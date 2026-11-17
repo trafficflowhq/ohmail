@@ -35,7 +35,7 @@ export function heartbeatSection(scope: WorkerScope): void {
       try {
         if (scope.claimed) { await renew(); return; }
         const landed = await claimHeartbeat(
-          scope.db as unknown as Tx,
+          scope.roster as unknown as Tx,
           { shardIndex: scope.shardIndex, instanceId: scope.leaderToken, shards: scope.shards, startedAt: scope.startedAt, ...counters() },
           { pid: scope.lock.backendPid, key: leaderLockKeyFor(scope.shardIndex), mark: scope.lock.mark },
         );
@@ -53,7 +53,7 @@ export function heartbeatSection(scope: WorkerScope): void {
      * from here.
      */
     async function renew(): Promise<void> {
-      const mine = await refreshHeartbeat(scope.db as unknown as Tx, { shardIndex: scope.shardIndex, instanceId: scope.leaderToken, ...counters() });
+      const mine = await refreshHeartbeat(scope.roster as unknown as Tx, { shardIndex: scope.shardIndex, instanceId: scope.leaderToken, ...counters() });
       if (!mine) scope.handleLockLoss(new LockLostError("the heartbeat row no longer names this instance", "LOCK_SUPERSEDED"));
     }
 
@@ -202,7 +202,7 @@ export function heartbeatSection(scope: WorkerScope): void {
      */
     async function alertPass(): Promise<void> {
       try {
-        const result = await runAlertPass(scope.db as unknown as Tx, {
+        const result = await runAlertPass(scope.roster as unknown as Tx, {
           ...(scope.config.alertFirstReadMs !== undefined ? { firstReadMs: scope.config.alertFirstReadMs } : {}),
           sinks: scope.alertSinks, shards: [], source: "worker", environment: scope.environment,
           deliveryStreak: scope.alertDeliveryStreak,
@@ -322,12 +322,12 @@ export function heartbeatSection(scope: WorkerScope): void {
         // AFTER the pass, never before: the rules read a ten-minute window, so a prune ahead of
         // them could only ever delete rows they were about to ignore — and if it throws, the
         // pass has already delivered. It swallows its own faults; see the module.
-        await apiFaultPrunePass(scope.db as unknown as Tx, new Date(), scope.log);
+        await apiFaultPrunePass(scope.roster as unknown as Tx, new Date(), scope.log);
         // `alert_driver_gaps`' hundred days, on the same terms.
-        await alertGapPrunePass(scope.db as unknown as Tx, new Date(), scope.log);
+        await alertGapPrunePass(scope.roster as unknown as Tx, new Date(), scope.log);
         // A drill the API queued for this driver (`alert-drill-pass.ts`): last, after every line of
         // the real pass, so it cannot delay a page. Shard 0 only; it never throws.
-        await alertDrillPass(scope.db as unknown as Tx, { sinks: scope.alertSinks, environment: scope.environment, now: new Date(), log: scope.log, shardIndex: scope.shardIndex });
+        await alertDrillPass(scope.roster as unknown as Tx, { sinks: scope.alertSinks, environment: scope.environment, now: new Date(), log: scope.log, shardIndex: scope.shardIndex });
       } catch (err) {
         scope.log.error("alert_pass_failed", { err });
         // A database that is gone or unusable pages from memory, reading and writing nothing. Never throws.

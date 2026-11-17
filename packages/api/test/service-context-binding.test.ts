@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import { bindingOf, BindingRefusedError } from "@trafficflow/db";
-import { serviceContext } from "../src/context.js";
+import { bindDb, bindingOf, BindingRefusedError } from "@trafficflow/db";
+import { bindRequest, serviceContext } from "../src/context.js";
 import type { ApiDeps, ResolvedSession } from "../src/deps.js";
 import { makeDeps, req } from "./helpers.js";
 
@@ -46,23 +46,34 @@ describe("serviceContext binds the request's handle to the session's account", (
     expect(ctx.accountId).toBe("");
   });
 
-  it("gives one handle per request, and a second binding once the session changes", () => {
-    const deps: ApiDeps = { ...base, session: sessionOf(A) };
+  it("gives one handle per request: the one its session was bound to, and no other once the session changes", () => {
+    // A request as a host hands it over: its handle minted bound to nothing, then bound by its session.
+    const deps: ApiDeps = { ...base, db: bindDb(base.db, { account: null }), session: sessionOf(A) };
+    bindRequest(deps);
     const first = serviceContext(deps, req("GET", "/x")).db;
+    expect(first).toBe(deps.db);
     expect(serviceContext(deps, req("GET", "/x")).db).toBe(first);
+    expect(bindingOf(first)).toEqual({ account: A, keyed: false });
+    // The session changed under a handle already bound: no context is built for the other account.
     deps.session = sessionOf(B);
-    const second = serviceContext(deps, req("GET", "/x")).db;
-    expect(bindingOf(second)?.account).toBe(B);
+    expect(() => serviceContext(deps, req("GET", "/x"))).toThrow(BindingRefusedError);
+    deps.session = null;
+    expect(() => serviceContext(deps, req("GET", "/x"))).toThrow(BindingRefusedError);
     expect(bindingOf(first)?.account).toBe(A);
   });
 
-  it("re-binds when the request's handle is swapped for another over the same pool", () => {
-    const deps: ApiDeps = { ...base, session: sessionOf(A) };
-    const before = serviceContext(deps, req("GET", "/x")).db;
-    deps.db = Object.create(base.db) as ApiDeps["db"];
-    const after = serviceContext(deps, req("GET", "/x")).db;
-    expect(after).not.toBe(before);
-    expect(bindingOf(after)?.account).toBe(A);
+  it("binds over the handle the request holds when its session is bound: a handle swapped before that, never after", () => {
+    const swapped = bindDb(Object.create(base.db) as ApiDeps["db"], { account: null });
+    const deps: ApiDeps = { ...base, db: bindDb(base.db, { account: null }), session: sessionOf(A), sessionDb: () => swapped };
+    // The session doors swap the handle before the token is resolved.
+    deps.db = deps.sessionDb!();
+    bindRequest(deps);
+    const ctx = serviceContext(deps, req("GET", "/x"));
+    expect(ctx.db).toBe(deps.db);
+    expect(bindingOf(ctx.db)?.account).toBe(A);
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(ctx.db))).toBe(base.db);
+    // The second handle's door is closed with the binding.
+    expect(deps.sessionDb).toBeUndefined();
   });
 
   it("refuses a session whose account is empty or no id, rather than binding it to nothing", () => {

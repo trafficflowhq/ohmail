@@ -5,6 +5,7 @@ import {
 import { silentLogger } from "@trafficflow/core/mail";
 // The reader refusal, from the package that throws it — see the envelope arm below for why it
 // cannot live beside `ServiceError`.
+import { bindRequest } from "./context.js";
 import { jarCookie } from "./cookies.js";
 import { csrfTokenFor } from "./csrf.js";
 import { errorResponse } from "./responses.js";
@@ -474,6 +475,9 @@ export const withSessionAcquireCeiling: Middleware = (next) => async (req, deps,
  * the session and proceeds anonymously — a stale enrollment cookie must not 403 a fresh login,
  * and `GET /oauth/authorize` mints from `ctx.userId`, so dropping the identity yields the 401 it
  * must be instead of a password-only escalation.
+ *
+ * Its last step binds the request's handle to the session's account (`bindRequest`): the only
+ * place `deps.session` is assigned is here, and the only place a request is bound follows it.
  */
 export const withSession: Middleware = (next, route) => async (req, deps, params) => {
   const token = readSessionToken(req, deps.allowCookieAuth !== false);
@@ -493,6 +497,9 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
     if (token && await erasedAccountBearer(req, deps, token.value)) return accountErasedResponse();
     return errorResponse("unauthorized", 401, "authentication required");
   }
+  // Last, and here alone: the session is settled (resolved, or dropped above), and the request's
+  // handle comes to name its account before any later step or the handler reads through it.
+  bindRequest(deps);
   return next(req, deps, params);
 };
 

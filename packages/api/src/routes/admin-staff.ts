@@ -12,7 +12,7 @@ import {
 } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import {
-  queryHmacOf, recordStaffEvents, adoptRequestId, rolesAdmit, StaffAuditWriteError,
+  queryHmacOf, recordStaffEvents, adoptRequestId, rolesAdmit, staffDb, StaffAuditWriteError,
   type StaffActor, type StaffEventInput,
 } from "../staff-audit.js";
 import {
@@ -30,9 +30,9 @@ import type { Handler, Route } from "../router.js";
  * — says who. Not `AuthService`: a session that can read mail and one that can suspend an account
  * must come from different tables verified by different code, or one bug is both; this reuses the
  * primitives (`scryptHasher`, the TOTP module, `generateToken`/`hashToken`, `auth_throttle`) and
- * none of the service. Runs on `deps.db`: the blind role holds nothing on `staff_users`. A failed
- * sign-in reveals the fact, never the factor: all three failures answer 401 `invalid`, and the
- * unknown-email path runs a full scrypt against a decoy hash.
+ * none of the service. Runs at the staff door (`staffDb`): the blind role holds nothing on
+ * `staff_users`. A failed sign-in reveals the fact, never the factor: all three failures answer
+ * 401 `invalid`, and the unknown-email path runs a full scrypt against a decoy hash.
  */
 
 /* ── the shapes the console reads ──────────────────────────────────────────────────────── */
@@ -306,7 +306,7 @@ async function mintSession(
 async function mintAuditedSession(
   deps: ApiDeps, user: { id: string; email: string }, now: Date, requestId: string,
 ): Promise<{ token: string; expiresAt: Date }> {
-  return (deps.db as unknown as Tx).transaction(async (tx) => {
+  return (staffDb(deps) as unknown as Tx).transaction(async (tx) => {
     const minted = await mintSession(tx, user.id, now);
     const roles = await liveRolesOf(tx, user.id);
     await recordStaffEvents(tx, [{
@@ -426,7 +426,7 @@ export async function resolveStaffSession(
 async function consumeStaffTotp(
   deps: ApiDeps, staffId: string, code: string, now: Date,
 ): Promise<"ok" | "invalid" | "no_enrollment"> {
-  const [user] = await deps.db.select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
+  const [user] = await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
   if (!user?.totpActivated || !user.totpSecretEnc || user.totpKeyVersion === null) return "no_enrollment";
   const totpSecret = await deps.keyProvider.decrypt(user.totpSecretEnc, user.totpKeyVersion);
   const v = verifyTotp({
@@ -434,7 +434,7 @@ async function consumeStaffTotp(
     afterStep: user.totpLastConsumedStep === null ? null : Number(user.totpLastConsumedStep),
   });
   if (!v.valid) return "invalid";
-  const advanced = await deps.db.update(staffUsers)
+  const advanced = await staffDb(deps).update(staffUsers)
     .set({ totpLastConsumedStep: BigInt(v.timeStep!), updatedAt: now })
     .where(and(
       eq(staffUsers.id, user.id),
@@ -454,7 +454,7 @@ async function consumeStaffTotp(
  */
 async function recordSignOut(deps: ApiDeps, event: StaffEventInput): Promise<void> {
   try {
-    await recordStaffEvents(deps.db, [event]);
+    await recordStaffEvents(staffDb(deps), [event]);
   } catch (err) {
     deps.logger?.child({ route: "/admin/staff" }).error("staff_audit_failed", { err, action: event.action });
   }
@@ -525,14 +525,14 @@ async function signIn(
   // row. This was a pure SELECT with the increment after the scrypt and the TOTP compare.
   const keys = [emailKey(email, deps), ipKey(req, deps)];
   for (const key of keys) {
-    const verdict = await throttleReserve(deps.db, key, now);
+    const verdict = await throttleReserve(staffDb(deps), key, now);
     if (verdict.locked) {
       return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
     }
   }
 
   const [user] = email
-    ? await deps.db.select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1)
+    ? await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1)
     : [];
 
   // ALWAYS a full scrypt verify, even with no such row. See `decoy()`.
@@ -543,15 +543,15 @@ async function signIn(
   // `staff_user_id` is a key, and an unknown address is nobody to record.
   const failed = async (step: "password" | "totp"): Promise<void> => {
     if (!user) return;
-    await recordStaffEvents(deps.db, [{
+    await recordStaffEvents(staffDb(deps), [{
       requestId, at: now, action: "staff.signin_failed", outcome: "refused", refusalCode: "invalid",
-      actor: { staffId: user.id, sessionId: null, email: user.email, roles: await liveRolesOf(deps.db as unknown as Tx, user.id) },
+      actor: { staffId: user.id, sessionId: null, email: user.email, roles: await liveRolesOf(staffDb(deps) as unknown as Tx, user.id) },
       detail: { step },
     }]);
   };
 
   if (!user || !passwordOk) {
-    for (const key of keys) await throttleFail(deps.db, key, now);
+    for (const key of keys) await throttleFail(staffDb(deps), key, now);
     await failed("password");
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
@@ -559,7 +559,7 @@ async function signIn(
   // cost is written again, a compare-and-set on the old hash, best-effort.
   if (scryptHasher.needsRehash?.(user.passwordHash)) {
     try {
-      await deps.db.update(staffUsers).set({ passwordHash: await scryptHasher.hash(password) })
+      await staffDb(deps).update(staffUsers).set({ passwordHash: await scryptHasher.hash(password) })
         .where(and(eq(staffUsers.id, user.id), eq(staffUsers.passwordHash, user.passwordHash)));
     } catch {
       /* the stored hash still verifies; the next sign-in rehashes */
@@ -573,7 +573,7 @@ async function signIn(
   // in with two calls, so charging each of them would spend two of five attempts on every clean
   // sign-in. See {@link throttleRefund}.
   if (!user.totpActivated || !user.totpSecretEnc || user.totpKeyVersion === null) {
-    for (const key of keys) await throttleRefund(deps.db, key, now);
+    for (const key of keys) await throttleRefund(staffDb(deps), key, now);
     const enrollToken = await signEnrollToken(
       secret, user.id, Math.floor(now.getTime() / 1000) + ENROLL_TTL_SECONDS,
     );
@@ -581,7 +581,7 @@ async function signIn(
   }
 
   if (!code) {
-    for (const key of keys) await throttleRefund(deps.db, key, now);
+    for (const key of keys) await throttleRefund(staffDb(deps), key, now);
     return { status: 200, body: { ok: false, status: "totp_required" } };
   }
 
@@ -591,7 +591,7 @@ async function signIn(
     afterStep: user.totpLastConsumedStep === null ? null : Number(user.totpLastConsumedStep),
   });
   if (!v.valid) {
-    for (const key of keys) await throttleFail(deps.db, key, now);
+    for (const key of keys) await throttleFail(staffDb(deps), key, now);
     await failed("totp");
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
@@ -604,7 +604,7 @@ async function signIn(
   // clause is the concurrent case: removing it leaves every sequential test passing, because a
   // one-connection PGlite suite cannot interleave. `test/admin-staff-concurrency.pg.test.ts` is
   // the real-Postgres test: two connections, a barrier, one sign-in wins.
-  const advanced = await deps.db.update(staffUsers)
+  const advanced = await staffDb(deps).update(staffUsers)
     .set({ totpLastConsumedStep: BigInt(v.timeStep!), lastLoginAt: now, updatedAt: now })
     .where(and(
       eq(staffUsers.id, user.id),
@@ -616,12 +616,12 @@ async function signIn(
   if (advanced.length === 0) {
     // Somebody else consumed this step between the read and the write. That is the replay this
     // guard exists for, and it is refused exactly like a wrong code.
-    for (const key of keys) await throttleFail(deps.db, key, now);
+    for (const key of keys) await throttleFail(staffDb(deps), key, now);
     await failed("totp");
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
 
-  for (const key of keys) await throttleClear(deps.db, key);
+  for (const key of keys) await throttleClear(staffDb(deps), key);
   const { token, expiresAt } = await mintAuditedSession(deps, user, now, requestId);
   return {
     status: 200,
@@ -646,12 +646,12 @@ async function authorizeEnrollment(
   const fromToken = await readEnrollToken(secret, str(body.enrollToken) || undefined, now);
   if (fromToken) return { staffId: fromToken, viaSession: false };
 
-  const session = await resolveStaffSession(deps.db, staffTokenOf(body), now);
+  const session = await resolveStaffSession(staffDb(deps), staffTokenOf(body), now);
   if (!session) return null;
 
   // RE-ASSERT THE PASSWORD. Always a full scrypt, against the decoy when the row has somehow
   // gone, so a wrong password and a vanished operator cost the same time.
-  const [user] = await deps.db.select().from(staffUsers)
+  const [user] = await staffDb(deps).select().from(staffUsers)
     .where(eq(staffUsers.id, session.staffId)).limit(1);
   const ok = await scryptHasher.verify(str(body.password), user?.passwordHash ?? (await decoy()));
   if (!user || !ok) return null;
@@ -676,12 +676,12 @@ async function totpBegin(
   if (!authorized) return { status: 401, body: { error: { code: "unauthorized" } } };
   const staffId = authorized.staffId;
 
-  const [user] = await deps.db.select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
+  const [user] = await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
   if (!user) return { status: 401, body: { error: { code: "unauthorized" } } };
 
   const totpSecret = newTotpSecret();
   const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(totpSecret);
-  await deps.db.update(staffUsers)
+  await staffDb(deps).update(staffUsers)
     .set({
       totpPendingSecretEnc: ciphertext, totpPendingKeyVersion: keyVersion,
       totpPendingStartedAt: now, updatedAt: now,
@@ -719,12 +719,12 @@ async function totpConfirm(
   const ip = ipKey(req, deps);
   // RESERVED, not read — the same fix as `signIn`'s. A pure read in front of the TOTP compare
   // makes the six-digit code sprayable as wide as the caller's connection count.
-  const verdict = await throttleReserve(deps.db, ip, now);
+  const verdict = await throttleReserve(staffDb(deps), ip, now);
   if (verdict.locked) {
     return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
   }
 
-  const [user] = await deps.db.select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
+  const [user] = await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
   const pending = user?.totpPendingSecretEnc;
   const pendingFresh = user?.totpPendingStartedAt != null
     && now.getTime() - user.totpPendingStartedAt.getTime() <= PENDING_ENROLLMENT_TTL_SECONDS * 1000;
@@ -735,12 +735,12 @@ async function totpConfirm(
   const totpSecret = await deps.keyProvider.decrypt(pending, user.totpPendingKeyVersion);
   const v = verifyTotp({ secret: totpSecret, token: code, now, window: TOTP_WINDOW, afterStep: null });
   if (!v.valid) {
-    await throttleFail(deps.db, ip, now);
+    await throttleFail(staffDb(deps), ip, now);
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
 
   // THE PROMOTION. One statement, and its `where` is the compare-and-swap described above.
-  const promoted = await deps.db.update(staffUsers)
+  const promoted = await staffDb(deps).update(staffUsers)
     .set({
       totpSecretEnc: pending, totpKeyVersion: user.totpPendingKeyVersion,
       totpPendingSecretEnc: null, totpPendingKeyVersion: null, totpPendingStartedAt: null,
@@ -752,8 +752,8 @@ async function totpConfirm(
   if (promoted.length === 0) {
     return { status: 409, body: { error: { code: "enrollment_superseded" } } };
   }
-  await throttleClear(deps.db, ip);
-  await throttleClear(deps.db, emailKey(user.email, deps));
+  await throttleClear(staffDb(deps), ip);
+  await throttleClear(staffDb(deps), emailKey(user.email, deps));
 
   // No new session on the session arm — see the note on this function.
   if (authorized.viaSession) {
@@ -779,7 +779,7 @@ async function whoami(
   body: Record<string, unknown>, deps: ApiDeps,
 ): Promise<{ status: number; body: unknown }> {
   const now = deps.now();
-  const who = await resolveStaffSession(deps.db, str(body.token) || undefined, now);
+  const who = await resolveStaffSession(staffDb(deps), str(body.token) || undefined, now);
   // `stepUpWindowSeconds` travels with the identity so the console's sentences render from the
   // value the API enforces. It is a policy number and names nobody, so it is safe on a refusal
   // too — and the sign-in screen needs it before it holds a session.
@@ -814,11 +814,11 @@ async function stepUp(
   const now = deps.now();
   const token = str(body.token) || undefined;
   const code = str(body.code).replace(/\s+/g, "");
-  const session = await resolveStaffSession(deps.db, token, now);
+  const session = await resolveStaffSession(staffDb(deps), token, now);
   if (!session) return { status: 401, body: { ok: false, status: "signed_out" } };
 
   const ip = ipKey(req, deps);
-  const verdict = await throttleReserve(deps.db, ip, now);
+  const verdict = await throttleReserve(staffDb(deps), ip, now);
   if (verdict.locked) {
     return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
   }
@@ -829,8 +829,8 @@ async function stepUp(
     return { status: 409, body: { error: { code: "no_enrollment" } } };
   }
   if (consumed === "invalid") {
-    await throttleFail(deps.db, ip, now);
-    await recordStaffEvents(deps.db, [{
+    await throttleFail(staffDb(deps), ip, now);
+    await recordStaffEvents(staffDb(deps), [{
       requestId, at: now, action: "staff.stepup_failed", outcome: "refused", refusalCode: "invalid",
       actor: actorOf(session),
     }]);
@@ -838,13 +838,13 @@ async function stepUp(
   }
 
   // The fresh stamp and its record, together: a step-up the audit cannot record grants nothing.
-  await (deps.db as unknown as Tx).transaction(async (tx) => {
+  await (staffDb(deps) as unknown as Tx).transaction(async (tx) => {
     await tx.update(staffSessions)
       .set({ lastTwofaAt: now })
       .where(and(eq(staffSessions.tokenHash, hashToken(token!)), isNull(staffSessions.revokedAt)));
     await recordStaffEvents(tx, [{ requestId, at: now, action: "staff.stepup", outcome: "ok", actor: actorOf(session) }]);
   });
-  await throttleClear(deps.db, ip);
+  await throttleClear(staffDb(deps), ip);
 
   return {
     status: 200,
@@ -888,12 +888,12 @@ async function totpReset(
   if (note.length < MIN_RESET_FIELD) return { status: 400, body: { error: { code: "note_required" } } };
   if (!email) return { status: 400, body: { error: { code: "email_required" } } };
 
-  const [user] = await deps.db.select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1);
+  const [user] = await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1);
   // An address that matches no row is the operator's mistake, not a no-op: a 200 over a typo
   // reads as "done" and leaves the person still locked out.
   if (!user) return { status: 404, body: { error: { code: "staff_not_found" } } };
 
-  await deps.db.update(staffUsers)
+  await staffDb(deps).update(staffUsers)
     .set({
       totpSecretEnc: null, totpKeyVersion: null,
       totpPendingSecretEnc: null, totpPendingKeyVersion: null, totpPendingStartedAt: null,
@@ -901,18 +901,18 @@ async function totpReset(
       updatedAt: now,
     })
     .where(eq(staffUsers.id, user.id));
-  const revoked = await deps.db.update(staffSessions)
+  const revoked = await staffDb(deps).update(staffSessions)
     .set({ revokedAt: now })
     .where(and(eq(staffSessions.staffUserId, user.id), isNull(staffSessions.revokedAt)))
     .returning();
-  await deps.db.insert(staffAuditLog).values({
+  await staffDb(deps).insert(staffAuditLog).values({
     staffUserId: user.id, action: "staff.totp.reset", actor: operator, note, createdAt: now,
   });
   // The structured record beside the old table's note: the operator's name is the label (no
   // staff session is presented to this command), the note stays in `staff_audit_log` alone.
-  await recordStaffEvents(deps.db, [{
+  await recordStaffEvents(staffDb(deps), [{
     requestId: randomUUID(), at: now, action: "staff.totp_reset", outcome: "ok",
-    actor: { staffId: user.id, sessionId: null, email: operator.slice(0, 64), roles: await liveRolesOf(deps.db as unknown as Tx, user.id) },
+    actor: { staffId: user.id, sessionId: null, email: operator.slice(0, 64), roles: await liveRolesOf(staffDb(deps) as unknown as Tx, user.id) },
     detail: { sessionsRevoked: revoked.length },
   }]);
 
@@ -935,8 +935,8 @@ async function signOut(
   const token = str(body.token);
   if (token) {
     const now = deps.now();
-    const who = await resolveStaffSession(deps.db, token, now);
-    await deps.db.update(staffSessions)
+    const who = await resolveStaffSession(staffDb(deps), token, now);
+    await staffDb(deps).update(staffSessions)
       .set({ revokedAt: now })
       .where(and(eq(staffSessions.tokenHash, hashToken(token)), isNull(staffSessions.revokedAt)));
     // After the revoke, and best-effort: a sign-out must never fail for want of its record.
@@ -981,7 +981,7 @@ async function mintAssertions(
   body: Record<string, unknown>, deps: ApiDeps, req: Request,
 ): Promise<{ status: number; body: unknown }> {
   const now = deps.now();
-  const who = await resolveStaffSession(deps.db, staffTokenOf(body), now);
+  const who = await resolveStaffSession(staffDb(deps), staffTokenOf(body), now);
   if (!who) return { status: 401, body: { error: { code: "staff_session_required" } } };
   const key = deps.admin?.assertion ?? null;
   if (!key) return { status: 503, body: { error: { code: "assertion_unarmed" } } };
@@ -1006,7 +1006,7 @@ async function mintAssertions(
         : undefined,
     }));
   const refuse = async (status: number, code: string): Promise<{ status: number; body: unknown }> => {
-    await recordStaffEvents(deps.db, [rowsFor("refused", code, 0)[0]!]);
+    await recordStaffEvents(staffDb(deps), [rowsFor("refused", code, 0)[0]!]);
     return { status, body: { error: { code } } };
   };
 
@@ -1022,17 +1022,17 @@ async function mintAssertions(
   const code = str(body.totp).replace(/\s+/g, "");
   if (code) {
     const ip = ipKey(req, deps);
-    const verdict = await throttleReserve(deps.db, ip, now);
+    const verdict = await throttleReserve(staffDb(deps), ip, now);
     if (verdict.locked) {
       return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
     }
     const consumed = await consumeStaffTotp(deps, who.staffId, code, now);
     if (consumed !== "ok") {
-      await throttleFail(deps.db, ip, now);
+      await throttleFail(staffDb(deps), ip, now);
       return refuse(401, "totp_invalid");
     }
-    await deps.db.update(staffSessions).set({ lastTwofaAt: now }).where(eq(staffSessions.id, who.sessionId));
-    await throttleClear(deps.db, ip);
+    await staffDb(deps).update(staffSessions).set({ lastTwofaAt: now }).where(eq(staffSessions.id, who.sessionId));
+    await throttleClear(staffDb(deps), ip);
     tier = 2;
   } else if (scope === "write") {
     if (now.getTime() - who.lastTwofaAt.getTime() > STAFF_STEP_UP_WINDOW_SECONDS * 1000) {
@@ -1052,7 +1052,7 @@ async function mintAssertions(
     return mintStaffAssertion(claims, key);
   });
   // BEFORE the answer, all rows or none: an assertion nobody recorded is never handed out.
-  await recordStaffEvents(deps.db, rowsFor("ok", null, tier));
+  await recordStaffEvents(staffDb(deps), rowsFor("ok", null, tier));
   const answer: StaffAssertionAnswer = {
     assertions, expiresAt: new Date(exp * 1000).toISOString(), kid: key.kid, tier,
   };
@@ -1071,14 +1071,14 @@ async function changeRole(
   body: Record<string, unknown>, deps: ApiDeps, req: Request,
 ): Promise<{ status: number; body: unknown }> {
   const now = deps.now();
-  const who = await resolveStaffSession(deps.db, staffTokenOf(body), now);
+  const who = await resolveStaffSession(staffDb(deps), staffTokenOf(body), now);
   if (!who) return { status: 401, body: { error: { code: "staff_session_required" } } };
   const requestId = adoptRequestId(req, deps);
   const op = str(body.op);
   const role = str(body.role) as StaffRole;
   const action: StaffAuditAction = op === "revoke" ? "staff.role_revoke" : "staff.role_grant";
   const refuse = async (status: number, code: string, target?: string): Promise<{ status: number; body: unknown }> => {
-    await recordStaffEvents(deps.db, [{
+    await recordStaffEvents(staffDb(deps), [{
       requestId, at: now, action, outcome: "refused", refusalCode: code, actor: actorOf(who),
       detail: target && (STAFF_ROLES as readonly string[]).includes(role) ? { role, targetStaffUserId: target } : {},
     }]);
@@ -1091,25 +1091,25 @@ async function changeRole(
   const code = str(body.totp).replace(/\s+/g, "");
   if (!code) return refuse(401, "totp_required");
   const ip = ipKey(req, deps);
-  const verdict = await throttleReserve(deps.db, ip, now);
+  const verdict = await throttleReserve(staffDb(deps), ip, now);
   if (verdict.locked) {
     return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
   }
   if (await consumeStaffTotp(deps, who.staffId, code, now) !== "ok") {
-    await throttleFail(deps.db, ip, now);
+    await throttleFail(staffDb(deps), ip, now);
     return refuse(401, "totp_invalid");
   }
-  await throttleClear(deps.db, ip);
-  await deps.db.update(staffSessions).set({ lastTwofaAt: now }).where(eq(staffSessions.id, who.sessionId));
+  await throttleClear(staffDb(deps), ip);
+  await staffDb(deps).update(staffSessions).set({ lastTwofaAt: now }).where(eq(staffSessions.id, who.sessionId));
 
   const email = normalizeEmail(body.staffEmail);
   const [target] = email
-    ? await deps.db.select({ id: staffUsers.id }).from(staffUsers).where(eq(staffUsers.email, email)).limit(1)
+    ? await staffDb(deps).select({ id: staffUsers.id }).from(staffUsers).where(eq(staffUsers.email, email)).limit(1)
     : [];
   if (!target) return refuse(404, "staff_not_found");
   if (target.id === who.staffId) return refuse(409, "self_change_refused", target.id);
 
-  const outcome = await (deps.db as unknown as Tx).transaction(async (tx) => {
+  const outcome = await (staffDb(deps) as unknown as Tx).transaction(async (tx) => {
     const record = (o: "ok" | "no_change" | "refused", refusalCode: string | null): Promise<void> =>
       recordStaffEvents(tx, [{
         requestId, at: now, action, outcome: o, refusalCode, actor: actorOf(who),

@@ -74,7 +74,10 @@ const REPO = fileURLToPath(new URL("../../..", import.meta.url));
  * both needle sets now run over source with comments removed.
  */
 const STAND_DOWN_NEEDLES = [
-  /markMailboxStoodDown\(db,/,
+  // The call with the handle it writes on as its first argument: `db`, or a handle read off one
+  // account's view (`scope.forAccount(mb.accountId).db` in the worker's start file, read here as
+  // `forAccount(mb.accountId).db`), since every statement of the worker rides the account it is for.
+  /markMailboxStoodDown\([\w.()]*\bdb,/,
   // The INLINE demotion — the role AND the holder it names, adjacent. Both terms are needed and
   // the second is what makes it a demotion: `MailboxService.create` writes `organizerRole:
   // "reader"` too, because a NEW mailbox is a consent-less reader (mail 0083), and that is a

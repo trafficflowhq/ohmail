@@ -631,9 +631,12 @@ export async function refreshAccessToken(p: RefreshParams, now: () => number = D
 /**
  * The one-method port a host injects so a ROTATED refresh token is persisted. It receives the
  * already-encrypted envelope — the provider re-encrypts with the host's KeyProvider — so this stays
- * a pure DB write with no key material of its own.
+ * a pure DB write with no key material of its own. `dial` is what the site that asked for the
+ * token handed {@link MicrosoftTokenProvider.forMailbox}: the write belongs to that dial.
  */
-export type UpdateSecretPort = (mailboxId: string, ciphertextEnc: string, keyVersion: number) => Promise<void>;
+export type UpdateSecretPort<Dial = void> = (
+  mailboxId: string, ciphertextEnc: string, keyVersion: number, dial: Dial,
+) => Promise<void>;
 
 /** The application registration, as the provider needs it at the moment it mints a token. */
 export interface MicrosoftClientCredentials {
@@ -651,7 +654,7 @@ export interface MicrosoftClientCredentials {
 }
 
 /** What a host wires once per process (worker) or once per invocation (API). */
-export interface MicrosoftOAuthRuntime {
+export interface MicrosoftOAuthRuntime<Dial = void> {
   /** `MS_OAUTH_CLIENT_ID`. Empty ⇒ a token request is a {@link OAuthConfigError}. */
   clientId: string;
   /** `MS_OAUTH_CLIENT_SECRET`. Empty ⇒ the NAMED refusal, not a retry loop — unless `kind` is `"public"`. */
@@ -676,7 +679,7 @@ export interface MicrosoftOAuthRuntime {
    */
   resolveClient?: (want: MicrosoftClientKind) => Promise<MicrosoftClientCredentials>;
   keyProvider: KeyProvider;
-  updateSecret: UpdateSecretPort;
+  updateSecret: UpdateSecretPort<Dial>;
   fetch: FetchLike;
   now?: () => number;
   /** Refresh when the cached token is within this of expiry. Default 5 min. */
@@ -697,23 +700,24 @@ const DEFAULT_SKEW_MS = 120_000;
  * not driven from here, and `connect()` calls the fetcher exactly once per dial — the cache only
  * spares a redundant token POST when the same provider is asked again.
  */
-export class MicrosoftTokenProvider implements OAuthTokenProvider {
+export class MicrosoftTokenProvider<Dial = void> implements OAuthTokenProvider<Dial> {
   private readonly cache = new Map<string, { accessToken: string; expiresAtMs: number }>();
-  constructor(private readonly rt: MicrosoftOAuthRuntime) {}
+  constructor(private readonly rt: MicrosoftOAuthRuntime<Dial>) {}
 
-  forMailbox(mailboxId: string): AccessTokenFetcherFactory {
+  /** What the dial hands over rides with its fetcher, to the write of a token that fetcher's refresh rotated. */
+  forMailbox(mailboxId: string, dial: Dial): AccessTokenFetcherFactory {
     return ({ refreshToken, tenant, provider, clientKind }) => {
       if (provider !== "microsoft") {
         // Should never happen — buildImapAuth already gated the provider — but a factory that
         // silently accepted a foreign provider would be a hole waiting for a caller that skips it.
         throw new OAuthConfigError("provider", `MicrosoftTokenProvider cannot serve provider ${provider}`);
       }
-      return () => this.accessToken(mailboxId, refreshToken, tenant, wantedClientKind(clientKind));
+      return () => this.accessToken(mailboxId, dial, refreshToken, tenant, wantedClientKind(clientKind));
     };
   }
 
   private async accessToken(
-    mailboxId: string, refreshToken: string, tenant: string,
+    mailboxId: string, dial: Dial, refreshToken: string, tenant: string,
     /**
      * The door the MAILBOX's token came through. Defaults to `"confidential"` at
      * {@link wantedClientKind}, so every mailbox stored before the device flow existed keeps
@@ -796,7 +800,7 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
       // Rotation: Microsoft handed back a NEW refresh token; the old one may already be dead. Persist
       // the new one so the next dial (which re-reads the DB) uses it. Encrypt with the host's key.
       const enc = await this.rt.keyProvider.encrypt(res.refreshToken);
-      await this.rt.updateSecret(mailboxId, enc.ciphertext, enc.keyVersion);
+      await this.rt.updateSecret(mailboxId, enc.ciphertext, enc.keyVersion, dial);
     }
     this.cache.set(mailboxId, { accessToken: res.accessToken, expiresAtMs: res.expiresAtMs });
     return res.accessToken;

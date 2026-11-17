@@ -9,10 +9,12 @@ export {
   ACCOUNT_MAILBOXES_MAX_READ, accountMailboxesProbe, refuseOverAccountMailboxes,
   type ReadBoundKind,
 } from "./read-bounds.js";
-export type { ServiceContext, Db, BoundDb, UnboundDb, IdempotencyClaim, SearchSupersede } from "./context.js";
+export type {
+  ServiceContext, PassContext, OpenPassSendAdapter, Db, BoundDb, UnboundDb, IdempotencyClaim, SearchSupersede,
+} from "./context.js";
 // The fenced transaction door — every request-scoped write against a table Art. 17 erasure
 // empties opens here, so the fence cannot be forgotten. See `context.ts`.
-export { withAccountTx, claimOrLose, dbFor } from "./context.js";
+export { withAccountTx, claimOrLose, dbFor, passContext } from "./context.js";
 /* THE HOSTED DATABASE HANDLES. `context.ts` declares the registry with the one member a local
  * install can offer; this adds the two a hosted deployment has, by augmenting that interface.
  * Re-exporting a name from it is what carries the augmentation into every program built from this

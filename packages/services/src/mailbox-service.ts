@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole,
+  assertOrganizerRole, carryBinding,
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings, messageFailures,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
@@ -2021,7 +2021,7 @@ export class MailboxService {
       // commit. `credential-report-commit-side.test.ts` requires this marker on every derivation
       // outside `context.ts`, so the next one cannot arrive silently.
       return this.toDTO({
-        ...ctx, db: carryDialect(ctx.db, tx as object) as unknown as ServiceContext["db"],
+        ...ctx, db: carryBinding(ctx.db, carryDialect(ctx.db, tx as object)),
       }, row!);
     }).catch((err: unknown) => {
       // The RE-ENABLE path hits the same index: `disabled → connected` inserts a new entry

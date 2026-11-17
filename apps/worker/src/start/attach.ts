@@ -3,7 +3,7 @@ import {
   type OrganizerRole, mailboxes, type Tx, messages, folderState, junkSweepCandidateWhere,
 } from "@trafficflow/db";
 import { providerAuthservIds } from "@trafficflow/core";
-import { storedFoldersOf, recordSpecialFolders } from "@trafficflow/core/adapters/drizzle-repo";
+import { storedFoldersOf, recordSpecialFolders, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { type MailboxAdapter, learnSmtpMaxSize, WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
 import { TURN_START_MESSAGES } from "../config.js";
 import { type AttachTicket, AttachAbortedError, AttachDeadlineError } from "../attach-pool.js";
@@ -66,7 +66,10 @@ export function attachSection(scope: WorkerScope): void {
       let adapter: MailboxAdapter | null = null;
       let unwatch: (() => Promise<void>) | null = null;
       try {
-        const creds = await loadMailboxCreds(scope.db, mb.mailboxId, scope.keyProvider, scope.oauthTokenProvider);
+        // The account of the roster row this mailbox is attached from: every read and write below is this
+        // mailbox's, and its runtime keeps the handle and the repository for as long as it lives.
+        const own = scope.forAccount(mb.accountId);
+        const creds = await loadMailboxCreds(own.db, mb.mailboxId, scope.keyProvider, scope.oauthTokenProvider);
         ticket.checkpoint();
         if (!creds) {
           // RECORD ONLY. The log below still announces once ever — that is a log-noise control and
@@ -105,7 +108,7 @@ export function attachSection(scope: WorkerScope): void {
             dial: makeSmtpSizeDial(scope.dialHostGuard),
           });
           if (learned.outcome === "learned") {
-            await recordSmtpMaxSize(scope.db, mb.mailboxId, learned.maxMessageBytes);
+            await recordSmtpMaxSize(own.db, mb.mailboxId, learned.maxMessageBytes);
             scope.log.info("mailbox_smtp_size_learned", {
               mailboxId: mb.mailboxId, accountId: mb.accountId,
               announcedBytes: learned.maxMessageBytes,
@@ -151,7 +154,7 @@ export function attachSection(scope: WorkerScope): void {
           auth: creds.imap.auth,
           sentDomain: scope.config.sentDomain,
           // What the last attach decided for Sent, Junk and Trash: a role never moves by a name guess.
-          storedFolders: await storedFoldersOf(scope.repo, mb.mailboxId),
+          storedFolders: await storedFoldersOf(own.repo, mb.mailboxId),
           // NOT the serverless defaults. This process holds its connections for the life of the
           // deployment and does bounded database work between IMAP commands; a 25 s socket
           // deadline chosen against Vercel's `maxDuration` is a deadline the worker's own cycle
@@ -283,7 +286,7 @@ export function attachSection(scope: WorkerScope): void {
         // product rule this serves.
         // Mail 0132: the Sent path the scan watches is written beside them (`recordSpecialFolders`).
         try {
-          await recordSpecialFolders(adapter, scope.repo, mb.mailboxId);
+          await recordSpecialFolders(adapter, own.repo, mb.mailboxId);
         } catch (err) {
           scope.log.warn("special_folder_discovery_failed", { mailboxId: mb.mailboxId, err });
         }
@@ -296,7 +299,7 @@ export function attachSection(scope: WorkerScope): void {
         /** The sweep's scan state for THIS attachment — see the `junkSweep.run` note below. */
         let sweepScan: SweepScanState = SWEEP_SCAN_START;
         const deps: Omit<SyncDeps, "writeAuthority"> = {
-          repo: scope.repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId,
+          repo: own.repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId,
           // Mail 0083. THE ATTACH-TIME ROLE, and it is the field's floor rather than its whole
           // story: `cycle()` re-verifies the lease before every pass and spreads `role: rt.role`
           // over these deps, so a flip in either direction applies on the very next cycle without
@@ -311,7 +314,7 @@ export function attachSection(scope: WorkerScope): void {
           // tripwire — `handleLockLoss` flips it the moment loss is observed, so the in-flight cycle
           // refuses its NEXT write and unwinds. `stopped` is deliberately NOT part of it: a graceful
           // shutdown lets in-flight writes complete.
-          fence: makeSyncWriteFence(scope.db, mb.mailboxId, scope.fence, () => scope.lockLost),
+          fence: makeSyncWriteFence(own.db, mb.mailboxId, scope.fence, () => scope.lockLost),
           ...(scope.spend ? { credits: scope.spend } : {}),
           // Whose `Authentication-Results` this mailbox may believe, resolved from the
           // SAME host string the adapter above dials. Empty for every provider the table does
@@ -370,7 +373,7 @@ export function attachSection(scope: WorkerScope): void {
           // compare-the-text discipline), so a press landing mid-sweep is served next cycle.
           junkSweep: {
             requested: async () => {
-              const [row] = await scope.db
+              const [row] = await own.db
                 .select({
                   at: sql<string | null>`${mailboxes.junkSweepRequestedAt}::text`,
                   off: mailboxes.foldersDisabledAt,
@@ -383,7 +386,7 @@ export function attachSection(scope: WorkerScope): void {
                 // Switched off under "Use folders" since the press (§17): an opted-out mailbox
                 // performs no move on the feature's account. The stale stamp is retired here
                 // — at its observed value — so the offer does not read "queued" for ever.
-                await scope.db.update(mailboxes)
+                await own.db.update(mailboxes)
                   .set({ junkSweepRequestedAt: null })
                   .where(and(
                     eq(mailboxes.id, mb.mailboxId),
@@ -402,10 +405,10 @@ export function attachSection(scope: WorkerScope): void {
               // rather than a conditional here, because a decision spelled inline in this file is
               // one nothing can assert. See `SweepScanState.command`.
               sweepScan = sweepStateForPress(sweepScan, hooks.command);
-              const fencedRepo = new Proxy(scope.repo, {
+              const fencedRepo = new Proxy(own.repo, {
                 get: (target, key, receiver) =>
                   key === "transaction" ? hooks.write : Reflect.get(target, key, receiver),
-              }) as typeof scope.repo & { transaction: typeof hooks.write };
+              }) as DrizzleRepo & { transaction: typeof hooks.write };
               /**
                * ONE BOUNDED WINDOW PER CYCLE on a KEYSET cursor, with the scan's state carried
                * across cycles in the attachment ({@link adoptSweepWindow} is the whole decision,
@@ -416,7 +419,7 @@ export function attachSection(scope: WorkerScope): void {
                * window inside one cycle.
                */
               const res = await junkSweepPass({
-                db: scope.db as unknown as Tx, repo: fencedRepo, adapter: attachedAdapter,
+                db: own.db as unknown as Tx, repo: fencedRepo, adapter: attachedAdapter,
                 accountId: mb.accountId, mailboxId: mb.mailboxId, execute: true,
                 writeAuthority: hooks.writeAuthority,
                 limit: JUNK_SWEEP_PER_CYCLE,
@@ -447,7 +450,7 @@ export function attachSection(scope: WorkerScope): void {
               };
             },
             remaining: async () => {
-              const [row] = await scope.db
+              const [row] = await own.db
                 .select({ n: sql<number>`count(*)::int` })
                 .from(messages)
                 .innerJoin(folderState, eq(folderState.messageId, messages.id))
@@ -455,7 +458,7 @@ export function attachSection(scope: WorkerScope): void {
               return Number(row?.n ?? 0);
             },
             clear: async (observed) => {
-              await scope.db.update(mailboxes)
+              await own.db.update(mailboxes)
                 .set({ junkSweepRequestedAt: null })
                 .where(and(
                   eq(mailboxes.id, mb.mailboxId),
@@ -497,7 +500,7 @@ export function attachSection(scope: WorkerScope): void {
           // (the label the health endpoint reports): which release wrote a copy is what tells a
           // rollback's copy from a restored store's.
           profile: new OrganizerProfileSync({
-            db: scope.db, accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
+            db: own.db, accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
             self: { installId: scope.organizerInstallId, kind: "cloud" },
             producerVersion: profileProducerVersion(scope.config.buildVersion ?? "dev"),
             ...(scope.config.organizer?.profileFlushIntervalMs !== undefined
@@ -561,7 +564,7 @@ export function attachSection(scope: WorkerScope): void {
          */
         try {
           const shaped = role === "reader" ? { ran: false } as Awaited<ReturnType<typeof runKickstart>> : await runKickstart({
-            repo: scope.repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId, log: scope.log,
+            repo: own.repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId, log: scope.log,
           });
           if (shaped.ran) {
             scope.log.info("mailbox_kickstarted", {

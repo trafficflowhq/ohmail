@@ -12,7 +12,18 @@ import { ROLE_DEADLINES } from "../src/row-security/deadlines.js";
 import { readLock, type LockReading } from "../src/row-security/check.js";
 import { ACCOUNT_VIEWS, INDEX_READS, readerCondition, viewName, viewStatement, type AccountView } from "../src/row-security/views.js";
 import { switchLock } from "../src/row-security/switch.js";
-import { BINDER_SQL, BINDING_READERS_SQL } from "../src/bound.js";
+import { BINDER_SQL } from "../src/bound.js";
+
+/**
+ * The readers as the handle's first part wrote them, before the lock's list carried its own: a
+ * store may still hold them. Kept here as the plant it is: a malformed value fails the statement
+ * in these, where the list's readers read NULL.
+ */
+const OLD_READERS_SQL = `create schema if not exists ohmail;
+create or replace function ohmail.current_account() returns uuid language sql stable parallel safe
+  as $$ select nullif(pg_catalog.current_setting('ohmail.account', true), '')::uuid $$;
+create or replace function ohmail.current_key() returns text language sql stable parallel safe
+  as $$ select nullif(pg_catalog.current_setting('ohmail.key', true), '') $$;`;
 
 /**
  * THE LOCK ON A REAL POSTGRES, ON A SERVER THIS FILE OWNS WHOLE. Roles belong to the whole server,
@@ -137,7 +148,7 @@ for (const major of PG_MAJORS) {
     }, CASE_MS);
 
     it("the logins exist, nothing asks, and only the readers' schema stands, bare or with old readers: not applied, nothing written", async () => {
-      for (const [name, plant] of [["bare_schema", "create schema ohmail"], ["old_readers", BINDING_READERS_SQL]] as const) {
+      for (const [name, plant] of [["bare_schema", "create schema ohmail"], ["old_readers", OLD_READERS_SQL]] as const) {
         const db = await ground.clone("unlocked", name);
         const mig = ground.connectAs(db, MIGRATOR_ROLE);
         try { await mig.unsafe(plant).simple(); } finally { await mig.end({ timeout: 5 }); }

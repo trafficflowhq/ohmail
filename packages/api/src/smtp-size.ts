@@ -130,7 +130,7 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
         // No static auth in the coordinates: a bearer token is not transport state. See
         // `verifySmtpLogin`, which presents it at the AUTH step and nowhere else.
         ...oauthSmtpEndpoint(imapMeta.smtp && { ...imapMeta.smtp, port: portForDial(dialPort(imapMeta.smtp.port)) }),
-        auth: buildImapAuth(imapMeta, secret, deps.oauth?.forMailbox(mailboxId)),
+        auth: buildImapAuth(imapMeta, secret, deps.oauth?.forMailbox(mailboxId, deps.db)),
       },
       credentialsTransport: "imap",
       // META, not `updated_at`: the token refresh this dial performs moves the row's stamp. See

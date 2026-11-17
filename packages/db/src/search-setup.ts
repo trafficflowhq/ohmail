@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
+import { refuseBound } from "./bound.js";
 import {
-  ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
+  ensureConcurrentIndexes, type ConcurrentIndexSpec, type SessionExecutor, type SqlExecutor,
 } from "./concurrent-index.js";
 import { pgDialect } from "./dialect/pg.js";
 import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migration-lock.js";
@@ -62,8 +63,9 @@ export const TRIGRAM_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
  * in the whole database, and a test database has no live writer to protect.
  */
 export async function ensureSearchExtensions(
-  db: SqlExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
+  db: SessionExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
 ): Promise<void> {
+  refuseBound(db, "the trigram index build");
   // The fuzzy arm's word_similarity()/`<%` operator lives in pg_trgm; btree_gin lets a trigram
   // index lead with the account.
   await db.execute(sql`create extension if not exists pg_trgm`);
@@ -94,7 +96,7 @@ export const WORD_INDEX_SPEC: ConcurrentIndexSpec = {
 
 /** Builds {@link WORD_INDEX_SPEC}, after {@link ensureSearchExtensions}; `concurrently: false` as there. */
 export async function ensureWordIndex(
-  db: SqlExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
+  db: SessionExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
 ): Promise<void> {
   await ensureConcurrentIndexes(db, [WORD_INDEX_SPEC], {
     label: "the word index build",
@@ -213,9 +215,10 @@ function sqlStateOf(err: unknown): unknown {
  * and takes no lock. `concurrently: false` as {@link ensureSearchExtensions}.
  */
 export async function retireOldSearch(
-  db: SqlExecutor,
+  db: SessionExecutor,
   opts: { log?: (msg: string) => void; concurrently?: boolean; lockTimeoutMs?: number; attempts?: number; pauseMs?: number } = {},
 ): Promise<OldSearchRetirement> {
+  refuseBound(db, "the old search's retirement");
   const { log, concurrently = true, lockTimeoutMs = 2_000, attempts = 20, pauseMs = 500 } = opts;
   if (!Number.isInteger(lockTimeoutMs) || lockTimeoutMs <= 0) throw new Error("lockTimeoutMs must be a positive integer");
   const first = await oldSearchState(db);
@@ -515,7 +518,7 @@ export const RETIRED_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
 ];
 
 export async function ensureWithheldProvenanceIndex(
-  db: SqlExecutor, opts: { log?: (msg: string) => void } = {},
+  db: SessionExecutor, opts: { log?: (msg: string) => void } = {},
 ): Promise<void> {
   await ensureConcurrentIndexes(db, PREMIGRATION_PREBUILD_SPECS, {
     label: "the pre-migration index prebuild",

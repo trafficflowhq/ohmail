@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, isNull, lt, lte, ne, or } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
-import { bridgeTx, bridgeDb, dbFor, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, passContext, type Db, type OpenPassSendAdapter } from "./context.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-pass.js";
 import {
@@ -178,7 +178,7 @@ const defaultLog = createLogger({ service: "send-reconcile" });
 
 export interface SendReconcilePassDeps {
   /** The send transport — `makeSendAdapter` on the API host, the local dial on the desktop. */
-  openSendAdapter: OpenSendAdapter;
+  openSendAdapter: OpenPassSendAdapter;
   /**
    * MAY THIS ACCOUNT'S AUTOMATION STILL DIAL? — the suspension gate, injected for
    * `ScheduledSendPassDeps.accountEligible`'s reasons (cloud-half fact; read on the HANDED
@@ -245,7 +245,7 @@ interface StaleRow {
  * the others, and the summary counts what happened instead.
  */
 export async function runSendReconcilePass(
-  db: Db, deps: SendReconcilePassDeps,
+  walk: Db, deps: SendReconcilePassDeps,
 ): Promise<SendReconcilePassResult> {
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());
@@ -264,7 +264,7 @@ export async function runSendReconcilePass(
    */
   const startedAt = now().getTime();
   const rows = await claimStale(
-    db, now(), batch * SEND_RECONCILE_SCAN_FACTOR, batch * SEND_RECONCILE_SCAN_FACTOR,
+    walk, now(), batch * SEND_RECONCILE_SCAN_FACTOR, batch * SEND_RECONCILE_SCAN_FACTOR,
     deps.accountEligible, deps.inherited ?? [],
   );
   result.claimed = rows.filter((r) => r.kind === "pending").length;
@@ -286,7 +286,7 @@ export async function runSendReconcilePass(
   // `resolveStale` does not tear down a connection the next row still needs.
   const held = new Map<string, SendAdapter>();
   const shared = new Map<string, SendAdapter>();
-  const openOnce: OpenSendAdapter = async (mailboxId: string): Promise<SendAdapter> => {
+  const openOnce: OpenPassSendAdapter = async (mailboxId, db): Promise<SendAdapter> => {
     const cached = shared.get(mailboxId);
     if (cached) return cached;
     /**
@@ -303,7 +303,7 @@ export async function runSendReconcilePass(
     try {
       // NOT raced. `SEND_RECONCILE_NET_TIMEOUTS` bounds this inside the adapter, so a failure
       // here is the mailbox's answer and not ours — which is what lets the give-up act on it.
-      real = await deps.openSendAdapter(mailboxId);
+      real = await deps.openSendAdapter(mailboxId, db);
     } catch (err) {
       // FREE ONLY IF NOTHING REACHED THE WIRE, and there are two such refusals, not one.
       // `TransientDialRefusal` is the admission counter; `ServiceError` is `makeSendAdapter`
@@ -339,10 +339,8 @@ export async function runSendReconcilePass(
 
   try {
     for (const row of rows) {
-      const ctx: ServiceContext = {
-        db: dbFor(db, row.send.accountId), accountId: row.send.accountId, userId: null, now,
-        requestId: `reconcile:${row.send.id}`,
-      };
+      const ctx = passContext(walk, row.send.accountId, { userId: null, now, requestId: `reconcile:${row.send.id}` });
+      const open: OpenSendAdapter = (mailboxId) => openOnce(mailboxId, ctx.db);
       const ageMs = now().getTime() - row.send.createdAt.getTime();
       const givingUp = ageMs > SEND_RECONCILE_GIVE_UP_MS;
 
@@ -410,7 +408,7 @@ export async function runSendReconcilePass(
         const heldAgeMs = now().getTime() - (row.heldAt ?? row.send.createdAt).getTime();
         const probe = mayDial && (shared.has(row.mailboxId) || (inUnverifiedProbeWindow(heldAgeMs) && !outOfBudget));
         try {
-          const out = await sends.recheckUnverified(ctx, row.send, row.mailboxId, probe ? openOnce : null);
+          const out = await sends.recheckUnverified(ctx, row.send, row.mailboxId, probe ? open : null);
           if (out.status === "sent") {
             result.recheckedSent += 1;
             log.info("send_reconcile_recheck_sent", {
@@ -450,7 +448,7 @@ export async function runSendReconcilePass(
       let outcome;
       try {
         outcome = await sends.resolveStale(
-          ctx, row.send, row.mailboxId, willDial ? openOnce : null, onMiss,
+          ctx, row.send, row.mailboxId, willDial ? open : null, onMiss,
         );
       } catch (err) {
         // The probe threw (a dead socket, a deadline, `ImapBoundExceeded`). The row is UNTOUCHED

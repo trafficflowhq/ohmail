@@ -10,7 +10,7 @@
  */
 import { and, eq, inArray } from "drizzle-orm";
 import { calCalendars, calSettings } from "@trafficflow/db/mail";
-import { lockSettingsStamp, moveSettingsStamp, recordChanges } from "@trafficflow/db";
+import { carryBinding, lockSettingsStamp, moveSettingsStamp, recordChanges } from "@trafficflow/db";
 import type { CalendarSettingsWire } from "@ohmail/wire";
 import { withAccountTx, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -124,7 +124,7 @@ export async function setCalendarSettings(
     const now = ctx.now();
     // The stamp's row first, held where it stands: every settings writer takes it before its own row.
     await lockSettingsStamp(tx, ctx.accountId, now);
-    const before = await storedOf(tx as unknown as ServiceContext["db"], ctx.accountId);
+    const before = await storedOf(carryBinding(ctx.db, tx), ctx.accountId);
     const { enabled, ...rest } = patch;
     const next: Stored = {
       ...before, ...rest,

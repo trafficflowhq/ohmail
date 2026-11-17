@@ -95,7 +95,7 @@ export function cycleTailSection(scope: WorkerScope): void {
          scope the bubble-up pass below now needs. One read, same shard predicate, same fallback. */
       let passMailboxes = scope.dutyMailboxes;
       await scope.runTailStage("cycle.loadServedAccounts", "database", async () => {
-        passMailboxes = await loadEnabledMailboxes(scope.db, scope.selection, new Date(), scope.parkedAccountsReader ?? undefined);
+        passMailboxes = await loadEnabledMailboxes(scope.roster, scope.selection, new Date(), scope.parkedAccountsReader ?? undefined);
       }, (err) => {
         scope.log.error("served_accounts_load_failed", {
           err, accounts: scope.dutyAccounts.length,
@@ -123,7 +123,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           scope.owedReadAt = new Date();
           let owedRows: Array<{ accountId: string; owedAt: Date }> = [];
           await scope.runTailStage("cycle.owedSuggestAccounts", "database", async () => {
-            owedRows = await owedSuggestAccounts(scope.db as unknown as Tx);
+            owedRows = await owedSuggestAccounts(scope.roster as unknown as Tx);
           }, (err) => {
             scope.log.warn("screener_suggest_owed_read_failed", {
               err,
@@ -148,7 +148,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           await scope.runTailStage("cycle.screenerSuggestOwedServe", "mixed", async () => {
             const screening = await scope.screeningFor(accountId);
             const { ran, bought, chargedAttempts, stopped: why, capped } = await screenerAutoSuggestPass(
-              scope.db as unknown as Tx,
+              scope.forAccount(accountId).db as unknown as Tx,
               {
                 accountId, log: scope.log, until: sliceUntil(),
                 // No mailbox, deliberately: this pass spends through `spend`, never the circuit's
@@ -166,11 +166,11 @@ export function cycleTailSection(scope: WorkerScope): void {
             // Cleared after ANY non-throwing pass, opted-in or not: a stale mark for an account
             // that opted out would otherwise lead every cycle for ever.
             await asDatabaseFault("cycle.clearScreenerSuggestOwed",
-              () => clearScreenerSuggestOwed(scope.db as unknown as Tx, accountId, scope.owedReadAt));
+              () => clearScreenerSuggestOwed(scope.forAccount(accountId).db as unknown as Tx, accountId, scope.owedReadAt));
             // AND ACT ON WHAT IS NOW STORED, on the act's own consent. Here rather than a cycle
             // later so advice bought this serve is acted on this serve.
             const acted = await asDatabaseFault("cycle.screenerAutoActPass", () => screenerAutoActPass(
-              scope.db as unknown as Tx, {
+              scope.forAccount(accountId).db as unknown as Tx, {
                 accountId, log: scope.log, until: sliceUntil(), consent: screenerActConsentFrom(accountId),
                 noteFault: scope.tailFaultNote("cycle.screenerAutoActPass"),
               }, new Date(),
@@ -213,7 +213,7 @@ export function cycleTailSection(scope: WorkerScope): void {
              desktop gets that mailbox's rows left alone. Read here rather than assumed — an
              account this process reads entirely yields an empty set and flips nothing. */
           await scope.runTailStage("cycle.bubbleUpPass", "database", async () => {
-            const { flipped } = await bubbleUpPass(scope.db as unknown as Tx, new Date(), {
+            const { flipped } = await bubbleUpPass(scope.forAccount(accountId).db as unknown as Tx, new Date(), {
               accountId, mailboxIds: organizedMailboxIdsOf(walk.mailboxes, accountId),
             });
             if (flipped > 0) scope.log.info("bubble_up_flipped", { accountId, flipped });
@@ -233,12 +233,12 @@ export function cycleTailSection(scope: WorkerScope): void {
           await scope.runTailStage("cycle.workflow", "mixed", async () => {
             const nowTick = new Date();
             await asDatabaseFault("cycle.workflowTimeScanPass",
-              () => workflowTimeScanPass(scope.db as unknown as Tx, { accountId }, nowTick));
+              () => workflowTimeScanPass(scope.forAccount(accountId).db as unknown as Tx, { accountId }, nowTick));
             // NOT wrapped in `asDatabaseFault`: the drain calls the DRAFTER, so a model outage
             // throws from inside it and must not be tagged as our database — the same subtraction
             // `sensitiveBackfillPass` gets, for the same reason.
             await workflowDrainPass(
-              scope.db as unknown as Tx,
+              scope.forAccount(accountId).db as unknown as Tx,
               {
                 drafter: scope.config.drafter && scope.usageRelay && scope.usageBuffer
                   ? attributedWorkflowDrafter(scope.config.drafter, accountId, scope.usageRelay.hook, scope.usageBuffer)
@@ -264,7 +264,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         // file's raw text).
         run: async (accountId) => {
           await scope.runTailStage("cycle.gateReleasePass", "database", async () => {
-            const r = await gateReleasePass(scope.db as unknown as Tx, { accountId, log: scope.log }, new Date());
+            const r = await gateReleasePass(scope.forAccount(accountId).db as unknown as Tx, { accountId, log: scope.log }, new Date());
             if (r.ran && (r.rulesArmed > 0 || r.contactRowsReleased > 0 || r.completed)) {
               scope.log.info("gate_release_swept", {
                 accountId, rulesArmed: r.rulesArmed,
@@ -287,11 +287,12 @@ export function cycleTailSection(scope: WorkerScope): void {
         // both sets answer empty the account RETIRES in this process and costs nothing; one read on
         // entry re-arms an account a row re-entered (`senderCheckRetirement`). Contained: a failure
         // leaves the rows unchecked until the next tail.
-        enter: (accounts) => senderCheckTail.enter(scope.db as unknown as Tx, accounts, scope.log,
+        // The entry's read is ONE statement over every retired account of the walk: on the roster's view.
+        enter: (accounts) => senderCheckTail.enter(scope.roster as unknown as Tx, accounts, scope.log,
           scope.tailFaultNote("cycle.senderCheckReentered")),
         run: async (accountId) => {
           await scope.runTailStage("cycle.senderCheckBackfillPass", "database", async () => {
-            await senderCheckTail.run(scope.db as unknown as Tx, accountId, scope.log);
+            await senderCheckTail.run(scope.forAccount(accountId).db as unknown as Tx, accountId, scope.log);
           }, (err) => {
             scope.log.error("sender_check_backfill_failed", {
               accountId, err,
@@ -310,7 +311,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         // outage met here is announced for the shard, never swallowed as one account's failure.
         run: async (accountId) => {
           await scope.runTailStage("cycle.listAddressBackfillPass", "database",
-            () => listAddressBackfillPass(scope.db as unknown as Tx, { accountId, log: scope.log }), (err) => {
+            () => listAddressBackfillPass(scope.forAccount(accountId).db as unknown as Tx, { accountId, log: scope.log }), (err) => {
               scope.log.error("list_address_backfill_failed", {
                 accountId, err,
                 reason: "the account is not stamped, so the next tail reads its stored mail again; " +
@@ -333,7 +334,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           let senders = scope.impersonationWalks.get(accountId);
           if (senders === undefined) scope.impersonationWalks.set(accountId, senders = {});
           await scope.runTailStage("cycle.screenerImpersonationPass", "database", async () => {
-            const r = await screenerImpersonationPass(scope.db as unknown as Tx, {
+            const r = await screenerImpersonationPass(scope.forAccount(accountId).db as unknown as Tx, {
               accountId, mailboxIds, log: scope.log, until: sliceUntil(), walk: senders,
               noteFault: scope.tailFaultNote("cycle.screenerImpersonationPass"),
             });
@@ -354,7 +355,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         run: async (accountId) => {
           if (scope.actAdmissionsRetired.has(accountId)) return;
           await scope.runTailStage("cycle.retireActAdmissionsPass", "database", async () => {
-            const r = await retireActAdmissionsPass(scope.db as unknown as Tx, {
+            const r = await retireActAdmissionsPass(scope.forAccount(accountId).db as unknown as Tx, {
               accountId, log: scope.log, ...(scope.actAdmissionCursor.has(accountId) ? { after: scope.actAdmissionCursor.get(accountId)! } : {}),
             });
             if (r.done) { scope.actAdmissionsRetired.add(accountId); scope.actAdmissionCursor.delete(accountId); }
@@ -383,7 +384,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           // The pass talks only to our database, so its throw is named as the database's.
           await scope.runTailStage("cycle.ruleRetroPass", "database", async () => {
             const { moved, completed, capped } = await ruleRetroPass(
-              scope.db as unknown as Tx,
+              scope.forAccount(accountId).db as unknown as Tx,
               // Per-MAILBOX trust, off the credential row's own IMAP host, because one
               // account's mailboxes can sit at different providers. The pass caches per mailbox.
               { accountId, log: scope.log, trustedAuthservIdsFor: mailboxProviderAuthservIds },
@@ -414,7 +415,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           // bare `ECONNREFUSED`, which reads as the shard's only when tagged.
           await scope.runTailStage("cycle.gapCatchupPass", "database", async () => {
             const { offered, moved, completed } = await gapCatchupPass(
-              scope.db as unknown as Tx,
+              scope.forAccount(accountId).db as unknown as Tx,
               {
                 accountId, log: scope.log, trustedAuthservIdsFor: mailboxProviderAuthservIds,
                 // Data from the visit, never a runtime: an unvisited or unread mailbox waits.
@@ -447,7 +448,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         run: async (accountId) => {
           await scope.runTailStage("cycle.ohboxTidyPass", "database", async () => {
             const { ran, moved, completed, capped } = await ohboxTidyPass(
-              scope.db as unknown as Tx,
+              scope.forAccount(accountId).db as unknown as Tx,
               // Same per-mailbox trust as the retro pass above, same canonical resolver.
               { accountId, log: scope.log, trustedAuthservIdsFor: mailboxProviderAuthservIds },
               new Date(),
@@ -483,7 +484,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           await scope.runTailStage("cycle.threadJoinHealPass", "database", async () => {
             const at = Date.now();
             const r = await threadJoinHealPass({
-              db: scope.db as unknown as Tx, apply: true, accountId, log: scope.log, ...slice, until: sliceUntil(),
+              db: scope.forAccount(accountId).db as unknown as Tx, apply: true, accountId, log: scope.log, ...slice, until: sliceUntil(),
               noteFault: scope.tailFaultNote("cycle.threadJoinHealPass"),
             });
             // The resume point is carried whatever `failed` says: a group that fails
@@ -531,7 +532,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         },
         run: async (accountId) => {
           await scope.runTailStage("cycle.inboundQuietPass", "database", async () => {
-            const r = await inboundQuietPass(scope.db as unknown as Tx, new Date(), { accountId });
+            const r = await inboundQuietPass(scope.forAccount(accountId).db as unknown as Tx, new Date(), { accountId });
             if (r.tripped > 0 || r.cleared > 0) {
               scope.log.info("inbound_quiet_pass", { accountId, tripped: r.tripped, cleared: r.cleared });
             }
@@ -570,7 +571,8 @@ export function cycleTailSection(scope: WorkerScope): void {
           // fleet's sweep on one account's failure. Its per-account try/catch keeps that shape — one
           // account's failure must not skip the rest — and reports through `onError`.
           const r = await asDatabaseFault("cycle.awayReplySweep",
-            () => scope.awayReplySweep.runOnce(scope.db as unknown as Tx, [...walk.accounts], {
+            // The sweep walks the accounts itself: it is handed the way to each one's handle, never one handle for all.
+            () => scope.awayReplySweep.runOnce((accountId) => scope.forAccount(accountId).db as unknown as Tx, [...walk.accounts], {
               log: scope.log,
               onError: (accountId, err) => {
                 awayReplyFault(err);
@@ -608,7 +610,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           // MIXED: the cap is the entitlements program's answer; the pass tags its own db calls.
           await scope.runTailStage("cycle.storageEvictPass", "mixed", async () => {
             const { ran, evicted, freedBytes, capped, waitsForErasure } = await storageEvictPass(
-              scope.db as unknown as Tx, { accountId, log: scope.log, storageCap: scope.storageCapFor, dbCall: asDatabaseFault }, new Date(),
+              scope.forAccount(accountId).db as unknown as Tx, { accountId, log: scope.log, storageCap: scope.storageCapFor, dbCall: asDatabaseFault }, new Date(),
             );
             if ((ran && evicted > 0) || waitsForErasure) {
               scope.log.info("storage_evict_pass", { accountId, evicted, freedBytes, capped, waitsForErasure });
@@ -634,7 +636,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           // MIXED: the cap is the entitlements program's answer, through the resolver's cache.
           await scope.runTailStage("cycle.storageStatsPass", "mixed", async () => {
             if (typeof (await scope.storageCapFor(accountId)) !== "number") return;
-            const { taken, mailboxes, more } = await storageStatsPass(scope.db as unknown as Tx, {
+            const { taken, mailboxes, more } = await storageStatsPass(scope.forAccount(accountId).db as unknown as Tx, {
               accountId, now: new Date(), until: sliceUntil(),
             });
             if (mailboxes > 0) scope.log.info("storage_stats_pass", { accountId, reason: taken, mailboxes, more });
@@ -657,7 +659,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           if (Date.now() - (scope.correspondentRetroAt.get(accountId) ?? 0) < CORRESPONDENT_RETRO_EVERY_MS) return;
           scope.correspondentRetroAt.set(accountId, Date.now());
           await scope.runTailStage("cycle.screenerCorrespondentRetroPass", "database",
-            () => screenerCorrespondentRetroPass(scope.db as unknown as Tx, { accountId, log: scope.log }), (err) => {
+            () => screenerCorrespondentRetroPass(scope.forAccount(accountId).db as unknown as Tx, { accountId, log: scope.log }), (err) => {
               scope.log.error("screener_correspondent_retro_failed", {
                 accountId, err,
                 reason: "each sender is released in its own transaction and nothing is marked, so the "
@@ -683,7 +685,7 @@ export function cycleTailSection(scope: WorkerScope): void {
             // account, so this is a hit rather than a read per account per cycle.
             const screening = await scope.screeningFor(accountId);
             const { ran, bought, chargedAttempts, stopped: why, capped } = await screenerAutoSuggestPass(
-              scope.db as unknown as Tx,
+              scope.forAccount(accountId).db as unknown as Tx,
               {
                 accountId, log: scope.log, until: sliceUntil(),
                 // No mailbox, deliberately: this pass spends through `spend`, never the circuit's
@@ -718,7 +720,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         run: async (accountId) => {
           await scope.runTailStage("cycle.screenerAutoActPass", "database", async () => {
             const acted = await screenerAutoActPass(
-              scope.db as unknown as Tx, {
+              scope.forAccount(accountId).db as unknown as Tx, {
                 accountId, log: scope.log, until: sliceUntil(), consent: screenerActConsentFrom(accountId),
                 noteFault: scope.tailFaultNote("cycle.screenerAutoActPass"),
               }, new Date(),
@@ -746,7 +748,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         enter: async () => {
           let owed: string[] = [];
           await scope.runTailStage("cycle.htmlWordsOwedAccounts", "database", async () => {
-            owed = await htmlWordsOwedAccounts(scope.db as unknown as Tx, {
+            owed = await htmlWordsOwedAccounts(scope.roster as unknown as Tx, {
               limit: HTML_WORDS_ACCOUNTS_PER_TAIL, shard: accountShardFilter(scope.selection, accounts.id),
             });
           }, (err) => {
@@ -758,7 +760,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         },
         run: async (accountId) => {
           await scope.runTailStage("cycle.htmlWordsBackfillPass", "database", async () => {
-            const r = await htmlWordsBackfillPass(scope.db as unknown as Tx, {
+            const r = await htmlWordsBackfillPass(scope.forAccount(accountId).db as unknown as Tx, {
               accountId, until: sliceUntil(), turn: () => new Promise<void>((resolve) => setImmediate(resolve)),
             });
             if (r.ran && (r.filled > 0 || r.marked)) {
@@ -783,7 +785,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         enter: async () => {
           let owed: string[] = [];
           await scope.runTailStage("cycle.searchIndexOwedAccounts", "database", async () => {
-            owed = await searchIndexOwedAccounts(scope.db as unknown as Tx, {
+            owed = await searchIndexOwedAccounts(scope.roster as unknown as Tx, {
               limit: SEARCH_INDEX_ACCOUNTS_PER_TAIL, shard: accountShardFilter(scope.selection, accounts.id),
             });
           }, (err) => {
@@ -795,7 +797,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         },
         run: async (accountId) => {
           await scope.runTailStage("cycle.searchIndexBackfillPass", "database", async () => {
-            const indexed = await searchIndexBackfillPass({ db: scope.db as unknown as Tx, accountId });
+            const indexed = await searchIndexBackfillPass({ db: scope.forAccount(accountId).db as unknown as Tx, accountId });
             if (indexed.ran && indexed.written > 0) {
               scope.log.info("search_index_backfill_pass", {
                 accountId, written: indexed.written, rounds: indexed.rounds, marked: indexed.marked,
@@ -820,7 +822,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         enter: async (served) => {
           let listed: readonly string[] = [];
           await scope.runTailStage("cycle.goneLetterTidyAccounts", "database", async () => {
-            listed = await goneLetterTidyAccounts(scope.db as unknown as Tx, { shard: accountShardFilter(scope.selection, accounts.id) });
+            listed = await goneLetterTidyAccounts(scope.roster as unknown as Tx, { shard: accountShardFilter(scope.selection, accounts.id) });
           }, (err) => {
             scope.log.warn("gone_letter_tidy_accounts_read_failed", {
               err, reason: "the accounts that do not sync could not be read; this tail tidies the served ones and the next reads them again",
@@ -831,7 +833,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         run: async (accountId) => {
           if (scope.goneLettersTidied.has(accountId)) return;
           await scope.runTailStage("cycle.goneLetterTidyPass", "database", async () => {
-            const r = await goneLetterTidyPass(scope.db as unknown as Tx, accountId, { until: sliceUntil(), done: scope.goneLettersTidied });
+            const r = await goneLetterTidyPass(scope.forAccount(accountId).db as unknown as Tx, accountId, { until: sliceUntil(), done: scope.goneLettersTidied });
             if (r.tidied > 0) scope.log.info("gone_letter_tidy_pass", { accountId, written: r.tidied, more: !r.done });
           }, (err) => {
             scope.log.error("gone_letter_tidy_failed", {
@@ -853,7 +855,7 @@ export function cycleTailSection(scope: WorkerScope): void {
         shard: true,
         run: async () => {
           await scope.runTailStage("cycle.mailboxErasurePass", "database", async () => {
-            const erased = await mailboxErasurePass(scope.db as unknown as Tx, { now: () => new Date(), shard: shardFilter(scope.selection) });
+            const erased = await mailboxErasurePass(scope.roster as unknown as Tx, { now: () => new Date(), shard: shardFilter(scope.selection) });
             if (erased.steps > 0) {
               scope.log.info("mailbox_erasure_pass", {
                 mailboxes: erased.mailboxes, steps: erased.steps, finished: erased.finished,
@@ -882,25 +884,25 @@ export function cycleTailSection(scope: WorkerScope): void {
         gate: scope.maintenanceDue,
         run: async () => {
           await scope.runTailStage("cycle.pruneIdempotencyKeys", "database", async () => {
-            const pruned = await pruneIdempotencyKeys(scope.db as unknown as Tx, new Date());
+            const pruned = await pruneIdempotencyKeys(scope.roster as unknown as Tx, new Date());
             if (pruned > 0) scope.log.info("idempotency_pruned", { pruned });
           }, (err) => { scope.log.error("idempotency_prune_failed", { err }); });
           // An erased account's token hashes (cloud 0043) answer nothing past their own expiry;
           // the erasure writes them and nothing else ever revisits them, so they go here.
           await scope.runTailStage("cycle.pruneErasedBearers", "database", async () => {
-            const pruned = await pruneErasedBearers(scope.db as unknown as Tx, new Date());
+            const pruned = await pruneErasedBearers(scope.roster as unknown as Tx, new Date());
             if (pruned > 0) scope.log.info("erased_bearers_pruned", { pruned });
           }, (err) => { scope.log.error("erased_bearers_prune_failed", { err }); });
           // An erased account's notice rows (cloud 0052): the warning a retention erasure keeps goes
           // ten years after the erasure, the billing record's period; nothing else deletes it.
           await scope.runTailStage("cycle.pruneErasedNotices", "database", async () => {
-            const pruned = await pruneErasedNotices(scope.db as unknown as Tx, new Date());
+            const pruned = await pruneErasedNotices(scope.roster as unknown as Tx, new Date());
             if (pruned > 0) scope.log.info("erased_notices_pruned", { pruned });
           }, (err) => { scope.log.error("erased_notices_prune_failed", { err }); });
           // Sign-in throttle rows past retention (48 h; a known client 90 d). The API writes them and
           // only an erasure deleted them, so every typed address and client hash stayed for ever.
           await scope.runTailStage("cycle.pruneAuthThrottle", "database", async () => {
-            const pruned = await pruneAuthThrottle(scope.db as unknown as Tx, new Date());
+            const pruned = await pruneAuthThrottle(scope.roster as unknown as Tx, new Date());
             if (pruned > 0) scope.log.info("auth_throttle_pruned", { pruned });
           }, (err) => { scope.log.error("auth_throttle_prune_failed", { err }); });
           // ── WHAT WE OWE PEOPLE WHOSE SPEND BOUGHT NOTHING ─────────────────────────────────
@@ -910,7 +912,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           // account to find, almost always, nothing. Leader-only; the row's own lease makes that a
           // performance property rather than a correctness one. NEVER THROWS by contract — the
           // pass states why where it is implemented.
-          await refundObligationDrainPass(scope.db as unknown as Tx, {
+          await refundObligationDrainPass(scope.roster as unknown as Tx, {
             ...(scope.spend ? { credits: scope.spend } : {}), log: scope.log,
           });
           // ── SPENT SEND-CONTENT CLAIMS ──────────────────────────────────────────────────
@@ -922,7 +924,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           // install runs the same send path and has no maintenance pass at all, so an expiry that
           // depended on pruning would be unbounded on every desktop.
           await scope.runTailStage("cycle.pruneSendFingerprints", "database", async () => {
-            const fps = await pruneSendFingerprints(scope.db as unknown as Tx, new Date());
+            const fps = await pruneSendFingerprints(scope.roster as unknown as Tx, new Date());
             if (fps > 0) scope.log.info("send_fingerprints_pruned", { pruned: fps });
           }, (err) => { scope.log.error("send_fingerprint_prune_failed", { err }); });
           // Expired staged attachment bytes: the object, then the row. A hosted send puts attachment
@@ -938,7 +940,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           if (stagingStorage) {
             // MIXED and untagged: object storage and our database inside one `packages/db` call.
             await scope.runTailStage("cycle.sweepExpiredStaging", "mixed", async () => {
-              const sweep = await sweepExpiredStagingFor(scope.db as unknown as Tx, stagingStorage, new Date());
+              const sweep = await sweepExpiredStagingFor(scope.roster as unknown as Tx, stagingStorage, new Date());
               if (sweep.deleted > 0 || sweep.pages > 0) {
                 scope.log.info("attachment_staging_swept", {
                   swept: sweep.deleted, pages: sweep.pages, drained: sweep.drained,
@@ -977,7 +979,7 @@ export function cycleTailSection(scope: WorkerScope): void {
              * COUNTS ONLY in the log — an object path names an account and a ticket. */
             await scope.runTailStage("cycle.reconcileStagingOrphans", "mixed", async () => {
               const rec = await reconcileStagingOrphansFor(
-                scope.db as unknown as Tx, stagingStorage, new Date());
+                scope.roster as unknown as Tx, stagingStorage, new Date());
               if (rec.orphans > 0 || rec.unrecognised > 0 || !rec.complete) {
                 scope.log.info("attachment_staging_reconciled", {
                   scanned: rec.scanned, orphans: rec.orphans, deleted: rec.deleted,
@@ -1017,10 +1019,10 @@ export function cycleTailSection(scope: WorkerScope): void {
           // prunes. Same slot as its neighbours (the worker is the single elected writer, and a
           // failure is a logged warning, never a cycle abort — the pass states that itself). The
           // horizons live in ONE place, `@trafficflow/db/cloud`'s `retention.ts`.
-          await retentionPrunePass(scope.db as unknown as Tx, new Date(), scope.log);
+          await retentionPrunePass(scope.roster as unknown as Tx, new Date(), scope.log);
           // Sign-in records, sessions and the ceremony tables, 30 days past their end; its own
           // deadline, never a throw (`retention-prune.ts`).
-          await signInRetentionPass(scope.db as unknown as Tx, new Date(), scope.log);
+          await signInRetentionPass(scope.roster as unknown as Tx, new Date(), scope.log);
         },
       },
     };
@@ -1133,7 +1135,7 @@ export function cycleTailSection(scope: WorkerScope): void {
       scope.backfillCursor++;
       try {
         const r = await threadBackfill({
-          repo: scope.repo, accountId, log: scope.log,
+          repo: scope.forAccount(accountId).repo, accountId, log: scope.log,
           maxPages: THREAD_BACKFILL_SLICE_PAGES,
           deadlineMs: THREAD_BACKFILL_SLICE_MS,
         });

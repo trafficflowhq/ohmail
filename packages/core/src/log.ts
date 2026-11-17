@@ -48,6 +48,14 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // those lines exist to name could not be named. A row-scoped test drives the REAL logger for this
   // name, so it cannot silently go missing again.
   "messageId",
+  // `namedAccountId` is the `accounts.id` ROW UUID the worker's roster names for a mailbox whose
+  // connection was attached under another account (`mailbox_account_changed`): `accountId` on the
+  // same line is the account the connection was attached under, this the one the mailbox's row
+  // names now. A row id, the same non-secret shape as `accountId`; never an address and never an
+  // account's name. Added AFTER the fact, as `messageId` was: the line passed it and the census
+  // dropped it (`droppedFields=["namedAccountId"]`), so the line said where the mailbox had been and
+  // not where it went. `log-fields.test.ts` drives the REAL logger for it.
+  "namedAccountId",
   /**
    * Three folder-shaped names, and the values they may carry are NOT folder names:
    * `fromFolder`/`toFolder`/`folderLabel` are written only through `sync.ts#folderLabel`, which

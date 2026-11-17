@@ -18,10 +18,10 @@ export { PRESS_AGE_MAX_MS, pressIsAged } from "@trafficflow/db";
 export {
   parseReaderZone, parseReaderLocale, forwardedDate, READER_ZONE_MAX_CHARS, READER_LOCALE_MAX_CHARS,
 } from "./reader-clock.js";
-export type { ServiceContext, Db, BoundDb, UnboundDb, SearchSupersede } from "./context.js";
+export type { ServiceContext, PassContext, OpenPassSendAdapter, Db, BoundDb, UnboundDb, SearchSupersede } from "./context.js";
 // The fenced transaction door — see `context.ts`. On the mail leaf because the API's own
 // account-owned writers (the Junk window's rescue) reach it without the AI half.
-export { withAccountTx, dbFor } from "./context.js";
+export { withAccountTx, dbFor, passContext } from "./context.js";
 /* The fence itself, for a writer that already holds its transaction — the local install's consent
    write is one, and it is on the mail leaf for the same reason the door above is. */
 export { fenceErasedAccount, fenceErasedScope, asServiceRefusal } from "./erasure-fence.js";

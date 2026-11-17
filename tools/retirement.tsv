@@ -898,6 +898,7 @@ apps/worker/test/attach-line-names-no-server.pg.test.ts	data	through apps/worker
 apps/worker/test/attach-nonblocking.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/auto-reply-not-engagement.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/backfill.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/binding-on-the-wire.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/blank-repair-worker-mode.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/box-journal-drift.pg.test.ts	source-text	reads source as text (js, ts)	layer 1	worker	
 apps/worker/test/bubble-up-inline.e2e.test.ts	source-text	reads source as text (ts)	layer 1	worker	
@@ -948,6 +949,7 @@ apps/worker/test/no-pass-admits-a-stranger.pg.test.ts	data	through apps/worker/t
 apps/worker/test/observability.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/ohbox-tidy.no-imap.test.ts	source-text	reads source as text (js, ts)	layer 1	worker	
 apps/worker/test/one-shot-readings-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/operator-commands-binding.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/operator-runner-release-refusal.test.ts	source-text	reads source as text (ts)	layer 1	worker	
 apps/worker/test/organize-here-wakes-the-pass.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/organizer-lease-worker.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	

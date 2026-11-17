@@ -25,8 +25,12 @@ import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
 const wire = recordPgWire();
 const PG_UP = await realPgAvailable();
 const KEK = "ab".repeat(32);
-/** Statements one poll may cost, at any number of mailboxes, begin, binder and commit included: a ceiling that may only fall. */
-const STATEMENTS = 25;
+/**
+ * Statements one poll may cost, at any number of mailboxes, begin, binder and commit included: a
+ * ceiling that may only fall. Three more than before, and no burst more: the session's look-up is
+ * a flight of its own, keyed by the token's digest.
+ */
+const STATEMENTS = 28;
 /** Bursts one poll waits on, at any number of mailboxes: the record before the binding. */
 const BURSTS = 7;
 
