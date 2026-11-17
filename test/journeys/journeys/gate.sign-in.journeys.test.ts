@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import type { Bench, Stack } from "../bench/seam.js";
+import { stackOf } from "../bench/journey.js";
 import { Authenticator } from "../bench/totp.js";
 import { journey, journeysOf, type Guard } from "../bench/web.js";
 
@@ -26,11 +26,6 @@ export const GUARDS: Guard[] = [
     rows: [], surfaces: ["W-i"], needs: ["stack"], tolerates: [/status of 421/],
   },
 ];
-
-const stackOf = (b: Bench): Stack => {
-  if (!b.stack) throw new Error("this journey walks the self-hosted stack");
-  return b.stack;
-};
 
 journeysOf("gate", () => {
   journey(GUARDS[0]!, async (b) => {

@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as httpServer, type Server } from "node:http";
 import { chromium, type Browser } from "@playwright/test";
 import { PLACE_IDS, type PlaceId as FramePlaceId } from "@ohmail/app/frame/contract";
 import { fragmentOf, PANES, routeOf } from "@ohmail/app/frame/route";
@@ -13,11 +13,11 @@ import { OWN_PATHS } from "../../apps/webapp/routes.mjs";
 import { menuOf, wholeMenu } from "./bench/panes.js";
 import { layoutPlan } from "../../packages/app/src/frame/layout-plan.js";
 import { fenced, VIEWPORTS } from "./bench/dom-playwright.js";
+import { arrivedIn, baked, readHandover, smtpDeliver } from "./bench/far-end.js";
 import { benchOf, sizeOf, SIZES, WORDS, type Setting } from "./bench/seam.js";
 import { runsOn, STANDING } from "./bench/standing/index.js";
 import { AT_SIZE } from "./bench/standing/sizes.js";
 import { DEFAULT_AUTH_CONFIG } from "@trafficflow/services";
-import { baked, readHandover } from "./bench/far-end.js";
 import { Authenticator, codeAt, STEP_MS } from "./bench/totp.js";
 import { fingerprint, oneAtATime, type Guard } from "./bench/web.js";
 import { ACTS } from "./vocabulary/acts.js";
@@ -419,7 +419,7 @@ describe("the bench holds its promises", () => {
     // An invite's link carries its token after the hash, 43 characters; a journey types a password it minted.
     const handed = randomBytes(32).toString("base64url");
     const typed = "kiln-glaze-ember-47";
-    const server: Server = createServer((_ask, answer) => {
+    const server: Server = httpServer((_ask, answer) => {
       answer.writeHead(200, { "content-type": "text/html" });
       answer.end(`<!doctype html><title>join</title><main><input aria-label="${say("join.passwordLabel", {}, "en")}" maxlength="4"></main>`);
     });
@@ -440,7 +440,7 @@ describe("the bench holds its promises", () => {
       await person.page.goto(`${origin}/app#/settings/general`);
       expect(await told(person.see("join-email", {}, 300))).toContain("never saw join-email on /app#/settings/general");
       // A link that cannot be opened: the browser's own error names the address, and the token is cut off.
-      const shut = createServer();
+      const shut = httpServer();
       await new Promise<void>((ok) => shut.listen(0, "127.0.0.1", ok));
       const closed = (shut.address() as AddressInfo).port;
       await new Promise((ok) => shut.close(ok));
@@ -474,5 +474,75 @@ describe("the bench holds its promises", () => {
     await person.page.getByRole("paragraph").waitFor();
     expect(person.problems()).toEqual([]);
     await person.context.close();
+  });
+});
+
+/**
+ * The stack's far end sends a letter as another person's server does: a mail server of this file's own takes it,
+ * or refuses it at a step.
+ */
+describe("the stack's far end hands a letter to a mail server", () => {
+  /** A mail server on loopback that answers each command as `answers` says, and keeps what it was told. */
+  async function server(answers: Record<string, string> = {}): Promise<{ at: string; told: string[]; close(): void }> {
+    const told: string[] = [];
+    const srv = createServer((c) => {
+      c.setEncoding("utf8");
+      let inData = false;
+      let buffer = "";
+      c.write("220 mail.invalid ready\r\n");
+      c.on("data", (chunk: string) => {
+        buffer += chunk;
+        for (let at = buffer.indexOf("\r\n"); at >= 0; at = buffer.indexOf("\r\n")) {
+          const line = buffer.slice(0, at);
+          buffer = buffer.slice(at + 2);
+          told.push(line);
+          if (inData) { if (line === ".") { inData = false; c.write(answers.end ?? "250 queued\r\n"); } continue; }
+          const verb = line.split(/[ :]/)[0]!.toUpperCase();
+          if (verb === "EHLO") c.write("250-mail.invalid\r\n250-8BITMIME\r\n250 SIZE 1000000\r\n");
+          else if (verb === "MAIL") c.write(answers.MAIL ?? "250 ok\r\n");
+          else if (verb === "RCPT") c.write(answers.RCPT ?? "250 ok\r\n");
+          else if (verb === "DATA") { inData = true; c.write("354 go on\r\n"); }
+          else if (verb === "QUIT") { c.write("221 bye\r\n"); c.end(); }
+        }
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+    return { at: `127.0.0.1:${(srv.address() as AddressInfo).port}`, told, close: () => srv.close() };
+  }
+  const letter = { from: { name: "Ben Arnold", address: "ben@lichtgrat.example" }, subject: "Kiln at noon", text: "Bring the glaze.\n.hidden line\nSee you." };
+
+  it("says the envelope and the letter, a leading dot doubled, and ends it", async () => {
+    const s = await server();
+    try {
+      await smtpDeliver(s.at, "mila@greenmail.test", letter, new Date("2026-11-17T09:30:00Z"));
+      expect(s.told).toContain("MAIL FROM:<ben@lichtgrat.example>");
+      expect(s.told).toContain("RCPT TO:<mila@greenmail.test>");
+      expect(s.told).toContain("Subject: Kiln at noon");
+      expect(s.told).toContain("Date: Tue, 17 Nov 2026 09:30:00 +0000");
+      expect(s.told).toContain("..hidden line");
+      expect(s.told.slice(-2)).toEqual([".", "QUIT"]);
+    } finally { s.close(); }
+  });
+
+  it("refuses at the step the server refused, and never sends to a server off this machine", async () => {
+    const s = await server({ RCPT: "550 no such user\r\n" });
+    try {
+      await expect(smtpDeliver(s.at, "nobody@greenmail.test", letter)).rejects.toThrow(/the recipient: the mail server answered "550"/);
+      expect(s.told.some((l) => l === "DATA")).toBe(false);
+    } finally { s.close(); }
+    await expect(smtpDeliver("mail.example.com:25", "mila@greenmail.test", letter)).rejects.toThrow(/only to a mail server on this machine/);
+    // The IPv6 loopback is this machine: it is dialled (nothing listens there, so the socket refuses), never refused by the rule.
+    await expect(smtpDeliver("[::1]:1", "mila@greenmail.test", letter)).rejects.not.toThrow(/only to a mail server on this machine|must be host:port/);
+  });
+
+  it("a letter has arrived once /sync names a message of its subject, and not before", () => {
+    const answer = { changes: { creates: [
+      { type: "message", id: "m1", entity: { subject: "Kiln at noon" } },
+      { type: "thread", id: "t1", entity: { subject: "Kiln at noon" } },
+      { type: "message", id: "m2", entity: { subject: "Kiln at noon (2)" } },
+    ], updates: [], moves: [], deletes: [] } };
+    expect(arrivedIn(answer, "Kiln at noon")).toEqual(["m1"]);
+    expect(arrivedIn(answer, "Kiln")).toEqual([]);
+    expect(arrivedIn(null, "Kiln at noon")).toEqual([]);
   });
 });

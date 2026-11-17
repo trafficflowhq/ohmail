@@ -1406,6 +1406,7 @@ test/journeys/journeys/reader.journeys.test.ts	data	through test/journeys/bench/
 test/journeys/journeys/reads.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/receipts.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/screener.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/screener.mail.journeys.test.ts	data	through test/journeys/bench/far-end.ts, test/journeys/vocabulary/catalogue.ts: reads the stack's handover and the invites it took; the message catalogue	none	journeys	
 test/journeys/journeys/search.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/settings-about.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/settings-account.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
