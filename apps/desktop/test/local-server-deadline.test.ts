@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 import { BRIDGE_DEADLINE_MS, bridgeFetch } from "../src/bridge-fetch.js";
 import { LOCAL_SERVER_CALL_DEADLINE_MS } from "../src/local-server-deadline.js";
@@ -83,7 +84,6 @@ describe("bridgeFetch — a per-call deadline, forwarded only when present", () 
 /* ── the census: every bridge call to a route that probes, derived from both sides ──────────── */
 
 const DESKTOP_SRC = join(fileURLToPath(new URL(".", import.meta.url)), "..", "src");
-const ENGINE = fileURLToPath(new URL("../../sidecar/src/engine.ts", import.meta.url));
 
 interface Route { method: string; pattern: string }
 interface Call { at: string; method: string | null; path: string | null; deadline: string | null }
@@ -267,7 +267,7 @@ function wrong(routes: Route[], calls: Call[]): string[] {
 }
 
 describe("the census — every bridge call to a route that probes rides the local deadline", () => {
-  const engine = probingRoutes(readFileSync(ENGINE, "utf8"));
+  const engine = probingRoutes(readEngineAsOneText());
   const files = sources(DESKTOP_SRC);
   const calls = bridgeCalls(files);
 

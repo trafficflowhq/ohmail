@@ -232,7 +232,7 @@ const SIDECAR_SUBSTITUTES = {
   "./db.js": path.join(PHONE, "db.ts"),
   /* `store-lanes.ts` names the desktop store's two lanes with `AsyncLocalStorage`, and
      `node:async_hooks` is not on a phone — the import is a crash at load. The drain imports
-     `inStoreLane` directly (`engine.ts`), so the row is needed even though `./db.js` beside it is
+     `inStoreLane` directly (`engine-mailbox-drain.ts`), so the row is needed even though `./db.js` beside it is
      already substituted. See `phone/store-lanes.ts` for why a pass-through is the honest answer
      and not a stub with a hole in it. */
   "./store-lanes.js": path.join(PHONE, "store-lanes.ts"),

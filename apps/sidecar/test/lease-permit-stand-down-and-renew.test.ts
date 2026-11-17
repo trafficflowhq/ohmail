@@ -204,9 +204,10 @@ interface Rig {
   meta: MetaWorld;
   /**
    * Spent by the first cycle that sees it: `age` moves the clock past the permit's deadline,
-   * `age+transfer` also hands the mailbox to the rival at that same instant.
+   * `age+transfer` also hands the mailbox to the rival at that same instant, `age+lose` loses the
+   * answer of the next claim append, which is then the permit's renewal, not the gate's.
    */
-  armed: "age" | "age+transfer" | null;
+  armed: "age" | "age+transfer" | "age+lose" | null;
   /** Whether the adapter can batch a filing — the ONE difference between the two shapes. */
   batched: boolean;
   cycles: number;
@@ -226,6 +227,7 @@ function rigAdapter(rig: Rig): (cfg: ImapConfig) => MailboxAdapter {
     rig.armed = null;
     if (armed !== null) nowMs += 61_000;
     if (armed === "age+transfer") rig.meta.transferToRival();
+    if (armed === "age+lose") rig.meta.loseAnswer = true;
   };
   const adapter: MailboxAdapter & Record<string, unknown> = {
     leaseIo: () => rig.meta.lease,
@@ -646,6 +648,30 @@ describe("a renewal this install performed is this install's own claim", () => {
     expect({ organizing: sidecar.organizerState().organizing, role: await roleOf(sidecar) },
       "the attempt that never landed made this install forget the one that did")
       .toEqual({ organizing: true, role: "organizer" });
+  });
+
+  it("the drain's own renewal commits and loses its answer; the next pass still organizes", async () => {
+    /* The two cases above lose the POLL GATE's answer. Here the PERMIT renews past its deadline at
+       the filing boundary and that answer is lost: the pass ends there, and the nonce the permit
+       minted must still reach the runtime, or the next gate reads it as another copy of us. */
+    const rig = freshRig();
+    const sidecar = await boot(rig);
+    await seedPendingFiling(sidecar, 61);
+    rig.armed = "age+lose";
+    await sidecar.syncMailbox(sidecar.world.mailboxId).catch(() => undefined);
+    expect(rig.meta.loseAnswer, "the permit never renewed inside the drain").toBe(false);
+    expect(rig.moves, "the filing went out on a renewal whose answer was lost").toBe(0);
+    expect(rig.meta.liveClaims().length, "the committed renewal is not in the folder").toBe(2);
+    await poll(sidecar);
+    expect({
+      organizing: sidecar.organizerState().organizing,
+      role: await roleOf(sidecar),
+      heldBy: sidecar.organizerState().heldBy,
+      moved: rig.moves,
+      claims: rig.meta.liveClaims().length,
+    }, "this install read the permit's lost renewal as another copy of itself").toEqual({
+      organizing: true, role: "organizer", heldBy: null, moved: 1, claims: 1,
+    });
   });
 
   it("a live claim under our id we never wrote stands us down; at its lapse we take it back, no press", async () => {

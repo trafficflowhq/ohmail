@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, normalize, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * THE ORDER every writer under a sender's key keeps, first take of each, in one transaction: the
@@ -40,7 +41,7 @@ const parsed = new Map<string, ts.SourceFile>();
 function sourceOf(file: string, text?: string): ts.SourceFile {
   let sf = parsed.get(file);
   if (!sf) {
-    sf = ts.createSourceFile(file, text ?? readFileSync(resolve(ROOT, file), "utf8"), ts.ScriptTarget.Latest, true);
+    sf = ts.createSourceFile(file, text ?? readAsUnit(resolve(ROOT, file)), ts.ScriptTarget.Latest, true);
     parsed.set(file, sf);
   }
   return sf;
@@ -543,7 +544,7 @@ function sourcesUnder(root: string): string[] {
     for (const e of readdirSync(resolve(ROOT, rel), { withFileTypes: true })) {
       const r = `${rel}/${e.name}`;
       if (e.isDirectory()) visit(r);
-      else if (e.name.endsWith(".ts") && !e.name.endsWith(".d.ts")) out.push(r);
+      else if (e.name.endsWith(".ts") && !e.name.endsWith(".d.ts") && !isEnginePart(resolve(ROOT, r))) out.push(r);
     }
   };
   visit(root);

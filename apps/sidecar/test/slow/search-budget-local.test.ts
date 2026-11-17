@@ -8,6 +8,7 @@ import type { ServiceContext } from "@trafficflow/services";
 import { searchFor } from "../../src/composition-passes.js";
 import { GIN_PENDING_LIST_KB, openLocalDb, type OpenLocalDb } from "../../src/db.js";
 import { freshDataDir } from "../_datadir.js";
+import { sqlTextOf } from "../_store-client.js";
 
 /**
  * SEARCH IS MILLISECONDS ON THE DESKTOP'S OWN STORE, through the local door's own service
@@ -46,7 +47,7 @@ const ADDRESS_CLASSES = [
 /** The exact count reads every match by contract; the bound on rows read is the page's. */
 const isCount = (text: string): boolean => /^\s*select\s+\(?(cast\()?count\(\*\)/i.test(text);
 const rows = (r: unknown): any[] => (Array.isArray(r) ? r : ((r as { rows?: any[] }).rows ?? []));
-const textOf = (st: SQL): string => (o.db as unknown as { dialect: { sqlToQuery(s: SQL): { sql: string } } }).dialect.sqlToQuery(st).sql;
+const textOf = (st: SQL): string => sqlTextOf(o.db, st);
 
 let dir = "";
 let o: OpenLocalDb;

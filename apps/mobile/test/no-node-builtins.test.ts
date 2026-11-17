@@ -38,6 +38,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { engineUnitFiles } from "../../../test/support/engine-unit.js";
 
 import {
   BUNDLE, IMAPFLOW_CLOSE_MARKER, IMAPFLOW_REARM_MARKER, METAFILE, OUT_DIR, nodeSpecifiersIn, externalsIn, REPO,
@@ -79,7 +80,7 @@ function metafile(): Metafile {
 function newestSourceTime(): number {
   const watched = [
     join(REPO, "apps", "sidecar", "src", "mobile.ts"),
-    join(REPO, "apps", "sidecar", "src", "engine.ts"),
+    ...engineUnitFiles(),
     join(REPO, "apps", "sidecar", "src", "phone", "aliases.js"),
     join(REPO, "apps", "mobile", "src", "engine", "shims"),
   ];

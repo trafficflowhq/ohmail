@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /** The planted file the classifier is shown: a path that names no real source, joined from two parts so
  *  the published tree's citation gate does not read it as a link to the private tree. */
@@ -157,7 +157,7 @@ function hits(src: string, re: string): Array<[number, RegExpExecArray]> {
 
 const lineOf = (src: string, at: number): number => src.slice(0, at).split("\n").length;
 
-const read = (f: string): string => readFileSync(path.join(ROOT, f), "utf8");
+const read = (f: string): string => readAsUnit(path.join(ROOT, f));
 
 const SWEEP = "packages/services/src/account-deletion-service.ts";
 const DOOR = "packages/services/src/context.ts";
@@ -277,7 +277,7 @@ function serverSources(): string[] {
   // `git ls-files` with a `**` pathspec matched a fraction of the tree when the dialect census was
   // written, so the listing is filtered here where the rule is readable.
   const out = execFileSync("git", ["ls-files", "apps", "packages"], { cwd: ROOT, encoding: "utf8" });
-  return out.split("\n").filter((f) => /^(apps|packages)\/[^/]+\/src\/.*\.ts$/.test(f));
+  return out.split("\n").filter((f) => /^(apps|packages)\/[^/]+\/src\/.*\.ts$/.test(f) && !isEnginePart(path.join(ROOT, f)));
 }
 
 /**

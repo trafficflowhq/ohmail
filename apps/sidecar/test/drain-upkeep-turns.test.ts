@@ -5,6 +5,7 @@ import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organi
 import { createSidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
 
@@ -76,7 +77,7 @@ describe("the drain's upkeep", () => {
     const spin = (): void => { if (turning) { turn += 1; setImmediate(spin); } };
     setImmediate(spin);
     const seen: Array<{ turn: number; head: string }> = [];
-    const client = (sidecar.db as unknown as { $client: Record<string, unknown> }).$client;
+    const client = pgliteOf(sidecar.db) as unknown as Record<string, unknown>;
     for (const m of ["exec", "query"]) {
       const orig = (client[m] as (...a: unknown[]) => Promise<unknown>).bind(client);
       client[m] = (...a: unknown[]): Promise<unknown> => {

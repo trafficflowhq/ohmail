@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
-import { readFileSync } from "node:fs";
 import { vi } from "vitest";
 
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 // Every case here stands a PGlite up. The default 5 s is a budget for a pure function.
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
@@ -455,7 +455,7 @@ describe("the ahead-of-table family", () => {
 
 /** The stretch of `engine.ts` that decides which paths are served ahead of the route table. */
 function preTableBlock(): string {
-  const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8");
+  const src = readEngineAsOneText();
   const from = src.indexOf("const localRemoveMatch");
   const to = src.indexOf("if (localAction)", from);
   expect(from, "the pre-table block moved — this census is reading nothing").toBeGreaterThan(-1);

@@ -1,6 +1,7 @@
 import fs, { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, MailboxAdapter, NativeLocator, OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
@@ -95,7 +96,7 @@ async function launch(cleanups: Array<() => Promise<void> | void>, deferMaxMs: n
     searchBackfillTiming: { waitMs: 60 * 60 * 1000 },
     store: async (dir, opts) => {
       const store = await openLocalDb(dir, { ...opts, upkeepGate: { quietMs: QUIET_MS, deferMaxMs } });
-      const client = (store.db as unknown as { $client: Record<string, unknown> }).$client;
+      const client = pgliteOf(store.db) as unknown as Record<string, unknown>;
       for (const name of ["exec", "query"]) {
         const run = client[name] as (...a: unknown[]) => Promise<unknown>;
         client[name] = async function (this: unknown, ...a: unknown[]) {

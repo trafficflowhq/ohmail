@@ -1,12 +1,12 @@
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import type { PGlite } from "@electric-sql/pglite";
 import { sql } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
 import { attachments, invitationWithoutEventWhere, itipReplyHeaderWhere, mailboxes, messageBodies, messages } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 /**
  * THE CALENDAR FACTS ASK THE ATTACHMENTS INDEX BY ITS LEAD. Every materialized row (each search
@@ -51,7 +51,7 @@ describe("the calendar facts' attachments lookups", () => {
       await db.insert(messageBodies).values({ messageId: id, accountId, text: "", headers: {} });
       await db.insert(attachments).values({ accountId, messageId: id, contentType: i % 3 === 0 ? "text/calendar; method=REPLY" : "application/pdf", sizeBytes: 1, createdAt: at });
     }
-    const client = (db as unknown as { $client: PGlite }).$client;
+    const client = pgliteOf(db);
     await client.exec("analyze attachments; analyze messages;");
     const d = dialect(db);
     const row = { id: sql`m.id`, accountId: sql`m.account_id` };

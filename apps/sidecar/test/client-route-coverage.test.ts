@@ -6,6 +6,7 @@ import { localRoutes, matchRoute } from "@trafficflow/api/local";
 import { relayVerdict } from "@trafficflow/api/relay-allowlist";
 import { matchReadRoute } from "../src/cloud-read.js";
 import { SUGGEST_ROUTES } from "../../desktop/src/cloud-suggest.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * EVERY ROUTE THE DESKTOP CLIENT CALLS, AGAINST THE TWO SURFACES THE SIDECAR SERVES.
@@ -442,7 +443,7 @@ const CALENDAR_HOSTED_DOOR_ONLY = [
 
 function calendarIsHostedOnly(): { exempt: Set<string>; holds: Record<string, boolean> } {
   const table = fs.readFileSync(LOCAL_TABLE_SRC, "utf8");
-  const standalone = fs.readFileSync(path.resolve(HERE, "../src/engine.ts"), "utf8");
+  const standalone = readEngineAsOneText();
   const program = fs.readFileSync(path.resolve(HERE, "../../server/src/program.ts"), "utf8");
   const holds = {
     "the standalone table composes no calendar route": !table.toLowerCase().includes("calendar"),

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NETWORK_RETURN_PATH, startNetworkReturnRelay } from "../src/network-return.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * The webview's `online` event reaches the local engine's retry door, so a lost connection is
@@ -67,7 +68,7 @@ describe("the network's return, relayed to the local engine", () => {
   });
 
   it("names the engine's own route", () => {
-    const engine = readFileSync(resolve(process.cwd(), "apps/sidecar/src/engine.ts"), "utf8");
+    const engine = readEngineAsOneText();
     expect(engine).toContain(`url.pathname === "${NETWORK_RETURN_PATH}"`);
   });
 

@@ -6,6 +6,7 @@ import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { resetFirstPageGate } from "../src/first-page-gate.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS * 4, hookTimeout: PGLITE_STANDUP_BUDGET_MS * 4 });
 
@@ -30,7 +31,7 @@ let dir = "";
 let o: OpenLocalDb;
 let accountId = "";
 const rows = (r: unknown): any[] => (Array.isArray(r) ? r : ((r as { rows?: any[] }).rows ?? []));
-const client = () => (o.db as unknown as { $client: { query: (t: string, p?: unknown[]) => Promise<unknown> } }).$client;
+const client = () => pgliteOf(o.db) as unknown as { query: (t: string, p?: unknown[]) => Promise<unknown> };
 const iso = (ms: number) => new Date(ms).toISOString();
 
 beforeAll(async () => {

@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { engineUnitFiles } from "../../../test/support/engine-unit.js";
 import { Copy, DECKS } from "../src/copy";
 import { mobileDeviceKind, type MobileDeviceKind } from "../src/net/pairing";
 
@@ -989,7 +990,7 @@ describe("§6 every refusal rule fires — the controls", () => {
 
   it("§1 the file rule refuses each source tree, and admits the one named leaf", () => {
     for (const forbidden of [
-      "apps/sidecar/src/engine.ts",
+      ...engineUnitFiles(),
       "apps/worker/src/index.ts",
       "packages/organizer/src/sync.ts",
       "packages/api/src/routes/desktop-host.ts",
@@ -1006,7 +1007,7 @@ describe("§6 every refusal rule fires — the controls", () => {
   it("§1 a crawl that reached a forbidden module reports it", () => {
     // Driven through `crawl` itself rather than through the rule alone: this proves the walker
     // carries a hit out, which is the part a refactor of `crawl` could silently drop.
-    const found = crawl([r("apps/sidecar/src/engine.ts")]);
+    const found = crawl(engineUnitFiles());
     expect(found.hits.length, "the crawl reported nothing about the desktop engine")
       .toBeGreaterThan(0);
   });

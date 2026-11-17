@@ -461,7 +461,7 @@ apps/server/test/clocks.test.ts	ohmail/package-borders:apps/worker	1	server-wiri
 apps/server/test/session-door-busy.test.ts	ohmail/package-borders:apps/api-vercel	4	server-wiring
 apps/server/test/settings.test.ts	ohmail/platform-name	9	server-wiring
 apps/sidecar/src/cloud-mirror.ts	eslint:unused-directive	1	desktop-engine
-apps/sidecar/src/engine.ts	eslint:unused-directive	1	desktop-engine
+apps/sidecar/src/engine-request-door.ts	eslint:unused-directive	1	desktop-engine
 apps/sidecar/src/host-static.ts	eslint:unused-directive	1	desktop-engine
 apps/sidecar/test/_overrun-rig.ts	eslint:unused-directive	1	desktop-engine
 apps/sidecar/test/_phone-offline-rig.ts	ohmail/declared-dependency	1	desktop-engine
