@@ -1,9 +1,10 @@
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
+import { isSubjectHeading, subjectHeadingOf, type SubjectHeading } from "@trafficflow/core/adapters/organizer-profile";
 import {
   accountSettings, clearRuleRemovals, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
-  lockAccountRuleKeys, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, PROFILE_SIGNATURE_MAX,
+  lockAccountRuleKeys, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, statePreference, PROFILE_SIGNATURE_MAX,
   TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type LedgerTx, type OrganizedBy, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
@@ -667,6 +668,11 @@ export async function consentSettings(
   locale: string | null;
   themeFace: string | null;
   /**
+   * mail 0210 — where a conversation's subject stands in the reader, as the person stated it, or
+   * `null` for "nothing stated", which every client shows as the subject once at the head.
+   */
+  subjectHeading: SubjectHeading | null;
+  /**
    * mail 0110 — the wall clock this account's resurfaced mail comes back at, `'HH:MM'` in the
    * reader's own zone, or `null` for "never chosen", which every client renders as the built-in
    * 09:00. A wall clock and not an instant: the horizons have always minted 09:00 through the
@@ -698,6 +704,8 @@ export async function consentSettings(
     .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
   // An absent row is every account that has never changed anything. Defaults, not an error.
   return {
+    // The row's word only as one of its pair and beside its instant: anything else is nothing stated.
+    subjectHeading: subjectHeadingOf(row?.subjectHeading, row?.subjectHeadingAt),
     seedConfirmedAt: row?.seedConfirmedAt ? row.seedConfirmedAt.toISOString() : null,
     dormancyDays: row?.dormancyDays ?? null,
     screeningResetAt: row?.screeningResetAt ? row.screeningResetAt.toISOString() : null,
@@ -1638,6 +1646,29 @@ export async function setThemeFace(
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order
   });
   return { themeFace };
+}
+
+/**
+ * STATE WHERE A CONVERSATION'S SUBJECT STANDS (mail 0210): `'head'` or `'each'`, and nothing else. No
+ * `null`: a statement is not taken back, it is replaced by the other word. The row keeps the word with
+ * the instant of this press, the organizer's next settings copy carries both, and every other install
+ * of the mailbox takes the later statement. Anything outside the pair is a 400 and never coerced.
+ * The settings row first, then the settings record's doorbell, as every writer here; returns the
+ * STORED pair.
+ */
+export async function setSubjectHeading(
+  ctx: ServiceContext, subjectHeading: unknown,
+): Promise<{ subjectHeading: SubjectHeading; subjectHeadingAt: string }> {
+  if (!isSubjectHeading(subjectHeading)) {
+    throw new ServiceError("validation_failed", 400, "subjectHeading must be 'head' or 'each'");
+  }
+  const stored = await bridgeTx(ctx.db).transaction(async (tx) => {
+    // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) that
+    // every settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
+    return statePreference(tx as LedgerTx, ctx.accountId, "subject", subjectHeading, ctx.now());
+  });
+  return { subjectHeading: stored.value, subjectHeadingAt: stored.at.toISOString() };
 }
 
 /**

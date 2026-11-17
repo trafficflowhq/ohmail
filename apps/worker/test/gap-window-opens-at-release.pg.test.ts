@@ -10,6 +10,8 @@ import { accounts, folderState, mailboxes, messages, routingDecisions, rules } f
 import { schema } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import { gapCatchupPass } from "@ohmail/organizer/gap-catchup";
+import { readNewestSettings } from "@ohmail/organizer/profile";
+import { formatProfileMessage, makeProfileDoc, type ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   clearOrganizerStandDown, markMailboxReleased, markMailboxStoodDown, readTravellingGapSince, refreshOrganizerHolder,
 } from "../src/mailboxes.js";
@@ -587,6 +589,38 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
       expect(await look(w.mailboxId, null, { written: { by, at } })).toBe(true);
       expect((await rowOf(w.mailboxId)).since!.getTime(), by).toBe(open.getTime());
     }
+  }, 60_000);
+
+  /* THE COPY IS ANYONE'S TO WRITE, and the look's write binds what it takes from it: a key, or the copy itself,
+     dated before 1970 (the written form also spells years before 1) or further ahead than two clocks may differ
+     (years past 9999 among them, which no store holds) is nothing the look takes. Its write runs, by today's rule. */
+  it.each([
+    ["a key that starts before year 1", { since: "0000-06-15T00:00:00.000Z" }],
+    ["a key that starts before 1970", { since: "1969-12-31T23:59:59.999Z" }],
+    ["a key dated past year 9999", { since: "+010000-01-01T00:00:00.000Z", at: "+010000-01-01T00:00:00.000Z" }],
+    ["a copy dated past year 9999", { written: "+010000-01-01T00:00:00.000Z" }],
+  ] as const)("%s opens nothing of its own: the look's write runs and opens the window at the look", async (_name, o) => {
+    const w = await readerRow();
+    const now = Date.now();
+    const at = "at" in o ? o.at : new Date(now - 30_000).toISOString();
+    const doc = makeProfileDoc({ screener: [], rules: [], notifyRules: [], awayResponder: null, tagNames: ["kept"], signature: null }, {
+      updatedAt: new Date("written" in o ? o.written : new Date(now - 20_000).toISOString()), producer: { kind: "local", version: "test" },
+      preferences: {}, ...("since" in o ? { gap: { since: o.since, by: "the-laptop", at } } : {}),
+    });
+    const raw = formatProfileMessage(doc, { installId: "the-laptop" });
+    const folder: ProfileIo = {
+      ensureMetaFolder: async () => undefined,
+      listProfileMessages: async () => [{ ref: 1, raw, generation: 1 }],
+      appendProfile: async () => { throw new Error("a look appends nothing"); },
+      removeProfiles: async () => { throw new Error("a look removes nothing"); },
+    };
+    const left = await readNewestSettings(folder, () => undefined);
+    // What the look takes from it, as `lease-gate.ts` spells it.
+    const travelled: TravelledGap | null = left?.gap ? { since: new Date(left.gap.since), by: left.gap.by, at: new Date(left.gap.at) } : null;
+    const lookedAt = await storeNow();
+    expect(await look(w.mailboxId, travelled, left === null ? {} : { written: { by: left.by, at: left.at } })).toBe(true);
+    expect((await rowOf(w.mailboxId)).since!.getTime()).toBeGreaterThanOrEqual(lookedAt.getTime() - 5);
+    expect(travelled).toBeNull();
   }, 60_000);
 
   it("held: the travelled window waits by name, uncounted and kept", async () => {

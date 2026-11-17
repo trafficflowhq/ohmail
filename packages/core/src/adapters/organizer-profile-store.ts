@@ -5,7 +5,8 @@ import {
   clearRuleRemovals, createPressesSince, fenceErased, lockAccountRuleKeys, lockSettingsStamp, moveSettingsStamp, newestOwnProfileWriteBefore, newestProfileImport,
   profileImportResolutionExists, readRuleRemovals, recordChanges, recordProfileImportResolution, recordRuleRemovals, rerouteOwnHeldBag,
   resolveImportAsk, ruleDelta, ruleRemovalKey, RULE_REMOVAL_MAX_AGE_MS,
-  type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx,
+  adoptPreferences, readPreferences,
+  type ChangeInput, type ImportAskRefusal, type LedgerTx, type StoredPreferences, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "../rule-order.js";
@@ -15,9 +16,9 @@ import { AWAY_AUDIENCES, AWAY_THROTTLES, nextEnabledAt, type AwayAudience, type 
 import { awayScopeFitsAudience, isAwayPile, type AwayPile } from "../away-scope.js";
 import {
   PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileCopyKey, namesCopy,
-  profilePayloadAsRead, profileScreenerAddress, signatureReceipt,
-  type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileListCounts, type ProfileReadResult,
-  type ProfileRemovedRule, type ProfileScreening,
+  profilePayloadAsRead, profileScreenerAddress, readProfilePreferences, signatureReceipt, statesNothing,
+  type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileListCounts, type ProfilePreferences,
+  type ProfileReadResult, type ProfileRemovedRule, type ProfileScreening,
 } from "./organizer-profile.js";
 
 /**
@@ -67,6 +68,8 @@ export async function serializeOrganizerProfileCounted(
 ): Promise<{
   payload: OrganizerProfilePayload; leftOut: ProfileLeftOut; normalized: ProfileListCounts; screening: ProfileScreening; applied?: string[];
   removedRules?: ProfileRemovedRule[];
+  /** What the account holds stated for every install, as a copy states it; `{}` while nothing is. */
+  preferences: ProfilePreferences;
 }> {
   // ONE SNAPSHOT, not five. Under READ COMMITTED each statement sees its own snapshot, so a
   // screener decide committing between the contacts read and the rules read would serialize a
@@ -74,7 +77,7 @@ export async function serializeOrganizerProfileCounted(
   // something no store ever held (self-healing one flush later, but "a burst is one write" is
   // the contract, and a torn read is how it becomes two). REPEATABLE READ pins all five reads
   // to one snapshot; PGlite is real Postgres, so the same statement works on both stores.
-  const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows, screening, appliedRows, removalRows, switchRows] = await db.transaction(async (tx) => {
+  const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows, screening, appliedRows, removalRows, switchRows, held] = await db.transaction(async (tx) => {
     return [
       // Each list is the newest PROFILE_LIST_MAX of its kind, so the import on another machine
       // takes what this one publishes; automatic (promoted) rules are the first to stay behind.
@@ -136,6 +139,10 @@ export async function serializeOrganizerProfileCounted(
       // THE TENTH READ: the impersonation filing's switch (mail 0184), published only while off.
       await tx.select({ offAt: accountSettings.impersonationFilingOffAt }).from(accountSettings)
         .where(eq(accountSettings.accountId, accountId)).limit(1),
+      // THE ELEVENTH READ: what the person stated for every install (mail 0210), from the row and from
+      // nowhere else. The copy being replaced is never its source: an organizer that does not know the
+      // key writes a copy without it, and the row is what states it again.
+      await readPreferences(tx as unknown as Tx, accountId),
     ] as const;
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 
@@ -195,7 +202,64 @@ export async function serializeOrganizerProfileCounted(
   return {
     payload, leftOut, normalized, screening, ...(appliedRows === null ? {} : appliedOf(appliedRows)),
     ...(removalRows === null || opts.removed === undefined ? {} : removedOf(removalRows, ruleRows, leftOut.rules, opts.removed.by, opts.now ?? new Date())),
+    preferences: preferencesOfStore(held),
   };
+}
+
+/**
+ * THE ROW'S PAIRS AS A COPY STATES THEM: the instant in the form a copy carries, and the whole
+ * through the copy's own reader, so a stored word no set has is not published.
+ */
+export function preferencesOfStore(held: StoredPreferences): ProfilePreferences {
+  return readProfilePreferences({
+    ...(held.subject === undefined ? {} : { subject: { value: held.subject.value, at: held.subject.at.toISOString() } }),
+  });
+}
+
+/** What the account holds stated for every install, as a copy would state it now ({@link preferencesOfStore}). */
+export async function readStatedPreferences(db: Tx, accountId: string): Promise<ProfilePreferences> {
+  return preferencesOfStore(await readPreferences(db, accountId));
+}
+
+/**
+ * THE MEMBERS A FOUND COPY'S STATEMENT IS TAKEN IN FOR WITH NO QUESTION, a closed list. Only a closed word
+ * that any later press of the person outranks may stand here: a member that can change what a notice or
+ * a device shows is taken from another install's copy only inside the person's Import answer, so a member
+ * not named here is never taken in by this door.
+ */
+export const PREFERENCES_ADOPTED_FREELY: ReadonlyArray<keyof ProfilePreferences> = ["subject"];
+
+/**
+ * The statements of a found copy this clock takes: the copy's key through its reader once more, with
+ * the latest instant a statement may carry here, and of its members those on `freely` alone. `{}` when
+ * it states nothing a store may take.
+ */
+export function adoptableProfilePreferences(
+  doc: Pick<OrganizerProfileDoc, "preferences">, now: Date,
+  freely: ReadonlyArray<keyof ProfilePreferences> = PREFERENCES_ADOPTED_FREELY,
+): ProfilePreferences {
+  const read = readProfilePreferences(doc.preferences, now.getTime() + clockSkewBoundMs(DEFAULT_STALE_AFTER_MS));
+  return Object.fromEntries(freely.filter((m) => read[m] !== undefined).map((m) => [m, read[m]])) as ProfilePreferences;
+}
+
+/**
+ * WHAT A FOUND COPY STATES FOR EVERY INSTALL, TAKEN INTO THIS STORE WITH NO QUESTION ASKED: the one
+ * door both takers use, the organizer at its takeover and the reader at each new copy. The key is
+ * outside the payload, so it is no part of any Import. The copy is read again through its reader
+ * with this clock: an instant further ahead than the lease lets two clocks differ is not stated.
+ * What the copy does not state changes nothing here, and a statement no newer than the held one
+ * changes nothing either, nor a member off the closed list ({@link PREFERENCES_ADOPTED_FREELY}, or
+ * `freely` where a caller names its own). Inside the caller's transaction. Returns the members that moved.
+ */
+export async function adoptProfilePreferences(
+  tx: LedgerTx,
+  o: { accountId: string; doc: Pick<OrganizerProfileDoc, "preferences">; now: Date; freely?: ReadonlyArray<keyof ProfilePreferences> },
+): Promise<Array<keyof ProfilePreferences>> {
+  const stated = adoptableProfilePreferences(o.doc, o.now, o.freely);
+  if (statesNothing(stated)) return [];
+  return adoptPreferences(tx, o.accountId, {
+    ...(stated.subject === undefined ? {} : { subject: { value: stated.subject.value, at: new Date(stated.subject.at) } }),
+  }, o.now);
 }
 
 /**

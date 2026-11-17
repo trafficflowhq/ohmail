@@ -834,6 +834,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0184_account_settings_impersonation_filing — the switch for filing a held impersonation to Spam.
   // LOUD: the export and the settings reads select the row whole. Deploy order migration → API → worker.
   ["account_settings", "impersonation_filing_off_at"],
+  // mail 0210_account_settings_subject_heading — where a conversation's subject stands, with the instant it
+  // was stated. LOUD: the consent read, the export and the organizer's settings copy select the row, so a host
+  // ahead of the migration fails at each. The marker probes the second column, so both are there. Deploy order
+  // migration → API → worker.
+  ["account_settings", "subject_heading_at"],
   // mail 0201_account_on_borrowers — the account on the six tables that borrowed their parent's.
   // LOUD: every insert into them names the column and the two reconcile polls bind it, so a
   // worker or an API ahead of the migration 42703s on every write and every cycle. Deploy order
@@ -1072,6 +1077,12 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // work" leaves no error in any log. The service validates the same set with a 400, but that
   // is code and can regress; the CHECK holds for a hand-run UPDATE and any importer.
   "account_settings_theme_face_supported",
+  // mail 0210_account_settings_subject_heading — the pair behind `account_settings.subject_heading`, and the
+  // rule that the word and its instant are stated together. SILENT without them: a word outside the pair is
+  // read as nothing stated everywhere, and a word without its instant never travels. The one writer holds both;
+  // the CHECKs hold for a hand-run UPDATE and any importer.
+  "account_settings_subject_heading_closed",
+  "account_settings_subject_heading_stated",
   // mail 0083_organizer_role — the four closed sets this migration adds, listed on 0027's rule
   // (the column and the CHECK fail differently, only one loud). `mailboxes_organizer_role_closed`
   // is the strongest here: the state it makes unrepresentable is two organizers on one mailbox —
@@ -1312,7 +1323,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0209_app_handoff";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0210_account_settings_subject_heading";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

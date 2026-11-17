@@ -822,5 +822,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"pairing_tokens\" ADD COLUMN \"handoff_from_device_id\" text;",
       "ALTER TABLE \"devices\" ADD COLUMN \"handed_off_from\" text;"
     ]
+  },
+  {
+    "name": "0210_account_settings_subject_heading.sql",
+    "statements": [
+      "ALTER TABLE \"account_settings\" ADD COLUMN \"subject_heading\" text;",
+      "ALTER TABLE \"account_settings\" ADD COLUMN \"subject_heading_at\" integer;"
+    ]
   }
 ] as const;

@@ -109,7 +109,7 @@ import {
   setBadge, type LinkAsk as HeldPress, type LinkRefusal, type MenuCommand,
 } from "./native.js";
 import { LinkAsk } from "./LinkAsk.js";
-import { decideNotices } from "@ohmail/client-engine";
+import { decideNotices, noticeChoicesOf, type Notice, type NoticeSample } from "@ohmail/client-engine";
 import { readChannels } from "../../webapp/app/shell/notification-settings";
 import { parseMailto } from "@trafficflow/core/mailto";
 import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
@@ -1546,16 +1546,19 @@ function useUnreadSink(): (unread: number) => void {
        settings screen said it never would. Now it asks the shared gate, exactly as the
        browser and the phone do: `decideNotices` is handed the counts and the stored switches
        and answers with what may be drawn — nothing at all when the master is off. */
+    const sampled = (ohboxUnread: number): NoticeSample => ({ ohboxUnread, screenerWaiting: 0, sends: new Map(), devices: null });
     const spec = decideNotices(
-      before === null ? null : { ohboxUnread: before, screenerWaiting: 0 },
-      { ohboxUnread: unread, screenerWaiting: 0 },
-      readChannels(),
+      before === null ? null : sampled(before),
+      sampled(unread),
+      noticeChoicesOf(readChannels(), null, { ohcalPhone: false }),
       /* The shell holds the OS permission, not this window: its `notify` command asks the
          platform itself on first use and reports a refusal as a rejection, which the catch below
          absorbs. Passing "granted" here says "this window may ask the shell", not "the OS has
          agreed" — the gate's other three states belong to hosts that can read the answer. */
       "granted",
-    ).find((n) => n.event === "ohbox");
+      // What this sink draws: new mail, as a count.
+      ["ohbox"],
+    ).find((n): n is Extract<Notice, { kind: "ohbox" }> => n.kind === "ohbox");
     if (spec === undefined) return;
 
     const fresh = spec.count;
