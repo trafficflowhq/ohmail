@@ -53,7 +53,6 @@ const cal = (id: string, over: Partial<CalendarRecord> = {}): CalendarRecord => 
   color: "#3366cc",
   access: "owner",
   shown: true,
-  isDefault: id === "cal-1",
   timeZone: ZURICH,
   window: null,
   defaultAlarms: [],

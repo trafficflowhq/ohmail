@@ -78,7 +78,6 @@ export function calendarRecord(over: Partial<CalendarRecord> = {}): CalendarReco
     color: "#3366cc",
     access: "owner",
     shown: true,
-    isDefault: true,
     timeZone: ZURICH,
     window: null,
     defaultAlarms: [],
