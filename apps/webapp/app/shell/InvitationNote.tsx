@@ -17,7 +17,7 @@
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { owaInvitationStub } from "@ohmail/client-engine";
-import { linkHref, useRenderedLinks } from "../letter-body/rendered-links";
+import { linkHref, useRenderedLinks } from "@ohmail/letter-body/links";
 
 const NO_LINKS: readonly string[] = [];
 

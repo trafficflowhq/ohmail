@@ -30,9 +30,9 @@
  * folded tracking URL must not become an anchor until asked for.
  */
 import { Fragment, memo, useId, useMemo, useState, type ReactNode } from "react";
-import { BODY_PAGE_CHARS, pageEnd, pageEnds, type TagHueName } from "@ohmail/ui";
+import { BODY_PAGE_CHARS, pageEnd, pageEnds, type TagHueName } from "@ohmail/ui/body-parts";
 import { QUOTED_HISTORY_LIMITS, quotedHistoryOfText, type QuotedAt, type QuotedVerdict } from "@ohmail/client-engine";
-import { liveCopy } from "../shell/locale";
+import { bodyCopy } from "./words";
 import { RenderedLinks } from "./rendered-links";
 import { ASK_ATTR, useAskPage } from "./link-ask";
 
@@ -321,7 +321,7 @@ const EN = {
   linkTitle: (host: string) => `Goes to ${host}`,
   more: (percent: string) => `Show more (${percent}% shown)`,
 };
-export const COPY: typeof EN = liveCopy("bodyText", EN, { linkTitle: ["host"], more: ["percent"] });
+export const COPY: typeof EN = bodyCopy("bodyText", EN, { linkTitle: ["host"], more: ["percent"] });
 
 /**
  * A CANDIDATE, NOT A DECISION. This matches anything shaped like `scheme:rest`, INCLUDING `javascript:` and `data:`.

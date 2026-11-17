@@ -30,7 +30,7 @@
  * imports the table from here, never the other way).
  */
 
-import { Gloss } from "@ohmail/ui";
+import { Gloss } from "@ohmail/ui/body-parts";
 
 /** Which of the three captions a notice headlines. */
 export type NoticeKind = "pixel" | "images" | "sheet";

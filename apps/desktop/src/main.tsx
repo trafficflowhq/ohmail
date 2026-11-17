@@ -16,7 +16,7 @@ import { localStorageDoor } from "@ohmail/client-engine/durable";
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
 import { enableDesktopDroppedFiles, installFileDropGuard } from "../../webapp/app/shell/dropped-files";
 import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
-import { setRenderedLinksBatchSink } from "../../webapp/app/letter-body/rendered-links";
+import { setRenderedLinksBatchSink } from "@ohmail/letter-body/links";
 import { stampColumns } from "@ohmail/app-logic/lists/column-store";
 import { installTextSizeApplier } from "../../webapp/app/shell/text-size";
 import { applyDesktopTextSize } from "./text-zoom.js";

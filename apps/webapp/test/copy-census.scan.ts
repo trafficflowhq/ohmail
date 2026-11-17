@@ -82,7 +82,7 @@ export const COPY_CENSUS_ROOTS = [
   "apps/webapp/app/shell",
   "apps/webapp/app/views",
   "apps/webapp/app/components",
-  "apps/webapp/app/letter-body",
+  "packages/letter-body/src",
   "apps/desktop/src",
   "apps/paired-page/src",
 ];

@@ -36,6 +36,7 @@ const ROOTS = [
   ["packages", "client-engine", "src"],
   ["apps", "webapp", "app"],
   ["packages", "app-logic", "src"],
+  ["packages", "letter-body", "src"],
   ["apps", "desktop", "src"],
   ["apps", "paired-page", "src"],
   ["apps", "mobile", "src"],

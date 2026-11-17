@@ -4,7 +4,6 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@ohmail/ui";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
-import { TodaysScopeProvider } from "../app/shell/todays-scope";
 import { parseCssColor, relativeLuminance } from "@ohmail/client-engine";
 import { GRAY_WRAPPER_HTML, GRAY_WRAPPER_TEXT, TINTED_WRAPPER_HTML } from "./fixtures/gray-wrapper-letter";
 import { CORPUS_WIDTHS, LETTER_PAPER_CORPUS } from "../../../packages/client-engine/test/fixtures/letter-paper-corpus";
@@ -55,8 +54,8 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type Mod = typeof import("../app/letter-body/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
+type Mod = typeof import("../../../packages/letter-body/src/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/MessageBody.js");
 
 /** Mount the component inside a theme, which is the only way the dark path engages at all. */
 async function renderIn(
@@ -73,8 +72,8 @@ async function renderIn(
       h(ThemeProvider, {
         defaultPreference: preference,
         storageKey: null,
-        /* Drawn in a shell, as the reader always is: the account the case names, else an account of its own. */
-        children: h(TodaysScopeProvider, { value: storageOwner() ?? "acc-viewing" }, h(MessageBody, props)),
+        /* Handed its scope, as every mount of it is: the account the case names, else an account of its own. */
+        children: h(MessageBody, { owner: storageOwner() ?? "acc-viewing", ...props }),
       }),
     );
   });
@@ -170,6 +169,66 @@ describe("the paper a mail is painted on", () => {
   });
 });
 
+// ══ the body's controls, drawn by the host ══════════════════════════════════════════════
+
+describe("a host that draws the body's controls itself", () => {
+  type Control = import("../../../packages/letter-body/src/MessageBody.js").BodyControl;
+  const reported: Array<readonly Control[]> = [];
+  const onControls = (controls: readonly Control[]): void => { reported.push(controls); };
+  const last = (): readonly Control[] => reported.at(-1) ?? [];
+  const byId = (id: Control["id"]): Control | undefined => last().find((c) => c.id === id);
+  const press = async (id: Control["id"]): Promise<void> => { await act(async () => { byId(id)!.onPress(); }); };
+  afterEach(() => { reported.length = 0; });
+
+  it("is handed the dark toggle, draws none, and a press flips the letter", async () => {
+    const { COPY } = await mod();
+    const el = await renderIn("dark", { text: "fallback", html: LIGHT_TABLE, onControls });
+    expect(byId("adapt")).toMatchObject({ label: COPY.darkOriginal, pressed: false });
+    expect(buttons(), "the body drew a control the host takes").toEqual([]);
+    expect(el.querySelector(".mb-bar"), "a bar was drawn for controls the host takes").toBeNull();
+    await press("adapt");
+    expect(byId("adapt")).toMatchObject({ label: COPY.darkAdapt, pressed: true });
+    expect(el.querySelector(".mb-sheet")?.hasAttribute("data-dark"), "the letter stayed adapted").toBe(false);
+  });
+
+  it("is handed the flip between the app's type and the sender's layout, and a press frames the letter", async () => {
+    const { COPY } = await mod();
+    const el = await renderIn("light", { text: "Hello there.", html: PLAIN, onControls });
+    expect(byId("design")).toMatchObject({ label: COPY.design, pressed: false });
+    expect(el.querySelector(".mb-flip")).toBeNull();
+    expect(el.querySelector("iframe")).toBeNull();
+    await press("design");
+    expect(byId("design")).toMatchObject({ label: COPY.plain, pressed: true });
+    expect(el.querySelector("iframe"), "the press did not show the sender's layout").not.toBeNull();
+  });
+
+  it("is handed Show images where pictures wait, and a press asks the host to load them", async () => {
+    const { COPY } = await mod();
+    let asked = 0;
+    const html = `<p>Hi</p><img src="https://img.example/a.png" width="64" height="64">`;
+    const imageProxy = (url: string): string => `${location.origin}/img?mid=m1&u=${encodeURIComponent(url)}`;
+    await renderIn("light", { text: "", html, imageProxy, onLoadRemote: () => { asked += 1; }, onControls });
+    expect(byId("pictures")).toMatchObject({ label: COPY.show });
+    expect(buttons()).not.toContain(COPY.show);
+    await press("pictures");
+    expect(asked).toBe(1);
+  });
+
+  it("stands on the reader's sheet only where the host asks for that look", async () => {
+    const plain = await renderIn("light", { text: "Hello there.", html: PLAIN });
+    expect(plain.querySelector(".mb")?.hasAttribute("data-look"), "a body with no look changed its markup").toBe(false);
+    const sheet = await renderIn("light", { text: "Hello there.", html: PLAIN, look: "sheet" });
+    expect(sheet.querySelector(".mb")?.getAttribute("data-look")).toBe("sheet");
+  });
+
+  it("reports again only when a control changes, not on every render", async () => {
+    await renderIn("dark", { text: "fallback", html: LIGHT_TABLE, onControls });
+    const before = reported.length;
+    await act(async () => { root!.render(h(ThemeProvider, { defaultPreference: "dark", storageKey: null, children: h((await mod()).MessageBody, { text: "fallback", html: LIGHT_TABLE, onControls }) })); });
+    expect(reported.length, "a render with nothing changed reported the controls again").toBe(before);
+  });
+});
+
 // ══ 2. the component refuses to invert a mail that is already dark ══════════════════════
 
 describe("dark viewing is offered for light mail and withheld from dark mail", () => {
@@ -259,6 +318,35 @@ describe("dark viewing is offered for light mail and withheld from dark mail", (
       expect(await as("acct_A"), "A's choice was lost").toContain(COPY.darkAdapt);
     } finally {
       document.cookie = "tf_owner=; Path=/; Max-Age=0";
+      localStorage.clear();
+    }
+  });
+
+  it("a host that knows its scheme hands it in, with or without a theme around the body", async () => {
+    const { COPY, MessageBody } = await mod();
+    const adapt = (): string[] => buttons().filter((t) => t === COPY.darkOriginal || t === COPY.darkAdapt);
+    await unmount();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(h(MessageBody, { text: "fallback", html: LIGHT_TABLE, scheme: "dark" })); });
+    expect(adapt(), "a dark host with no theme provider drew the letter light").toEqual([COPY.darkOriginal]);
+    expect(rootTag()).toContain('data-ohmail-dark="1"');
+    await renderIn("dark", { text: "fallback", html: LIGHT_TABLE, scheme: "light" });
+    expect(adapt(), "the handed scheme did not win over the provider").toEqual([]);
+  });
+
+  it("a host that knows its account hands it in: a letter kept original under one is not under another", async () => {
+    const { COPY } = await mod();
+    const props = { text: "fallback", html: LIGHT_TABLE, messageId: "m-owner" };
+    try {
+      await renderIn("dark", { ...props, owner: "acct_A" });
+      await act(async () => { [...host!.querySelectorAll("button")].find((b) => b.textContent === COPY.darkOriginal)!.click(); });
+      await renderIn("dark", { ...props, owner: "acct_B" });
+      expect(buttons(), "another account opened the message in A's colours").toContain(COPY.darkOriginal);
+      await renderIn("dark", { ...props, owner: "acct_A" });
+      expect(buttons(), "A's choice was lost").toContain(COPY.darkAdapt);
+    } finally {
       localStorage.clear();
     }
   });

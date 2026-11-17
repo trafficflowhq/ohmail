@@ -2,8 +2,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { BodyText } from "../app/letter-body/BodyText";
-import { MessageBody } from "../app/letter-body/MessageBody";
+import { BodyText } from "../../../packages/letter-body/src/BodyText";
+import { MessageBody } from "../../../packages/letter-body/src/MessageBody";
 import { qhFixtures } from "../../../packages/client-engine/test/quoted-history-fixtures.js";
 
 /**

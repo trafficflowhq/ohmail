@@ -58,6 +58,9 @@
       "path": "./packages/app-logic"
     },
     {
+      "path": "./packages/letter-body"
+    },
+    {
       "path": "./packages/app"
     }
   ]

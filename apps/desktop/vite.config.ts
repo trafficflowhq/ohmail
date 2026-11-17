@@ -871,6 +871,7 @@ export default defineConfig({
       { find: "@ohmail/client-engine/calendar-writes", replacement: r("../../packages/client-engine/src/calendar-writes.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       // The kit's doors and its squares window, ABOVE the old kit's bare name.
+      { find: "@ohmail/ui/body-parts", replacement: r("../../packages/ui/src/body-parts.ts") },
       { find: "@ohmail/ui/base", replacement: r("../../packages/ui/src/base/index.ts") },
       { find: "@ohmail/ui/mail", replacement: r("../../packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui/squares-window", replacement: r("../../packages/ui/src/squares-window.ts") },
@@ -879,6 +880,11 @@ export default defineConfig({
          `paths` carries the same pair, and the host contract's line under it. */
       { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1/index.ts` },
       { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
+      // The letter's body: its three leaves ABOVE its door, each by its own file. `tsconfig.json`'s `paths` carries the same four.
+      { find: "@ohmail/letter-body/links", replacement: r("../../packages/letter-body/src/rendered-links.ts") },
+      { find: "@ohmail/letter-body/cache", replacement: r("../../packages/letter-body/src/mail-doc-cache.ts") },
+      { find: "@ohmail/letter-body/words", replacement: r("../../packages/letter-body/src/words.ts") },
+      { find: /^@ohmail\/letter-body$/, replacement: r("../../packages/letter-body/src/index.ts") },
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },

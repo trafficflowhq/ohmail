@@ -197,6 +197,7 @@ function productFiles(): Array<{ path: string; src: string }> {
   };
   go(resolve(ROOT, "apps/webapp/app"));
   go(resolve(ROOT, "packages/app-logic/src"));
+  go(resolve(ROOT, "packages/letter-body/src"));
   go(resolve(ROOT, "apps/desktop/src"));
   go(resolve(ROOT, "apps/paired-page/src"));
   return out;

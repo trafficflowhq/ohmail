@@ -19,7 +19,7 @@ import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * a planted view proves the refusal.
  */
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "apps/mobile/src"];
+const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "packages/letter-body/src", "apps/mobile/src"];
 const SKIP = new Set(["node_modules", "dist", ".next"]);
 
 /** Every file that reads the published copy, and the consent question it reads it for. */

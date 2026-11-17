@@ -184,6 +184,7 @@ const DOORS: Record<string, { count: number; why: string }> = {
 const APP = join(__dirname, "../app");
 /** The behaviour moved out of the shell is browser code of the web app still: read with it, keyed `app-logic/…`. */
 const APP_LOGIC = join(__dirname, "../../../packages/app-logic/src");
+const LETTER_BODY = join(__dirname, "../../../packages/letter-body/src");
 const REQUEST = /(?<![\w.$])fetch\s*\(|\?\?\s*fetch\b|\?\s*fetch\s*:|globalThis\.fetch\s*\(|window\.fetch\s*\(|new\s+EventSource\s*\(|new\s+XMLHttpRequest\s*\(|new\s+WebSocket\s*\(|sendBeacon\s*\(/g;
 
 function sources(dir: string): string[] {
@@ -202,7 +203,7 @@ const code = (src: string): string =>
 describe("the lane census", () => {
   it("every browser request in the web app is a lane door or named exempt", () => {
     const found: Record<string, number> = {};
-    for (const [root, prefix] of [[APP, ""], [APP_LOGIC, "app-logic/"]] as const) for (const file of sources(root)) {
+    for (const [root, prefix] of [[APP, ""], [APP_LOGIC, "app-logic/"], [LETTER_BODY, "letter-body/"]] as const) for (const file of sources(root)) {
       const n = (code(readFileSync(file, "utf8")).match(REQUEST) ?? []).length;
       if (n > 0) found[prefix + relative(root, file).split("\\").join("/")] = n;
     }

@@ -7,10 +7,10 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import DOMPurify from "dompurify";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
-import { MessageBody } from "../app/letter-body/MessageBody";
+import { MessageBody } from "../../../packages/letter-body/src/MessageBody";
 import {
   forgetMailDocs, mailDocCacheFor, MAIL_DOC_ENTRIES_MAX, type MailDocInputs,
-} from "../app/letter-body/mail-doc-cache";
+} from "../../../packages/letter-body/src/mail-doc-cache";
 import { EngineProvider } from "../app/shell/engine";
 import { registerSyncGate, type SyncGate, type SyncIdentity } from "@ohmail/app-logic/session/sync-scheduler";
 

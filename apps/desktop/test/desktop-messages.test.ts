@@ -86,7 +86,7 @@ const MIRROR_SOURCE_DIRS = [
   "apps/desktop/src",
   "apps/paired-page/src",
   "apps/webapp/app/components",
-  "apps/webapp/app/letter-body",
+  "packages/letter-body/src",
   "apps/webapp/app/shell",
   "apps/webapp/app/views",
   "packages/app-logic/src",
@@ -166,7 +166,8 @@ function sourceFiles(): string[] {
  *  · `useTranslations("ohbox")` → the namespace is the argument;
  *  · `useTranslations()` unscoped (AppShell.tsx) → the namespace is the first
  *    segment of every dotted key passed to the returned `t`;
- *  · `liveCopy("mailBody", …)` / `activeTranslator("place")` → the NON-HOOK read.
+ *  · `liveCopy("mailBody", …)` / `activeTranslator("place")` → the NON-HOOK read;
+ *  · `bodyCopy("mailBody", …)` → the body package's own non-hook read (`packages/letter-body/src/words.ts`).
  *
  * The second shape is the one a reader misses, and missing it renders key names.
  *
@@ -190,7 +191,7 @@ function namespacesRead(src: string): Set<string> {
   // The one text reader's door reads a namespace the same way (`@ohmail/app/text`).
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   for (const m of code.matchAll(/\buseText\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
-  for (const m of src.matchAll(/\b(?:liveCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
+  for (const m of src.matchAll(/\b(?:liveCopy|bodyCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
     found.add(m[1]!);
   }
 
@@ -351,7 +352,7 @@ function namespacesIn(files: string[]): Map<string, string[]> {
   for (const rel of files) {
     const src = read(rel);
     for (const m of src.matchAll(/useTranslations\(\s*"([A-Za-z0-9_]+)"/g)) add(m[1]!, rel);
-    for (const m of src.matchAll(/\b(?:liveCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
+    for (const m of src.matchAll(/\b(?:liveCopy|bodyCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
       add(m[1]!, rel);
     }
     if (/useTranslations\(\s*\)/.test(src)) {

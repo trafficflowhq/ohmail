@@ -6,7 +6,7 @@
  * capture listener the desktop used to put on the frame. `?scripts=1` adds `allow-scripts`,
  * the harness-only positive control. `window.__links` hands the rig what each listener saw.
  */
-import { buildMailDocument, FRAME_SANDBOX, sanitizeMailHtml } from "../../app/letter-body/MessageBody";
+import { buildMailDocument, FRAME_SANDBOX, sanitizeMailHtml } from "../../../../packages/letter-body/src/MessageBody";
 import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
 
 declare global {
