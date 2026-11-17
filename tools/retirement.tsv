@@ -1067,6 +1067,7 @@ packages/cal-providers/test/google-reader.test.ts	data	reads data files (json): 
 packages/cal-providers/test/microsoft-reader.test.ts	data	reads data files (json) through its helpers: the Microsoft double's seed	none	cal-read	
 packages/cal-providers/test/microsoft-writer.test.ts	data	reads data files (json) through its helpers: the Microsoft double's seed	none	cal-write	
 packages/cal-providers/test/providers.test.ts	data	reads data files (json): the apps' manifests	none	cal-read	
+packages/cal-providers/test/repeat-proof.test.ts	data	reads data files (json): the repeat proof's recorded answers, the bench's and (once recorded) Google's	none	cal-write	
 packages/cal-providers/test/support/test/bench-census.test.ts	data	reads data files (json): the recorded exchanges and the Microsoft double's seed	none	cal-read	
 packages/cal-providers/test/support/test/caldav-test-client.test.ts	data	reads data files through its helper calendar-test-accounts.ts: the accounts and bench files an environment variable names	none	cal-read	
 packages/cal-providers/test/support/test/calendar-test-accounts.test.ts	data	reads files it wrote itself	none	cal-read	

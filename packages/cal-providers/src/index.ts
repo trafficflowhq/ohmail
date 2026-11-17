@@ -11,5 +11,6 @@ export * from "./credentials.js";
 export * from "./request/index.js";
 export * from "./providers.js";
 export * from "./repeat-shapes.js";
+export * from "./series.js";
 /** Microsoft's own address of its API: what a composing program names as the base unless it means another. */
 export { MS_GRAPH_BASE } from "./microsoft/index.js";

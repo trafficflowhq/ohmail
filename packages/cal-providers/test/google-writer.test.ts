@@ -254,7 +254,9 @@ describe("Google's writer", () => {
       ["POST", `${BASE}?sendUpdates=all`],
       ["GET", `${BASE}/${KEY}`],
     ]);
-    expect(again).toEqual(first);
+    // The same event, made by the first insert alone: the second found it so, and nothing waiting is re-based onto what it read.
+    expect(again).toEqual({ ...first, written: undefined });
+    expect([first.ok && first.written, again.ok && again.written]).toEqual([true, undefined]);
   });
 
   it("refuses a change made against a version Google moved past, and leaves Google's event as it was", async () => {
@@ -305,6 +307,7 @@ describe("Google's writer", () => {
     expect(await g.writer.remove(connection, { id: "cal-1" }, target(one), never)).toEqual({
       ok: true,
       items: [{ kind: "gone", id: "evt-1" }],
+      written: true,
     });
     expect(await g.writer.remove(connection, { id: "cal-1" }, target(one), never)).toEqual({
       ok: true,
@@ -563,5 +566,39 @@ describe("Google's writer", () => {
       expect([status, word(a)]).toEqual([status, expected]);
       expect(g.sent.length).toBe(1);
     }
+  });
+
+  it("writes no day of a series yet, and never a day's write onto its series: nothing is asked", async () => {
+    const g = google();
+    const series = g.plant("series-1", { recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU"] });
+    const day = { ...target(series), occurrence: at(9) };
+    const answers = [
+      await g.writer.change(connection, { id: "cal-1" }, day, { summary: "Only that day" }, never),
+      await g.writer.remove(connection, { id: "cal-1" }, day, never),
+      await g.writer.answer(
+        connection,
+        { id: "cal-1" },
+        day,
+        { as: "mila@example.test", reply: "ACCEPTED" },
+        never,
+      ),
+      // Nor a series' end, nor its days from one on as a series of their own.
+      await g.writer.endSeries(connection, { id: "cal-1" }, day, { then: null, mayBeDone: false }, never),
+      await g.writer.continueSeries(
+        connection,
+        { id: "cal-1" },
+        {
+          key: { hex: KEY },
+          from: day,
+          start: at(9),
+          end: at(10),
+          rule: parseRRule("FREQ=WEEKLY;BYDAY=TU")!,
+          change: {},
+        },
+        never,
+      ),
+    ];
+    expect(answers.map(word)).toEqual(Array(5).fill("repeat_unsupported"));
+    expect(g.sent).toEqual([]);
   });
 });

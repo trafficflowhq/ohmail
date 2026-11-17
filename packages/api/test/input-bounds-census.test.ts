@@ -1599,12 +1599,12 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   },
   "calendar/writes.ts :: [\"pending\", \"refused\"]": { origin: "constant", count: 3 },
   "calendar/writes.ts :: followers": {
-    origin: { bounded: "the open writes of one event, at most `CALENDAR_WRITE_LIMITS.openPerEvent` (8)" },
+    origin: { bounded: "the open writes that wait on one write (of its event, and a press's second part), at most the account's open writes, `CALENDAR_WRITE_LIMITS.openPerAccount` (200)" },
     count: 1,
   },
   "calendar/writes.ts :: going": {
-    origin: { bounded: "one write and the open writes of its event that wait on it, at most `openPerEvent` (8)" },
-    count: 1,
+    origin: { bounded: "one write and the open writes that wait on it, at most one more than the account's open writes (`openPerAccount`, 200)" },
+    count: 2,
   },
   // ── CLOSED 2026-09-01. All four were `unbounded` and are now subqueries. ────────────────────
   // The messageIds entry was the critical one and its old disposition is worth keeping in view:

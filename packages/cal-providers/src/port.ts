@@ -185,11 +185,31 @@ export interface WriteTarget {
  * reading's own mapper. A writer answers; it does not throw.
  */
 export type WriteAnswer =
-  | { readonly ok: true; readonly items: readonly ChangeItem[] }
+  /**
+   * `written`: the write's own success: the provider took this very request (its 2xx), and `items`
+   * are the object as that request left it (at CalDAV: the answer's tag absent, or the read-back's
+   * own). Absent where the write was found done (a refused precondition and a compare, an object
+   * already gone or already so): the writes waiting behind it are then never re-based onto `items`,
+   * which may be someone else's newer copy.
+   */
+  | { readonly ok: true; readonly items: readonly ChangeItem[]; readonly written?: true }
   | { readonly ok: false; readonly reason: ProviderRefusal | WriteRefusal; readonly retryAfterMs: number | null };
 
 /** An invitee's own answer, as the calendar format words it. */
 export type WriteReply = "ACCEPTED" | "TENTATIVE" | "DECLINED";
+
+/**
+ * The series the days of a series become from one of its days on (the second half of a press on a
+ * day and the days after it): its own name (`key`, as `create`'s), its start, its end, its repeat,
+ * and the fields the person named for it. Every other line is the series' own.
+ */
+export interface SeriesContinuation {
+  readonly key: WriteKey;
+  readonly start: EventTime;
+  readonly end: EventTime;
+  readonly rule: RRule;
+  readonly change: EventChange;
+}
 
 /**
  * The writing half of a provider. No method sends a change without a precondition: a change and a
@@ -204,6 +224,38 @@ export interface CalendarWriter {
   remove(c: Connection, cal: CalendarRef, target: WriteTarget, signal: AbortSignal): Promise<WriteAnswer>;
   /** The account's own answer as an invitee (`as`: its address on the event). */
   answer(c: Connection, cal: CalendarRef, target: WriteTarget, req: { readonly as: string; readonly reply: WriteReply }, signal: AbortSignal): Promise<WriteAnswer>;
+  /**
+   * The series `target.id` names ends before its day `target.occurrence` (that day and the days after
+   * it go to a series of their own, or are let go): its repeat ends there, and the changed days it
+   * holds from that day on go with the days they named. Against the target's version, as a change.
+   * `then`: the series those days become, as the press's second half will ask it (`continueSeries`),
+   * or `null` where they are let go. Nothing is sent of a press that cannot be finished: the writer
+   * makes that series from the very copy it ends before it sends anything, and where it would refuse
+   * it, refuses the end with that word. `mayBeDone`: may a series found ended exactly where this end
+   * ends it be taken as this end's own (an earlier attempt of it landed)? Only where the queue says so
+   * (not on a write's first attempt, nor where another write may have made that end); else such a
+   * series is another copy than the one the write was made on (`version_stale`). `late`: the end is
+   * too old to send: the member is only looked at, nothing is sent; found ended exactly so, on another
+   * version than the target's and `mayBeDone`, it is answered as done; otherwise `version_stale`.
+   */
+  endSeries(
+    c: Connection, cal: CalendarRef, target: WriteTarget,
+    req: { readonly then: SeriesContinuation | null; readonly mayBeDone: boolean; readonly late?: boolean },
+    signal: AbortSignal,
+  ): Promise<WriteAnswer>;
+  /**
+   * A new object of the days of the series `from.id` names from its day `from.occurrence` on, made
+   * from that series' own component as `from` holds it: every line the series carries, and its
+   * excluded days from that day on, are carried; only what a new series must differ in is written
+   * anew (its own name from `key`, its start and end, its repeat, and the fields `change` names).
+   * Its invitees are asked again, its organizer's own line kept as it is. Under a name that is new,
+   * as `create`; a writer that cannot make it so refuses it with its word. Made only where that
+   * series no longer has those days (it ends before that day): where it goes on from it, they
+   * stand there, and it is refused for its copy (`version_stale`), nothing sent.
+   */
+  continueSeries(
+    c: Connection, cal: CalendarRef, req: SeriesContinuation & { readonly from: WriteTarget }, signal: AbortSignal,
+  ): Promise<WriteAnswer>;
   /**
    * A provider's own move of an event between two calendars of one connection; `null` where it has
    * none and a move is a create and a removal. Named apart from a mailbox's moves on purpose.

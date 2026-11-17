@@ -38,16 +38,34 @@ export const CALENDAR_WRITE_LIMITS = {
 /** The queue's own spelling of an act, and the version of that spelling. */
 export const CALENDAR_WRITE_PAYLOAD_VERSION = 1;
 
+/** The fields a person may name for the days a press on a day and the days after it gives a series of their own. */
+export const CONTINUED_FIELDS = ["title", "notes", "place", "callLink", "busy", "private", "alarms"] as const;
+export type ContinuedField = (typeof CONTINUED_FIELDS)[number];
+
+/**
+ * Where the second half of a press on a day and the days after it comes from: the series (its
+ * event's id), the day its days go on from (that day's key), and which of the new series' fields
+ * the person named. The new series is made from that series' own component, and of the act's
+ * fields only these, its start, its end and its repeat are written anew.
+ */
+export interface CalendarWriteContinuation {
+  readonly eventId: string;
+  readonly at: string;
+  readonly named: readonly ContinuedField[];
+}
+
 /**
  * What a `cal_writes` row's `payload` holds while it is owed: the act, the row it waits for
  * (`after`, a write of the same event recorded before it), and for one half of a two-part act which
- * half it is and the press's key. An applied row keeps none of it.
+ * half it is and the press's key (and, for the second half of a press on a day and the days after
+ * it, where it comes from). An applied row keeps none of it: at most the day a series' end ended
+ * it at ({@link appliedPayloadOf}).
  */
 export interface CalendarWritePayload {
   readonly v: typeof CALENDAR_WRITE_PAYLOAD_VERSION;
   readonly act: CalendarEventAct;
   readonly after: string | null;
-  readonly part: { readonly of: string; readonly n: 1 | 2 } | null;
+  readonly part: { readonly of: string; readonly n: 1 | 2; readonly from?: CalendarWriteContinuation } | null;
 }
 
 type Obj = Record<string, unknown>;
@@ -233,17 +251,193 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
 
 /**
  * Is this stored event a series, or one day of one: its own repeat rule or added days, or the day it
- * replaces? No act touches such a row until series are written, each repeat proven at its provider:
- * the door refuses it, and the drain refuses one recorded before that.
+ * replaces?
  */
 export function isSeriesRow(row: { readonly repeatRule: string | null; readonly recurrenceId: string; readonly addedDates: unknown }): boolean {
   return (row.repeatRule !== null && row.repeatRule !== "") || row.recurrenceId !== ""
     || (Array.isArray(row.addedDates) && row.addedDates.length > 0);
 }
 
+/**
+ * What a stored event is, to a write: one event (`single`), a series by one repeat rule (`series`),
+ * one day of a series that the provider holds changed (`day`), or a series whose days are listed or
+ * that has more than one rule (`listed`), which no write makes.
+ */
+export type CalendarWriteRow = "single" | "series" | "day" | "listed";
+
+/**
+ * The stored event as a write reads it: what makes it a series, its start as stored, its excluded
+ * days, and whose it is (its organizer's address, and the account's own answer on it where the
+ * account is one of its invitees).
+ */
+export interface CalendarWriteRowFacts {
+  readonly repeatRule: string | null;
+  readonly recurrenceId: string;
+  readonly addedDates: unknown;
+  readonly excludedDates: unknown;
+  readonly startKind: string;
+  readonly startLocal: string;
+  readonly startZone: string | null;
+  /**
+   * Whom the event names as its organizer, as door and drain read it off the stored text alike
+   * (the providers' `storedObjectFacts`; where the store keeps no text, its own organizer): `null`
+   * where its text shows no organizer in any spelling and no invitee the reader takes no address
+   * from; else the one mail address its ORGANIZER lines name; `""` where the text does not show it
+   * so (a line the reader takes no address from, or takes not at all, a principal's path, a urn; no
+   * ORGANIZER line beside an invitee told by no address), which is never one of the account's own.
+   */
+  readonly organizer: string | null;
+  readonly myAnswer: string | null;
+  /**
+   * Does the event's own component exclude days by a rule of their own (EXRULE) beside its repeat?
+   * The store keeps no field of it: door and drain read it off the stored text alike (the providers'
+   * `storedObjectFacts`). A series of more than one rule, which no act writes.
+   */
+  readonly excludesByRule: boolean;
+  /**
+   * Does a changed day of the series speak for the days after it too (RANGE=THISANDFUTURE), as its
+   * stored text says (read as `excludesByRule` is)? Such a series is not split: a series of their own
+   * made of its days from one on would lose what that day says of them.
+   */
+  readonly reachesForward: boolean;
+}
+
+export function writeRowOf(row: CalendarWriteRowFacts): CalendarWriteRow {
+  if (row.recurrenceId !== "") return "day";
+  if (row.excludesByRule || (Array.isArray(row.addedDates) && row.addedDates.length > 0)) return "listed";
+  if (row.repeatRule === null || row.repeatRule === "") return "single";
+  return row.repeatRule.includes("\n") ? "listed" : "series";
+}
+
+/** The days of a series that are not as its rule makes them: its excluded days and the changed days stored beside it. */
+export function changedDaysOf(row: Pick<CalendarWriteRowFacts, "excludedDates">, changedRows: number): number {
+  return (Array.isArray(row.excludedDates) ? row.excludedDates.length : 0) + changedRows;
+}
+
+/**
+ * Is this text a day's key as the store writes it (`recurrence_id`): the milliseconds of the moment the
+ * day was first at (a whole day's at its UTC midnight), or, where that moment cannot be said, its zone,
+ * its clock time to the minute (seconds where it has any) and `false`.
+ */
+export function isOccurrenceKey(key: string): boolean {
+  if (/^-?\d{1,16}$/.test(key)) return Number.isSafeInteger(Number(key));
+  const tail = "|false";
+  if (!key.endsWith(tail)) return false;
+  const cut = key.lastIndexOf("|", key.length - tail.length - 1);
+  return cut >= 0 && /^\d{8}T\d{4}(\d{2})?$/.test(key.slice(cut + 1, key.length - tail.length));
+}
+
+const sameStart = (t: CalendarTime, row: CalendarWriteRowFacts): boolean =>
+  t.kind === row.startKind && t.value === row.startLocal && (t.zone ?? null) === row.startZone;
+
+/** An address as an event names it, to compare with the account's own: lower case, without `mailto:`. */
+const addressOf = (a: string): string => a.trim().toLowerCase().replace(/^mailto:/, "");
+
+/**
+ * Is this stored event someone else's? One whose own component names an organizer that is not
+ * one of the account's own addresses (`own`: lower case), a line that names no mail address among
+ * them; or one that names no organizer and holds the account's own answer (an invitation that names
+ * nobody). An event that names no organizer and holds no answer of the account's is the account's own.
+ */
+export function someoneElses(row: Pick<CalendarWriteRowFacts, "organizer" | "myAnswer">, own: ReadonlySet<string>): boolean {
+  if (row.organizer === null) return row.myAnswer !== null;
+  const organizer = addressOf(row.organizer);
+  return organizer === "" || !own.has(organizer);
+}
+
+/**
+ * Why a write may not be made on a stored event, with the word the drain refuses it with:
+ * `read_only` where the event is not the account's to change, `repeat_unsupported` where the act
+ * is no shape of a series this version writes. The door answers the first `calendar_read_only`
+ * (409), the second `validation_failed` (400).
+ */
+export interface CalendarWriteActRefusal {
+  readonly word: "read_only" | "repeat_unsupported";
+  readonly why: string;
+}
+
+/**
+ * Why this act may not be written on this stored event as it stands, or `null`. One rule for the
+ * door and the drain: a row the door recorded before a check is not sent either. `changedDays`:
+ * {@link changedDaysOf}; `own`: the account's own addresses, lower case.
+ *
+ * - Someone else's event (its organizer is not one of the account's own addresses) takes the
+ *   account's answer and nothing else: no change, no day's move or cancel, no removal, no split.
+ *   An answer is taken only on someone else's event, and only where the account is invited to it.
+ * - A series' listed days, or a series of more than one rule, are written by no act.
+ * - One day of a series is named through its series (scope `occurrence` on the series' own row),
+ *   never as a record of its own: a record's act on it would reach the series it stands in.
+ * - Only a series has days to name.
+ * - A series with changed days keeps its start, its repeat and its invitees: its changed days are
+ *   named by the days its start and repeat make, and would then name days it no longer has.
+ */
+export function writeActRefusal(
+  row: CalendarWriteRowFacts, act: Exclude<CalendarEventAct, { kind: "calendar_event_create" }>, changedDays: number, own: ReadonlySet<string>,
+): CalendarWriteActRefusal | null {
+  const readOnly = (why: string): CalendarWriteActRefusal => ({ word: "read_only", why });
+  const shape = (why: string): CalendarWriteActRefusal => ({ word: "repeat_unsupported", why });
+  if (someoneElses(row, own)) {
+    if (act.kind !== "calendar_event_answer") return readOnly("this event is someone else's invitation: it takes an answer and nothing else");
+    if (row.myAnswer === null) return readOnly("the account is not invited to this event");
+  } else if (act.kind === "calendar_event_answer") return readOnly("the account is not invited to this event");
+  const kind = writeRowOf(row);
+  if (kind === "listed") return shape("a series with days listed, or with more than one rule, is not written");
+  if (kind === "day") return shape("one day of a series is written through its series");
+  const scope = "scope" in act ? act.scope.kind : "record";
+  if (scope !== "record" && kind !== "series") return shape("only a series has days to name");
+  if ("scope" in act && act.scope.kind !== "record" && !isOccurrenceKey(act.scope.at)) return shape("a day of a series is named by its key");
+  // The days from one on are told from a moment: the series ends the second before it, and goes on from it.
+  if ("scope" in act && act.scope.kind === "following" && !/^\d{1,16}$/.test(act.scope.at)) {
+    return shape("a day and the days after it are named by the moment the day was first at");
+  }
+  if (scope === "occurrence" && act.kind === "calendar_event_update" && (act.change.repeat !== undefined || act.change.invitees !== undefined)) {
+    return shape("one day of a series has no repeat and no invitees of its own");
+  }
+  // The days from one day on go to a series of their own: a repeat they keep, and the invitees the series has.
+  if (scope === "following" && act.kind === "calendar_event_update" && (act.change.repeat === null || act.change.invitees !== undefined)) {
+    return shape("a day and the days after it keep a repeat, and the series' invitees");
+  }
+  // A changed day that speaks for the days after it would be lost to them in a series of their own (and those after the cut would go
+  // back to the series' own time): such a series is not split.
+  if (scope === "following" && act.kind === "calendar_event_update" && row.reachesForward) {
+    return shape("a series with a changed day that speaks for the days after it (RANGE=THISANDFUTURE) is not split");
+  }
+  if (kind === "series" && changedDays > 0 && act.kind === "calendar_event_update" && scope === "record") {
+    const c = act.change;
+    if (c.repeat !== undefined || c.invitees !== undefined || (c.start !== undefined && !sameStart(c.start, row))) {
+      return shape("a series with changed days keeps its start, its repeat and its invitees");
+    }
+  }
+  return null;
+}
+
 /** The payload a row is recorded with. */
 export function writePayloadOf(act: CalendarEventAct, after: string | null, part: CalendarWritePayload["part"]): CalendarWritePayload {
   return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after, part };
+}
+
+/**
+ * What an applied row keeps in place of its act: nothing of the person's. A write that ended a
+ * series before one of its days (a day and the days after it: the first part of a press, or their
+ * removal alone) keeps that day, by its key and nothing else: the queue asks it of a later write of
+ * the same series whether an end found at the provider may be this row's (the end it made is the
+ * series ended at that day), and of a press's second part whether its first ended the series at the
+ * day it goes on from. Every other applied row keeps nothing (`{}`).
+ */
+export function appliedPayloadOf(act: CalendarEventAct | null): { readonly ended: string } | Record<string, never> {
+  return act !== null && "scope" in act && act.scope.kind === "following" && /^\d{1,16}$/.test(act.scope.at) ? { ended: act.scope.at } : {};
+}
+
+/** The day an applied row ended its series at ({@link appliedPayloadOf}), by its key; `null` for a row that keeps none, or any other payload. */
+export function endedDayOf(payload: unknown): string | null {
+  return isObject(payload) && closed(payload, ["ended"]) && typeof payload.ended === "string" && /^\d{1,16}$/.test(payload.ended) ? payload.ended : null;
+}
+
+function continuationOf(v: unknown): CalendarWriteContinuation | null {
+  if (!isObject(v) || !closed(v, ["eventId", "at", "named"]) || !isWriteUuid(v.eventId) || !occurrenceKey(v.at) || !Array.isArray(v.named)) return null;
+  const allowed: ReadonlySet<string> = new Set(CONTINUED_FIELDS);
+  const named = v.named.filter((n): n is ContinuedField => typeof n === "string" && allowed.has(n));
+  return named.length === v.named.length && new Set(named).size === named.length ? { eventId: v.eventId, at: v.at, named } : null;
 }
 
 /** A row's payload as this version reads it, or `null` for one it does not know: an applied row's, another version's, a damaged one. */
@@ -254,8 +448,13 @@ export function parseWritePayload(v: unknown): CalendarWritePayload | null {
   if (v.after !== null && !isWriteUuid(v.after)) return null;
   let part: CalendarWritePayload["part"] = null;
   if (v.part !== null) {
-    if (!isObject(v.part) || !closed(v.part, ["of", "n"]) || !isWriteKey(v.part.of) || (v.part.n !== 1 && v.part.n !== 2)) return null;
-    part = { of: v.part.of, n: v.part.n };
+    if (!isObject(v.part) || !closed(v.part, ["of", "n"], ["from"]) || !isWriteKey(v.part.of) || (v.part.n !== 1 && v.part.n !== 2)) return null;
+    if (!Object.hasOwn(v.part, "from")) part = { of: v.part.of, n: v.part.n };
+    else {
+      const from = continuationOf(v.part.from);
+      if (from === null || v.part.n !== 2) return null;
+      part = { of: v.part.of, n: v.part.n, from };
+    }
   }
   return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after: v.after, part };
 }
