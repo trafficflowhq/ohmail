@@ -309,6 +309,8 @@ describe("census: every organize press carries the verb it means", () => {
     "apps/webapp/app/(product)/mailbox/useCloudFirstRun.ts": { presses: 1, verb: "forwards FirstRun's verb" },
     // Settings → Mailboxes "Organize here" on the web: the hosted door, absent = takeover.
     "apps/webapp/app/(product)/mailbox/MailboxSection.tsx": { presses: 1, verb: "takeover (hosted default)" },
+    // The new Mailboxes pane's web wire, the same press: no body, so the hosted door reads it as a takeover.
+    "apps/webapp/app/(product)/mailbox/mailboxes-wire.ts": { presses: 1, verb: "takeover (hosted default)" },
     // Settings → Mailboxes "Organize from this machine" on the desktop: the takeover route.
     "apps/desktop/src/DesktopMailboxes.tsx": { presses: 1, verb: "takeover (its own route)" },
     // The phone's consent: its door stamps join over every consent and has no takeover verb.

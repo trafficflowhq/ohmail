@@ -10,7 +10,8 @@ import { webHost, type WebFacts, type WebSupplies } from "../app/(product)/mailb
 
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk",
-  "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "mailboxes",
+  "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "connect",
+  "mailboxes",
 ] as const;
 /** A stand-in that is only ever compared: which thing was handed on, not what it does. */
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
@@ -90,6 +91,7 @@ describe("the web shell's answers on the managed service", () => {
   it("hands on every wire it has but the switch for a person's own model", () => {
     expect(withheld(host)).toEqual(["calendar", "ownModelAutoSuggest"]);
     expect(host.wires.liveBody).toBe(has.wires.liveBody);
+    expect(host.wires.connect).toBe(has.wires.connect);
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access });
   });
 

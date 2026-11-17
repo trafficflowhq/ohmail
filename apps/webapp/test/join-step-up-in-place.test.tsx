@@ -9,6 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 
 const FULL = {
   user: {
@@ -100,27 +101,32 @@ async function atTheMailboxStep() {
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
+  /* The step is the one connect form, and the second factor is asked by the one dialog: the form's fields by their
+     labels, the dialog by its role, its code field by its label, its presses by their words (a key's hint aside). */
+  const probes = mailboxProbes(host, en, act);
+  const prompt = () => document.querySelector<HTMLElement>('[role="dialog"]');
+  const codeField = (): HTMLInputElement | null => {
+    const label = [...(prompt()?.querySelectorAll("label") ?? [])].find((l) => l.textContent === en.stepUp.codeLabel);
+    return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+  };
   const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
+    const input = id === "stepup-code" ? codeField() : probes.input(id);
     expect(input, `#${id} is not on screen`).toBeTruthy();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
+    await probes.typeInto(input, value, id);
   };
   const press = async (label: string, scope: ParentNode = host) => {
-    const button = [...scope.querySelectorAll("button")].find((b) => b.textContent === label);
+    const buttons = [...scope.querySelectorAll("button")];
+    const button = buttons.find((b) => b.textContent === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     await settle();
   };
   const h1 = () => host.querySelector("h1")?.textContent ?? "";
-  const prompt = () => host.querySelector<HTMLElement>('[data-testid="step-up-prompt"]');
-  const value = (id: string) => host.querySelector<HTMLInputElement>(`#${id}`)?.value ?? null;
-  const connectButton = () => [...host.querySelectorAll("button")].find((b) => b.textContent === en.join.connectMailbox) ?? null;
+  const value = (id: string) => probes.input(id)?.value ?? null;
+  const connectButton = () => probes.button(en.join.connectMailbox);
 
   expect(h1()).toBe(en.join.step_mailbox_title);
-  const tile = [...host.querySelectorAll('[role="radio"]')]
-    .find((b) => (b.textContent ?? "").startsWith(en.providerPicker.otherLabel));
-  await act(async () => { (tile as HTMLElement).click(); });
+  await probes.choose(en.providerPicker.otherLabel);
   await type("join-mb-address", "pat@family.example");
   await type("join-imap", "mail.family.example");
   await type("join-smtp", "smtp.family.example");
@@ -142,7 +148,7 @@ describe("the mailbox step asks for the second factor in place", () => {
     expect(ui.prompt()!.contains(document.activeElement), "focus is not in the prompt").toBe(true);
 
     await ui.type("stepup-code", "123456");
-    await ui.press(en.devices.stepUpVerify, ui.prompt()!);
+    await ui.press(en.stepUp.verify, ui.prompt()!);
 
     expect(stepUps).toEqual([{ code: "123456" }]);
     expect(createBodies, "exactly the refused connect, sent again once").toHaveLength(2);
@@ -155,7 +161,7 @@ describe("the mailbox step asks for the second factor in place", () => {
     const ui = await atTheMailboxStep();
     await ui.press(en.join.connectMailbox);
     expect(ui.prompt()).toBeTruthy();
-    await ui.press(en.devices.cancel, ui.prompt()!);
+    await ui.press(en.stepUp.cancel, ui.prompt()!);
     expect(ui.prompt()).toBeNull();
     expect(createBodies).toHaveLength(1);
     expect(ui.h1()).toBe(en.join.step_mailbox_title);
@@ -170,7 +176,7 @@ describe("the mailbox step asks for the second factor in place", () => {
     const ui = await atTheMailboxStep();
     await ui.press(en.join.connectMailbox);
     await ui.type("stepup-code", "123456");
-    await ui.press(en.devices.stepUpVerify, ui.prompt()!);
+    await ui.press(en.stepUp.verify, ui.prompt()!);
     expect(createBodies).toHaveLength(2);
     expect(ui.h1()).toBe(en.join.expiredTitle);
     const signIn = [...ui.host.querySelectorAll("a")].find((a) => a.textContent === en.join.signIn);
@@ -248,7 +254,7 @@ describe("the trial mail's button, for an account that never connected a mailbox
     await ui.press(en.join.connectMailbox);
     expect(ui.prompt(), "the factor is asked for on the step, not a dead end").toBeTruthy();
     await ui.type("stepup-code", "123456");
-    await ui.press(en.devices.stepUpVerify, ui.prompt()!);
+    await ui.press(en.stepUp.verify, ui.prompt()!);
     expect(createBodies).toHaveLength(2);
     expect(ui.h1()).toBe(en.join.step_connected_title);
   });

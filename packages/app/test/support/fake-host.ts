@@ -58,6 +58,7 @@ const WIRES = [
   "seedReview",
   "folderSummary",
   "ownModelAutoSuggest",
+  "connect",
   "mailboxes",
   "calendar",
 ] as const satisfies readonly (keyof HostWires)[];

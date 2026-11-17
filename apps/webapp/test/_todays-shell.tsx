@@ -172,7 +172,7 @@ export function hostFromTodaysInputs(
       draftReply: orNone(props.draftReplyWire),
       firstRun: orNone(props.firstRun),
       seedReview: apiConfigured() ? CLOUD_SEED_REVIEW : NONE,
-      screening: NONE, autoFiled: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, mailboxes: NONE,
+      screening: NONE, autoFiled: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, connect: NONE, mailboxes: NONE,
     } as unknown as HostContract["wires"],
     capabilities: {
       ...CANNOT,

@@ -37,7 +37,8 @@ describe("a signed-in account can connect a mailbox without leaving the shell", 
   it("THE REGRESSION: POST /mailboxes has a caller outside the onboarding wizard", () => {
     // The single fact whose absence caused the outage. If this is ever true only of
     // the wizard's mailbox step again, the dead end is back.
-    const callers = ["../app/(product)/join/MailboxStep.tsx", "../app/(product)/mailbox/MailboxSection.tsx"]
+    // The wizard's mailbox step is the one connect form now, and its create is the web's connect wire's.
+    const callers = ["../app/(product)/mailbox/connect-wire.ts", "../app/(product)/mailbox/MailboxSection.tsx"]
       .filter((p) => /mailboxApi\.create\(|mailboxes\.create\(/.test(read(p)));
     expect(callers).toHaveLength(2);
   });

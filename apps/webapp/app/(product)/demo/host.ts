@@ -12,7 +12,7 @@ import { browserNotificationHost } from "../../shell/notification-settings";
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk",
   "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary",
-  "ownModelAutoSuggest", "mailboxes", "calendar",
+  "ownModelAutoSuggest", "connect", "mailboxes", "calendar",
 ] as const;
 
 /** What the demo's page says of itself: which service it shows, and what a send from it may carry. */

@@ -17,8 +17,8 @@ const still = <T,>(value: T): Signal<T> => ({ read: () => value, subscribe: () =
 const noWire: HostWires = {
   organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: NONE, profileImport: NONE, consent: NONE,
   images: NONE, olderBody: NONE, junk: NONE, trash: NONE, suggest: NONE, draftReply: NONE, firstRun: NONE,
-  screening: NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, mailboxes: NONE,
-  calendar: NONE,
+  screening: NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, connect: NONE,
+  mailboxes: NONE, calendar: NONE,
 };
 
 /** A host that cannot do anything: every wire, read, feature, device verb and signal `none`. */
