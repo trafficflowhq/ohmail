@@ -352,9 +352,10 @@ describe("a busy refresh door says a replay is safe", () => {
 
   it("the statement is the refresh door's and the send's alone, and absent it a public write stays not-retryable", () => {
     // The send's reservation deduplicates every replay of its key, so a busy pool may invite one. An
-    // invitation's answer is that send, under the press's key.
+    // invitation's answer is that send, under the press's key. A phone app's handoff rotates as the refresh door
+    // does, under the same attempt's name, and answers a replay of it the same way.
     expect(apiRoutes.filter((r) => r.options?.replaySafe).map((r) => `${r.method} ${r.pattern}`).sort())
-      .toEqual(["POST /auth/refresh", "POST /drafts/:id/send", "POST /messages/:id/invitation/answer"]);
+      .toEqual(["POST /auth/refresh", "POST /drafts/:id/send", "POST /messages/:id/invitation/answer", "POST /pair/handoff"]);
     const post = req("POST", "/auth/login", { body: "{}" });
     const body = async (r: Response) => ((await r.json()) as { error: { retryable?: boolean } }).error.retryable;
     return Promise.all([

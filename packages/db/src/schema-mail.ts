@@ -1515,6 +1515,9 @@ export const devices = pgTable("devices", {
   // NULL = never completed a drain. Stamped by the API's sync route alone, throttled in the
   // statement; the `device_sync_stale` alert reads it. Never projected into a DTO.
   lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  // mail 0209 — the device whose session handed this one its sign-in on the same phone, or NULL. A reuse sweep and a
+  // take-back of that device end this one too. No foreign key; never projected into a DTO.
+  handedOffFrom: uuid("handed_off_from"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("devices_id_account_uq").on(t.id, t.accountId),
   ixUser: index("devices_user_idx").on(t.userId) }));
@@ -1606,7 +1609,7 @@ export const refreshTokens = pgTable("refresh_tokens", {
 export const pairingTokens = pgTable("pairing_tokens", {
   id: uuid("id").defaultRandom().primaryKey(),
   createdByUserId: uuid("created_by_user_id").references(() => users.id),
-  grant: text("grant").notNull(),                  // 'invite' | 'device-pair' (CHECK in 0059)
+  grant: text("grant").notNull(),                  // 'invite' | 'device-pair' | 'app-handoff' (CHECK in 0059, 0209)
   tokenHash: text("token_hash").notNull(),         // sha256(raw); the raw value is never at rest
   label: text("label").notNull().default(""),      // device-pair: becomes the device row's label
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -1618,6 +1621,13 @@ export const pairingTokens = pgTable("pairing_tokens", {
    * token), which a CHECK holds on a server.
    */
   accountId: uuid("account_id"),
+  /**
+   * mail 0209 — an `app-handoff` code's binding: the receiver's SHA-256 challenge (the redeem must present its
+   * verifier), and the device of the session that minted it (the code is spent only while that session lives). A
+   * CHECK holds both present exactly for that grant.
+   */
+  challengeHash: text("challenge_hash"),
+  handoffFromDeviceId: uuid("handoff_from_device_id"),
 }, (t) => ({
   uqToken: unique().on(t.tokenHash),
 }));

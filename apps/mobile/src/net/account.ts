@@ -536,3 +536,12 @@ export function exportFilename(now: Date): string {
   const p = (n: number): string => String(n).padStart(2, "0");
   return `ohmail-settings-${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}.json`;
 }
+
+/**
+ * THE OTHER APP'S OWN DOWNLOAD PAGE, on its domain: where the switch's store verb goes on a phone without the Play
+ * Store, and on an iPhone until the calendar's App Store page exists. A static page (no form, no script that reads
+ * anything of the visit); the system browser opens it on the person's press.
+ */
+export function downloadPageOf(host: string): string {
+  return `https://${host}/download`;
+}

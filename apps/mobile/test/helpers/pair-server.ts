@@ -17,6 +17,7 @@ import {
   type PairOutcome,
   type PairingEnv,
 } from "../../src/net/pairing";
+import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import type { DatabaseSync } from "node:sqlite";
@@ -162,6 +163,8 @@ export function pairServer(opts: PairServerOptions = {}) {
   const log: SyncChange[] = [];
   let seq = 0;
   const mintable = new Set<string>();
+  /** The sibling's one-use handoff codes, each bound to the challenge it was minted for (`app-handoff`). */
+  const handoffs = new Map<string, string>();
   /** The family's one live refresh token — rotation moves it; reuse of an old one revokes. */
   let refreshHead: string | null = null;
   let revoked = false;
@@ -243,7 +246,7 @@ export function pairServer(opts: PairServerOptions = {}) {
           json(404, { error: { code: "not_found", message: "no such route" } });
           return;
         }
-        let parsed: { grant?: unknown; token?: unknown; kind?: unknown } = {};
+        let parsed: { grant?: unknown; token?: unknown; kind?: unknown; verifier?: unknown } = {};
         try {
           parsed = JSON.parse(body) as typeof parsed;
         } catch {
@@ -260,6 +263,27 @@ export function pairServer(opts: PairServerOptions = {}) {
               message: `device kind must be one of ${whitelist.map((k) => `"${k}"`).join(", ")}`,
             },
           });
+          return;
+        }
+        // THE HANDOFF'S ARM, as the real redeem's: a phone's kind only, refused before the burn; the code spent only
+        // with the verifier of the challenge it was bound to, and a wrong one burns nothing.
+        if (parsed.grant === "app-handoff") {
+          if (parsed.kind !== "mobile-android" && parsed.kind !== "mobile-ios") {
+            json(400, { error: { code: "validation_failed", message: "a handoff is redeemed by a phone" } });
+            return;
+          }
+          const bound = typeof parsed.token === "string" ? handoffs.get(parsed.token) : undefined;
+          const verified = typeof parsed.verifier === "string"
+            && createHash("sha256").update(parsed.verifier, "utf8").digest("base64url") === bound;
+          if (bound === undefined || !verified) {
+            json(404, { error: { code: "pairing_invalid", message: "no live pairing token matches" } });
+            return;
+          }
+          handoffs.delete(parsed.token as string);
+          revoked = false;
+          endedWith = null;
+          family += 1;
+          json(200, { grant: "app-handoff", tokens: mintPair() });
           return;
         }
         if (parsed.grant !== "device-pair" || typeof parsed.token !== "string" || !mintable.has(parsed.token)) {
@@ -404,6 +428,8 @@ export function pairServer(opts: PairServerOptions = {}) {
     addMessage,
     /** Put a single-use pairing token on the table — what the desktop's Devices pane mints. */
     mintPairToken: (token: string) => mintable.add(token),
+    /** Put the sibling app's one-use handoff code on the table, bound to the receiver's challenge. */
+    mintHandoffToken: (token: string, challenge: string) => handoffs.set(token, challenge),
     /**
      * The desktop Devices revoke: every access token dies NOW, the refresh answers 401 — naming
      * `refresh_revoked` when asked to, as the current server does (Devices, sign out everywhere).

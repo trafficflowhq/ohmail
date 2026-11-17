@@ -9,7 +9,8 @@
  * {@link resolveAccountId} takes the server's word — a door naming no account is refused.
  */
 import {
-  clientHeaders, isSessionRefusal, mirrorDbName, originNeedsPin, type OhmailEngine, type ScheduleFilesAnswer, type SqlMirrorStore,
+  clientHeaders, isSessionRefusal, mirrorDbName, originNeedsPin, pairLink, type OhmailEngine, type ScheduleFilesAnswer,
+  type SqlMirrorStore,
 } from "@ohmail/client-engine";
 import {
   FORWARD_PARTS_HELLO_MS,
@@ -826,7 +827,11 @@ async function endMintedPair(
  */
 async function pairWithServer(
   env: PairingEnv,
-  input: { admission: PairAdmission; token: string },
+  /**
+   * `handoff`: the code is the sibling app's single-use handoff, spent with the verifier of the challenge this app
+   * made for it (`grant: "app-handoff"`); the phone's kind is always declared and never retried without.
+   */
+  input: { admission: PairAdmission; token: string; handoff?: { verifier: string } },
   /** Which surface the session is for: the screens' boots the engine here, the shell's never does. */
   to: "screens" | "shell",
 ): Promise<PairOutcome | ShellOutcome> {
@@ -886,7 +891,9 @@ async function pairWithServer(
     fetchImpl(`${origin}/pair/redeem`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify(input.handoff ? {
+        grant: "app-handoff", token, verifier: input.handoff.verifier, kind: env.deviceKind,
+      } : {
         grant: "device-pair",
         token,
         ...(declare && env.deviceKind ? { kind: env.deviceKind } : {}),
@@ -910,6 +917,7 @@ async function pairWithServer(
     redeemed = await redeem(true);
     answer = await parse(redeemed);
     const kindRefused =
+      input.handoff === undefined &&
       env.deviceKind !== undefined &&
       redeemed.status === 400 &&
       answer.error?.code === "validation_failed" &&
@@ -1036,6 +1044,42 @@ export { pairForScreens as pairWithServer };
  */
 export function pairForShell(env: PairingEnv, input: { admission: PairAdmission; token: string }): Promise<ShellOutcome> {
   return pairWithServer(env, input, "shell") as Promise<ShellOutcome>;
+}
+
+/**
+ * THE SIBLING APP'S HANDOFF, SPENT: the same ceremony as a scanned code's (the admission a probe made of the link's
+ * origin and pin, the same refusals, the same storing of the pairing), redeemed as the handoff's grant with the
+ * verifier of this app's own challenge. Only the switch's receiving step calls it, with a verifier it holds.
+ */
+export function pairByHandoff(
+  env: PairingEnv, input: { admission: PairAdmission; token: string; verifier: string }, to: "screens" | "shell",
+): Promise<PairOutcome | ShellOutcome> {
+  return pairWithServer(env, { admission: input.admission, token: input.token, handoff: { verifier: input.verifier } }, to);
+}
+
+/**
+ * THE PAIRINGS THIS PHONE HOLDS LIVE: each paired row whose credential stands, and this phone's own mailbox. An app
+ * holding any of them takes no handoff; their digests are what its switch provider answers the sibling from.
+ */
+export async function livePairings(env: Pick<PairingEnv, "profiles">): Promise<ServerProfile[]> {
+  return (await env.profiles.list()).filter((p) => p.origin === LOCAL_ENGINE_ORIGIN || p.refreshToken !== null);
+}
+
+/**
+ * THE SENDER'S HALF OF A HANDOFF, for a session on a paired door only (this phone's own mailbox mints nothing): one
+ * rotation of its refresh token that also asks for a code bound to the sibling's challenge, answered as the pairing
+ * link the code rides in (this pairing's origin and pin, the code in the fragment), or null where no code came.
+ */
+export function handoffMinter(
+  session: { readonly profile: Pick<ServerProfile, "origin" | "pin">; readonly bearer: BearerManagerRN | null; readonly standalone: boolean },
+  target: "ohmail" | "ohcal",
+): ((challenge: string) => Promise<string | null>) | undefined {
+  const { bearer } = session;
+  if (session.standalone || bearer === null) return undefined;
+  return async (challenge) => {
+    const code = await bearer.renewForHandoff({ challenge, target });
+    return code === null ? null : pairLink(session.profile.origin, code.token, session.profile.pin);
+  };
 }
 
 export async function connectShellById(env: PairingEnv, id: string): Promise<ShellOutcome> {

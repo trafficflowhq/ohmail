@@ -461,6 +461,7 @@ describe("the sign-in and token routes name the credential, not the session", ()
       "enrollmentResult(",     // the factor-enrolment helper — exchanges into a FULL session
       "sessionMinter(",        // the paired-device redeem's minter
       ".refresh(",             // POST /auth/refresh
+      "rotateNativeRefresh(",  // the native rotation: POST /auth/refresh's body branch and POST /pair/handoff
       ".token(",               // POST /oauth/token
       ".claimDesktopLink(",    // POST /auth/desktop-claim
       ".claimDesktopApproval(", // POST /auth/desktop-approval/claim

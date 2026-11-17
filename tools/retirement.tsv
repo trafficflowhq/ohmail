@@ -290,6 +290,8 @@ apps/mobile/test/unified-push.test.ts	source-text	reads source as text (js, ts, 
 apps/mobile/test/unsaved-changes.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/update-verbs.test.ts	data	reads data files (json): the app's manifest and the message catalogue	none	phone-shell	
 apps/mobile/test/use-lists-clock.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/variant-config.test.ts	data	reads data files (json): the app's configuration, which the variants resolve	none	phone-apps	
+apps/mobile/test/variant-table.test.ts	data	reads data files (json): today's identifiers in the app's configuration	none	phone-apps	
 apps/mobile/test/verbs-announce.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/waiting-on-the-organizer.test.ts	data	reads data files (json): the message catalogue	none	phone-shell	
 apps/mobile/test/world-memo-owner.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	

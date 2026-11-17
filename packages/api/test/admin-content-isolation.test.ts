@@ -701,11 +701,12 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
  * Columns the sweep cannot UPDATE because the ROW is immutable, and which {@link seedWorld}
  * therefore writes the marker into at INSERT.
  *
- * EMPTY today: the one append-only table in this schema left with the money. Kept as a named,
- * empty set rather than deleted, because the mechanism is what a future immutable table needs
- * and the sweep would otherwise throw on the first UPDATE against one.
+ * No immutable table today (the one append-only table left with the money); the mechanism stays for a future one.
+ * `pairing_tokens.challenge_hash` (mail 0209) is here for another reason: `pairing_tokens_handoff_bound` lets it stand
+ * only on an `app-handoff` row, where it is free text held to 43 base64url characters by its writer alone, so the
+ * seeded invitation refuses the sweep's UPDATE and the marker goes in at INSERT on a seeded handoff row.
  */
-const INSERT_TAINTED: ReadonlySet<string> = new Set<string>();
+const INSERT_TAINTED: ReadonlySet<string> = new Set<string>(["pairing_tokens.challenge_hash"]);
 
 /**
  * Tables this file plants no row in, so nothing in them can be tainted.
@@ -1916,6 +1917,12 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   await db.insert(pairingTokens).values({
     createdByUserId: session.userId, accountId: accountOfUser(session.userId), grant: "invite", tokenHash: `pt-${tag}`,
     label: `pairing-label-${tag}`, expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),
+  });
+  // mail 0209 — a handoff code, whose challenge column stands on this grant alone: tainted at INSERT (INSERT_TAINTED).
+  await db.insert(pairingTokens).values({
+    createdByUserId: session.userId, accountId: accountOfUser(session.userId), grant: "app-handoff", tokenHash: `ph-${tag}`,
+    label: `handoff-label-${tag}`, expiresAt: new Date(FIXED_NOW.getTime() + 60_000),
+    challengeHash: `${markerFor("pairing_tokens", "challenge_hash")}-${tag}`, handoffFromDeviceId: crypto.randomUUID(),
   });
   await db.insert(invites).values({
     codeHash: `inv-${tag}`, email: `invited-${tag}@example.com`,

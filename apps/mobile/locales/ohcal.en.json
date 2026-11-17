@@ -1,0 +1,5 @@
+{
+  "ios": {
+    "NSCameraUsageDescription": "ohcal uses the camera only to scan a pairing QR code."
+  }
+}

@@ -53,6 +53,10 @@ function native(): NativeApi | null {
   if (typeof require !== "function") return cached;
   try {
     /* eslint-disable @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-assignment */
+    // AN APP THAT CARRIES NO MAIL PUSH (the calendar's) is built without the native module, and the package's
+    // module-init throw would be the fatal one above: asked first, without loading the package.
+    const { requireOptionalNativeModule } = require("expo") as { requireOptionalNativeModule: (name: string) => unknown };
+    if (requireOptionalNativeModule("ExpoUnifiedPush") === null) return cached;
     // A lazy require, for the reason in the header: on a platform without the native module this
     // import is a throw, and it must not be one that happens at module load.
     const mod = require("expo-unified-push") as {

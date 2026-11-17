@@ -580,6 +580,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "POST /pair/redeem": { scalarsOnly: true },
   // A link's state by its hash: one string, refused unless it is sha256's 43 base64url characters.
   "POST /pair/state": { scalarsOnly: true },
+  // A phone app's handoff: a refresh token, an attempt's name, a 43-character challenge and a closed-set target.
+  "POST /pair/handoff": { scalarsOnly: true },
 
   // ── sync ────────────────────────────────────────────────────────────────────────────────
   // `?types=` is validated against a closed set of nine entity names (`VALID_TYPES`), so its
@@ -1707,8 +1709,14 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // the swept sessions of the at most REUSE_SWEEPS_MAX it keeps.
   "auth/auth-service.ts :: ackDevices": { origin: { bounded: "one per sweep row the listing read, `limit`ed by REUSE_SWEEPS_SCAN" }, count: 1 },
   "auth/auth-service.ts :: sweptSessions": { origin: { bounded: "the swept sessions of the at most REUSE_SWEEPS_MAX sweeps the listing keeps" }, count: 1 },
-  "auth/session-lifecycle.ts :: families.slice(i, i + 500)": { origin: { bounded: "sliced into 500-family chunks by the caller, explicitly" }, count: 1 },
+  "auth/session-lifecycle.ts :: families.slice(i, i + 500)": { origin: { bounded: "sliced into 500-family chunks by the caller, explicitly" }, count: 2 },
   "auth/session-lifecycle.ts :: live.map((r) => r.familyId)": { origin: { bounded: "the live families of ONE session's chain, which the refresh ladder bounds" }, count: 1 },
+  // The handoff's lineage (`revokeHandedOff`): each step's devices and the families it ended, in 500-row slices.
+  "auth/session-lifecycle.ts :: frontier.slice(i, i + 500)": { origin: { bounded: "sliced into 500-device chunks by the caller, explicitly" }, count: 2 },
+  // The two grants that mint a session, voided together: a literal pair.
+  "auth/session-lifecycle.ts :: [\"device-pair\", \"app-handoff\"]": { origin: "constant", count: 1 },
+  // The pairings a person lists: the two public grants, a literal pair.
+  "pairing.ts :: [\"invite\", \"device-pair\"]": { origin: "constant", count: 1 },
   "auth/session-reaper.ts :: [...new Set(rows.map((c) => c.familyId))]": { origin: { bounded: "the reaper's own claim batch, `limit`ed by its pass size" }, count: 1 },
   "auth/session-reaper.ts :: ids": { origin: { bounded: "the reaper's own claim batch, `limit`ed by its pass size" }, count: 1 },
   "push-service.ts :: chunk": { origin: { bounded: "PRUNE_FAMILIES (500) of the families a revoke ended, sliced before the two reads of each chunk" }, count: 2 },

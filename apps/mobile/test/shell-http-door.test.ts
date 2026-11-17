@@ -46,7 +46,7 @@ function sessionOver(fetch: ShellSession["fetch"], cleared = true): ShellSession
 
 const get = (path: string, more: object = {}) => ({ scope: SCOPE, method: "GET" as const, path, headers: [] as [string, string][], body: null, ...more });
 
-function hostOver(door: HttpDoor) {
+function hostOver(door: HttpDoor, more: Partial<ConstructorParameters<typeof BridgeHost>[0]> = {}) {
   const posted: Record<string, unknown>[] = [];
   const host = new BridgeHost({
     post: (_epoch, text) => void posted.push(JSON.parse(text) as Record<string, unknown>),
@@ -58,6 +58,7 @@ function hostOver(door: HttpDoor) {
     place: () => {},
     note: () => {},
     oldCopy: { page: async () => ({ refused: "notReady" as const }), done: async () => ({ refused: "notReady" as const }) },
+    ...more,
   });
   host.begin("e1");
   const say = (message: object, facts: Partial<{ origin: string; mainFrame: boolean; epoch: string }> = {}) =>
@@ -104,6 +105,17 @@ describe("the shell's HTTP door", () => {
       expect(answer, spec).toMatchObject({ status: 403 });
     }
     expect(await door.request(get("/admin/accounts"), signal)).toMatchObject({ status: 403 });
+    expect(t.calls).toHaveLength(0);
+  });
+
+  it("never lets the page reach a route that answers session tokens or spends a pairing or handoff code", async () => {
+    const t = transport();
+    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true });
+    const signal = new AbortController().signal;
+    for (const path of ["/auth/2fa/totp/activate", "/auth/2fa/webauthn/register/verify", "/pair/handoff", "/pair/redeem"]) {
+      const answer = await door.request(get(path, { method: "POST", body: { as: "text", text: "{}" } }), signal);
+      expect(answer, path).toMatchObject({ status: 403 });
+    }
     expect(t.calls).toHaveLength(0);
   });
 
@@ -183,5 +195,52 @@ describe("the bridge's native end", () => {
     expect(seen.map((s) => s.aborted)).toEqual([true, false]);
     host.begin("e2");
     expect(seen.map((s) => s.aborted)).toEqual([true, true]);
+  });
+});
+
+describe("the switch's kinds at the bridge's native end", () => {
+  const EVENT = "0b9f2c1e-7d4a-4c1b-9e3f-5a6b7c8d9e0f";
+  const quiet = new HttpDoor({ live: () => null, ready: () => false });
+
+  function switchDouble() {
+    const opened: unknown[] = [];
+    return {
+      opened,
+      door: {
+        read: async () => ({ other: "here" as const }),
+        open: async (to: unknown) => (opened.push(to), { went: "absent" as const }),
+        store: async () => ({ opened: true }),
+      },
+    };
+  }
+
+  it("answers each kind from native's switch, and a place of this app's direction only", async () => {
+    const { door, opened } = switchDouble();
+    const { posted, say, settled } = hostOver(quiet, { app: "ohmail", switch: door });
+    say({ id: 1, epoch: "e1", kind: "switch.read" });
+    say({ id: 2, epoch: "e1", kind: "switch.open", to: { to: "event", id: EVENT } });
+    say({ id: 3, epoch: "e1", kind: "switch.open", to: { to: "message", id: EVENT } });
+    say({ id: 4, epoch: "e1", kind: "switch.store" });
+    await settled();
+    await settled();
+    const by = (id: number) => posted.find((p) => p.id === id);
+    expect(by(1)).toMatchObject({ ok: true, other: "here" });
+    expect(by(2)).toMatchObject({ ok: true, went: "absent" });
+    expect(by(3)).toMatchObject({ ok: false, refused: "malformed" });
+    expect(by(4)).toMatchObject({ ok: true, opened: true });
+    expect(opened).toEqual([{ to: "event", id: EVENT }]);
+  });
+
+  it("answers not ready where no switch is wired, and opens nothing when it does not know its app", async () => {
+    const { door, opened } = switchDouble();
+    const bare = hostOver(quiet);
+    bare.say({ id: 1, epoch: "e1", kind: "switch.read" });
+    await bare.settled();
+    expect(bare.posted[0]).toMatchObject({ ok: false, refused: "notReady" });
+    const unnamed = hostOver(quiet, { switch: door });
+    unnamed.say({ id: 2, epoch: "e1", kind: "switch.open", to: { to: "last" } });
+    await unnamed.settled();
+    expect(unnamed.posted[0]).toMatchObject({ ok: false, refused: "malformed" });
+    expect(opened).toEqual([]);
   });
 });

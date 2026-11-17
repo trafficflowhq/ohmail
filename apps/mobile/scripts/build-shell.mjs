@@ -7,8 +7,12 @@
  * policy as a header, and the app's build refuses to package a shell that has no manifest
  * (`plugins/shell-assets.js`).
  *
- *   node apps/mobile/scripts/build-shell.mjs            the page every build ships
+ *   node apps/mobile/scripts/build-shell.mjs            the page every build ships, for the ohmail app
+ *   node apps/mobile/scripts/build-shell.mjs --app ohcal    the page for the ohcal app
  *   node apps/mobile/scripts/build-shell.mjs --bench    with the emulator bench's door compiled in
+ *
+ * Each app mounts its own places: the page's `./mounted` is answered by `web/src/mounted.<app>.ts`, and the manifest
+ * names the app, so a native build for the other app refuses this page (`plugins/shell-assets.js`).
  *
  * The bundler is the root's pinned esbuild; nothing is fetched. The page's policy has one source,
  * the meta in web/index.html, and the build refuses a page whose policy would let it reach the
@@ -52,6 +56,21 @@ export function pageCatalogue(messages = MESSAGES) {
     }
   }
   return out;
+}
+
+/** The apps a page can be built for; each has its `web/src/mounted.<app>.ts`. */
+export const SHELL_APPS = ["ohmail", "ohcal"];
+
+/** Answers the page's `./mounted` with the places of the app the page is built for. */
+function mountedOf(app) {
+  if (!SHELL_APPS.includes(app)) throw new Error(`build-shell: --app is "${app}": it is ${SHELL_APPS.join(" or ")}`);
+  return {
+    name: "shell-mounted",
+    setup(b) {
+      b.onResolve({ filter: /^\.\/mounted$/ }, (args) =>
+        args.resolveDir === join(WEB, "src") ? { path: join(WEB, "src", `mounted.${app}.ts`) } : undefined);
+    },
+  };
 }
 
 /** Answers the page's catalogue import with {@link pageCatalogue}, read at build time. */
@@ -113,7 +132,8 @@ function filesUnder(dir) {
   });
 }
 
-export async function buildShell({ out = SHELL_OUT, bench = false } = {}) {
+export async function buildShell({ out = SHELL_OUT, bench = false, app = "ohmail" } = {}) {
+  const mounted = mountedOf(app);
   const template = readFileSync(join(WEB, "index.html"), "utf8");
   const csp = policyOf(template);
   rmSync(out, { recursive: true, force: true });
@@ -135,7 +155,7 @@ export async function buildShell({ out = SHELL_OUT, bench = false } = {}) {
     sourcemap: false,
     metafile: true,
     logLevel: "warning",
-    plugins: [catalogue],
+    plugins: [catalogue, mounted],
   });
   const js = readFileSync(join(out, "shell.js"), "utf8");
   if (!bench && js.includes(BENCH_MARKER)) throw new Error("build-shell: the bench's door is in a release page");
@@ -146,7 +166,7 @@ export async function buildShell({ out = SHELL_OUT, bench = false } = {}) {
   const files = Object.fromEntries(
     filesUnder(out).map((path) => [relative(out, path).split("\\").join("/"), createHash("sha256").update(readFileSync(path)).digest("hex")]),
   );
-  const manifest = { csp, bench, files };
+  const manifest = { app, csp, bench, files };
   writeFileSync(join(out, "shell.manifest.json"), `${JSON.stringify(manifest, null, 1)}\n`);
   /* What went into the bundle, for whoever builds it to read: the manifest ships, this does not. */
   const inputs = Object.keys(result.metafile.inputs).map((p) => relative(join(MOBILE, "..", ".."), p).split("\\").join("/"));
@@ -154,6 +174,8 @@ export async function buildShell({ out = SHELL_OUT, bench = false } = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const manifest = await buildShell({ bench: process.argv.includes("--bench") });
-  console.log(`SHELL_BUILT ${Object.keys(manifest.files).length} files into ${relative(process.cwd(), SHELL_OUT) || SHELL_OUT}${manifest.bench ? " (bench)" : ""}`);
+  const at = process.argv.indexOf("--app");
+  const app = at < 0 ? "ohmail" : process.argv[at + 1];
+  const manifest = await buildShell({ bench: process.argv.includes("--bench"), app });
+  console.log(`SHELL_BUILT ${Object.keys(manifest.files).length} files into ${relative(process.cwd(), SHELL_OUT) || SHELL_OUT} for ${manifest.app}${manifest.bench ? " (bench)" : ""}`);
 }

@@ -172,6 +172,9 @@ export interface AuthAuditEvent {
   event:
     | "login" | "login_failed" | "2fa_verified" | "2fa_failed"
     | "logout" | "device_revoked" | "recovery_used" | "lockout"
+    // One phone app minted a single-use code that hands its sign-in to its sibling app on the same phone (the
+    // detail names the minting device and the target app's word, never the code or the challenge).
+    | "app_handoff_issued"
     // An ENROLLMENT-scoped session was issued on the password factor alone
     // (register, or a re-entry login with zero enrolled methods). Recorded so the
     // audit trail shows every password-only session issuance, not just full logins.

@@ -1821,6 +1821,30 @@ describe("the pairing confirmation cannot be routed around", () => {
     expect(callers).toEqual(["src/net/connection.tsx", "src/net/pairing.ts"]);
   });
 
+  it("the sibling app's handoff has one spender: the switch's receiving step, with a verifier native made", () => {
+    /* The second way a phone session is born. No person confirms it, because the person pressed the other app and the
+       code is bound to a challenge only this app made: so the one caller is named, and a screen growing a second is red. */
+    const callers = shipped()
+      .filter((f) => /\bpairByHandoff\(/.test(f.src))
+      .map((f) => f.rel)
+      .sort();
+    expect(callers).toEqual(["src/net/pairing.ts", "src/switch/receive.ts"]);
+  });
+
+  it("only native opens a switch link: the app's code names its path only in the grammar, and the switch never reaches Linking", () => {
+    /* The platform's own opener cannot ask for an installed app alone: a switch link opened through it lands in a
+       browser with its fragment, the code in it. So no file but the link's grammar names the path or reads it from
+       the table, and no file of the switch imports the opener; the sibling is opened by the native module alone. */
+    const naming = shipped()
+      .filter((f) => /["'`]\/switch(?:-preview)?["'`#]/.test(f.src) || /\blinks\.path\b/.test(f.src))
+      .map((f) => f.rel)
+      .sort();
+    expect(naming).toEqual(["src/switch/link.ts"]);
+    const switchFiles = shipped().filter((f) => f.rel.startsWith("src/switch/"));
+    expect(switchFiles.length, "the switch's folder moved: this census reads nothing").toBeGreaterThan(5);
+    expect(switchFiles.filter((f) => /\bLinking\b|\bopenURL\b/.test(f.src)).map((f) => f.rel)).toEqual([]);
+  });
+
   it("every screen that can spend a code RENDERS the confirmation", () => {
     const spenders = shipped()
       .filter((f) => f.rel.startsWith("app/") && /\bpairConfirmed\(/.test(f.src));

@@ -6,10 +6,13 @@
  */
 import { bridge, kept } from "./boot";
 import catalogue from "./catalogue";
+import mounted from "./mounted";
 import { createRoot, type Root } from "react-dom/client";
 import { startSyncScheduler, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
 import { unsentDraftsOf, type NoticePermission } from "./engine-package";
 import { benchDoor, type BenchDoor } from "./bench";
+import type { LinkInTarget } from "../../src/shell/bridge-kinds";
+import { otherAppDoor } from "./other-app";
 import { note, type Bridge } from "./bridge";
 import { createPhoneEngine, keptStoreOf } from "./engine";
 import { phoneFrameSupplies } from "./frame-supplies";
@@ -45,10 +48,20 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
   }
   const { engine, store } = createPhoneEngine(config, bridge);
   // The emulator bench's door, in a page built for the bench alone (the build drops this branch otherwise).
-  if (__OHMAIL_BENCH__) (window as unknown as { __ohmailBench?: BenchDoor }).__ohmailBench = benchDoor(engine, store, localStorage);
+  // The other app (the frame's switch takes this port), and the last place it opened this one at: held until a seat
+  // that draws the place takes it.
+  const other = otherAppDoor(bridge, config);
+  let arrived: LinkInTarget | null = null;
+  bridge.on((e) => {
+    if (e.type === "linkIn" && e.target.to !== "compose") arrived = e.target;
+  });
+  if (__OHMAIL_BENCH__) {
+    (window as unknown as { __ohmailBench?: BenchDoor }).__ohmailBench =
+      benchDoor(engine, store, localStorage, { door: other, arrival: () => arrived });
+  }
   const signals = phoneSignals(bridge, config.facts, () => unsentDraftsOf(engine.read()).length);
   let permission: NoticePermission = config.notifications;
-  const frame = phoneFrameSupplies(config.place, (fragment) => void bridge.request("place", { fragment }).catch(() => {}));
+  const frame = phoneFrameSupplies(mounted, config.place, (fragment) => void bridge.request("place", { fragment }).catch(() => {}));
   const facts = { setting: config.setting, scope: config.scope, accountId: config.accountId, build: config.build };
   const host = phoneHost(engine, facts, {
     signOut: async () => { await bridge.request("act", { act: "signOut" }); },

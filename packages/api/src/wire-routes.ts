@@ -67,7 +67,7 @@ export const UNBOUND_CALLS = [
   "POST /mailboxes/oauth/microsoft/start", "POST /mailboxes/probe", "POST /messages/:id/draft",
   "GET /messages/:id/live-body", "POST /messages/:id/load-remote", "GET /oauth/authorize",
   "POST /oauth/authorize", "GET /oauth/authorize/request", "POST /oauth/token", "GET /pair", "POST /pair",
-  "DELETE /pair/:id", "POST /pair/redeem", "POST /pair/state", "POST /push/subscriptions",
+  "DELETE /pair/:id", "POST /pair/handoff", "POST /pair/redeem", "POST /pair/state", "POST /push/subscriptions",
   "DELETE /push/subscriptions/:id", "GET /push/vapid-key", "GET /rules", "GET /rules/:id",
   "GET /screener/junk", "GET /screener/junk/body", "POST /screener/junk/rescue",
   "DELETE /screener/junk/rescue/:id", "GET /screener/junk/search", "GET /screener/junk/sweep",

@@ -22,10 +22,16 @@ import { RELAY_ROUTES } from "./relay-routes";
 type HttpAsk = Requests["http"]["ask"];
 type HttpAnswer = Requests["http"]["answer"];
 
-/** The routes only the native side calls: the session's end, the pairing ceremony, the wake registration. */
+/**
+ * The routes only the native side calls: the session's end, the pairing ceremony, the wake registration, and the two
+ * second-factor steps that answer session tokens in their body to a session that is still enrolling. The page's
+ * session is a pairing's full one and never enrolling, but a route that hands out session tokens has no place at the
+ * page's door in any state.
+ */
 export const NATIVE_ONLY = [
   "POST /auth/logout", "GET /pair", "POST /pair", "DELETE /pair/:id",
   "GET /push/vapid-key", "POST /push/subscriptions", "DELETE /push/subscriptions/:id",
+  "POST /auth/2fa/totp/activate", "POST /auth/2fa/webauthn/register/verify",
 ] as const;
 
 /** The drain routes, by path (both are reads), held shut until the identity verdict settles without a mismatch. */
