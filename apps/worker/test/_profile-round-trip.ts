@@ -7,8 +7,8 @@ import {
   type AckRecord, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage, type MetaRecordsList,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
-import { listedOf } from "./_meta-list.js";
+import { applyMetaRequests, driveOutstandingRequests } from "@ohmail/organizer/request-drain";
+import { listedOf } from "../../../packages/organizer/test/_meta-list.js";
 
 /**
  * A reader's settings press carried to the organizer through the production functions on both

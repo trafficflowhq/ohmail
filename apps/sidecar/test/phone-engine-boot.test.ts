@@ -1440,7 +1440,7 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
 // `SidecarConfig` carries two faces of the same channel: the `Diagnostic` this file's `deps()`
 // supplies, and the `Logger` the shared sync loop writes through. This composition passed only the
 // first, so `config.logger` was absent on a phone and every `log?.warn` / `log?.error` inside
-// `@trafficflow/worker/sync` optional-chained into nothing. `apps/sidecar/test/
+// `@ohmail/organizer/sync` optional-chained into nothing. `apps/sidecar/test/
 // sync-log-wiring.test.ts` guards the same seam on the DESKTOP door and states why it matters
 // most here: a phone's database is on the person's own device and nobody reads it, so the log is
 // the only witness that a write the mail server refused ever happened.

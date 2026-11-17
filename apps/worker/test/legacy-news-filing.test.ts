@@ -8,11 +8,11 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { MessageService, type ServiceContext } from "@trafficflow/services";
-import { reconcileMailbox } from "../src/sync.js";
-import { legacyNewsRepairPass } from "../src/news-repair.js";
-import { RECONCILE_BACKOFF_MINUTES } from "../src/reconcile-refusal.js";
-import { FIXTURE_LEASE } from "./_door.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
+import { reconcileMailbox } from "@ohmail/organizer/sync";
+import { legacyNewsRepairPass } from "../../../packages/organizer/src/news-repair.js";
+import { RECONCILE_BACKOFF_MINUTES } from "../../../packages/organizer/src/reconcile-refusal.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * SIX LEGACY FILINGS, AND THE FILING PATH AROUND THEM — the real adapter over an in-memory IMAP

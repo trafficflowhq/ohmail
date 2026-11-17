@@ -29,7 +29,7 @@ const FOLDS_BEFORE_KILL = 4;
  * defeat the whole cell. The periodic checkpointer is left at PRODUCTION's five minutes, so every
  * fold a run takes is the per-cycle one and the bound below is attributable to it.
  * It transcribes the drain's three deciding lines rather than running it: the lane (`engine.ts`),
- * one transaction carrying a message AND the folder cursor that names it (`apps/worker/src/sync.ts`)
+ * one transaction carrying a message AND the folder cursor that names it (`packages/organizer/src/sync.ts`)
  * and a fold per cycle that has more backlog.
  */
 const CHILD = `

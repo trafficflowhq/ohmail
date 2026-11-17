@@ -5,11 +5,11 @@ import { mailboxes, messages, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { MailboxRemovedError, runSyncCycle } from "../src/sync.js";
+import { MailboxRemovedError, runSyncCycle } from "@ohmail/organizer/sync";
 import { ingestRunRepository } from "../src/ingest-run.js";
 import { INGEST_RUN_BOUNDS } from "../src/config.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * EVERY INGEST COMMIT ASKS WHETHER THE MAILBOX IS STILL THERE — EXACTLY ONCE, AND IN ITS PLACE. The

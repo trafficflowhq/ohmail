@@ -12,7 +12,7 @@ import {
   accounts, auditAction, auditLog, changeLog, folderState, mailboxes, messageBodies, messageFailures, messages, threads,
 } from "@trafficflow/db";
 import { screenUnscreened, type ServiceContext } from "@trafficflow/services/mail";
-import { classifyIngestFault, markStoreStatement, StoreStatementFaultError } from "@trafficflow/worker/dead-letter";
+import { classifyIngestFault, markStoreStatement, StoreStatementFaultError } from "@ohmail/organizer/dead-letter";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import {
   oneTransactionAtATime, openPhoneStore, STORE_TURN_WAIT, type PhoneSqlExecutor, type PhoneSqlRows,

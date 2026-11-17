@@ -14,7 +14,7 @@ import { accounts, mailboxes, messageFailures, messages } from "@trafficflow/db"
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { mirroredFirstSyncFacts } from "../src/local-mirror.js";
 import { openPhoneStore, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
-import { DeadLetterLedger, HOLD_EXEMPT_CODES } from "@trafficflow/worker/dead-letter";
+import { DeadLetterLedger, HOLD_EXEMPT_CODES } from "@ohmail/organizer/dead-letter";
 
 /**
  * ON THE PHONE'S STORE (node:sqlite), through the phone's own composition: (A) a message the ledger

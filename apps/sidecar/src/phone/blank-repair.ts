@@ -1,8 +1,8 @@
 /**
  * THE BLANK REPAIR, NOT IN THIS BUILD — substituted for `./blank-repair.js` where
- * `apps/worker/src/sync.ts` imports it.
+ * `packages/organizer/src/sync.ts` imports it.
  *
- * The repair (`apps/worker/src/blank-repair.ts`) gives back the places an older build's blank
+ * The repair (`packages/organizer/src/blank-repair.ts`) gives back the places an older build's blank
  * messages took and moves a letter it filed away back to INBOX. It runs on the desktop engine, the
  * hosted worker and the self-host organizer. The phone's composition (`mobile.ts`) passes
  * `blankRepair: "off"`, so `runSyncCycle` never calls the pass there, and its code stays out of the

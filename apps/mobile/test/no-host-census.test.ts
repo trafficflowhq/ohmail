@@ -279,6 +279,7 @@ const FORBIDDEN_FILE = (file: string): boolean => {
   const p = rel(file);
   return p.startsWith("apps/sidecar/src/")
     || p.startsWith("apps/worker/src/")
+    || p.startsWith("packages/organizer/src/")
     || p.startsWith("packages/api/src/")
     || p.startsWith("packages/services/src/")
     || p.startsWith("packages/db/src/")
@@ -989,7 +990,8 @@ describe("§6 every refusal rule fires — the controls", () => {
   it("§1 the file rule refuses each source tree, and admits the one named leaf", () => {
     for (const forbidden of [
       "apps/sidecar/src/engine.ts",
-      "apps/worker/src/sync.ts",
+      "apps/worker/src/index.ts",
+      "packages/organizer/src/sync.ts",
       "packages/api/src/routes/desktop-host.ts",
       "packages/services/src/mail.ts",
       "packages/core/src/adapters/organizer-lease.ts",

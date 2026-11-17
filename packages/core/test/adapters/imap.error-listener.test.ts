@@ -9,7 +9,7 @@ import { ImapAdapter, ImapConnectionClosedError } from "../../src/adapters/imap.
  * `ImapFlow` extends `EventEmitter` and reports an asynchronous connection FAILURE — a dead
  * socket, a server `BYE`, an `ETIMEOUT` from imapflow's own `_socketTimeout` handler when the
  * client is not idling — by EMITTING `error`. Node throws when `error` is emitted with no
- * listener, `apps/worker/src/entry.ts` answers uncaught exceptions with `exit(1)` by design, and
+ * listener, `packages/organizer/src/entry.ts` answers uncaught exceptions with `exit(1)` by design, and
  * so one mailbox's socket ended the whole worker every ~26 s for eight minutes.
  *
  * ── AND A CONNECTION THAT MERELY *ENDS* EMITS SOMETHING ELSE ENTIRELY ──────────

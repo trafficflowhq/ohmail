@@ -83,7 +83,7 @@ const REPO = fileURLToPath(new URL("../../..", import.meta.url));
  * where a notice printed plainly IS the wanted output. A silent exclusion is how a census quietly
  * stops covering half the repo, so the reason lives in the guard, not in a commit message.
  */
-const ROOTS = ["packages/db/src", "apps/worker/src", "apps/api-vercel/src", "apps/admin/src"];
+const ROOTS = ["packages/db/src", "apps/worker/src", "packages/organizer/src", "apps/api-vercel/src", "apps/admin/src"];
 
 /**
  * Comments are stripped BEFORE scanning, and that is load-bearing rather than tidiness:

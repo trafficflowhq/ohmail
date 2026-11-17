@@ -98,12 +98,12 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   "admin.credits.adjust", "admin.oauth.microsoft.save",
   // ── the routing pipeline (`packages/core/src/pipeline.ts`) ───────────────────────────────
   "move", "move_deferred", "move_superseded", "adopt_external", "adopt_superseded",
-  // ── the worker's reconcile passes (`apps/worker/src/sync.ts`, `junk-*.ts`) ───────────────
+  // ── the worker's reconcile passes (`packages/organizer/src/sync.ts`, `junk-*.ts`) ───────────────
   "reconcile.move", "reconcile.move.superseded", "reconcile.move.voided", "reconcile.move.failed",
   "reconcile.move.same_folder", "reconcile.folder.remade",
   "reconcile.flags", "reconcile.flags.retired", "reconcile.flags.no_locator",
   "reconcile.flags.voided", "reconcile.flags.failed",
-  // The legacy News repair and the letters it found missing on the server (`apps/worker/src/news-repair.ts`).
+  // The legacy News repair and the letters it found missing on the server (`packages/organizer/src/news-repair.ts`).
   "sync.legacy_news_repaired", "sync.message_missing",
   "sync.message_skipped", "sweep.junk_filed",
   // ── the worker's own passes ──────────────────────────────────────────────────────────────
@@ -127,9 +127,9 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   // ── a person's first agree on a screen that stated the rule, at the consent's instant ──
   "organizer.agree_screens_backlog",
   // ── a correspondent let through: at ingest (`pipeline.ts`) and by the retro
-  //    (`apps/worker/src/screener-correspondent-retro.ts`), which also retires the auto-act's rule ─
+  //    (`packages/organizer/src/screener-correspondent-retro.ts`), which also retires the auto-act's rule ─
   "screener.correspondent_admitted", "screener.correspondent_rule_retired",
-  // ── a sender only the act on suggestions let in, retired once (`apps/worker/src/act-admission-retire.ts`) ─
+  // ── a sender only the act on suggestions let in, retired once (`packages/organizer/src/act-admission-retire.ts`) ─
   "screener.act_admission_retired",
   // ── a delivery report let through at ingest (`pipeline.ts`): it cited the account's own Sent copy ─
   "screener.bounce_admitted",

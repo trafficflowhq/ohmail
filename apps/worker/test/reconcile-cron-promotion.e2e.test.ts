@@ -7,7 +7,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import type { LogFields } from "@trafficflow/core";
 import { runReconcileCron } from "../src/reconcile-cron.js";
-import { imapCfg, makeHarness, dbUrlFor } from "./_workerenv.js";
+import { imapCfg, makeHarness, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 

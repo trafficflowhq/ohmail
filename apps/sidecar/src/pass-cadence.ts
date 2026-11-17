@@ -3,7 +3,7 @@
  * reading of its run; the time since is the larger delta, because a wall clock stepped back
  * cannot shrink the monotonic one and a suspend, which the monotonic clock does not count, still
  * moves the wall one. A wall stamp in the future (the clock stepped back since) is due now: a
- * step costs at most one early run, never a skipped interval. `apps/worker/src/lease.ts`'s shape.
+ * step costs at most one early run, never a skipped interval. `packages/organizer/src/lease.ts`'s shape.
  */
 export interface CadenceStamp { readonly wallMs: number; readonly monoMs: number }
 export interface CadenceClocks { readonly wall: () => number; readonly mono: () => number }

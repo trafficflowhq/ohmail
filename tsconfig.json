@@ -26,6 +26,9 @@
       "path": "./packages/api/tsconfig.contract.json"
     },
     {
+      "path": "./packages/organizer"
+    },
+    {
       "path": "./apps/worker"
     },
     {

@@ -12,9 +12,9 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, type ImapCursor, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap-types";
 import { MessageService, type ServiceContext } from "@trafficflow/services";
-import { reconcileMailbox, runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
+import { reconcileMailbox, runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
 
 /**
  * THE PASS BEFORE THE WALK, ON A REAL SERVER (GreenMail) AND THIS PROJECT'S STORE (PGlite).

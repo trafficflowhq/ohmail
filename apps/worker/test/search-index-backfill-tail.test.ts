@@ -8,7 +8,7 @@ import { SEARCH_DOCUMENT_SHAPE_AT, StaticKeyProvider, createLogger } from "@traf
 import { startWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE SEARCH BACKFILL REACHES THE ACCOUNTS THAT NEVER SYNC. It ran at the tail of a successful

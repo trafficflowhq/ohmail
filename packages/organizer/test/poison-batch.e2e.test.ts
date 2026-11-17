@@ -181,7 +181,7 @@ describe("one poison message in the middle of a batch (GreenMail + Postgres)", (
     // known-set and is offered once more." Both halves were true and the design they described was a
     // mail-loss defect: for the SENT folder, whose cursor is a UID watermark, "offered once more"
     // was false and nothing else could ever notice
-    // (`apps/worker/test/sent-loss.pg.test.ts`).
+    // (`packages/organizer/test/sent-loss.pg.test.ts`).
     //
     // The durable table landed, `runSyncCycle` hydrates the ledger from it, and the UID now stays in
     // the known-set across a restart — so its body is NOT pulled again, in this folder or any other.

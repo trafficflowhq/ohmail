@@ -16,14 +16,14 @@ import {
 import { creditRefundObligations, pendingRefundObligations, refundObligationsOn, schema } from "@trafficflow/db/cloud";
 import { screenerAttemptKey } from "@trafficflow/db";
 import type { RefundObligationPort, SpendPort } from "@trafficflow/db";
-import { fakeSpendPort, type FakeSpendPort } from "./_spendport.js";
+import { fakeSpendPort, type FakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import ts from "typescript";
 import { createLogger, makeHaikuClassifier, SensitivePayloadRefusal, type AnthropicLike } from "@trafficflow/core";
 import type { ClassifierInput, ClassifierPort, ClassifierResult, LogFields, Logger }
   from "@trafficflow/core";
 import {
   screenerAutoSuggestPass, AUTO_SUGGEST_BATCH, DECLINE_COOLDOWN_MS, makeDeclineMemory,
-} from "../src/screener-auto-suggest.js";
+} from "@ohmail/organizer/screener-auto-suggest";
 
 /**
  * SCR-AUTOSUGGEST — the worker pass that buys the model's advice about INCOMING held senders,
@@ -1646,7 +1646,7 @@ function readTheDoor(src: string, fnName: string): DoorReading {
 describe("one door: the auto-suggest claim is handed back in a `finally`", () => {
   it("the release is in the `finally` and nowhere else, so every exit passes it", () => {
     const subject = readFileSync(
-      fileURLToPath(new URL("../src/screener-auto-suggest.ts", import.meta.url)), "utf8",
+      fileURLToPath(new URL("../../../packages/organizer/src/screener-auto-suggest.ts", import.meta.url)), "utf8",
     );
 
     const door = readTheDoor(subject, "screenerAutoSuggestPass");

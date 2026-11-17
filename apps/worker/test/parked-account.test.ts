@@ -16,7 +16,7 @@ import { ImapBoundExceeded } from "@trafficflow/core/adapters/imap";
 import { runWorkerSupervised } from "../src/supervisor.js";
 import { DEFAULT_SYNC_BLOCK_GRACE_MS, type WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet, type FakeControl } from "./_fakeadapter.js";
+import { FakeAdapterFleet, type FakeControl } from "../../../packages/organizer/test/_fakeadapter.js";
 // The door the first client read after a reopening goes through, driven against the rows this
 // worker left: the catch-up is the two halves meeting, so it is measured where they meet.
 import { reopenedCatchUp } from "../../../packages/api/src/account-reopen.js";

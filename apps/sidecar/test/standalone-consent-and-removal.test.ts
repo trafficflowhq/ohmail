@@ -311,7 +311,7 @@ function recordingMailbox(
    * THE PROFILE STEP FAILS THE WAY IT FAILS ON A REAL PROVIDER — present and refusing.
    *
    * `onOrganize` returns immediately unless the adapter has a `profileIo` (`hasProfileIo`,
-   * `apps/worker/src/profile.ts:86-88`), so a fake without one skips the profile step altogether
+   * `packages/organizer/src/profile.ts:86-88`), so a fake without one skips the profile step altogether
    * and cannot say anything about a pass whose profile step fails. With one, the read throws the
    * shape production throws: `readOrganizerProfile` wraps whatever the server did in
    * `ProfileUnavailableError` with `op: "list_profiles"` and the original as `cause`
@@ -1144,7 +1144,7 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
      * `drainPass` (`engine.ts:4582`) calls `mayOrganize()` (`:4634`), whose release arm runs first
      * of all; the profile write is downstream at `:4856` (`profileSync.onOrganize`) and again in
      * `drain` at `:4329` (`armHoldFromFolder`), and both of that class's call sites catch and log
-     * rather than throw (`apps/worker/src/profile.ts:540-546` and `:949-959`). So a profile step
+     * rather than throw (`packages/organizer/src/profile.ts:540-546` and `:949-959`). So a profile step
      * that fails cannot starve the release — and this is the guard that keeps it that way, because
      * the ordering is invisible at either site and one `await` moved would reverse it.
      */
@@ -1161,7 +1161,7 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
     ).toContain("organizer_profile_write_failed");
     /* ── AND THE FAILURE LINE CARRIES THE ERROR, NOT ITS MESSAGE STRING (0.14.1) ────────────
      *
-     * `apps/worker/src/profile.ts` handed the logger `err instanceof Error ? err.message :
+     * `packages/organizer/src/profile.ts` handed the logger `err instanceof Error ? err.message :
      * String(err)` — a STRING in the `err` slot, under a comment claiming "`err` reduces to
      * class + code in `log.ts`". The logger reduces the THROWN VALUE to class + code; handed a
      * string it reports `errorClass:"String" errorCode:null` and, by design, no message — so a

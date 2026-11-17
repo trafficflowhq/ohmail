@@ -7,8 +7,8 @@ import { StaticKeyProvider, createLogger } from "@trafficflow/core";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import { CYCLE_WAKE_REVISITS, type WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { byMessageId, ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { byMessageId, ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * production 2026-10-09: a burst spent a woken mailbox's four revisits and the next

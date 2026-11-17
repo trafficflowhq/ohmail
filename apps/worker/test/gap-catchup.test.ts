@@ -17,7 +17,7 @@ import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-prof
 import { OHBOX_UNSCREENED_GROUPS_MAX as GROUPS } from "@trafficflow/core/adapters/drizzle-repo";
 import type { Logger, SweepClearance } from "@trafficflow/core/mail";
 import { clockSkewBoundMs, DEFAULT_STALE_AFTER_MS } from "@trafficflow/core/adapters/organizer-lease";
-import { GAP_CLOCK_ALLOWANCE_MS, gapCatchupPass } from "../src/gap-catchup.js";
+import { GAP_CLOCK_ALLOWANCE_MS, gapCatchupPass } from "@ohmail/organizer/gap-catchup";
 import { markMailboxStoodDown } from "../src/mailboxes.js";
 
 /**

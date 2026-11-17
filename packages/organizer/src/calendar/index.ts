@@ -1,10 +1,10 @@
 /**
- * `@trafficflow/worker/calendar-sync` — the calendar's passes, as the worker runs them and as a
+ * `@ohmail/organizer/calendar-sync` — the calendar's passes, as the worker runs them and as a
  * desktop's engine will: handed its providers, its pool, its clock and its zones, reading no
  * environment and starting no timer of its own. The worker's start file (`../start/calendar.ts`)
  * composes it; nothing here knows which program it runs in.
  */
-/* The pass itself has a door of its own (`@trafficflow/worker/calendar-sync-pass`): a pass is declared once and exported where it is declared. */
+/* The pass itself has a door of its own (`@ohmail/organizer/calendar-sync-pass`): a pass is declared once and exported where it is declared. */
 export { calendarTurnFailed, isProviderWord, parkConnection } from "./sync-pass.js";
 export { loadDueConnections, type ShardRule } from "./roster.js";
 export {

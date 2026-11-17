@@ -6,7 +6,7 @@ import type {
   DraftInput, DraftPort, DraftResult, KeyProvider,
 } from "@trafficflow/core/mail";
 import { ServiceError } from "@trafficflow/services/mail";
-import { ClassifierFaultError } from "@trafficflow/worker/classifier-fault";
+import { ClassifierFaultError } from "@ohmail/organizer/classifier-fault";
 import {
   anthropicTransport, DEFAULT_ANTHROPIC_MODELS, ollamaTransport, DEFAULT_OLLAMA,
   openaiTransport, DEFAULT_OPENAI_MODELS, opencodeGoTransport, OPENCODE_GO_MODEL_IDS,

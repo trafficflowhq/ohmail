@@ -101,7 +101,7 @@ describe("organizer_requests — the reader's own bookkeeping", () => {
 
   /**
    * ORDERING — `listPendingRequests` sorts `decidedAt` then `id`, matching
-   * `apps/worker/src/request-drain.ts`'s own sort of the folder's records, so a reader's cycle
+   * `packages/organizer/src/request-drain.ts`'s own sort of the folder's records, so a reader's cycle
    * appends two outstanding decisions to the mailbox in the same order the organizer will see
    * them applied in.
    */

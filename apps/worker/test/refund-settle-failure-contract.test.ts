@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { createLogger, makeHaikuClassifier, type AnthropicLike } from "@trafficflow/core";
 import { makeClassifierCircuit } from "../src/ai-circuit.js";
-import { makeDeclineMemory, screenerAutoSuggestPass } from "../src/screener-auto-suggest.js";
+import { makeDeclineMemory, screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { refundObligationDrainPass } from "../src/refund-obligation-drain.js";
 
 /**

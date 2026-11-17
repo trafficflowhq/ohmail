@@ -1222,6 +1222,7 @@ packages/db/test/transition-window.test.ts	data	reads data files (json): a journ
 packages/db/test/transition.pg.test.ts	data	reads data files (json, sql): a journal and its migrations copied to its own folder	none	services-proof	
 packages/db/test/tx-dialect-carry-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/worker-timeouts.pg.test.ts	source-text	reads source as text (ts): the database client and the worker's leader lock	layer 1	services-proof	
+packages/organizer/test/manifest-entries.test.ts	data	reads data files (json): its own manifest	none	worker	
 packages/services/test/admin-freetext-projection.test.ts	source-text	reads source as text (ts): the admin service	layer 1	services-proof	
 packages/services/test/ai-refusal-contradiction.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
 packages/services/test/attachment-part-id-not-synced.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	

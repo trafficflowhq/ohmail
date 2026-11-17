@@ -8,7 +8,7 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * WHAT A FAILED MAILBOX RECORDS, AND WHAT A BUSY ONE LOOKS LIKE FROM OUTSIDE.

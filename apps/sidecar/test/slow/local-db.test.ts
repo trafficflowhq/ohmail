@@ -69,7 +69,7 @@ await h.checkpoint();
 process.stdout.write("checkpointed\\n");
 await inStoreLane("ingest", async () => {
 for (let uid = 1; ; uid += 1) {
-  // THE SYNC CYCLE'S OWN ORDER (apps/worker/src/sync.ts): one transaction per message, and the
+  // THE SYNC CYCLE'S OWN ORDER (packages/organizer/src/sync.ts): one transaction per message, and the
   // folder cursor written AFTER a batch of them, in a transaction of its own. That order is the
   // deciding line — crash recovery replays a PREFIX of the log, so a cursor committed after the
   // rows it acknowledges can be lost with them but can never outlive them. The whole loop runs in

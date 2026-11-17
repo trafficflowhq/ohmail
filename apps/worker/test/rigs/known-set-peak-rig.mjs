@@ -48,7 +48,7 @@ const INDEX = arg("index", "1") !== "0";
 const CYCLES = Number(arg("cycles", 0));
 
 const { KnownSetCache, KnownSetBudget, KNOWN_SET_BUDGET_BYTES, processKnownSetBudget } =
-  await import("../../src/known-set.ts");
+  await import("../../../../packages/organizer/src/known-set.ts");
 
 const MIB = 1024 * 1024;
 const mib = (b) => Math.round((b / MIB) * 100) / 100;

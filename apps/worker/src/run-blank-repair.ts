@@ -15,10 +15,10 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
-import { blankRepairPass, BLANK_REPAIR_PLACES_PER_VISIT } from "./blank-repair.js";
+import { blankRepairPass, BLANK_REPAIR_PLACES_PER_VISIT } from "@ohmail/organizer/blank-repair";
 import { buildVersionOf } from "./build-version.js";
 import { cliArgs, readRunnerMailbox, takeRunnerLease } from "./run-cli.js";
-import { writeDoorOf } from "./lease.js";
+import { writeDoorOf } from "@ohmail/organizer/lease";
 
 const { flag, opt } = cliArgs(process.argv.slice(2));
 

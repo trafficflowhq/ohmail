@@ -17,7 +17,7 @@ import ts from "typescript";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SRC_ROOTS = ["packages/core/src", "packages/services/src", "packages/db/src", "packages/api/src",
-  "apps/worker/src", "apps/sidecar/src"];
+  "apps/worker/src", "packages/organizer/src", "apps/sidecar/src"];
 
 function tsFiles(dir: string): string[] {
   const out: string[] = [];
@@ -193,7 +193,7 @@ const READERS = new Set([
   "apps/sidecar/src/db.ts",
   // The gone-letter tidy asks whether a letter that left the server still has a document; the
   // delete it runs is the repo's own scrub.
-  "apps/worker/src/gone-letter-tidy.ts",
+  "packages/organizer/src/gone-letter-tidy.ts",
   // The move of a 1.0.11 store to 2.0 counts the living letters that have no document, before and
   // after (the old search goes only where that count is zero), and its map of a store's tables
   // names this one. Counts and a name: neither reads a document's text.

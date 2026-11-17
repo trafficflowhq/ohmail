@@ -18,18 +18,18 @@ import {
   accountInShard, clearOrganizerStandDown, loadMailboxById, makeSyncWriteFence,
   markMailboxStoodDown, stampMailboxSyncNow, type LeaderFence,
 } from "./mailboxes.js";
-import { LeaderFencedError, refusalIsRemoval, runSyncCycle, UNLABELLED_BUILD, type SyncDeps } from "./sync.js";
-import { isSharedDatabaseFault } from "./dead-letter.js";
-import { applyMetaRequests } from "./request-drain.js";
-import { OrganizerProfileSync } from "./profile.js";
+import { LeaderFencedError, refusalIsRemoval, runSyncCycle, UNLABELLED_BUILD, type SyncDeps } from "@ohmail/organizer/sync";
+import { isSharedDatabaseFault } from "@ohmail/organizer/dead-letter";
+import { applyMetaRequests } from "@ohmail/organizer/request-drain";
+import { OrganizerProfileSync } from "@ohmail/organizer/profile";
 import { profileProducerVersion } from "./build-version.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit, writeDoorOf,
   cycleWriteAuthority,
   cloudInstallId, leaseStoodDown, mailboxHasRequestKey, type LeasePermit,
-} from "./lease.js";
-import { isCliEntry } from "./entry.js";
+} from "@ohmail/organizer/lease";
+import { isCliEntry } from "@ohmail/organizer/entry";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
 

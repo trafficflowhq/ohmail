@@ -4,7 +4,7 @@ import { EpochUnknownError } from "@trafficflow/core/adapters/imap";
 import {
   DeadLetterLedger, classifyIngestFault, isDatabaseFault, isSharedDatabaseFault, nextAttemptAfter,
   DatabaseFaultError, DEFAULT_MAX_MESSAGE_ATTEMPTS, MAX_DEAD_LETTERS_PER_CYCLE,
-} from "../src/dead-letter.js";
+} from "@ohmail/organizer/dead-letter";
 import { markDatabaseFaults, asDatabaseFault } from "../src/db-fault.js";
 import { BindLimitError } from "@trafficflow/db/cloud";
 

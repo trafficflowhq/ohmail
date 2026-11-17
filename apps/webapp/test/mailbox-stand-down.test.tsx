@@ -442,7 +442,7 @@ describe("the row says WHY, and never claims mail is on its way", () => {
     /**
      * The distinction the COLUMN cannot make, and the reason the wording is what it is.
      *
-     * `standDownReason` (`apps/worker/src/lease.ts:167`) maps BOTH verdicts onto the same three
+     * `standDownReason` (`packages/organizer/src/lease.ts:167`) maps BOTH verdicts onto the same three
      * values: `stand_down` (a FRESH foreign claim — somebody is organizing it right now) and
      * `available` (a STALE one — nobody is, and we refuse to self-promote). the observed case
      * was the second: a local worker three hours dead. So "another install IS ORGANIZING this

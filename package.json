@@ -31,6 +31,7 @@
     "packages/core",
     "packages/db",
     "packages/db-mail",
+    "packages/organizer",
     "packages/testing",
     "packages/services",
     "packages/cal-core",

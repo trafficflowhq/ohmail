@@ -11,7 +11,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { memoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
-import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
+import { applyMetaRequests, driveOutstandingRequests } from "@ohmail/organizer/request-drain";
 
 /**
  * A REQUEST PAST THE 500-RECORD WINDOW (REQUEST-DRAIN-REFUSES-PAST-META-WINDOW).

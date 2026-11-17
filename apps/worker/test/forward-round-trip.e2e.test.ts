@@ -6,9 +6,9 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { eq } from "drizzle-orm";
 import { SendService, type ServiceContext } from "@trafficflow/services";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { byMessageId, makeHarness, rawClient, dbUrlFor } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
+import { byMessageId, makeHarness, rawClient, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 

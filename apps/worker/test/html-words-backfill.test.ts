@@ -14,10 +14,10 @@ import {
   upsertMessageSearchRows,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { runSyncCycle } from "../src/sync.js";
-import { htmlWordsBackfillPass, htmlWordsOwedAccounts, type HtmlWordsBackfillOptions } from "../src/html-words-backfill.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { htmlWordsBackfillPass, htmlWordsOwedAccounts, type HtmlWordsBackfillOptions } from "@ohmail/organizer/html-words-backfill";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * THE HTML-WORDS BACKFILL (mail 0172), on the in-process store (PGlite here, the device's SQLite in

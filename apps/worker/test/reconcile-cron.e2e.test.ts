@@ -9,8 +9,8 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { META_FOLDER, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { runReconcileCron } from "../src/reconcile-cron.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "../src/leader-lock.js";
-import { cloudInstallId } from "../src/lease.js";
-import { byMessageId, makeHarness, rawClient, emlOf, dbUrlFor } from "./_workerenv.js";
+import { cloudInstallId } from "@ohmail/organizer/lease";
+import { byMessageId, makeHarness, rawClient, emlOf, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 import { rigAppendDate } from "../../../test/support/rig-append-date.js";
 
 const DB_URL = dbUrlFor(import.meta.url);

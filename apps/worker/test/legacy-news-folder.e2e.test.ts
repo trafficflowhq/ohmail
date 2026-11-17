@@ -10,10 +10,10 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { LEGACY_NEWS_FOLDER, NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import { MessageService, SearchService, readMailboxFilings, type ServiceContext } from "@trafficflow/services";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
 import { world } from "../../../packages/api/test/_self-check-world.js";
 import { selfCheckMailbox } from "../../../packages/api/src/mailbox-self-check.js";
 

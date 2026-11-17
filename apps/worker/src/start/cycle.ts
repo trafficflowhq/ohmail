@@ -2,23 +2,23 @@ import type { Tx } from "@trafficflow/db";
 import { WriteDeclinedError, isImapBoundExceeded } from "@trafficflow/core/adapters/imap";
 import { CYCLE_WAKE_REVISITS, nextTurnMessages } from "../config.js";
 import { LockLostError } from "../leader-lock.js";
-import { newCycleCensus, runSyncCycle, LeaderFencedError, refusalIsRemoval } from "../sync.js";
+import { newCycleCensus, runSyncCycle, LeaderFencedError, refusalIsRemoval } from "@ohmail/organizer/sync";
 import {
   driveOutstandingRequests, applyMetaRequests, settleOwnOutstandingRequests, shrinkMetaOnRefusal,
-} from "../request-drain.js";
-import { isSharedDatabaseFault, breachSetAside } from "../dead-letter.js";
+} from "@ohmail/organizer/request-drain";
+import { isSharedDatabaseFault, breachSetAside } from "@ohmail/organizer/dead-letter";
 import { asDatabaseFault } from "../db-fault.js";
 import { ClassifierFaultError } from "../ai-circuit.js";
 import { sensitiveBackfillPass } from "../sensitive-backfill.js";
 import {
   markOrganizedThrough, stampMailboxSyncNow, stampInitialImportComplete, stampImportProgress, stampSyncProgress,
 } from "../mailboxes.js";
-import { syncProfileMirror } from "../profile.js";
+import { syncProfileMirror } from "@ohmail/organizer/profile";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   writeDoorOf, cycleWriteAuthority, leaseStoodDown, LeaseUnavailableError, leaseBlockReason,
   OrganizerStandDownError,
-} from "../lease.js";
+} from "@ohmail/organizer/lease";
 import type { MailboxRuntime } from "../index.js";
 import type { WorkerScope } from "./scope.js";
 

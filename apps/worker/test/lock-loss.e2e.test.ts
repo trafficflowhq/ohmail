@@ -9,7 +9,7 @@ import { acquireLeaderLock, LEADER_LOCK_KEY, leaderLockKeyFor, type LeaderLock }
 import { runWorkerSupervised } from "../src/supervisor.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { DbDoor, surviveDriverWriteRace } from "./_dbdoor.js";
 
 type Db = ReturnType<typeof makeDb>;

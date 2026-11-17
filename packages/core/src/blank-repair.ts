@@ -11,7 +11,7 @@ import { isOrganizedFolder } from "./types.js";
  *
  * A real letter with no content (one blank line) normalizes to the same keys and the same empty
  * columns, so the store cannot tell the two apart; the bytes at the place can, and the repair
- * (`apps/worker/src/blank-repair.ts`) reads them before it changes anything.
+ * (`packages/organizer/src/blank-repair.ts`) reads them before it changes anything.
  */
 
 /** `fingerprintDedupKey(messageFingerprint(normalizeMime(empty)))` — `blank-repair.test.ts` recomputes it. */

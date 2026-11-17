@@ -15,15 +15,15 @@ import type { ServiceContext } from "@trafficflow/services";
 import { CALENDAR_BUILDERS, recordCalendarWrite } from "@trafficflow/services/calendar";
 import {
   CALENDAR_RING_GAP_MS, CALENDAR_RING_SETTLE_MS, CALENDAR_TICK_MS, ROSTER_LIMIT, calendarPool, loadDueConnections,
-} from "../apps/worker/src/calendar/index.js";
-import { calendarSyncPass } from "../apps/worker/src/calendar/sync-pass.js";
-import { calendarWriteDrain } from "../apps/worker/src/calendar/write-drain.js";
+} from "../packages/organizer/src/calendar/index.js";
+import { calendarSyncPass } from "../packages/organizer/src/calendar/sync-pass.js";
+import { calendarWriteDrain } from "../packages/organizer/src/calendar/write-drain.js";
 import { accountShardFilter } from "../apps/worker/src/mailboxes.js";
 import { startCalendarRunner } from "../apps/worker/src/start/calendar.js";
 import {
   AVAILABLE, Secret, ZONES, capturedLog, depsFor, openWorld, providersOf, scriptedReader, scriptedWriter, sealCredential,
   seedConnection, silentHttp, single, upsert, type World,
-} from "../apps/worker/test/_calendar-world.js";
+} from "../packages/organizer/test/_calendar-world.js";
 
 /** The roster is held to this file's own accounts by the worker's shard rule: each is a shard of its own among a million. */
 const SHARDS = 1_000_003;

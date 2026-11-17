@@ -7,7 +7,7 @@ import {
   DraftingService, DraftsService, SendService, type ServiceContext,
 } from "@trafficflow/services";
 import type { DraftPort, OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { makeHarness, rawClient, dbUrlFor } from "./_workerenv.js";
+import { makeHarness, rawClient, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 

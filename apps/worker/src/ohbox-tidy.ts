@@ -12,7 +12,7 @@ import {
 import { identityOfRow } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
-import { perMailboxAuthservTrust, ruleInputOf, upsertDesired } from "./rule-pass.js";
+import { perMailboxAuthservTrust, ruleInputOf, upsertDesired } from "@ohmail/organizer/rule-pass";
 
 /* RE-ROUTING THE OHBOX BACKLOG — mail `people_only` (migration 0042) was turned on too late to catch.
  * The engine (`rules.ts#evaluateRules`) demotes NEW mail under the posture, but a rule is consulted at

@@ -16,7 +16,7 @@ import { holderKind } from "../apps/mobile/src/ui/standalone-form.js";
  * word: the sidecar writes `organizerKind ?? "local"`, the worker `cloud`, the phone `mobile`. So
  * every reader parsed the twin's claim as `unknown`, the phone stood down fail-closed — correctly —
  * and run 6 recorded a product row that was the rig's own word (2026-09-12). A worker fixture
- * spelled the same word at `apps/worker/test/profile-failure-latch.test.ts:146`, where nothing
+ * spelled the same word at `packages/organizer/test/profile-failure-latch.test.ts:146`, where nothing
  * typechecks it: `apps/worker` has no typecheck script.
  *
  * The word list is a VALUE in core now, the two parser doors ask one predicate, and the rig tool

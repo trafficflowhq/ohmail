@@ -117,7 +117,7 @@ describe("placement census, server leg: New for you folds a resurfaced conversat
 /* ── THE SQL SOURCE CENSUS ──────────────────────────────────────────────────────────────────── */
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const ROOTS = ["packages/db/src", "packages/services/src", "apps/worker/src"];
+const ROOTS = ["packages/db/src", "packages/services/src", "apps/worker/src", "packages/organizer/src"];
 /** The schema declares the columns; nothing there is a predicate. */
 const SCHEMA = new Set(["packages/db/src/schema-mail.ts", "packages/db/src/schema-mail-sqlite.ts"]);
 /**

@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { realPgAvailable } from "@trafficflow/db/testing";
 import { checkoutKey, claimRunSlot, dropIsolatedDb, openAdmin, prepareIsolatedDb } from "./_isolateddb.js";
 import { checkoutRoot, isolatedDbName } from "./_isolateddb-name.js";
-import { DB_URL, refuseDriftedSharedDb } from "./_workerdb.js";
+import { DB_URL, refuseDriftedSharedDb } from "../../../packages/organizer/test/_workerdb.js";
 
 /*
  * THE TWO PROMISES THE KEYED DOOR'S EXEMPTION RESTS ON, read on a real server. A second run of this

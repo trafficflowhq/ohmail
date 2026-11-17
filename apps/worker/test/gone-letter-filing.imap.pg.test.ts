@@ -9,9 +9,9 @@ import { auditLog, folderState, mailboxes, messageBodies, messageInstances, mess
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
 import { MailboxService, MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
-import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { makeHarness, rawClient, uidInFolder, DB_URL, ORGANIZER_CONSENT } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
+import { makeHarness, rawClient, uidInFolder, DB_URL, ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A DELETE PRESSED ON A LETTER THE SERVER NO LONGER HOLDS IS CLOSED AT THE NEXT PASS.

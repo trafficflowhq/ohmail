@@ -8,9 +8,9 @@ import type { NativeLocator } from "@trafficflow/core";
 import type { MailboxAdapter, WriteDoor, WriteDoorAnswer } from "@trafficflow/core/adapters/imap";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { startWorker } from "../src/index.js";
-import { hasLeaseIo } from "../src/lease.js";
+import { hasLeaseIo } from "@ohmail/organizer/lease";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * A READER CYCLE ON THE HOSTED WORKER RIDES A READER'S AUTHORITY — never an old permit, never none.

@@ -58,7 +58,7 @@ const SEED = [
   "packages/db/src/schema-mail.ts",
   "packages/core/src/adapters/drizzle-repo.ts",
   "packages/services/src/mail.ts",
-  "apps/worker/src/sync.ts",
+  "packages/organizer/src/sync.ts",
 ] as const;
 
 /** Workspace specifiers this walk can follow. Anything else is third-party and out of remit. */
@@ -74,8 +74,8 @@ const ALIASES: readonly [string, string][] = [
   ["@ohmail/db-mail", "packages/db-mail/src/index.ts"],
   ["@trafficflow/services/mail", "packages/services/src/mail.ts"],
   ["@trafficflow/services", "packages/services/src/index.ts"],
-  ["@trafficflow/worker/sync", "apps/worker/src/sync.ts"],
-  ["@trafficflow/worker/lease", "apps/worker/src/lease.ts"],
+  ["@ohmail/organizer/sync", "packages/organizer/src/sync.ts"],
+  ["@ohmail/organizer/lease", "packages/organizer/src/lease.ts"],
   ["@trafficflow/core/mail", "packages/core/src/mail.ts"],
   ["@trafficflow/core/adapters/drizzle-repo", "packages/core/src/adapters/drizzle-repo.ts"],
   ["@trafficflow/core", "packages/core/src/index.ts"],

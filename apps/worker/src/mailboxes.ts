@@ -20,10 +20,10 @@ import { withIngestRuns } from "./ingest-run.js";
 // The RULE the fence answers with, from the module that owns the refusal it becomes. This
 // direction only: `sync.ts` must never import this file, which reaches `@trafficflow/db/cloud`
 // and would carry the hosted half into the engine bundle `apps/sidecar` builds from `sync.ts`.
-import { mailboxIsGoneForWrites, type FenceVerdict, type SyncWriteFence } from "./sync.js";
+import { mailboxIsGoneForWrites, type FenceVerdict, type SyncWriteFence } from "@ohmail/organizer/sync";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
-import { gapKeyFrom, handBackStart, heldElsewhereUntilOnLeave, travellingGapColumns } from "./gap-window.js";
-export { markOrganizedThrough } from "./gap-window.js";
+import { gapKeyFrom, handBackStart, heldElsewhereUntilOnLeave, travellingGapColumns } from "@ohmail/organizer/gap-window";
+export { markOrganizedThrough } from "@ohmail/organizer/gap-window";
 
 // The always-on worker reads its per-mailbox credentials from `mailbox_credentials`
 // (envelope-encrypted at rest) instead of a single env mailbox. This module is

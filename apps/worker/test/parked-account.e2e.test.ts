@@ -7,7 +7,7 @@ import { makeDb, pushSubscriptions } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger, type Logger } from "@trafficflow/core";
 import { META_FOLDER, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { startWorker } from "../src/index.js";
-import { imapCfg, rawClient } from "./_workerenv.js";
+import { imapCfg, rawClient } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**

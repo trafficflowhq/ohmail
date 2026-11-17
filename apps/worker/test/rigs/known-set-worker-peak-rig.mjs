@@ -50,8 +50,8 @@ const { mailboxes: mailboxesTable, mailboxCredentials, messages, messageInstance
 const { makeDb } = await import("@trafficflow/db/cloud");
 const { StaticKeyProvider, createLogger } = await import("@trafficflow/core");
 const { startWorker } = await import("../../src/index.ts");
-const { processKnownSetBudget, WORKER_HEAP_MIB } = await import("../../src/known-set.ts");
-const { greenmailPorts } = await import("../_greenmail-ports.ts");
+const { processKnownSetBudget, WORKER_HEAP_MIB } = await import("../../../../packages/organizer/src/known-set.ts");
+const { greenmailPorts } = await import("../../../../packages/organizer/test/_greenmail-ports.ts");
 const { ImapFlow } = await import("imapflow");
 const { eq, sql: dsql } = await import("drizzle-orm");
 

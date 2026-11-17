@@ -12,9 +12,9 @@ import {
   formatClaim, isMalformed, parseClaim, LeaseUnavailableError, META_RECORDS_MAX_PER_FETCH, MetaEnumRefusedError, META_ENUM_RECORDS_MAX,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { startWorker } from "../src/index.js";
-import { readMailboxLease, cloudInstallId, releaseMailboxClaim, hasLeaseIo } from "../src/lease.js";
+import { readMailboxLease, cloudInstallId, releaseMailboxClaim, hasLeaseIo } from "@ohmail/organizer/lease";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { ClaimReleaseError, makeLeaseIo, makeRequestOrganizerIo } from "@trafficflow/core/adapters/organizer-lease";
 import { memoryImapServer, type MemoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
 import { foreign600 } from "../../../packages/core/test/adapters/_lease-fixtures.js";

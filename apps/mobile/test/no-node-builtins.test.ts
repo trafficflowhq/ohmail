@@ -126,7 +126,7 @@ describe("the phone engine bundle reaches no Node builtin", () => {
     expect(inputs.length).toBeGreaterThan(600);
     expect(count((p) => p.startsWith("apps/") || p.startsWith("packages/"))).toBeGreaterThan(200);
     // And it is the ENGINE: the worker's sync loop and the local route table are in it.
-    expect(list((p) => p.includes("apps/worker/src/sync")).length).toBe(1);
+    expect(list((p) => p.includes("packages/organizer/src/sync")).length).toBe(1);
     expect(count((p) => /packages\/api\/(dist|src)\/local/.test(p))).toBeGreaterThan(0);
   });
 });

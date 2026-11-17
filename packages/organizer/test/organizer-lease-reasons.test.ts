@@ -18,7 +18,7 @@ import { leaseBlockReason, leaseRefusalIsNamed } from "../src/lease.js";
  * import the private half, and a `packages/core` import in `packages/db` would invert the
  * dependency the whole desktop split rests on.
  *
- * `apps/worker/src/lease.ts` is where they meet, and the typed assignment there is the primary
+ * `packages/organizer/src/lease.ts` is where they meet, and the typed assignment there is the primary
  * proof — a member on either side that the other lacks fails `tsc`. This file is the half `tsc`
  * cannot give: the DB side is a runtime array, so a value ADDED to it that no verdict can produce
  * is invisible to the compiler and would arrive in production as a reason the UI has no copy for.

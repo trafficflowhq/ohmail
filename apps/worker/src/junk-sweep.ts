@@ -16,8 +16,8 @@ import {
 } from "@trafficflow/core/adapters/imap";
 import type { NativeLocator } from "@trafficflow/core";
 import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
-import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.js";
-import { assertMayWriteToMailbox, writeDoorOf, type MailboxWriteAuthority } from "./lease.js";
+import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "@ohmail/organizer/junk-filing";
+import { assertMayWriteToMailbox, writeDoorOf, type MailboxWriteAuthority } from "@ohmail/organizer/lease";
 
 /**
  * THE SCAN'S STATE ACROSS CYCLES — a pure decision, extracted so it can be pinned by test (a fully

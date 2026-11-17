@@ -1790,7 +1790,7 @@ describe("apps/sidecar — the census", () => {
     expect(main).toMatch(/\bcreateSidecarLog\s*\(/);
     // ── AND THE HALF THAT LIMIT NAMED, FOR THE ONE CONSUMER WHERE IT WENT WRONG ────────────
     //
-    // The local engine composes `@trafficflow/worker/sync`, which speaks `Logger` rather than
+    // The local engine composes `@ohmail/organizer/sync`, which speaks `Logger` rather than
     // this package's two-argument seam, and `engine.ts` built its `syncDeps` with no `log` at
     // all — so every diagnostic the reconcile passes emit went nowhere on the standalone door.
     // Nothing could see it: the sink was correct, the census was green, and the lines simply had

@@ -7,7 +7,7 @@ import {
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { loadServedAccounts } from "./mailboxes.js";
-import { isCliEntry } from "./entry.js";
+import { isCliEntry } from "@ohmail/organizer/entry";
 import { cronEvent, runCronCli } from "./cron-log.js";
 import { attributedProposer, type UsageHook } from "./ai-usage.js";
 

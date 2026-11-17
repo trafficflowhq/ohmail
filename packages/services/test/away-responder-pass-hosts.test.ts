@@ -168,7 +168,8 @@ describe("the away responder's pass runs on exactly the three hosts that can dia
 
 describe("the worker no longer contains a responder it cannot deliver from", () => {
   it("no file under apps/worker/src calls the pass", () => {
-    const offenders = sources("apps/worker/src")
+    // And the organizer's package, where the worker's passes moved (ruling:organizer-cut).
+    const offenders = [...sources("apps/worker/src"), ...sources("packages/organizer/src")]
       .filter((p) => mentionsInCode(p, "runAwayResponderPass"));
     expect(offenders).toEqual([]);
   });

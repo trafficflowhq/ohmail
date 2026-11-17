@@ -7,8 +7,8 @@ import { makeDrizzleRepo, recordSpecialFolders } from "@trafficflow/core/adapter
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { SyncService, type ServiceContext } from "@trafficflow/services";
 import { MemoryMirrorStore, ohboxView } from "@ohmail/client-engine";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A LETTER THE PERSON SENT THEMSELVES, IN INBOX AND IN SENT. One logical row per fingerprint, so

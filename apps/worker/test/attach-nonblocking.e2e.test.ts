@@ -7,8 +7,8 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet, type FakeEvent } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet, type FakeEvent } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════

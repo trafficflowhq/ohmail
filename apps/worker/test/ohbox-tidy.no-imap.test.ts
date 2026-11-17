@@ -19,6 +19,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PASS = fileURLToPath(new URL("../src/ohbox-tidy.ts", import.meta.url));
 
+/** The organizer's package, where the shared rule write moved (ruling:organizer-cut). */
+const ORGANIZER = new URL("../../../packages/organizer/", import.meta.url);
+const ORGANIZER_EXPORTS = (JSON.parse(readFileSync(new URL("package.json", ORGANIZER), "utf8")) as {
+  exports: Record<string, { "ohmail-source": string }>;
+}).exports;
+
+/** The file an `@ohmail/organizer/<entry>` specifier names, read through the package's own manifest; else undefined. */
+function organizerFile(spec: string): string | undefined {
+  if (!spec.startsWith("@ohmail/organizer/")) return undefined;
+  const entry = ORGANIZER_EXPORTS[`./${spec.slice("@ohmail/organizer/".length)}`];
+  return entry === undefined ? undefined : fileURLToPath(new URL(entry["ohmail-source"], ORGANIZER));
+}
+
 /** Every module specifier a file imports — the import machinery, not the prose. */
 function importsOf(file: string): string[] {
   const body = readFileSync(file, "utf8");
@@ -41,6 +54,7 @@ function packageImportsOf(entry: string): Array<{ file: string; spec: string }> 
     seen.add(file);
     for (const spec of importsOf(file)) {
       if (spec.startsWith(".")) stack.push(resolve(dirname(file), spec.replace(/\.js$/, ".ts")));
+      else if (organizerFile(spec) !== undefined) stack.push(organizerFile(spec)!);
       else out.push({ file: basename(file), spec });
     }
   }
@@ -73,7 +87,7 @@ describe("the ohbox-tidy pass opens no IMAP connection", () => {
     const check = (file: string, who: string): string[] => {
       const out: string[] = [];
       for (const spec of importsOf(file)) {
-        if (spec.startsWith(".")) { out.push(spec); continue; }
+        if (spec.startsWith(".") || organizerFile(spec) !== undefined) { out.push(spec); continue; }
         const ok = allowed.some((a) => spec === a || spec.startsWith(`${a}/`));
         expect(ok, `${who} imports ${spec}, which is outside db + core`).toBe(true);
       }
@@ -81,10 +95,10 @@ describe("the ohbox-tidy pass opens no IMAP connection", () => {
     };
     const siblings = check(PASS, "ohbox-tidy.ts");
     for (const rel of siblings) {
-      const target = fileURLToPath(new URL(rel.replace(/\.js$/, ".ts"), pathToFileURL(PASS)));
+      const target = organizerFile(rel) ?? fileURLToPath(new URL(rel.replace(/\.js$/, ".ts"), pathToFileURL(PASS)));
       expect(check(target, rel).length, `${rel} reaches a sibling of its own`).toBe(0);
     }
     // The admission measured something: this pass really does reach a sibling.
-    expect(siblings).toEqual(["./rule-pass.js"]);
+    expect(siblings).toEqual(["@ohmail/organizer/rule-pass"]);
   });
 });

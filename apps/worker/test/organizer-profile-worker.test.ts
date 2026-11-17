@@ -18,9 +18,9 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile";
 import { startWorker } from "../src/index.js";
 import { buildReleaseOf, profileProducerVersion } from "../src/build-version.js";
-import { OrganizerProfileSync, serializeOrganizerProfile, serializeOrganizerProfileCounted, PROFILE_FOUND_AUDIT_ACTION } from "../src/profile.js";
+import { OrganizerProfileSync, serializeOrganizerProfile, serializeOrganizerProfileCounted, PROFILE_FOUND_AUDIT_ACTION } from "@ohmail/organizer/profile";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { KEY_RING_PREFIX, keyRingVar } from "../../../test/support/key-ring-env.js";
 
 /**

@@ -2,10 +2,10 @@ import net from "node:net";
 import { afterAll, describe, expect, it } from "vitest";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
-import { DatabaseFaultError } from "../src/dead-letter.js";
+import { DatabaseFaultError } from "@ohmail/organizer/dead-letter";
 import { isShardConnectionFault } from "../src/db-fault.js";
 import { tailStageRunner } from "../src/tail-stage.js";
-import { senderCheckRetirement } from "../src/sender-check-backfill.js";
+import { senderCheckRetirement } from "@ohmail/organizer/sender-check-backfill";
 import { makeAwayReplySweep } from "../src/away-reply-sweep.js";
 
 /**

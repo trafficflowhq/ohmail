@@ -9,7 +9,7 @@ import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { startWorker } from "../src/index.js";
 import { syncKickPass } from "../src/sync-kick.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * "ORGANIZE HERE" WAKES THE PASS (VERIFY-026 L6). The press stamped only `takeover_authorized_at`,

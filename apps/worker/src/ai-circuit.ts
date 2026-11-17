@@ -1,5 +1,5 @@
 import type { SpendPort } from "@trafficflow/db";
-import { ClassifierFaultError } from "./classifier-fault.js";
+import { ClassifierFaultError } from "@ohmail/organizer/classifier-fault";
 import { ModelDeclinedError, SensitivePayloadRefusal } from "@trafficflow/core";
 import type { AiCallOptions, ClassifierPort, ClassifierInput, ClassifierResult, Logger } from "@trafficflow/core";
 
@@ -26,7 +26,7 @@ export const DEFAULT_MAX_COOLDOWN_MS = 15 * 60_000;
  * a leaf module with no imports: `sync.ts` needs only the discriminator, and importing it from
  * here dragged the whole breaker into the sync loop's closure. See `classifier-fault.ts`.
  */
-export { ClassifierFaultError } from "./classifier-fault.js";
+export { ClassifierFaultError } from "@ohmail/organizer/classifier-fault";
 
 export interface ClassifierCircuitState {
   open: boolean;

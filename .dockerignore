@@ -54,7 +54,9 @@
 !packages/core
 !packages/db
 !packages/db-mail
-# The calendar's passes (`apps/worker/src/calendar/`) and the providers they read through.
+# The organizer's cycle and passes (`packages/organizer`), which the worker imports by name.
+!packages/organizer
+# The calendar's passes (`packages/organizer/src/calendar/`) and the providers they read through.
 !packages/cal-core
 !packages/cal-providers
 # Types only, and in the closure because core and db reference it: `tsc -b` reads its sources

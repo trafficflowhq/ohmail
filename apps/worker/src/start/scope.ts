@@ -17,17 +17,17 @@ import type { AiUsageRelay, WorkerConfig } from "../config.js";
 import type { DialHostGuard } from "../dial-host-guard.js";
 import type { DegradedCauses, UnservedBreakdown } from "../health.js";
 import type { LeaderLock, LockLostError } from "../leader-lock.js";
-import type { OrganizerWriteAuthority } from "../lease.js";
+import type { OrganizerWriteAuthority } from "@ohmail/organizer/lease";
 import type {
   EnabledMailbox, LeaderFence, MailboxErrorPhase, MailboxSelection, MailboxSyncBlockReason, ParkedAccountsReader,
 } from "../mailboxes.js";
 import type { PlatformSignalPollHandle } from "../platform-signal-poll.js";
-import type { SweepClearance } from "../profile.js";
+import type { SweepClearance } from "@ohmail/organizer/profile";
 import type { RunningPushWake } from "../push-wake.js";
-import type { ImpersonationWalk } from "../screener-impersonation.js";
+import type { ImpersonationWalk } from "@ohmail/organizer/screener-impersonation";
 import type { StorageCapResolver } from "../storage-cap.js";
 import type { SyncKickBell } from "../sync-kick.js";
-import type { SyncDeps } from "../sync.js";
+import type { SyncDeps } from "@ohmail/organizer/sync";
 import type { TailOrigin } from "../tail-stage.js";
 import type { ThreadJoinHealWalk } from "../thread-join-heal-walk.js";
 import type { MailboxRuntime, Quarantine } from "../index.js";

@@ -180,7 +180,7 @@ const logRows = (accountId: string) =>
 
 /**
  * Run the SYNC WORKER's two ingest phases over one change — `planChange` outside a transaction,
- * `commitChange` inside one with a tx-scoped repo. Copied in shape from `apps/worker/src/sync.ts`
+ * `commitChange` inside one with a tx-scoped repo. Copied in shape from `packages/organizer/src/sync.ts`
  * rather than imported, because `packages/services` does not depend on `apps/worker`; what matters
  * is that it is the same two pipeline functions over the same repo adapter.
  */

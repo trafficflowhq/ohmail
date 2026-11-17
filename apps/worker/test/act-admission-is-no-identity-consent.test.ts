@@ -13,12 +13,12 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { sql } from "drizzle-orm";
-import { runSyncCycle } from "../src/sync.js";
-import { retireActAdmissionsPass } from "../src/act-admission-retire.js";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { retireActAdmissionsPass } from "@ohmail/organizer/act-admission-retire";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 import { ohboxTidyPass } from "../src/ohbox-tidy.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 import { fakeKeys, letter, nodemailerSign, rsaKey } from "../../../packages/core/test/fixtures/dkim-signed.js";
 
 /**

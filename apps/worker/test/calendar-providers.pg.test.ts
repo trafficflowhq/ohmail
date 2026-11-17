@@ -19,15 +19,15 @@ import { GOOGLE_TOKEN_URL, makeReader as makeGoogleReader } from "@ohmail/cal-pr
 import { makeReader as makeMicrosoftReader } from "@ohmail/cal-providers/microsoft";
 import type { HostResolver } from "@trafficflow/core/net";
 import { calCalendars, calConnections, calEvents, calWrites } from "@trafficflow/db";
-import { calendarSyncPass } from "../src/calendar/sync-pass.js";
-import { calendarWriteDrain } from "../src/calendar/write-drain.js";
+import { calendarSyncPass } from "@ohmail/organizer/calendar-sync-pass";
+import { calendarWriteDrain } from "@ohmail/organizer/calendar/write-drain";
 import { startCalDavStandIn, type StandIn } from "../../../packages/cal-providers/test/caldav-stand-in.js";
 // @ts-expect-error a plain module
 import { startMsDouble } from "../../../packages/cal-providers/test/support/ms-double.mjs";
 import {
   AVAILABLE, calendarsOf, capturedLog, changesOf, connectionOf, depsFor, eventsOf, openWorld, providersOf, recordWrite, seedConnection, tokenEndpoint,
   type World,
-} from "./_calendar-world.js";
+} from "../../../packages/organizer/test/_calendar-world.js";
 
 const never = new AbortController().signal;
 /** The byte no text or JSON column of the store takes. */

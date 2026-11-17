@@ -8,7 +8,7 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
-import { DEFAULT_STALE_AFTER_MS } from "@trafficflow/worker/lease";
+import { DEFAULT_STALE_AFTER_MS } from "@ohmail/organizer/lease";
 import { mailboxes } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { releaseRefusal } from "./_release-refusal.js";

@@ -144,13 +144,13 @@ import { readLoopbackMailCertificate } from "./host-pin-probe.js";
 // It lives in the worker package today because the worker was its only caller. If the loop later
 // moves into a package shared by both hosts, this import moves with it and nothing else here
 // changes. A test in this package fails if a second copy of the loop ever appears beside it.
-import { runSyncCycle, type CycleCensus, type SyncDeps } from "@trafficflow/worker/sync";
+import { runSyncCycle, type CycleCensus, type SyncDeps } from "@ohmail/organizer/sync";
 /* The memo the cycle's `knownSet` takes, from its OWN subpath and not through the loop's module:
-   `one-pipeline.test.ts` holds this file's value import from `@trafficflow/worker/sync` to
+   `one-pipeline.test.ts` holds this file's value import from `@ohmail/organizer/sync` to
    `runSyncCycle` alone, because a second value out of the loop's module would be a second piece of
    the pipeline running here. This is per-attachment state, not a piece of the pipeline. */
-import { KnownSetCache } from "@trafficflow/worker/known-set";
-import { breachSetAside, DeadLetterLedger, isDeviceStoreFault } from "@trafficflow/worker/dead-letter";
+import { KnownSetCache } from "@ohmail/organizer/known-set";
+import { breachSetAside, DeadLetterLedger, isDeviceStoreFault } from "@ohmail/organizer/dead-letter";
 import { startTailProgress } from "./drain-tail-progress.js";
 
 // The ORGANIZER LEASE, from the same package and for the same reason: two readings of one decision
@@ -167,7 +167,7 @@ import {
   OrganizerStandDownError,
   leaseStoodDown, writeDoorOf, cycleWriteAuthority, DEFAULT_STALE_AFTER_MS, leaseBlockReason, leaseRefusalIsNamed,
   type OrganizerWriteAuthority,
-} from "@trafficflow/worker/lease";
+} from "@ohmail/organizer/lease";
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
 // still be able to say who does, and `runLeaseGate` cannot answer that question without taking
 // the mailbox (its empty-folder arm claims). One method, no way to write. See
@@ -180,7 +180,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-lease";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
-import { OrganizerProfileSync, readNewestSettings, sweepHeld, syncProfileMirror } from "@trafficflow/worker/profile";
+import { OrganizerProfileSync, readNewestSettings, sweepHeld, syncProfileMirror } from "@ohmail/organizer/profile";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 // THE SYMMETRIC-TAKEOVER REQUEST DRAIN (0.14.1), from the worker's own subpath for
 // the same reason `OrganizerProfileSync` is: one implementation of "apply a reader's decision" or
@@ -188,54 +188,54 @@ import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 // what the hosted worker does.
 import {
   applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests, shrinkMetaOnRefusal,
-} from "@trafficflow/worker/request-drain";
+} from "@ohmail/organizer/request-drain";
 // The SCHEDULED-RESURFACE FLIP, from the same package and for the third instance of the same
 // argument. "Resurfaces Friday at 9" is a dated promise the product makes to the user, and the
 // only thing that can keep it is a pass that notices the date has arrived. On a hosted account
 // the worker's cycle runs it; a standalone install has no worker at all, so this process runs the
 // SAME function against the store that is authoritative here. A local reimplementation would be a
 // second answer to "when is a resurface due", which is the one thing that must not differ.
-import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
+import { bubbleUpPass } from "@ohmail/organizer/bubble-up";
 /* A RULE'S "APPLY TO EXISTING MAIL", the worker's pass for bubble-up's reason: on this door the
    store is the authority and no worker will walk the backlog, so without it a Screener decision
    re-presented the old mail while the mailbox kept it where it was. */
-import { ruleRetroPass } from "@trafficflow/worker/rule-retro";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 /* OLDER HTML-ONLY LETTERS' WORDS, the worker's store-only pass: here the store is the authority. */
 import {
   HTML_WORDS_LOCAL_BUDGET_MS, HTML_WORDS_LOCAL_SCAN_ROWS, htmlWordsBackfillPass,
-} from "@trafficflow/worker/html-words-backfill";
+} from "@ohmail/organizer/html-words-backfill";
 import { arrivalBackfill, type ArrivalBackfill, type ArrivalReader } from "./arrival-backfill.js";
 /* MAIL FROM A GAP, the worker's pass for the same reason: on this door no worker rules the mail
    that arrived while nothing organized the mailbox. */
 import {
   gapCatchupPass, gapKeyFrom, gapOpenStart, handBackStart, heldElsewhereUntilOnLeave, instantOf,
   markOrganizedThrough, NO_FOLDER_READ, travellingGapColumns, type TravelledGap,
-} from "@trafficflow/worker/gap-catchup";
-import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
+} from "@ohmail/organizer/gap-catchup";
+import { screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import {
   screenerActConsentFrom, screenerAutoActPass, type ScreenerAutoActSettings,
-} from "@trafficflow/worker/screener-auto-act";
+} from "@ohmail/organizer/screener-auto-act";
 /* THE CORRESPONDENT RETRO, the worker's pass for `ruleRetroPass`'s reason: nobody this account
    wrote to waits at the gate, and on this door no worker will ever walk the held set. */
 import {
   CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
-} from "@trafficflow/worker/screener-correspondent-retro";
-import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
+} from "@ohmail/organizer/screener-correspondent-retro";
+import { threadJoinHealPass, type ThreadJoinHealCursor } from "@ohmail/organizer/thread-join-heal";
 /* THE IDENTITY BACKFILL (mail 0148), the worker's pass for the name repair's reason: this store is
    the authority nothing else will ever check, and one fact function decides every row. */
-import { senderCheckBackfillPass } from "@trafficflow/worker/sender-check-backfill";
-import { listAddressBackfillPass } from "@trafficflow/worker/list-address-backfill";
+import { senderCheckBackfillPass } from "@ohmail/organizer/sender-check-backfill";
+import { listAddressBackfillPass } from "@ohmail/organizer/list-address-backfill";
 import {
   screenerImpersonationPass, type ImpersonationCutlineSettings, type ImpersonationWalk,
-} from "@trafficflow/worker/screener-impersonation";
-import { retireActAdmissionsPass } from "@trafficflow/worker/act-admission-retire";
-import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
-import { GONE_LETTER_TIDY_BATCH, goneLetterTidyPass } from "@trafficflow/worker/gone-letter-tidy";
+} from "@ohmail/organizer/screener-impersonation";
+import { retireActAdmissionsPass } from "@ohmail/organizer/act-admission-retire";
+import { inboundQuietPass } from "@ohmail/organizer/inbound-quiet";
+import { GONE_LETTER_TIDY_BATCH, goneLetterTidyPass } from "@ohmail/organizer/gone-letter-tidy";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
 // argument. The values it writes have to be the ones ingest would have written from the same
 // headers; a second parse here would leave two populations of rows decided by different rules, and
 // the disagreement would be invisible one row at a time.
-import { runSenderNameBackfill } from "@trafficflow/worker/sender-name-backfill";
+import { runSenderNameBackfill } from "@ohmail/organizer/sender-name-backfill";
 import { createLocalAi, type LocalAi } from "./ai-provider.js";
 import { localAiRoutes } from "./ai-routes.js";
 import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
@@ -400,7 +400,7 @@ export interface SidecarConfig {
    */
   heartbeatTimeoutMs?: number;
   /**
-   * The blank repair's mode (`apps/worker/src/blank-repair.ts`), handed to every cycle: `off` runs
+   * The blank repair's mode (`packages/organizer/src/blank-repair.ts`), handed to every cycle: `off` runs
    * nothing, `dry` reads and counts and writes nothing, `apply` repairs. Absent is apply. The desktop
    * reads `OHMAIL_BLANK_REPAIR` (`main.ts`), as the hosted worker does. The phone (`mobile.ts`) passes
    * `off`, always: its build carries no repair (the alias table substitutes a twin that refuses,
@@ -571,7 +571,7 @@ export interface SidecarConfig {
   leaseStaleAfterMs?: number;
   /**
    * TEST SEAM. How often the portable organizer profile is re-serialized and compared against
-   * what `ohmail/_meta` holds, at most (`@trafficflow/worker/profile`). Production takes the
+   * what `ohmail/_meta` holds, at most (`@ohmail/organizer/profile`). Production takes the
    * composition's five minutes.
    */
   profileFlushIntervalMs?: number;
@@ -1971,7 +1971,7 @@ export const LOCAL_NAME_BACKFILL_PAGES = 2;
 const LOCAL_ACT_RETIRE_PAGES = 1000;
 
 /**
- * How often a launch runs the THREAD-JOIN HEAL (`@trafficflow/worker/thread-join-heal`) at the
+ * How often a launch runs the THREAD-JOIN HEAL (`@ohmail/organizer/thread-join-heal`) at the
  * tail of a drain. Six hours — the hosted worker's own gate — because it repairs presentation
  * (a conversation a forward split into two threads), nothing user-promised rides on a run, and
  * its candidate pre-filter is a GROUP BY over the store's threads that per-drain polling would
@@ -1980,7 +1980,7 @@ const LOCAL_ACT_RETIRE_PAGES = 1000;
 export const LOCAL_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
 
 /**
- * How often a launch runs the INBOUND-QUIET pass (`@trafficflow/worker/inbound-quiet` — the
+ * How often a launch runs the INBOUND-QUIET pass (`@ohmail/organizer/inbound-quiet` — the
  * forwarding-detection heuristic, mail 0078) at the tail of a drain. Six hours, the hosted
  * worker's own gate, for its reason: the pass judges fortnight-wide windows, so nothing a user
  * can perceive changes between two drains, and its grouped aggregate is not worth paying
@@ -3113,7 +3113,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * means at the tail of a drain: the only moment this install can have new held senders, and the only moment it is
      * awake. Launch catch-up needs no second hook — nothing arrives while the app is closed, and an interrupted pass
      * resumes for free (the stored suggestion is the progress marker). It is the worker's pass
-     * (`@trafficflow/worker/screener-auto-suggest`), not a copy: watermark, cap and ordering must agree character for
+     * (`@ohmail/organizer/screener-auto-suggest`), not a copy: watermark, cap and ordering must agree character for
      * character with the Screener surface. Here `credits` is absent and `unmetered: true` declared; the watermark is
      * `account_settings.auto_suggest_at` (written by `PUT /local/auto-suggest` only); the first refusal stops the
      * pass via `classifierForCycle()`'s cooldown. On: at most one model call per new held sender, ever.
@@ -3206,7 +3206,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * put them — a one-time repair of this install's own store, spread over many visits. Hosted
      * rows were repaired centrally and mirrors learned the values as `/sync` deltas; a standalone
      * store is the authority nothing else has seen, so this door runs the same pass itself
-     * (`@trafficflow/worker/sender-name-backfill` — a second parse would produce indistinguishable
+     * (`@ohmail/organizer/sender-name-backfill` — a second parse would produce indistinguishable
      * rows). {@link LOCAL_NAME_BACKFILL_PAGES} pages of {@link LOCAL_NAME_BACKFILL_BATCH} rows per
      * visit; no resume state — the pass writes only unset columns (`namesCursor` is a per-launch
      * walk position, `namesDone` ends the scans); one `message` update per row repaints the window.
@@ -5081,7 +5081,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // The organizer lease — the LOCAL half. A local install cannot query the hosted database
       // and Cloud cannot query this PGlite file, so the mailbox is the only medium the two
       // share and the claim lives in it. The format, priority table and IO are
-      // `packages/core`'s; the composition is `@trafficflow/worker/lease`'s. This file supplies
+      // `packages/core`'s; the composition is `@ohmail/organizer/lease`'s. This file supplies
       // the two things Cloud cannot: WHO this install is, and what standing down means on a
       // laptop. The install id is the local `accounts` row: an install resuming its own role is
       // not a takeover, and that distinction IS an install-id match — the id survives a crash,
@@ -5318,7 +5318,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
 
       /**
        * The portable organizer profile — the LOCAL half, the same composition Cloud runs
-       * (`@trafficflow/worker/profile`), handed this install's lease identity and this install's
+       * (`@ohmail/organizer/profile`), handed this install's lease identity and this install's
        * store. One serialization of one store, or LOCAL and CLOUD would write documents that
        * disagree about the same configuration. Ticked only from `syncUntilQuiet` AFTER
        * `mayOrganize()` said yes — the single-writer discipline every organizer-side write
@@ -6830,7 +6830,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        *   One reading per pass; the cache is re-established at the NEXT pass's gate.
        */
       /**
-       * THE KNOWN-SET MEMO, ONE PER ATTACHMENT — `apps/worker/src/known-set.ts`, on this door.
+       * THE KNOWN-SET MEMO, ONE PER ATTACHMENT — `packages/organizer/src/known-set.ts`, on this door.
        * Without it every idle cycle re-read every locator this mailbox holds. DIRTY BY DEFAULT:
        * the proxy drops it on every repo method not classified neutral, `runSyncCycle` on any
        * throw. Two legs hold it here — this process holds an EXCLUSIVE lock on the data directory,
@@ -7263,7 +7263,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           tail.phase("name-repair");
           await upkeep(() => onceForTheAccount(backfillStoredNames));
           /* REJOIN THE CONVERSATIONS A FORWARD SPLIT, the same pass the hosted worker runs
-             (`@trafficflow/worker/thread-join-heal`) for the reason every pass above is the
+             (`@ohmail/organizer/thread-join-heal`) for the reason every pass above is the
              worker's: on this door the store under the user's home IS the authority, no worker
              anywhere else will ever visit it, and a second implementation of the join evidence
              would be a second population of merges decided by different rules. Time-gated
@@ -7299,7 +7299,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
           }
           /* NOTICE THE MAILBOX A PROVIDER-SIDE FORWARD EMPTIED — the same pass the hosted worker
-             runs (`@trafficflow/worker/inbound-quiet`), for the reason every pass above is the
+             runs (`@ohmail/organizer/inbound-quiet`), for the reason every pass above is the
              worker's: this store is the authority for this install, no worker anywhere else will
              judge it, and a second implementation of the predicate would tell the same mailbox's
              owner two different stories across the doors. Time-gated in-launch (six hours, the

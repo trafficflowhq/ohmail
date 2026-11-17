@@ -11,10 +11,10 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, ImapBoundExceeded } from "@trafficflow/core/adapters/imap";
 import { MessageService, SearchService, SyncService, buildSeedReview, type ServiceContext } from "@trafficflow/services";
 import { MemoryMirrorStore } from "@ohmail/client-engine";
-import { runSyncCycle } from "../src/sync.js";
-import { goneLetterTidyAccounts, goneLetterTidyPass } from "../src/gone-letter-tidy.js";
-import { FIXTURE_LEASE } from "./_door.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { goneLetterTidyAccounts, goneLetterTidyPass } from "@ohmail/organizer/gone-letter-tidy";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * A SENT MESSAGE DELETED IN ANOTHER MAIL APP LEAVES OHMAIL.

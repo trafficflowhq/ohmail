@@ -6,8 +6,8 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { MessageGoneError, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { MailboxService, MessageService, type ServiceContext } from "@trafficflow/services";
-import { reconcileMailbox, type SyncDeps } from "../src/sync.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { reconcileMailbox, type SyncDeps } from "@ohmail/organizer/sync";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * RESTORE BEFORE THE DELETE LANDS — the press and the organizer's pass composed on the stores the

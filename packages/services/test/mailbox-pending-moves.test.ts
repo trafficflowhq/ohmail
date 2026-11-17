@@ -31,7 +31,7 @@ import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
  *
  * PGlite deliberately: this is about which rows one aggregate counts, not about concurrency.
  * The convergence half — an adapter that throws mid-reconcile, re-run, no duplicate copies —
- * needs real Postgres and lives in `apps/worker/test/reconcile-resume.pg.test.ts`.
+ * needs real Postgres and lives in `packages/organizer/test/reconcile-resume.pg.test.ts`.
  */
 
 const NOW = new Date("2026-08-06T12:00:00.000Z");

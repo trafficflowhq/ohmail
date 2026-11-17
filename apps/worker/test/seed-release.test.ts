@@ -7,7 +7,7 @@ import {
 } from "@trafficflow/db";
 import { confirmSeed } from "@trafficflow/services/mail";
 import type { ServiceContext } from "@trafficflow/services";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
  * ═══ CONFIRMING THE SEED RELEASES WHAT THE GATE IS HOLDING FROM THOSE PEOPLE ══════════════

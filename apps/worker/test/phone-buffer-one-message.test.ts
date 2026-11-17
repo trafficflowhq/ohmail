@@ -7,9 +7,9 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { createLogger, STORED_HTML_CAP_BYTES, UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { messageIdFromRaw } from "@trafficflow/core/adapters/imap";
-import { runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ONE MESSAGE OVER THE HTML CAP, INGESTED WITH THE PHONE'S BUFFER — the hotfix's boundary.

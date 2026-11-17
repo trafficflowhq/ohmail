@@ -9,11 +9,11 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, folderState, mailboxes, messages, routingDecisions, rules } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
-import { gapCatchupPass } from "../src/gap-catchup.js";
+import { gapCatchupPass } from "@ohmail/organizer/gap-catchup";
 import {
   clearOrganizerStandDown, markMailboxReleased, markMailboxStoodDown, readTravellingGapSince, refreshOrganizerHolder,
 } from "../src/mailboxes.js";
-import { GAP_CLOCK_ALLOWANCE_MS, gapOpenStart, markOrganizedThrough, type TravelledGap } from "../src/gap-window.js";
+import { GAP_CLOCK_ALLOWANCE_MS, gapOpenStart, markOrganizedThrough, type TravelledGap } from "@ohmail/organizer/gap-window";
 
 /**
  * A HAND-BACK OPENS THE GAP AT THE RELEASE, NOT ONE LOOK LATER. The letter is taken in

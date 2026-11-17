@@ -66,7 +66,7 @@ const HOLD_WRITERS: ReadonlyArray<{
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const SCAN: readonly string[] = [
   "packages/core/src", "packages/services/src", "packages/db/src",
-  "apps/worker/src", "apps/sidecar/src",
+  "apps/worker/src", "packages/organizer/src", "apps/sidecar/src",
 ];
 
 function sources(dir: string, out: string[] = []): string[] {

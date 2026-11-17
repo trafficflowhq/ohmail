@@ -14,9 +14,9 @@ import {
   formatProfileMessage, makeProfileDoc, profileFingerprint, signatureReceipt, type OrganizerProfilePayload,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { ScreenerService, TriageService, type ServiceContext } from "@trafficflow/services";
-import { OrganizerProfileSync } from "../src/profile.js";
+import { OrganizerProfileSync } from "@ohmail/organizer/profile";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE ORGANIZER FINISHES A PRESS THE REQUEST COULD NOT. The ask is on the mailbox row (mail 0129);

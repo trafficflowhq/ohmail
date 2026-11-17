@@ -15,8 +15,8 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { MailboxAdapter, ChangeBatch } from "@trafficflow/core/adapters/imap";
 import type { NativeLocator } from "@trafficflow/core";
 import { markMailboxFailed, makeSyncWriteFence, type LeaderFence } from "../src/mailboxes.js";
-import { runSyncCycle, LeaderFencedError, type SyncDeps } from "../src/sync.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle, LeaderFencedError, type SyncDeps } from "@ohmail/organizer/sync";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ══ THE LEADER FENCE, WHEN THE TAKEOVER COMMITS INSIDE THE LOCK WAIT ══════════════════════

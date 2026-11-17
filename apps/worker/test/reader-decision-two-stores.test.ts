@@ -10,8 +10,8 @@ import {
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage, type MetaRecordsList,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
-import { listedOf } from "./_meta-list.js";
+import { applyMetaRequests, driveOutstandingRequests } from "@ohmail/organizer/request-drain";
+import { listedOf } from "../../../packages/organizer/test/_meta-list.js";
 
 /**
  * A reader's decision between TWO INSTALLS, each with its own store. Every install

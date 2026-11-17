@@ -8,7 +8,7 @@ import { dialect } from "@trafficflow/db/dialect";
  * `change_log`, because the client pins on `message.triage.state` and joins nothing (the state change
  * alone moves the row for nobody). Its own module because TWO HOSTS run it and only one has a Postgres
  * pool: `bubble-up-cron.ts` is the hosted CLI backstop, `apps/sidecar` the desktop engine (PGlite, no
- * lock), so the pass lives in the smallest graph, exported `@trafficflow/worker/bubble-up`. `resurfaced`
+ * lock), so the pass lives in the smallest graph, exported `@ohmail/organizer/bubble-up`. `resurfaced`
  * (not `none`) pins the row under its own label, cleared by `MessageService.markSeen`/`patch`/`move`;
  * `bubbleUpAt` cleared with the flip. It does NOT touch read state (the `\Seen` idea removed 2026-08-26).
  * Pure/hermetic (handle + clock); one SELECT over `message_states_account_state_idx` + one UPDATE per due row; `opts.accountId` REQUIRED (shard-specific lock). {@link runBubbleUpCron} is the dead-worker backstop. */

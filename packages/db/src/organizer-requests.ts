@@ -125,7 +125,7 @@ export async function insertOrganizerRequestSet(tx: Tx, input: {
  * Every `pending` request on one mailbox, oldest first — what the reader's cycle appends next.
  * `decidedAt` then `id`: two decisions made in the same instant (a fast double-press, or a client
  * clock with second resolution) still land in a STABLE order across repeated reads, which matters
- * because `apps/worker/src/request-drain.ts` — the organizer's OWN read of the analogous folder
+ * because `packages/organizer/src/request-drain.ts` — the organizer's OWN read of the analogous folder
  * records — sorts by that same pair for the identical reason (its own header: "two doors deciding
  * one sender in one cycle land in the order the human made them").
  */

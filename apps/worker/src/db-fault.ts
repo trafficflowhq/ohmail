@@ -1,4 +1,4 @@
-import { DatabaseFaultError } from "./dead-letter.js";
+import { DatabaseFaultError } from "@ohmail/organizer/dead-letter";
 
 /**
  * WHOSE SOCKET WAS IT — tagging a database fault at its ORIGIN instead of guessing from a code. The cycle

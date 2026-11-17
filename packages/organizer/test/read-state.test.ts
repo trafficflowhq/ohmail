@@ -195,7 +195,7 @@ describe("reconcileFlags — OUR intent reaches IMAP", () => {
 describe("user always wins — an EXTERNAL \\Seen is never reverted by us", () => {
   it("a divergent row marked 'external' is left alone: no setFlags, nothing rewritten", async () => {
     // THE GUARD. Delete `if (p.lastSetBy !== "us") continue;` from `reconcileFlags` in
-    // `apps/worker/src/sync.ts` and this goes red: the fake records a write, and the row is
+    // `packages/organizer/src/sync.ts` and this goes red: the fake records a write, and the row is
     // stamped reconciled — i.e. the product overrules a decision its owner made in Apple Mail,
     // every cycle, forever.
     const w = await world();

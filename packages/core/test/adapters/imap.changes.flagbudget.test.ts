@@ -8,7 +8,7 @@ import { DEFAULT_SYNC_BATCH_MAX_FLAGS, type ImapCursor } from "../../src/adapter
  * `changesSince` capped creates by count and by bytes and capped flag changes not at all, so a
  * CONDSTORE `changedSince` after "mark all as read" across thousands of messages returned all of
  * them in one `ChangeBatch`. The worker consumes each as its own database transaction
- * (`apps/worker/src/sync.ts`), on its ONE serial queue: minutes in which no other mailbox
+ * (`packages/organizer/src/sync.ts`), on its ONE serial queue: minutes in which no other mailbox
  * syncs, no roster pass runs, and `stop()` cannot finish inside Railway's 30 s drain.
  *
  * ── WHY THE BOUND NEEDED A RESUME POINT, WHICH IS THE WHOLE DIFFICULTY ─────────────────────

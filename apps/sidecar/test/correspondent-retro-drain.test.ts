@@ -19,7 +19,7 @@ import { createSidecar, type Sidecar } from "../src/engine.js";
  * had no caller for it, so mail held before the ingest learned the correspondent waited for the
  * held-release offer. The drain tail now runs the pass behind the organizer gate, and the same
  * drain's reconciler carries the move. The pass itself runs on the device store in the sqlite
- * project (`apps/worker/test/screener-correspondent.test.ts`).
+ * project (`packages/organizer/test/screener-correspondent.test.ts`).
  */
 
 class MemoryMetaFolder implements LeaseIo {

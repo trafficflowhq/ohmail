@@ -7,7 +7,7 @@ import {
 import { sourceFor } from "@trafficflow/db";
 import type { SpendOutcome, SpendPort } from "@trafficflow/db";
 import { makeClassifierCircuit, ClassifierFaultError } from "../src/ai-circuit.js";
-import { classifyIngestFault, DeadLetterLedger } from "../src/dead-letter.js";
+import { classifyIngestFault, DeadLetterLedger } from "@ohmail/organizer/dead-letter";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════

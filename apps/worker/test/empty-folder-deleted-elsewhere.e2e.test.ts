@@ -12,9 +12,9 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap-types";
 import { SyncService, type ServiceContext } from "@trafficflow/services";
 import { OhmailEngine, type EngineAdapter, type SyncSnapshotPage } from "@ohmail/client-engine";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
 
 /**
  * A FOLDER DELETED ON THE SERVER LEAVES EVERY FOLDER LIST WITHIN ONE SYNC, EMPTY OR NOT.

@@ -9,7 +9,7 @@
  * still opens nothing until the table and the route exist. It says so once, at the worker's start.
  */
 import type { Logger } from "@trafficflow/core";
-import type { CalendarNoticeInput } from "./calendar/types.js";
+import type { CalendarNoticeInput } from "@ohmail/organizer/calendar/types";
 
 export interface CalendarNoticeDeps {
   /** The public origin a provider's notices are sent to, or `null`. */

@@ -1,4 +1,4 @@
-import { THREAD_JOIN_HEAL_MAX_GROUPS, type ThreadJoinHealCursor, type ThreadJoinHealResult } from "./thread-join-heal.js";
+import { THREAD_JOIN_HEAL_MAX_GROUPS, type ThreadJoinHealCursor, type ThreadJoinHealResult } from "@ohmail/organizer/thread-join-heal";
 
 /**
  * THE CYCLE TAIL'S THREAD-JOIN HEAL WALK: the six-hour gate and each account's resume point. One heal

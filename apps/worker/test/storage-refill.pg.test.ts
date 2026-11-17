@@ -19,11 +19,11 @@ import {
 } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { storageEvictPass } from "../src/storage-evict.js";
+import { storageEvictPass } from "@ohmail/organizer/storage-evict";
 import { makeStorageCapResolver } from "../src/storage-cap.js";
 import {
   REFILL_ABSENT_RETRY_MS, REFILL_EVERY_MS, newRefillState, storageRefillPass, type StorageRefillDeps,
-} from "../src/storage-refill.js";
+} from "../../../packages/organizer/src/storage-refill.js";
 
 /**
  * THE STORAGE REFILL ON REAL POSTGRES. Room appears (a bigger plan, the add-on, an erased mailbox)

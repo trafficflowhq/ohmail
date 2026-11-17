@@ -10,7 +10,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { triageService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { bubbleUpPass } from "../src/bubble-up-cron.js";
-import { dbUrlFor, refuseDriftedSharedDb } from "./_workerdb.js";
+import { dbUrlFor, refuseDriftedSharedDb } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * "RESURFACE NOW" AGAINST THE WORKER'S BUBBLE-UP PASS, ON REAL POSTGRES.

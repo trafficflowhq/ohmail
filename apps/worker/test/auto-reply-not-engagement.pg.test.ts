@@ -10,7 +10,7 @@ import {
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { ohboxTidyPass } from "../src/ohbox-tidy.js";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import type { Tx } from "@trafficflow/db";
 import { brandDialect, dialect } from "@trafficflow/db/dialect";

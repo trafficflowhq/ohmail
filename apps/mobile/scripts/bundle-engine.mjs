@@ -845,7 +845,7 @@ export function workspaceExportTargets(repo = REPO) {
 
 /* `pathToFileURL`, never `file://${argv[1]}`: the raw splice is false for any path needing
  * percent-encoding (the Mac's "/Volumes/Macintosh SSD/..."), so the build exits 0 having
- * written nothing — failure shaped as success. Same rule as apps/worker/src/entry.ts. */
+ * written nothing — failure shaped as success. Same rule as packages/organizer/src/entry.ts. */
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   writePdfFrame();
   console.log(`pdf frame: ${relative(REPO, PDF_FRAME)}`);

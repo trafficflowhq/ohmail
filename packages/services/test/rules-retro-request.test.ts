@@ -6,7 +6,7 @@ import { REFILE_HOLD_MS } from "@trafficflow/core/mail";
 import { accounts, changeLog, folderState, mailboxes, messages, rules } from "@trafficflow/db";
 import { rulesService } from "../src/rules-service.js";
 import { ruleRowToDTO } from "../src/dto/materialize.js";
-import { ruleRetroPass } from "../../../apps/worker/src/rule-retro.js";
+import { ruleRetroPass } from "../../organizer/src/rule-retro.js";
 import { mutated } from "./helpers.js";
 import type { Db, ServiceContext } from "../src/context.js";
 

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { DrizzleRepo, type KnownLocator } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   KnownSetBudget, KnownSetCache, KNOWN_SET_NEUTRAL, dirtyMethodsOf, estimateWireBytes, watchKnownSet,
-} from "../src/known-set.js";
+} from "@ohmail/organizer/known-set";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════

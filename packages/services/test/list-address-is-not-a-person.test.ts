@@ -15,7 +15,7 @@ import { materializeMessages } from "../src/dto/materialize.js";
 import { resetScreeningState } from "../src/consent-reset.js";
 import { heldReleaseSenders, releaseHeld } from "../src/held-release-service.js";
 import type { ServiceContext } from "../src/context.js";
-import { ruleRetroPass } from "../../../apps/worker/src/rule-retro.js";
+import { ruleRetroPass } from "../../organizer/src/rule-retro.js";
 import { readerDoorListClaim, readerDoorWorld } from "./helpers/list-claim-reader-door.js";
 
 /**

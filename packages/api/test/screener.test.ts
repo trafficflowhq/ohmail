@@ -342,7 +342,7 @@ describe("POST /screener/:id — decide (defer + idempotency)", () => {
  *
  * `organized_by_capabilities = 'requests'` is written here directly because NO BUILD WRITES IT
  * TODAY: ruling §(i) containment empties `ORGANIZER_CAPABILITIES`
- * (`apps/worker/src/lease.ts`), so every organizer this tree ships advertises nothing and every
+ * (`packages/organizer/src/lease.ts`), so every organizer this tree ships advertises nothing and every
  * reader is refused — which is exactly what
  * an end-to-end worker case proved when it was written, and what production
  * does. These two tests pin the WIRE CONTRACT the channel will answer on when the signature work

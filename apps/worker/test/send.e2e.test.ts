@@ -6,7 +6,7 @@ import { drafts, outboundSends } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { SendService, SEND_STALE_AFTER_MS, type ServiceContext } from "@trafficflow/services";
 import type { EmailAddress, OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { makeHarness, rawClient, uidInFolder, dbUrlFor } from "./_workerenv.js";
+import { makeHarness, rawClient, uidInFolder, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 
