@@ -6,7 +6,7 @@
  * from the door's handle once per handle, and holds the page's copies of the door's shapes equal to the door's at
  * compile time, so that a change to either stops the build instead of a state drawn wrong.
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { SaidRefusal } from "@ohmail/app-logic/phone/said";
 import { NONE, type None } from "@ohmail/app/host";
 import { ConnectForm } from "@ohmail/app/mailboxes/connect";
@@ -24,7 +24,21 @@ import {
   type PhoneRect,
   type PhoneScanned,
   type PhoneServerAnswer,
+  type WayInSeed,
+  type WayInStep,
 } from "@ohmail/app/phone-door";
+import {
+  ServersPage,
+  type ServersConfig,
+  type ServersDone,
+  type ServersDoor,
+  type ServersForgetAsk,
+  type ServersForgot,
+  type ServersMigrating,
+  type ServersRow,
+  type ServersState,
+  type ServersWayIn,
+} from "@ohmail/app/servers";
 import type * as Wire from "../../../src/shell/door-kinds";
 import { phoneConnectWire } from "./connect-wire";
 import type { DoorHandle } from "./handle";
@@ -48,6 +62,21 @@ export type WaysInShapesAreTheDoors = Holds<
     Same<Wire.DoorRequests["server.ask"]["answer"], PhoneServerAnswer>,
     Same<Wire.DoorRequests["pair"]["answer"], PhonePairAnswer>,
     Same<Extract<Wire.DoorEvent, { type: "scan" }>["scan"], PhoneScanned>,
+  ]
+>;
+
+type Within<A, B> = [A] extends [B] ? true : false;
+/** THE LIST'S SHAPES ARE THE DOOR'S, and the steps it opens the ways in at are steps of theirs. */
+export type ServersShapesAreTheDoors = Holds<
+  [
+    Same<Wire.PairedRow, ServersRow>,
+    Same<Wire.DoorMigrating, ServersMigrating>,
+    Same<Wire.DoorState, ServersState>,
+    Same<Pick<Wire.DoorConfig, keyof ServersConfig>, ServersConfig>,
+    Same<Wire.DoorRequests["switch"]["answer"], ServersDone>,
+    Same<Wire.DoorRequests["forget.ask"]["answer"], ServersForgetAsk>,
+    Same<Wire.DoorRequests["forget"]["answer"], ServersForgot>,
+    Within<Exclude<ServersWayIn, "welcome">, WayInStep>,
   ]
 >;
 
@@ -92,7 +121,50 @@ function phoneDoor(door: DoorHandle): PhoneDoor {
   return made;
 }
 
+/**
+ * WHERE THE WAYS IN OPEN, when the list opened them at a step: one cell of memory per handle, set by the list before
+ * the route moves and taken once by the ways in as they mount. The route itself names only the page, never a step.
+ */
+const opensAt = new WeakMap<DoorHandle, WayInSeed>();
+
+function WaysIn({ door }: { readonly door: DoorHandle }): ReactNode {
+  const [from] = useState(() => {
+    const seed = opensAt.get(door);
+    opensAt.delete(door);
+    return seed;
+  });
+  return <PhoneDoorPage door={phoneDoor(door)} from={from} />;
+}
+
+/** The list's door over the door's handle: each member one request; the ways in through the route and the cell. */
+function serversDoorOf(door: DoorHandle): ServersDoor {
+  const quiet = (sent: Promise<unknown>): void => void sent.catch(() => {});
+  return {
+    config: door.config,
+    state: door.state,
+    switchTo: (id) => door.ask("switch", { id }),
+    forgetAsk: (id) => door.ask("forget.ask", { id }),
+    forget: (id, anyway) => door.ask("forget", { id, anyway }),
+    sync: () => quiet(door.ask("sync", {})),
+    disconnect: () => quiet(door.ask("disconnect", {})),
+    leave: () => quiet(door.ask("leave", {})),
+    waysIn: (at) => {
+      if (at === "welcome") opensAt.delete(door);
+      else opensAt.set(door, { step: at });
+      door.go("welcome");
+    },
+    back: door.back,
+  };
+}
+
+const listed = new WeakMap<DoorHandle, ServersDoor>();
+function serversDoor(door: DoorHandle): ServersDoor {
+  let made = listed.get(door);
+  if (made === undefined) listed.set(door, (made = serversDoorOf(door)));
+  return made;
+}
+
 export const pages: { readonly [At in Wire.DoorAt]: DoorPage | None } = {
-  welcome: ({ door }) => <PhoneDoorPage door={phoneDoor(door)} />,
-  servers: NONE,
+  welcome: ({ door }) => <WaysIn door={door} />,
+  servers: ({ door }) => <ServersPage door={serversDoor(door)} />,
 };

@@ -12,11 +12,15 @@ import {
   appPasswordPresetFor, authHintPreset, holderIsLive, organizerSituation, portMeansImplicitTls, serverGuessFor,
   standingOf, type ProviderPreset,
 } from "@ohmail/client-engine";
+import {
+  stopAndRemoveLines as linesOfStopAndRemove, stopAndRemoveVerb as verbOfStopAndRemove,
+  type StopAndRemoveAsk, type StopAndRemoveLine,
+} from "@ohmail/app-logic/phone/stop-and-remove";
 import { Copy } from "../copy";
 /* TYPE ONLY, so the session's module state does not travel into every consumer of this module.
    The mapping from the instruction to a chip is a DECISION and belongs here rather than in a
    component — the header's rule. */
-import type { OrganizeInstruction, SettingsKeptHere } from "../engine/organizer-session";
+import type { OrganizeInstruction } from "../engine/organizer-session";
 import { refuse, type Refusal, type RefusalKey } from "../refusal";
 
 /** The two steps. The limitations screen comes first and cannot be skipped. */
@@ -912,49 +916,29 @@ export function serverChangeOf(f: StandaloneFields): { imap: ServerAt; smtp: Ser
   };
 }
 
-/**
- * WHAT STOP AND REMOVE ASKS FIRST. It deletes the store, so it asks while the store holds unsent drafts
- * (or cannot count them) or settings the mailbox does not have yet (or the engine cannot say): `null`
- * only for a known zero and a known `none`, which keeps the single press.
+/*
+ * WHAT STOP AND REMOVE ASKS FIRST is decided in the behaviour package (`@ohmail/app-logic/phone/stop-and-remove`),
+ * where the door's list of servers reads it too. This screen's confirm says the same lines in this app's deck until
+ * the last pull request removes the screen.
  */
-export interface StopAndRemoveAsk {
-  /** Unsent drafts in the store; `null` where they cannot be counted, `0` says nothing. */
-  readonly drafts: number | null;
-  /**
-   * Settings at risk: waiting for the settings question, behind a newer ohmail, refused by the mailbox on the
-   * way out, or not known; `null` for none. Removing past a named risk is the person's answer to it.
-   */
-  readonly settings: SettingsKeptHere | null;
-  /** Asked after the hand-back: nothing was removed and the mailbox stopped here, so Keep opens it again. */
-  readonly kept?: true;
-}
+export { stopAndRemoveAsks, stopAndRemoveKept, type StopAndRemoveAsk } from "@ohmail/app-logic/phone/stop-and-remove";
 
-/** The ask when the removal kept the store: the settings alone, since any drafts were asked about first. */
-export function stopAndRemoveKept(settings: SettingsKeptHere): StopAndRemoveAsk {
-  return { drafts: 0, settings, kept: true };
-}
-
-export function stopAndRemoveAsks(
-  drafts: number | null, settings: "answer" | "newer" | "none" | null,
-): StopAndRemoveAsk | null {
-  const risk = settings === null ? "unknown" : settings === "none" ? null : settings;
-  if (drafts === 0 && risk === null) return null;
-  return { drafts, settings: risk };
-}
+/** The deck's sentence of each line the confirm names. */
+const STOP_AND_REMOVE_SAID: { readonly [K in StopAndRemoveLine["key"]]: (line: StopAndRemoveLine) => string } = {
+  "remove.drafts": (line) => Copy.serversStopHereDrafts("values" in line ? line.values.count : 0),
+  "remove.draftsUnknown": () => Copy.serversStopHereDraftsUnknown,
+  "remove.settingsAnswer": () => Copy.serversStopHereSettingsAnswer,
+  "remove.settingsNewer": () => Copy.serversStopHereSettingsNewer,
+  "remove.settingsUnsaved": () => Copy.serversStopHereSettingsUnsaved,
+  "remove.settingsUnknown": () => Copy.serversStopHereSettingsUnknown,
+};
 
 /** The confirm's sentences, one per loss, drafts first. */
 export function stopAndRemoveLines(ask: StopAndRemoveAsk): string[] {
-  const lines: string[] = [];
-  if (ask.drafts === null) lines.push(Copy.serversStopHereDraftsUnknown);
-  else if (ask.drafts > 0) lines.push(Copy.serversStopHereDrafts(ask.drafts));
-  if (ask.settings === "answer") lines.push(Copy.serversStopHereSettingsAnswer);
-  else if (ask.settings === "newer") lines.push(Copy.serversStopHereSettingsNewer);
-  else if (ask.settings === "unsaved") lines.push(Copy.serversStopHereSettingsUnsaved);
-  else if (ask.settings === "unknown") lines.push(Copy.serversStopHereSettingsUnknown);
-  return lines;
+  return linesOfStopAndRemove(ask).map((line) => STOP_AND_REMOVE_SAID[line.key](line));
 }
 
 /** The confirm's danger verb: "Remove anyway" while settings are at risk. */
 export function stopAndRemoveVerb(ask: StopAndRemoveAsk): string {
-  return ask.settings === null ? Copy.serversStopHereDelete : Copy.serversStopHereAnyway;
+  return verbOfStopAndRemove(ask) === "remove.removeDrafts" ? Copy.serversStopHereDelete : Copy.serversStopHereAnyway;
 }

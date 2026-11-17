@@ -125,6 +125,7 @@
   },
   "servers": {
     "title": "Server",
+    "back": "Zurück",
     "connected": "Verbunden",
     "opening": "Wird geöffnet",
     "openingLine": "Die Kopie auf diesem Handy wird geöffnet",
@@ -184,6 +185,10 @@
       "keep": "Postfach behalten",
       "drafts": "{count, plural, one {Beim Entfernen wird der nicht gesendete Entwurf auf diesem Handy gelöscht. Kein Mailserver hat ihn.} other {Beim Entfernen werden die # nicht gesendeten Entwürfe auf diesem Handy gelöscht. Kein Mailserver hat sie.}}",
       "draftsUnknown": "Beim Entfernen werden alle nicht gesendeten Entwürfe auf diesem Handy gelöscht. Kein Mailserver hat sie.",
+      "settingsAnswer": "Einstellungen, die du auf diesem Handy geändert hast, sind noch nicht im Postfach. Sie warten auf deine Antwort auf die Frage zu den Einstellungen über deinen Mails. Beantworte sie zuerst, sonst werden sie beim Entfernen gelöscht.",
+      "settingsNewer": "Einstellungen, die du auf diesem Handy geändert hast, sind nicht im Postfach, weil ein neueres ohmail die Einstellungen des Postfachs gespeichert hat. Aktualisiere ohmail zuerst, sonst werden sie beim Entfernen gelöscht.",
+      "settingsUnsaved": "Einstellungen, die du auf diesem Handy geändert hast, konnten nicht im Postfach gespeichert werden, darum wurde nichts entfernt. Wenn du es jetzt entfernst, werden sie gelöscht.",
+      "settingsUnknown": "Beim Entfernen werden vielleicht Einstellungen gelöscht, die du auf diesem Handy geändert hast und die noch nicht im Postfach sind.",
       "removeDrafts": "Entfernen und Entwürfe löschen",
       "removeAnyway": "Trotzdem entfernen"
     }

@@ -14,6 +14,7 @@ import { NONE, type ConnectWire } from "@ohmail/app/host";
 import { NO_DETAILS } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import { reveal } from "@ohmail/app-logic/mailboxes/connect/secret";
 import { mailboxIdOfAnswer } from "@ohmail/app-logic/mailboxes/connect/mailbox-id";
+import { standaloneAuthHint } from "@ohmail/app-logic/mailboxes/connect/standalone-said";
 import type { Answered, Connected, ConnectInput, Refusal } from "@ohmail/app-logic/mailboxes/connect/types";
 import type { DoorRequests, OpenField, OpenInput } from "../../../src/shell/door-kinds";
 import type { RequestOptions } from "../channel";
@@ -69,7 +70,9 @@ function answeredOf(answer: unknown): Answered<Connected> {
   if (a.ok !== false || typeof a.code !== "string" || !CODE.test(a.code) || a.code in Object.prototype)
     return NO_ANSWER;
   const field = FIELDS.find((known) => known === a.field) ?? null;
-  const refusal: Refusal = { status: 0, code: a.code, message: "", details: { ...NO_DETAILS, field } };
+  // A refused sign-in that names the provider carries its hint, by its code alone, so that the form draws the help.
+  const authHint = standaloneAuthHint(a.code);
+  const refusal: Refusal = { status: 0, code: a.code, message: "", details: { ...NO_DETAILS, field, authHint } };
   return { ok: false, refusal };
 }
 

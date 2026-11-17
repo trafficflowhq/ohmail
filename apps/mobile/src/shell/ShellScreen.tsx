@@ -33,6 +33,7 @@ import { nativePosture } from "../ui/posture/posture-native";
 import { buildCommit } from "../build-info";
 import { appRelease } from "../net/app-release";
 import { BridgeHost } from "./bridge-host";
+import { askDoorAt } from "./door-at";
 import type { FoldReading, NoticePermission, SafeInsets, ShellConfig } from "./bridge-kinds";
 import { HttpDoor } from "./http-door";
 import { KEPT_FAMILIES } from "./kept-families";
@@ -175,10 +176,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       http,
       act: async (a) => {
         switch (a.act) {
-          // The sign-out's ceremony, with its confirmations and its outcomes, stands on the Servers pane.
+          // The sign-out's ceremony, with its confirmations and its outcomes, stands on the door's list of servers.
           case "openServers":
           case "signOut":
-            router.push("/servers");
+            askDoorAt("servers");
+            router.push("/door");
             return {};
           case "notifications.permission":
             return { permission: (permission.current = await noticePermission(nativeNotificationPermission())) };
