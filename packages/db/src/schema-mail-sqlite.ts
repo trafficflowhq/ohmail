@@ -2314,6 +2314,9 @@ export const accountSettings = sqliteTable("account_settings", {
   screenerAutoActAt: integer("screener_auto_act_at", { mode: "timestamp_ms" }),
   /** Mail 0184 — the impersonation filing switch, off when set. See the server twin. LAST. */
   impersonationFilingOffAt: integer("impersonation_filing_off_at", { mode: "timestamp_ms" }),
+  /** Mail 0210 — where a conversation's subject stands, and when it was stated. See the server twin. LAST. */
+  subjectHeading: text("subject_heading"),
+  subjectHeadingAt: integer("subject_heading_at", { mode: "timestamp_ms" }),
 });
 
 /**

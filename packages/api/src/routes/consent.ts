@@ -4,12 +4,13 @@ import {
   resetScreeningState, setAutoAct, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
-  setOnboardingCompleted, setResurfaceTime, setThemeFace,
+  setOnboardingCompleted, setResurfaceTime, setSubjectHeading, setThemeFace,
   unmovedReport, readProfileChange, readMailboxProfileChanges, type ProfileChangeWire,
   DEFAULT_DORMANCY_DAYS, RESURFACE_TIME_RE, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES,
   SUPPORTED_THEME_FACES,
   ServiceError, fenceErasedAccount, lockAccountSettingsRow, lockMailboxRows,
 } from "@trafficflow/services/mail";
+import { isSubjectHeading } from "@trafficflow/core/adapters/organizer-profile";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import { lockAccountRuleKeys, type LedgerTx, type Tx } from "@trafficflow/db";
 import { serviceContext } from "../context.js";
@@ -98,7 +99,8 @@ interface SeedConfirmBody {
  * `blockTrackingPixels` (boolean — refuse beacons at the proxy, default true; mail 0072),
  * `locale` ('en' | 'de' | null — `null` for the default, which is also what `'en'` stores; see
  * {@link setLocale}), `themeFace` ('paper' | 'ohmarchy' | null — unlike locale, 'paper' is
- * stored; see {@link setThemeFace}).
+ * stored; see {@link setThemeFace}), `subjectHeading` ('head' | 'each' — where a conversation's subject
+ * stands in the reader; see {@link setSubjectHeading}).
  */
 interface ConsentSettingsBody {
   autoSuggest?: unknown;
@@ -146,6 +148,11 @@ interface ConsentSettingsBody {
   locale?: unknown;
   themeFace?: unknown;
   /**
+   * Where a conversation's subject stands in the reader (mail 0210) — `'head'` or `'each'`. No `null`:
+   * a statement is replaced by the other word, never taken back.
+   */
+  subjectHeading?: unknown;
+  /**
    * The wall clock resurfaced mail comes back at (mail 0110) — `'HH:MM'`, 24-hour, in the
    * reader's own zone; `null` clears it back to the product's 09:00. Nothing else is accepted.
    */
@@ -178,6 +185,7 @@ async function applyConsentSettings(
   signaturesHtml?: Record<string, string>;
   signatureSources?: Record<string, "organizer" | "local">;
   locale?: string | null; themeFace?: string | null; resurfaceTime?: string | null;
+  subjectHeading?: "head" | "each";
   onboardingCompletedAt?: string;
   dormancyChange?: ProfileChangeWire; signatureChanges?: Record<string, ProfileChangeWire>;
 }> {
@@ -195,17 +203,18 @@ async function applyConsentSettings(
   const hasLocale = "locale" in body;
   const hasThemeFace = "themeFace" in body;
   const hasResurfaceTime = "resurfaceTime" in body;
+  const hasSubjectHeading = "subjectHeading" in body;
   const hasOnboarding = "onboardingCompleted" in body;
   if (!hasAuto && !hasAct && !hasDormancy && !hasScope && !hasImages && !hasPixels && !hasAutoUnsub
       && !hasFolders && !hasFolderMailboxes && !hasSignatures && !hasSignaturesHtml
-      && !hasLocale && !hasThemeFace && !hasResurfaceTime
+      && !hasLocale && !hasThemeFace && !hasResurfaceTime && !hasSubjectHeading
       && !hasOnboarding) {
     throw new ServiceError(
       "validation_failed", 400,
       "at least one of autoSuggest, autoAct, dormancyDays, screeningScope, blockRemoteImages, " +
       "blockTrackingPixels, blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, " +
       "signaturesHtml, " +
-      "locale, themeFace, resurfaceTime or onboardingCompleted is required",
+      "locale, themeFace, resurfaceTime, subjectHeading or onboardingCompleted is required",
     );
   }
 
@@ -508,6 +517,13 @@ async function applyConsentSettings(
     }
     resurfaceTime = r;
   }
+  /**
+   * THE SUBJECT'S PLACE, a closed pair and no `null`: the wire refuses anything else before a write
+   * opens, and the service refuses it again where the word is stored. A statement is not taken back.
+   */
+  if (hasSubjectHeading && !isSubjectHeading(body.subjectHeading)) {
+    throw new ServiceError("validation_failed", 400, "subjectHeading must be 'head' or 'each'");
+  }
 
   /**
    * THE ONE-VALUE KNOB — `true` and nothing else, not even `false`.
@@ -532,6 +548,7 @@ async function applyConsentSettings(
   signaturesHtml?: Record<string, string>;
   signatureSources?: Record<string, "organizer" | "local">;
     locale?: string | null; themeFace?: string | null; resurfaceTime?: string | null;
+    subjectHeading?: "head" | "each";
     onboardingCompletedAt?: string;
     dormancyChange?: ProfileChangeWire; signatureChanges?: Record<string, ProfileChangeWire>;
   } = {};
@@ -635,6 +652,9 @@ async function applyConsentSettings(
     if (hasResurfaceTime) {
       out.resurfaceTime =
         (await setResurfaceTime(txCtx, resurfaceTime as string | null)).resurfaceTime;
+    }
+    if (hasSubjectHeading) {
+      out.subjectHeading = (await setSubjectHeading(txCtx, body.subjectHeading)).subjectHeading;
     }
     if (hasOnboarding) {
       // Inside the SHARED transaction like every knob above it, which is what makes the flow's
@@ -812,6 +832,10 @@ export const consentRoutes: Route[] = [
         // Deliberately not filled in here — the DEFAULT is a client-side constant, and a server
         // that answered "09:00" would make "never chosen" unsayable on the wire.
         resurfaceTime: settings.resurfaceTime,
+        // WHERE A CONVERSATION'S SUBJECT STANDS — `'head'` or `'each'`, or `null` for "nothing stated"
+        // (mail 0210). Sent as `null` rather than omitted for `locale`'s reason; the client shows the
+        // subject once at the head for both a null and a server too old to carry the field.
+        subjectHeading: settings.subjectHeading,
         // WHEN THE FIRST-RUN FLOW WAS LAST LEFT, or `null` for "never" (mail 0083). It rides THIS
         // response rather than a route of its own for `dormancyDays`'s reason: the flow's step is
         // DERIVED from truth-conditions and a client that had to ask two endpoints to place

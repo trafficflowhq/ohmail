@@ -5,7 +5,7 @@ import {
   type ImportAskRefusal,
   mailboxProfileMirror, mailboxes, recordChanges, recordMailboxProfileChange, profileWritesRecorded, recordProfileWrite,
   latestProfileCopy, recordProfileCopy,
-  type LedgerTx, type Tx, auditAction, fenceErased, fencedAccountWrite, lockAccountRuleKeys,} from "@trafficflow/db";
+  type LedgerTx, type Tx, auditAction, fenceErased, fencedAccountWrite, lockAccountRuleKeys, lockSettingsStamp,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
    `@trafficflow/core`'s index carries `export *` lines that convey the whole AI runtime
@@ -17,18 +17,20 @@ import { dialect } from "@trafficflow/db/dialect";
    nothing to the engine's closure. `lease.ts` carries the same warning for the same reason. */
 import { DEFAULT_DORMANCY_DAYS, describeError, type ImportHold, type SweepClearance } from "@trafficflow/core/mail";
 import { epochOf, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { DEFAULT_STALE_AFTER_MS, clockSkewBoundMs } from "@trafficflow/core/adapters/organizer-lease";
 /* The one post-pass fact — see `flushBeforeLeaving`. `lease.ts` imports nothing from here. */
 import { leaseStoodDown, type OrganizerWriteAuthority } from "./lease.js";
 import {
-  applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile, serializeOrganizerProfileCounted,
+  adoptProfilePreferences, adoptableProfilePreferences, applyOrganizerProfile, importRefusalFor, readStatedPreferences,
+  serializeOrganizerProfile, serializeOrganizerProfileCounted,
 } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
-  PROFILE_FOUND_READ_MAX, PROFILE_KEPT_MAX, PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
+  PROFILE_FOUND_READ_MAX, PROFILE_KEPT_MAX, PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, isStatedInstant, makeProfileDoc, oversizedProfileList,
   listedProfileSeconds, localSaysWhatAFingerprintSays, namesCopy, ownCopy, payloadFingerprintOf, profileCopyKey, profileFingerprint, profileGateView, readFoundCopies, readOrganizerProfile, signatureReceipt, tidyOrganizerProfile,
   writeOrganizerProfile,
   type FoundRead, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
   type ProfileReadResult, type ProfileTidyMode, type ProfileLocator, profileLocatorOf, type ProfileScreening,
-  type ProfileGap, type ProfileRemovedRule, type ProfileUnkeptWhy,
+  type ProfileGap, type ProfilePreferences, type ProfileRemovedRule, type ProfileUnkeptWhy, statesNothing,
 } from "@trafficflow/core/adapters/organizer-profile";
 
 /** (install, mailbox, folder generation) the holder has re-encoded a plain settings message under. */
@@ -279,6 +281,13 @@ export class OrganizerProfileSync {
    * ({@link leavingGap}), so every other write drops a key this install left earlier.
    */
   private lastWrittenGap: string = GAP_ABSENT;
+  /**
+   * WHAT THE LAST WRITE STATED FOR EVERY INSTALL ({@link preferencesKeyOf}), `null` while unknown: after
+   * another organizer's copy, which may state nothing of ours. Outside the fingerprint like the window,
+   * so a person's press with an unchanged payload is dirty only through this, and so is the write that
+   * states the store's pairs again after an organizer that does not know them rewrote the copy.
+   */
+  private lastWrittenPreferences: string | null = null;
   /** Set for the length of one {@link flushBeforeLeaving}: the gap this hand-back leaves. */
   private leavingGap: ProfileGap | null = null;
   /**
@@ -629,6 +638,14 @@ export class OrganizerProfileSync {
     return null;
   }
 
+  /**
+   * Does the last write state what the store states ({@link preferencesKeyOf})? A store that states
+   * nothing owes no write on this account, whatever the last copy said.
+   */
+  private preferencesWritten(key: string): boolean {
+    return key === PREFERENCES_ABSENT || key === this.lastWrittenPreferences;
+  }
+
   /** The mailbox's newest copy says what the store says: a kept copy the store also says carries nothing more. */
   private published(local: OrganizerProfilePayload): boolean {
     return this.lastWrittenFingerprint !== null && this.lastWrittenFingerprint === profileFingerprint(local);
@@ -935,6 +952,7 @@ export class OrganizerProfileSync {
     this.everSucceeded = false;
     this.copySaid = null;
     this.lastWrittenGap = GAP_ABSENT;
+    this.lastWrittenPreferences = null;
     this.leavingGap = null;
   }
 
@@ -1445,9 +1463,13 @@ export class OrganizerProfileSync {
          line moves to, and no longer dependent on nothing awaiting above it. */
       const io = adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
       this.tick += 1;
-      const { payload, leftOut, normalized, screening, applied, removedRules } = await serializeOrganizerProfileCounted(
+      const serialized = await serializeOrganizerProfileCounted(
         deps.db, deps.accountId, deps.mailboxId, { applied: true, removed: { by: deps.self.installId }, now },
       );
+      const { payload, leftOut, normalized, screening, applied, removedRules } = serialized;
+      /* What the person stated for every install, from the store's own row and never from the copy being
+         replaced. Read again below when the seed took a newer statement in. */
+      let preferences = serialized.preferences;
       // The organizer's bookkeeping beside the payload: it rides every write and never causes one.
       const books: Books = { ...(applied === undefined ? {} : { applied }), ...(removedRules === undefined ? {} : { removedRules }) };
       const screeningKey = screeningKeyOf(screening);
@@ -1476,9 +1498,11 @@ export class OrganizerProfileSync {
       }
 
       if (!this.seeded) {
-        await this.seed(io, payload, log);
+        // A statement the seed took in moved the row after this tick read it: this tick writes the row as it is now.
+        if (await this.seed(io, payload, log)) preferences = await readStatedPreferences(deps.db, deps.accountId);
         this.seeded = true;
       }
+      const preferencesKey = preferencesKeyOf(preferences);
       if (writeDue) await this.keepRecordAlive(io, now);
       if (this.kept.length > 0) await this.refreshKept(payload);
       if (this.published(payload)) this.answersPublished();
@@ -1657,13 +1681,15 @@ export class OrganizerProfileSync {
       // confirm surface to answer. Every arm of the hold blocks above returns without writing,
       // except a standing found hold, which writes beside its held record below.
       if (this.blockedByNewer) return;
-      // THE SECOND TRIGGER: the window travels in the envelope, outside `fp`.
-      if (fp === this.lastWrittenFingerprint && screeningKey === this.lastWrittenScreening && gapKey === this.lastWrittenGap) {
+      // THE SECOND TRIGGER: the window travels in the envelope, outside `fp`. THE THIRD: so does what the
+      // person stated for every install.
+      if (fp === this.lastWrittenFingerprint && screeningKey === this.lastWrittenScreening && gapKey === this.lastWrittenGap
+        && this.preferencesWritten(preferencesKey)) {
         // Nothing to write — but LOOK once per interval anyway. This is what owes a tidy for the
         // residue of a transient organizer overlap (two documents from two writers, neither of
         // which will ever change its store again) and what notices a document appearing
         // under an established organizer without any local change.
-        await this.verifyFolder(io, payload, screening, books, log);
+        await this.verifyFolder(io, payload, screening, books, preferences, log);
         return;
       }
       // A mailbox that has said nothing gets no document: writing an empty payload into a fresh
@@ -1676,6 +1702,7 @@ export class OrganizerProfileSync {
       // ever offer for answering. Flush cadence, self-guarded.
       // A CONSENTED organizer (a baseline) always publishes: its window is what a reader applies,
       // beside another install's held document too. Beside one under our id it waits for the answer.
+      // A stated preference alone starts no document either: it rides the first one this store writes.
       const heldHere = this.retained();
       if (this.lastWrittenFingerprint === null && isEmptyProfilePayload(payload)
         && (screening.baselineAt === null
@@ -1686,12 +1713,12 @@ export class OrganizerProfileSync {
       /* THE DOCUMENT THE SERVER DID NOT KEEP is not appended again until it changes or a day has passed: the
          refusal stands (the row keeps its sentence, the line was said) and the folder is looked at once per
          interval, as a store with nothing to write looks. A document is what the dirty check tells apart. */
-      const document = JSON.stringify([fp, screeningKey, gapKey]);
+      const document = JSON.stringify([fp, screeningKey, gapKey, preferencesKey]);
       const unkeptKey = JSON.stringify([deps.self.installId, deps.mailboxId]);
       const unkept = UNKEPT.get(unkeptKey);
       if (unkept?.document === document && now.getTime() - unkept.at < PROFILE_UNKEPT_RETRY_MS) {
         this.noteFailure(appendUnreadable(), log);
-        await this.verifyFolder(io, payload, screening, books, log);
+        await this.verifyFolder(io, payload, screening, books, preferences, log);
         return;
       }
 
@@ -1703,8 +1730,8 @@ export class OrganizerProfileSync {
         ...(leavingGap === null ? {} : { gap: leavingGap }),
         // Rides every write, never causes one: a new id or removal alone leaves the dirty check closed.
         ...books,
-        // Nothing is stated yet: the account's row that holds a preference comes with its setting.
-        preferences: {},
+        // What the store's row states, on every write: the copy this one replaces is never its source.
+        preferences,
       });
       /* ONE WRITE, and a second one only from the never-owned `foreign` arm, which holds the
          document it met and then publishes this install's own settings beside it. */
@@ -1744,6 +1771,7 @@ export class OrganizerProfileSync {
           this.lastWrittenFingerprint = fp;
           this.lastWrittenScreening = screeningKey;
           this.lastWrittenGap = gapKey;
+          this.lastWrittenPreferences = preferencesKey;
           this.currentOwnSecond = Math.floor(now.getTime() / 1000);
           this.seenForeignFingerprints.clear();
           UNKEPT.delete(unkeptKey);
@@ -1980,10 +2008,12 @@ export class OrganizerProfileSync {
     if (!hasProfileIo(adapter)) return "saved";
     const newerHeld = (): boolean => this.holdNewerV !== null || this.blockedByNewer;
     const settled = async (): Promise<boolean> => {
-      const payload = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
+      const { payload, preferences } = await serializeOrganizerProfileCounted(deps.db, deps.accountId, deps.mailboxId);
       if (this.lastWrittenFingerprint === null && isEmptyProfilePayload(payload)) return true;
+      // A press since the last write is a decision too: it reaches the mailbox before the claim leaves.
       return !newerHeld() && profileFingerprint(payload) === this.lastWrittenFingerprint
-        && gapKeyOf(this.leavingGap ?? undefined) === this.lastWrittenGap;
+        && gapKeyOf(this.leavingGap ?? undefined) === this.lastWrittenGap
+        && this.preferencesWritten(preferencesKeyOf(preferences));
     };
     this.leavingGap = leaving?.gap ?? null;
     // Not saved stands, for `settingsLeftOnlyHere`, until a write lands.
@@ -2012,14 +2042,65 @@ export class OrganizerProfileSync {
     }
   }
 
-  /** The read-on-takeover. Throws only through `onOrganize`'s catch, which retries next tick. */
+  /**
+   * The read-on-takeover. Throws only through `onOrganize`'s catch, which retries next tick.
+   * Answers whether it took a statement of the found copy into the store ({@link takeInStated}).
+   */
   private async seed(
     io: ProfileIo,
     local: OrganizerProfilePayload,
     log: (event: string, detail: Record<string, unknown>) => void,
+  ): Promise<boolean> {
+    const read: ProfileReadResult = await readOrganizerProfile(io, { ownSince: await this.ownSince(), owns: await this.owns() });
+    /* WHAT THE FOUND COPY STATES FOR EVERY INSTALL is taken in before any arm below, whoever wrote the copy
+       and whatever is asked about its payload: the key is outside the payload, so it is no part of the
+       question, and no answer to it is waited for. */
+    const took = read.state === "found" && await this.takeInStated(read.doc, log);
+    await this.seedArms(io, local, read, log);
+    return took;
+  }
+
+  /**
+   * A found copy's statements, taken into the store's row in a transaction of their own: only a statement
+   * newer than the held one moves it, and a copy that states nothing costs nothing and clears nothing.
+   * A value the store refuses (a data or an integrity error) takes nothing in and never throws: the copy is
+   * anyone's to write, and what the store refuses must not stop the seed or a tick. Any other failure (the
+   * pool, a lock, the connection) is thrown, so the seed or the look runs again on the next tick before a
+   * copy of this store's own is written over the one that states it.
+   */
+  private async takeInStated(
+    doc: OrganizerProfileDoc, log: (event: string, detail: Record<string, unknown>) => void,
+  ): Promise<boolean> {
+    const { deps } = this;
+    const now = (deps.now ?? ((): Date => new Date()))();
+    const stated = adoptableProfilePreferences(doc, now);
+    if (statesNothing(stated)) return false;
+    let moved: Array<keyof ProfilePreferences>;
+    try {
+      moved = await fencedAccountWrite(deps.db, { accountId: deps.accountId }, (tx) =>
+        adoptProfilePreferences(tx as LedgerTx, { accountId: deps.accountId, doc, now }));
+    } catch (err) {
+      // Taken as refused only where the store says so: SQLSTATE class 22 (data) or 23 (integrity).
+      const code = (err as { code?: unknown } | null)?.code ?? (err as { cause?: { code?: unknown } } | null)?.cause?.code;
+      if (typeof code !== "string" || !(code.startsWith("22") || code.startsWith("23"))) throw err;
+      // The members by name, never a value.
+      log("profile_preferences_not_taken", { mailboxId: deps.mailboxId, accountId: deps.accountId, members: Object.keys(stated) });
+      return false;
+    }
+    if (moved.length === 0) return false;
+    // The members by name, never a value.
+    log("profile_preferences_adopted", { mailboxId: deps.mailboxId, accountId: deps.accountId, members: moved, by: "organizer" });
+    return true;
+  }
+
+  /** The seed's arms over the folder's reading: what stands there decides the hold, the baseline and the question. */
+  private async seedArms(
+    io: ProfileIo,
+    local: OrganizerProfilePayload,
+    read: ProfileReadResult,
+    log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
-    const read: ProfileReadResult = await readOrganizerProfile(io, { ownSince: await this.ownSince(), owns: await this.owns() });
     // The preflight (`armHoldFromFolder`) may have armed a hold on a document this read no
     // longer sees — expunged, replaced, or converged-onto in the window between attach and the
     // first tick. The seed is the authoritative reading, so each arm below SUPERSEDES the
@@ -2108,6 +2189,8 @@ export class OrganizerProfileSync {
         if (ours) this.lastWrittenScreening = screeningKeyOf(read.doc.screening);
         // And which gap: a key our last release left is dropped by the next write.
         if (ours) this.lastWrittenGap = gapKeyOf(read.doc.gap);
+        // And what it stated for every install; another organizer's copy never stands for ours here either.
+        if (ours) this.lastWrittenPreferences = preferencesKeyOf(read.doc.preferences);
         if (ours || localSaysWhatTheDocumentSays(local, read.doc) || onlyAWindow(read.installId, read.doc, deps.self.installId)) {
           // Our own previous write (stale or not), or a foreign one that says exactly what we
           // would say or only its window: seed the dirty check from it and let write-behind do its ordinary work.
@@ -2163,6 +2246,7 @@ export class OrganizerProfileSync {
     local: OrganizerProfilePayload,
     screening: ProfileScreening,
     books: Books,
+    preferences: ProfilePreferences,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
@@ -2203,7 +2287,17 @@ export class OrganizerProfileSync {
         // The held record is the question this organizer asks, never mid-flight residue.
         if (this.holdFingerprint !== null && docFingerprint === this.holdFingerprint) return;
         if (localSaysWhatTheDocumentSays(local, read.doc)) {
-          if (read.encoded === false) await this.reencodeOnce(io, local, screening, books, read, log);
+          /* ANOTHER INSTALL'S COPY THAT SAYS WHAT THE STORE SAYS, met by an organizer that kept its life across
+             it (no hand-over seen, so nothing reset what its last write stated): its statement is taken in as
+             at every takeover, and where the copy then states other than the row, the dirty check opens, so
+             the next write states the row's pairs. The one rule decides, so two such organizers end on the
+             later statement and stop. */
+          let stated = preferences;
+          if (!ours) {
+            if (await this.takeInStated(read.doc, log)) stated = await readStatedPreferences(deps.db, deps.accountId);
+            if (preferencesKeyOf(stated) !== preferencesKeyOf(read.doc.preferences)) this.lastWrittenPreferences = null;
+          }
+          if (read.encoded === false) await this.reencodeOnce(io, local, screening, books, stated, read, log);
           return;
         }
         if (ours) {
@@ -2247,6 +2341,7 @@ export class OrganizerProfileSync {
     local: OrganizerProfilePayload,
     screening: ProfileScreening,
     books: Books,
+    preferences: ProfilePreferences,
     read: Extract<ProfileReadResult, { state: "found" }>,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
@@ -2257,7 +2352,8 @@ export class OrganizerProfileSync {
     const now = (deps.now ?? ((): Date => new Date()))();
     const doc = makeProfileDoc(local, {
       updatedAt: now, producer: { kind: deps.self.kind, version: deps.producerVersion }, screening, ...books,
-      preferences: {},
+      // The rewrite replaces the copy whole, so it states what the store's row states, as every write does.
+      preferences,
     });
     const keep = this.retained();
     const found = this.found();
@@ -2280,6 +2376,7 @@ export class OrganizerProfileSync {
       this.lastWrittenFingerprint = profileFingerprint(doc);
       this.lastWrittenScreening = screeningKeyOf(screening);
       this.lastWrittenGap = GAP_ABSENT;
+      this.lastWrittenPreferences = preferencesKeyOf(preferences);
       this.currentOwnSecond = Math.floor(now.getTime() / 1000);
       this.refusedSinceLanded = false;
       if (result.owed === true) this.tidyOwed = true;
@@ -2602,10 +2699,24 @@ export async function applyProfileRead(
      before the erasure did. An UPSERT, so it creates: without the fence the swept cache comes
      straight back, and `mailbox_profile_mirror` has no key to anything the sweep deletes. */
   const epoch = typeof generation === "bigint" ? generation : BigInt(generation);
+  /* WHAT THE COPY STATES FOR EVERY INSTALL is taken into this store's own row in the same transaction as
+     the copy it came in: a reader shows what the person stated on the install that organizes. A copy
+     that states nothing, as an organizer that does not know the key writes it, takes no lock here,
+     changes nothing and clears nothing. */
+  const takes = !statesNothing(adoptableProfilePreferences(read.doc, deps.now));
+  let adopted: Array<keyof ProfilePreferences> = [];
   await fencedAccountWrite(
     deps.db as unknown as Tx,
-    { accountId: deps.accountId, mailboxId: deps.mailboxId },
+    // The mailbox is fenced below, after the settings row, where a statement is taken in.
+    takes ? { accountId: deps.accountId } : { accountId: deps.accountId, mailboxId: deps.mailboxId },
     async (tx) => {
+      if (takes) {
+        /* THE SETTINGS ROW BEFORE THE MAILBOX'S, the order every settings writer keeps (a save that holds
+           the settings row and then writes this mailbox's row would otherwise wait on this pass while
+           this pass waits on it). */
+        await lockSettingsStamp(tx as unknown as LedgerTx, deps.accountId, deps.now);
+        await fenceErased(tx, dialect(tx), { accountId: deps.accountId, mailboxId: deps.mailboxId });
+      }
       /* THE CHANGE ROW RIDES A NEW DOCUMENT, not every cadence's re-stamp. A document is one
          immutable message, so the same (uidvalidity, uid) is the same bytes; locked FOR UPDATE so
          a concurrent pass writing a different document waits and then compares against it. */
@@ -2626,9 +2737,15 @@ export async function applyProfileRead(
         });
       const same = held !== undefined && held.uid === uid
         && sameEpoch(epochOf(held.uidvalidity), epochOf(epoch));
+      // Before the account's counter, which the change row below takes.
+      if (takes) adopted = await adoptProfilePreferences(tx as unknown as LedgerTx, { accountId: deps.accountId, doc: read.doc, now: deps.now });
       if (!same) await recordMailboxProfileChange(tx as unknown as LedgerTx, deps.accountId, deps.mailboxId);
     },
   );
+  if (adopted.length > 0) {
+    // The members by name, never a value.
+    deps.log("profile_preferences_adopted", { mailboxId: deps.mailboxId, accountId: deps.accountId, members: adopted, by: "reader" });
+  }
   deps.log("profile_mirror_written", {
     mailboxId: deps.mailboxId, accountId: deps.accountId,
     generation: String(generation), uid, residue: read.residue,
@@ -2665,17 +2782,26 @@ export interface NewestSettings {
  * THE NEWEST SETTINGS DOCUMENT, for a reader's look (RULING-026 lane A): one read, no write, never
  * throws. `null` for no document, an unreadable or newer one, or a read that failed: the look then
  * opens its window as it always did. A refused key is no key; the writer still counts.
+ * The look's write binds what it takes, from a copy anyone can write: the copy's own instant and its
+ * key's are taken only as stated instants by `now` ({@link isStatedInstant}); a copy dated otherwise is
+ * no document, and a key dated otherwise no key.
  */
 export async function readNewestSettings(
-  io: ProfileIo, log: (event: string, detail: Record<string, unknown>) => void,
+  io: ProfileIo, log: (event: string, detail: Record<string, unknown>) => void, now: Date = new Date(),
 ): Promise<NewestSettings | null> {
   try {
     const read = await readOrganizerProfile(io);
     if (read.state !== "found") return null;
+    const notAfterMs = now.getTime() + clockSkewBoundMs(DEFAULT_STALE_AFTER_MS);
+    if (!isStatedInstant(read.doc.updatedAt, notAfterMs)) return null;
     const at = new Date(read.doc.updatedAt);
-    if (!Number.isFinite(at.getTime())) return null;
     if (read.gapRefused !== undefined) log("profile_gap_refused", { reason: read.gapRefused });
-    return { gap: read.gapRefused === undefined ? read.doc.gap ?? null : null, by: read.installId, at };
+    const gap = read.gapRefused === undefined ? read.doc.gap ?? null : null;
+    if (gap !== null && !(isStatedInstant(gap.since, notAfterMs) && isStatedInstant(gap.at, notAfterMs))) {
+      log("profile_gap_refused", { reason: "the gap is dated further ahead than two clocks may differ" });
+      return { gap: null, by: read.installId, at };
+    }
+    return { gap, by: read.installId, at };
   } catch (err) {
     log("profile_gap_read_failed", {
       err, reason: "the settings document could not be read, so this look opens the window as before",
@@ -2689,6 +2815,15 @@ export async function readTravellingGap(
   io: ProfileIo, log: (event: string, detail: Record<string, unknown>) => void,
 ): Promise<ProfileGap | null> {
   return (await readNewestSettings(io, log))?.gap ?? null;
+}
+
+/** {@link preferencesKeyOf} for a document that states nothing for every install. */
+const PREFERENCES_ABSENT = "absent";
+
+/** One string per set of statements, `absent` for none: the dirty check's key, each member's word and instant. */
+export function preferencesKeyOf(p: ProfilePreferences | undefined): string {
+  if (statesNothing(p)) return PREFERENCES_ABSENT;
+  return JSON.stringify([p!.subject === undefined ? null : [p!.subject.value, p!.subject.at]]);
 }
 
 /** One string per window, `absent` for a document that states none — the dirty check's key. */

@@ -1110,6 +1110,70 @@ describe("the onboarding-consent routes", () => {
   });
 
   /**
+   * WHERE A CONVERSATION'S SUBJECT STANDS (mail 0210): a word of a closed pair, stated with the
+   * instant of the press. The read says it, the settings record on the feed carries it once it is
+   * stated, the export carries the word, and a press on the same word is a new statement: its
+   * instant moves on, so it outranks whatever another install stated in between.
+   */
+  it("PATCH /consent/settings states where the subject stands; the read, the feed and the export carry it", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedAccount(db, FIXED_NOW);
+    const settingsOnTheFeed = async () => {
+      const feed = await (await H(req("GET", "/sync?since=0&types=settings", { bearer: s.token }), deps)).json() as {
+        changes: Record<"creates" | "updates", Array<{ type: string; entity: Record<string, unknown> }>>;
+      };
+      return [...feed.changes.creates, ...feed.changes.updates].filter((c) => c.type === "settings").at(-1)?.entity;
+    };
+    const exported = async () => (await (await H(req("GET", "/account/export", { bearer: s.token }), deps)).json()).settings;
+
+    // Nothing stated: `null` on the read and in the export, and no row.
+    const fresh = await (await H(req("GET", "/consent", { bearer: s.token }), deps)).json();
+    expect("subjectHeading" in fresh, "the route omitted the field rather than sending null").toBe(true);
+    expect(fresh.subjectHeading).toBeNull();
+    expect((await exported()).subjectHeading).toBeNull();
+
+    for (const word of ["each", "head"] as const) {
+      const set = await H(req("PATCH", "/consent/settings", { bearer: s.token, body: JSON.stringify({ subjectHeading: word }) }), deps);
+      expect(set.status).toBe(200);
+      expect(await set.json()).toEqual({ subjectHeading: word });
+      expect((await (await H(req("GET", "/consent", { bearer: s.token }), deps)).json()).subjectHeading).toBe(word);
+      expect((await exported()).subjectHeading).toBe(word);
+      expect((await settingsOnTheFeed())?.subjectHeading, "the settings record rang and carries the word").toBe(word);
+    }
+    const [row] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, s.accountId));
+    expect(row).toMatchObject({ subjectHeading: "head", subjectHeadingAt: new Date(FIXED_NOW.getTime() + 1) });
+
+    // The same word again is a statement of its own: one millisecond on, at a clock that stood still.
+    await H(req("PATCH", "/consent/settings", { bearer: s.token, body: JSON.stringify({ subjectHeading: "head" }) }), deps);
+    const [again] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, s.accountId));
+    expect(again!.subjectHeadingAt).toEqual(new Date(FIXED_NOW.getTime() + 2));
+    // The export carries the choice, never the instant.
+    expect(JSON.stringify(await exported())).not.toContain("subjectHeadingAt");
+  });
+
+  /**
+   * The pair at the wire, nothing coerced, and no `null`: a statement is replaced by the other
+   * word, never taken back. A refused body stores nothing and leaves a stated word as it stands.
+   */
+  it("PATCH /consent/settings refuses a word outside the pair, a null, and anything that is no word", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedAccount(db, FIXED_NOW);
+    const bad = ["every", "EACH", "Head", "", " each", null, 1, true, {}, ["each"]];
+    for (const word of bad) {
+      const res = await H(req("PATCH", "/consent/settings", { bearer: s.token, body: JSON.stringify({ subjectHeading: word }) }), deps);
+      expect(res.status, `subjectHeading=${JSON.stringify(word)}`).toBe(400);
+    }
+    expect(await db.select().from(accountSettings).where(eq(accountSettings.accountId, s.accountId))).toHaveLength(0);
+
+    await H(req("PATCH", "/consent/settings", { bearer: s.token, body: JSON.stringify({ subjectHeading: "each" }) }), deps);
+    // A valid knob beside a refused word persists neither, and the word stated before stands.
+    const mixed = await H(req("PATCH", "/consent/settings", { bearer: s.token, body: JSON.stringify({ subjectHeading: "every", dormancyDays: 30 }) }), deps);
+    expect(mixed.status).toBe(400);
+    const [row] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, s.accountId));
+    expect(row).toMatchObject({ subjectHeading: "each", subjectHeadingAt: FIXED_NOW, dormancyDays: null });
+  });
+
+  /**
    * COLUMN-SCOPED, like the three knobs before it. Onboarding writes several of these on one
    * primary key within a minute, and a writer that upserted the whole row would erase whichever
    * setting was written first.

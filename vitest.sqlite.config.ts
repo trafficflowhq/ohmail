@@ -87,6 +87,8 @@ export default defineConfig({
     include: [
       "packages/db/test/borrowers-insert-account.test.ts",
       "packages/db/test/pass-progress.test.ts",
+      // What a person stated for every install: a phone that organizes on its own presses and takes in here too.
+      "packages/db/test/preferences.test.ts",
       "packages/db/test/message-invitations.test.ts",
       "packages/db/test/sqlite-matrix.test.ts",
       "packages/db/test/sqlite-baseline.test.ts",
@@ -235,6 +237,9 @@ export default defineConfig({
       /* Mail from a gap: a phone that organizes again runs the same catch-up over this store. */
       "apps/worker/test/gap-catchup.test.ts",
       "apps/sidecar/test/local-consent-baseline.test.ts",
+      // What a person stated, through every writer and reader of the settings copy: a phone that organizes on
+      // its own serializes, takes in and states again on this store.
+      "apps/sidecar/test/profile-preferences-round-trip.test.ts",
       "packages/services/test/kb-service.test.ts",
       "packages/services/test/search-materialize.test.ts",
       "packages/services/test/search-sort.r12.test.ts",

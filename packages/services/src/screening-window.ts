@@ -4,6 +4,8 @@ import {
   type OrganizedBy, type ResolvedCutline,
 } from "@trafficflow/db";
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
+import { DEFAULT_STALE_AFTER_MS, clockSkewBoundMs } from "@trafficflow/core/adapters/organizer-lease";
+import { isStatedInstant } from "@trafficflow/core/adapters/organizer-profile";
 import type { ServiceContext } from "./context.js";
 
 /**
@@ -30,15 +32,19 @@ export interface EffectiveScreeningWindow {
 /** The folder whole: what `unread` and `unstated` resolve to — no date retires anybody. */
 const FOLDER_WHOLE = { baselineAt: null, dormancyDays: DEFAULT_DORMANCY_DAYS, scope: "all_time" as const };
 
-/** The envelope's window, well-formed only — the mirror stores what the parser kept. */
-function publishedWindow(doc: unknown): Pick<EffectiveScreeningWindow, "baselineAt" | "dormancyDays" | "scope"> | null {
+/**
+ * The envelope's window, well-formed only — the mirror stores what the parser kept. Its baseline is the
+ * cutoff the queue and the count bind, from a copy anyone can write: a stated instant only, from 1970 on
+ * and not after `notAfterMs` ({@link isStatedInstant}), also where an earlier build's parser kept another.
+ */
+function publishedWindow(doc: unknown, notAfterMs: number): Pick<EffectiveScreeningWindow, "baselineAt" | "dormancyDays" | "scope"> | null {
   const s = typeof doc === "object" && doc !== null ? (doc as { screening?: unknown }).screening : undefined;
   if (typeof s !== "object" || s === null) return null;
   const o = s as Record<string, unknown>;
   const days = o.dormancyDays;
   if (typeof days !== "number" || !Number.isInteger(days) || days < 1) return null;
   if (o.scope !== "window" && o.scope !== "all_time") return null;
-  if (o.baselineAt !== null && typeof o.baselineAt !== "string") return null;
+  if (o.baselineAt !== null && !isStatedInstant(o.baselineAt, notAfterMs)) return null;
   return { baselineAt: o.baselineAt as string | null, dormancyDays: days, scope: o.scope };
 }
 
@@ -74,6 +80,8 @@ export async function effectiveScreeningWindows(ctx: ServiceContext): Promise<Ma
     scope: own?.scope === "all_time" ? "all_time" as const : "window" as const,
   };
 
+  // The latest baseline a copy may state here: two clocks differ by at most the lease's skew bound.
+  const notAfterMs = ctx.now().getTime() + clockSkewBoundMs(DEFAULT_STALE_AFTER_MS);
   const out = new Map<string, EffectiveScreeningWindow>();
   for (const r of rows) {
     const role = isOrganizerRole(r.role) ? r.role : "reader";
@@ -91,7 +99,7 @@ export async function effectiveScreeningWindows(ctx: ServiceContext): Promise<Ma
       out.set(r.id, { ...FOLDER_WHOLE, source: "unread", holder, asOf: null });
       continue;
     }
-    const published = publishedWindow(r.doc);
+    const published = publishedWindow(r.doc, notAfterMs);
     out.set(r.id, published === null
       ? { ...FOLDER_WHOLE, source: "unstated", holder, asOf }
       : { ...published, source: "organizer", holder, asOf });

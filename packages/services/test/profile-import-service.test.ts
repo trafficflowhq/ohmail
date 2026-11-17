@@ -1539,6 +1539,25 @@ describe("a takeover import retires the rule rows the copy records as removed th
     expect((await readRuleRemovals(w.db as unknown as Tx, w.accountId)).map((r) => r.match)).toEqual(["kept@example.com"]);
   });
 
+  /* THE COPY IS ANYONE'S TO WRITE: the written form also spells years before 1, which no store holds. A removal
+     dated before 1970 is no removal: the Import lands, retires nothing by it and records nothing of it. */
+  it.each(["0000-06-15T00:00:00.000Z", "-000001-01-01T00:00:00.000Z", "-271821-04-20T00:00:00.000Z"])(
+    "a removal a planted copy dates %s retires nothing and is not recorded, and the rest of the copy arrives",
+    async (at) => {
+      const w = await world();
+      const id = await dead(w);
+      const removedAt = new Date(DOC_AT.getTime() - HOUR);
+      const raw = formatProfileMessage(doc(PAYLOAD, { removed: [{ match: DEAD.match, at: removedAt }, { match: "elsewhere@example.com", at: removedAt }] }), { installId: THERE })
+        .replaceAll(removedAt.toISOString(), at);
+      const parsed = parseProfileMessage(raw);
+      if (parsed === null || isMalformedProfile(parsed) || parsed.doc === undefined) throw new Error("the planted copy was not read");
+      expect((await apply(w, parsed.doc)).retiredRules).toBe(0);
+      expect(await stillThere(w, id)).toBe(true);
+      expect(await readRuleRemovals(w.db as unknown as Tx, w.accountId)).toEqual([]);
+      expect((await w.db.select().from(rules).where(eq(rules.accountId, w.accountId))).map((r) => r.match)).toContain("anna@example.com");
+    },
+  );
+
   it("a removal the copy also names a rule for, dated after the copy or ahead of this clock retires nothing", async () => {
     const w = await world();
     const id = await dead(w);

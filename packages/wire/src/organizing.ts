@@ -51,6 +51,12 @@ export interface FolderDTO {
 }
 
 /**
+ * Where a conversation's subject stands in the reader: once at the conversation's head, or on each
+ * letter. What a person states once for every install of a mailbox; nothing stated reads as `head`.
+ */
+export type SubjectHeading = "head" | "each";
+
+/**
  * The account's settings row on the delta feed — the `"settings"` entity. One row per account
  * (`entity_id` = the account id, op always `"update"`). It exists so a settings write travels the
  * sync channel and rings the wake like any other change; the AUTHORITY for what a surface renders
@@ -79,6 +85,11 @@ export interface SettingsDTO {
    * has no calendar, which a client reads as off too.
    */
   calendarEnabledAt?: ISODateTime | null;
+  /**
+   * Where a conversation's subject stands, as the person stated it. ABSENT while nothing is stated,
+   * and from a server that does not know the setting: a client reads both as `head`.
+   */
+  subjectHeading?: SubjectHeading;
   updatedAt: ISODateTime;
 }
 

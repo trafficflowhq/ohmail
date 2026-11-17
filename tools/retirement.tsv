@@ -1475,6 +1475,7 @@ test/pg-url-one-resolver.test.ts	source-text	reads source as text (mjs, mts, ts)
 test/pglite-template-env-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/phone-relay-routes-copy.test.ts	data	reads data files (json): the phone shell's copy of the relay's routes	none	phone-shell	
 test/pin-released-migrations.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/pin-released-organizer.test.ts	data	reads data files (json, mjs): the released organizer's fixture and its lock	none	notices	
 test/pr-build-scope.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 5	unassigned	
 test/pr-guard.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
 test/published-images-pin-their-base.test.ts	data	reads data files (selfhost, yml)	none	unassigned	
