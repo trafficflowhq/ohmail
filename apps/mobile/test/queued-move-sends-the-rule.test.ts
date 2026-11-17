@@ -134,7 +134,7 @@ describe("a Move whose letter waits on the organizer", () => {
       windowOver(s, 60_000);
       s.fake.queueNextForOrganizer("POST", "/messages/m1/move");
       await s.actions.move(row(s), "reads");
-      expect(offer(s).say).toBe("Für Studio laptop vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach News.");
+      expect(offer(s).say).toBe("Für Studio laptop vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: News.");
     } finally { s.close(); }
   });
 });

@@ -408,6 +408,12 @@ async function listen<T>(
   });
 }
 
+/** A notice as the shell reads it: a kind, with its numbers and closed words beside it. */
+export interface OsNotice {
+  readonly kind: string;
+  readonly [member: string]: unknown;
+}
+
 /**
  * Put one notice in the operating system's notification centre. The window hands over the notice
  * as the gate answered it, a kind and its numbers and closed words, and the SHELL writes the words
@@ -416,10 +422,10 @@ async function listen<T>(
  * (notifications off, a platform without them) comes back as a rejection and is the caller's to
  * swallow. NAMED `postOsNotice`, NOT `notify`: the census "nothing draws a notice outside an
  * emitter" keys on a name, and `notify` is also the client-engine's subscriber callback. The
- * notice's type is the emitter's (`NoticeShell.post`), not this file's: the first frame's stamp
- * reaches this file and may reach no package, not even for a type.
+ * notice's full type is the emitter's (`NoticeShell.post`); this file keeps its own shape of it: the
+ * first frame's stamp reaches this file and may reach no package, not even for a type.
  */
-export async function postOsNotice(notice: object): Promise<void> {
+export async function postOsNotice(notice: OsNotice): Promise<void> {
   const shell = internals();
   if (!shell) return;
   await shell.invoke(NOTIFY_COMMAND, { notice });

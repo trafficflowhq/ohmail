@@ -595,7 +595,6 @@ const SMALLER: readonly Room[] = [
  */
 const OPEN_SMALLER: Readonly<Record<string, readonly string[]>> = {
   setup: [
-    "1280x720 de",
     "1100x640",
     "1024x600",
     "text 1.25 at 1440x900 de",
@@ -603,11 +602,9 @@ const OPEN_SMALLER: Readonly<Record<string, readonly string[]>> = {
     "text 1.25 at 1280x720",
   ],
   wall: ["1100x640 de", "1024x600", "text 1.5 at 1440x900", "text 1.25 at 1280x720"],
-  "authorize-desktop": ["1100x640 de", "1024x600", "text 1.5 at 1440x900", "text 1.25 at 1280x720"],
-  "delete-account": ["text 1.25 at 1280x720 de"],
+  "authorize-desktop": ["1100x640 de", "1024x600 de", "text 1.5 at 1440x900", "text 1.25 at 1280x720"],
   "sign-in": ["1100x640", "1024x600", "text 1.5 at 1440x900", "text 1.25 at 1280x720"],
   verify: ["1024x600", "text 1.5 at 1440x900", "text 1.25 at 1280x720"],
-  invite: ["text 1.25 at 1280x720 de"],
   join: SMALLER.map((room) => room.name),
 };
 

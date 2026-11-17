@@ -2462,9 +2462,9 @@ export const DE: Deck = {
     "Schau nochmal auf die Leute, denen du geschrieben hast, und entscheide, wer durchkommt. Wen du schon entschieden hast, bleibt wie er ist; das hier nimmt nur Leute dazu, für die du noch nicht geantwortet hast — und genau die bringt ein neu verbundenes Postfach mit.",
   seedReopenAction: "Ansehen",
   toastMoveQueuedWithRule: (place: string, holder: string) =>
-    `Für ${holder} vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
+    `Für ${holder} vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: ${place}.`,
   toastMoveQueuedWithRuleUnknown: (place: string) =>
-    `Für den Organizer vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
+    `Für den Organizer vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: ${place}.`,
   toastQueuedRuleUndone: (holder: string) => `Keine Regel angelegt. Die Nachricht wartet weiter auf ${holder}.`,
   toastQueuedRuleUndoneUnknown: "Keine Regel angelegt. Die Nachricht wartet weiter auf den Organizer.",
   waitingStrip: (count: number, holder: string) =>
