@@ -483,6 +483,38 @@ describe("remote content is blocked, and blocked means not named", () => {
     expect(frameCsp(proxyImgSource(() => "https://evil.example/pic", origin))).toBe(frameCsp(null));
   });
 
+  it("a proxy that answers nothing, or the origin's root, gives the frame no picture source", async () => {
+    // A window that may not read for its account answers "" at the probe, and "" resolves to the
+    // origin's root: a source naming every path of the origin. Read on the frame a consented letter
+    // gets; each refusal is a soft arm, so each fails alone. Mutation: drop the empty and root
+    // refusals in `proxyImgSource`. Real failure text, the first of three arms:
+    //   AssertionError: an empty answer named the origin
+    //   Received: "default-src 'none'; img-src data: blob: http://localhost:3000/; style-src …"
+    const { frameCsp } = await mod();
+    const origin = window.location.origin;
+    const policyFor = async (imageProxy: (url: string) => string): Promise<string | null | undefined> => {
+      const el = await render({
+        text: "Hello there.",
+        html: `<table width="600" cellpadding="0"><tr><td>` +
+          `<img src="https://cdn.example.com/pic.png" width="400" height="200"></td></tr></table>`,
+        remoteLoaded: true,
+        imageProxy,
+        onLoadRemote: () => {},
+      });
+      const doc = el.querySelector("iframe")?.getAttribute("srcdoc");
+      expect(doc, "no frame was rendered").toBeTruthy();
+      return new DOMParser().parseFromString(doc!, "text/html")
+        .querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content");
+    };
+    expect.soft(await policyFor(() => ""), "an empty answer named the origin").toBe(frameCsp(null));
+    expect.soft(await policyFor(() => `${origin}/`), "the origin's root named every path of it").toBe(frameCsp(null));
+    expect.soft(await policyFor((u) => `/?u=${encodeURIComponent(u)}`), "a root path with a query named every path")
+      .toBe(frameCsp(null));
+    // The picture door's own path is still the one source.
+    expect(await policyFor((u) => `${origin}/api/img?mid=m1&u=${encodeURIComponent(u)}`))
+      .toBe(frameCsp(`${origin}/api/img`));
+  });
+
   it("consent routes an image through the proxy and NEVER at the sender directly", async () => {
     // The seam the consent path lands on, exercised so it is not an untested branch waiting
     // to be wrong. Mutation: `node.setAttribute("src", src)` in the `proxy` branch. Real
