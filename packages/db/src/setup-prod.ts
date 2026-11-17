@@ -688,7 +688,7 @@ export async function setupProdDatabase(
 
     // THE LOCK, where the runtime logins exist; on a server without them one catalog read and
     // nothing else. Its refusals join `problems` below.
-    const lock = await ensureLock(url, client, { asked: opts.lock === "apply", log });
+    const lock = await ensureLock(url, client, { asked: opts.lock === "apply", hear: clientSession.hear, log });
 
     // The Supabase Data API lockdown's second pass, and the census that is the verdict. A stock
     // project grants every table in `public` to the host roles at CREATE time and serves them

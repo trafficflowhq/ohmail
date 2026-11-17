@@ -45,14 +45,35 @@
 -- PRIVILEGES: a table that was just made or rebuilt carries no row policy yet, and a default
 -- grant would open it to the runtime logins in that state.
 --
--- Never TRUNCATE, REFERENCES, TRIGGER or MAINTAIN; no column grant; no grant on a view, a
--- sequence or a routine; USAGE on `public` (and on the schema the search extensions live in,
--- where a login reaches no relation but an extension's own) and on no other schema; nothing in
--- `admin`, `plane` or the migration ledgers.
+-- Never TRUNCATE, REFERENCES, TRIGGER or MAINTAIN; no column grant; no grant on a sequence or a
+-- routine, nor on a view but the row lock's three (below); USAGE on `public` (and on the schema the
+-- search extensions live in, where a login reaches no relation but an extension's own), on
+-- `ohmail` while one of the lock's views stands there, and on no other schema; nothing in `admin`,
+-- `plane` or the migration ledgers.
 --
 -- Grants to PUBLIC on the product's relations, and CREATE on its schemas, are revoked: PUBLIC
 -- reaches every login. What other named roles hold (the staff role, the billing plane's) is read
 -- and never touched.
+--
+-- ## The row lock's views
+--
+-- Under the row lock a search through `public` loses its indexes: a policy keeps a statement's
+-- condition on an index only when every operator in it is leakproof, and the search's are not. So
+-- the search reads three views in schema `ohmail` (ohmail.messages, ohmail.message_search,
+-- ohmail.message_search_words), each answering the bound account's rows alone, through which the
+-- planner keeps its indexes. The lock's setup step makes them, owned by the migrator; this file
+-- grants them, and only where they stand: SELECT on each to both logins, and USAGE on `ohmail`
+-- while one of them stands. Nothing else there is a login's: no write on a view, no grant option,
+-- no fourth relation, no routine but the lock's two readers. Nobody else reaches anything there,
+-- by any road: no entry (PUBLIC, the staff role, the billing plane, a host's role) and no
+-- membership (pg_read_all_data, pg_write_all_data, or a role that holds one, inherited, one SET
+-- ROLE away, or a grant of its own away by an ADMIN option), for a view there reads its tables
+-- with the migrator's rights. The roles that read every row already, by SUPERUSER, BYPASSRLS or
+-- REPLICATION, are the host's: the report names them. The views' names are the rule's rows (@rows,
+-- and runtime-roles.tsv), never read from the catalog. A view's text is not judged here: one made
+-- again under its name with another text is the lock's own check's to refuse. The lock's ruling
+-- said the logins get no USAGE on `ohmail`, since a policy calls its readers by their stored id; the
+-- search ruling changed that one line on purpose, for these views, and the USAGE goes with them.
 --
 -- ## Plain SQL, one transaction
 --
@@ -118,8 +139,45 @@ BEGIN
   -- The schemas the product's own objects live in. Never `plane`: the billing plane owns it.
   PERFORM set_config('ohmail.roles_schemas', '{public,admin,drizzle_mail,drizzle_cloud}', true);
   -- The schemas a login may USE. The search extensions' own schema joins them below, where a host
-  -- keeps extensions apart; a schema added here is a decision (a helper that policies call, say).
-  PERFORM set_config('ohmail.roles_usage_schemas', '{public}', true);
+  -- keeps extensions apart; a schema added here is a decision. Beside `public` there is one: `ohmail`,
+  -- the row lock's own, used only while one of the login's views below stands in it. (The lock's
+  -- ruling had "the logins get no USAGE on it"; the search ruling changed that line, for the views.)
+  PERFORM set_config('ohmail.roles_usage_schemas', '{public,ohmail}', true);
+  -- THE ACCOUNT'S VIEWS OF THE ROW LOCK, by name, and what each login may do on them: read them.
+  -- The lock's setup step makes them; this file grants them, only where they stand. Cut out, the
+  -- views are relations the rule does not know: the census refuses them (the plant's case).
+  PERFORM set_config('ohmail.roles_views', '{}', true);
+  -- @clause rows.views
+  PERFORM set_config('ohmail.roles_views', (
+    SELECT jsonb_object_agg(per_role.role, per_role.views)
+      FROM (
+        SELECT v.role, jsonb_object_agg(v.rel, to_jsonb(string_to_array(v.verbs, ' '))) AS views
+          FROM (VALUES
+            ('ohmail_api',    'ohmail.messages',             'SELECT'),
+            ('ohmail_api',    'ohmail.message_search',       'SELECT'),
+            ('ohmail_api',    'ohmail.message_search_words', 'SELECT'),
+            ('ohmail_worker', 'ohmail.messages',             'SELECT'),
+            ('ohmail_worker', 'ohmail.message_search',       'SELECT'),
+            ('ohmail_worker', 'ohmail.message_search_words', 'SELECT')
+          ) AS v(role, rel, verbs)
+         GROUP BY v.role
+      ) per_role)::text, true);
+  -- @end rows.views
+  -- The routines a login may run in that schema: the lock's two readers, which every view and every
+  -- policy calls. EXECUTE on them is PUBLIC's, as Postgres makes every routine; this file grants
+  -- none, and a direct grant to a login is refused like any other.
+  PERFORM set_config('ohmail.roles_view_routines', (
+    SELECT jsonb_object_agg(per_role.role, per_role.fns)
+      FROM (
+        SELECT v.role, jsonb_agg(v.fn ORDER BY v.fn) AS fns
+          FROM (VALUES
+            ('ohmail_api',    'ohmail.current_account()'),
+            ('ohmail_api',    'ohmail.current_key()'),
+            ('ohmail_worker', 'ohmail.current_account()'),
+            ('ohmail_worker', 'ohmail.current_key()')
+          ) AS v(role, fn)
+         GROUP BY v.role
+      ) per_role)::text, true);
   -- The server-side deadlines, in milliseconds, and the roles that carry them: the two logins and
   -- the staff role. Never the migrator: a dump, a migration and a restore set or lift their own.
   -- @deadlines
@@ -396,6 +454,10 @@ END $$;
 -- is a member of the host's roles). The migrator bypasses row security: a view or a SECURITY
 -- DEFINER routine handed to it would answer its callers with every account's rows from then on,
 -- and taking a table waits for an ACCESS EXCLUSIVE lock behind whoever reads it.
+-- In the schema of the row lock's views no owner is changed on EITHER shape: whoever owns a view
+-- there may have given it another text, and handed to the migrator it would read every account for
+-- the logins this file grants it to. Anything there that is not the migrator's is refused instead
+-- (census.ownership, census.views-schema).
 -- @clause repair.ownership
 DO $$
 DECLARE
@@ -403,6 +465,7 @@ DECLARE
   shape    text := current_setting('ohmail.roles_shape');
   runtime  text[] := current_setting('ohmail.roles_runtime')::text[];
   ours     text[] := current_setting('ohmail.roles_schemas')::text[];
+  view_ns  text[] := ARRAY(SELECT s FROM unnest(current_setting('ohmail.roles_usage_schemas')::text[]) AS s WHERE s <> 'public');
   mig_oid  oid := (SELECT oid FROM pg_roles WHERE rolname = migrator);
   o        record;
 BEGIN
@@ -418,6 +481,7 @@ BEGIN
       FROM pg_namespace n JOIN pg_roles w ON w.oid = n.nspowner
      WHERE n.nspowner IS DISTINCT FROM mig_oid
        AND (w.rolname = ANY (runtime) OR (n.nspname = ANY (ours) AND n.nspname <> 'public'))
+       AND NOT n.nspname = ANY (view_ns)
     UNION ALL
     SELECT CASE WHEN c.relkind = 'S' THEN 3 ELSE 2 END,
            CASE c.relkind WHEN 'S' THEN 'sequence' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view'
@@ -432,6 +496,7 @@ BEGIN
      WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
        AND c.relowner IS DISTINCT FROM mig_oid
        AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+       AND NOT n.nspname = ANY (view_ns)
        AND (w.rolname = ANY (runtime)
             OR (n.nspname = ANY (ours)
                 AND NOT EXISTS (SELECT 1 FROM pg_depend e
@@ -447,6 +512,7 @@ BEGIN
       JOIN pg_roles w ON w.oid = p.proowner
      WHERE p.proowner IS DISTINCT FROM mig_oid
        AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+       AND NOT n.nspname = ANY (view_ns)
        AND (w.rolname = ANY (runtime)
             OR (n.nspname = ANY (ours)
                 AND NOT EXISTS (SELECT 1 FROM pg_depend e
@@ -483,9 +549,11 @@ END $$;
 DO $$
 DECLARE
   the_rule jsonb := current_setting('ohmail.roles_rule')::jsonb;
+  the_views jsonb := current_setting('ohmail.roles_views')::jsonb;
   runtime  text[] := current_setting('ohmail.roles_runtime')::text[];
   usable   text[] := current_setting('ohmail.roles_usage_schemas')::text[]
                      || current_setting('ohmail.roles_extension_schemas')::text[];
+  view_ns  text[] := ARRAY(SELECT s FROM unnest(current_setting('ohmail.roles_usage_schemas')::text[]) AS s WHERE s <> 'public');
   ours     text[] := current_setting('ohmail.roles_schemas')::text[];
   mig_oid  oid := (SELECT oid FROM pg_roles WHERE rolname = current_setting('ohmail.roles_migrator'));
   g        record;
@@ -502,6 +570,11 @@ BEGIN
                     -- A staff table nobody named gets nothing: the census refuses it until it is named.
                     WHEN c.relname LIKE 'staff\_%' THEN '[]'::jsonb
                     ELSE the_rule->'default' END) ORDER BY 1)
+                -- A view of the row lock the rule names for this login, standing as the lock makes it: a plain
+                -- view, the migrator's, in its schema of the migrator's. Anything else there gets nothing.
+                WHEN c.relkind = 'v' AND c.relowner = mig_oid AND n.nspowner = mig_oid AND n.nspname = ANY (view_ns)
+                     AND the_views->l.rolname::text ? format('%I.%I', n.nspname, c.relname) THEN
+                  ARRAY(SELECT jsonb_array_elements_text(the_views->l.rolname::text->format('%I.%I', n.nspname, c.relname)) ORDER BY 1)
            ELSE '{}'::text[] END AS want
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -546,7 +619,14 @@ BEGIN
   FOR g IN
     WITH logins AS (SELECT oid, rolname FROM pg_roles WHERE rolname = ANY (runtime))
     SELECT n.nspname, n.nspowner, l.rolname AS role, l.oid AS role_oid, held.verbs AS have, held.grantable,
-           CASE WHEN n.nspname = ANY (usable) THEN ARRAY['USAGE'] ELSE '{}'::text[] END AS want
+           -- The schema of the row lock's views only while one of this login's views stands in it.
+           CASE WHEN n.nspname = ANY (usable)
+                     AND (NOT n.nspname = ANY (view_ns)
+                          OR (n.nspowner = mig_oid AND EXISTS (
+                                SELECT 1 FROM pg_class v
+                                 WHERE v.relnamespace = n.oid AND v.relkind = 'v' AND v.relowner = mig_oid
+                                   AND the_views->l.rolname::text ? format('%I.%I', n.nspname, v.relname))))
+                THEN ARRAY['USAGE'] ELSE '{}'::text[] END AS want
       FROM pg_namespace n
       CROSS JOIN logins l
       CROSS JOIN LATERAL (
@@ -606,8 +686,12 @@ BEGIN
   -- @end repair.grants-routines
 
   -- Default privileges: what a table made LATER is born with. One that names a login, or that
-  -- gives PUBLIC a relation right in the product's schemas, would open every later table before
-  -- this file runs again.
+  -- gives PUBLIC a relation right in the product's schemas or in the schema of the row lock's views
+  -- (a view the lock's setup step makes again would be born readable by every role), would open
+  -- every later one before this file runs again. In the schema of the row lock's views the
+  -- migrator's own for any other role goes too: a view made again there would be born granted to
+  -- that role, and the census would then refuse the run with the view closed to the logins. Nothing
+  -- but the migrator makes anything there, so this takes nothing from anyone.
   -- @clause repair.default-acl
   FOR g IN
     SELECT w.rolname AS of_role, n.nspname,
@@ -621,7 +705,9 @@ BEGIN
       LEFT JOIN pg_roles l ON l.oid = x.grantee
      WHERE l.rolname = ANY (runtime)
         OR (x.grantee = 0 AND d.defaclobjtype IN ('r', 'S')
-            AND (n.nspname = ANY (ours) OR (d.defaclnamespace = 0 AND d.defaclrole = mig_oid)))
+            AND (n.nspname = ANY (ours || view_ns) OR (d.defaclnamespace = 0 AND d.defaclrole = mig_oid)))
+        OR (x.grantee <> 0 AND x.grantee <> d.defaclrole AND d.defaclrole = mig_oid AND d.defaclobjtype IN ('r', 'S')
+            AND n.nspname = ANY (view_ns))
      GROUP BY 1, 2, 3, 4 ORDER BY 1, 2, 3, 4
   LOOP
     BEGIN
@@ -705,6 +791,58 @@ BEGIN
   END LOOP;
 END $$;
 -- @end repair.public
+
+-- The schema of the row lock's views is the logins' alone. A view there reads its tables with the
+-- migrator's rights, and PUBLIC is every role: the staff role, the billing plane, a host's own. So
+-- whatever PUBLIC holds there is revoked: USAGE or CREATE on the schema, any right on a relation or
+-- a column in it. EXECUTE on its routines stays PUBLIC's: every view and policy calls the readers.
+-- @clause repair.views-public
+DO $$
+DECLARE
+  view_ns text[] := ARRAY(SELECT s FROM unnest(current_setting('ohmail.roles_usage_schemas')::text[]) AS s WHERE s <> 'public');
+  g       record;
+BEGIN
+  FOR g IN
+    SELECT CASE WHEN c.relkind = 'S' THEN 'SEQUENCE' ELSE 'TABLE' END AS kind, c.relowner,
+           format('%I.%I', n.nspname, c.relname) AS ident,
+           (SELECT string_agg(DISTINCT x.privilege_type, ' ' ORDER BY x.privilege_type)
+              FROM aclexplode(c.relacl) x WHERE x.grantee = 0) AS on_table,
+           (SELECT count(*) FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x
+             WHERE a.attrelid = c.oid AND a.attnum > 0 AND x.grantee = 0) AS on_columns
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = ANY (view_ns) AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+     ORDER BY 3
+  LOOP
+    CONTINUE WHEN g.on_table IS NULL AND g.on_columns = 0;
+    IF NOT pg_has_role(current_user, g.relowner, 'USAGE') THEN
+      RAISE WARNING 'skipped: PUBLIC holds [%] on %, which is owned by % and not by this session',
+        coalesce(g.on_table, 'column grants'), g.ident, g.relowner::regrole;
+      CONTINUE;
+    END IF;
+    EXECUTE format('REVOKE ALL PRIVILEGES ON %s %s FROM PUBLIC CASCADE', g.kind, g.ident);
+    RAISE NOTICE 'repair: PUBLIC on %: held [%], revoked', g.ident,
+      concat_ws(' + ', g.on_table, CASE WHEN g.on_columns > 0 THEN 'column grants' END);
+  END LOOP;
+
+  FOR g IN
+    SELECT n.nspname, n.nspowner,
+           (SELECT string_agg(DISTINCT x.privilege_type, ' ' ORDER BY x.privilege_type)
+              FROM aclexplode(n.nspacl) x WHERE x.grantee = 0) AS held
+      FROM pg_namespace n
+     WHERE n.nspname = ANY (view_ns)
+       AND EXISTS (SELECT 1 FROM aclexplode(n.nspacl) x WHERE x.grantee = 0)
+     ORDER BY 1
+  LOOP
+    IF NOT pg_has_role(current_user, g.nspowner, 'USAGE') THEN
+      RAISE WARNING 'skipped: PUBLIC holds [%] on schema %, which is owned by % and not by this session',
+        g.held, g.nspname, g.nspowner::regrole;
+      CONTINUE;
+    END IF;
+    EXECUTE format('REVOKE ALL PRIVILEGES ON SCHEMA %I FROM PUBLIC CASCADE', g.nspname);
+    RAISE NOTICE 'repair: PUBLIC on schema %: held [%], revoked', g.nspname, g.held;
+  END LOOP;
+END $$;
+-- @end repair.views-public
 
 -- ── 4. THE DEADLINES, AND ONE SEARCH PATH. Role settings, by role NAME. ───────────────────
 --
@@ -848,6 +986,11 @@ DECLARE
   ext_ns   text[] := current_setting('ohmail.roles_extension_schemas')::text[];
   usable   text[] := current_setting('ohmail.roles_usage_schemas')::text[]
                      || current_setting('ohmail.roles_extension_schemas')::text[];
+  the_views jsonb := current_setting('ohmail.roles_views')::jsonb;
+  the_routines jsonb := current_setting('ohmail.roles_view_routines')::jsonb;
+  view_ns  text[] := ARRAY(SELECT s FROM unnest(current_setting('ohmail.roles_usage_schemas')::text[]) AS s WHERE s <> 'public');
+  login_oids oid[] := ARRAY(SELECT oid FROM pg_roles WHERE rolname = ANY (current_setting('ohmail.roles_runtime')::text[]));
+  standing_views text[];
   path_want text;
   drift    text[] := '{}';
   line     text;
@@ -1066,7 +1209,9 @@ BEGIN
   -- @end census.staff-rows
 
   -- A view reads its base tables with its OWNER's rights. Owned by the migrator, which bypasses
-  -- row security, it would answer with every account's rows. So no login reaches a view at all.
+  -- row security, it would answer with every account's rows. So no login reaches a view of `public`
+  -- at all. The row lock's views carry the account's condition themselves: they are the rule's three
+  -- in `ohmail`, judged by the arms below.
   -- @clause census.views
   drift := drift || ARRAY(
     SELECT format('%s on the %s public.%s: role %s reaches it, and it reads its tables with the rights of its owner %s, past any row lock',
@@ -1080,10 +1225,231 @@ BEGIN
      ORDER BY 1);
   -- @end census.views
 
-  -- A schema the logins may use beside `public` (where a host keeps the search extensions) is on
+  -- THE ACCOUNT'S VIEWS OF THE ROW LOCK, as the logins hold them: USAGE on their schema exactly while
+  -- one of the login's views stands there, on each view that stands the verbs the rule writes and no
+  -- other, and nothing to hand on. A view stands as the lock's setup step makes it: a plain view, the
+  -- migrator's, in its schema of the migrator's; a view the rule names that does not stand is the
+  -- lock's to make, and judged here once it stands.
+  -- @clause census.views-grants
+  drift := drift || ARRAY(
+    WITH standing AS (
+      SELECT l.oid AS role_oid, l.rolname AS role, c.oid AS rel_oid, format('%I.%I', n.nspname, c.relname) AS ident,
+             ARRAY(SELECT jsonb_array_elements_text(the_views->l.rolname::text->format('%I.%I', n.nspname, c.relname))) AS written
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_roles l ON l.rolname = ANY (runtime)
+       WHERE c.relkind = 'v' AND c.relowner = mig_oid AND n.nspowner = mig_oid AND n.nspname = ANY (view_ns)
+         AND the_views->l.rolname::text ? format('%I.%I', n.nspname, c.relname)
+    )
+    SELECT format('%s on the view %s: role %s %s', v.verb, s.ident, s.role,
+                  CASE WHEN h.held THEN 'holds it and the rule does not write it'
+                       ELSE 'lacks it and the rule writes it' END)
+      FROM standing s
+      CROSS JOIN unnest(verbs) AS v(verb)
+      CROSS JOIN LATERAL (SELECT has_table_privilege(s.role_oid, s.rel_oid, v.verb) AS held) h
+     WHERE h.held <> (v.verb = ANY (s.written))
+    UNION ALL
+    SELECT format('%s WITH GRANT OPTION on the view %s: role %s can hand it on', v.verb, s.ident, s.role)
+      FROM standing s
+      CROSS JOIN unnest(verbs) AS v(verb)
+     WHERE has_table_privilege(s.role_oid, s.rel_oid, v.verb || ' WITH GRANT OPTION')
+    UNION ALL
+    SELECT format('USAGE on schema %I: role %s %s', n.nspname, l.rolname,
+                  CASE WHEN h.held THEN 'holds it, and no view the rule lists for it stands there'
+                       ELSE 'lacks it, and the rule writes it while one of its views stands there' END)
+      FROM pg_namespace n
+      JOIN pg_roles l ON l.rolname = ANY (runtime)
+      CROSS JOIN LATERAL (
+        SELECT has_schema_privilege(l.oid, n.oid, 'USAGE') AS held,
+               coalesce(n.nspowner = mig_oid AND EXISTS (
+                 SELECT 1 FROM pg_class c
+                  WHERE c.relnamespace = n.oid AND c.relkind = 'v' AND c.relowner = mig_oid
+                    AND the_views->l.rolname::text ? format('%I.%I', n.nspname, c.relname)), false) AS written) h
+     WHERE n.nspname = ANY (view_ns) AND h.held <> h.written
+    UNION ALL
+    SELECT format('USAGE WITH GRANT OPTION on schema %I: role %s can hand it on', n.nspname, l.rolname)
+      FROM pg_namespace n
+      JOIN pg_roles l ON l.rolname = ANY (runtime)
+     WHERE n.nspname = ANY (view_ns) AND has_schema_privilege(l.oid, n.oid, 'USAGE WITH GRANT OPTION')
+     ORDER BY 1);
+  -- @end census.views-grants
+
+  -- WHAT STANDS in the schema of the row lock's views: the views the rule names, plain views of the
+  -- migrator's, and no other relation. The names come from the rule, never from the catalog: a
+  -- relation the rule does not name is refused by its existence, read by a login or not. A view
+  -- under one of the rule's names is held to its kind and its owner only. Its text is NOT judged
+  -- here: a view made again under its name with another text (a WHERE gone, a barrier set) is the
+  -- lock's own check's to refuse, by the text, owner, options and columns it recorded.
+  -- @clause census.views-schema
+  drift := drift || ARRAY(
+    SELECT format('the schema %I is owned by %s, not by the migrator %s: the rule grants nothing in it', n.nspname,
+                  n.nspowner::regrole, migrator)
+      FROM pg_namespace n
+     WHERE n.nspname = ANY (view_ns) AND n.nspowner IS DISTINCT FROM mig_oid
+    UNION ALL
+    SELECT format('the %s %I.%I stands in schema %I, %s',
+                  CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' WHEN 'f' THEN 'foreign table'
+                                 WHEN 'S' THEN 'sequence' ELSE 'table' END,
+                  n.nspname, c.relname, n.nspname,
+                  CASE WHEN NOT k.listed
+                         THEN 'and the rule names no such relation: what a login may read there is a decision to make in the rule'
+                       WHEN c.relkind <> 'v'
+                         THEN 'and the rule names a view by that name, the one the lock''s setup step makes'
+                       ELSE format('owned by %s, and the rule names the view the migrator %s makes', c.relowner::regrole, migrator) END)
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM jsonb_each(the_views) r
+                                          WHERE r.value ? format('%I.%I', n.nspname, c.relname)) AS listed) k
+     WHERE n.nspname = ANY (view_ns) AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+       AND NOT (k.listed AND c.relkind = 'v' AND c.relowner IS NOT DISTINCT FROM mig_oid)
+     ORDER BY 1);
+  -- @end census.views-schema
+
+  -- The routines of that schema a login may run: the lock's readers the rule names, whose EXECUTE is
+  -- PUBLIC's (every view and every policy calls them). Any other routine there a login may run is
+  -- refused by name, whoever owns it and whatever rights it runs with: none is the rule's to admit.
+  -- @clause census.views-routines
+  drift := drift || ARRAY(
+    SELECT format('EXECUTE on the routine %s: role %s may run it in schema %I, where the rule admits %s alone. By hand: drop it, or revoke EXECUTE on it from PUBLIC',
+                  r.ident, l.rolname, n.nspname,
+                  coalesce((SELECT string_agg(a, ', ' ORDER BY a) FROM jsonb_array_elements_text(the_routines->l.rolname::text) AS a), 'no routine'))
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      CROSS JOIN LATERAL (SELECT format('%I.%I(%s)', n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)) AS ident) r
+      JOIN pg_roles l ON l.rolname = ANY (runtime)
+     WHERE n.nspname = ANY (view_ns)
+       AND has_function_privilege(l.oid, p.oid, 'EXECUTE')
+       AND NOT coalesce(the_routines->l.rolname::text ? r.ident, false)
+     ORDER BY 1);
+  -- @end census.views-routines
+
+  -- Nobody but the two logins and the schema's owner holds an entry in that schema: not PUBLIC (which is
+  -- every role, a host's own among them), not the staff role, not the billing plane. A view there
+  -- reads its tables with the migrator's rights, so whoever may read one reads every account it is
+  -- told to. Such a grant is read and never touched here (PUBLIC's is revoked above): refused by name.
+  -- A road there that is no entry, a membership, is census.views-reach's, below.
+  -- @clause census.views-others
+  drift := drift || ARRAY(
+    SELECT format('%s on schema %I: granted to %s, and in the schema of the row lock''s views only the logins may hold a right',
+                  x.privilege_type, n.nspname, CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END)
+      FROM pg_namespace n
+      CROSS JOIN LATERAL aclexplode(n.nspacl) x
+     WHERE n.nspname = ANY (view_ns) AND x.grantee <> n.nspowner AND NOT x.grantee = ANY (login_oids)
+    UNION ALL
+    SELECT format('%s on the %s %I.%I: granted to %s, and in the schema of the row lock''s views only the logins may hold a right',
+                  x.privilege_type,
+                  CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' WHEN 'f' THEN 'foreign table'
+                                 WHEN 'S' THEN 'sequence' ELSE 'table' END,
+                  n.nspname, c.relname, CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END)
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      CROSS JOIN LATERAL aclexplode(c.relacl) x
+     WHERE n.nspname = ANY (view_ns) AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+       AND x.grantee <> c.relowner AND NOT x.grantee = ANY (login_oids)
+    UNION ALL
+    SELECT format('%s on column %I.%I.%I: granted to %s, and in the schema of the row lock''s views only the logins may hold a right',
+                  x.privilege_type, n.nspname, c.relname, a.attname, CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END)
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      CROSS JOIN LATERAL aclexplode(a.attacl) x
+     WHERE n.nspname = ANY (view_ns) AND a.attnum > 0 AND NOT a.attisdropped
+       AND x.grantee <> c.relowner AND NOT x.grantee = ANY (login_oids)
+     ORDER BY 1);
+  -- @end census.views-others
+
+  -- WHO ELSE REACHES THAT SCHEMA, BY ANY ROAD. A right there needs no entry there: a member of
+  -- pg_read_all_data holds SELECT on every relation and USAGE on every schema, a member of
+  -- pg_write_all_data INSERT, UPDATE and DELETE and USAGE, and neither may bypass row security. On the
+  -- tables the lock holds such a role (no policy names it); through a view it reads or rewrites, with
+  -- the migrator's rights, whatever account it binds. So every other role is read for what it may
+  -- EFFECTIVELY do there, as each role it may act as (may_act, below): itself, with all it inherits
+  -- (has_*_privilege answers that, as for the logins); each role it may SET ROLE to (a membership WITH
+  -- INHERIT FALSE confers nothing by itself and has_*_privilege does not show it, but one SET ROLE away
+  -- the member reads); and each role an ADMIN option lets it grant itself. That option confers nothing
+  -- by itself either, yet whoever may act as its holder, or as a role that inherits the holder, may
+  -- GRANT itself the membership, then SET ROLE to it, and on from there, ADMIN options included: the
+  -- option held, inherited from a group, held by a group it may SET ROLE to or by one that a role it
+  -- may SET ROLE to inherits, and an option on a role that holds one (two grants of its own) are each a
+  -- road. USAGE and the verb are read together, of the role the statement would run as. Refused by
+  -- name, never repaired: a membership is its grantor's to revoke, and this file revokes none but the
+  -- logins'.
+  -- Left to the arms that name it once: the logins (census.views-grants); a role that may act as the
+  -- migrator, by INHERIT or SET (it is the migrator; the report names the migrator's members); a role
+  -- that may act as a login (census.membership-reverse); a role's own entry on a relation there
+  -- (census.views-others); the ADMIN option on the migrator or on a login, which is a membership in it
+  -- (the report names the migrator's members, census.membership-reverse a login's). Left to the host,
+  -- and named in the report with the attribute: a role with SUPERUSER, BYPASSRLS or REPLICATION, which
+  -- reads every row already. Not a road: CREATEROLE alone, for since Postgres 16 it grants no
+  -- membership in a role it holds no ADMIN option on; a membership with no option at all in a role
+  -- that holds one, for the member may not act as that role. Counted though it is no road, which
+  -- refuses more: the ADMIN option on a SUPERUSER role, whose membership only a superuser may grant.
+  -- pg_maintain (17) gives MAINTAIN on every relation and no USAGE: alone it reaches nothing there.
+  -- @clause census.views-reach
+  drift := drift || ARRAY(
+    -- may_act(role_oid, acts_as, holder): the roles each role may act as. By SET ROLE, itself included (no
+    -- holder); and by an ADMIN option: acting as a role x that holds the option on a role y, or inherits a
+    -- role that does, it grants itself y, and may then SET ROLE to y and to whatever y may SET ROLE to
+    -- (holder: the role whose option it used). Never y the migrator or a login (above). Nothing is
+    -- followed from a superuser: as x it reaches everything there already, and as y (counted, above) it
+    -- would be every role. UNION adds each row once, so it ends.
+    WITH RECURSIVE may_act(role_oid, acts_as, holder) AS (
+      SELECT a.oid, b.oid, NULL::oid FROM pg_roles a JOIN pg_roles b ON pg_has_role(a.oid, b.oid, 'SET')
+      -- @clause census.views-reach-admin
+      UNION
+      SELECT m.role_oid, t.oid, am.member
+        FROM may_act m
+        JOIN pg_roles x ON x.oid = m.acts_as AND NOT x.rolsuper
+        JOIN pg_auth_members am ON am.admin_option AND pg_has_role(x.oid, am.member, 'USAGE')
+        JOIN pg_roles y ON y.oid = am.roleid
+        JOIN pg_roles t ON t.oid = y.oid OR (NOT y.rolsuper AND pg_has_role(y.oid, t.oid, 'SET'))
+       WHERE y.oid IS DISTINCT FROM mig_oid AND NOT y.oid = ANY (login_oids)
+      -- @end census.views-reach-admin
+    )
+    SELECT format('%s on the %s %I.%I: role %s reaches it through %s, a membership and no entry of its own there, and through the view acts with the migrator''s rights on whatever account it names. By hand: revoke that membership',
+                  h.held,
+                  CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' WHEN 'f' THEN 'foreign table'
+                                 WHEN 'S' THEN 'sequence' ELSE 'table' END,
+                  n.nspname, c.relname, r.rolname, coalesce(h.through, 'what it holds itself (PUBLIC, or what it owns)'))
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_roles r ON r.oid IS DISTINCT FROM mig_oid AND NOT r.oid = ANY (login_oids) AND r.rolname !~ '^pg_'
+                     AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolreplication
+      CROSS JOIN LATERAL (
+        SELECT (SELECT string_agg(v.verb, ' ' ORDER BY v.ord)
+                  FROM unnest(verbs) WITH ORDINALITY AS v(verb, ord)
+                 WHERE EXISTS (SELECT 1 FROM may_act m
+                                WHERE m.role_oid = r.oid
+                                  AND has_schema_privilege(m.acts_as, n.oid, 'USAGE')
+                                  AND has_table_privilege(m.acts_as, c.oid, v.verb))) AS held,
+               (SELECT string_agg(s.rolname || CASE WHEN pg_has_role(r.oid, s.oid, 'USAGE') THEN ''
+                                                    WHEN pg_has_role(r.oid, s.oid, 'SET') THEN ' (by SET ROLE)'
+                                                    ELSE ' (by the ADMIN option of '
+                                                         || (SELECT string_agg(DISTINCT o.rolname::text, ', ' ORDER BY o.rolname::text)
+                                                               FROM may_act m JOIN pg_roles o ON o.oid = m.holder
+                                                              WHERE m.role_oid = r.oid AND m.acts_as = s.oid)
+                                                         || ': it may grant itself the membership)' END,
+                                  ', ' ORDER BY s.rolname)
+                  FROM pg_roles s
+                 WHERE s.oid <> r.oid
+                   AND (pg_has_role(r.oid, s.oid, 'USAGE')
+                        OR EXISTS (SELECT 1 FROM may_act m WHERE m.role_oid = r.oid AND m.acts_as = s.oid))
+                   AND EXISTS (SELECT 1 FROM unnest(verbs) AS v(verb) WHERE has_table_privilege(s.oid, c.oid, v.verb))) AS through
+      ) h
+     WHERE n.nspname = ANY (view_ns) AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+       AND h.held IS NOT NULL
+       AND NOT coalesce(pg_has_role(r.oid, mig_oid, 'USAGE') OR pg_has_role(r.oid, mig_oid, 'SET'), false)
+       AND NOT EXISTS (SELECT 1 FROM unnest(login_oids) AS l(oid)
+                        WHERE pg_has_role(r.oid, l.oid, 'USAGE') OR pg_has_role(r.oid, l.oid, 'SET'))
+       AND NOT EXISTS (SELECT 1 FROM aclexplode(c.relacl) x WHERE x.grantee = r.oid)
+     ORDER BY 1);
+  -- @end census.views-reach
+
+  -- A schema the logins may use beside `public` where a host keeps the search extensions is on
   -- their search path, and the rule writes nothing in it. A relation a login reaches there came by
   -- a road no section above owns, a grant to PUBLIC, and a view there reads with its owner's
-  -- rights. What an extension brought is the extension's; anything else is refused by name.
+  -- rights. What an extension brought is the extension's; anything else is refused by name. (The
+  -- schema of the row lock's views is on no search path, and its own arms above judge it.)
   -- @clause census.usable-schemas
   drift := drift || ARRAY(
     SELECT format('%s on the %s %I.%I: role %s reaches it in a schema it may use, where the rule writes nothing (owner %s). By hand: revoke it from PUBLIC, or drop the relation',
@@ -1095,7 +1461,8 @@ BEGIN
       JOIN pg_roles l ON l.rolname = ANY (runtime)
       CROSS JOIN LATERAL (SELECT string_agg(v.verb, ' ') AS held FROM unnest(verbs) AS v(verb)
                            WHERE has_table_privilege(l.oid, c.oid, v.verb)) h
-     WHERE n.nspname = ANY (usable) AND n.nspname <> 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+     WHERE n.nspname = ANY (usable) AND n.nspname <> 'public' AND NOT n.nspname = ANY (view_ns)
+       AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
        AND (h.held IS NOT NULL OR has_any_column_privilege(l.oid, c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'))
        AND NOT EXISTS (SELECT 1 FROM pg_depend e
                         WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid AND e.deptype = 'e')
@@ -1147,7 +1514,8 @@ BEGIN
      ORDER BY 1);
   -- @end census.columns
 
-  -- Outside `public` the rule writes nothing: any entry that names a login is one too many.
+  -- Outside `public` the rule writes nothing but the verbs of the row lock's views (held exactly by
+  -- census.views-grants): any other entry that names a login is one too many.
   -- @clause census.other-schemas
   drift := drift || ARRAY(
     SELECT format('%s on %I.%I: a direct grant to role %s outside the rule (granted by %s)', x.privilege_type,
@@ -1158,11 +1526,16 @@ BEGIN
       JOIN pg_roles l ON l.oid = x.grantee
      WHERE l.rolname = ANY (runtime) AND n.nspname <> 'public'
        AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+       AND NOT coalesce(c.relkind = 'v' AND c.relowner = mig_oid AND n.nspowner = mig_oid AND n.nspname = ANY (view_ns)
+                        AND NOT x.is_grantable
+                        AND coalesce(the_views->l.rolname::text->format('%I.%I', n.nspname, c.relname), '[]'::jsonb) ? x.privilege_type,
+                        false)
      ORDER BY 1);
   -- @end census.other-schemas
 
-  -- USAGE on the schemas the rule names (`public`, and where the search extensions live); on no
-  -- other schema, `admin`, `plane` and the migration ledgers among them. CREATE nowhere.
+  -- USAGE on the schemas the rule names (`public`, and where the search extensions live; `ohmail`
+  -- follows its views, in census.views-grants); on no other schema, `admin`, `plane` and the
+  -- migration ledgers among them. CREATE nowhere, `ohmail` included.
   -- @clause census.schemas
   drift := drift || ARRAY(
     SELECT format('%s on schema %I: role %s %s', p.priv, n.nspname, l.rolname,
@@ -1177,6 +1550,8 @@ BEGIN
      WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
        AND n.nspname !~ '^pg_(toast_)?temp_'
        AND h.held <> h.written
+       -- USAGE on the schema of the row lock's views follows the views: census.views-grants holds it.
+       AND NOT (p.priv = 'USAGE' AND n.nspname = ANY (view_ns))
      ORDER BY 1);
   -- @end census.schemas
 
@@ -1240,8 +1615,33 @@ BEGIN
       LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
       CROSS JOIN LATERAL aclexplode(d.defaclacl) x
      WHERE x.grantee = 0 AND d.defaclobjtype IN ('r', 'S')
-       AND (n.nspname = ANY (ours) OR (d.defaclnamespace = 0 AND d.defaclrole = mig_oid))
+       AND (n.nspname = ANY (ours || view_ns) OR (d.defaclnamespace = 0 AND d.defaclrole = mig_oid))
      GROUP BY d.defaclrole, d.defaclnamespace, d.defaclobjtype
+    UNION ALL
+    -- The migrator's own for any other role: in the schema of the row lock's views (the repair above takes it),
+    -- or with no schema named, which reaches every schema and is refused by name (revoking it is a decision about
+    -- all of them). Judged only once that schema stands: before the lock's setup step made it, nothing is born there.
+    -- Another role's default privilege there is not judged: nothing that role makes there can stand. The line says
+    -- what takes it away by hand: a read-only check names it before the lock's setup step, which it stops, and the
+    -- apply that would repair the schema's form runs only after that step has passed.
+    SELECT format('the default privileges of the migrator %s%s grant %s on new %s to %s: a view the lock''s setup step makes again would arrive granted to it, and in the schema of the row lock''s views only the logins may hold a right%s',
+                  d.defaclrole::regrole,
+                  CASE WHEN d.defaclnamespace = 0 THEN ' (in every schema)' ELSE ' in schema ' || d.defaclnamespace::regnamespace END,
+                  string_agg(DISTINCT x.privilege_type, ' ' ORDER BY x.privilege_type),
+                  CASE d.defaclobjtype WHEN 'r' THEN 'tables' ELSE 'sequences' END, x.grantee::regrole,
+                  CASE WHEN d.defaclnamespace = 0
+                       THEN '. By hand: name the schemas it is meant for (ALTER DEFAULT PRIVILEGES ... IN SCHEMA ...), or revoke it'
+                       ELSE format('. By hand: ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s REVOKE ALL ON %s FROM %s',
+                                   d.defaclrole::regrole, d.defaclnamespace::regnamespace,
+                                   CASE d.defaclobjtype WHEN 'r' THEN 'TABLES' ELSE 'SEQUENCES' END, x.grantee::regrole) END)
+      FROM pg_default_acl d
+      LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+      CROSS JOIN LATERAL aclexplode(d.defaclacl) x
+     WHERE d.defaclrole = mig_oid AND d.defaclobjtype IN ('r', 'S')
+       AND (n.nspname = ANY (view_ns)
+            OR (d.defaclnamespace = 0 AND EXISTS (SELECT 1 FROM pg_namespace v WHERE v.nspname = ANY (view_ns))))
+       AND x.grantee <> 0 AND x.grantee <> d.defaclrole AND NOT x.grantee = ANY (login_oids)
+     GROUP BY d.defaclrole, d.defaclnamespace, d.defaclobjtype, x.grantee
      ORDER BY 1);
   -- @end census.default-acl
 
@@ -1367,13 +1767,36 @@ BEGIN
     (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relrowsecurity),
     (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relforcerowsecurity),
     (SELECT coalesce(string_agg(c.relname, ',' ORDER BY c.relname), 'none') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('v', 'm'));
+  -- The account's views of the row lock: how many of those the rule names stand as the lock's setup
+  -- step makes them (none before it ran), which, and the logins the rule names them for.
+  standing_views := ARRAY(
+    SELECT DISTINCT format('%I.%I', n.nspname, c.relname) COLLATE "C"
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relkind = 'v' AND c.relowner = mig_oid AND n.nspowner = mig_oid AND n.nspname = ANY (view_ns)
+       AND EXISTS (SELECT 1 FROM jsonb_each(the_views) r WHERE r.value ? format('%I.%I', n.nspname, c.relname))
+     ORDER BY 1);
+  RAISE NOTICE 'ROLES_REPORT account_views=%/% standing=% for=%',
+    cardinality(standing_views),
+    (SELECT count(DISTINCT k) FROM jsonb_each(the_views) r CROSS JOIN LATERAL jsonb_object_keys(r.value) AS k),
+    CASE WHEN cardinality(standing_views) = 0 THEN 'none' ELSE array_to_string(standing_views, ',') END,
+    coalesce((SELECT string_agg(r.key, ',' ORDER BY r.key COLLATE "C") FROM jsonb_each(the_views) r), 'none');
+  -- The row lock's off marker, where its switch writes it: the comment on the lock's schema, one line with no free
+  -- text (`ohmail.lock off since=<UTC> by=<role> why=<incident|rehearsal|test>`), none while the lock stands. Read
+  -- here, never judged; a comment of any other shape is said to be one, and never printed.
   RAISE NOTICE 'ROLES_REPORT lock_marker=%',
-    (SELECT coalesce((SELECT kv FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase
-                        CROSS JOIN LATERAL unnest(s.setconfig) AS kv
-                       WHERE s.setrole = 0 AND d.datname = current_database() AND kv LIKE 'ohmail.lock=%' LIMIT 1), 'none'));
-  RAISE NOTICE 'ROLES_REPORT other_roles_that_bypass=%',
-    (SELECT coalesce(string_agg(r.rolname, ',' ORDER BY r.rolname), 'none') FROM pg_roles r
-      WHERE (r.rolbypassrls OR r.rolsuper) AND r.oid IS DISTINCT FROM mig_oid);
+    (SELECT CASE WHEN m.comment IS NULL OR m.comment = '' THEN 'none'
+                 WHEN m.comment ~ '^ohmail\.lock off since=\S+ by=[a-z_][a-z0-9_]* why=(incident|rehearsal|test)$' THEN m.comment
+                 ELSE 'unreadable' END
+       FROM (SELECT obj_description(to_regnamespace('ohmail'), 'pg_namespace') AS comment) m);
+  -- The roles that read every row already, each by an attribute of its own, and by which: census.views-reach
+  -- leaves them to the host.
+  RAISE NOTICE 'ROLES_REPORT other_roles_that_read_every_row=%',
+    (SELECT coalesce(string_agg(r.rolname || ':' || concat_ws('/', CASE WHEN r.rolsuper THEN 'SUPERUSER' END,
+                                                             CASE WHEN r.rolbypassrls THEN 'BYPASSRLS' END,
+                                                             CASE WHEN r.rolreplication THEN 'REPLICATION' END),
+                                ',' ORDER BY r.rolname), 'none')
+       FROM pg_roles r
+      WHERE (r.rolsuper OR r.rolbypassrls OR r.rolreplication) AND r.oid IS DISTINCT FROM mig_oid);
   RAISE NOTICE 'ROLES_REPORT migrator_member_of=% members_of_migrator=%',
     (SELECT coalesce(string_agg(DISTINCT am.roleid::regrole::text, ','), 'none') FROM pg_auth_members am WHERE am.member = mig_oid),
     (SELECT coalesce(string_agg(DISTINCT am.member::regrole::text, ','), 'none') FROM pg_auth_members am WHERE am.roleid = mig_oid);

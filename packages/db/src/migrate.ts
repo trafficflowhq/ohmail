@@ -56,6 +56,13 @@ interface MigrationSession {
   readonly sql: Sql;
   lost(): MigrationSessionLostError | null;
   end(): Promise<void>;
+  /**
+   * Hear the text of every notice the session's one connection says, until the returned stop is
+   * called: for a step that reads what a statement it sent says (the row lock's postcondition reads
+   * the runtime roles' check's names this way). The process's notice sink still gets each notice's
+   * severity and code alone; a listener that throws is ignored.
+   */
+  hear(listener: (message: string) => void): () => void;
 }
 
 /**
@@ -101,8 +108,15 @@ export async function openMigrationSession(
   let open = false;
   let ending = false;
   let lost: MigrationSessionLostError | null = null;
+  const listeners = new Set<(message: string) => void>();
+  const heard = (n: postgres.Notice): void => {
+    onNotice(n);
+    for (const listener of listeners) {
+      try { listener(String(n.message ?? "")); } catch { /* a listener never becomes a database error */ }
+    }
+  };
   const raw = postgres(url, {
-    ...pgTlsOptions(url), max: 1, onnotice: onNotice, max_lifetime: null,
+    ...pgTlsOptions(url), max: 1, onnotice: heard, max_lifetime: null,
     onclose: () => { if (open && !ending && lost === null) lost = new MigrationSessionLostError(); },
   });
   const refuse = (): void => { if (lost !== null) throw lost; };
@@ -150,6 +164,10 @@ export async function openMigrationSession(
   return {
     sql: guarded,
     lost: () => lost,
+    hear: (listener) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
     // A lost connection keeps its dead statement referenced, and a graceful end would wait out
     // the whole timeout for it; there is nothing left to flush, so it is destroyed at once.
     end: async () => {

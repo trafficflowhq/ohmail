@@ -60,11 +60,24 @@ export {
   PLANE_READS, PLANE_APPENDS, NOTICE_FAMILY, ACCOUNT_BY_ID,
   tableClass, accountColumnOf, serverTables, lockedTables, adminReadTables, policiesOfTable, policyList,
   policiesFor, policiesNaming,
-  // The lock's own word for a class (`keyed` where `row-classes.ts`, exported below as `TableClass`, says
-  // `read before sign-in`): the two lists are one decision away from being one.
-  type TableClass as LockTableClass, type PolicyVerb, type PolicyRow,
+  type TableClass, type PolicyVerb, type PolicyRow,
 } from "./row-security/policies.js";
 export { ROLE_DEADLINES, deadlineText } from "./row-security/deadlines.js";
+/**
+ * The account's three views of the lock: their list, their names and the statement the setup makes each with; and
+ * how each index the lock could take from a read is read: through a view, small, or kept (the search ruling).
+ */
+export {
+  ACCOUNT_VIEWS, VIEW_CHECK_OPTION, readerCondition, viewName, viewStatement, type AccountView, INDEX_READS, type IndexRead,
+} from "./row-security/views.js";
+/**
+ * Which relations a pool's index-driven reads name: the one catalog read, asked once per pool handle, the line a
+ * pool says and the road the health line reads; and the views' answer. The shape and the tables' answer are the root's.
+ */
+export {
+  accountRows, accountRowsAnswered, accountRowsLine, ACCOUNT_ROWS_SQL, ACCOUNT_VIEW_RELATIONS,
+  type AccountRowsExecutor, type AccountRowsOptions,
+} from "./row-security/account-road.js";
 /** The lock's check: its reading of the catalog, the verdict a handle is built on, and the health line. */
 export {
   lockVerdict, readLock, lockHealthLine, type LockVerdictWord, type LockReading, type LockHealthLine,
@@ -345,9 +358,6 @@ export {
   asCapabilities, describeCapability, staffCapabilityExcess, staffCapabilityShortfall,
   type StaffCapability,
 } from "./staff-grants.js";
-
-/** Each table's class for row security, as data: the policies are generated from it. */
-export { TABLE_CLASSES, type TableClass, type TableClassRow } from "./row-classes.js";
 
 /**
  * CRYPTO-4 — the KEK re-wrap pass, and the census that licenses retiring a version.

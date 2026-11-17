@@ -6,13 +6,15 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { bindDb, rebindTx, type BindTo } from "@trafficflow/db";
 import { brandDialect } from "@trafficflow/db/dialect";
 import {
-  makeOwnedDb, schema, accountColumnOf, lockedTables, policyList, readLock, WORKER_WIDE_READ, STAFF_DOOR_KEY, STAFF_TABLES, type OwnedDb,
+  makeOwnedDb, schema, accountColumnOf, lockedTables, policyList, readLock, lockHealthLine, WORKER_WIDE_READ, STAFF_DOOR_KEY, STAFF_TABLES, type OwnedDb,
   pruneSignInRecords, pruneAuthEvents, pruneConnectAttempts, pruneAuditLog, pruneErasedBearers, pruneErasedNotices,
   sweepExpiredStagingFor, horizonOf, SIGN_IN_RECORD_RETENTION_MS, AUTH_EVENTS_RETENTION_MS, CONNECT_ATTEMPTS_RETENTION_MS,
   AUDIT_LOG_RETENTION_MS, WEBAUTHN_CHALLENGE_RETENTION_MS, OAUTH_CEREMONY_RETENTION_MS, DEVICE_CEREMONY_RETENTION_MS,
   ERASED_NOTICE_KEEP_YEARS, ERASED_REFRESH_KEEP_DAYS, AUTH_THROTTLE_RETENTION_MS, resyncMailbox,
 } from "@trafficflow/db/cloud";
-import { pruneIdempotencyKeys, pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS } from "@trafficflow/db";
+import { ACCOUNT_TABLES, pruneIdempotencyKeys, pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS } from "@trafficflow/db";
+import { accountRows, accountRowsAnswered, ACCOUNT_VIEW_RELATIONS, ACCOUNT_VIEWS, viewName, viewStatement } from "@trafficflow/db/cloud";
+import { lockCensus, switchLock, viewComment } from "@trafficflow/db/admin";
 import {
   MIGRATED_DB_SETUP_BUDGET_MS, MIGRATOR_ROLE, PG_MAJORS, ownServersAvailable, ruleVerbs, startLockGround, type LockGround,
 } from "@trafficflow/db/testing";
@@ -873,6 +875,650 @@ for (const major of PG_MAJORS) {
         }
       });
       expect(await addresses()).toBe(0);
+    }, CASE_MS);
+  });
+}
+
+/**
+ * The letters a plan reads at size, in the views' ruling's probe's shape, for one account: `n` letters
+ * (a sender of 400, a recipient beside the account's own every seventh, a copy every eleventh, an
+ * undated letter every fiftieth, a deleted one every fortieth), each with its search document (a
+ * subject word of 500, thirty body words of 3,000, a file name of 100). Planted as the migrator.
+ */
+async function plantLetters(m: postgres.Sql, a: SeededAccount, n: number): Promise<void> {
+  const tag = a.accountId.slice(0, 8);
+  await m.unsafe(`insert into public.messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, to_addresses, cc_addresses,
+      date, arrived_at, created_at, deleted_at, unread)
+    select $1::uuid, $2::uuid, md5(i::text), 'gen:' || $3::text || ':' || i, 'subject w' || (i % 500), 'P' || (i % 400) || '@Example.test',
+      jsonb_build_array(jsonb_build_object('address', 'own-' || $3::text || '@example.test'))
+        || case when i % 7 = 0 then jsonb_build_array(jsonb_build_object('address', 'r' || (i % 300) || '@example.test')) else '[]'::jsonb end,
+      case when i % 11 = 0 then jsonb_build_array(jsonb_build_object('address', 'cc' || (i % 50) || '@example.test')) else '[]'::jsonb end,
+      case when i % 50 = 0 then null else now() - i * interval '1 hour' end, now() - i * interval '1 hour' + interval '3 minutes',
+      now() - i * interval '1 hour', case when i % 40 = 0 then now() else null end, i % 9 = 0
+    from generate_series(1, $4::int) i`, [a.accountId, a.mailboxId, tag, n]);
+  await m.unsafe(`insert into public.message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
+    select x.id, x.account_id, to_tsvector('simple', x.subject || ' ' || lower(x.from_address)),
+      to_tsvector('simple', (select string_agg('w' || ((x.n * 37 + k * 101) % 3000), ' ') from generate_series(1, 30) k)),
+      x.subject || ' ' || lower(x.from_address) || chr(31) || 'file' || (x.n % 100) || '.pdf', 'text'
+    from (select id, account_id, subject, from_address, row_number() over (order by id) as n from public.messages
+           where dedup_key like 'gen:' || $1::text || ':%') x`, [tag]);
+}
+
+/** The test's own statement that names an account for a transaction, as the binder's does: for a role that has no handle of the product's. */
+const NAME_ACCOUNT = "select set_config('ohmail.account', $1, true), set_config('ohmail.key', '', true)";
+type Plan = { "Node Type": string; "Index Name"?: string; "Index Cond"?: string; "Recheck Cond"?: string; "Shared Hit Blocks"?: number; "Shared Read Blocks"?: number; Plans?: Plan[] };
+const planNodes = (p: Plan): Plan[] => [p, ...(p.Plans ?? []).flatMap(planNodes)];
+
+/**
+ * THE RULING'S TEN READS (the views' text ruling's buffers table), each written once over the relations it
+ * names: `m` the letters, `s` the search documents, `w` the documents as the word reads key them, and the
+ * account. The common page, a word search keyed as the service keys it, a person as sender and as recipient
+ * (the product's own recipient key), a typo, a substring of the head terms, the next page by arrival, words
+ * joined to their letters, every document dated by id, a materialized set and a lateral.
+ */
+const TEN_READS: Record<string, (r: { m: string; s: string; w: string }, a: string) => string> = {
+  common_page: (r, a) => `select x.id from (select m.id, m.date from ${r.m} m where m.account_id = '${a}' and m.deleted_at is null
+      order by m.date desc nulls last, m.id desc limit 200) x
+    where exists (select 1 from ${r.s} s where s.message_id = x.id and s.head_tsv @@ to_tsquery('simple', 'subject') limit 1 offset 0)
+    order by x.date desc nulls last, x.id desc limit 50`,
+  word_search: (r, a) => `select s.message_id from ${r.w} s where ((s.account_id)::text = ('${a}'::uuid)::text)
+    and (s.head_tsv @@ to_tsquery('simple', 'w7') or s.text_tsv @@ to_tsquery('simple', 'w7')) limit 200`,
+  sender: (r, a) => `select m.id from ${r.m} m where m.account_id = '${a}' and lower(m.from_address) = 'p17@example.test' limit 20001`,
+  recipient: (r, a) => `select m.id from ${r.m} m
+    where messages_recipient_keys(m.account_id, m.to_addresses, m.cc_addresses) @> array['${a}'::text || ':' || lower('r14@example.test')] limit 20001`,
+  typo: (r, a) => `select s.message_id from ${r.s} s where s.account_id = '${a}' and 'subjekt w123' <% s.terms limit 200`,
+  substring: (r, a) => `select s.message_id from ${r.s} s where s.account_id = '${a}' and split_part(s.terms, chr(31), 1) ilike '%w123 p1%' limit 200`,
+  next_page_by_arrival: (r, a) => `select m.id from ${r.m} m where m.account_id = '${a}' and m.deleted_at is null
+    and ((case when m.arrived_at is null then coalesce(m.date, 'epoch'::timestamptz) when m.date is null then m.arrived_at
+      when m.date <= m.arrived_at and m.arrived_at - m.date <= interval '48 hours' then m.date else m.arrived_at end), m.id)
+      < ((now() - interval '600 days')::timestamptz, 'ffffffff-ffff-4fff-8fff-ffffffffffff'::uuid)
+    order by (case when m.arrived_at is null then coalesce(m.date, 'epoch'::timestamptz) when m.date is null then m.arrived_at
+      when m.date <= m.arrived_at and m.arrived_at - m.date <= interval '48 hours' then m.date else m.arrived_at end) desc, m.id desc limit 50`,
+  words_joined: (r, a) => `select t.id, x.date from (select s.message_id as id from ${r.w} s
+      where ((s.account_id)::text = ('${a}'::uuid)::text) and s.text_tsv @@ to_tsquery('simple', 'w7')) t
+    cross join lateral (select m.date as date from ${r.m} m where m.id = t.id and m.account_id = '${a}' and m.deleted_at is null offset 0) x
+    order by x.date desc nulls last, t.id desc limit 50`,
+  every_document_dated: (r, a) => `select count(*), max(x.date) from (select s.message_id as id from ${r.w} s
+      where ((s.account_id)::text = ('${a}'::uuid)::text) and s.head_tsv @@ to_tsquery('simple', 'subject')) t
+    cross join lateral (select m.date as date from ${r.m} m where m.id = t.id and m.account_id = '${a}' and m.deleted_at is null offset 0) x`,
+  materialized_set: (r, a) => `with tg as materialized (select s.message_id as id from ${r.s} s where s.account_id = '${a}' and 'subjekt w123' <% s.terms)
+    select t.id, x.date from tg t cross join lateral (select m.date as date from ${r.m} m where m.id = t.id and m.account_id = '${a}' offset 0) x limit 50`,
+};
+const TABLES = { m: "public.messages", s: "public.message_search", w: "public.message_search" };
+const VIEWS = { m: "ohmail.messages", s: "ohmail.message_search", w: "ohmail.message_search_words" };
+
+/**
+ * THE ACCOUNT'S VIEWS OF THE LOCK (the search ruling as the views' text ruling amends it), on a ground
+ * made the Cloud's way the first time: the setup, the roles' apply, the setup with the lock (it makes the
+ * views, with no grant), and the roles' apply again (it grants them: SELECT to the two logins, USAGE on their
+ * schema). Two full accounts, A with 20,000 letters more and B with 6,000, for the plans.
+ */
+for (const major of PG_MAJORS) {
+  describe.skipIf(!OWN)(`the account's views on Postgres ${major}`, () => {
+    let g: LockGround;
+    let A: SeededAccount;
+    let B: SeededAccount;
+    /** The migrator's count of `table`'s rows naming `account` on `db`: the control, past the lock. */
+    const own = async (db: string, table: string, account: string): Promise<number> => {
+      const m = g.connectAs(db, MIGRATOR_ROLE);
+      try { return Number((await m.unsafe(`select count(*)::int as n from public.${table} where account_id = $1`, [account]))[0]!.n); }
+      finally { await m.end({ timeout: 5 }); }
+    };
+
+    beforeAll(async () => {
+      g = await startLockGround(major, `views_${major}`, "ground");
+      await g.setup("ground");
+      await g.makeRoles("ground");
+      await g.setup("ground", MIGRATOR_ROLE, { lock: "apply" });
+      const said = await g.runRolesScript("ground");
+      expect(said.filter((s) => /ROLES_(OK|DRIFT|REFUSED)/.test(s)).map((s) => s.split(" ")[1])).toEqual(["ROLES_OK"]);
+      const mig = g.connectAs("ground", MIGRATOR_ROLE);
+      try {
+        const db = brandDialect(drizzle(mig, { schema }), "pg") as unknown as Db;
+        A = await seedFullAccount(db, "Account A");
+        B = await seedFullAccount(db, "Account B");
+        await plantLetters(mig, A, 20_000);
+        await plantLetters(mig, B, 6_000);
+        await mig.unsafe("vacuum analyze public.messages");
+        await mig.unsafe("vacuum analyze public.message_search");
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+    }, MIGRATED_DB_SETUP_BUDGET_MS * 2);
+    afterAll(() => g?.stop());
+
+    /**
+     * `statements` as `role` on `db` in one transaction that is rolled back, `pre` first and the account named by
+     * the test's own statement (none when `account` is ""): the last statement's count, or its rows, or the code
+     * that refused it.
+     */
+    async function asRoleBound(db: string, role: string | undefined, account: string, statements: readonly string[],
+      pre: readonly string[] = []): Promise<number | string> {
+      const c = g.connectAs(db, role);
+      try {
+        await c.unsafe("begin");
+        try {
+          for (const s of pre) await c.unsafe(s);
+          await c.unsafe(NAME_ACCOUNT, [account]);
+          let last: postgres.RowList<postgres.Row[]> | undefined;
+          for (const s of statements) last = await c.unsafe(s);
+          const first = last?.[0] as Record<string, unknown> | undefined;
+          return first !== undefined && "n" in first ? Number(first.n) : last?.count ?? 0;
+        } catch (e) {
+          return codeOf(e);
+        } finally {
+          await c.unsafe("rollback").catch(() => undefined);
+        }
+      } finally {
+        await c.end({ timeout: 5 });
+      }
+    }
+    const countOf = (relation: string): string => `select count(*)::int as n from ${relation}`;
+
+    it("the two logins read exactly their bound account through each view, and nothing named otherwise", async () => {
+      const got: Record<string, Record<string, number | string>> = {};
+      const want: Record<string, Record<string, number | string>> = {};
+      for (const role of ["ohmail_api", "ohmail_worker"]) {
+        const handle = makeOwnedDb(g.urlAs("ground", role), { role: role === "ohmail_api" ? "api" : "worker" });
+        try {
+          for (const v of ACCOUNT_VIEWS) {
+            const key = `${role} ${viewName(v)}`;
+            const read = async (bind: BindTo | null, text: string): Promise<number | string> => {
+              const db = (bind === null ? handle.db : bind.account === null ? bindDb(handle.db, { account: null }) : bindDb(handle.db, { account: bind.account })) as unknown as Exec;
+              return db.execute(sql.raw(text)).then((r) => Number(rows(r)[0]!.n), codeOf);
+            };
+            const inTx = async (statements: readonly string[]): Promise<number | string> => {
+              const a = bindDb(handle.db, { account: A.accountId }) as unknown as Txable;
+              return a.transaction(async (tx) => {
+                let n = 0;
+                for (const s of statements) n = Number(rows(await tx.execute(sql.raw(s)))[0]?.n ?? 0);
+                return n;
+              }).catch(codeOf);
+            };
+            got[key] = {
+              plain: await read(null, countOf(viewName(v))),
+              boundToNothing: await read({ account: null }, countOf(viewName(v))),
+              boundToA: await read({ account: A.accountId }, countOf(viewName(v))),
+              boundToB: await read({ account: B.accountId }, countOf(viewName(v))),
+              boundToANamingB: await read({ account: A.accountId }, `${countOf(viewName(v))} where account_id = '${B.accountId}'`),
+              resetInside: await inTx(["reset all", countOf(viewName(v))]),
+              malformed: await inTx(["select set_config('ohmail.account', 'not-an-id', true) as n", countOf(viewName(v))]),
+            };
+            want[key] = {
+              plain: 0, boundToNothing: 0, boundToA: await own("ground", v.table, A.accountId), boundToB: await own("ground", v.table, B.accountId),
+              boundToANamingB: 0, resetInside: 0, malformed: 0,
+            };
+          }
+          // A login writes nothing through a view, nor replaces or drops one: it holds SELECT alone.
+          const a = bindDb(handle.db, { account: A.accountId }) as unknown as Exec;
+          got[`${role} writes`] = {
+            update: await a.execute(sql.raw(`update ohmail.messages set subject = 'x'`)).then(() => "written", codeOf),
+            delete: await a.execute(sql.raw(`delete from ohmail.message_search`)).then(() => "written", codeOf),
+            replace: await a.execute(sql.raw(viewStatement(ACCOUNT_VIEWS[0]!, true))).then(() => "replaced", codeOf),
+            drop: await a.execute(sql.raw(`drop view ohmail.message_search_words`)).then(() => "dropped", codeOf),
+          };
+          want[`${role} writes`] = { update: "42501", delete: "42501", replace: "42501", drop: "42501" };
+        } finally {
+          await handle.close();
+        }
+      }
+      expect(got).toEqual(want);
+      expect(want["ohmail_api ohmail.messages"]!.boundToA).toBeGreaterThan(20_000);
+    }, CASE_MS);
+
+    it("a prepared read through a view under a generic plan answers each transaction's own account and each execution's own role", async () => {
+      const su = g.connectAs("ground");
+      try {
+        await su.unsafe("set plan_cache_mode = force_generic_plan");
+        await su.unsafe("prepare views_count as select count(*)::int as n from ohmail.messages");
+        const run = async (role: string | null, account: string): Promise<number> => {
+          await su.unsafe(role === null ? "reset role" : `set role ${role}`);
+          await su.unsafe("begin");
+          try {
+            await su.unsafe(NAME_ACCOUNT, [account]);
+            return Number((await su.unsafe("execute views_count"))[0]!.n);
+          } finally {
+            await su.unsafe("rollback");
+          }
+        };
+        const got = [await run(null, A.accountId), await run("ohmail_api", A.accountId), await run("ohmail_api", B.accountId),
+          await run("ohmail_worker", A.accountId), await run(null, B.accountId)];
+        expect(got).toEqual([0, await own("ground", "messages", A.accountId), await own("ground", "messages", B.accountId), await own("ground", "messages", A.accountId), 0]);
+      } finally {
+        await su.unsafe("reset role").catch(() => undefined);
+        await su.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    /**
+     * THE ROADS (the views' text ruling, section 2): a role that is not one of the two logins, given a way to
+     * name a view, bound to an account that holds letters. On a database of its own, where the migrator's
+     * default privilege grants each view at its birth to one of them (the three made again by the step's own
+     * statements and record, then granted to the logins as the roles' rule writes it), one holds a hand-made
+     * entry, and a view of another schema reads a listed one.
+     */
+    const ROADS: ReadonlyArray<{ road: string; role?: string; pre?: readonly string[]; through?: string }> = [
+      { road: "a member of pg_read_all_data", role: "r_read" },
+      { road: "a member of both all-data roles", role: "r_write" },
+      { road: "a NOINHERIT role under SET ROLE to pg_read_all_data", role: "r_set", pre: ["set local role pg_read_all_data"] },
+      { road: "the ADMIN option alone, after granting itself", role: "r_admin",
+        pre: ["grant pg_read_all_data to r_admin with set true", "set local role pg_read_all_data"] },
+      { road: "the grantee of the migrator's default privilege, at a view's birth", role: "r_default" },
+      { road: "a hand-made entry: USAGE and the four verbs", role: "r_grant" },
+      { road: "a role made after the step", role: "r_late" },
+      { road: "a reader of a view of another schema over a listed view", role: "r_side", through: "side.over_messages" },
+      { road: "a member of the migrator, as itself", role: "r_memmig" },
+      { road: "a member of a login, as itself", role: "r_memlogin" },
+      { road: "a role that may bypass, granted the views", role: "r_bypass" },
+      { road: "the migrator", role: MIGRATOR_ROLE },
+      { road: "a superuser" },
+    ];
+    const ROAD_ROLES = ["r_read", "r_write", "r_set", "r_admin", "r_default", "r_grant", "r_side", "r_memmig", "r_memlogin", "r_bypass"];
+
+    it("by every road, a role that is not one of the two logins reads nothing through each view, bound to an account that holds letters", async () => {
+      const db = await g.clone("ground", "roads");
+      const su = g.connectAs("postgres");
+      try {
+        for (const r of ROAD_ROLES) await su.unsafe(`create role ${r} login`);
+        await su.unsafe("grant pg_read_all_data to r_read");
+        await su.unsafe("grant pg_read_all_data, pg_write_all_data to r_write");
+        await su.unsafe("alter role r_set noinherit");
+        await su.unsafe("grant pg_read_all_data to r_set with inherit false, set true");
+        await su.unsafe("grant pg_read_all_data to r_admin with admin true, inherit false, set false");
+        await su.unsafe(`grant ${MIGRATOR_ROLE} to r_memmig`);
+        await su.unsafe("grant ohmail_api to r_memlogin");
+        await su.unsafe("alter role r_bypass bypassrls");
+      } finally {
+        await su.end({ timeout: 5 });
+      }
+      for (const r of [...ROAD_ROLES, MIGRATOR_ROLE]) await g.password(r);
+      const mig = g.connectAs(db, MIGRATOR_ROLE);
+      try {
+        // Each view born again under the migrator's default privilege for one role, as the step makes it and records it.
+        await mig.unsafe("alter default privileges for role ohmail_migrator in schema ohmail grant select, insert, update, delete on tables to r_default");
+        await mig.unsafe("grant usage on schema ohmail to r_default");
+        for (const v of [...ACCOUNT_VIEWS].reverse()) await mig.unsafe(`drop view ${viewName(v)}`);
+        for (const v of ACCOUNT_VIEWS) {
+          await mig.unsafe(viewStatement(v));
+          const [printed] = await mig.unsafe(`select pg_get_viewdef('${viewName(v)}'::regclass) as text`);
+          await mig.unsafe(`comment on view ${viewName(v)} is '${viewComment(v, String(printed!.text))}'`);
+          await mig.unsafe(`grant select on ${viewName(v)} to ohmail_api, ohmail_worker`);
+        }
+        // A hand-made entry; the grants of a role that may bypass; a view of another schema over a listed one.
+        await mig.unsafe(`grant usage on schema ohmail to r_grant, r_bypass`);
+        await mig.unsafe("grant usage on schema public to r_bypass");
+        await mig.unsafe("grant select on public.messages to r_bypass");
+        await mig.unsafe(`grant select, insert, update, delete on ${ACCOUNT_VIEWS.map(viewName).join(", ")} to r_grant, r_bypass`);
+        await mig.unsafe("create schema side");
+        await mig.unsafe("create view side.over_messages as select id, account_id, subject from ohmail.messages");
+        await mig.unsafe("grant usage on schema side to r_side");
+        await mig.unsafe("grant select on side.over_messages to r_side");
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+      const late = g.connectAs("postgres");
+      try { await late.unsafe("create role r_late login in role pg_read_all_data"); } finally { await late.end({ timeout: 5 }); }
+      await g.password("r_late");
+      const got: Record<string, Record<string, number | string>> = {};
+      const want: Record<string, Record<string, number | string>> = {};
+      for (const { road, role, pre = [], through } of ROADS) {
+        const relations = through === undefined ? ACCOUNT_VIEWS.map(viewName) : [through];
+        got[road] = {};
+        want[road] = {};
+        for (const rel of relations) {
+          got[road]![rel] = await asRoleBound(db, role, A.accountId, [countOf(rel)], pre);
+          want[road]![rel] = 0;
+        }
+      }
+      // The account holds letters, and the table answers what the role is: past the lock for those that bypass.
+      expect(await own(db, "messages", A.accountId)).toBeGreaterThan(20_000);
+      expect(got).toEqual(want);
+      expect({
+        bypass: await asRoleBound(db, "r_bypass", A.accountId, [countOf("public.messages")]),
+        reader: await asRoleBound(db, "r_read", A.accountId, [countOf("public.messages")]),
+        memberOfALogin: await asRoleBound(db, "r_memlogin", A.accountId, [countOf("public.messages")]),
+      }).toEqual({
+        bypass: Number((await own(db, "messages", A.accountId))) + Number(await own(db, "messages", B.accountId)),
+        reader: 0,
+        // The policy's TO list admits a login's member: the login's own border, which the roles' census holds.
+        memberOfALogin: await own(db, "messages", A.accountId),
+      });
+    }, CASE_MS * 2);
+
+    it("nobody writes through a view: each holder of a write verb, bound to B, updates, deletes and locks nothing, and every insert is refused", async () => {
+      const db = "roads";
+      const [{ id: bLetter }] = await (async () => {
+        const m = g.connectAs(db, MIGRATOR_ROLE);
+        try { return await m.unsafe(`select id::text as id from public.messages where account_id = $1 limit 1`, [B.accountId]) as unknown as Array<{ id: string }>; }
+        finally { await m.end({ timeout: 5 }); }
+      })();
+      /** B's letters and search documents, read by the migrator: what a write through a view would change. */
+      const digest = async (): Promise<string> => {
+        const m = g.connectAs(db, MIGRATOR_ROLE);
+        try {
+          return String((await m.unsafe(`select md5(coalesce(string_agg(x.t, '|' order by x.t), '')) as d from (
+              select m::text as t from public.messages m where m.account_id = $1
+              union all select s.message_id::text || s.terms from public.message_search s where s.account_id = $1) x`, [B.accountId]))[0]!.d);
+        } finally { await m.end({ timeout: 5 }); }
+      };
+      const before = await digest();
+      const insert = `insert into ohmail.messages (account_id, mailbox_id, body_hash, dedup_key) values ('${B.accountId}', '${B.mailboxId}', 'x', 'through-a-view')`;
+      const writes: Record<string, string> = {
+        update: `update ohmail.messages set subject = 'rewritten'`,
+        delete: `delete from ohmail.message_search`,
+        lock: `select count(*)::int as n from (select id from ohmail.messages for update) l`,
+        insert,
+        upsert: `insert into ohmail.messages (id, account_id, mailbox_id, body_hash, dedup_key) values ('${bLetter}', '${B.accountId}', '${B.mailboxId}', 'x', 'through-a-view-2')
+          on conflict (id) do update set subject = 'rewritten'`,
+        ...(major >= 17 ? { merge: `merge into ohmail.messages t using (select 1) s on false
+          when not matched then insert (account_id, mailbox_id, body_hash, dedup_key) values ('${B.accountId}', '${B.mailboxId}', 'x', 'through-a-view-3')` } : {}),
+      };
+      const got: Record<string, Record<string, number | string>> = {};
+      const want: Record<string, Record<string, number | string>> = {};
+      for (const [road, role] of [["pg_write_all_data", "r_write"], ["the migrator's default privilege", "r_default"], ["a hand-made entry", "r_grant"],
+        ["a member of the migrator", "r_memmig"]] as const) {
+        got[road] = {};
+        for (const [what, text] of Object.entries(writes)) got[road]![what] = await asRoleBound(db, role, B.accountId, [text]);
+        want[road] = { update: 0, delete: 0, lock: 0, insert: "44000", upsert: "44000", ...(major >= 17 ? { merge: "44000" } : {}) };
+      }
+      expect(got).toEqual(want);
+      expect(await digest()).toBe(before);
+    }, CASE_MS);
+
+    /** Both logins' verdicts on `db`, each judged for itself: the verdict and its reasons. */
+    const verdicts = async (db: string): Promise<Record<string, { verdict: string; why: readonly string[] }>> => {
+      const out: Record<string, { verdict: string; why: readonly string[] }> = {};
+      for (const role of ["ohmail_api", "ohmail_worker"]) {
+        const c = g.connectAs(db, role);
+        try { const r = await readLock(c, { role }); out[role] = { verdict: r.verdict, why: r.why }; } finally { await c.end({ timeout: 5 }); }
+      }
+      return out;
+    };
+    /** The lock's census of `db`, read as the migrator. */
+    const censusOf = async (db: string): Promise<string[]> => {
+      const m = g.connectAs(db, MIGRATOR_ROLE);
+      try { return await lockCensus(m); } finally { await m.end({ timeout: 5 }); }
+    };
+
+    /**
+     * A LOGIN GIVEN THE WRITE VERBS BY HAND (the views' text ruling's plant 3). An update, a delete and
+     * a plain insert through a view stay inside the bound account: the check option judges the row they write. An insert ... on
+     * conflict do update does not: the view's condition is not asked of the row the conflict finds, and the option judges only
+     * the row after the update, which names the bound account. So a letter of B that no other row names yet (its search document
+     * not built: `message_search`'s key to the letter and its account stops it otherwise) is taken by a login bound to A, and its
+     * text is answered. The right is beyond the rule's: both logins read broken, whoever was granted.
+     */
+    it("a login given the write verbs by hand: an update, a delete and a plain insert stay inside its bound account, but an insert ... on conflict do update takes a letter of another account and answers its text, and both logins read broken", async () => {
+      const db = await g.clone("ground", "by_hand");
+      const mig = g.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.unsafe("grant insert, update, delete on ohmail.messages to ohmail_api");
+        const [{ id: aLetter }] = await mig.unsafe(`select id::text as id from public.messages where account_id = $1 limit 1`, [A.accountId]) as unknown as Array<{ id: string }>;
+        // A letter of B just arrived: no search document yet, so no other row names it by its id and its account.
+        const [{ id: bFresh }] = await mig.unsafe(`insert into public.messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, snippet)
+          values ($1, $2, 'hb', 'riso:fresh-b', 'B PRIVATE SUBJECT', 'b-correspondent@example.test', 'B PRIVATE SNIPPET') returning id::text as id`,
+        [B.accountId, B.mailboxId]) as unknown as Array<{ id: string }>;
+        const run = (text: string): Promise<number | string> => asRoleBound(db, "ohmail_api", A.accountId, [text]);
+        expect({
+          ownRow: await run(`update ohmail.messages set subject = 'rewritten' where id = '${aLetter}'`),
+          movedToB: await run(`update ohmail.messages set account_id = '${B.accountId}' where id = '${aLetter}'`),
+          insertForB: await run(`insert into ohmail.messages (account_id, mailbox_id, body_hash, dedup_key) values ('${B.accountId}', '${B.mailboxId}', 'x', 'by-hand-b')`),
+          insertForA: await run(`insert into ohmail.messages (account_id, mailbox_id, body_hash, dedup_key) values ('${A.accountId}', '${A.mailboxId}', 'x', 'by-hand-a')`),
+          deleteOfB: await run(`delete from ohmail.messages where account_id = '${B.accountId}'`),
+          updateOfB: await run(`update ohmail.messages set subject = 'rewritten' where id = '${bFresh}'`),
+        }).toEqual({ ownRow: 1, movedToB: "44000", insertForB: "44000", insertForA: 1, deleteOfB: 0, updateOfB: 0 });
+        // The review's statement (a), as the API's login bound to A, onto B's letter by its id: it is answered B's text, and the letter is A's.
+        const api = g.connectAs(db, "ohmail_api");
+        let answered: unknown;
+        try {
+          answered = await api.begin(async (tx) => {
+            await tx.unsafe(NAME_ACCOUNT, [A.accountId]);
+            return (await tx.unsafe(`insert into ohmail.messages (id, account_id, mailbox_id, body_hash, dedup_key) values ($1, $2, $3, 'h', 'riso:x')
+              on conflict (id) do update set account_id = excluded.account_id, mailbox_id = excluded.mailbox_id
+              returning subject, from_address, snippet`, [bFresh, A.accountId, A.mailboxId]))[0];
+          });
+        } finally {
+          await api.end({ timeout: 5 });
+        }
+        const [{ account }] = await mig.unsafe(`select account_id::text as account from public.messages where id = $1`, [bFresh]) as unknown as Array<{ account: string }>;
+        const why = ["the view ohmail.messages is granted beyond the two logins' SELECT: ohmail_api holds DELETE; ohmail_api holds INSERT; ohmail_api holds UPDATE"];
+        expect({ answered, letterNowOf: account === A.accountId ? "A" : "B", verdicts: await verdicts(db) }).toEqual({
+          answered: { subject: "B PRIVATE SUBJECT", from_address: "b-correspondent@example.test", snippet: "B PRIVATE SNIPPET" },
+          letterNowOf: "A",
+          verdicts: { ohmail_api: { verdict: "broken", why }, ohmail_worker: { verdict: "broken", why } },
+        });
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    /**
+     * A RULE ON A LISTED VIEW AND A ROLE MADE AFTER IT, the state as a review wrote it. A rule on a listed view, made by the view's owner,
+     * and no grant to anybody; a member of pg_write_all_data made after it, bound to B, inserts one row of B through the view, and
+     * the rule's update rewrites every account's letters: a rule voids the check option for every holder of a verb. The census
+     * names the rule as code on the view and both logins read broken (the next setup's refusal of it, before it writes, is the
+     * lock's ground's case: on this server the roads' roles stand, and the roles' check names them first). Its control: the rule
+     * dropped, the same insert is refused (44000) and nothing is rewritten.
+     */
+    it("a rule on a listed view, made by its owner, voids the check option for every holder of a verb: a role made later rewrites every account's letters by one insert; the census names it and both logins read broken; the rule dropped, the insert is refused", async () => {
+      const db = await g.clone("ground", "view_rule");
+      const migrator = async (text: string): Promise<void> => {
+        const m = g.connectAs(db, MIGRATOR_ROLE);
+        try { await m.unsafe(text); } finally { await m.end({ timeout: 5 }); }
+      };
+      await migrator("create rule riso_ins as on insert to ohmail.messages do instead update public.messages set subject = 'REWRITTEN BY A RULE'");
+      const su = g.connectAs(db);
+      /** As the reviewer: one insert through the view by the member made later, bound to B; then the letters rewritten, A's and B's; rolled back. */
+      const insertThrough = async (): Promise<{ insert: string; a: number; b: number }> => {
+        await su.unsafe("begin");
+        try {
+          await su.unsafe(NAME_ACCOUNT, [B.accountId]);
+          await su.unsafe("savepoint through");
+          let insert: string;
+          try {
+            await su.unsafe("set local session authorization r_rule_writer");
+            await su.unsafe(`insert into ohmail.messages (account_id, mailbox_id, body_hash, dedup_key) values ($1, $2, 'h', 'riso:w')`, [B.accountId, B.mailboxId]);
+            insert = "taken";
+            await su.unsafe("reset session authorization");
+          } catch (e) {
+            insert = codeOf(e);
+            await su.unsafe("rollback to savepoint through");
+          }
+          const [n] = await su.unsafe(`select count(*) filter (where account_id = $1)::int as a, count(*) filter (where account_id = $2)::int as b
+            from public.messages where subject = 'REWRITTEN BY A RULE'`, [A.accountId, B.accountId]);
+          return { insert, a: Number(n!.a), b: Number(n!.b) };
+        } finally {
+          await su.unsafe("rollback");
+        }
+      };
+      try {
+        // The member is made after the rule, and gone again before the lock is read: its membership is the roles' census's to name.
+        await su.unsafe("create role r_rule_writer in role pg_write_all_data");
+        const ruled = await insertThrough();
+        await su.unsafe("drop role r_rule_writer");
+        const code = "code (the rule riso_ins on INSERT)";
+        const why = [`the view ohmail.messages differs: ${code}`];
+        expect({ ruled, census: await censusOf(db), verdicts: await verdicts(db) }).toEqual({
+          ruled: { insert: "taken", a: await own(db, "messages", A.accountId), b: await own(db, "messages", B.accountId) },
+          census: [`LOCK_DRIFT views.differ ohmail.messages: ${code}`],
+          verdicts: { ohmail_api: { verdict: "broken", why }, ohmail_worker: { verdict: "broken", why } },
+        });
+        // The control: the rule dropped by hand, the same insert is the check option's refusal, and the lock reads as listed again.
+        await migrator("drop rule riso_ins on ohmail.messages");
+        await su.unsafe("create role r_rule_writer in role pg_write_all_data");
+        const dropped = await insertThrough();
+        await su.unsafe("drop role r_rule_writer");
+        expect({ dropped, census: await censusOf(db), verdicts: await verdicts(db) }).toEqual({
+          dropped: { insert: "44000", a: 0, b: 0 },
+          census: [],
+          verdicts: { ohmail_api: { verdict: "locked", why: [] }, ohmail_worker: { verdict: "locked", why: [] } },
+        });
+      } finally {
+        await su.unsafe("drop role if exists r_rule_writer").catch(() => undefined);
+        await su.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    it("the plans: through the views the word read keeps its index with @@ in its condition and the sender read its lower sender, which on the tables they lose; and each of the ten reads costs the login through the views at most the migrator's buffers on the tables and a tenth", async () => {
+      /** One read's plan and its execution's shared buffers, as `role` bound to A (the migrator: plain). */
+      const explain = async (role: string, text: string): Promise<{ nodes: Plan[]; buffers: number }> => {
+        const c = g.connectAs("ground", role);
+        try {
+          await c.unsafe("begin");
+          try {
+            await c.unsafe("set local max_parallel_workers_per_gather = 0");
+            await c.unsafe("set local jit = off");
+            await c.unsafe(NAME_ACCOUNT, [role === MIGRATOR_ROLE ? "" : A.accountId]);
+            const [row] = await c.unsafe(`explain (analyze, buffers, timing off, summary off, format json) ${text}`);
+            const plan = ((row as Record<string, unknown>)["QUERY PLAN"] as Array<{ Plan: Plan }>)[0]!.Plan;
+            return { nodes: planNodes(plan), buffers: (plan["Shared Hit Blocks"] ?? 0) + (plan["Shared Read Blocks"] ?? 0) };
+          } finally {
+            await c.unsafe("rollback");
+          }
+        } finally {
+          await c.end({ timeout: 5 });
+        }
+      };
+      const table: Record<string, { migrator: number; loginOnTables: number; loginThroughViews: number; ceiling: number }> = {};
+      const over: string[] = [];
+      let wordsThroughViews: Plan[] = [], wordsOnTables: Plan[] = [], senderThroughViews: Plan[] = [], senderOnTables: Plan[] = [];
+      for (const [name, read] of Object.entries(TEN_READS)) {
+        const migrator = await explain(MIGRATOR_ROLE, read(TABLES, A.accountId));
+        const onTables = await explain("ohmail_api", read(TABLES, A.accountId));
+        const throughViews = await explain("ohmail_api", read(VIEWS, A.accountId));
+        const ceiling = Math.ceil((migrator.buffers * 1.1) / 100) * 100;
+        table[name] = { migrator: migrator.buffers, loginOnTables: onTables.buffers, loginThroughViews: throughViews.buffers, ceiling };
+        if (throughViews.buffers > ceiling) over.push(`${name}: ${throughViews.buffers} buffers through the views, ${migrator.buffers} the migrator's`);
+        if (name === "word_search") { wordsThroughViews = throughViews.nodes; wordsOnTables = onTables.nodes; }
+        if (name === "sender") { senderThroughViews = throughViews.nodes; senderOnTables = onTables.nodes; }
+      }
+      console.log(`the ten reads' execution buffers on Postgres ${major} (A holds ${await own("ground", "messages", A.accountId)} letters):\n`
+        + Object.entries(table).map(([n, b]) => `  ${n}: migrator on the tables ${b.migrator}, the API's login on the tables ${b.loginOnTables}, through the views ${b.loginThroughViews} (ceiling ${b.ceiling})`).join("\n"));
+      const wordIndex = (nodes: Plan[]): boolean => nodes.some((n) => n["Index Name"] === "message_search_words_idx" && /@@/.test(n["Index Cond"] ?? ""));
+      const lowerSender = (nodes: Plan[]): boolean => nodes.some((n) => /lower\(.*from_address/.test(n["Index Cond"] ?? ""));
+      expect({
+        wordsThroughViews: wordIndex(wordsThroughViews), wordsOnTables: wordIndex(wordsOnTables),
+        senderThroughViews: lowerSender(senderThroughViews), senderOnTables: lowerSender(senderOnTables), over,
+      }).toEqual({ wordsThroughViews: true, wordsOnTables: false, senderThroughViews: true, senderOnTables: false, over: [] });
+      // The control is not void: on the tables the word read costs the login far more than through the views.
+      expect(table.word_search!.loginOnTables).toBeGreaterThan(table.word_search!.loginThroughViews);
+    }, CASE_MS * 2);
+
+    it("accountRows answers the views for a runtime login where the three stand readable, and the tables for every other handle, each pool saying its road once and the health line beside it; a view sent to the migrator reads nothing", async () => {
+      const handles = {
+        api: makeOwnedDb(g.urlAs("ground", "ohmail_api"), { role: "api" }),
+        worker: makeOwnedDb(g.urlAs("ground", "ohmail_worker"), { role: "worker" }),
+        migrator: makeOwnedDb(g.urlAs("ground", MIGRATOR_ROLE), { role: "worker" }),
+        staff: makeOwnedDb(g.urlAs("ground", "ohmail_admin"), { role: "api" }),
+      };
+      /** What each pool said when it was first answered (one line: its road and its role's kind). */
+      const said: Record<string, string[]> = {};
+      const heard = (who: string) => ({ log: (line: string): void => { (said[who] ??= []).push(line); } });
+      /** The lock's health line for `role`, with the road `db`'s pool was answered (asked nothing): the store's views and this pool's. */
+      const line = async (role: string, db: object): Promise<object> => {
+        const c = g.connectAs("ground", role);
+        try { const h = lockHealthLine(await readLock(c, { role }), accountRowsAnswered(db)); return { views: h.views, reads: h.reads }; }
+        finally { await c.end({ timeout: 5 }); }
+      };
+      try {
+        // Not asked yet: the health line says so.
+        expect(await line("ohmail_api", handles.api.db)).toEqual({ views: 3, reads: "unasked" });
+        const answers = Object.fromEntries(await Promise.all(Object.entries(handles).map(async ([who, h]) => [who, (await accountRows(h.db as never, heard(who))).through])));
+        expect(answers).toEqual({ api: "views", worker: "views", migrator: "tables", staff: "tables" });
+        // A bound view of the API's handle asks nothing again, answers the same, and says nothing more.
+        expect(await accountRows(bindDb(handles.api.db, { account: A.accountId }) as never, heard("api"))).toBe(ACCOUNT_VIEW_RELATIONS);
+        // The search document's census admits account-rows.ts, the names this catalog read answers with, by this proof that
+        // the read reads no row (the census ruling (a), its second condition): the staff role is answered here, and it may
+        // read neither the document's table nor its views.
+        const m0 = g.connectAs("ground", MIGRATOR_ROLE);
+        try {
+          expect((await m0.unsafe(`select r.relation, pg_catalog.has_table_privilege('ohmail_admin', r.relation, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+              or pg_catalog.has_any_column_privilege('ohmail_admin', r.relation, 'SELECT, INSERT, UPDATE, REFERENCES') as holds
+            from unnest(array['public.message_search', 'ohmail.message_search', 'ohmail.message_search_words']) as r(relation) order by 1`)).map((r) => `${r.relation}: ${r.holds}`))
+            .toEqual(["ohmail.message_search: false", "ohmail.message_search_words: false", "public.message_search: false"]);
+        } finally {
+          await m0.end({ timeout: 5 });
+        }
+        expect(said).toEqual({
+          api: ["account rows: this pool reads the account's views (the runtime login ohmail_api)"],
+          worker: ["account rows: this pool reads the account's views (the runtime login ohmail_worker)"],
+          migrator: ["account rows: this pool reads the tables (a role that is no runtime login)"],
+          staff: ["account rows: this pool reads the tables (a role that is no runtime login)"],
+        });
+        // The health line carries the road beside the store's views, asked nothing.
+        expect({ api: await line("ohmail_api", handles.api.db), worker: await line("ohmail_worker", bindDb(handles.worker.db, { account: A.accountId })) })
+          .toEqual({ api: { views: 3, reads: "views" }, worker: { views: 3, reads: "views" } });
+        // Why the migrator never reads a view: bound to A, the view answers it nothing; the table answers it every row.
+        const m = bindDb(handles.migrator.db, { account: A.accountId }) as unknown as Exec;
+        expect({
+          view: Number(rows(await m.execute(sql.raw(countOf(ACCOUNT_VIEW_RELATIONS.messages))))[0]!.n),
+          table: Number(rows(await m.execute(sql.raw(`${countOf(ACCOUNT_TABLES.messages)} where account_id = '${A.accountId}'`)))[0]!.n),
+        }).toEqual({ view: 0, table: await own("ground", "messages", A.accountId) });
+      } finally {
+        for (const h of Object.values(handles)) await h.close();
+      }
+      // A login over a store whose views are gone: the tables.
+      const bare = await g.clone("ground", "no_views");
+      const mig = g.connectAs(bare, MIGRATOR_ROLE);
+      try { for (const v of [...ACCOUNT_VIEWS].reverse()) await mig.unsafe(`drop view ${viewName(v)}`); } finally { await mig.end({ timeout: 5 }); }
+      const login = makeOwnedDb(g.urlAs(bare, "ohmail_api"), { role: "api" });
+      try {
+        expect(await accountRows(login.db as never, heard("bare"))).toBe(ACCOUNT_TABLES);
+        expect(said.bare).toEqual(["account rows: this pool reads the tables (the runtime login ohmail_api, to which the account's views are not all "
+          + "readable: a pool made after the roles' apply reads them)"]);
+        const c = g.connectAs(bare, "ohmail_api");
+        try { expect(lockHealthLine(await readLock(c, { role: "ohmail_api" }), accountRowsAnswered(login.db)).reads).toBe("tables"); }
+        finally { await c.end({ timeout: 5 }); }
+      } finally { await login.close(); }
+    }, CASE_MS);
+
+    it("the lock switched off: through a view still the bound account alone; the migrator without its bypass: nothing", async () => {
+      const db = await g.clone("ground", "views_off");
+      const url = g.urlAs(db, MIGRATOR_ROLE);
+      await switchLock(url, "off", { why: "test" });
+      try {
+        expect({
+          view: await asRoleBound(db, "ohmail_api", A.accountId, [countOf("ohmail.messages")]),
+          tableUnbound: await asRoleBound(db, "ohmail_api", "", [countOf("public.messages")]),
+        }).toEqual({ view: await own(db, "messages", A.accountId), tableUnbound: await own(db, "messages", A.accountId) + await own(db, "messages", B.accountId) });
+      } finally {
+        await switchLock(url, "on");
+      }
+      const su = g.connectAs("postgres");
+      try {
+        await su.unsafe(`alter role ${MIGRATOR_ROLE} nobypassrls`);
+        try {
+          expect(await asRoleBound(db, "ohmail_api", A.accountId, [countOf("ohmail.messages")])).toBe(0);
+        } finally {
+          await su.unsafe(`alter role ${MIGRATOR_ROLE} bypassrls`);
+        }
+      } finally {
+        await su.end({ timeout: 5 });
+      }
+      expect(await asRoleBound(db, "ohmail_api", A.accountId, [countOf("ohmail.messages")])).toBe(await own(db, "messages", A.accountId));
+    }, CASE_MS);
+
+    it("a login renamed reads nothing through a view, its account still on the table, and the check, asked for the login, reads broken", async () => {
+      const su = g.connectAs("postgres");
+      try {
+        await su.unsafe("alter role ohmail_api rename to ohmail_api_renamed");
+        await g.password("ohmail_api_renamed");
+        const reads = {
+          views: Object.fromEntries(await Promise.all(ACCOUNT_VIEWS.map(async (v) => [viewName(v), await asRoleBound("ground", "ohmail_api_renamed", A.accountId, [countOf(viewName(v))])]))),
+          table: await asRoleBound("ground", "ohmail_api_renamed", A.accountId, [countOf("public.messages")]),
+        };
+        const renamed = g.connectAs("ground", "ohmail_api_renamed");
+        let verdict: { verdict: string; why: readonly string[] };
+        try { verdict = await readLock(renamed, { role: "ohmail_api" }); } finally { await renamed.end({ timeout: 5 }); }
+        expect({ reads, verdict: verdict.verdict, why: verdict.why.filter((w) => w.startsWith("connected as")) }).toEqual({
+          reads: { views: Object.fromEntries(ACCOUNT_VIEWS.map((v) => [viewName(v), 0])), table: await own("ground", "messages", A.accountId) },
+          verdict: "broken", why: ["connected as ohmail_api_renamed, not ohmail_api"],
+        });
+      } finally {
+        await su.unsafe("alter role ohmail_api_renamed rename to ohmail_api").catch(() => undefined);
+        await su.end({ timeout: 5 });
+        await g.password("ohmail_api");
+      }
     }, CASE_MS);
   });
 }
