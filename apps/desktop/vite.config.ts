@@ -857,6 +857,7 @@ export default defineConfig({
       // The design's sheets and values (the kit's), ABOVE the bare name: `find` matches as a path prefix.
       { find: "@ohmail/tokens/design.css", replacement: r("../../packages/tokens/src/design/tokens.css") },
       { find: "@ohmail/tokens/design/motion.css", replacement: r("../../packages/tokens/src/design/motion.css") },
+      { find: "@ohmail/tokens/design/fonts.css", replacement: r("../../packages/tokens/src/design/fonts.css") },
       { find: "@ohmail/tokens/design", replacement: r("../../packages/tokens/src/design/tokens.ts") },
       { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },
       /* The sample adapter's entry, which the shared shell's demo arm imports. It resolves to

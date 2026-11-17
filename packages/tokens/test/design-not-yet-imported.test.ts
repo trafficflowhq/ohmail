@@ -322,7 +322,7 @@ describe("what the new folders import", () => {
     ["packages/tokens/omarchy/design-slots.ts", /^\.\//],
     ["packages/ui/src/icons/", /^\.\/|^react(\/jsx-runtime)?$/],
     ["packages/ui/src/motion/", /^\.\/|^\.\.\/ui-zoom\.js$|^react$|^@ohmail\/tokens(\/design)?$/],
-    ["packages/ui/src/base/", /^\.{1,2}\/|^react(\/jsx-runtime)?$|^@ohmail\/tokens\/design(\.css|\/motion\.css)?$/],
+    ["packages/ui/src/base/", /^\.{1,2}\/|^react(\/jsx-runtime)?$|^@ohmail\/tokens\/design(\.css|\/motion\.css|\/fonts\.css)?$/],
     ["packages/ui/src/mail/", /^\.{1,2}\/|^react(\/jsx-runtime)?$/],
     ["packages/ui/src/calendar/", /^\.{1,2}\/|^react(\/jsx-runtime)?$/],
   ];
