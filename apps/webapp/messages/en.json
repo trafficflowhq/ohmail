@@ -5000,6 +5000,73 @@
     "caughtUp": "ohmail is catching up on mail that arrived since {date}.",
     "dismiss": "Got it"
   },
+  "accountDevices": {
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "notCopied": "Not copied",
+    "cancelled": "Cancelled",
+    "thisOne": "This browser"
+  },
+  "accountSubscription": {
+    "notOpened": "Not opened",
+    "notRead": "Not read",
+    "plansUnavailable": "The plans and their prices could not be read just now.",
+    "retry": "Try again",
+    "trial": "Trial",
+    "trialEnded": "Trial ended",
+    "overdue": "Payment overdue",
+    "active": "Active",
+    "canceled": "Cancelled",
+    "unpaid": "Unpaid",
+    "suspended": "Suspended",
+    "closed": "Closed",
+    "paymentFailed": "Payment failed",
+    "paymentFailedUndated": "Your last payment failed.",
+    "noPlan": "No plan yet",
+    "mailboxesUpTo": "Up to {count, number}",
+    "openStorage": "Open",
+    "billing": "Billing",
+    "monthly": "Monthly",
+    "yearly": "Yearly",
+    "planFacts": "{mailboxes, plural, one {# mailbox} other {# mailboxes}} · {credits, number} credits · {storage}",
+    "subscribe": "Subscribe",
+    "subscribeTo": "Subscribe to {plan, select, solo {Solo} plus {Plus} pro {Pro} other {{plan}}}",
+    "fixPayment": "Fix payment"
+  },
+  "accountStorage": {
+    "notOpened": "Not opened"
+  },
+  "accountInvites": {
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "notCopied": "Not copied",
+    "cancelled": "Cancelled",
+    "none": "No invites"
+  },
+  "accountSecurity": {
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "cancelled": "Cancelled",
+    "codesUnused": "Some unused",
+    "codesNoneUnused": "None unused",
+    "on": "On",
+    "notSetUp": "Not set up",
+    "generate": "Generate",
+    "replace": "Replace",
+    "setUp": "Set up",
+    "remove": "Remove",
+    "byHand": "Type this key into your authenticator app.",
+    "byHandLabel": "Key"
+  },
+  "accountOwn": {
+    "signedIn": "Signed in",
+    "thisBrowser": "This browser",
+    "changeLabel": "Password",
+    "cancel": "Cancel",
+    "notRead": "Not read",
+    "stillHere": "Still here",
+    "notConfirmed": "Not confirmed"
+  },
   "accessLock": {
     "title": "This account is not active.",
     "suspendedTitle": "This account is suspended.",

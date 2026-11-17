@@ -166,6 +166,72 @@
       "node": "./dist/settings/help/index.js",
       "default": "./src/settings/help/index.ts"
     },
+    "./account": {
+      "types": "./src/account/index.ts",
+      "ohmail-source": "./src/account/index.ts",
+      "node": "./dist/account/index.js",
+      "default": "./src/account/index.ts"
+    },
+    "./account/contract": {
+      "types": "./src/account/contract.ts",
+      "ohmail-source": "./src/account/contract.ts",
+      "node": "./dist/account/contract.js",
+      "default": "./src/account/contract.ts"
+    },
+    "./account/bodies": {
+      "types": "./src/account/bodies.ts",
+      "ohmail-source": "./src/account/bodies.ts",
+      "node": "./dist/account/bodies.js",
+      "default": "./src/account/bodies.ts"
+    },
+    "./account/devices": {
+      "types": "./src/account/devices/index.ts",
+      "ohmail-source": "./src/account/devices/index.ts",
+      "node": "./dist/account/devices/index.js",
+      "default": "./src/account/devices/index.ts"
+    },
+    "./account/subscription": {
+      "types": "./src/account/subscription/index.ts",
+      "ohmail-source": "./src/account/subscription/index.ts",
+      "node": "./dist/account/subscription/index.js",
+      "default": "./src/account/subscription/index.ts"
+    },
+    "./account/storage": {
+      "types": "./src/account/storage/index.ts",
+      "ohmail-source": "./src/account/storage/index.ts",
+      "node": "./dist/account/storage/index.js",
+      "default": "./src/account/storage/index.ts"
+    },
+    "./account/invites": {
+      "types": "./src/account/invites/index.ts",
+      "ohmail-source": "./src/account/invites/index.ts",
+      "node": "./dist/account/invites/index.js",
+      "default": "./src/account/invites/index.ts"
+    },
+    "./account/security": {
+      "types": "./src/account/security/index.ts",
+      "ohmail-source": "./src/account/security/index.ts",
+      "node": "./dist/account/security/index.js",
+      "default": "./src/account/security/index.ts"
+    },
+    "./account/account": {
+      "types": "./src/account/account/index.ts",
+      "ohmail-source": "./src/account/account/index.ts",
+      "node": "./dist/account/account/index.js",
+      "default": "./src/account/account/index.ts"
+    },
+    "./account/password": {
+      "types": "./src/account/account/password-entry.ts",
+      "ohmail-source": "./src/account/account/password-entry.ts",
+      "node": "./dist/account/account/password-entry.js",
+      "default": "./src/account/account/password-entry.ts"
+    },
+    "./account/way-out": {
+      "types": "./src/account/way-out/index.ts",
+      "ohmail-source": "./src/account/way-out/index.ts",
+      "node": "./dist/account/way-out/index.js",
+      "default": "./src/account/way-out/index.ts"
+    },
     "./host/browser": {
       "types": "./src/host/browser/index.ts",
       "ohmail-source": "./src/host/browser/index.ts",

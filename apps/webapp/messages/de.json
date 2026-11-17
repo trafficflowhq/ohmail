@@ -5000,6 +5000,73 @@
     "caughtUp": "ohmail holt die Nachrichten nach, die seit dem {date} angekommen sind.",
     "dismiss": "Verstanden"
   },
+  "accountDevices": {
+    "notRead": "Nicht gelesen",
+    "notDone": "Nicht ausgeführt",
+    "notCopied": "Nicht kopiert",
+    "cancelled": "Abgebrochen",
+    "thisOne": "Dieser Browser"
+  },
+  "accountSubscription": {
+    "notOpened": "Nicht geöffnet",
+    "notRead": "Nicht gelesen",
+    "plansUnavailable": "Die Tarife und ihre Preise ließen sich gerade nicht lesen.",
+    "retry": "Nochmal versuchen",
+    "trial": "Testphase",
+    "trialEnded": "Testphase abgelaufen",
+    "overdue": "Zahlung überfällig",
+    "active": "Aktiv",
+    "canceled": "Gekündigt",
+    "unpaid": "Unbezahlt",
+    "suspended": "Gesperrt",
+    "closed": "Beendet",
+    "paymentFailed": "Zahlung fehlgeschlagen",
+    "paymentFailedUndated": "Deine letzte Zahlung ist fehlgeschlagen.",
+    "noPlan": "Noch kein Tarif",
+    "mailboxesUpTo": "Bis zu {count, number}",
+    "openStorage": "Öffnen",
+    "billing": "Abrechnung",
+    "monthly": "Monatlich",
+    "yearly": "Jährlich",
+    "planFacts": "{mailboxes, plural, one {# Postfach} other {# Postfächer}} · {credits, number} Credits · {storage}",
+    "subscribe": "Abo abschließen",
+    "subscribeTo": "{plan, select, solo {Solo} plus {Plus} pro {Pro} other {{plan}}} abonnieren",
+    "fixPayment": "Zahlung in Ordnung bringen"
+  },
+  "accountStorage": {
+    "notOpened": "Nicht geöffnet"
+  },
+  "accountInvites": {
+    "notRead": "Nicht gelesen",
+    "notDone": "Nicht ausgeführt",
+    "notCopied": "Nicht kopiert",
+    "cancelled": "Abgebrochen",
+    "none": "Keine Einladungen"
+  },
+  "accountSecurity": {
+    "notRead": "Nicht gelesen",
+    "notDone": "Nicht ausgeführt",
+    "cancelled": "Abgebrochen",
+    "codesUnused": "Einige unbenutzt",
+    "codesNoneUnused": "Keine unbenutzt",
+    "on": "An",
+    "notSetUp": "Nicht eingerichtet",
+    "generate": "Erzeugen",
+    "replace": "Ersetzen",
+    "setUp": "Einrichten",
+    "remove": "Entfernen",
+    "byHand": "Tipp diesen Schlüssel in deine Authenticator-App ein.",
+    "byHandLabel": "Schlüssel"
+  },
+  "accountOwn": {
+    "signedIn": "Angemeldet",
+    "thisBrowser": "Dieser Browser",
+    "changeLabel": "Passwort",
+    "cancel": "Abbrechen",
+    "notRead": "Nicht gelesen",
+    "stillHere": "Noch da",
+    "notConfirmed": "Nicht bestätigt"
+  },
   "accessLock": {
     "title": "Dieser Account ist nicht aktiv.",
     "suspendedTitle": "Dieser Account ist gesperrt.",

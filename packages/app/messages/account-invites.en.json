@@ -1,0 +1,9 @@
+{
+  "accountInvites": {
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "notCopied": "Not copied",
+    "cancelled": "Cancelled",
+    "none": "No invites"
+  }
+}

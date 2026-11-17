@@ -239,8 +239,39 @@ const DOOR_ONLY: Record<string, string> = {
 };
 
 /**
- * What the shipped lists and the doors' exceptions leave unexplained: a namespace on neither list and not excepted,
- * or an excepted one read outside the doors' pages. Empty is green.
+ * ── THE ACCOUNT GROUP'S PANES ARE SCANNED, AND THE DESKTOP MOUNTS NONE OF THEM YET ─────────────────────────────────
+ *
+ * The six panes of Settings' Account group live in the same package (`packages/app/src/account`), built and seated
+ * nowhere the window reaches: the window draws its own Devices and Subscription, Storage through the web shell's
+ * shared pane, and the browser card for Security and Account (`DesktopWebSection`). So a namespace read only by the
+ * account folder does not ship; each is named here with the pane that reads it. As the doors' exception, it covers
+ * that folder alone, and a row leaves when the window mounts its pane and ships its words.
+ */
+const ACCOUNT = "packages/app/src/account/";
+const ACCOUNT_ONLY: Record<string, string> = {
+  account: "the Account pane's sheet (who is signed in, sign-out, the way to erase): the window's Account is the card",
+  accountDevices: "the Devices pane's own words: the window draws its own Devices pane",
+  accountInvites: "the Invites pane's own words: a self-hosted web build's pane, never the window's",
+  accountLifecycle: "the Subscription pane's standing: the window draws its own Subscription",
+  accountOwn: "the Account pane's and the password form's own words: the window's Account is the card",
+  accountSecurity: "the Security pane's own words: the window's Security is the card",
+  accountStorage: "the Storage pane's own words: the window draws Storage with the web shell's shared pane",
+  accountSubscription: "the Subscription pane's own words: the window draws its own Subscription",
+  devices: "the Devices pane, and the factor's 'nothing ran' Storage says: the window draws its own Devices pane",
+  invites: "the Invites pane: a self-hosted web build's pane, never the window's",
+  passwordChange: "the password form: the window's Account is the card, and the wall that mounts it is a web route",
+  security: "the Security pane: the window's Security is the card",
+};
+
+/** Each folder whose namespaces are read and not shipped, with its exceptions. */
+const ONLY_IN: readonly (readonly [string, Record<string, string>])[] = [
+  [DOORS, DOOR_ONLY],
+  [ACCOUNT, ACCOUNT_ONLY],
+];
+
+/**
+ * What the shipped lists and the exceptions leave unexplained: a namespace on neither list and not excepted, or an
+ * excepted one read outside its folder. Empty is green.
  */
 function unexplained(reads: ReadonlyMap<string, ReadonlySet<string>>): string[] {
   const shipped = new Set<string>([...SHELL_MESSAGE_NAMESPACES, ...Object.keys(SHELL_MESSAGE_KEYS)]);
@@ -248,8 +279,9 @@ function unexplained(reads: ReadonlyMap<string, ReadonlySet<string>>): string[] 
   for (const [file, namespaces] of reads) {
     for (const ns of namespaces) {
       if (shipped.has(ns)) continue;
-      if (!Object.hasOwn(DOOR_ONLY, ns)) out.add(ns);
-      else if (!file.startsWith(DOORS)) out.add(`${ns} in ${file}`);
+      const only = ONLY_IN.find(([, table]) => Object.hasOwn(table, ns));
+      if (only === undefined) out.add(ns);
+      else if (!file.startsWith(only[0])) out.add(`${ns} in ${file}`);
     }
   }
   return [...out].sort();
@@ -430,11 +462,17 @@ describe("desktop message filter", () => {
        list or by the subset one, and a namespace on NEITHER is the omission this guard exists
        for — a raw key in front of a user. Concatenated rather than made optional: a subset entry
        for a namespace nobody reads is dead payload and this still catches it. The doors' own
-       namespaces are read and not shipped ({@link DOOR_ONLY}); an exception nobody reads is red
-       here as well, and one read outside the doors' pages is red by `unexplained`. */
+       namespaces and the account panes' are read and not shipped ({@link DOOR_ONLY},
+       {@link ACCOUNT_ONLY}); an exception nobody reads is red here as well, and one read outside
+       its folder is red by `unexplained`. */
     expect(unexplained(reads)).toEqual([]);
     expect(used).toEqual(
-      [...SHELL_MESSAGE_NAMESPACES, ...Object.keys(SHELL_MESSAGE_KEYS), ...Object.keys(DOOR_ONLY)].sort(),
+      [
+        ...SHELL_MESSAGE_NAMESPACES,
+        ...Object.keys(SHELL_MESSAGE_KEYS),
+        ...Object.keys(DOOR_ONLY),
+        ...Object.keys(ACCOUNT_ONLY),
+      ].sort(),
     );
   });
 
@@ -449,6 +487,14 @@ describe("desktop message filter", () => {
     ]);
     expect(unexplained(planted("apps/webapp/app/shell/Planted.tsx", "stepUp"))).toEqual([
       "stepUp in apps/webapp/app/shell/Planted.tsx",
+    ]);
+    // The account panes' exception is the account folder's alone, as the doors' is theirs.
+    expect(unexplained(planted(`${ACCOUNT}devices/Planted.tsx`, "plantedPane"))).toEqual(["plantedPane"]);
+    expect(unexplained(planted("apps/desktop/src/Planted.tsx", "accountDevices"))).toEqual([
+      "accountDevices in apps/desktop/src/Planted.tsx",
+    ]);
+    expect(unexplained(planted(`${DOORS}sign-in/Planted.tsx`, "security"))).toEqual([
+      `security in ${DOORS}sign-in/Planted.tsx`,
     ]);
   });
 
