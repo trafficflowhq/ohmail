@@ -209,7 +209,7 @@ npx playwright install chromium        # the layout tests render in it
   --alone` lists them) fail over state they did not write. So it runs as CI's
   whole run runs it (nightly, on a batch branch and on a fork's pull request;
   a maintainer's other pull requests run only the files their change can
-  reach, into `next` the nearest of those first and the rest on `next` after landing, `.github/scripts/ci-select.mjs`), in sixteen shards, each on a
+  reach, into `next` the floor and the nearest of those, held to one pass of the test machines, and the rest on `next` at night, `.github/scripts/ci-select.mjs`), in sixteen shards, each on a
   database of its own, and each of those files on a database made from empty. That is the run on Linux, in parts as
   above: part k of n runs every n-th shard from shard k-1, and the last part
   also runs the files that run alone:
