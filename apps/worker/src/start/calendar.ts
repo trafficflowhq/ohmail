@@ -15,15 +15,15 @@ import { MS_GRAPH_BASE, makeCalendarProviders, type ProviderWord } from "@ohmail
 import type { Logger } from "@trafficflow/core";
 import { nodeHostResolver } from "@trafficflow/core/net";
 import type { Tx } from "@trafficflow/db";
-import { calendarSyncPass, calendarTurnFailed } from "../calendar/sync-pass.js";
+import { calendarSyncPass, calendarTurnFailed } from "@ohmail/organizer/calendar-sync-pass";
 import {
   calendarPool, loadDueConnections, newCalendarSyncMemory, parkConnection, CALENDAR_LANES, CALENDAR_RING_GAP_MS,
   CALENDAR_RING_SETTLE_MS, CALENDAR_TICK_MS, CalendarTurnOverdue, OFF_RECHECK_MS, RETRY_CEILING_MS, ROSTER_EXCEPT_MAX, ROSTER_LIMIT,
   TURN_HARD_MS, TURN_MS, doublingWait,
   type CalendarSyncDeps, type CalendarSyncOutcome, type DueConnection,
-} from "../calendar/index.js";
+} from "@ohmail/organizer/calendar-sync";
 import { calendarNoticesPass } from "../calendar-notices.js";
-import { calendarWriteDrain } from "../calendar/write-drain.js";
+import { calendarWriteDrain } from "@ohmail/organizer/calendar/write-drain";
 import type { WorkerCalendarConfig } from "../config.js";
 import { accountShardFilter } from "../mailboxes.js";
 import { startSyncKickBell, type SyncKickBell } from "../sync-kick.js";

@@ -30,7 +30,7 @@ import { describe, expect, it } from "vitest";
  * decides whether it runs.
  */
 
-const ROOTS = ["packages/core/test", "apps/worker/test", "apps/sidecar/test"];
+const ROOTS = ["packages/core/test", "apps/worker/test", "packages/organizer/test", "apps/sidecar/test"];
 const REPO = resolve(__dirname, "../../..");
 
 /** The lease's required operations. A shape presenting all four IS a lease io, named or not. */

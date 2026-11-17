@@ -8,7 +8,7 @@ import {
   accountPass, readPassProgress,
 } from "@trafficflow/db";
 import { gateReleasePass } from "../src/gate-release.js";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
  * ═══ THE ONE-TIME REPAIR FOR AN ACCOUNT THAT ALREADY CONFIRMED ITS SEED ═══════════════════

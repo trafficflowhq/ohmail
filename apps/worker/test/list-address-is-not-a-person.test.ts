@@ -10,12 +10,12 @@ import {
   mailboxFolders, mailboxes, messageBodies, messageInstances, messages, PassMayNotAdmitError, rules, type Tx,
 } from "@trafficflow/db";
 import type { OrganizerRole } from "@trafficflow/db";
-import { runSyncCycle } from "../src/sync.js";
-import { screenerCorrespondentRetroPass } from "../src/screener-correspondent-retro.js";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 import { materializeMessages, releaseHeld } from "@trafficflow/services/mail";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A LIST ADDRESS THE PERSON POSTED TO NEVER CONSENTS A COMPANY CLAIM (mail 0150), through a real

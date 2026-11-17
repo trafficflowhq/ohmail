@@ -7,7 +7,7 @@ import {
   timerMs, type WorkerConfig,
 } from "./config.js";
 import { asDatabaseFault, databaseAwayCodeOf, FIRST_CONTACT_TIMEOUT } from "./db-fault.js";
-import { DatabaseFaultError } from "./dead-letter.js";
+import { DatabaseFaultError } from "@ohmail/organizer/dead-letter";
 import {
   errorTokenOf, evaluateHealth, startHealthServer, stuckCycleBoundMs,
   type HealthInput, type HealthServer, type HealthVerdict,

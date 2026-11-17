@@ -7,10 +7,10 @@ import { makeDb } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { MessageService, type ServiceContext } from "@trafficflow/services";
-import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { byMessageId, imapCfg, rawClient, emlOf, uidInFolder, ORGANIZER_CONSENT } from "./_workerenv.js";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
+import { byMessageId, imapCfg, rawClient, emlOf, uidInFolder, ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * DELETE → TRASH → RESTORE, END TO END AGAINST A REAL MAIL SERVER (mail 0099).

@@ -23,7 +23,7 @@ vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
 /**
  * ═══ THE LOCAL ENGINE'S TWIN: A CLAIM THAT AGES OUT MID-BATCH SENDS NO MOVE ══════════════════
  *
- * `apps/worker/test/lease-door-per-write.test.ts` drives the cycle with a permit built by hand.
+ * `packages/organizer/test/lease-door-per-write.test.ts` drives the cycle with a permit built by hand.
  * This drives the desktop and phone engine's own composition — its gate, its adopted permit, its
  * clock — into the same seam: the page check is served inside the permit's minute, and the batch's
  * preflight then outlives the claim (a laptop lid closed mid-batch). The adapter's filing verbs are

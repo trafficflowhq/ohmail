@@ -255,7 +255,7 @@ describe.skipIf(!PG_UP)("a rule is applied to the mail that arrived after it", (
 
   /**
    * INGEST THEN RULE — today's behaviour, kept. Gate-held mail that predates the rule is the
-   * backlog, and no ingest path re-files it: `apps/worker/src/rule-retro.ts` empties it, on the
+   * backlog, and no ingest path re-files it: `packages/organizer/src/rule-retro.ts` empties it, on the
    * press `applyRuleRequest` stamps or on the licence `gate-release.ts` arms.
    *
    * WHAT CHANGED IN 0.19.0 IS THE LISTING, NOT THE MAIL. The queue no longer ASKS about a sender

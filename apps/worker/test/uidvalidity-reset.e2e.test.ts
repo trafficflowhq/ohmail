@@ -7,9 +7,9 @@ import { mailboxFolders, messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { mailboxService } from "@trafficflow/services";
-import { runSyncCycle } from "../src/sync.js";
-import { makeHarness, rawClient, emlOf, imapCfg, dbUrlFor } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { makeHarness, rawClient, emlOf, imapCfg, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 

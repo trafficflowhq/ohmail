@@ -19,6 +19,9 @@ const DIAGNOSTICS_DIR = join(ROOT, "packages/core/src/diagnostics");
 const ROOTS: [rel: string, atLeast: number][] = [
   ["packages/services/src", 50],
   ["apps/worker/src", 20],
+  // The worker's passes that moved to the organizer's package (ruling:organizer-cut): a root of its
+  // own, since the worker's root no longer reads them.
+  ["packages/organizer/src", 40],
   ["apps/sidecar/src", 50],
   ["packages/core/src", 50],
 ];

@@ -11,8 +11,8 @@ import { makeDb } from "@trafficflow/db/cloud";
 import { startWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE HOSTED WORKER'S OWN LOOP RUNS THE BLANK REPAIR IN THE CONFIGURED MODE — the door the Cloud

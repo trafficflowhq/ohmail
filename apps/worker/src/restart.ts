@@ -1,4 +1,4 @@
-import { runSyncCycle, type SyncDeps } from "./sync.js";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
 
 /**
  * NO PRODUCTION CALLER SINCE ATTACH STOPPED DRAINING. DO NOT RE-WIRE IT INTO `attach()`. What it does is

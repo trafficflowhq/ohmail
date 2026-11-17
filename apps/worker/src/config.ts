@@ -22,7 +22,7 @@ import type { ThreadBackfillPass } from "./thread-backfill.js";
 import { dialHostGuardFromEnv, type DialHostGuard } from "./dial-host-guard.js";
 import type { PlatformSignalConfig } from "./platform-signal-poll.js";
 import type { ApiCronTarget } from "./api-cron.js";
-import type { IngestRunBounds } from "./sync.js";
+import type { IngestRunBounds } from "@ohmail/organizer/sync";
 
 /** One IMAP IDLE connection per mailbox lives in this process — cap it. */
 export const DEFAULT_MAX_MAILBOXES = 64;
@@ -700,7 +700,7 @@ export interface WorkerConfig {
     staleAfterMs?: number;
     /**
      * How often the portable organizer profile is re-serialized and compared against what the
-     * mailbox holds, at most (`apps/worker/src/profile.ts`). `TF_PROFILE_FLUSH_MS` exists for
+     * mailbox holds, at most (`packages/organizer/src/profile.ts`). `TF_PROFILE_FLUSH_MS` exists for
      * tests, which cannot wait out the five-minute default.
      */
     profileFlushIntervalMs?: number;

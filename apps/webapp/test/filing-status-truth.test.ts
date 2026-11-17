@@ -18,7 +18,7 @@
  *  · STUCK — refused repeatedly, or outstanding far longer than a rotation can explain. The
  *    same sentence, forever, is how this reads today.
  *  · SOMEBODY ELSE FILES IT — a reader install. `reconcileFolders` is skipped for a reader
- *    (`apps/worker/src/sync.ts`), so the decisions made here are applied by whichever install
+ *    (`packages/organizer/src/sync.ts`), so the decisions made here are applied by whichever install
  *    holds the mailbox, on ITS schedule. "The server is catching up" is false by construction:
  *    the server is not the organizer.
  *

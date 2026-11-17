@@ -10,9 +10,9 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { startWorker } from "../src/index.js";
-import { GAP_CLOCK_ALLOWANCE_MS } from "../src/gap-window.js";
+import { GAP_CLOCK_ALLOWANCE_MS } from "@ohmail/organizer/gap-window";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE GAP TRAVELS, ON THE HOSTED WORKER (RULING-026 lane A). Cloud's release writes its settings

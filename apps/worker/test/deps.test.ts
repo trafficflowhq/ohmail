@@ -84,10 +84,16 @@ const CALENDAR_PACKAGES = ["@ohmail/cal-core", "@ohmail/cal-providers"];
 const CALENDAR_FILES = (rel: string): boolean =>
   rel.startsWith("calendar/") || rel === "start/calendar.ts" || rel === "calendar-notices.ts";
 
+/**
+ * THE ORGANIZER'S PACKAGE, which every worker file may name: the cycle and the passes the worker composes moved
+ * to `packages/organizer` (`@ohmail/organizer`), and the worker imports them from there by name.
+ */
+const ORGANIZER_PACKAGE = "@ohmail/organizer";
+
 /** The forbidden package names a file's code carries, with the calendar's two admitted in the calendar's files. */
 function forbiddenIn(rel: string, code: string): string[] {
   const named = code.match(/@ohmail\/[A-Za-z0-9._-]+/g) ?? [];
-  const clients = named.filter((n) => !(CALENDAR_FILES(rel) && CALENDAR_PACKAGES.includes(n)));
+  const clients = named.filter((n) => n !== ORGANIZER_PACKAGE && !(CALENDAR_FILES(rel) && CALENDAR_PACKAGES.includes(n)));
   return [
     ...FORBIDDEN_IN_SRC.filter((bad) => bad !== "@ohmail/" && code.includes(bad)),
     ...new Set(clients),
@@ -214,12 +220,45 @@ describe("worker dependency boundary", () => {
     expect(codeOnly('const r = a / b; import "@trafficflow/services";')).toContain("@trafficflow/services");
   });
 
+  /**
+   * THE ORGANIZER'S PACKAGE IMPORTS NOTHING IT MUST NOT. `packages/organizer` holds the cycle and the passes that
+   * the worker and the desktop's engine both run, so what it may name is narrower than any app's: never
+   * `services` or `api`, never the database's Cloud and admin doors, never the Postgres driver or the file
+   * system, and no client package but the calendar's two, inside its calendar. The tools' border rule holds
+   * `services`, `api` and `postgres` already; the Cloud's door of `db`, the admin door and the file system are
+   * held here alone.
+   */
+  it("the organizer's package imports no services, api, Cloud or admin door of db, postgres or file system, and no client package but the calendar's two in its calendar", () => {
+    const ORGANIZER_SRC = join(ROOT, "packages", "organizer", "src");
+    const FORBIDDEN_IN_PACKAGE = [
+      "@trafficflow/services", "@trafficflow/api", "@trafficflow/db/cloud", "@trafficflow/db/admin",
+      "postgres", "node:fs", "node:fs/promises", "fs", "fs/promises",
+    ];
+    const files = tsFiles(ORGANIZER_SRC);
+    expect(files.length).toBeGreaterThan(5);
+    const offenders: string[] = [];
+    for (const file of files) {
+      const rel = file.slice(ORGANIZER_SRC.length + 1).split("\\").join("/");
+      const code = codeOnly(readFileSync(file, "utf8"));
+      const specs = [...code.matchAll(/(?:\bfrom|\bimport|\brequire)\s*\(?\s*["'`]([^"'`]+)["'`]/g)].map((m) => m[1]!);
+      for (const spec of specs) {
+        const bad = FORBIDDEN_IN_PACKAGE.find((f) => spec === f || spec.startsWith(`${f}/`));
+        if (bad !== undefined) offenders.push(`${rel} → ${spec}`);
+      }
+      const clients = (code.match(/@ohmail\/[A-Za-z0-9._-]+/g) ?? [])
+        .filter((n) => !(rel.startsWith("calendar/") && CALENDAR_PACKAGES.includes(n)));
+      for (const n of new Set(clients)) offenders.push(`${rel} → ${n}`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("declares only core, db, the calendar's two packages and its two runtime libraries as dependencies", () => {
     const pkg = JSON.parse(readFileSync(PKG, "utf8")) as {
       dependencies: Record<string, string>; devDependencies?: Record<string, string>;
     };
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
-      "@ohmail/cal-core", "@ohmail/cal-providers", "@trafficflow/core", "@trafficflow/db", "drizzle-orm", "postgres",
+      "@ohmail/cal-core", "@ohmail/cal-providers", "@ohmail/organizer", "@trafficflow/core", "@trafficflow/db", "drizzle-orm",
+      "postgres",
     ]);
     // TEST-ONLY: never a runtime dependency. The tests reach it through the workspace (this manifest
     // declares no devDependencies; the root's carry the test tooling).
@@ -275,10 +314,12 @@ describe("worker dependency boundary", () => {
   });
 
   it("keeps the services import confined to the e2e tests that genuinely need it", () => {
-    const users = tsFiles(TEST)
+    // The package's test folder is walked too: the tests that moved there with the organizer's modules are held to
+    // the same rule. One of them would be listed by its path from the repository's root.
+    const users = [TEST, join(ROOT, "packages", "organizer", "test")].flatMap((dir) => tsFiles(dir))
       .filter((f) => !f.endsWith("deps.test.ts"))          // this file names it to assert on it
       .filter((f) => readFileSync(f, "utf8").includes("@trafficflow/services"))
-      .map((f) => f.slice(TEST.length))
+      .map((f) => (f.startsWith(TEST) ? f.slice(TEST.length) : f.slice(ROOT.length).split("\\").join("/")))
       .sort();
     // `sent-ingest.pg.test.ts` joined on 2026-08-02 with that change, and it is NAMED here rather than
     // the assertion being loosened: proving that a message ohmail SENT is one row and not two
@@ -351,7 +392,7 @@ describe("worker dependency boundary", () => {
     // `two-world-reader-decides.test.ts` joined with the symmetric-takeover request path (mail
     // 0088), NAMED for the reason `screener-cron-press.race.pg.test.ts` already states one
     // row up: its subject is whether a READER's decision, made through `ScreenerService.decide`'s
-    // own validate + role branch, is the thing `apps/worker/src/request-drain.ts`'s
+    // own validate + role branch, is the thing `packages/organizer/src/request-drain.ts`'s
     // `applyMetaRequests` actually applies — and a hand-typed `organizer_requests` INSERT would
     // prove that the DRAIN honours a row shaped like the service's, not that the service's own
     // validation, idempotency claim and 202 response are what a real reader press produces.
@@ -360,7 +401,7 @@ describe("worker dependency boundary", () => {
     //
     // `request-capability-gate.test.ts` walks the chain from the request key to the door (mail 0090),
     // NAMED on the narrowest argument of the set: its whole subject is a CHAIN that starts at
-    // `apps/worker/src/lease.ts#organizerCapabilitiesFor` and ends at `ScreenerService.decide`,
+    // `packages/organizer/src/lease.ts#organizerCapabilitiesFor` and ends at `ScreenerService.decide`,
     // and a test that stopped at the worker end would prove only what a function returns — which
     // is not the property. What has to hold is that an account holding no request key REACHES the
     // door as a 409 with no row written, and that one holding a key reaches it as a queued

@@ -14,7 +14,7 @@ import { readSource } from "./_start-function.js";
  *  EVERY ORGANIZER `runSyncCycle` HOST DRAINS `_meta` — AND DOES IT AFTERWARDS (mail 0090)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `applyMetaRequests` (`apps/worker/src/request-drain.ts`) is only load-bearing if EVERY process
+ * `applyMetaRequests` (`packages/organizer/src/request-drain.ts`) is only load-bearing if EVERY process
  * that runs `runSyncCycle` while organizing a mailbox calls it. A host that syncs as an organizer
  * and never drains is "built-tested-unreachable": the code compiles, `request-drain.test.ts`
  * proves the function itself is correct, and a reader's decision still sits in `ohmail/_meta` for
@@ -39,7 +39,7 @@ import { readSource } from "./_start-function.js";
  * ── WHY `await runSyncCycle(` AND NOT A BARER `runSyncCycle` ────────────────────────────────
  *
  * The bare identifier also matches `export async function runSyncCycle(...)` — the DEFINITION, in
- * `apps/worker/src/sync.ts` — and a census that counted its own declaration as a caller would
+ * `packages/organizer/src/sync.ts` — and a census that counted its own declaration as a caller would
  * either have to exempt that file by name (a birth-site-shaped hole) or silently expect `sync.ts`
  * to drain requests before calling itself.
  *
@@ -53,6 +53,8 @@ import { readSource } from "./_start-function.js";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const WORKER_SRC = join(HERE, "..", "src");
+/** The organizer's package: the cycle and the drain moved there from the worker (ruling:organizer-cut). */
+const ORGANIZER_SRC = join(HERE, "..", "..", "..", "packages", "organizer", "src");
 const SIDECAR_SRC = join(HERE, "..", "..", "sidecar", "src");
 
 /**
@@ -106,7 +108,7 @@ function tsFilesIn(dir: string): string[] {
 }
 
 function organizerCycleHosts(): string[] {
-  const files = [...tsFilesIn(WORKER_SRC), ...tsFilesIn(SIDECAR_SRC)];
+  const files = [...tsFilesIn(WORKER_SRC), ...tsFilesIn(ORGANIZER_SRC), ...tsFilesIn(SIDECAR_SRC)];
   return files.filter((f) => callsSyncCycle(readSource(f)));
 }
 
@@ -182,7 +184,7 @@ describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle
   });
 
   it("neither the unguarded twins nor the authenticity flag exist anywhere in either host tree", () => {
-    const files = [...tsFilesIn(WORKER_SRC), ...tsFilesIn(SIDECAR_SRC)];
+    const files = [...tsFilesIn(WORKER_SRC), ...tsFilesIn(ORGANIZER_SRC), ...tsFilesIn(SIDECAR_SRC)];
     expect(files.length).toBeGreaterThan(0);
     const offenders = files
       .filter((f) => RETIRED_NEEDLE.test(readSource(f)))
@@ -196,7 +198,7 @@ describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle
    * repeated at each call site — a fourth host added later inherits it by construction.
    */
   it("the drain gates on the mailbox's request key, in the one function each host calls", () => {
-    const src = readSource(join(WORKER_SRC, "request-drain.ts"));
+    const src = readSource(join(ORGANIZER_SRC, "request-drain.ts"));
     expect(src).toMatch(/export async function applyMetaRequests\(/);
     expect(src).toMatch(/export async function driveOutstandingRequests\(/);
     // BOTH halves stop without a key — the one that APPLIES records and the one that WRITES them.
@@ -215,7 +217,7 @@ describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle
    * anywhere here means somebody has rebuilt the design that could not work.
    */
   it("no host reads a stored request key or fetches one", () => {
-    const files = [...tsFilesIn(WORKER_SRC), ...tsFilesIn(SIDECAR_SRC)];
+    const files = [...tsFilesIn(WORKER_SRC), ...tsFilesIn(ORGANIZER_SRC), ...tsFilesIn(SIDECAR_SRC)];
     const offenders = files
       .filter((f) => /readRequestKey|readOrMintRequestKey|request_key|requestKeyRotatedAt/.test(readSource(f)))
       .map((f) => f.split(sep).slice(-3).join(sep));

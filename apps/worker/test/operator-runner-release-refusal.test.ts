@@ -25,6 +25,8 @@ import { readSource } from "./_start-function.js";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const SRC = join(HERE, "../src");
+/** The organizer's package, where the worker's passes that moved out of it stand (ruling:organizer-cut). */
+const ORG_SRC = join(HERE, "../../../packages/organizer/src");
 
 /** The scaffold itself — the home of the read, the sentence and the lease call. */
 const DOOR = "run-cli.ts";
@@ -72,10 +74,10 @@ describe("the operator runners share one release refusal", () => {
   }
 
   it("the refusal sentence is written in exactly one file under apps/worker/src", () => {
-    const holders = readdirSync(SRC)
+    const holders = [SRC, ORG_SRC].flatMap((d) => readdirSync(d)
       .filter((f) => f.endsWith(".ts"))
-      .filter((f) => withoutComments(readSource(join(SRC, f)))
-        .includes("has been asked to stop being organized here"));
+      .filter((f) => withoutComments(readSource(join(d, f)))
+        .includes("has been asked to stop being organized here")));
     expect(holders, `written in: ${holders.join(", ") || "(nowhere)"}`).toHaveLength(1);
   });
 });

@@ -22,7 +22,7 @@ import {
   applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests,
   readerOutcomeFor, hasRequestOrganizerIo, hasRequestReaderIo,
   REQUEST_DRAIN_MAX_PER_CYCLE, REQUEST_STALE_AFTER_MS, REQUEST_STALE_MUST_NOT_EXCEED_MS,
-} from "../src/request-drain.js";
+} from "@ohmail/organizer/request-drain";
 
 /** The drain refuses a runtime with no install, so every fixture states one. */
 const TEST_INSTALL = "test-install";

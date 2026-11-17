@@ -9,7 +9,7 @@ import {
 import { silentLogger, type Destination, type Logger } from "@trafficflow/core";
 import { SCREENING_AUTH_VERDICTS } from "@trafficflow/core/mail";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
-import { writeSenderChecks } from "./sender-check-backfill.js";
+import { writeSenderChecks } from "@ohmail/organizer/sender-check-backfill";
 
 /* THE ONE-TIME REPAIR FOR MAIL STUCK AT THE SCREENING GATE BEHIND A DECISION ALREADY MADE.
    `confirmSeed` used to write its rules with `retro_requested_at` NULL — consent granted in bulk

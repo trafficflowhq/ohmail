@@ -15,7 +15,7 @@ const ROOT = new URL("../", import.meta.url).pathname;
 // declaration files are skipped: they are build output or another package's source.
 const ENGINE_ROOTS = [
   "packages/services/src", "packages/db/src", "packages/core/src", "packages/api/src",
-  "apps/sidecar/src", "apps/worker/src",
+  "apps/sidecar/src", "apps/worker/src", "packages/organizer/src",
 ];
 const TX_CALLEES = new Set(["transaction", "withAccountTx", "withTx", "withTransaction"]);
 const VERBS = new Set(["select", "selectDistinct", "insert", "update", "delete", "execute", "query", "exec", "transaction"]);

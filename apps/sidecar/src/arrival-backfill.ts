@@ -1,7 +1,7 @@
 import { and, desc, eq, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { folderState, mailboxes, messages, recordChanges, type LedgerTx, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
-import { GAP_CLOCK_ALLOWANCE_MS, instantOf } from "@trafficflow/worker/gap-catchup";
+import { GAP_CLOCK_ALLOWANCE_MS, instantOf } from "@ohmail/organizer/gap-catchup";
 
 /* ARRIVAL TIMES A PHONE LOST. Before the engine read INTERNALDATE by hand, every letter a phone took
    in was stored with `arrived_at` NULL (its JS engine refused the RFC 3501 form), so the gap window

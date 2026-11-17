@@ -6,9 +6,9 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { makeHaikuClassifier, type AnthropicLike } from "@trafficflow/core";
 import { makeClassifierCircuit } from "../src/ai-circuit.js";
-import { runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A DECLINED MESSAGE DOES NOT HOLD UP ITS MAILBOX — the production chain, end to end: a client

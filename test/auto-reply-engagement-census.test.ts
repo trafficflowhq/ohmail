@@ -88,7 +88,7 @@ const CONSULTS = [
  */
 const ENGAGEMENT_READERS = [
   "apps/worker/src/ohbox-tidy.ts",
-  "apps/worker/src/rule-retro.ts",
+  "packages/organizer/src/rule-retro.ts",
   // the undecided-sender screen asked thread membership in the class it copied from
   // `ohbox-tidy.ts` until FIX-025 put it on the one question its three siblings ask.
   "packages/core/src/unscreened-set.ts",

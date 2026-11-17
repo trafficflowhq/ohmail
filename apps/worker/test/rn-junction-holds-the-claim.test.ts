@@ -8,9 +8,9 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accounts, accountSettings, folderState, mailboxFolders, mailboxes, messageBodies, messageInstances, messages, rules, type Tx,
 } from "@trafficflow/db";
-import { runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A BRAND AT AN `r|n` JUNCTION IS STILL CLAIMED (mail 0148), through a real sync cycle on the two

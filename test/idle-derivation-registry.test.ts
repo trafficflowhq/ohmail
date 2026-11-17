@@ -50,7 +50,7 @@ const REGISTRY: readonly Site[] = [
   {
     site: 2,
     what: "a cached cycle still reconstructed all remembered locators",
-    file: "apps/worker/src/sync.ts",
+    file: "packages/organizer/src/sync.ts",
     signal: "the known-set generation, and each folder's own row epoch",
     needle: "derived.rowEpochs.get(f) !== cur",
   },

@@ -8,19 +8,19 @@ import { type MailboxAdapter, learnSmtpMaxSize, WORKER_NET_TIMEOUTS } from "@tra
 import { TURN_START_MESSAGES } from "../config.js";
 import { type AttachTicket, AttachAbortedError, AttachDeadlineError } from "../attach-pool.js";
 import { profileProducerVersion } from "../build-version.js";
-import { type SyncDeps, UNLABELLED_BUILD } from "../sync.js";
-import { shrinkMetaOnRefusal } from "../request-drain.js";
+import { type SyncDeps, UNLABELLED_BUILD } from "@ohmail/organizer/sync";
+import { shrinkMetaOnRefusal } from "@ohmail/organizer/request-drain";
 import {
   type SweepScanState, SWEEP_SCAN_START, sweepStateForPress, junkSweepPass, adoptSweepWindow,
 } from "../junk-sweep.js";
-import { DeadLetterLedger, isDatabaseFault } from "../dead-letter.js";
-import { KnownSetCache } from "../known-set.js";
+import { DeadLetterLedger, isDatabaseFault } from "@ohmail/organizer/dead-letter";
+import { KnownSetCache } from "@ohmail/organizer/known-set";
 import { checkedDial } from "../dial-host-guard.js";
 import { runKickstart } from "../kickstart.js";
 import { makeSmtpSizeDial, recordSmtpMaxSize } from "../smtp-size.js";
 import { type EnabledMailbox, loadMailboxCreds, makeSyncWriteFence } from "../mailboxes.js";
-import { OrganizerProfileSync } from "../profile.js";
-import { type OrganizerWriteAuthority, writeDoorOf, LeaseUnavailableError, leaseBlockReason } from "../lease.js";
+import { OrganizerProfileSync } from "@ohmail/organizer/profile";
+import { type OrganizerWriteAuthority, writeDoorOf, LeaseUnavailableError, leaseBlockReason } from "@ohmail/organizer/lease";
 import { deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
 import { type MailboxRuntime, JUNK_SWEEP_PER_CYCLE } from "../index.js";
 import type { WorkerScope } from "./scope.js";

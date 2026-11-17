@@ -6,9 +6,9 @@ import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, accountSettings, folderState, mailboxes, messages, rules, type Tx } from "@trafficflow/db";
-import { runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A RELAY'S OWN BRAND EXCUSES NOTHING (mail 0148), through a real sync cycle. A

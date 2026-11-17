@@ -47,7 +47,7 @@ export const PROFILE_IMPORT_STATUS_BEAT_MS = 15 * 1000;
 /**
  * THE DOORBELL A FIND RINGS — the mirror's `settings` record's seq, or null before one lands. An
  * organizer that finds or lapses a settings document appends a `settings` change row with its
- * marker (`apps/worker/src/profile.ts#writeMarker`); the row re-materializes unchanged settings, so
+ * marker (`packages/organizer/src/profile.ts#writeMarker`); the row re-materializes unchanged settings, so
  * the consent stamp stays put and only this seq moves. The card is asked for on the drain that
  * carries it, never at the beat.
  */

@@ -74,10 +74,10 @@ import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } f
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { apiClocksLead } from "./api-clocks-lead.js";
 import { startPlatformSignalPoll, type PlatformSignalPollHandle } from "./platform-signal-poll.js";
-import { newCycleCensus, runSyncCycle, LeaderFencedError, refusalIsRemoval, UNLABELLED_BUILD, type SyncDeps } from "./sync.js";
+import { newCycleCensus, runSyncCycle, LeaderFencedError, refusalIsRemoval, UNLABELLED_BUILD, type SyncDeps } from "@ohmail/organizer/sync";
 import {
   applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests, shrinkMetaOnRefusal,
-} from "./request-drain.js";
+} from "@ohmail/organizer/request-drain";
 import {
   adoptSweepWindow, junkSweepPass, sweepStateForPress, SWEEP_SCAN_START,
   type SweepScanState,
@@ -90,8 +90,8 @@ import {
  */
 export const JUNK_SWEEP_PER_CYCLE = 200;
 import { makeStorageCapResolver } from "./storage-cap.js";
-import { breachSetAside, DatabaseFaultError, DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
-import { KnownSetCache } from "./known-set.js";
+import { breachSetAside, DatabaseFaultError, DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "@ohmail/organizer/dead-letter";
+import { KnownSetCache } from "@ohmail/organizer/known-set";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { markDatabaseFaults, asDatabaseFault } from "./db-fault.js";
 import { tailStageRunner } from "./tail-stage.js";
@@ -103,39 +103,39 @@ import { makeClassifierCircuit, ClassifierFaultError, type ClassifierCircuit } f
 import { attributedIngestClassifier, attributedWorkflowDrafter, makeAiUsageBuffer } from "./ai-usage.js";
 import { workflowDrainPass, workflowTimeScanPass, unconfiguredDrafter } from "./workflow-cron.js";
 import { bubbleUpPass } from "./bubble-up-cron.js";
-import { threadJoinHealPass } from "./thread-join-heal.js";
+import { threadJoinHealPass } from "@ohmail/organizer/thread-join-heal";
 import { makeThreadJoinHealWalk } from "./thread-join-heal-walk.js";
-import { inboundQuietPass } from "./inbound-quiet.js";
+import { inboundQuietPass } from "@ohmail/organizer/inbound-quiet";
 import { makeAwayReplySweep } from "./away-reply-sweep.js";
-import { ruleRetroPass } from "./rule-retro.js";
-import { gapCatchupPass, gapOpenStart, NO_FOLDER_READ, type TravelledGap } from "./gap-catchup.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
+import { gapCatchupPass, gapOpenStart, NO_FOLDER_READ, type TravelledGap } from "@ohmail/organizer/gap-catchup";
 import { dialect } from "@trafficflow/db/dialect";
 import { gateReleasePass } from "./gate-release.js";
-import { senderCheckRetirement } from "./sender-check-backfill.js";
-import { listAddressBackfillPass } from "./list-address-backfill.js";
+import { senderCheckRetirement } from "@ohmail/organizer/sender-check-backfill";
+import { listAddressBackfillPass } from "@ohmail/organizer/list-address-backfill";
 import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { alertGapPrunePass } from "./alert-gap-prune.js";
 import { alertDrillPass } from "./alert-drill-pass.js";
 import { retentionPrunePass, signInRetentionPass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
-import { screenerActConsentFrom, screenerAutoActPass } from "./screener-auto-act.js";
-import { screenerImpersonationPass, type ImpersonationWalk } from "./screener-impersonation.js";
-import { retireActAdmissionsPass } from "./act-admission-retire.js";
+import { screenerActConsentFrom, screenerAutoActPass } from "@ohmail/organizer/screener-auto-act";
+import { screenerImpersonationPass, type ImpersonationWalk } from "@ohmail/organizer/screener-impersonation";
+import { retireActAdmissionsPass } from "@ohmail/organizer/act-admission-retire";
 import {
   CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
-} from "./screener-correspondent-retro.js";
-import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
+} from "@ohmail/organizer/screener-correspondent-retro";
+import { screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { refundObligationDrainPass } from "./refund-obligation-drain.js";
 import { mailboxErasurePass } from "./mailbox-erasure-pass.js";
 import { SYNC_KICK_SIGNAL_GAP_MS, startSyncKickBell, syncKickPass, type SyncKickBell } from "./sync-kick.js";
 import { calendarSection, type CalendarRunner } from "./start/calendar.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchIndexBackfillPass, searchIndexOwedAccounts } from "@trafficflow/core/mail";
-import { HTML_WORDS_ACCOUNTS_PER_TAIL, htmlWordsBackfillPass, htmlWordsOwedAccounts } from "./html-words-backfill.js";
-import { goneLetterTidyAccounts, goneLetterTidyPass } from "./gone-letter-tidy.js";
-import { storageEvictPass } from "./storage-evict.js";
+import { HTML_WORDS_ACCOUNTS_PER_TAIL, htmlWordsBackfillPass, htmlWordsOwedAccounts } from "@ohmail/organizer/html-words-backfill";
+import { goneLetterTidyAccounts, goneLetterTidyPass } from "@ohmail/organizer/gone-letter-tidy";
+import { storageEvictPass } from "@ohmail/organizer/storage-evict";
 import { storageStatsPass } from "./storage-stats.js";
-import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
+import { isCliEntry, flushExit, installCrashHandlers } from "@ohmail/organizer/entry";
 import {
   startPushWake, pushEndpointGuardFromEnv, vapidFromEnv, type RunningPushWake,
 } from "./push-wake.js";
@@ -155,7 +155,7 @@ import {
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
   type MailboxSyncBlockReason, type ParkedAccountsReader,
 } from "./mailboxes.js";
-import { OrganizerProfileSync, readNewestSettings, sweepHeld, syncProfileMirror, type SweepClearance } from "./profile.js";
+import { OrganizerProfileSync, readNewestSettings, sweepHeld, syncProfileMirror, type SweepClearance } from "@ohmail/organizer/profile";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
@@ -163,7 +163,7 @@ import {
   cycleWriteAuthority, OrganizerStandDownError,
   type OrganizerWriteAuthority,
   type LeaseSelf, type LeasePeekCapableAdapter,
-} from "./lease.js";
+} from "@ohmail/organizer/lease";
 // The APPEND-less read of `ohmail/_meta` — see `LeasePeekCapableAdapter`. A reader LOOKS at the
 // lease every cycle to keep `organizer_state` and the holder columns honest, and looking must
 // never write a claim: `readLeasePeek` takes the read-only IO and creates nothing.
@@ -574,7 +574,7 @@ export interface MailboxRuntime {
   owesBacklog: boolean;
   /**
    * The portable organizer profile's write-behind state for this attachment
-   * (`apps/worker/src/profile.ts`). Per attachment for the known-set memo's reason: a mailbox
+   * (`packages/organizer/src/profile.ts`). Per attachment for the known-set memo's reason: a mailbox
    * that changes hands starts cold and re-reads what `ohmail/_meta` actually holds.
    */
   profile: OrganizerProfileSync;

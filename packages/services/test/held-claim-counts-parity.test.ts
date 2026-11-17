@@ -13,8 +13,8 @@ import { cutlineCounts } from "../src/consent-cutline.js";
 import { messageRowToDTO } from "../src/dto/materialize.js";
 import { effectiveScreeningWindows } from "../src/screening-window.js";
 import type { ServiceContext } from "../src/context.js";
-import { screenerAutoSuggestPass } from "../../../apps/worker/src/screener-auto-suggest.js";
-import { screenerAutoActPass } from "../../../apps/worker/src/screener-auto-act.js";
+import { screenerAutoSuggestPass } from "../../organizer/src/screener-auto-suggest.js";
+import { screenerAutoActPass } from "../../organizer/src/screener-auto-act.js";
 import {
   LIVE_LETTERS, NOW as WORLD_NOW, SENDERS, removedMailboxWorld, type RemovedMailboxWorld,
 } from "./helpers/removed-mailbox-world.js";

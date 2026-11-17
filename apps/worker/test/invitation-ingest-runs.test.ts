@@ -4,13 +4,13 @@ import { changeLog, mailboxes, messageInvitations, messages, type Tx } from "@tr
 import { makeTestDb } from "@trafficflow/db/testing";
 import { normalizeMime, planChange, newMessageInsertOf, UNMETERED_STORAGE_CAP, type Logger } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { runSyncCycle } from "../src/sync.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
 import { ingestRunRepository, persistNewRun, RunConflictError } from "../src/ingest-run.js";
 import { INGEST_RUN_BOUNDS } from "../src/config.js";
 import { dialect } from "@trafficflow/db/dialect";
-import { FakeAdapterFleet, rawOf } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
-import { shapeLetters, invitationLetter, ME, reply, request, type InvitationLetter } from "./_invitations.js";
+import { FakeAdapterFleet, rawOf } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { shapeLetters, invitationLetter, ME, reply, request, type InvitationLetter } from "../../../packages/organizer/test/_invitations.js";
 
 /**
  * A FIRST IMPORT KEEPS THE SAME INVITATIONS AS ONE LETTER AT A TIME. The worker's import stores runs

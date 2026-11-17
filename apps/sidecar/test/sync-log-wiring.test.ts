@@ -21,7 +21,7 @@ vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
  *  THE SYNC LOOP'S DIAGNOSTICS REACH A SINK ON THE STANDALONE DOOR
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `engine.ts` built its `syncDeps` with no `log` at all. `@trafficflow/worker/sync` writes every
+ * `engine.ts` built its `syncDeps` with no `log` at all. `@ohmail/organizer/sync` writes every
  * one of its diagnostics through `log?.warn` / `log?.error`, so on this door the optional chain
  * went to `undefined` and the lines were discarded — silently, and specifically the lines that
  * report a write the MAIL SERVER did not accept: a refused `STORE`, a `STORE` whose bookkeeping

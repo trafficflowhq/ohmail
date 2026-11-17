@@ -10,8 +10,8 @@ import { randomUUID } from "node:crypto";
 import { startWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { byMessageId } from "./_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { byMessageId } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * THE KILL MECHANISM OF 2026-08-02, CONTAINED.

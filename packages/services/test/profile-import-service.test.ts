@@ -143,7 +143,7 @@ const neverReader = (): (() => Promise<ProfileReadResult>) => async () => {
   throw new Error("the mailbox must not be dialled on this path");
 };
 
-/** Seed the organizer's found-marker exactly as `apps/worker/src/profile.ts#writeMarker` shapes it. */
+/** Seed the organizer's found-marker exactly as `packages/organizer/src/profile.ts#writeMarker` shapes it. */
 async function seedHeldMarker(w: World, d: OrganizerProfileDoc, signature?: number, copyReceipt?: string): Promise<string> {
   const fingerprint = profileCopyKey(d, "someone-elses-install");
   await w.db.insert(auditLog).values({
@@ -949,7 +949,7 @@ describe("the away responder's pile scope travels in the published profile", () 
   it("a document written BEFORE the field does not converge, and that outcome is already covered", async () => {
     /**
      * THE COMPATIBILITY COST, STATED. Leaving a stored scope alone means `local ⊃ document`, so
-     * the fingerprints never meet — not a new state: `apps/worker/src/profile.ts` treats it as the
+     * the fingerprints never meet — not a new state: `packages/organizer/src/profile.ts` treats it as the
      * MERGED import and releases the hold on the `imported` row (`profileImportWriteReleased`),
      * moving the held fingerprint to `seenForeignFingerprints` so the next write supersedes the
      * document. Asserted so the difference is a measured property of this design rather than a

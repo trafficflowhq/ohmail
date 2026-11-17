@@ -13,7 +13,7 @@ import {
 import { mailboxStorageStats, schema } from "@trafficflow/db/cloud";
 import type { Logger } from "@trafficflow/core/mail";
 import { MAILBOX_ERASURE_PASS_BUDGET_MS, mailboxErasurePass } from "../src/mailbox-erasure-pass.js";
-import { STORAGE_RECOUNT_EVERY_MS, storageEvictPass } from "../src/storage-evict.js";
+import { STORAGE_RECOUNT_EVERY_MS, storageEvictPass } from "@ohmail/organizer/storage-evict";
 
 /**
  * THE ERASURE PASS — the sweep a "Remove and erase" press owes, driven the way the worker cycle

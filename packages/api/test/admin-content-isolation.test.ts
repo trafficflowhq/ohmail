@@ -680,7 +680,7 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
   // value comes FROM A MAIL SERVER'S RESPONSE and is still closed, because what a mail server
   // supplies is which MEMBER is chosen and never what the members ARE.
   //
-  // `classifyMoveRefusal` in `apps/worker/src/sync.ts` reads the server's bracketed IMAP response
+  // `classifyMoveRefusal` in `packages/organizer/src/sync.ts` reads the server's bracketed IMAP response
   // code through a closed switch whose default is `refused` — never its message text, which is
   // where a provider puts free prose and, on some hosts, echoes the folder path back. The
   // migration's own header states the same rule from the schema's side: `folder_state` forbids a

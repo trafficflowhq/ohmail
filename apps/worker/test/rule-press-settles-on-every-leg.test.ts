@@ -10,7 +10,7 @@ import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests } from "../src/request-drain.js";
+import { applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests } from "@ohmail/organizer/request-drain";
 import { clearOrganizerStandDown } from "../src/mailboxes.js";
 
 /**

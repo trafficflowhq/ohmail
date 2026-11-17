@@ -13,8 +13,8 @@ import { describe, expect, it } from "vitest";
  * from:
  *
  *   · the IMAP adapter        `@trafficflow/core/adapters/imap`  (opens the user's mailbox)
- *   · the organizer lease     `@trafficflow/worker/lease`        (claims the mailbox)
- *   · the shared sync loop     `@trafficflow/worker/sync`         (files mail)
+ *   · the organizer lease     `@ohmail/organizer/lease`        (claims the mailbox)
+ *   · the shared sync loop     `@ohmail/organizer/sync`         (files mail)
  *
  * The census is transitive: it resolves every workspace and relative import to its SOURCE and
  * recurses, so a forbidden module reached three packages deep fails exactly as a direct import
@@ -55,13 +55,13 @@ const CLOUD_ENGINE = resolve(HERE, "../src/cloud-engine.ts");
 /** The three modules an organizer is built from. Their exact `/sync`-visible specifiers. */
 const FORBIDDEN_SPECIFIERS = [
   "@trafficflow/core/adapters/imap",
-  "@trafficflow/worker/lease",
-  "@trafficflow/worker/sync",
+  "@ohmail/organizer/lease",
+  "@ohmail/organizer/sync",
 ];
 const FORBIDDEN_FILES = new Set([
   r("packages/core/src/adapters/imap.ts"),
-  r("apps/worker/src/lease.ts"),
-  r("apps/worker/src/sync.ts"),
+  r("packages/organizer/src/lease.ts"),
+  r("packages/organizer/src/sync.ts"),
 ]);
 
 /**
@@ -77,7 +77,7 @@ const ALIASES: Record<string, string> = {
   // incomplete — the suite sat red from the slice that added it until this entry.
   "@trafficflow/core/adapters/imap-types": r("packages/core/src/adapters/imap-types.ts"),
   "@trafficflow/core/adapters/organizer-lease": r("packages/core/src/adapters/organizer-lease.ts"),
-  // The organizer profile's document and store halves — imported by apps/worker/src/profile.ts,
+  // The organizer profile's document and store halves — imported by packages/organizer/src/profile.ts,
   // which the census reaches through the worker's sync surface.
   "@trafficflow/core/adapters/organizer-profile": r("packages/core/src/adapters/organizer-profile.ts"),
   "@trafficflow/core/adapters/organizer-profile-store": r("packages/core/src/adapters/organizer-profile-store.ts"),
@@ -148,9 +148,9 @@ const ALIASES: Record<string, string> = {
   "@trafficflow/api/match-path": r("packages/api/src/match-path.ts"),
   "@trafficflow/api/health-cloud": r("packages/api/src/routes/health-cloud.ts"),
   "@trafficflow/api": r("packages/api/src/index.ts"),
-  "@trafficflow/worker/sync": r("apps/worker/src/sync.ts"),
-  "@trafficflow/worker/lease": r("apps/worker/src/lease.ts"),
-  "@trafficflow/worker/entry": r("apps/worker/src/entry.ts"),
+  "@ohmail/organizer/sync": r("packages/organizer/src/sync.ts"),
+  "@ohmail/organizer/lease": r("packages/organizer/src/lease.ts"),
+  "@ohmail/organizer/entry": r("packages/organizer/src/entry.ts"),
   "@ohmail/sidecar": r("apps/sidecar/src/index.ts"),
   "@ohmail/db-mail": r("packages/db-mail/src/index.ts"),
   "@ohmail/client-engine": r("packages/client-engine/src/index.ts"),
@@ -286,6 +286,12 @@ describe("cloud-engine.ts cannot reach the organizer — the structural safety o
   });
 
   it("reaches NEITHER the IMAP adapter, NOR the worker lease, NOR the worker sync loop", () => {
+    // The census is only as good as its names: a forbidden specifier that no key of ALIASES resolves, or a
+    // forbidden file that does not exist, would leave both readings below empty and green.
+    expect(
+      [...FORBIDDEN_SPECIFIERS.filter((s) => !(s in ALIASES)), ...[...FORBIDDEN_FILES].filter((f) => !existsSync(f))],
+      "a forbidden name of this census resolves to nothing",
+    ).toEqual([]);
     expect(
       result.forbiddenHits,
       "cloud-engine's graph imported an organizer module — Cloud mode could open IMAP / take the lease / run the loop",

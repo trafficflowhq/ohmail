@@ -12,10 +12,10 @@ import { MAX_BIND_PARAMETERS, schema, withBindLimit } from "@trafficflow/db/clou
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { normalizeMime, UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { markDatabaseFaults } from "../src/db-fault.js";
-import { DatabaseFaultError, classifyIngestFault, isSharedDatabaseFault } from "../src/dead-letter.js";
-import { runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet, rawOf } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { DatabaseFaultError, classifyIngestFault, isSharedDatabaseFault } from "@ohmail/organizer/dead-letter";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet, rawOf } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ONE CRAFTED MESSAGE CANNOT HOLD A FOLDER, on real Postgres through the worker's real ingest.

@@ -40,7 +40,7 @@ import type { ApiDeps } from "../src/deps.js";
  *  · the rescue — the RECORDED command, its locator, the doorbell, the re-press that resets one
  *    row rather than queueing a second move, and the standing command read back onto the window's
  *    own rows. The move itself, the husk's restoration and the honest gone/refused endings are the
- *    WORKER's (`apps/worker/test/junk-rescue.test.ts`), which is the whole change: the API opens
+ *    WORKER's (`packages/organizer/test/junk-rescue.test.ts`), which is the whole change: the API opens
  *    no socket here, and the spies in the first case prove it by never being called.
  *
  * The page bound itself (50, newest-first, seq-window, no SEARCH) is the adapter's and is

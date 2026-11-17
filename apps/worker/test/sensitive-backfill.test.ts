@@ -12,7 +12,7 @@ import {
 import {
   resetSensitiveBackfillProgress, sensitiveBackfillPass, __fromStoredRow, __snippetOf,
 } from "../src/sensitive-backfill.js";
-import { htmlWordsBackfillPass } from "../src/html-words-backfill.js";
+import { htmlWordsBackfillPass } from "@ohmail/organizer/html-words-backfill";
 
 /**
  * REPAIRING THE BODIES A CLASSIFIER FALSE POSITIVE STORED REDACTED.

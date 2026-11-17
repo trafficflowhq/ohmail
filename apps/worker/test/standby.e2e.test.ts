@@ -11,9 +11,9 @@ import { asDatabaseFault, databaseAwayCodeOf } from "../src/db-fault.js";
 import { DEFAULT_DB_WAIT_BASE_MS, DEFAULT_DB_WAIT_CAP_MS } from "../src/config.js";
 import { DbDoor, refusingPostgres, surviveDriverWriteRace } from "./_dbdoor.js";
 import { acquireLeaderLock } from "../src/leader-lock.js";
-import { imapCfg, rawClient, emlOf } from "./_workerenv.js";
+import { imapCfg, rawClient, emlOf } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
 
 type Db = ReturnType<typeof makeDb>;

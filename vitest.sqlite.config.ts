@@ -231,7 +231,7 @@ export default defineConfig({
       // the phone's local engine projects both over this store.
       "packages/services/test/sender-unverified.test.ts",
       "packages/services/test/card-move-is-conditional.test.ts",
-      "apps/worker/test/inbound-quiet.test.ts",
+      "packages/organizer/test/inbound-quiet.test.ts",
       /* Mail from a gap: a phone that organizes again runs the same catch-up over this store. */
       "apps/worker/test/gap-catchup.test.ts",
       "apps/sidecar/test/local-consent-baseline.test.ts",
@@ -245,13 +245,13 @@ export default defineConfig({
       "packages/services/test/attachments-part-gate.test.ts",
       // …and the ingest that writes the server's section in the first place: the worker's cycle,
       // which the sidecar composes over this store.
-      "apps/worker/test/attachment-sections-ingest.test.ts",
+      "packages/organizer/test/attachment-sections-ingest.test.ts",
       // An invitation's identity kept at ingest (mail 0204): a phone keeps it on this store, and
       // runs the pass that gives the letters it stored before their rows.
-      "apps/worker/test/invitation-ingest.test.ts",
-      "apps/worker/test/invitation-backfill.test.ts",
+      "packages/organizer/test/invitation-ingest.test.ts",
+      "packages/organizer/test/invitation-backfill.test.ts",
       // …and neither answers one: no draft, no reservation, without the person's press.
-      "apps/worker/test/invitation-sends-nothing.test.ts",
+      "packages/organizer/test/invitation-sends-nothing.test.ts",
       "test/invitation-corpus-one-letter.test.ts",
       // One message over the html cap, ingested with the phone's Buffer: the store's CHECK is the
       // refusal the device met, so the device store is the one this boundary is measured on.
@@ -259,10 +259,10 @@ export default defineConfig({
       // A device store's refusals by class, and the ledger that writes one off across cycles.
       "apps/worker/test/store-fault-classes.test.ts",
       // The local backstop over the same store: one cycle's cap, then the write-offs hold.
-      "apps/worker/test/write-off-backstop.test.ts",
+      "packages/organizer/test/write-off-backstop.test.ts",
       // A batch-total overrun in a first-read and a renumbered folder: the cursor, the repoint and
       // the reset's proof over the device store, where the phone's engine runs them.
-      "apps/worker/test/overrun-batch-total-stores.test.ts",
+      "packages/organizer/test/overrun-batch-total-stores.test.ts",
       "packages/services/test/search-part-word.test.ts",
       "packages/services/test/search-punctuation-parity.test.ts",
       // The device answers what the server answers: stems, joined forms, part-words (the census).
@@ -304,43 +304,43 @@ export default defineConfig({
       // THE CORRESPONDENT PREDICATE AND ITS TWO PASSES (FIX-023): the sidecar runs the auto-act's
       // gate over this store, and its reads spell a JSON element walk, a Sent-folder list and
       // the larger-of the connect and the seed, each through the seam.
-      "apps/worker/test/screener-correspondent.test.ts",
+      "packages/organizer/test/screener-correspondent.test.ts",
       // A RULE'S "APPLY TO EXISTING MAIL": the sidecar's drain runs the worker's pass on this
       // store, so the whole suite runs here too (the server spelling died on `::uuid`).
       "apps/worker/test/rule-retro.test.ts",
       // The identity fact (mail 0148): a pass reads the column, and the backfill writes it, on this store too.
-      "apps/worker/test/rule-retro-identity.test.ts",
+      "packages/organizer/test/rule-retro-identity.test.ts",
       // A rule never moves a place somebody decided (`decided_at`): the device store runs the pass too.
       "apps/worker/test/rule-retro-leaves-a-decided-place.test.ts",
-      "apps/worker/test/sender-check-backfill.test.ts",
+      "packages/organizer/test/sender-check-backfill.test.ts",
       // A copy written to somebody else admits nobody, and a failed authentication is never released:
       // the correspondent retro on this store too.
-      "apps/worker/test/correspondent-retro-holds-the-claim.test.ts",
+      "packages/organizer/test/correspondent-retro-holds-the-claim.test.ts",
       // An answer the gate admits is decided for that letter, through the ingest and the retro: this store too.
-      "apps/worker/test/admitted-answer-is-decided.test.ts",
+      "packages/organizer/test/admitted-answer-is-decided.test.ts",
       // A report reaches the Ohbox only citing the account's own Sent copy, and the own-sent twin
       // adopts only a row that already has a Sent instance: both through this store's ingest too.
       "apps/worker/test/bounce-cites-own-sent.test.ts",
-      "apps/worker/test/own-sent-twin-adopts-own-row.test.ts",
+      "packages/organizer/test/own-sent-twin-adopts-own-row.test.ts",
       // A brand at an r|n junction is still claimed through this store's ingest.
       "apps/worker/test/rn-junction-holds-the-claim.test.ts",
       // A list address is no person (mail 0150): its row, its brands and the passes that read it,
       // through this store's ingest, retro and press; and its one-time backfill on this store.
       "apps/worker/test/list-address-is-not-a-person.test.ts",
-      "apps/worker/test/list-address-backfill.test.ts",
+      "packages/organizer/test/list-address-backfill.test.ts",
       // Older html-only letters get their words (mail 0172), on this store too: the phone runs the pass.
       "apps/worker/test/html-words-backfill.test.ts",
       // A crafted sender is read in bounded time at this store's ingest too.
-      "apps/worker/test/crafted-identity-inputs.test.ts",
+      "packages/organizer/test/crafted-identity-inputs.test.ts",
       // The account's own mail claiming a company keeps its place through this store's visit too.
-      "apps/worker/test/own-mail-claim-keeps-its-place.test.ts",
+      "packages/organizer/test/own-mail-claim-keeps-its-place.test.ts",
       // A held claim is listed however old its Date, and the held-release press never takes one.
       "packages/services/test/dormant-claim-is-listed.test.ts",
       "packages/services/test/held-release-press-leaves-the-claim.test.ts",
       // A person's domain press checks the rows the check never reached before it moves them, here too.
       "packages/services/test/press-checks-unchecked-first.test.ts",
       // The act's contacts from before the column are marked inferred by the cycle tail, here too.
-      "apps/worker/test/legacy-act-contacts.test.ts",
+      "packages/organizer/test/legacy-act-contacts.test.ts",
       // An allow rule for everyone at a shared provider admits nobody: the three twins on this store.
       "packages/services/test/shared-provider-rule-inert.test.ts",
       // The sender's identity fact on the queue row is a window over their held mail, on this store too.
@@ -502,21 +502,21 @@ export default defineConfig({
       // A folder deleted in another mail app while the app was closed, and a reset's letter deleted
       // meanwhile, through the same cycle on the phone's store.
       "apps/worker/test/folder-deleted-elsewhere.e2e.test.ts",
-      "apps/worker/test/folder-gone-one-transaction.test.ts",
+      "packages/organizer/test/folder-gone-one-transaction.test.ts",
       // A folder deleted on the server leaves the folder list, and one made there joins it.
       "apps/worker/test/empty-folder-deleted-elsewhere.e2e.test.ts",
-      "apps/worker/test/gone-folder-leaves-the-list.test.ts",
+      "packages/organizer/test/gone-folder-leaves-the-list.test.ts",
       // The News rename's tail: a pre-0.22 row retired, a Reads folder beside News folded in.
       "apps/worker/test/legacy-news-folder.e2e.test.ts",
       // The legacy News repair and the letters it keeps, and the filing path around the six.
-      "apps/worker/test/legacy-news-repair.test.ts",
+      "packages/organizer/test/legacy-news-repair.test.ts",
       "apps/worker/test/legacy-news-filing.test.ts",
       // A message over the download ceiling, listed from its headers on the phone's store too.
       "apps/worker/test/too-large-message-is-listed.e2e.test.ts",
       // The blank repair's read and its writes on the device store: the desktop repairs a blank
       // message through the same pass (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS); the phone's
       // build leaves the repair out (apps/mobile/test/phone-engine-leaves-out-blank-repair.test.ts).
-      "apps/worker/test/blank-repair.test.ts",
+      "packages/organizer/test/blank-repair.test.ts",
       // A Restore pressed before the delete's move landed cancels it, composed with the pass.
       "apps/worker/test/restore-before-the-delete-lands.test.ts",
       // THE UNSUBSCRIBE DRAIN'S TWO MEMORIES (mail 0116), as STATEMENTS. The mark's insert takes

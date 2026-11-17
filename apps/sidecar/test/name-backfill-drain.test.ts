@@ -41,7 +41,7 @@ import {
  * The claims PGlite genuinely cannot host are the CONCURRENT ones — the guarded UPDATE losing to a
  * writer that lands between the page read and the write — and they are not this door's: there is
  * one writer here. They are proved against real Postgres over THIS EXACT FUNCTION in
- * `apps/worker/test/sender-name-backfill.pg.test.ts`, which is the reason this door calls the
+ * `packages/organizer/test/sender-name-backfill.pg.test.ts`, which is the reason this door calls the
  * worker's pass rather than a copy of it.
  *
  * ── THE MUTATIONS, EACH RUN AND WATCHED FAIL, THEN RESTORED ───────────────────────────────

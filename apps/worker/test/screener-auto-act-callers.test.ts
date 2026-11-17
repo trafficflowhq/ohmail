@@ -14,7 +14,7 @@ import { readSource } from "./_start-function.js";
  */
 
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const PASS = ["apps", "worker", "src", "screener-auto-act.ts"].join(sep);
+const PASS = ["packages", "organizer", "src", "screener-auto-act.ts"].join(sep);
 
 /** Every production call, by file, and how many each makes. */
 const CALLERS: Record<string, number> = {

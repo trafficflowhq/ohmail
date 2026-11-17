@@ -922,7 +922,7 @@ export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
         optimistic: "landed",
         pass: {
           none: "the executing half (folder-ops on the worker, under the mailbox lease, against " +
-            "real IMAP) is out of an in-process world — apps/worker/test/folder-ops.test.ts and " +
+            "real IMAP) is out of an in-process world — packages/organizer/test/folder-ops.test.ts and " +
             "folder-rename-swap.pg.test.ts own execution; what the API RECORDS is pinned here",
         },
       },

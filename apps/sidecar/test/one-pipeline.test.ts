@@ -59,7 +59,7 @@ describe("the sidecar drives the pipeline and is not a second one", () => {
   });
 
   it("imports the worker's sync loop rather than defining one", () => {
-    const importers = FILES.filter((f) => /from\s+"@trafficflow\/worker\/sync"/.test(f.text));
+    const importers = FILES.filter((f) => /from\s+"@ohmail\/organizer\/sync"/.test(f.text));
     /* TWO FILES MAY NAME THE LOOP'S MODULE, AND EXACTLY ONE MAY RUN IT.
      *
      * `engine.ts` is the driver. `roster.ts` is the second, and it is here for the reason the
@@ -82,9 +82,9 @@ describe("the sidecar drives the pipeline and is not a second one", () => {
     for (const f of importers) {
       if (f.path === "apps/sidecar/src/engine.ts") continue;
       expect(f.text, `${f.path} may import TYPES from the sync loop and nothing else`)
-        .toMatch(/import\s+type\s*\{[^}]*\}\s*from\s+"@trafficflow\/worker\/sync"/);
+        .toMatch(/import\s+type\s*\{[^}]*\}\s*from\s+"@ohmail\/organizer\/sync"/);
       expect(f.text, `${f.path} must not carry a value import from the sync loop`)
-        .not.toMatch(/import\s*\{[^}]*\}\s*from\s+"@trafficflow\/worker\/sync"/);
+        .not.toMatch(/import\s*\{[^}]*\}\s*from\s+"@ohmail\/organizer\/sync"/);
     }
     /* THE VALUE IMPORT IS THE CLAIM. This used to require the clause to name `runSyncCycle` and
        nothing else, which read as strictness and was really a coincidence: the module also exports
@@ -98,12 +98,12 @@ describe("the sidecar drives the pipeline and is not a second one", () => {
        about the engine on others — the shape of a guard that passes by luck. */
     const driver = importers.find((f) => f.path === "apps/sidecar/src/engine.ts");
     expect(driver, "the engine must be the file that imports the loop").toBeDefined();
-    expect(driver!.text).toMatch(/import\s*\{[^}]*\brunSyncCycle\b[^}]*\}\s*from\s+"@trafficflow\/worker\/sync"/);
+    expect(driver!.text).toMatch(/import\s*\{[^}]*\brunSyncCycle\b[^}]*\}\s*from\s+"@ohmail\/organizer\/sync"/);
     /* …and nothing but TYPES may ride along. A second VALUE pulled out of the loop's module is a
        second piece of the pipeline executing in this process, which is the thing being prevented;
        a type cannot execute. Written as "every other name is prefixed `type`" rather than as a
        list, so a new export cannot join the clause by being unlisted. */
-    const clause = /import\s*\{([^}]*)\}\s*from\s+"@trafficflow\/worker\/sync"/.exec(driver!.text)![1]!;
+    const clause = /import\s*\{([^}]*)\}\s*from\s+"@ohmail\/organizer\/sync"/.exec(driver!.text)![1]!;
     const others = clause.split(",").map((s) => s.trim()).filter((s) => s && !/^runSyncCycle$/.test(s));
     expect(others.filter((s) => !s.startsWith("type "))).toEqual([]);
   });

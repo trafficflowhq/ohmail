@@ -13,8 +13,8 @@ import { and, eq, ne, sql } from "drizzle-orm";
 import { Secret, type StoredCredential } from "@ohmail/cal-providers";
 import { StaticKeyProvider, silentLogger } from "@trafficflow/core";
 import { calCalendars, calConnections, calWrites } from "@trafficflow/db";
-import { CALENDAR_RING_GAP_MS, CALENDAR_TICK_MS, ROSTER_LIMIT, calendarPool, loadDueConnections } from "../src/calendar/index.js";
-import { calendarSyncPass, calendarTurnFailed } from "../src/calendar/sync-pass.js";
+import { CALENDAR_RING_GAP_MS, CALENDAR_TICK_MS, ROSTER_LIMIT, calendarPool, loadDueConnections } from "@ohmail/organizer/calendar-sync";
+import { calendarSyncPass, calendarTurnFailed } from "@ohmail/organizer/calendar-sync-pass";
 import { calendarSection, startCalendarRunner } from "../src/start/calendar.js";
 import { queueSection } from "../src/start/queue.js";
 import type { WorkerScope } from "../src/start/scope.js";
@@ -23,7 +23,7 @@ import { startCalDavStandIn, type StandIn } from "../../../packages/cal-provider
 import {
   AVAILABLE, capturedLog, depsFor, eventsOf, openWorld, providersOf, recordWrite, scriptedReader, sealCredential, seedConnection, silentHttp, single,
   upsert, type World,
-} from "./_calendar-world.js";
+} from "../../../packages/organizer/test/_calendar-world.js";
 
 const SHARDS = 1_000_003;
 const OWN_NETWORK: WorkerCalendarConfig = { policy: "own-network", google: null, microsoft: null, noticeOrigin: null };

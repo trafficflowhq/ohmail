@@ -18,7 +18,7 @@ import type { ProfileIo, RawProfileMessage } from "@trafficflow/core/adapters/or
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { formatProfileMessage, makeProfileDoc, profileFingerprint } from "@trafficflow/core/adapters/organizer-profile";
 import { startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
-import { GAP_CLOCK_ALLOWANCE_MS } from "@trafficflow/worker/gap-catchup";
+import { GAP_CLOCK_ALLOWANCE_MS } from "@ohmail/organizer/gap-catchup";
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
   DatabaseSync: new (path: string) => {

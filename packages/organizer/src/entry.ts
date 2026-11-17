@@ -58,7 +58,7 @@ export interface CrashHandlerOptions {
    * contract's normal work; default `undefined` (an embedder that says nothing gets `exit(1)`). The
    * knowledge is INJECTED, not written here: the only shape that needs it is a `postgres@3.4.9` defect
    * (`driver-write-race.ts`, passed in by `index.ts`), and a contract that enumerates one dependency's bugs
-   * stops being a contract — and `entry.ts` is a PUBLISHED subpath (`@trafficflow/worker/entry`, imported by
+   * stops being a contract — and `entry.ts` is a PUBLISHED subpath (`@ohmail/organizer/entry`, imported by
    * `apps/sidecar` for `isCliEntry`) whose engine runs PGlite and has no postgres.js. Only `uncaughtException`
    * consults it: the driver's throw comes out of `setImmediate` (no promise to attach to); the same value as
    * a REJECTION means a promise owns it, which the `DatabaseFaultError` taxonomy already classifies. */

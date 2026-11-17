@@ -10,7 +10,7 @@ import { accounts, changeLog, drafts, mailboxes, messages, threadNotes, threads,
 import { schema } from "@trafficflow/db/cloud";
 import { MAX_THREAD_PARTICIPANTS } from "@trafficflow/core/mail";
 import { makeDrizzleRepo, recordAppearedSentFolder } from "@trafficflow/core/adapters/drizzle-repo";
-import { threadJoinHealPass, type ThreadJoinHealResult } from "../src/thread-join-heal.js";
+import { threadJoinHealPass, type ThreadJoinHealResult } from "@ohmail/organizer/thread-join-heal";
 import { makeThreadJoinHealWalk } from "../src/thread-join-heal-walk.js";
 
 /**

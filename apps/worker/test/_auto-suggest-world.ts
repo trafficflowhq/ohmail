@@ -5,7 +5,7 @@ import {
   type RefundObligation, type RefundObligationPort, type Tx,
 } from "@trafficflow/db";
 import { createLogger, makeHaikuClassifier, type AnthropicLike, type ClassifierPort } from "@trafficflow/core";
-import { fakeSpendPort, type FakeSpendPort } from "./_spendport.js";
+import { fakeSpendPort, type FakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 
 /**
  * ONE OPTED-IN ACCOUNT ON PGLITE for the automatic pass's door suites: held senders, a recording

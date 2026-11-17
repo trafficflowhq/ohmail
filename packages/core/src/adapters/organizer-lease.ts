@@ -27,7 +27,7 @@ export {
  * mailbox through the one medium they share — one claim message per organizer in the unsubscribed
  * `ohmail/_meta`. The invariant: a destructive IMAP write happens only under a permit naming
  * (install, mailbox, uidvalidity, nonce, issued-at) younger than `DEFAULT_PERMIT_TTL_MS`,
- * re-validated on a cadence (`apps/worker/src/lease.ts`). A LEASE, not a mutex — IMAP has no
+ * re-validated on a cadence (`packages/organizer/src/lease.ts`). A LEASE, not a mutex — IMAP has no
  * compare-and-swap; a one-cycle overlap is idempotent-safe. Records are headers-only; an
  * unreadable record is evidence, never permission. Three layers: format, decision ({@link
  * decideLease}, pure), IO ({@link runLeaseGate}).

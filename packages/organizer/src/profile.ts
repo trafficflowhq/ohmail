@@ -2414,7 +2414,7 @@ type MarkerFact =
  * force are in the organizer's published document), and ruling 6's Critical is that the panes rendered
  * the local rows; so the reader caches the document it sees and `GET /mailboxes/:id/profile` serves
  * that. Here, not beside the reader arms, so `apps/worker`'s hosted reader and `apps/sidecar`'s local
- * one share one implementation (the sidecar already imports `@trafficflow/worker/profile`). THE PAIR
+ * one share one implementation (the sidecar already imports `@ohmail/organizer/profile`). THE PAIR
  * (`uidvalidity`, `uid`) is written together or not at all, the generation taken from {@link
  * ProfileReadResult}'s `found` arm inside the fetch lock; a `null` generation ⇒ no usable locator, no write.
  */

@@ -28,6 +28,14 @@ import { readSource } from "./_start-function.js";
  */
 
 const SRC = fileURLToPath(new URL("../src/", import.meta.url));
+/** The organizer's package: the passes the worker and the desktop's engine both run (ruling:organizer-cut). */
+const ORG_SRC = fileURLToPath(new URL("../../../packages/organizer/src/", import.meta.url));
+/** A row is in the worker's program when its module stands under either folder; keyed by its path under its own `src`. */
+const PROGRAM_ROOTS = ["apps/worker/src/", "packages/organizer/src/"] as const;
+const underSrc = (module: string): string | undefined => {
+  const root = PROGRAM_ROOTS.find((r) => module.startsWith(r));
+  return root === undefined ? undefined : module.slice(root.length);
+};
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
 
 /**
@@ -147,10 +155,12 @@ function tsFilesUnder(dir: string, prefix = ""): string[] {
 
 function detectedExports(): Map<string, string[]> {
   const found = new Map<string, string[]>();
-  for (const rel of tsFilesUnder(SRC)) {
-    const src = readSource(join(SRC, rel));
-    const entries = [...exportedNames(src, rel)].filter((n) => PASS_SHAPED.test(n));
-    if (entries.length > 0) found.set(rel, entries);
+  for (const root of [SRC, ORG_SRC]) {
+    for (const rel of tsFilesUnder(root)) {
+      const src = readSource(join(root, rel));
+      const entries = [...exportedNames(src, rel)].filter((n) => PASS_SHAPED.test(n));
+      if (entries.length > 0) found.set(rel, [...(found.get(rel) ?? []), ...entries]);
+    }
   }
   return found;
 }
@@ -488,8 +498,8 @@ describe("the worker pass registry", () => {
   it("every pass-shaped export in src/ is registered, or excluded with a stated reason", () => {
     const registered = new Set(
       rows
-        .filter((r) => r.module.startsWith("apps/worker/src/"))
-        .map((r) => `${r.module.slice("apps/worker/src/".length)}::${r.entry}`),
+        .filter((r) => underSrc(r.module) !== undefined)
+        .map((r) => `${underSrc(r.module)}::${r.entry}`),
     );
     const unaccounted: string[] = [];
     for (const [file, entries] of detected) {
@@ -505,10 +515,10 @@ describe("the worker pass registry", () => {
   });
 
   it("the census is not vacuous: the extractor sees exactly the in-worker passes the registry names", () => {
-    const inWorker = rows.filter((r) => r.module.startsWith("apps/worker/src/"));
+    const inWorker = rows.filter((r) => underSrc(r.module) !== undefined);
     const passShaped = inWorker.filter((r) => /^(run[A-Z]\w*|\w*Pass)$/.test(r.entry));
     for (const r of passShaped) {
-      const file = r.module.slice("apps/worker/src/".length);
+      const file = underSrc(r.module) ?? r.module;
       expect(detected.get(file) ?? [], `${r.module} should export ${r.entry}`).toContain(r.entry);
     }
     /**
@@ -518,7 +528,7 @@ describe("the worker pass registry", () => {
      * the thing it exists to detect (review round 1). Naming them means a deletion is red and
      * an addition is red until it is listed, which is the whole point.
      */
-    expect([...passShaped].map((r) => `${r.module.slice("apps/worker/src/".length)}::${r.entry}`).sort())
+    expect([...passShaped].map((r) => `${underSrc(r.module)}::${r.entry}`).sort())
       .toEqual([...IN_WORKER_PASSES].sort());
   });
 
@@ -654,7 +664,7 @@ describe("the worker pass registry", () => {
   });
 
   it("every sidecar-drain row is backed by a real subpath export — the dual-mode rule, cross-checked", () => {
-    const pkg = JSON.parse(readSource(join(SRC, "../package.json"))) as {
+    const pkg = JSON.parse(readSource(join(ORG_SRC, "../package.json"))) as {
       exports: Record<string, string | { default?: string }>;
     };
     const exported = new Set(
@@ -666,7 +676,7 @@ describe("the worker pass registry", () => {
     );
     for (const r of rows) {
       if (!r.triggers.includes("sidecar-drain")) continue;
-      const file = r.module.slice("apps/worker/src/".length);
+      const file = r.module.startsWith("packages/organizer/src/") ? r.module.slice("packages/organizer/src/".length) : r.module;
       expect(exported.has(file), `row '${r.name}' claims the sidecar runs it, but ${file} is not a subpath export`).toBe(true);
     }
   });

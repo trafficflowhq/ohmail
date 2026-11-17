@@ -540,25 +540,25 @@ const ALLOWLIST: Record<string, string> = {
     "written by `stampScreeningBaseline` / `writeScreeningAnswer` on the fenced transaction " +
     "`organizeHere` opens — asserted, not assumed, by the call-site case in this file",
 
-  // ── The calendar sync's turn (apps/worker/src/calendar) ─────────────────────────────────────
+  // ── The calendar sync's turn (packages/organizer/src/calendar) ─────────────────────────────────────
   // Each write runs on the transaction of one turn, which `inConnection` alone opens, through the
   // store's `fencedConnectionWrite`: `fencedAccountWrite` first, then the connection's mailbox and
   // row FOR SHARE. The four tables hang on composite `foreignKey({ … })` keys, which
   // `foreignKeys()` does not read, so they are class (c) here and not (b1). The calendar call-site
   // case below asserts every link of the reason.
-  "apps/worker/src/calendar/apply.ts insert calEvents":
+  "packages/organizer/src/calendar/apply.ts insert calEvents":
     "an event row, written on the turn's transaction that only `inConnection` opens, through the store's " +
     "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
     "the calendar call-site case",
-  "apps/worker/src/calendar/apply.ts insert calAttendees":
+  "packages/organizer/src/calendar/apply.ts insert calAttendees":
     "an event's invitees, written on the turn's transaction that only `inConnection` opens, through the store's " +
     "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
     "the calendar call-site case",
-  "apps/worker/src/calendar/apply.ts insert calAlarms":
+  "packages/organizer/src/calendar/apply.ts insert calAlarms":
     "an event's reminders, written on the turn's transaction that only `inConnection` opens, through the store's " +
     "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
     "the calendar call-site case",
-  "apps/worker/src/calendar/calendars.ts insert calCalendars":
+  "packages/organizer/src/calendar/calendars.ts insert calCalendars":
     "a listed calendar, written on the turn's transaction that only `inConnection` opens, through the store's " +
     "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
     "the calendar call-site case",
@@ -645,10 +645,10 @@ const ALLOWLIST: Record<string, string> = {
   // account fence at the head of its own transaction, as the gate release does.
   "packages/db/src/pass-progress.ts insert passProgress":
     "the door's own statement asks for its subject: a mailbox's row FOR SHARE and not erased, an account not erased",
-  "apps/worker/src/gap-catchup.ts insert auditLog": "a background pass, no session",
+  "packages/organizer/src/gap-catchup.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/ohbox-tidy.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/redacted-restore.ts insert auditLog": "a background pass, no session",
-  "apps/worker/src/rule-retro.ts insert auditLog": "a background pass, no session",
+  "packages/organizer/src/rule-retro.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/sensitive-backfill.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/workflow-cron.ts insert workflowRuns":
     "the workflow cron, which enqueues only for a workflow row the sweep deletes",
@@ -1185,7 +1185,7 @@ describe("the erasure fence census", () => {
     // The merge fences its mailbox with the account itself, and its callers open the door it runs
     // in: this is the check that both do. Two callers, each inside its door; a third, or one
     // outside a door, is red by file and line.
-    const callers = ["packages/services/src/profile-import-service.ts", "apps/worker/src/profile.ts"];
+    const callers = ["packages/services/src/profile-import-service.ts", "packages/organizer/src/profile.ts"];
     const loose: string[] = [];
     for (const file of callers) {
       const src = withoutComments(read(file));
@@ -1248,7 +1248,7 @@ describe("the erasure fence census", () => {
       "packages/services/src/away-responder-pass.ts insert awaySenderState",
       // The profile marker now rings the settings doorbell in the same transaction, so it is
       // fenced with it: a late marker must not append a change row to an erased account's log.
-      "apps/worker/src/profile.ts insert auditLog",
+      "packages/organizer/src/profile.ts insert auditLog",
     ]) expect(fenced, `${k} is no longer fenced`).toContain(k);
   });
 
@@ -1331,7 +1331,7 @@ describe("the erasure fence census", () => {
      * only from inside an `inConnection` call. A later writer in the folder that goes around the
      * door is red here by file and line, whatever its table's row says.
      */
-    const FOLDER = "apps/worker/src/calendar/";
+    const FOLDER = "packages/organizer/src/calendar/";
     const CONNECTION = `${FOLDER}connection.ts`;
     const FENCE = "packages/db/src/calendar/fence.ts";
     const OPENERS = String.raw`\.transaction\s*\(|\b(?:withAccountTx|fencedAccountWrite|fencedConnectionWrite)\s*\(`;

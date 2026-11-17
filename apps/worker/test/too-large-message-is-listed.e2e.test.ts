@@ -10,9 +10,9 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import type { ChangeBatch, ImapConfig } from "@trafficflow/core/adapters/imap-types";
 import { MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
 
 /**
  * A MESSAGE OVER THE DOWNLOAD CEILING IS STILL IN THE LIST (OVERSIZE-MESSAGE-IS-STORED-NOWHERE).

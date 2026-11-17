@@ -22,7 +22,7 @@ import { perMailboxAuthservTrust, ruleInputOf, upsertDesired } from "./rule-pass
    `sync-service.ts`; `Engine.drain` loops until `hasMore`), but instead of one
    `POST /messages/:id/move` per match from the browser (`sender-screening.ts#planScreeningChange`) —
    which serializes `account_sync_state` and strands the tail on tab close — this worker pass writes
-   `desired_folder` + a `move` and stops. `reconcileFolders` (`apps/worker/src/sync.ts`) is the only
+   `desired_folder` + a `move` and stops. `reconcileFolders` (`packages/organizer/src/sync.ts`) is the only
    crash-safe mover and holds the lease (a second mover = two organizers; `rule-retro.no-imap.test.ts`
    fails on an IMAP client). `RULE_RETRO_WRITES_PER_CYCLE` caps creation/cycle because `reconcileFolders`
    walks an unbounded `listPendingFolderStates` and can miss `beat()`/`leaderStaleMs`; the DECISION is

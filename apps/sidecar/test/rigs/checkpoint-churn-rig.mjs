@@ -33,8 +33,8 @@ import { join } from "node:path";
 import { mailboxes, messages } from "@trafficflow/db";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
-import { runSyncCycle } from "@trafficflow/worker/sync";
-import { FakeAdapterFleet } from "../../../worker/test/_fakeadapter.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet } from "../../../../packages/organizer/test/_fakeadapter.js";
 import { openLocalDb } from "../../src/db.js";
 import { inStoreLane } from "../../src/store-lanes.js";
 

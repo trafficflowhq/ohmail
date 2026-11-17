@@ -521,7 +521,7 @@ describe("SEC3-PRIV-3 — the redaction sits AT the sink, so no caller can skip 
     // which is the property that makes this list safe to be short.
     for (const caller of [
       "packages/services/src/screener-service.ts",
-      "apps/worker/src/screener-auto-suggest.ts",
+      "packages/organizer/src/screener-auto-suggest.ts",
     ]) {
       const src = codeOnly(readFileSync(join(ROOT, caller), "utf8"));
       expect(src, `${caller} no longer routes through askScreeningQuestion`)

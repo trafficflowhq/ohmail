@@ -9,7 +9,7 @@ import { StaticKeyProvider, createLogger, type DraftPort, type Logger } from "@t
 import { runWorkerSupervised } from "../src/supervisor.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE RESURFACING PASS RUNS BECAUSE THE WORKER'S OWN LOOP CALLS IT.

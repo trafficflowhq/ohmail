@@ -78,7 +78,7 @@ describe("the decide lifts the promoted address rule over its domain's", () => {
   });
 
   it("the auto-act pass skips a ruled key and does not lift, at its one call site", () => {
-    const src = readFileSync(resolve(import.meta.dirname ?? ".", "../../../apps/worker/src/screener-auto-act.ts"), "utf8");
+    const src = readFileSync(resolve(import.meta.dirname ?? ".", "../../../packages/organizer/src/screener-auto-act.ts"), "utf8");
     const call = src.slice(src.indexOf("applyScreenerDecision(tx, {"));
     const body = call.slice(0, call.indexOf("});"));
     expect(body.length, "the call site was not found").toBeGreaterThan(50);

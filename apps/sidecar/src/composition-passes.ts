@@ -97,7 +97,7 @@ export class AppointmentsRefused extends ScheduleService {
  * `search_index_backfill` pass (`@trafficflow/core/mail`), gated on idle and power here
  * (`search-backfill.ts`). The hosted deployment runs it in the worker's cycle tail, never in
  * this composition; the phone does not schedule it (search there reads rows without a document the
- * older way, which stays complete). `html-words-backfill` (`@trafficflow/worker/html-words-backfill`)
+ * older way, which stays complete). `html-words-backfill` (`@ohmail/organizer/html-words-backfill`)
  * gives older html-only letters their words, on the same gate, on the phone too: its index and its
  * previews read the stored text alone. A Cloud mirror follows the hosted store's deltas instead.
  */

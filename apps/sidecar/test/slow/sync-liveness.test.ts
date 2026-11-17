@@ -236,7 +236,7 @@ class MemoryMailbox {
   /**
    * The return type is `MailboxAdapter` PLUS `leaseIo`, and the addition is not cosmetic.
    *
-   * `leaseIo` is not on `MailboxAdapter` — `apps/worker/src/lease.ts` probes for it structurally,
+   * `leaseIo` is not on `MailboxAdapter` — `packages/organizer/src/lease.ts` probes for it structurally,
    * deliberately, so that an adapter which cannot produce one makes `readMailboxLease` throw
    * rather than silently take the permissive branch. Declaring it here keeps that intersection
    * visible instead of hiding it behind a cast to a type the object does not actually satisfy.

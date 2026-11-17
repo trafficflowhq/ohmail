@@ -1789,7 +1789,7 @@ export class ScreenerReadService {
    * `heldRowById` / `heldRowsForSender` / `heldRowsForDomain` USED TO LIVE HERE, and now live in
    * `@trafficflow/db#screener-apply.ts` — see that module's own header (0.14.1):
    * `decide`'s validate step and `applyScreenerDecision`'s own internals both read through them,
-   * and the organizer's request drain (`apps/worker/src/request-drain.ts`) needs the identical
+   * and the organizer's request drain (`packages/organizer/src/request-drain.ts`) needs the identical
    * queries without importing this package. `decide` was their only caller in this class; moving
    * them left nothing behind to keep.
    */

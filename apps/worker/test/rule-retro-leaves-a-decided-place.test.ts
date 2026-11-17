@@ -8,7 +8,7 @@ import {
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { MessageService, RulesService, type ServiceContext } from "@trafficflow/services";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 import {
   REFILE_FIXTURE, REFILE_FROM, REFILE_MOVES, REFILE_TO,
 } from "../../../test/support/retro-candidates.js";

@@ -4,7 +4,7 @@ import type { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
   assertNoLiveTwin, mailboxHasRequestKey, resolveCloudInstallId, type LeasePermit,
-} from "./lease.js";
+} from "@ohmail/organizer/lease";
 
 /**
  * WHAT THE ONE-OFF MAILBOX RUNNERS SHARE — the scaffold around a bounded operator command.

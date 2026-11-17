@@ -8,6 +8,6 @@
     { "path": "../../packages/db" },
     { "path": "../../packages/services" },
     { "path": "../../packages/api" },
-    { "path": "../worker" }
+    { "path": "../../packages/organizer" }
   ]
 }

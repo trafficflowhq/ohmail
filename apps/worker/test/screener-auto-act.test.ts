@@ -12,9 +12,9 @@ import type { ClassifierPort, ClassifierResult } from "@trafficflow/core";
 import { autoFiledSummary, undoAutoFiled, type ServiceContext } from "@trafficflow/services";
 import {
   plannedDecision, screenerActConsentFrom, screenerAutoActPass, SCREENER_ACT_DENY_BAR, type ScreenerActConsent,
-} from "../src/screener-auto-act.js";
-import { screenerAutoSuggestPass } from "../src/screener-auto-suggest.js";
-import { repoWithFailingMethod } from "./_fault.js";
+} from "@ohmail/organizer/screener-auto-act";
+import { screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
+import { repoWithFailingMethod } from "../../../packages/organizer/test/_fault.js";
 
 /**
  * SCREENER AUTO-ACT — the act on its own consent, measured.

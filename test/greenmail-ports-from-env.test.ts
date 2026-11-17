@@ -1,6 +1,6 @@
 // @services: none — the port resolver's answers, no dial
 import { afterEach, describe, expect, it } from "vitest";
-import { greenmailPorts } from "../apps/worker/test/_greenmail-ports.js";
+import { greenmailPorts } from "../packages/organizer/test/_greenmail-ports.js";
 
 /**
  * A LANE'S OWN GREENMAIL ISOLATES ALL OF ITS TRAFFIC, OR THE LANE IS TOLD.

@@ -67,7 +67,7 @@ if (/trafficflow_test(\b|$)/.test(url)) throw new Error("rig: that is the SHARED
 
 const postgres = (await import("postgres")).default;
 const { estimateRetainedBytes, KnownSetCache, KnownSetBudget, KNOWN_SET_BUDGET_BYTES } =
-  await import("../../src/known-set.ts");
+  await import("../../../../packages/organizer/src/known-set.ts");
 
 const MIB = 1024 * 1024;
 const mib = (b) => Math.round((b / MIB) * 100) / 100;

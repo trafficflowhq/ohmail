@@ -132,7 +132,7 @@ describe("creating a rule with a subject term", () => {
 
   it("stamps the retroactive request exactly as a one-term rule does", async () => {
     // The subject rule rides the existing `retro_requested_at` machinery unchanged; the worker pass
-    // over it is proven in `apps/worker/test/rule-retro-subject.pg.test.ts`.
+    // over it is proven in `packages/organizer/test/rule-retro-subject.pg.test.ts`.
     const { db, ctx } = await world();
     const { rule } = await createRule(ctx, { ...BODY, subjectContains: TOKEN });
     const stored = await row(db, rule.id);

@@ -11,8 +11,8 @@ import {
   type ThreadBackfillDeps, type ThreadBackfillResult,
 } from "../src/thread-backfill.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { byMessageId } from "./_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { byMessageId } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * WHERE THE THREAD BACKFILL RUNS, AND WHAT IT MAY COST.

@@ -16,7 +16,7 @@ import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { junkSweepPass } from "./junk-sweep.js";
 import { cliArgs, readRunnerMailbox, takeRunnerLease } from "./run-cli.js";
-import { type LeasePermit } from "./lease.js";
+import { type LeasePermit } from "@ohmail/organizer/lease";
 
 const { flag, opt } = cliArgs(process.argv.slice(2));
 

@@ -6,10 +6,10 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { rulesService, type ServiceContext } from "@trafficflow/services/mail";
-import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { ruleRetroPass } from "../src/rule-retro.js";
-import { makeHarness, rawClient, DB_URL } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
+import { makeHarness, rawClient, DB_URL } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * "ALL THEIR MAIL -> OHBOX" HOLDS FOR THE NEXT NEWSLETTER TOO, under "Keep my Ohbox for what matters".

@@ -10,7 +10,7 @@ import {
   mailboxes, messageStates, messages, reconcileRuleCreate, rules, threads, SCREENER_ACT_TRIGGER_PREFIX, type Tx,
 } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 import { clearOrganizerStandDown, clearOwedRetroFences } from "../src/mailboxes.js";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {

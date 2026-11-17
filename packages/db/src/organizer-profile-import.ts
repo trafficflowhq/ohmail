@@ -192,7 +192,7 @@ export async function newestProfileImport(db: Tx, o: { accountId: string; mailbo
  */
 export type ProfileImportDecision = "imported" | "declined" | "replaced";
 
-/** The found-marker payload, as `apps/worker/src/profile.ts#writeMarker` shapes it. */
+/** The found-marker payload, as `packages/organizer/src/profile.ts#writeMarker` shapes it. */
 export interface ProfileFoundMarker {
   mailboxId: string;
   state: "found" | "newer";

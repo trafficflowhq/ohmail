@@ -32,7 +32,7 @@ const read = (p: string): string => withoutComments(readFileSync(`${REPO}/${p}`,
 /** The two call sites that SPEND on the answer. Both are money paths; neither may guess. */
 const SPENDERS: ReadonlyArray<[string, string]> = [
   ["packages/services/src/screener-service.ts", "the manual purchase route (ScreenerService.suggest)"],
-  ["apps/worker/src/screener-auto-suggest.ts", "the automatic worker pass (screenerAutoSuggestPass)"],
+  ["packages/organizer/src/screener-auto-suggest.ts", "the automatic worker pass (screenerAutoSuggestPass)"],
 ];
 
 /**

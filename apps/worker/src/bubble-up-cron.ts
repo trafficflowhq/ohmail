@@ -4,9 +4,9 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { accountsOf, loadEnabledMailboxes, organizedMailboxIdsOf } from "./mailboxes.js";
-import { isCliEntry } from "./entry.js";
+import { isCliEntry } from "@ohmail/organizer/entry";
 import { cronEvent, runCronCli } from "./cron-log.js";
-import { bubbleUpPass } from "./bubble-up-pass.js";
+import { bubbleUpPass } from "@ohmail/organizer/bubble-up";
 
 /**
  * THE PASS ITSELF MOVED, and the re-export is what keeps that from being a rename with a blast
@@ -15,7 +15,7 @@ import { bubbleUpPass } from "./bubble-up-pass.js";
  * graph — the leader lock, the `postgres` driver and the served-account roster, none of which
  * exists on a laptop. Everything that already imported it from here still can.
  */
-export { bubbleUpPass } from "./bubble-up-pass.js";
+export { bubbleUpPass } from "@ohmail/organizer/bubble-up";
 
 /**
  * MANUAL BACKSTOP — for a dead worker, not a scheduler. Guarded by the shard's session-level leader lock

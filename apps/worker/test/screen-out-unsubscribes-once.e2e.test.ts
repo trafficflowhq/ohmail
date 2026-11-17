@@ -8,10 +8,10 @@ import {
   makeNodeOneClickPost, makeScreenerService, makeUnsubscribeService, ONE_CLICK_BODY,
   type HostResolver, type OneClickPost, type ServiceContext,
 } from "@trafficflow/services";
-import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { ruleRetroPass } from "../src/rule-retro.js";
-import { byMessageId, makeHarness, rawClient, dbUrlFor, ORGANIZER_CONSENT } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
+import { byMessageId, makeHarness, rawClient, dbUrlFor, ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 

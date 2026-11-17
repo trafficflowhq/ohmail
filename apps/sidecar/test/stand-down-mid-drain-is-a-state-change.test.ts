@@ -35,7 +35,7 @@ vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
  * their sync had failed.
  *
  * These cases are about the door, not the cycle: the cycle's own refusal (no move, no flag, no
- * folder write past the page it stopped at) is `apps/worker/test/permit-through-the-cycle.test.ts`
+ * folder write past the page it stopped at) is `packages/organizer/test/permit-through-the-cycle.test.ts`
  * and `apps/sidecar/test/lease-permit-stand-down-and-renew.test.ts`, and neither of them moves for
  * this. What is measured here is what the DRAIN does with it, and that an unreadable lease — the
  * other class the same boundary throws — is NOT given the same arm.

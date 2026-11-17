@@ -5,7 +5,7 @@ import {
   MemoryMirrorStore, consentPartition, type EngineMessage, type SyncChange,
 } from "@ohmail/client-engine";
 import { SyncService, materialize } from "../src/index.js";
-import { applyProfileRead } from "../../../apps/worker/src/profile.js";
+import { applyProfileRead } from "../../organizer/src/profile.js";
 import { makeCtx, otherAccount, seedMessage } from "./helpers.js";
 
 /**

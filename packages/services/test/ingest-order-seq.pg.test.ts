@@ -20,7 +20,7 @@ import { pgTestUrl } from "@trafficflow/db/testing";
  *
  * `fetchCapped` now orders the backfill by arrival date. That only reaches the user because of
  * a chain nothing tested end to end: the worker commits `batch.creates` IN ARRAY ORDER
- * (`apps/worker/src/sync.ts`), each commit allocates the next `change_log.seq`, and `/sync`
+ * (`packages/organizer/src/sync.ts`), each commit allocates the next `change_log.seq`, and `/sync`
  * reads the log ascending by seq. If any link were order-free, the adapter's sort would be
  * decoration.
  *

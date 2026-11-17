@@ -21,10 +21,12 @@ import { readSource } from "./_start-function.js";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const SRC = join(HERE, "../src");
+/** The organizer's package holds the passes that moved out of the worker (ruling:organizer-cut). */
+const ORG_SRC = join(HERE, "../../../packages/organizer/src");
 
-const FILES = readdirSync(SRC)
+const FILES = [SRC, ORG_SRC].flatMap((dir) => readdirSync(dir)
   .filter((f) => f.endsWith(".ts"))
-  .map((f) => ({ name: f, code: withoutCommentsAndLiterals(readSource(join(SRC, f))) }));
+  .map((f) => ({ name: f, code: withoutCommentsAndLiterals(readSource(join(dir, f))) })));
 
 /** The upsert by its own derivation line — the thing that makes it THIS write and not another. */
 const DERIVATION = /reconcileStatus\s*=\s*destination\s*===\s*row\.observedFolder/g;

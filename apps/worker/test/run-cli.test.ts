@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { LeaseUnavailableError, OrganizerStandDownError } from "../src/lease.js";
+import { LeaseUnavailableError, OrganizerStandDownError } from "@ohmail/organizer/lease";
 import {
   RELEASE_REQUESTED_REFUSAL, cliArgs, leaseUnreadableRefusal, standDownRefusal,
 } from "../src/run-cli.js";

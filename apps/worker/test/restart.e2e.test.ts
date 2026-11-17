@@ -3,10 +3,10 @@ import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { messages, folderState } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
-import { runSyncCycle } from "../src/sync.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
 import { reconcileOnRestart } from "../src/restart.js";
-import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, dbUrlFor } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 

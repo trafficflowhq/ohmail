@@ -9,8 +9,8 @@ import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * NO AUTOMATIC PASS LETS A STRANGER IN (owner report 2026-11-02): a cold letter from a sender the

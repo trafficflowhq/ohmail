@@ -7,7 +7,7 @@ import { StaticKeyProvider, type LogFields } from "@trafficflow/core";
 import { randomUUID } from "node:crypto";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE FIRST SYNC OF A BIG MAILBOX (the 2026-08-01 outage).

@@ -37,6 +37,9 @@ const ROOTS: readonly { dir: string; atLeast: number }[] = [
   // that silently stopped being walked reads 0 and refuses instead of passing empty.
   { dir: join(REPO, "packages", "api", "src"), atLeast: 30 },
   { dir: join(REPO, "apps", "worker", "src"), atLeast: 100 },
+  // The worker's passes that moved to the organizer's package (ruling:organizer-cut): a root of its
+  // own, since the worker's root no longer reads them; its floor by the same rule.
+  { dir: join(REPO, "packages", "organizer", "src"), atLeast: 50 },
   // The API program's wiring, which took the function host's two sites with it.
   { dir: join(REPO, "apps", "server", "src"), atLeast: 2 },
 ];

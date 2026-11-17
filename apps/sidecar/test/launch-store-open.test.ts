@@ -9,7 +9,7 @@ import {
   analyzeKnownSetIfNever, analyzeNeverAnalyzed, openLocalDb, OWED_COPY_RECLAIM_FLOOR_BYTES, reclaimBodyBloat, type OpenLocalDb,
 } from "../src/db.js";
 import { makeDrizzleRepo, KNOWN_LOCATOR_PAGE_ROWS } from "@trafficflow/core/adapters/drizzle-repo";
-import { KnownSetCache, watchKnownSet } from "@trafficflow/worker/known-set";
+import { KnownSetCache, watchKnownSet } from "@ohmail/organizer/known-set";
 import { armFirstPageGate, noteFirstPageServed, resetFirstPageGate } from "../src/first-page-gate.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";

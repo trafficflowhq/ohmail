@@ -11,8 +11,8 @@ import {
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 import {
   CONDSTORE_HOST, CONDSTORE_PORT, greenmailConfig, probeCondstore,
 } from "../../../packages/core/test/adapters/_imapenv.js";

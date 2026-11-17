@@ -10,7 +10,7 @@ import { ServiceError, makeMailboxService, type ServiceContext } from "@trafficf
  * pair, and the dismissal is a per-mailbox write the caller's own account can make and nobody
  * else's can reach.
  *
- * The PREDICATE is not here — `apps/worker/test/inbound-quiet.test.ts` replays the incident
+ * The PREDICATE is not here — `packages/organizer/test/inbound-quiet.test.ts` replays the incident
  * against the pass that owns it. What this file holds is the wire contract the clients build
  * the show rule on: both instants projected unconditionally (a status gate here would be the
  * incident's invisibility restored one layer up), the dismissal stamping the context clock,

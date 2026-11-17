@@ -6,26 +6,26 @@ import {
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import { resolveTailTurn, TAIL_SLICE_BUDGET_MS } from "../config.js";
 import { type TailSectionName, TAIL_SECTION_PLAN } from "../cycle-tail-plan.js";
-import { isSharedDatabaseFault } from "../dead-letter.js";
+import { isSharedDatabaseFault } from "@ohmail/organizer/dead-letter";
 import { asDatabaseFault } from "../db-fault.js";
 import { runThreadBackfill, THREAD_BACKFILL_SLICE_PAGES, THREAD_BACKFILL_SLICE_MS } from "../thread-backfill.js";
 import { attributedWorkflowDrafter } from "../ai-usage.js";
 import { workflowTimeScanPass, workflowDrainPass, unconfiguredDrafter } from "../workflow-cron.js";
 import { bubbleUpPass } from "../bubble-up-cron.js";
-import { threadJoinHealPass } from "../thread-join-heal.js";
-import { inboundQuietPass } from "../inbound-quiet.js";
-import { ruleRetroPass } from "../rule-retro.js";
-import { gapCatchupPass, NO_FOLDER_READ } from "../gap-catchup.js";
+import { threadJoinHealPass } from "@ohmail/organizer/thread-join-heal";
+import { inboundQuietPass } from "@ohmail/organizer/inbound-quiet";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
+import { gapCatchupPass, NO_FOLDER_READ } from "@ohmail/organizer/gap-catchup";
 import { gateReleasePass } from "../gate-release.js";
-import { senderCheckRetirement } from "../sender-check-backfill.js";
-import { listAddressBackfillPass } from "../list-address-backfill.js";
+import { senderCheckRetirement } from "@ohmail/organizer/sender-check-backfill";
+import { listAddressBackfillPass } from "@ohmail/organizer/list-address-backfill";
 import { retentionPrunePass, signInRetentionPass } from "../retention-prune.js";
 import { ohboxTidyPass } from "../ohbox-tidy.js";
-import { screenerAutoActPass, screenerActConsentFrom } from "../screener-auto-act.js";
-import { screenerImpersonationPass } from "../screener-impersonation.js";
-import { retireActAdmissionsPass } from "../act-admission-retire.js";
-import { CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass } from "../screener-correspondent-retro.js";
-import { screenerAutoSuggestPass } from "../screener-auto-suggest.js";
+import { screenerAutoActPass, screenerActConsentFrom } from "@ohmail/organizer/screener-auto-act";
+import { screenerImpersonationPass } from "@ohmail/organizer/screener-impersonation";
+import { retireActAdmissionsPass } from "@ohmail/organizer/act-admission-retire";
+import { CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
+import { screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { refundObligationDrainPass } from "../refund-obligation-drain.js";
 import { mailboxErasurePass } from "../mailbox-erasure-pass.js";
 import {
@@ -33,9 +33,9 @@ import {
 } from "@trafficflow/core/mail";
 import {
   htmlWordsOwedAccounts, HTML_WORDS_ACCOUNTS_PER_TAIL, htmlWordsBackfillPass,
-} from "../html-words-backfill.js";
-import { goneLetterTidyAccounts, goneLetterTidyPass } from "../gone-letter-tidy.js";
-import { storageEvictPass } from "../storage-evict.js";
+} from "@ohmail/organizer/html-words-backfill";
+import { goneLetterTidyAccounts, goneLetterTidyPass } from "@ohmail/organizer/gone-letter-tidy";
+import { storageEvictPass } from "@ohmail/organizer/storage-evict";
 import { storageStatsPass } from "../storage-stats.js";
 import {
   type EnabledMailbox, loadEnabledMailboxes, organizedMailboxIdsOf, accountShardFilter, shardFilter, accountsOf,

@@ -1,23 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { screenerCorrespondentRetroPass } from "@trafficflow/worker/screener-correspondent-retro";
-import { threadJoinHealPass } from "@trafficflow/worker/thread-join-heal";
-import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
+import { screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
+import { threadJoinHealPass } from "@ohmail/organizer/thread-join-heal";
+import { inboundQuietPass } from "@ohmail/organizer/inbound-quiet";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { boot, ordinary, rig, server } from "./_overrun-rig.js";
 import { settledWithin } from "../src/engine.js";
 import { resetFirstPageGate } from "../src/first-page-gate.js";
 
-vi.mock("@trafficflow/worker/screener-correspondent-retro", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@trafficflow/worker/screener-correspondent-retro")>();
+vi.mock("@ohmail/organizer/screener-correspondent-retro", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@ohmail/organizer/screener-correspondent-retro")>();
   return { ...real, screenerCorrespondentRetroPass: vi.fn(real.screenerCorrespondentRetroPass) };
 });
-vi.mock("@trafficflow/worker/thread-join-heal", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@trafficflow/worker/thread-join-heal")>();
+vi.mock("@ohmail/organizer/thread-join-heal", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@ohmail/organizer/thread-join-heal")>();
   return { ...real, threadJoinHealPass: vi.fn(real.threadJoinHealPass) };
 });
-vi.mock("@trafficflow/worker/inbound-quiet", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@trafficflow/worker/inbound-quiet")>();
+vi.mock("@ohmail/organizer/inbound-quiet", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@ohmail/organizer/inbound-quiet")>();
   return { ...real, inboundQuietPass: vi.fn(real.inboundQuietPass) };
 });
 

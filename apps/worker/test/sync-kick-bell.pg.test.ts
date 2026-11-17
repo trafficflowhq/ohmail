@@ -8,7 +8,7 @@ import { SYNC_KICK_EVERY_MS, startWorker } from "../src/index.js";
 import { loadConfig } from "../src/config.js";
 import { SYNC_KICK_SIGNAL_GAP_MS } from "../src/sync-kick.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE DOORBELL ON A LIVE WORKER, real Postgres: the signal is a NOTIFY the worker hears on its own

@@ -1,5 +1,5 @@
 import { asDatabaseFault, isShardConnectionFault } from "./db-fault.js";
-import { DatabaseFaultError } from "./dead-letter.js";
+import { DatabaseFaultError } from "@ohmail/organizer/dead-letter";
 
 /** `database`: the pass talks only to our database, so its throw is tagged as ours. `mixed`: it also
  *  talks to a remote (a model, the entitlements program, object storage) and tags its own db calls. */

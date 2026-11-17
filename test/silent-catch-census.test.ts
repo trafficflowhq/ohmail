@@ -27,7 +27,7 @@ import { presentRoots } from "./support/public-root.mjs";
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const ROOTS = presentRoots([
   "packages/api/src", "packages/services/src", "packages/db/src", "packages/db-mail/src",
-  "packages/core/src", "apps/worker/src", "apps/sidecar/src", "apps/admin/app", "apps/admin/lib",
+  "packages/core/src", "apps/worker/src", "packages/organizer/src", "apps/sidecar/src", "apps/admin/app", "apps/admin/lib",
 ], REPO);
 
 /**

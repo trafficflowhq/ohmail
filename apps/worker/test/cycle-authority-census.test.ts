@@ -2,7 +2,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { cycleWriteAuthority, type LeasePermit } from "../src/lease.js";
+import { cycleWriteAuthority, type LeasePermit } from "@ohmail/organizer/lease";
 import { readSource } from "./_start-function.js";
 
 /**
@@ -101,7 +101,7 @@ describe("every cycle's authority is composed from its own role, by one function
 
   it("the function has one definition, and a reader never rides the permit it is handed", () => {
     const defs = productionFiles().filter((f) => new RegExp(`export function ${COMPOSE}\\b`).test(readSource(f)));
-    expect(defs.map((f) => f.slice(REPO.length + 1))).toEqual(["apps/worker/src/lease.ts"]);
+    expect(defs.map((f) => f.slice(REPO.length + 1))).toEqual(["packages/organizer/src/lease.ts"]);
     const permit = { standing: () => "held" } as unknown as LeasePermit;
     expect(cycleWriteAuthority("organizer", permit)).toBe(permit);
     expect(cycleWriteAuthority("reader", permit)).toEqual({ noLease: "reader" });

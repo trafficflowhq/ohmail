@@ -9,7 +9,7 @@ import {
   SensitivePayloadRefusal, StaticKeyProvider, TAXONOMY_PREFIX, classifyUserPayload,
 } from "@trafficflow/core/mail";
 import type { ClassifierInput, DraftInput } from "@trafficflow/core/mail";
-import { ClassifierFaultError } from "@trafficflow/worker/classifier-fault";
+import { ClassifierFaultError } from "@ohmail/organizer/classifier-fault";
 import { ANTHROPIC_BASE } from "@trafficflow/core/ai-transports";
 import { hasInstalledModel } from "@trafficflow/core/model-name";
 import {

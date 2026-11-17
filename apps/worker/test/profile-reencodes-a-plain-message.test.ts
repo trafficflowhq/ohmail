@@ -10,7 +10,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile";
 import { readOrganizerScreening, serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
-import { OrganizerProfileSync } from "../src/profile.js";
+import { OrganizerProfileSync } from "@ohmail/organizer/profile";
 import { readSource } from "./_start-function.js";
 
 /**

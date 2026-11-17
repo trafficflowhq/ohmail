@@ -19,8 +19,8 @@ import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 // so widening the exports map for a test would put test-only doors on a published package —
 // they are imported relatively instead, exactly as this suite already imports
 // `../../api/test/helpers.js` across package lines.
-import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
-import { ruleRetroPass } from "../../../../apps/worker/src/rule-retro.js";
+import { bubbleUpPass } from "@ohmail/organizer/bubble-up";
+import { ruleRetroPass } from "../../../organizer/src/rule-retro.js";
 import {
   awayReplyFlagRedeliverPass, type AwayReplyRedeliverResult,
 } from "../../../../apps/worker/src/away-reply-flag-redeliver.js";

@@ -10,9 +10,9 @@ import {
   accounts, accountSettings, auditLog, contacts, folderState, mailboxCredentials, mailboxFolders, mailboxes, messageBodies,
   messageInstances, messages, type Tx,
 } from "@trafficflow/db";
-import { runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A DELIVERY REPORT REACHES THE OHBOX ONLY BY CITING THE ACCOUNT'S OWN SENT COPY — through a real

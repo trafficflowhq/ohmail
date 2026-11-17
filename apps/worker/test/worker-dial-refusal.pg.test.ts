@@ -7,7 +7,7 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap";
 import { startWorker } from "../src/index.js";
 import { makeDialHostGuard } from "../src/dial-host-guard.js";
-import { imapCfg } from "./_workerenv.js";
+import { imapCfg } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**

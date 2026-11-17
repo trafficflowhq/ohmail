@@ -6,7 +6,7 @@ import { makeDb } from "@trafficflow/db/cloud";
 import { workerHeartbeats, alertState, platformSignals, SYNC_LAG_PAGE_ACCOUNTS } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
-import { imapCfg } from "./_workerenv.js";
+import { imapCfg } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**

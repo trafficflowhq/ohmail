@@ -5,7 +5,7 @@
  * as a host supplies them. Nothing here asserts: the parent reads the exit code and the log.
  */
 import { runWorkerCli } from "../src/index.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 const fleet = new FakeAdapterFleet();
 fleet.behave(process.argv[2] ?? "", { syncGate: new Promise<void>(() => { /* never */ }) });

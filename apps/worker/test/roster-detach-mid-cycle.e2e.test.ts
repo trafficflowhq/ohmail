@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * FIX-026-A: a roster pass that runs INSIDE a parked cycle, driven by gates and never by a clock.

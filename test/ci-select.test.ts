@@ -526,7 +526,7 @@ describe("the readers of this tree", () => {
     const cases: Array<[string, string[]]> = [
       ["packages/services/src/mailbox-service.ts", ["packages/services/test/organizer-role-census.test.ts", "packages/db/test/organizer-event-census.test.ts"]],
       ["packages/services/src/consent-reset.ts", ["packages/services/test/organizer-role-census.test.ts"]],
-      ["apps/worker/src/sync.ts", ["apps/worker/test/sync-role-census.test.ts"]],
+      ["packages/organizer/src/sync.ts", ["apps/worker/test/sync-role-census.test.ts"]],
       ["apps/mobile/app/compose.tsx", ["apps/mobile/test/privacy.test.ts", "apps/mobile/test/bearer-construction-census.test.ts"]],
       ["apps/webapp/app/views/HistoryView.tsx", ["apps/webapp/test/row-participants-wiring.test.ts", "apps/webapp/test/row-stamp-wiring.test.ts", "apps/webapp/test/shortcut-hint.test.tsx"]],
       ["apps/webapp/messages/en.json", ["apps/desktop/test/desktop-door-copy.test.ts", "apps/webapp/test/selfhost-says-this-server-census.test.ts", "apps/webapp/test/session-verdict-guard.test.ts"]],
@@ -544,7 +544,7 @@ describe("the readers of this tree", () => {
 
   it("select the built worker's loader for package source, and a child's spawner for what the child loads", () => {
     expect(hit("packages/db/src/cloud.ts").get("apps/worker/test/dist-import-graph.test.ts")).toBe("always");
-    expect(hit("apps/worker/src/entry.ts").has("apps/worker/test/driver-startup-outage.test.ts")).toBe(true);
+    expect(hit("packages/organizer/src/entry.ts").has("apps/worker/test/driver-startup-outage.test.ts")).toBe(true);
   });
 
   it("send a build.yml change only to the files that name .github, beside the git spawners", () => {
@@ -555,7 +555,7 @@ describe("the readers of this tree", () => {
   });
 
   it("select the engine's metafile readers for the engine's source and for the bundlers", () => {
-    expect(hit("apps/worker/src/bubble-up-pass.ts").get("apps/sidecar/test/engine-closure-no-cli-entry.test.ts")).toBe("always");
+    expect(hit("packages/organizer/src/bubble-up-pass.ts").get("apps/sidecar/test/engine-closure-no-cli-entry.test.ts")).toBe("always");
     const b = hit("scripts/engine-bundle.mjs");
     for (const f of ["apps/sidecar/test/engine-closure-no-cli-entry.test.ts", "apps/sidecar/test/phone-engine-substitutes.test.ts"]) expect(b.has(f), f).toBe(true);
   });

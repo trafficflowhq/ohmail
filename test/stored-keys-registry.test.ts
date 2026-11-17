@@ -44,7 +44,7 @@ const TREES = [
   "apps/webapp/app", "apps/webapp/public", "apps/webapp/middleware.ts",
   "apps/desktop/src", "apps/paired-page/src", "apps/desktop/src-tauri/src", "apps/desktop/src-tauri/tauri.conf.json",
   "apps/mobile/src", "apps/mobile/app", "apps/mobile/app.json", "apps/mobile/plugins", "apps/mobile/modules",
-  "apps/sidecar/src", "apps/server/src", "apps/worker/src", "apps/api-vercel/src",
+  "apps/sidecar/src", "apps/server/src", "apps/worker/src", "packages/organizer/src", "apps/api-vercel/src",
   "packages/client-engine/src", "packages/ui/src", "packages/api/src", "packages/core/src",
   "packages/services/src", "packages/db/src", "packages/app-logic/src",
 ];

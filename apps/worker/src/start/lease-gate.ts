@@ -5,18 +5,18 @@ import {
 } from "@trafficflow/db";
 import { agreeSweepRun, makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { gapOpenStart, type TravelledGap } from "../gap-catchup.js";
+import { gapOpenStart, type TravelledGap } from "@ohmail/organizer/gap-catchup";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   refreshOrganizerHolder, readTravellingGapSince, markMailboxReleased, clearOrganizerStandDown,
   markMailboxStoodDown, type MailboxDisabledReason,
 } from "../mailboxes.js";
-import { readNewestSettings, sweepHeld } from "../profile.js";
+import { readNewestSettings, sweepHeld } from "@ohmail/organizer/profile";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   type LeaseSelf, type LeasePeekCapableAdapter, type OrganizerWriteAuthority, DEFAULT_STALE_AFTER_MS,
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim,
-} from "../lease.js";
+} from "@ohmail/organizer/lease";
 import {
   makeClockCorrectionWatch, answerLeasePeek, type OrganizerIntent, readLeasePeek, resumesOwnClaim, withMinted,
 } from "@trafficflow/core/adapters/organizer-lease";
