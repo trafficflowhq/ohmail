@@ -88,6 +88,7 @@ export const SWEPT_ROOTS = [
   "apps/webapp/app", "packages/api/src", "packages/client-engine/src", "packages/core/src",
   "packages/db-mail/src", "packages/db/src", "packages/services/src", "packages/ui/src",
   "apps/mobile/app", "apps/mobile/src", "apps/desktop/src", "apps/paired-page/src", "apps/sidecar/src", "apps/worker/src",
+  "packages/app-logic/src",
   "packages/organizer/src",
 ];
 

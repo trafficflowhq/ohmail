@@ -115,13 +115,19 @@ describe("the stream's read rule in a real browser", () => {
     const { page, errors } = await open(true);
     const at = await geometry(page);
     const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Input.synthesizeScrollGesture", {
-      x: Math.round(at.x),
-      y: Math.round(at.y),
-      yDistance: -700,
-      speed: 1200,
-      gestureSourceType: "touch",
-    });
+    // A finger of touch points, 700 px up in 20 moves: a synthesized touch gesture scrolls nothing in headless
+    // Chromium on Linux, not even a plain scroller, while these points scroll it as a finger does.
+    const x = Math.round(at.x);
+    const from = Math.round(at.y) + 350;
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: from }] });
+    for (let i = 1; i <= 20; i += 1) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x, y: from - i * 35 }],
+      });
+      await page.waitForTimeout(16);
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await settled(page);
     const after = await geometry(page);
     expect(after.scrollTop).toBeGreaterThan(300);

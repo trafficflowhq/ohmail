@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
+import { localStorageDoor } from "../storage/durable.js";
 import { usePinnedScope, type StorageScope } from "../storage/scope.js";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { EmailAddress, EngineDraft, OhmailEngine } from "@ohmail/client-engine";
@@ -16,7 +17,7 @@ import { AUTOSAVE_DELAY_MS } from "./compose-autosave.js";
 import {
   STORED_CREATES, copyGoes, createLive, dropCopy, landedOf, landingOf, twins, type CreateClaim,
 } from "./draft-creates.js";
-import { readReplyMeta, writeReplyMeta } from "./mail-send.js";
+import { readReplyMeta, replyDraftKey, replyMetaKey, writeReplyMeta } from "./mail-send.js";
 
 /** What the open reply editor would store — `null` while no reply editor is open. */
 export interface ReplyDraftForm {
@@ -180,6 +181,20 @@ export function useReplyAutosave(
   /** See {@link ReplyAutosave.waitedOf}: by lane, with the binding they were written under. */
   const waited = useRef(new Map<string, { on: number; keys: Set<string> }>());
   const bindingOf = (l: string): number => bound.current.get(l) ?? 0;
+  /**
+   * THE COMPOSER IS GONE: its mount ended. Set by the cleanup declared above the close's save, so it is set before
+   * that save. A save of a composer that is gone still goes to the account; the lane's row is written into its meta
+   * only beside the rest of the lane's unit ({@link laneStands}).
+   */
+  const composerGone = useRef(false);
+  /**
+   * MAY THE LANE'S ROW BE WRITTEN NOW: always while the composer stands; once it is gone, only while the lane's
+   * stored words or its stored meta stand under its scope (an emptied reply, a retitled one, a forward with only its
+   * audience keep no words). The row is part of the reply's unit and never stands without the rest; a sweep takes both.
+   */
+  const laneStands = (l: string): boolean => !composerGone.current
+    || localStorageDoor("reply.draft").get(replyDraftKey(l, owner.current)) !== null
+    || localStorageDoor("reply.meta").get(replyMetaKey(l, owner.current)) !== null;
   /** The lane's claims under its binding, beside its meta: a reload claims them again. */
   const storeClaims = useCallback((l: string) => {
     const keys = [...(claims.current.get(l) ?? [])].filter(([, c]) => c.binding === (bound.current.get(l) ?? 0)).map(([k]) => k);
@@ -251,6 +266,8 @@ export function useReplyAutosave(
         subject: f.subject, body: f.body, html: f.html ? f.html : null,
         to: f.to, cc: f.cc, bcc: f.bcc,
       }, key !== undefined ? { key } : {});
+      // Read before the claim is let go: a create's claim stands in the lane's meta, and its release can take the meta.
+      const unit = laneStands(lane);
       inAir.current.delete(lane);
       // Answered here: only a create the outbox holds stays claimed.
       if (key !== undefined && result.status !== "queued") unclaim(lane, key);
@@ -288,9 +305,12 @@ export function useReplyAutosave(
       // A door bound another row while it was in the air: the row made here is a draft of its own.
       if (row === null && !current) return false;
       // A write of a row the lane let go of while it was in the air (the composer took it) binds it no more.
+      // Once the composer is gone, the row is written only beside the rest of the lane's unit (`unit`, above).
       if (row === null && result.status === "confirmed" && result.entityId) {
-        doorsRef.current.took(lane, result.entityId, f.body, true, true, result.revision);
-      } else if (row !== null && current) doorsRef.current.took(lane, row, f.body, result.status === "confirmed", false, result.revision);
+        if (unit) doorsRef.current.took(lane, result.entityId, f.body, true, true, result.revision);
+      } else if (row !== null && current && unit) {
+        doorsRef.current.took(lane, row, f.body, result.status === "confirmed", false, result.revision);
+      }
       saved.current.set(lane, sig);
       if (result.status === "confirmed") {
         reached.current.set(lane, seq);
@@ -357,6 +377,13 @@ export function useReplyAutosave(
     return () => window.clearTimeout(timer);
   }, [lane, signature, writable, writeNow, wireClear]);
 
+  /* Declared ABOVE the close's save: at unmount the cleanups run in this order, so the composer is gone before it. */
+  useEffect(() => {
+    composerGone.current = false;
+    return () => {
+      composerGone.current = true;
+    };
+  }, []);
   /* A CLOSED EDITOR'S WORDS GO NOW, as its pause would write them, a row made when it holds none.
      The shell going away (the editor still shows the lane) writes only a row it holds or one `owed`. */
   useEffect(() => {

@@ -8,7 +8,7 @@ import {
   useComposeAutosave, worthSaving, reopenWouldOverwrite, draftNoteKey, AUTOSAVE_DELAY_MS,
 } from "@ohmail/app-logic/writing/compose-autosave";
 import {
-  EMPTY_COMPOSE, composePlan, composeRowKey, composeSessionKey, type ComposeFields,
+  EMPTY_COMPOSE, composePlan, composeRowKey, composeSessionKey, writeComposeDraft, type ComposeFields,
 } from "@ohmail/app-logic/writing/compose";
 import { claimSendLock, sendLocksKey, type SendLock } from "@ohmail/app-logic/writing/send-lock";
 import { useReplyAutosave, type ReplyDraftForm } from "@ohmail/app-logic/writing/reply-autosave";
@@ -1473,8 +1473,9 @@ describe("the shell is the consumer, not just the harness", () => {
     const scheduleAsk = [...autosave.matchAll(
       /if \(holdOf\(engine, \{\n\s*lane: COMPOSE_SEND_KEY, draftId: readComposeRow\(owner\.current\), session: composeSessionId\(owner\.current\),\n\s*\}, owner\.current\)\.kind === "parked"\) return;/g,
     )].map((m) => m.index ?? -1);
+    /* The write's session is `sessionNow()`: the stored one, minted only while the composer stands. */
     const writeAsk = [...autosave.matchAll(
-      /const hold = holdOf\(engine, \{\n\s*lane: COMPOSE_SEND_KEY, draftId: readComposeRow\(owner\.current\), session: composeSessionId\(owner\.current\),\n\s*\}, owner\.current\);\n\s*if \(hold\.kind === "parked"\) return \{ kind: "nothing" \};/g,
+      /const hold = holdOf\(engine, \{\n\s*lane: COMPOSE_SEND_KEY, draftId: readComposeRow\(owner\.current\), session: sessionNow\(\),\n\s*\}, owner\.current\);\n\s*if \(hold\.kind === "parked"\) return \{ kind: "nothing" \};/g,
     )].map((m) => m.index ?? -1);
     expect(
       scheduleAsk.length + writeAsk.length,
@@ -2092,6 +2093,9 @@ describe("a composer's saves stay under the scope of its mount", () => {
     const { engine, answer } = slowEngine();
     await mount(engine, typed(), { scope: A });
     await settle();
+    /* The letter in this browser's store, as the composer writes it at every change: a closed composer's row stands
+       beside its letter, never alone. */
+    writeComposeDraft(typed(), A);
     await act(async () => root!.unmount());
     root = null;
     setStorageOwner(B);

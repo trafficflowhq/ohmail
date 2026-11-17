@@ -5,9 +5,9 @@
  *
  * This file is the tree in its order, and nothing else. Each piece is one mount of its own (`ground/`); a piece
  * stands here once it is built, and until then its reader throws for want of a provider. Standing: the mail state,
- * the consent row, the partition with the presented mirror, the two doors of a letter, the Screener's model. To come,
- * each with the step that moves it: the one composer, the headless feeders. The press seam is not among them: it is
- * the frame's room's own, for the frame's life.
+ * the consent row, the partition with the presented mirror, the two doors of a letter, the Screener's model, the one
+ * composer. To come, with the step that moves them: the headless feeders. The press seam is not among them: it is the
+ * frame's room's own, for the frame's life.
  *
  * A place MAY RELY ON: what stands here is mounted with the frame and again only by another scope, never by a walk
  * between places; it reaches every pane, the rail, the dock, a stage and an over alike; one instance of each piece
@@ -23,6 +23,7 @@ import { DoorsMount } from "./ground/DoorsMount.js";
 import { MailStateMount } from "./ground/MailStateMount.js";
 import { PresentedMount } from "./ground/PresentedMount.js";
 import { ScreenerMount } from "./ground/ScreenerMount.js";
+import { WritingMount } from "./ground/WritingMount.js";
 
 export function MailGround({ children }: { readonly children: ReactNode }): ReactNode {
   return (
@@ -30,7 +31,9 @@ export function MailGround({ children }: { readonly children: ReactNode }): Reac
       <ConsentMount>
         <PresentedMount>
           <DoorsMount>
-            <ScreenerMount>{children}</ScreenerMount>
+            <ScreenerMount>
+              <WritingMount>{children}</WritingMount>
+            </ScreenerMount>
           </DoorsMount>
         </PresentedMount>
       </ConsentMount>

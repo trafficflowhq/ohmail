@@ -20,16 +20,6 @@
       "leaves": "when the reply sheet is handed over to the composer's own place"
     },
     {
-      "file": "todays-write.ts",
-      "what": "The composer's record as the write place reads it, filled from the old shell's one composer.",
-      "leaves": "when the composer is mounted by the mail ground"
-    },
-    {
-      "file": "todays-write-reply.ts",
-      "what": "The open reply as the write place's reply sheet reads it, planned with the old shell's own send helpers.",
-      "leaves": "when the composer is mounted by the mail ground"
-    },
-    {
       "file": "todays-ground.tsx",
       "what": "The mail ground's contexts, filled with the old shell's own consent row, partition and presented mirror: the one file that reads the old shell for a seated place.",
       "leaves": "when every host hands the mail ground itself"

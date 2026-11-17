@@ -1,7 +1,7 @@
 /**
- * TODAY'S REPLY, AS THE NEW SCREEN READS IT: the open reply planned with the helpers the shell's send builds it with
+ * THE OPEN REPLY, AS THE SCREEN READS IT: planned with the helpers the composer's send builds it with
  * (`replyEnvelopePlan`, `forwardSend`, `resolveReplyFrom`), so the fold, the lines, the From line and Send's gate are
- * one derivation with the wire, as the old reply's view derives them at its mount.
+ * one derivation with the wire.
  */
 import {
   forwardSubject,
@@ -10,9 +10,8 @@ import {
   type FromOption,
   type OhmailEngine,
 } from "@ohmail/client-engine";
-import { inlineForwardKey, sendRefusal } from "@ohmail/app-logic/writing/mail-send";
-import type { MailSend } from "@ohmail/app-logic/writing/compose";
-import type { WriteReply } from "@ohmail/app/write";
+import type { MailSend } from "./compose.js";
+import { inlineForwardKey, sendRefusal } from "./mail-send.js";
 import {
   formatRecipientChips,
   replyAllRecipients,
@@ -20,9 +19,9 @@ import {
   replyEnvelopePlan,
   replyRecipients,
   resolveReplyFrom,
-} from "@ohmail/app-logic/writing/compose-from";
-import { forwardEnvelopePlan, forwardSend } from "@ohmail/app-logic/writing/forward-send";
-import type { ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
+} from "./compose-from.js";
+import { forwardEnvelopePlan, forwardSend } from "./forward-send.js";
+import type { ShellCompose } from "./shell-compose.js";
 
 export interface ReplyContext {
   readonly engine: OhmailEngine;
@@ -32,7 +31,7 @@ export interface ReplyContext {
 }
 
 /** The open reply, planned; null when none is open or its letter is not in the mirror. */
-export function replyOf(compose: ShellCompose, ctx: ReplyContext): WriteReply | null {
+export function replyOf(compose: ShellCompose, ctx: ReplyContext) {
   if (ctx.replyTo === null) return null;
   const mode = compose.replyMode;
   const message =
@@ -59,7 +58,7 @@ export function replyOf(compose: ShellCompose, ctx: ReplyContext): WriteReply | 
     return {
       ...base,
       mode,
-      audience: "forward",
+      audience: "forward" as const,
       seed: { to: "", cc: "", bcc: "" },
       invalid: plan.invalid,
       subject: { value: forwardSubject(message.subject), editable: false },
@@ -71,7 +70,13 @@ export function replyOf(compose: ShellCompose, ctx: ReplyContext): WriteReply | 
   const all = compose.replyAll ? replyAllRecipients(message, own) : null;
   const to = all ? all.to : (replyRecipients(message, own) ?? [message.from]);
   const cc = all ? all.cc : [];
-  const would: MailSend = { kind: "mail_send", inReplyTo: message.id, body, ...withFiles, ...replyEnvelopeOnWire(plan) };
+  const would: MailSend = {
+    kind: "mail_send",
+    inReplyTo: message.id,
+    body,
+    ...withFiles,
+    ...replyEnvelopeOnWire(plan),
+  };
   return {
     ...base,
     mode,
@@ -84,7 +89,10 @@ export function replyOf(compose: ShellCompose, ctx: ReplyContext): WriteReply | 
   };
 }
 
-const personOf = (p: { name?: string | null; address: string }): { name: string | null; address: string } => ({
+const personOf = (p: {
+  name?: string | null;
+  address: string;
+}): { name: string | null; address: string } => ({
   name: p.name ?? null,
   address: p.address,
 });

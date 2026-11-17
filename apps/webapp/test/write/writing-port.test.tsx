@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 /**
- * THE COMPOSITION AS THE NEW SCREEN READS IT (`todays-write.ts`): the record's members handed through, and the members
+ * THE COMPOSITION AS THE NEW SCREEN READS IT (`writing-of.ts`, beside the composer): the record's members handed through, and the members
  * the old view's mount derives derived the same way: the send on screen, the hold and its row, the signatures only
  * once they are known.
  */
@@ -10,13 +10,15 @@ import { screen } from "@testing-library/react";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import type { SendState } from "@ohmail/app-logic/writing/mail-send";
 import en from "../../messages/en.json";
-import { writingOf, todaysWriteBeside, SEND_LATER_FLOOR_MS } from "../../app/shell/todays-write";
+import { fileSize } from "@ohmail/app/mail/ground";
+import { writingOf, writeBesideOf, SEND_LATER_FLOOR_MS } from "@ohmail/app-logic/writing/writing-of";
 import { act, stubDom } from "../_draft-shell.js";
 import { letter } from "../_handoff-steps.js";
 import { mountWriting, rounds, unmountWritings } from "./writing-world.js";
 
 const t = ((key: string) => key) as unknown as ReturnType<typeof useTranslations>;
 const KNOWN = { signatures: { mb1: "Mila" }, signaturesHtml: {}, signaturesKnown: true };
+const ONLINE = (): boolean => true;
 
 beforeEach(() => {
   try {
@@ -53,16 +55,29 @@ describe("writingOf", () => {
     expect(after.composeHeld).toEqual({ draftId: "d-a" });
     expect(after.compose.subject).toBe("Plans for Friday");
   });
+
+  it("reads the session of its scope and never mints one: after the account's keys are swept it writes none", async () => {
+    const w = await mountWriting();
+    const ctx = { engine: w.engine, scope: "acc-1", replyTo: null, options: [], consent: KNOWN, drafts: [], noCredits: false, t };
+    const keysOf = (): string[] => Object.keys(window.localStorage).filter((key) => key.includes("acc-1"));
+    /* The account's keys swept while the composition stands; then the composition is read, as each render reads it. */
+    for (const key of keysOf()) window.localStorage.removeItem(key);
+    const read = writingOf(w.now(), ctx);
+    expect(keysOf(), "a key of the account the composition's read wrote").toEqual([]);
+    expect(read.composeSend.phase).toBe("idle");
+    expect(read.composeHeld).toBeNull();
+  });
 });
 
-describe("todaysWriteBeside", () => {
+describe("writeBesideOf", () => {
   it("says the scope it was made for and refuses a time inside the floor", async () => {
     const w = await mountWriting();
-    const beside = todaysWriteBeside(w.engine, "acc-1", undefined, true);
+    const beside = writeBesideOf(w.engine, "acc-1", "strict", true, fileSize, ONLINE);
     expect(beside.scope).toBe("acc-1");
     expect(beside.surface).toBe("strict");
-    expect(todaysWriteBeside(w.engine, "acc-1", null, true).surface).toBe("mailbox");
-    expect(todaysWriteBeside(w.engine, "acc-1", 4096, true).surface).toBe(4096);
+    /* What one send may carry is the host's own answer, handed on as the host says it. */
+    expect(writeBesideOf(w.engine, "acc-1", "mailbox", true, fileSize, ONLINE).surface).toBe("mailbox");
+    expect(writeBesideOf(w.engine, "acc-1", 4096, true, fileSize, ONLINE).surface).toBe(4096);
     const now = Date.parse("2026-09-27T09:00:00.000Z");
     expect(beside.later.floor(now)).toBe(now + SEND_LATER_FLOOR_MS);
     expect(beside.later.options(now).every((o) => Date.parse(o.at) > now + SEND_LATER_FLOOR_MS)).toBe(true);

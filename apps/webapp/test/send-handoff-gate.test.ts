@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mayHandOff, type HandOffInputs } from "../app/shell/send-handoff";
+import { mayHandOff, type HandOffInputs } from "@ohmail/app-logic/writing/send-handoff";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { SendLineItem } from "@ohmail/app-logic/writing/mail-send";
 import { lineRows } from "../app/shell/SendingLine";

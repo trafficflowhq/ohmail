@@ -75,6 +75,7 @@ export async function pullForNotice(
   const ctx = { db, accountId: channel.accountId, userId: null, now: () => new Date(), requestId: "" };
   return runInTransaction(ctx, async (txCtx) => {
     const tx = bridgeTx(txCtx.db);
+    // scoped-by: a setting of this transaction alone, opened on the handle bound to the channel's account; no row is read or written
     await tx.execute(sql.raw(`set local lock_timeout = '${NOTICE_LOCK_TIMEOUT_MS}ms'`));
     const connections = await pullConnectionDue(tx, channel, NOTICE_SPACING_SECONDS);
     const calendars = await pullCalendarsDue(tx, channel, NOTICE_SPACING_SECONDS);

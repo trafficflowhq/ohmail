@@ -107,6 +107,8 @@ const DECLARED: Record<string, string> = {
     "the kit's letter row gives way on the sender's address, with an ellipsis, so that the longer German stamp stands whole",
   'cut: "nadja@erdton-atelier.example"':
     "the kit's letter row gives way on the sender's address, with an ellipsis, so that the longer German stamp stands whole",
+  'cut: "flurina@haldenlicht.example"':
+    "the kit's letter row gives way on the sender's address, with an ellipsis, so that the longer German stamp stands whole",
 };
 
 describe("the places' states, each drawn", () => {

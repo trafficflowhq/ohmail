@@ -176,13 +176,13 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.ui.compose.imageQuality", store: "localStorage", owner: "web",
-    at: ["apps/webapp/app/components/image-quality.ts", "apps/mobile/src/shell/kept-families.ts"],
+    at: ["packages/app-logic/src/write/image-quality.ts", "apps/mobile/src/shell/kept-families.ts"],
     holds: "the picture quality chosen for attachments, per account; one more under the bare name, which stays",
     words: false, erased: "account-erase", mark: "kept",
   },
   {
     key: "ohmail.ui.compose.imageShrink", store: "localStorage", owner: "web",
-    at: ["apps/webapp/app/components/image-quality.ts", "apps/mobile/src/shell/kept-families.ts"],
+    at: ["packages/app-logic/src/write/image-quality.ts", "apps/mobile/src/shell/kept-families.ts"],
     holds: "the same preference under the dial's earlier name and scale",
     words: false, erased: "account-erase", mark: { rewritten: "ohmail.ui.compose.imageQuality" },
   },
