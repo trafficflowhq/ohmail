@@ -3,10 +3,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { useSuggestText } from "../app/shell/suggest-text";
 import de from "../messages/de.json";
 import en from "../messages/en.json";
 import { ApiError } from "../app/api-client";
-import { aiRefusalKey, clearedByAccess } from "../app/shell/ai-refusal-copy";
+import { aiRefusalKey, clearedByAccess } from "@ohmail/app-logic/text/ai-refusal-copy";
 import type { SuggestBatchControl, SuggestWire } from "../app/shell/screener-suggest";
 
 /**
@@ -69,7 +70,7 @@ async function mount(wire: SuggestWire, locale: "en" | "de"): Promise<() => Sugg
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   let control: SuggestBatchControl | null = null;
   function Probe(): null {
-    const s = useScreenerSuggestions({ active: true, toast: (() => {}) as never, wire });
+    const s = useScreenerSuggestions({ text: useSuggestText(), active: true, toast: (() => {}) as never, wire });
     control = s.forSenders([SENDER]);
     return null;
   }

@@ -251,6 +251,9 @@ const SIDECAR_SUBSTITUTES = {
   /* The desktop's streamed save writes a file the shell named; a phone names none. The route's own
      module, the specifier `engine.ts` writes; `attachment-file.ts` then is in no phone graph. */
   "./attachment-file-route.js": path.join(PHONE, "attachment-file-route.ts"),
+  /* The copies a desktop's store update keeps in its data folder, and what removes them
+     (`node:fs`). A phone's store keeps none there, so its engine removes none. */
+  "./store-copies.js": path.join(PHONE, "store-copies.ts"),
 };
 
 /**

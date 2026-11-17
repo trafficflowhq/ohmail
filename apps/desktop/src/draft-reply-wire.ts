@@ -7,7 +7,7 @@
  * (`scan:host` refuses the bridge in the bundle a phone is handed).
  */
 
-import type { DraftReplyRead, DraftReplyWire } from "../../webapp/app/shell/draft-reply.js";
+import type { DraftReplyRead, DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 
 /**
  * A REFUSAL THAT CARRIES THE ENGINE'S OWN ENVELOPE — status, code, sentence and details, out of

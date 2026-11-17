@@ -8,7 +8,7 @@
 import { useTranslations } from "next-intl";
 import { Icon, formatFileSize } from "@ohmail/ui";
 import { activeFormatLocale } from "./locale";
-import type { ForwardFilesPlan, ForwardLine } from "./forward-files";
+import type { ForwardFilesPlan, ForwardLine } from "@ohmail/app-logic/writing/forward-files";
 
 /** A plan sentence in words, its byte counts in the reader's own units. */
 export function useForwardLine(): (line: ForwardLine) => string {

@@ -20,9 +20,10 @@ import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
 import type { ToastOptions } from "@ohmail/app-logic/press/report";
 import type { SendState } from "@ohmail/app-logic/writing/mail-send";
 import messages from "../../messages/en.json";
-import { parseHash } from "../../app/shell/routing";
-import { useShellCompose, type ShellCompose } from "../../app/shell/shell-compose";
-import type { DraftReplyWire } from "../../app/shell/draft-reply";
+import { go, parseHash } from "../../app/shell/routing";
+import { useShellCompose, type ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
+import { TODAYS_COMPOSER_WORDS } from "../../app/shell/mail-send-text";
 import { todaysWriteBeside, writingOf } from "../../app/shell/todays-write";
 import { TextProvider } from "@ohmail/app/text";
 import { WriteAbove, writeEntry, type WriteBeside } from "@ohmail/app/write";
@@ -125,8 +126,10 @@ function Bare({
     engine,
     reader,
     t,
+    words: TODAYS_COMPOSER_WORDS,
     toast,
     route: { view: routeView as never },
+    go,
     consent: consent as never,
     facts: roster,
     mailboxes: roster.map((m) => ({ id: m.id, address: m.address })) as never,
@@ -147,7 +150,8 @@ function Bare({
     mailtoDraft: null,
     onMailtoDraftSeeded: undefined,
     scope,
-    ...(draftWire !== undefined ? { draftReplyWire: draftWire } : {}),
+    /* A case that names no wire mounts a host with no drafter: the composer then answers no control. */
+    draftReplyWire: draftWire ?? "none",
   });
   // The shell's open of a reply draft's letter, as it stands when the letter is on this view: its reply opens.
   seen.current.openMessageRef.current = (m, o) => {

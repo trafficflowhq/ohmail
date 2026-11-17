@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
@@ -82,6 +82,7 @@ async function mount(): Promise<void> {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useJunkWindow } = await import("../app/shell/junk-window.js");
+  const { cloudWire } = await import("../app/(product)/mailbox/junk-wire.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const store = new MemoryMirrorStore();
@@ -99,7 +100,7 @@ async function mount(): Promise<void> {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const state = useScreenerState(engine, null, v, toast as never, useScreenerText());
-    const junk = useJunkWindow(true, toast as never);
+    const junk = useJunkWindow(true, toast as never, cloudWire, useTranslations("screener") as never);
     return h(ScreenerView, {
       owed: false, state, segment: "spam", settled: true,
       selection: { waiting: null, screened: null, spam: null } as never,

@@ -195,6 +195,34 @@ describe("the engine read as one text", () => {
     }
   });
 
+  // A section's body ends with its hand-over lines, `box.x = x;`; a statement before them is kept.
+  it("carries every line of every section's body, as often as the sections hold it", () => {
+    const units = new Map(engineUnitFiles().map((f) => [basename(f, ".ts"), readFileSync(f, "utf8")]));
+    const fields = new Set(
+      [...RECORDS].flatMap((name) => [...(units.get(name) ?? "").matchAll(/^ {2}(?:readonly )?([A-Za-z_$][\w$]*)\??:/gm)].map((m) => m[1]!)),
+    );
+    const unspelled = (line: string): string => line
+      .replace(/\b(?:scope|box)\.([A-Za-z_$][\w$]*)/g, (whole, name: string) => (fields.has(name) ? name : whole))
+      .replace(/\b([A-Za-z_$][\w$]*): \1(?=,|\s*\}|\s*$)/g, "$1");
+    const count = (lines: string[]): Map<string, number> => {
+      const counts = new Map<string, number>();
+      for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
+      return counts;
+    };
+    const body: string[] = [];
+    for (const [name, text] of units) {
+      if (RECORDS.has(name) || !/^export (?:async )?function \w+Section\(/m.test(text)) continue;
+      const lines = carried(text, false);
+      while (lines.length > 0 && (/^\s*(?:scope|box)\.([\w$]+) = \1;\s*$/.test(lines.at(-1)!) || lines.at(-1)!.trim() === "")) lines.pop();
+      body.push(...lines.filter((l) => l.trim() !== "").map(unspelled));
+    }
+    expect(body.length, "no section was read").toBeGreaterThan(0);
+    const one = count(readEngineAsOneText().split("\n"));
+    const short = [...count(body)].filter(([line, n]) => (one.get(line) ?? 0) < n)
+      .map(([line, n]) => `${line.trim()}: ${one.get(line) ?? 0} of ${n}`);
+    expect(short).toEqual([]);
+  });
+
   it("gives the door, its prelude and its section each once, the records' spelling taken out", () => {
     const one = readEngineAsOneText(unit());
     for (const line of Object.values(OWN_LINES)) expect(times(one, line), line).toBe(1);
@@ -219,5 +247,13 @@ describe("the engine read as one text", () => {
   it.each(SECTION_PLANTS)("refuses a section file that holds a statement %s", (_where, section) => {
     const dir = unit({ section });
     expect(() => readEngineAsOneText(dir)).toThrow(/engine-mailbox-drain .*statement outside its imports and its maker/);
+  });
+
+  // A file named off the unit's pattern is never read: the door's statement naming it would drop it unseen.
+  it("refuses a door that names an engine file the unit does not hold", () => {
+    const dir = unit({
+      door: (d) => d.replace('} from "./engine-routes.js";\n\nexport async', '} from "./engine-routes.js";\nexport { summarizeDrain } from "./engine-Routes.js";\n\nexport async'),
+    });
+    expect(() => readEngineAsOneText(dir)).toThrow("the engine's one text cannot place ./engine-Routes.js: no unit file of that name");
   });
 });

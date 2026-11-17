@@ -121,7 +121,7 @@ describe("census: every Forward door reads the one helper", () => {
   });
 
   it("the press decides in forwardPress — the shell's openForward and the phone's reader model", () => {
-    const shell = code("apps/webapp/app/shell/shell-compose.ts");
+    const shell = code("packages/app-logic/src/writing/shell-compose.ts");
     expect(shell).toMatch(/const press = forwardPress\(m, held != null\)/);
     expect(code("apps/mobile/src/state/live.ts")).toMatch(/forwardAsk: forwardPress\(m\)\.ask/);
   });

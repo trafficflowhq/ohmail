@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { forwardEnvelopePlan, forwardSend } from "../app/shell/forward-send";
+import { forwardEnvelopePlan, forwardSend } from "@ohmail/app-logic/writing/forward-send";
 import { canSend, sendKeyOf, inlineForwardKey, COMPOSE_SEND_KEY } from "@ohmail/app-logic/writing/mail-send";
 import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
+import { TODAYS_COMPOSER_WORDS } from "../app/shell/mail-send-text";
 import type { EngineMessage } from "@ohmail/client-engine";
 
 /**
@@ -42,9 +43,11 @@ describe("forwardEnvelopePlan — recipients are the user's, never derived", () 
 describe("forwardSend — the wire, key by key", () => {
   it("carries forwardOf and Fwd:, never inReplyTo; optional keys ride only when present", () => {
     const plan = forwardEnvelopePlan({ to: "a@b.test, ", cc: "", bcc: "" }, []);
+    /* The press hands the reader's clock, as the composer's words say it at that moment. */
     setActiveFormatZone("Europe/Zurich");
-    const m = forwardSend(parent, { body: "note", mailboxId: "mb1", plan });
+    const clock = TODAYS_COMPOSER_WORDS.clock();
     setActiveFormatZone(null);
+    const m = forwardSend(parent, { body: "note", mailboxId: "mb1", plan, clock });
     expect(m).toEqual({
       kind: "mail_send",
       inReplyTo: null,
@@ -61,6 +64,8 @@ describe("forwardSend — the wire, key by key", () => {
     // a forward has no parent-derived sender the way `enrich` gives a reply one.
     const bare = forwardSend(parent, { body: "note", plan });
     expect("mailboxId" in bare).toBe(false);
+    // A caller that hands no clock (an editor's lock judging the mutation) puts none on the wire.
+    expect("forwardClock" in bare).toBe(false);
     expect(canSend({ phase: "idle" }, bare)).toBe(false);
   });
 });

@@ -668,7 +668,7 @@ describe("Cancel is offered exactly when cancelling can do something", () => {
  */
 describe("the compose cancel asks for the withdrawal before it destroys anything", () => {
   const shell = (): string => {
-    const rel = "app/shell/shell-compose.ts";
+    const rel = "../../packages/app-logic/src/writing/shell-compose.ts";
     try {
       return readFileSync(resolve(process.cwd(), `apps/webapp/${rel}`), "utf8");
     } catch {

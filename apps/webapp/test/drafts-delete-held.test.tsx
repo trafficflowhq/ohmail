@@ -224,7 +224,7 @@ describe("Deleting a draft this browser holds a send record for", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const shell = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8",
     );
     /* BOTH BOUNDS USED TO NAME A HOOK, and both were wrong by the time this ran: the codemod
        spells that declaration `useStableCallback`, so `indexOf` returned -1, `slice(-1, …)` handed

@@ -37,7 +37,8 @@ async function open(dir: string, transition?: { openSealed?: Decrypts; before?: 
   const lines: { event: string; detail: Record<string, unknown> }[] = [];
   // The floor at zero, so every entry applied says so: which entries ran is what these cases read.
   const opened = await openLocalDb(dir, {
-    log: (event, detail) => lines.push({ event, detail }), slowMigrationFloorMs: 0, ...(transition ? { transition } : {}),
+    // The way is named, as the desktop's own engine names it: without one such a store is refused.
+    log: (event, detail) => lines.push({ event, detail }), slowMigrationFloorMs: 0, transition: { way: "copy", ...transition },
   });
   try {
     const one = async <T>(query: ReturnType<typeof sql>): Promise<T> => ((await opened.db.execute(query)) as unknown as { rows: T[] }).rows[0]!;
@@ -92,8 +93,8 @@ describe("a desktop's 1.0.11 data folder, opened by this engine", () => {
     const dir = folderAtOldHead();
     // No opener handed: the default opens nothing, and this store holds a sealed credential.
     const failed = await open(dir).catch((e: unknown) => e);
-    // The engine's own class for a store that would not open, carrying the transition's code and cause.
-    expect(failed).toMatchObject({ name: "LocalStoreOpenError", code: "transition_failed" });
+    // The engine's own class for a store whose update was refused, carrying the transition's code and cause.
+    expect(failed).toMatchObject({ name: "StoreUpdateRefusedError", code: "transition_failed" });
     expect((failed as { cause?: unknown }).cause).toBeInstanceOf(TransitionFailed);
     expect(((failed as { cause: TransitionFailed }).cause).at.stage).toBe("sealed");
     const client = new PGlite(join(dir, PGDATA_SUBDIR), { extensions: LOCAL_STORE_EXTENSIONS });

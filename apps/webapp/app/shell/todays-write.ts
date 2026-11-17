@@ -13,13 +13,14 @@ import {
   heldRowUnverified,
 } from "@ohmail/app-logic/writing/mail-send";
 import { holdOf } from "@ohmail/app-logic/writing/send-lock";
-import type { Writing, WriteBeside } from "@ohmail/app/write";
+import { DRAFT_REPLY_COST_CREDITS, NEW_LETTER } from "@ohmail/app-logic/writing/draft-reply";
+import type { Writing, WriteBeside, WriteDraftChrome, WriteDraftControl } from "@ohmail/app/write";
 import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
 import { composedLocalInput, localInputValue, scheduleLabel, sendLaterMornings, todayEvening } from "./format";
 import { activeFormatZone } from "./locale";
 import { gatedInvalid, joinRecipients, moveRecipient, splitRecipients } from "./RecipientField";
 import { filesNotKeptFor, useScheduleFiles } from "./schedule-files";
-import type { ShellCompose } from "./shell-compose";
+import type { ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
 import { fileSize, sendLine, sendLineValues } from "./SendStatus";
 import { replyOf } from "./todays-write-reply";
 import { compressImage, readImageQualityLevel, writeImageQualityLevel } from "../components/image-quality";
@@ -40,6 +41,30 @@ export interface WritingContext {
   readonly noCredits: boolean;
   readonly t: ReturnType<typeof useTranslations>;
 }
+
+const NOTHING = (): void => undefined;
+
+/**
+ * The screen's draft control over a host that names no drafter. The composer answers no control there (`null`): no
+ * hook stands behind this one, so it draws nothing (`offered: false`) and none of its doors can ask anything.
+ */
+const NO_DRAFTER: WriteDraftControl = {
+  offered: false,
+  phase: "closed",
+  messageId: null,
+  cost: DRAFT_REPLY_COST_CREDITS,
+  notice: null,
+  open: NOTHING,
+  cancel: NOTHING,
+  confirm: NOTHING,
+  press: NOTHING,
+  fromText: "none",
+  letter: "none",
+  letterId: NEW_LETTER,
+  own: new Map(),
+  keep: NOTHING,
+};
+const NO_DRAFT_CHROME: WriteDraftChrome = { control: NO_DRAFTER, pending: null, resolve: NOTHING };
 
 /** The composition as `write` reads it: the record's own members, and the derived ones as the old view's mount has them. */
 export function writingOf(compose: ShellCompose, ctx: WritingContext): Writing {
@@ -94,8 +119,13 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext): Writing {
     closeReply: compose.closeReply,
     discardRefusal: compose.discardRefusal,
     resolveHeldSend: compose.resolveHeldSend,
-    draftReply: compose.draftReply,
-    draftReplyChrome: ctx.noCredits ? { ...compose.draftReplyChrome, noCredits: true } : compose.draftReplyChrome,
+    draftReply: compose.draftReply ?? NO_DRAFTER,
+    draftReplyChrome:
+      compose.draftReplyChrome === null
+        ? NO_DRAFT_CHROME
+        : ctx.noCredits
+          ? { ...compose.draftReplyChrome, noCredits: true }
+          : compose.draftReplyChrome,
     openDraft: compose.openDraft,
     writeTo: (address, name) => compose.writeTo(address, name),
     composeSend: send,

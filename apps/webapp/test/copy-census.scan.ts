@@ -323,8 +323,11 @@ export interface KeyRead {
 export interface HandedReaders {
   /** Identifier in the file → the namespace of the reader it holds ("" is the catalogue root). */
   readers: Record<string, string>;
-  /** Where the namespaces are chosen: every reader bound in that file, or every reader handed at each call of that hook. */
-  glue: { file: string } | { call: string };
+  /**
+   * Where the namespaces are chosen: every reader bound in that file, or every reader handed at each call of that
+   * hook (of those hooks, for a file whose hooks are each handed a reader of their own).
+   */
+  glue: { file: string } | { call: string } | { calls: readonly string[] };
 }
 
 export const HANDED_READERS: Record<string, HandedReaders> = {
@@ -332,9 +335,32 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
     readers: { t: "screener", ts: "screening", tWhy: "ohbox", tSession: "session" },
     glue: { file: "apps/webapp/app/shell/screener-text.ts" },
   },
+  "packages/app-logic/src/screener/junk-window.ts": {
+    readers: { t: "screener" },
+    glue: { call: "useJunkWindow" },
+  },
+  "packages/app-logic/src/screener/screener-suggest.ts": {
+    readers: { t: "screener", tAi: "aiRefusal" },
+    glue: { file: "apps/webapp/app/shell/suggest-text.ts" },
+  },
+  /* The send machine's words are made from the composer's own reader (`useSendText`), chosen where the composer is called. */
   "packages/app-logic/src/writing/mail-send.ts": {
     readers: { t: "" },
-    glue: { file: "apps/webapp/app/shell/mail-send-text.ts" },
+    glue: { call: "useShellCompose" },
+  },
+  /* The drafted reply's hook is handed the composer's own reader: the one chosen at each call of the composer. */
+  "packages/app-logic/src/writing/draft-reply.ts": {
+    readers: { t: "" },
+    glue: { call: "useShellCompose" },
+  },
+  "packages/app-logic/src/writing/shell-compose.ts": {
+    readers: { t: "" },
+    glue: { call: "useShellCompose" },
+  },
+  /* The rows' words: the badges' hook is handed the `message` reader, the sent label's hook the `ohbox` one. */
+  "packages/app-logic/src/text/row-copy.ts": {
+    readers: { t: "message", tOhbox: "ohbox" },
+    glue: { calls: ["useRowBadgeCopy", "useSentLabel"] },
   },
   "packages/app-logic/src/keys/zone-nav.ts": {
     readers: { t: "shortcuts" },
@@ -391,7 +417,7 @@ const parse = (file: string): ts.SourceFile =>
 
 /**
  * The namespaces a row's glue chooses: for `{ file }` every reader bound in that file, for
- * `{ call }` every reader handed at a call of that hook, as an argument (`useZoneNav(
+ * `{ call }` (and each of `{ calls }`) every reader handed at a call of that hook, as an argument (`useZoneNav(
  * useTranslations("shortcuts"), …)`) or as a property of one (`useShellDispatch({ t })`, where
  * `t` is resolved to the nearest binding as the scan does). A variable namespace answers null.
  */
@@ -400,6 +426,7 @@ export function handedReaderNamespaces(repo: string, roots: string[], glue: Hand
   const files = "file" in glue ? [path.join(repo, glue.file)] : sourceFiles(repo, roots);
   for (const file of files) {
     const sf = parse(file);
+    const calls = "call" in glue ? [glue.call] : "calls" in glue ? glue.calls : [];
     const scopes: Map<string, string | null>[] = [new Map()];
     const lookup = (name: string): string | null | undefined => {
       for (let i = scopes.length - 1; i >= 0; i--) if (scopes[i]!.has(name)) return scopes[i]!.get(name);
@@ -425,7 +452,7 @@ export function handedReaderNamespaces(repo: string, roots: string[], glue: Hand
           if ("file" in glue) out.add(ns);
         }
       }
-      if ("call" in glue && ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === glue.call) {
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && calls.includes(n.expression.text)) {
         for (const arg of n.arguments) {
           if (ts.isObjectLiteralExpression(arg)) {
             for (const prop of arg.properties) {

@@ -3621,8 +3621,9 @@ const CSP_HOST_SOURCE = /^https?:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5}
  * (query/fragment ignored); prefixes and case variants blocked; `%`-spellings match after
  * decoding ({@link CSP_HOST_SOURCE} refuses `%`). The redirect hole is closed at the proxy
  * (never 3xx, mutation-watched). Minted via the caller's proxy fn ({@link CSP_PROBE_URL});
- * fail-closed null. An empty answer (a window that may not read for this account) and the
- * origin's root are null too: either would name every path of the origin.
+ * fail-closed null. An empty answer (a window that may not read for this account) and a path
+ * that ends in `/` (a directory source, the origin's root its widest) are null too: either would
+ * name every path under it.
  */
 export function proxyImgSource(proxy: (url: string) => string, pageOrigin: string): string | null {
   let minted: string;
@@ -3649,7 +3650,7 @@ export function proxyImgSource(proxy: (url: string) => string, pageOrigin: strin
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") return null;
   if (u.origin !== origin) return null;
-  if (u.pathname === "/") return null;
+  if (u.pathname.endsWith("/")) return null;
   const source = `${u.origin}${u.pathname}`;
   return CSP_HOST_SOURCE.test(source) ? source : null;
 }

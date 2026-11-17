@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as door from "../src/engine.js";
@@ -77,6 +77,55 @@ const named = (from: string, specifier: string): string | null =>
   specifier.startsWith(".") ? resolve(dirname(from), specifier).replace(/\.(?:[cm]?[jt]sx?)$/, "") : null;
 const bare = (path: string): string => path.replace(/\.(?:[cm]?[jt]sx?)$/, "");
 
+/** The modules a file loads when it runs: its imports and re-exports of a value, not those of types alone. */
+function valueImportsOf(sf: ts.SourceFile): string[] {
+  const out: string[] = [];
+  for (const st of sf.statements) {
+    if (ts.isImportDeclaration(st) && ts.isStringLiteral(st.moduleSpecifier)) {
+      const clause = st.importClause;
+      const bindings = clause?.namedBindings;
+      if (clause === undefined || (!clause.isTypeOnly && (clause.name !== undefined || (bindings !== undefined
+        && (ts.isNamespaceImport(bindings) || bindings.elements.some((e) => !e.isTypeOnly)))))) out.push(st.moduleSpecifier.text);
+    } else if (ts.isExportDeclaration(st) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
+      const clause = st.exportClause;
+      if (!st.isTypeOnly && (clause === undefined || !ts.isNamedExports(clause) || clause.elements.some((e) => !e.isTypeOnly))) {
+        out.push(st.moduleSpecifier.text);
+      }
+    }
+  }
+  return out;
+}
+
+/** The files of the engine's folder a file loads by a relative value import, each read once. */
+const loaded = new Map<string, string[]>();
+function loadsOf(file: string): string[] {
+  let found = loaded.get(file);
+  if (found === undefined) {
+    found = valueImportsOf(parse(file)).flatMap((s) => {
+      const base = named(file, s);
+      if (base === null || relative(ENGINE_SRC, base).startsWith("..")) return [];
+      return [".ts", ".tsx", ".js", ".mjs", `${sep}index.ts`].map((ext) => base + ext).filter((p) => existsSync(p)).slice(0, 1);
+    });
+    loaded.set(file, found);
+  }
+  return found;
+}
+
+/** The chain of value imports by which a part loads the door, or null when what it loads in the folder never does. */
+function wayToTheDoor(part: string): string[] | null {
+  const seen = new Set([part]);
+  const queue = [[part]];
+  for (let chain = queue.shift(); chain !== undefined; chain = queue.shift()) {
+    for (const next of loadsOf(chain.at(-1)!)) {
+      if (bare(next) === bare(ENGINE_DOOR)) return [...chain, next];
+      if (seen.has(next)) continue;
+      seen.add(next);
+      queue.push([...chain, next]);
+    }
+  }
+  return null;
+}
+
 const SKIP = new Set(["node_modules", ".git", "dist", "build", "generated", "target", "coverage", ".gradle", "Pods", ".expo"]);
 /** Every source file of the repository that names an `engine-` module anywhere in its text, the unit's own aside. */
 function namingAPart(dir: string, unit: ReadonlySet<string>, out: string[] = []): string[] {
@@ -104,6 +153,10 @@ describe("the desktop engine's door", () => {
     const through = parts.flatMap((f) => specifiersOf(parse(f)).filter((s) => named(f, s) === bare(ENGINE_DOOR))
       .map((s) => `${relative(ROOT, f)} imports ${s}`));
     expect(through).toEqual([]);
+    // Nor through what a part loads: a part that imports `./index.js`, which loads the door, closes the same cycle.
+    const around = parts.map((f) => wayToTheDoor(f)).filter((way) => way !== null)
+      .map((way) => way.map((p) => relative(ROOT, p)).join(" -> "));
+    expect(around).toEqual([]);
   });
 
   it("is the only way into the unit: nothing outside it imports one of its parts", () => {

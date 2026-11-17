@@ -93,7 +93,7 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
   // ELEVEN: the row a reply stored before a door bound its own create's row goes only while free.
   // TWELVE: a dock reads the row its lane last wrote, at its open and while open: one sent from another device ends the lane.
   // ELEVEN AGAIN: writeTo and the mailto seam became one door, `replaceComposer`, which Compose takes too.
-  ["shell-compose.ts", 11,
+  ["../../../../packages/app-logic/src/writing/shell-compose.ts", 11,
     "openDraft (above the reply arm, so a held reply takes the held view), replaceComposer (the "
     + "new-letter door: Compose, Write-to, a mail link), the Drafts list's Delete, replySendState (the reply editor's own lane, row "
     + "included), the orphaned-lane promotion (a dead parent's reply becoming a row), the "
@@ -159,7 +159,7 @@ describe("the send hold is answered in one place, and every write site asks", ()
       // IN SOURCE ORDER, which is what the assertion below compares. Both moved to
       // `shell-compose.ts` with the verbs that read them (ARCH-022); the empty entry below keeps
       // `AppShell.tsx` asked, so a comparison written back into the shell frame still refuses.
-      "shell-compose.ts": [
+      "../../../../packages/app-logic/src/writing/shell-compose.ts": [
         // Reads the HOLD's own answer, as the composer's sent-elsewhere read does: a `sent` by status
         // is another device's send, and Reply ends the lane's row as a delete ends it.
         'const sentElsewhere = hold !== null && hold.kind === "parked" && hold.by === "status" && hold.status === "sent";',
@@ -278,7 +278,7 @@ describe("the send hold is answered in one place, and every write site asks", ()
     ).toBe(1);
 
     /* ONE FILE IN THE SHELL PULLS IT, and it is the hook that owns the send. */
-    const pullers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", "AppShell.tsx", "shell-compose.ts"]
+    const pullers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", "AppShell.tsx", "../../../../packages/app-logic/src/writing/shell-compose.ts"]
       .filter((f) => code(SHELL(f)).some((l) => /\.flushPending\(/.test(l)));
     expect(
       pullers,
@@ -307,7 +307,7 @@ describe("the send hold is answered in one place, and every write site asks", ()
      * fires on innocent content — which discards real work and gets loosened until it fires on
      * nothing.
      */
-    const producers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", "AppShell.tsx", "shell-compose.ts"]
+    const producers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", "AppShell.tsx", "../../../../packages/app-logic/src/writing/shell-compose.ts"]
       .flatMap((f) => [...SHELL(f).matchAll(/\blocked=\{/g)].map(() => f));
     expect(
       producers,
@@ -547,7 +547,7 @@ describe("what a site may do under each answer", () => {
      * into the other by somebody who has only seen one of the two arguments.
      */
     const autosave = SHELL("../../../../packages/app-logic/src/writing/compose-autosave.ts");
-    const shell = SHELL("shell-compose.ts");
+    const shell = SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts");
     const send = SHELL("../../../../packages/app-logic/src/writing/mail-send.ts");
 
     expect(autosave, "the adopt-on-mount stopped failing closed on an answer nobody has")
@@ -609,7 +609,7 @@ describe("what a site may do under each answer", () => {
  */
 const SETTLE_SITES: Array<[file: string, count: number, sites: string]> = [
   ["../../../../packages/app-logic/src/writing/compose-autosave.ts", 1, "the adopt-on-mount arm for a row the mirror calls `sent`"],
-  ["shell-compose.ts", 2,
+  ["../../../../packages/app-logic/src/writing/shell-compose.ts", 2,
     "`onSendSettled`'s confirmed compose and `onSendOutcome`'s refused send that names its row "
     + "(`refusedWithRow`); a Discard empties the editor before the wire, so its 409 restores nothing"],
   // The shell frame keeps none: both endings moved with the verbs (ARCH-022), and a zero here is
@@ -639,7 +639,7 @@ describe("a compose's ending is written in one place", () => {
     /* And it is ONE implementation: the hook owns it and the shell is wired to that one. */
     expect(SHELL("../../../../packages/app-logic/src/writing/compose-autosave.ts"), "the one function is gone")
       .toMatch(/const settleCompose = useCallback\(\(fate: ComposeFate\) => \{/);
-    expect(SHELL("shell-compose.ts"), "the shell holds its own copy of the ending again")
+    expect(SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts"), "the shell holds its own copy of the ending again")
       .toMatch(/settleComposeRef\.current = autosave\.settleCompose;/);
   });
 
@@ -654,7 +654,7 @@ describe("a compose's ending is written in one place", () => {
      * Counted on CODE lines only — a comment naming the call is not a call, and the count read 4
      * with one of them in a docblock.
      */
-    const shell = SHELL("shell-compose.ts");
+    const shell = SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts");
     const codeReleases = shell.split("\n")
       .map((l) => l.trim())
       /* THE STATEMENT, not the mention. Filtering on a leading `*` missed a docblock line that
@@ -680,7 +680,7 @@ describe("a compose's ending is written in one place", () => {
      * refuse could have been anywhere in that function. A name the shell does not declare has to
      * throw, not hand back something to assert nothing against.
      */
-    const shell = SHELL("shell-compose.ts");
+    const shell = SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts");
     expect(() => sliceOfDeclaration(shell, "noSuchName")).toThrow("anchor not found: noSuchName");
     /* The positive half — the name `(b)` DOES use resolves to a slice with the arm in it. */
     expect(sliceOfDeclaration(shell, "discardDraft")).toContain("emptyEditorsOf(draftId, heldRow)");
@@ -1140,7 +1140,7 @@ describe("every write site, under every answer the predicate can give", { timeou
        cannot see for a restored send) the tab that died, and the durable outbox the row a waiting
        send names or made. A lane-wide read here froze every other letter on the lane. */
     expect(
-      SHELL("shell-compose.ts"),
+      SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts"),
       "the shell reads only the phase again, so a reload inside the send window is unguarded",
     ).toMatch(/const sendCarriesThis = pressedHere \|\| restoredHere \|\| rowWaits;[\s\S]*sendInFlight: sendCarriesThis,/);
   });

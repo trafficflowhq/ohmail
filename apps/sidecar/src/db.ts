@@ -1,4 +1,4 @@
-import { closeSync, constants as fsConstants, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import fs, { closeSync, constants as fsConstants, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -11,8 +11,8 @@ import { migrate } from "drizzle-orm/pglite/migrator";
 import { readMigrationFiles, type MigrationConfig, type MigrationMeta } from "drizzle-orm/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
 import {
-  MAIL_JOURNAL, NOTHING_OPENS, OLD_HEADS, TransitionRefused, adoptBaseline, adoptReissuedOriginals, ensureSearchExtensions,
-  readJournalOf, runTransition, sealedOpener, transitionState, type Decrypts,
+  MAIL_JOURNAL, NOTHING_OPENS, OLD_HEADS, TransitionFailed, TransitionRefused, adoptBaseline, adoptReissuedOriginals,
+  ensureSearchExtensions, readJournalOf, runTransition, sealedOpener, transitionState, type Decrypts,
 } from "@trafficflow/db/journal";
 import {
   INGEST_FOLD_WAL_BYTES, brandDialect, dialect,
@@ -30,6 +30,10 @@ import { makeStoreInMemory, syncStoreTree } from "./fresh-store.js";
 import { keepIngestPlans } from "./pglite-plans.js";
 import { markStoreStatement } from "@trafficflow/core/mail";
 import { anyWrite, statementKind, storeWriteGauge } from "./store-writes.js";
+import {
+  PARTIAL_SUFFIX, REFILL_SET_ASIDE_PREFIX, SET_ASIDE_PREFIX as COPIES_SET_ASIDE_PREFIX, STORE_COPY_DIR, finishOwedRemoval,
+  markProven, removeCopyLeftovers, removeProvenCopies, removeStoreCopy, storeCopyStands,
+} from "./store-copies.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -730,6 +734,13 @@ export interface OpenLocalDb {
   /** Settles when the drain's first page is committed — what the phone's Connect waits for. */
   firstIngestPage?: Promise<void>;
   /**
+   * A MAILBOX HAD A CYCLE SERVED. Once every mailbox this store holds a login for has had one in
+   * this run, the copy kept from before the store's update is marked as done with, and the next
+   * open removes it (`store-copies.ts`). Nothing to do where no such copy stands; never rejects.
+   * Absent on a store that keeps no copy beside it (the phone's).
+   */
+  copySettled?(mailboxId: string): Promise<void>;
+  /**
    * Flush and release. Idempotent — shutdown paths call it from more than one place, and they share
    * one close. On the desktop store it refuses new calls, waits for the admitted ones, and rejects
    * with {@link StoreCloseTimeoutError} rather than shut down under one still running.
@@ -773,7 +784,18 @@ export type LocalDbOpenPhase =
    * rewrite and is running one. Minutes on the store that needs it, ONCE; never announced on a
    * healthy launch, whose bloat check is a millisecond of `ANALYZE` arithmetic.
    */
-  | "compacting_store";
+  | "compacting_store"
+  /**
+   * `copying_store` — a store 1.0 made is being copied whole before 2.0 moves it. Nothing of the
+   * store has changed while this is said, so a quit here is safe: the next start copies again.
+   * `opening_store` follows it, when the store is started again beside its copy.
+   */
+  | "copying_store"
+  /**
+   * `updating_store` — the move to 2.0 itself: one transaction over the whole store, which commits
+   * whole or leaves the store as it was. Said once the copy stands; `migrating` follows it.
+   */
+  | "updating_store";
 
 /**
  * A write-ahead log at least this large announces itself as `replaying_wal` rather than
@@ -853,10 +875,22 @@ export interface OpenLocalDbOptions {
    * For the one open that finds a store in 1.0.11's shape and moves it to 2.0 (see
    * {@link applyMigrations}). `openSealed` is the install's key provider: every value the store
    * sealed is opened under it before the move commits, and without one a store that holds a sealed
-   * value is not moved. `before` runs once, after the store was found at the old head and before
-   * anything of it changes: a throw refuses the open.
+   * value is not moved. `before` runs once, after the store was found at the old head and a whole
+   * copy of it stands, and before anything of it changes: a throw refuses the open.
    */
-  transition?: { openSealed?: Decrypts; before?: () => Promise<void> };
+  transition?: {
+    openSealed?: Decrypts;
+    before?: () => Promise<void>;
+    /**
+     * HOW A STORE 1.0 MADE CROSSES TO 2.0, named by the caller or not at all. `copy`: a whole copy
+     * of it is taken first, with the store closed, and the move runs only beside that copy. A
+     * caller that names no way is refused before anything changes: nothing converts a store in
+     * place on a caller's silence. `set-aside`: the store is a mirror of an account on a server, so
+     * it is not moved at all: it is set aside whole with its place in the feed
+     * ({@link REFILL_SET_ASIDE_PREFIX}), and a new store is made and filled from the server.
+     */
+    way?: "copy" | "set-aside";
+  };
   /**
    * Run once the data directory's lock is held and before anything in it is read — the one place a
    * caller may remove files beside the database (the cloud door's owner check discards a foreign
@@ -931,6 +965,39 @@ export class LocalStoreOpenError extends Error {
   }
 }
 
+/** Why a store's update to 2.0 did not happen. */
+export type StoreUpdateRefusal = "store_copy_no_room" | "store_copy_failed" | "transition_refused" | "transition_failed";
+
+/**
+ * THE STORE WAS NOT UPDATED TO 2.0, AND IT IS WHAT IT WAS. Its copy could not be taken (no room, or
+ * the copy failed), or the move itself was refused or rolled back whole. Never a
+ * {@link LocalStoreOpenError}: that class means "this copy is the problem" and is answered by
+ * setting the store aside, and here the store is the person's mail and the one thing to keep.
+ * The store is closed before this is thrown. No path in the message.
+ */
+export class StoreUpdateRefusedError extends Error {
+  /** `store_copy_no_room`: what the copy and the move need on this disk, in bytes. */
+  readonly neededBytes: number | undefined;
+  /** `store_copy_no_room`: what the disk has free, in bytes. */
+  readonly freeBytes: number | undefined;
+  constructor(
+    readonly code: StoreUpdateRefusal, message: string,
+    detail: { cause?: unknown; neededBytes?: number; freeBytes?: number } = {},
+  ) {
+    super(message, detail.cause === undefined ? undefined : { cause: detail.cause });
+    this.name = "StoreUpdateRefusedError";
+    this.neededBytes = detail.neededBytes;
+    this.freeBytes = detail.freeBytes;
+  }
+}
+
+/**
+ * HOW MUCH ROOM A STORE'S UPDATE ASKS FOR, as a multiple of the store's own size: the store again
+ * for its copy, the same again for the log of the move (it rewrites every row of six tables), and
+ * a tenth for growth. Read before anything is written.
+ */
+export const STORE_COPY_ROOM_FACTOR = 2.2;
+
 /**
  * WHICH RUN OF THIS STORE A CLIENT'S CURSOR BELONGS TO — `<dataDir>/store-generation.json`.
  *
@@ -951,6 +1018,9 @@ export const STORE_UNFINISHED_FILE = "store-unfinished";
 
 /** Where a store is moved rather than deleted: `<dataDir>/set-aside-<UTC stamp>/pgdata`. */
 export const SET_ASIDE_PREFIX = "set-aside-";
+/* The same name `store-copies.ts` removes such a folder by: a compile error if the two ever part. */
+const ONE_SET_ASIDE_NAME: typeof COPIES_SET_ASIDE_PREFIX = SET_ASIDE_PREFIX;
+void ONE_SET_ASIDE_NAME;
 
 /**
  * HOW OLD AN EMPTY LOCK FILE HAS TO BE before it is read as a crash rather than as a launch.
@@ -1461,7 +1531,16 @@ async function throughTheWindow(
       if (!meta) throw new TransitionRefused([{ what: `the journal lists ${entry.tag} and holds no such file`, n: 1 }]);
       opts.onPhase?.("migrating", { applied, pending: owed });
       const began = Date.now();
-      await step.call(stepwise.dialect, [meta], stepwise.session, MAIL_MIGRATION_CONFIG);
+      try {
+        await step.call(stepwise.dialect, [meta], stepwise.session, MAIL_MIGRATION_CONFIG);
+      } catch (err) {
+        /* A step of the road that fails is an update that did not happen, like the move's own
+           failure: never the class a window answers by setting the store aside. The database's
+           error is not handed on. */
+        if (err instanceof TransitionRefused || err instanceof TransitionFailed) throw err;
+        throw new StoreUpdateRefusedError("transition_failed",
+          "the mail store was not updated: a step of the earlier version's own update did not complete; the copy taken before it stands");
+      }
       applied += 1;
       took(entry.tag, Date.now() - began);
     }
@@ -1471,7 +1550,8 @@ async function throughTheWindow(
     throw new TransitionRefused([{ what: typeof state === "object" ? state.refused : `the store is ${state} after walking the 1.0 road`, n: 1 }]);
   }
   await opts.transition?.before?.();
-  opts.onPhase?.("migrating", { applied, pending: owed });
+  // The move's own word, in place of the count: one transaction, so there is nothing to count until it commits.
+  opts.onPhase?.("updating_store");
   const report = await runTransition({
     kind: "desktop", db,
     openSealed: opts.transition?.openSealed ? sealedOpener(opts.transition.openSealed) : NOTHING_OPENS,
@@ -1531,16 +1611,20 @@ function writeStoreGeneration(dataDir: string, generation: number, open: boolean
   }
 }
 
-/** Make a directory's entries durable. Windows cannot open a directory for this; it is skipped there. */
+/**
+ * Make a directory's entries durable. Windows cannot open a directory for this; it is skipped there.
+ * Called on the module's default import, as `store-copies.ts` flushes its folders: a test can then
+ * see that a folder was flushed, which no power-cut emulation shows.
+ */
 function fsyncDir(dir: string): void {
   let fd: number | undefined;
   try {
-    fd = openSync(dir, "r");
-    fsyncSync(fd);
+    fd = fs.openSync(dir, "r");
+    fs.fsyncSync(fd);
   } catch {
     /* EISDIR/EPERM on Windows: its rename is durable without it. */
   } finally {
-    if (fd !== undefined) closeSync(fd);
+    if (fd !== undefined) fs.closeSync(fd);
   }
 }
 
@@ -1641,6 +1725,251 @@ function setStoreAside(dataDir: string, kind: "unfinished" | "holds-nothing", lo
     reason: "a local store a start never finished making was set aside (kept, not deleted) and "
       + "a new one is made; it held nothing, so the mailbox fills it again",
   });
+}
+
+/**
+ * WHAT A PAIRED DESKTOP'S MIRROR IS, BESIDE ITS STORE: where it stands in its account's feed, and
+ * the marks of a first fill under way. They name points in the store they stand beside, so they
+ * are set aside with it, and before it.
+ */
+const MIRROR_FILES_SET_ASIDE = ["cloud-cursor.json", "cloud-bootstrap-gen.marks"] as const;
+
+/**
+ * SET A PAIRED DESKTOP'S 1.0 MIRROR ASIDE WHOLE: `<dataDir>/set-aside-refill-<stamp>/`, private,
+ * holding the mirror's place in the feed, its marks and its store, moved in that order. The store
+ * goes last, so a kill at any point leaves no new store beside an old place in the feed: the next
+ * start finds the store still on the old line and sets aside what is left. The first two moves are
+ * flushed before the store's, so a power cut on a disk that keeps no order between renames cannot
+ * keep the last and lose them. Kept, never read again, and removed by `store-copies.ts`'s rules.
+ * A move that fails puts back what it moved and throws, so the start fails by name rather than
+ * filling a second store over the first.
+ */
+function setMirrorAside(dataDir: string, log?: Diagnostic): void {
+  const stamp = setAsideStamp();
+  let target = join(dataDir, `${REFILL_SET_ASIDE_PREFIX}${stamp}`);
+  for (let n = 2; existsSync(target); n += 1) target = join(dataDir, `${REFILL_SET_ASIDE_PREFIX}${stamp}-${n}`);
+  fs.mkdirSync(target, { mode: 0o700 });
+  fs.chmodSync(target, 0o700);
+  const moved: string[] = [];
+  const moveIn = (name: string): void => {
+    if (!existsSync(join(dataDir, name))) return;
+    fs.renameSync(join(dataDir, name), join(target, name));
+    moved.push(name);
+  };
+  try {
+    for (const name of MIRROR_FILES_SET_ASIDE) moveIn(name);
+    fsyncDir(target);
+    fsyncDir(dataDir);
+    moveIn(PGDATA_SUBDIR);
+  } catch (err) {
+    for (const name of moved.reverse()) {
+      try { fs.renameSync(join(target, name), join(dataDir, name)); } catch { /* it stays set aside: no new store is made beside it */ }
+    }
+    try { fs.rmdirSync(target); } catch { /* it holds what could not be put back */ }
+    throw err;
+  }
+  fsyncDir(target);
+  fsyncDir(dataDir);
+  log?.("store_set_aside", {
+    kind: "old-line",
+    reason: "the copy of the account's mail this computer held under the earlier version was set "
+      + "aside whole (kept, not deleted) and a new one is filled from its server",
+  });
+}
+
+/** What the open said when a caller named no way for a store 1.0 made. */
+const NO_WAY_NAMED = "a store 1.0 made was opened by a caller that names no way for it to cross to 2.0";
+
+/** A store's files and bytes, read by `lstat`: it holds files and folders, and anything else refuses. */
+function measureStore(root: string): { bytes: number; files: number } {
+  let bytes = 0;
+  let files = 0;
+  const walk = (at: string): void => {
+    for (const name of fs.readdirSync(at)) {
+      const path = join(at, name);
+      const st = fs.lstatSync(path);
+      if (st.isDirectory()) walk(path);
+      else if (st.isFile()) { bytes += st.size; files += 1; }
+      else throw new Error("the store holds an entry that is neither a file nor a folder");
+    }
+  };
+  walk(root);
+  return { bytes, files };
+}
+
+/** The bytes under a folder, or 0 when it cannot be read: only ever added to the room a removal gives back. */
+function bytesUnder(root: string): number {
+  try {
+    return fs.lstatSync(root).isDirectory() ? measureStore(root).bytes : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** What the disk under `dir` has free, in bytes; `null` when it cannot say. */
+function freeBytesAt(dir: string): number | null {
+  try {
+    const st = fs.statfsSync(dir);
+    const free = Number(st.bavail) * Number(st.bsize);
+    return Number.isFinite(free) && free >= 0 ? free : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Copy a store's tree by content: every folder made private, every file copied whole and made
+ * private, nothing linked. Hands the loop a turn now and then, so a large store's copy does not
+ * hold it for its whole length.
+ */
+async function copyStoreTree(from: string, to: string): Promise<{ bytes: number; files: number }> {
+  let bytes = 0;
+  let files = 0;
+  const walk = async (src: string, dst: string): Promise<void> => {
+    fs.mkdirSync(dst, { mode: 0o700 });
+    fs.chmodSync(dst, 0o700);
+    for (const name of fs.readdirSync(src)) {
+      const a = join(src, name);
+      const b = join(dst, name);
+      const st = fs.lstatSync(a);
+      if (st.isDirectory()) { await walk(a, b); continue; }
+      if (!st.isFile()) throw new Error("the store holds an entry that is neither a file nor a folder");
+      fs.copyFileSync(a, b, fs.constants.COPYFILE_EXCL);
+      fs.chmodSync(b, 0o600);
+      bytes += fs.lstatSync(b).size;
+      files += 1;
+      if (files % 64 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  };
+  await walk(from, to);
+  return { bytes, files };
+}
+
+/** One small file of a copy's own, private and on the disk before the name that commits the copy. */
+function writeCopyFile(path: string, text: string): void {
+  const fd = fs.openSync(path, "w", 0o600);
+  try {
+    fs.fchmodSync(fd, 0o600);
+    fs.writeSync(fd, text);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** A megabyte count a sentence can carry, rounded up. */
+const megabytes = (bytes: number): number => Math.ceil(bytes / (1024 * 1024));
+
+/**
+ * THE COPY A DESKTOP TAKES BEFORE ITS STORE IS MOVED TO 2.0: `<dataDir>/store-before-2.0/`, the
+ * whole of `pgdata` and nothing beside it. Taken with the store closed, under the data folder's
+ * lock. The room is read before anything is written; an older copy, whole or half, is of an
+ * earlier attempt and is removed, never reused (nothing on the disk tells a kill from a 1.0
+ * session in between). The copy is made under a name that is never a copy, checked against the
+ * store by files and bytes, put on the disk, and only then renamed into place: the rename is the
+ * commit. `head` is the ledger's head the store stood at, for the copy's own record.
+ *
+ * Throws {@link StoreUpdateRefusedError}: `store_copy_no_room` with nothing changed, or
+ * `store_copy_failed` with the half copy removed.
+ */
+async function takeStoreCopy(dataDir: string, head: number | null, log?: Diagnostic): Promise<void> {
+  const began = Date.now();
+  const source = join(dataDir, PGDATA_SUBDIR);
+  const partial = join(dataDir, `${STORE_COPY_DIR}${PARTIAL_SUFFIX}`);
+  let held: { bytes: number; files: number };
+  try {
+    held = measureStore(source);
+  } catch (err) {
+    log?.("store_copy_failed", {
+      err, kind: "copy",
+      reason: "the mail store could not be read to copy it, so it was not updated; nothing was changed",
+    });
+    throw new StoreUpdateRefusedError("store_copy_failed",
+      "the mail store was not updated: a copy of it could not be made first, and nothing was changed", { cause: err });
+  }
+  /* An older copy gives its room back before the new one is written, so it counts as room. An
+     unreadable figure refuses nothing: a write that runs out below does. */
+  const needed = Math.ceil(held.bytes * STORE_COPY_ROOM_FACTOR);
+  const free = freeBytesAt(dataDir);
+  if (free !== null && free + bytesUnder(join(dataDir, STORE_COPY_DIR)) < needed) {
+    log?.("store_copy_failed", {
+      kind: "no_room", bytes: needed, remaining: free,
+      reason: "this disk has too little room to copy the mail store before updating it, so it was "
+        + "not updated; nothing was changed",
+    });
+    throw new StoreUpdateRefusedError("store_copy_no_room",
+      `the mail store was not updated: its update needs ${megabytes(needed)} MB of free space on this disk and `
+        + `${megabytes(free)} MB are free; nothing was changed`,
+      { neededBytes: needed, freeBytes: free });
+  }
+  try {
+    removeStoreCopy(dataDir);
+    fs.mkdirSync(partial, { mode: 0o700 });
+    fs.chmodSync(partial, 0o700);
+    const copied = await copyStoreTree(source, join(partial, PGDATA_SUBDIR));
+    if (copied.files !== held.files || copied.bytes !== held.bytes) {
+      throw new Error("the copy does not hold what the store holds");
+    }
+    await syncStoreTree(join(partial, PGDATA_SUBDIR));
+    writeCopyFile(join(partial, "copy.json"), JSON.stringify({
+      v: 1, at: new Date().toISOString(), head, bytes: held.bytes, files: held.files,
+    }));
+    /* A generation of its own, so a copy put back by hand is a run no cursor was ever issued for. */
+    writeCopyFile(join(partial, STORE_GENERATION_FILE), JSON.stringify({ generation: Date.now(), open: false }));
+    fsyncDir(partial);
+    fs.renameSync(partial, join(dataDir, STORE_COPY_DIR));
+    fsyncDir(dataDir);
+  } catch (err) {
+    removeCopyLeftovers(dataDir, log);
+    log?.("store_copy_failed", {
+      err, kind: "copy",
+      reason: "a copy of the mail store could not be made before updating it, so it was not "
+        + "updated; what was written of the copy was removed and the store is as it was",
+    });
+    throw new StoreUpdateRefusedError("store_copy_failed",
+      "the mail store was not updated: a copy of it could not be made first, and nothing was changed", { cause: err });
+  }
+  log?.("store_copied", {
+    bytes: held.bytes, count: held.files, totalMs: Date.now() - began,
+    reason: "a copy of the mail store as it stood was taken before its update; it is removed once "
+      + "the updated store has served every mailbox",
+  });
+}
+
+/** A refused update as the open throws it: the copy's own refusal, or the move's, under one class. */
+function updateRefusal(err: unknown): StoreUpdateRefusedError | null {
+  if (err instanceof StoreUpdateRefusedError) return err;
+  if (err instanceof TransitionRefused || err instanceof TransitionFailed) {
+    return new StoreUpdateRefusedError(err.code, `the mail store was not updated: ${err.message}`, { cause: err });
+  }
+  return null;
+}
+
+/** The generation record's bytes, or `null` when there is none: what a refused update puts back. */
+function readGenerationBytes(dataDir: string): Buffer | null {
+  try {
+    return readFileSync(join(dataDir, STORE_GENERATION_FILE));
+  } catch {
+    return null;
+  }
+}
+
+/** Put the generation record back as it read before this open: a refused update changed nothing. */
+function restoreGeneration(dataDir: string, before: Buffer | null): void {
+  const path = join(dataDir, STORE_GENERATION_FILE);
+  try {
+    if (before === null) {
+      rmSync(path, { force: true });
+      return;
+    }
+    const fd = openSync(path, "w");
+    try {
+      writeSync(fd, before);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch { /* left saying the run is open: the next start mints a new generation, the safe side */ }
 }
 
 /**
@@ -2316,7 +2645,13 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
   mkdirSync(dataDir, { recursive: true });
   const unlock = lockDataDir(dataDir, log);
   try {
+    /* THE COPIES BESIDE THE STORE, before anything opens it (`store-copies.ts`): what a kill left
+       of one being made or removed, then a removal an earlier run owed; the caller's own step;
+       then the copies that have done what they were kept for. */
+    removeCopyLeftovers(dataDir, log);
+    finishOwedRemoval(dataDir, log);
     opts.underLock?.();
+    removeProvenCopies(dataDir, log);
   } catch (err) {
     unlock();
     throw err;
@@ -2324,10 +2659,17 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
   /* BEFORE `new PGlite`, because the record has to be read before recovery can hide what it is
      about — a store that replays a crash's log looks exactly like one that closed cleanly once
      it is up. Written back `open: true` immediately, so a kill from here on is seen as one. */
-  const storeGeneration = readStoreGeneration(dataDir);
+  const generationBefore = readGenerationBytes(dataDir);
+  let storeGeneration = readStoreGeneration(dataDir);
   writeStoreGeneration(dataDir, storeGeneration, true);
   const pgDataDir = join(dataDir, PGDATA_SUBDIR);
+  const way = opts.transition?.way;
   let client: PGlite;
+  /* The instance on the directory right now, so a refused update closes it before it is thrown. */
+  let running: PGlite | null = null;
+  /* Whether this open took a copy of the store, and the head the store stood at when it did. */
+  let copied = false;
+  let copiedThrough: number | null = null;
   let releaseSyncs: (() => void) | null = null;
   try {
     /* A store the last start never finished is set aside BEFORE anything opens it: PGlite would
@@ -2374,17 +2716,64 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     };
     let started = await startPglite();
     client = started.pg;
+    running = client;
     /* A STORE MADE BEFORE THE MARKER, which a kill inside `initdb` could leave half made with no
        marker to say so. One holding nothing is made again; one holding anything is left alone. */
     if (!fresh && await storeHoldsNothing(client)) {
       await client.close();
+      running = null;
       setStoreAside(dataDir, "holds-nothing", log);
       markStoreUnfinished(dataDir);
       fresh = true;
       opts.onPhase?.("creating_store");
       started = await startPglite();
       client = started.pg;
+      running = client;
     }
+    /* A STORE 1.0 MADE CROSSES TO 2.0 ONLY THE WAY ITS CALLER NAMES. It is on the old line when its
+       ledger does not prove a head above 1.0.11's; no ledger over tables counts as the old line,
+       the safe side. Named `copy`: the store is closed, a whole copy of it is taken, and it is
+       started again, the same close and start the holds-nothing branch makes. No way named: the
+       open refuses here, with the store closed and nothing changed. */
+    if (!fresh) {
+      const through = await migratedThrough(client, MAIL_JOURNAL.migrationsSchema);
+      if (through === null || through <= OLD_HEADS.mail.when) {
+        // Said before the store is closed: from here until the store is started again, a quit loses nothing.
+        if (way === "copy") opts.onPhase?.("copying_store");
+        await client.close();
+        running = null;
+        if (way === undefined) throw new TransitionRefused([{ what: NO_WAY_NAMED, n: 1 }]);
+        if (way === "set-aside") {
+          /* A NEW STORE IS A NEW RUN, said durably before the old one moves: no cursor a client
+             holds for the mirror being set aside is ever admitted by the store filled after it. */
+          storeGeneration += 1;
+          writeStoreGeneration(dataDir, storeGeneration, true);
+          fsyncDir(dataDir);
+          setMirrorAside(dataDir, log);
+          markStoreUnfinished(dataDir);
+          fresh = true;
+          opts.onPhase?.("creating_store");
+        } else {
+          await takeStoreCopy(dataDir, through, log);
+          copied = true;
+          copiedThrough = through;
+          opts.onPhase?.("opening_store");
+        }
+        started = await startPglite();
+        client = started.pg;
+        running = client;
+      }
+    }
+    /* THE GATE. Whatever was decided above, the first statement of the move to 2.0 runs only
+       beside a whole copy this open took; then the caller's own question is asked. */
+    const besideACopy = async (): Promise<void> => {
+      if (way === undefined) throw new TransitionRefused([{ what: NO_WAY_NAMED, n: 1 }]);
+      if (way === "set-aside") throw new TransitionRefused([{ what: "a store that is set aside, never moved, reached the move to 2.0", n: 1 }]);
+      if (!copied || !storeCopyStands(dataDir)) {
+        throw new TransitionRefused([{ what: "no whole copy of the store stands beside it", n: 1 }]);
+      }
+      await opts.transition?.before?.();
+    };
     /* BEFORE ANY OTHER WRITE: what every durability claim in this file rests on, the method read
        back and then one commit's record seen reaching the disk. See {@link WAL_SYNC_METHOD}. */
     await assertWalSyncMethod(client);
@@ -2433,7 +2822,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     const tMigrate = Date.now();
     // The phase — and, per migration, how far it has got — is announced from inside, because only
     // there is the pending set known. See {@link applyMigrations}.
-    const migrations = await applyMigrations(db, client, opts);
+    const migrations = await applyMigrations(db, client, { ...opts, transition: { ...opts.transition, before: besideACopy } });
     // AFTER the pass, exactly as the server runner orders it: a journal entry that exists
     // twice (an original plus its reissue) owes the original's bookkeeping row wherever only
     // the reissue could run — a local mirror that migrated in the skip window is that
@@ -2568,6 +2957,21 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     const cancelStatistics = afterFirstPage(() => {
       if (!closed) void analyzeNeverAnalyzed(client).then(() => (closed ? false : analyzeSearchIfStale(client)));
     });
+    /* THE COPY BESIDE THIS STORE, UNTIL IT IS DONE WITH. One still standing after the open's own
+       removals is kept until every mailbox this store holds a login for has had a cycle served in
+       this run: the store is asked, so a mailbox that has not attached yet still counts. */
+    let copyKept = storeCopyStands(dataDir);
+    const servedThisRun = new Set<string>();
+    const copySettled = async (mailboxId: string): Promise<void> => {
+      if (!copyKept || closed || servedThisRun.has(mailboxId)) return;
+      servedThisRun.add(mailboxId);
+      try {
+        const held = await client.query<{ id: string }>("SELECT DISTINCT mailbox_id::text AS id FROM mailbox_credentials");
+        if (!copyKept || !held.rows.every((row) => servedThisRun.has(row.id))) return;
+        copyKept = false;
+        markProven(dataDir, "copy");
+      } catch { /* the store is closing: the copy keeps its place, and the next run asks again */ }
+    };
 
     const terminate = async (): Promise<void> => {
       try {
@@ -2601,6 +3005,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       laneCensus: () => lanes.census(),
       analyzeSearchIfStale: () => (closed ? Promise.resolve(false) : analyzeSearchIfStale(client)),
       analyzeKnownSetIfNever: () => (closed ? Promise.resolve("pending" as const) : analyzeKnownSetIfNever(client)),
+      copySettled,
       /* ONE CLOSE, SHARED BY EVERY CALLER: refuse new calls, wait for the admitted ones, and only then
          Terminate. The checkpoint chain needs no wait of its own: every statement a checkpoint or fold
          sends is admitted by the door, and one sent after the shut is refused unrun. At the bound it
@@ -2632,6 +3037,42 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     };
   } catch (err) {
     releaseSyncs?.();
+    /* A REFUSED UPDATE LEAVES A CLOSED STORE THAT IS WHAT IT WAS, its generation record included,
+       so the release that made it opens it again. Any other failure is the store's own. */
+    const refused = updateRefusal(err);
+    if (refused !== null) {
+      const stillOpen: PGlite | null = running;
+      /* THE COPY THIS OPEN TOOK GOES AGAIN WHEN NOTHING OF THE UPDATE WAS APPLIED. A person whose
+         update is refused can only go back to the release that made the store, and that release
+         never names the copy: its sign-out and its removal of a mailbox would leave every letter
+         and the sealed passwords behind. So it goes, but only a copy that holds nothing the store
+         does not: taken at 1.0.11's head, the move refused or rolled back, and the store, asked
+         once more before it is closed, still at that head. A road that stopped part-way, a head
+         that reads otherwise or cannot be read: the copy may be the only good store, and it stays. */
+      const untouched = copied && copiedThrough === OLD_HEADS.mail.when
+        && (refused.code === "transition_refused" || refused.code === "transition_failed")
+        && stillOpen !== null
+        && await migratedThrough(stillOpen, MAIL_JOURNAL.migrationsSchema).then((head) => head === OLD_HEADS.mail.when, () => false);
+      const closedCleanly = stillOpen === null ? true : await stillOpen.close().then(() => true, () => false);
+      if (closedCleanly) {
+        restoreGeneration(dataDir, generationBefore);
+        // Renamed out of its name, the data folder flushed, deleted, flushed again (`store-copies.ts`).
+        if (untouched) {
+          try {
+            removeStoreCopy(dataDir);
+          } catch (err) {
+            // Never in silence: the copy stays beside a store the release that made it opens again.
+            log?.("store_copy_failed", {
+              err, kind: "removal",
+              reason: "the copy of the mail store taken before this refused update could not be removed; "
+                + "the next start of this version removes it before it takes its own",
+            });
+          }
+        }
+      }
+      unlock();
+      throw refused;
+    }
     unlock();
     throw new LocalStoreOpenError(err);
   }

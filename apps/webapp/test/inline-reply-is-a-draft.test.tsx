@@ -8,6 +8,7 @@ import {
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
+import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
 import en from "../messages/en.json";
 import {
   DraftServer, FORWARD_PARTS, NOW, act, fillForward, forwardDock, message, mountShell, openForward, press, pressRestart, replyDraft, replySurface,
@@ -282,10 +283,17 @@ describe("a forward typed inline is a draft on the account", () => {
     expect([surface(other).textContent?.includes(NOTE), shown(other).includes(TO)], "the note and the To there").toEqual([true, true]);
     await rounds(110);
     expect(saves(other), "opening the row wrote it").toEqual([]);
-    await act(async () => { fwdSend(other).click(); });
+    /* The quoted header dates the original on the reader's clock, as it reads at the press. */
+    setActiveFormatZone("Europe/Zurich");
+    try {
+      await act(async () => { fwdSend(other).click(); });
+    } finally {
+      setActiveFormatZone(null);
+    }
     await waitFor(() => sends(other).length === 1, "the send on the wire");
     const m = sends(other)[0]!;
-    expect([m.draftId, m.forwardOf, m.forwardParts, m.to?.map((a) => a.address)]).toEqual([row, "m1", [PART_A, PART_B], [TO]]);
+    expect([m.draftId, m.forwardOf, m.forwardParts, m.to?.map((a) => a.address), m.forwardClock])
+      .toEqual([row, "m1", [PART_A, PART_B], [TO], { zone: "Europe/Zurich", locale: activeFormatLocale() }]);
   }, 60_000);
 
   it("Send while the first save is in the air leaves no forward draft", async () => {

@@ -23,7 +23,7 @@
  */
 import { useTranslations } from "next-intl";
 import { TextField } from "@ohmail/ui";
-import { effectiveSignature, effectiveSignatureHtml, type SignatureState } from "./signature";
+import { effectiveSignature, effectiveSignatureHtml, type SignatureState } from "@ohmail/app-logic/writing/signature";
 import { RichEditor } from "./RichEditorLazy";
 
 export function SignatureBlock({

@@ -31,7 +31,7 @@ import {
   useCommandPalette,
   useTheme,
 } from "@ohmail/ui";
-import { replyAllRecipients } from "./compose-from";
+import { replyAllRecipients } from "@ohmail/app-logic/writing/compose-from";
 import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
 import { deleteKeyBindings } from "@ohmail/app-logic/press/delete-undo";
 import { FoldersRailGroup, type FolderVerbs } from "./FoldersRailGroup";
@@ -53,9 +53,9 @@ import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text"
 import {
   go, goFolder, goScreener, goSettings, goTag, goTriage, reflectMessage, switchKeyOf, type Route, type TriagePileId,
 } from "./routing";
-import { goCompose } from "./compose-door";
+import { goCompose } from "@ohmail/app-logic/writing/compose-door";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
-import type { ShellCompose } from "./shell-compose";
+import type { ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
 import type { ShellDerivations } from "./shell-derivations";
 import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import type { ShellOpenState } from "./shell-open-state";
@@ -573,7 +573,7 @@ export function useShellKeys({
       disabled: !pullBinding.available || pullBinding.pulling,
       run: () => pullBinding.pull(),
     },
-    { chord: COMPOSE_CHORD, group: "app", label: t("shortcuts.compose"), run: () => goCompose() },
+    { chord: COMPOSE_CHORD, group: "app", label: t("shortcuts.compose"), run: () => goCompose(() => go("compose")) },
     {
       chord: "f",
       group: "message",
@@ -998,7 +998,7 @@ export function useShellKeys({
         },
       },
       { id: "search", label: t("palette.search"), keys: [SEARCH_CHORD], run: () => go("search") },
-      { id: "compose", label: t("palette.newMessage"), keys: [COMPOSE_CHORD], run: () => goCompose() },
+      { id: "compose", label: t("palette.newMessage"), keys: [COMPOSE_CHORD], run: () => goCompose(() => go("compose")) },
       {
         /* THE DESTINATION ROW, reading the registry's own wording (`shortcuts.goTrash`) exactly
            as the four rows above it do — one message per destination, in the namespace the

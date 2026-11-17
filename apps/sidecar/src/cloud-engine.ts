@@ -23,6 +23,7 @@ import {
   REUSE_CAUSE, SESSION_MARKER_FILE, type CloudAuth, type CloudSessionReading, type CloudTokens, type SealOpen,
 } from "./cloud-auth.js";
 import { removeAtomic, writeAtomic } from "./fs-atomic.js";
+import { forgetStoreCopies, markProven, storeCopiesStand } from "./store-copies.js";
 import { readMachineBinding } from "./machine-binding.js";
 import {
   cloudIdentity,
@@ -600,9 +601,11 @@ export function enforceMirrorOwner(
    * the comparison on the record missed — that profile kept its seal and had the hosted bearer
    * activated against whatever server the door pointed at; a genuinely empty directory is adopted.
    */
+  /* A COPY OF A STORE, OR A FOLDER ONE WAS MOVED ASIDE INTO, IS STATE TOO (`store-copies.ts`): a
+     directory holding nothing else is judged by it, never adopted as empty. */
   const holdsCloudState = ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"].some((f) =>
     existsSync(join(dataDir, f)),
-  );
+  ) || storeCopiesStand(dataDir);
   const serverChanged = mirrorIsForeign(priorRecord, holdsCloudState, servedBase ?? cloudUrl.trim());
   /* ── A DISCARD THE LAST RUN ASKED FOR, EXPLICITLY ────────────────────────────────────────────
      A pairing told to start over cannot throw the mirror away itself: at redeem time `pgdata` is an
@@ -627,9 +630,17 @@ export function enforceMirrorOwner(
   /* A REVOKED SESSION'S COPY, owed by the record (a run that removed the mail and stopped short of
      its files) or by a kept revoke with no seal beside it (a crash before the discard, an older
      build): gone before anything opens it. The rewrite below drops the flag once the files are gone. */
+  let revokedCopyLeft = false;
   if (!foreign && (priorRecord?.revoked === true || refusalOwesCopy(dataDir))) {
     for (const name of REVOKED_COPY_FILES) rmSync(join(dataDir, name), { recursive: true, force: true });
-    markRefusalCopyRemoved(dataDir);
+    /* …AND EVERY EARLIER COPY OF THAT MAIL BESIDE IT, before either flag is dropped. One that
+       cannot be removed keeps both flags, so the next launch comes back here. */
+    try {
+      forgetStoreCopies(dataDir, "session_revoked", log);
+      markRefusalCopyRemoved(dataDir);
+    } catch {
+      revokedCopyLeft = true;
+    }
     log?.("cloud_revoked_copy_removed", {
       reason: "the hosted session was revoked, so the database it left on this computer was removed before this launch opened it",
     });
@@ -658,6 +669,10 @@ export function enforceMirrorOwner(
     for (const name of stale) {
       rmSync(join(dataDir, name), { recursive: true, force: true });
     }
+    /* EVERY EARLIER COPY OF THE PREVIOUS WORLD'S MAIL GOES WITH ITS MIRROR, before the record below
+       names the new owner: no account inherits a copy another account's mail was kept in. One
+       that cannot be removed fails this launch here, with the record still naming the old world. */
+    forgetStoreCopies(dataDir, addressChanged || serverChanged ? "owner_changed" : "started_over", log);
     // Never the addresses, and never the two SERVERS either. Which mailbox was served before and
     // which is served now are the exact identifying signal the sidecar log census exists to keep
     // off the line — and an operator's own hostname identifies them at least as sharply as their
@@ -708,6 +723,7 @@ export function enforceMirrorOwner(
       // AN ERASED ACCOUNT IS SAID ACROSS THE DISCARD that removed its mirror, until a session writes
       // a record of its own. Another address or server is another world with nothing to say.
       !addressChanged && !serverChanged && priorRecord?.erased === true,
+      revokedCopyLeft,
     ),
     { mode: 0o600 },
   );
@@ -799,9 +815,13 @@ function markRefusalCopyRemoved(dataDir: string): void {
   }
 }
 
-/** A revoked session's database files, then the record's flag and the kept refusal's mark, in that order. */
-function removeRevokedCopy(dataDir: string): void {
+/**
+ * A revoked session's database files and every earlier copy of that mail beside them, then the
+ * record's flag and the kept refusal's mark, in that order: a copy left keeps both.
+ */
+function removeRevokedCopy(dataDir: string, log?: Diagnostic): void {
   for (const name of REVOKED_COPY_FILES) rmSync(join(dataDir, name), { recursive: true, force: true });
+  forgetStoreCopies(dataDir, "session_revoked", log);
   clearMirrorRevoked(dataDir);
   markRefusalCopyRemoved(dataDir);
 }
@@ -880,6 +900,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     ...(log ? { log } : {}),
     ...(config.onPhase ? { onPhase: config.onPhase } : {}),
     ...(config.onStoreFatal ? { onFatal: config.onStoreFatal } : {}),
+    /* A MIRROR 1.0 FILLED IS SET ASIDE WHOLE, never moved in place: the account's server is its
+       master, so 2.0 fills a new one from it, and the old one is kept until that fill's first
+       window has landed. */
+    transition: { way: "set-aside" },
     underLock: () => {
       enforceMirrorOwner(config.dataDir, config.address, cloudBase, log, {
         identityPending: config.identityPending !== undefined,
@@ -1205,6 +1229,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         world,
         auth,
         onMailboxes: nameServedMailbox,
+        /* A mailbox erased on the account: no earlier copy of this install's mirror keeps its mail. */
+        onMailboxErased: () => forgetStoreCopies(config.dataDir, "mailbox_erased", log),
+        /* The new mirror's first window has landed: the 1.0 mirror set aside for it is done with,
+           and the next start removes it. */
+        onFirstWindow: () => markProven(config.dataDir, "refill"),
         cursorPath: join(config.dataDir, "cloud-cursor.json"),
         ...(log ? { log } : {}),
         now,
@@ -1395,6 +1424,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         });
       }
       await windowOutbox.discard().catch(() => undefined);
+      /* Every earlier copy of that account's mail goes now too; one that cannot is removed with
+         the database at the next start, by the staged discard this stamps below. */
+      try {
+        forgetStoreCopies(config.dataDir, "account_erased", log);
+      } catch { /* said by the removal's own line; it stays owed */ }
       const prior = readMirrorRecordRaw(config.dataDir);
       const record = prior === null ? null : decodeMirrorRecord(prior);
       writeFileSync(
@@ -1423,6 +1457,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           err: removed.err, reason: "the revoked session's mail could not be removed now; its database is removed at the stop",
         });
       }
+      /* Every earlier copy of that mail goes now too; one that cannot is removed with the database's
+         files, at the stop or before the next launch opens anything, while the record's flag stands. */
+      try {
+        forgetStoreCopies(config.dataDir, "session_revoked", log);
+      } catch { /* said by the removal's own line; it stays owed */ }
       const prior = readMirrorRecordRaw(config.dataDir);
       const record = prior === null ? null : decodeMirrorRecord(prior);
       writeFileSync(
@@ -2517,7 +2556,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            removal cut short is found again by the next launch, before it opens anything. */
         if (readMirrorRevoked(config.dataDir)) {
           try {
-            removeRevokedCopy(config.dataDir);
+            removeRevokedCopy(config.dataDir, log);
             log?.("cloud_revoked_copy_removed", {
               reason: "the hosted session was revoked, so the database it left on this computer was removed at the stop",
             });

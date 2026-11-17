@@ -13,7 +13,7 @@ import {
   formatRecipientLine,
   replyEnvelopeOnWire,
   replyEnvelopePlan,
-} from "../app/shell/compose-from";
+} from "@ohmail/app-logic/writing/compose-from";
 import { parseRecipients } from "@ohmail/app-logic/writing/compose";
 import { canSend } from "@ohmail/app-logic/writing/mail-send";
 
@@ -314,8 +314,8 @@ describe("ONE set of own addresses decides who Reply all offers AND who it sends
      */
     const src = readFileSync(
       [
-        resolve(process.cwd(), "app/shell/shell-compose.ts"),
-        resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"),
+        resolve(process.cwd(), "../../packages/app-logic/src/writing/shell-compose.ts"),
+        resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"),
       ].find(existsSync)!,
       "utf8",
     );

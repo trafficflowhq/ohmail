@@ -466,7 +466,11 @@ describe("a store an earlier start made", () => {
       return out;
     };
     try {
-      const h = await openLocalDb(dir, { onPhase: (p, at) => { if (p === "migrating") inPass = at === undefined || at.applied < at.pending; } });
+      const h = await openLocalDb(dir, {
+        onPhase: (p, at) => { if (p === "migrating") inPass = at === undefined || at.applied < at.pending; },
+        // The way is named, as the desktop's own engine names it: a store 1.0 made is refused without one.
+        transition: { way: "copy" },
+      });
       open.push(h);
       expect(h.migrations?.applied, "the fixture owed nothing, so this is no upgrade").toBe(owed);
       expect(pass, "an upgrade of a store that may hold mail committed its migrations unsynced").toBeGreaterThan(0);

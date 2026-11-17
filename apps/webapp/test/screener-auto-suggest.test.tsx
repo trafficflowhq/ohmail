@@ -3,6 +3,7 @@ import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { useSuggestText } from "../app/shell/suggest-text";
 import {
   OhmailEngine, MemoryMirrorStore, mutationEffects,
   type EngineMessage, type EngineMutation, type Folder, type SyncChange,
@@ -210,6 +211,7 @@ async function mountView(
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("@ohmail/app/keys");
 
@@ -223,6 +225,8 @@ async function mountView(
     setActive = setOnScreen;
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const suggestions = useScreenerSuggestions({
+      text: useSuggestText(),
+      wire: CLOUD_WIRE,
       active: onScreen,
       ...(opts.autoSuggest === undefined ? {} : { autoSuggest: opts.autoSuggest }),
       toast: ((m: string) => { toasts.push(m); }) as never,

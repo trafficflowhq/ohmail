@@ -60,7 +60,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 /* The send and draft verbs moved to `shell-compose.ts` (ARCH-022); the JSX and the `chrome` memo
    that hand them to the surfaces stayed in the shell frame, so both are read. */
 const SHELL = readFileSync(
-  resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"),
+  resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"),
   "utf8",
 );
 const FRAME = readFileSync(

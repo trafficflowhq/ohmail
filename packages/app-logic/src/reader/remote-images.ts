@@ -239,11 +239,14 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
    * ONE FUNCTION PER MESSAGE: `MessageBody` re-sanitizes when its `imageProxy` changes identity,
    * and the hosts call this during render, so a fresh closure per call re-sanitized and re-measured
    * the open message on every render. Cleared whole at {@link PROXY_CACHE_MAX}; an id then costs one
-   * re-sanitize, never a loop. `mayRead` is still asked at call time.
+   * re-sanitize, never a loop. `mayRead` is still asked at call time. The key carries the gate's
+   * answer too: a body first drawn while this window may not read gets a new function, so a picture
+   * source, at its first render once the gate holds again.
    */
   const proxies = useRef(new Map<string, (url: string) => string>());
   const proxyFor = useCallback((messageId: string) => {
-    const hit = proxies.current.get(messageId);
+    const key = mayNowRef.current() ? messageId : `\u0000${messageId}`;
+    const hit = proxies.current.get(key);
     if (hit) return hit;
     if (proxies.current.size >= PROXY_CACHE_MAX) proxies.current.clear();
     const proxy = (url: string): string => {
@@ -261,7 +264,7 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
          reads a source out of only where that origin is a web one, as it always was for such a door. */
       return isPipe(wire) ? imageProxyUrl("", window.location.origin, messageId, url) : wire.address(messageId, url);
     };
-    proxies.current.set(messageId, proxy);
+    proxies.current.set(key, proxy);
     return proxy;
   }, []);
 

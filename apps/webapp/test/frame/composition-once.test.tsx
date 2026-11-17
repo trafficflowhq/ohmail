@@ -23,23 +23,28 @@
  * letter is revoked once nobody holds that letter; and a place that holds a letter draws its list and its file as
  * they land, while the door keeps the letter for it.
  */
-import { createElement as h, useEffect, useMemo } from "react";
+import { createContext, createElement as h, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { screen, within } from "@testing-library/react";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineDraft, EngineMutation, OhmailEngine } from "@ohmail/client-engine";
 import { useConsent, usePartition } from "@ohmail/app-logic/consent";
 import { useConsentRow } from "@ohmail/app-logic/consent/consent-row";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { useDerivedVersion, useEngine } from "@ohmail/app-logic/engine";
+import { useMailState } from "@ohmail/app-logic/mail-state";
 import { letterPictures, useDoors, type Doors } from "@ohmail/app-logic/reader";
 import { usePresentedMirror } from "@ohmail/app-logic/reading";
-import { PLACE_IDS, useFrame, type FramePlaces, type PlaceEntry } from "@ohmail/app/frame";
+import { PLACE_IDS, useFrame, usePress, useReport, type FramePlaces, type PlaceEntry } from "@ohmail/app/frame";
 import { NONE, type ImageWire, type None } from "@ohmail/app/host";
 import { MailGround } from "@ohmail/app/mail";
 import { TextProvider } from "@ohmail/app/text";
 import en from "../../messages/en.json";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
+import { TODAYS_COMPOSER_WORDS } from "../../app/shell/mail-send-text";
+import { useShellCompose, type ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
 import { act, message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell } from "../_draft-shell.js";
 import { settleEditor } from "../_first-paint.js";
 import { hostFromTodaysInputs } from "../_todays-shell";
@@ -125,8 +130,8 @@ vi.mock("@ohmail/app-logic/consent/partition", async (load) => {
   };
 });
 
-vi.mock("../../app/shell/shell-compose", async (load) => {
-  const real = await load<typeof import("../../app/shell/shell-compose")>();
+vi.mock("@ohmail/app-logic/writing/shell-compose", async (load) => {
+  const real = await load<typeof import("@ohmail/app-logic/writing/shell-compose")>();
   const { useEffect } = await import("react");
   return {
     ...real,
@@ -304,6 +309,53 @@ describe("the old shell's composition over a walk from the seated Ohbox to a vie
     await rounds(20);
     expect(sends(s), "one send left for one press").toHaveLength(1);
     expect({ ...seen.mounts }, "nothing of the composition was mounted again").toEqual(ONCE);
+  }, 60_000);
+});
+
+/**
+ * THE HOST'S DRAFT WIRE REACHES THE COMPOSER, through the shell the tests' door mounts. Two hosts that differ only in
+ * the draft wire they hand: one that counts what it is asked, and none. A letter opened in a view of today's and its
+ * More menu: over the wire Draft reply opens the offer, and the wire is asked to draft on Draft it only; over none
+ * no Draft reply is offered and nothing is asked.
+ */
+describe.each([
+  ["hands a draft wire", true, ["m1"]],
+  ["names no drafter", false, []],
+] as const)("a host that %s, under the shell the tests' door mounts", (_, hands, drafted) => {
+  it("its letter's More offers Draft reply only over a wire, and the wire drafts on Draft it only", async () => {
+    const asked = { create: [] as string[], read: [] as string[] };
+    const wire: DraftReplyWire = {
+      configured: () => true,
+      create: async (messageId) => {
+        asked.create.push(messageId);
+        return { draftId: "d-drafted" };
+      },
+      read: async (draftId) => {
+        asked.read.push(draftId);
+        return { body: "Noon works.", html: null };
+      },
+      /* This host has no door for a draft made of the person's own words. */
+      fromText: "none",
+    };
+    const s = await mountShell(TODAYS_ADDRESS, [message("m1")], [], hands ? { draftReplyWire: wire } : {});
+    const row = () => within(s.el).queryByRole("option", { name: /Subject m1$/ });
+    await waitFor(() => row() !== null, "the letter in History");
+    await press(row(), "open the letter");
+    const more = () => within(s.el).queryAllByRole("button", { name: en.ohbox.actionMore })
+      .find((b) => b.getAttribute("aria-haspopup") === "menu") ?? null;
+    await waitFor(() => more() !== null, "the letter's More");
+    await press(more(), "More");
+    await waitFor(() => screen.queryByRole("menu", { name: en.ohbox.actionMore }) !== null, "the More menu");
+    const draftReply = screen.queryByRole("menuitem", { name: en.ohbox.actionDraftReply });
+    expect(draftReply !== null, "Draft reply in the letter's More").toBe(hands);
+    if (draftReply !== null) {
+      await press(draftReply, "Draft reply");
+      await waitFor(() => screen.queryByRole("group", { name: en.draftReply.offerTitle }) !== null, "the offer");
+      expect(asked.create, "the offer asked the wire to draft before Draft it").toEqual([]);
+      await press(screen.getByRole("button", { name: en.draftReply.confirm }), "Draft it");
+      await waitFor(() => asked.create.length > 0, "the wire asked to draft");
+    }
+    expect(asked.create, "what the wire was asked to draft").toEqual(drafted);
   }, 60_000);
 });
 
@@ -727,5 +779,173 @@ describe.each([
     await waitFor(() => file() === "ready", "the file's bytes, held by the door");
     await rounds(8);
     expect({ letGo, revoked }, "the letter was let go while a place still drew it").toEqual({ letGo: [], revoked: [] });
+  }, 60_000);
+});
+
+/**
+ * ONE SEND MACHINE OVER A HOST THAT HANDS THE MAIL GROUND, and nothing of the old shell. The composer's own hook is
+ * called once by THE STUB MOUNT below, which feeds it from the ground's contexts and the frame's door alone, as the
+ * ground's own mount of the composer will once the composer stands where a package can call it; until then this
+ * stub is that mount's stand-in, in this file only. Two places of two bodies press and read through it. A reply
+ * sent at the first place, the second place visited before the answer: one `mail_send`, the answer applied on the
+ * machine that sent it, the sending state gone. And the fault this guards is seen: a composer mounted with a
+ * place's own body leaves with that place, and the place walked to stands another machine that knows no send.
+ */
+const Composer = createContext<ShellCompose | null>(null);
+const NOTHING = (): void => {};
+const NO_MAILBOX_ROWS: never[] = [];
+function StubWritingMount({ children }: { readonly children?: ReactNode }): ReactNode {
+  const { host, route } = useFrame();
+  const engine = useEngine();
+  const derived = useDerivedVersion();
+  const reader = engine.read();
+  const press = usePress();
+  const consent = useConsent();
+  const { ownAddresses } = usePartition();
+  const { mailboxes: facts } = useMailState();
+  const presented = usePresentedMirror();
+  if (presented === null) throw new Error("the stub mount stands under no presented mirror");
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  /* The drafts as the mirror holds them now: read again when what is derived from the mirror moved. */
+  const drafts = useMemo(() => engine.read().list<EngineDraft>("draft"), [engine, derived]);
+  const own = useMemo(() => [...ownAddresses], [ownAddresses]);
+  const composer = useShellCompose({
+    engine, reader, t: useTranslations(), words: TODAYS_COMPOSER_WORDS, toast: useReport(),
+    /* As the host says it: `none` on this host, so the composer offers no drafted reply and asks nothing. */
+    draftReplyWire: host.wires.draftReply as DraftReplyWire | typeof NONE,
+    route: { view: route.place }, go: NOTHING,
+    consent, facts, mailboxes: NO_MAILBOX_ROWS, drafts, ownAddresses: own, fallbackMailboxId: "mb1",
+    replyTo, setReplyTo, setReaderFor: NOTHING, fr: null, setFr: NOTHING, setFrDone: NOTHING, setFrValues: NOTHING,
+    setOhboxSel: NOTHING, mailtoDraft: null, onMailtoDraftSeeded: undefined, presented,
+    mutateAndReport: press.mutateAndReport, toastWithUndo: press.toastWithUndo, scope: host.session.scope,
+  });
+  return h(Composer.Provider, { value: composer }, children);
+}
+/** A place that writes through the composer above it: Reply, the words, Send, and what the reply's send says now. */
+function writesAt(at: string, mount: "above every place" | "with this place's body") {
+  function Writes() {
+    const composer = useContext(Composer);
+    if (composer === null) throw new Error(`no composer stands above ${at}`);
+    return h("section", { "aria-label": at },
+      h("button", { type: "button", onClick: () => composer.openReply("m1") }, "Reply"),
+      h("button", { type: "button", onClick: () => composer.onReplyBody({ text: "Noon works.", html: "" }) }, "Write"),
+      h("button", { type: "button", onClick: () => composer.sendReply("m1") }, "Send"),
+      h("output", null, `the reply's send: ${composer.replySendState("m1").phase}`),
+      h("output", null, composer.draftReplyChrome === null ? "no draft control" : "a draft control"));
+  }
+  return mount === "above every place" ? Writes : () => h(StubWritingMount, null, h(Writes));
+}
+const writingPlaces = (mount: "above every place" | "with this place's body"): Places => ({
+  news: { id: "news", body: "writes-1", rail: null, panes: { kind: "wide", Wide: writesAt("the first place", mount) } },
+  receipts: { id: "receipts", body: "writes-2", rail: null, panes: { kind: "wide", Wide: writesAt("the second place", mount) } },
+});
+/** The ground, and above every place the composer's one mount. */
+function GroundWithTheComposer({ children }: { readonly children: ReactNode }): ReactNode {
+  return h(MailGround, null, h(StubWritingMount, null, children));
+}
+function StoodOverTheGround({ engine, places, above }: {
+  engine: OhmailEngine; places: Places; above: (props: { readonly children: ReactNode }) => ReactNode;
+}) {
+  const { TodaysFrame, NO_TODAYS, useTodaysSupplies } = parts!;
+  const frame = useTodaysSupplies(NONE);
+  const consent = useMemo(answering, []);
+  const host = useMemo(() => {
+    const only = { ...Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])), ...places } as unknown as FramePlaces;
+    const made = hostFromTodaysInputs(
+      { demo: false, engine, consentTransport: consent, mailboxFacts: ownFacts }, engine, { ...frame, places: only }, NONE,
+    );
+    return { ...made, features: { ...made.features, places: only, above } };
+  }, [engine, frame, places, consent, above]);
+  return h(TodaysFrame, { host, todays: NO_TODAYS });
+}
+async function standOverTheGround(engine: OhmailEngine, places: Places, above: (props: { readonly children: ReactNode }) => ReactNode) {
+  parts ??= await loaded();
+  const { ThemeProvider, ToastHost, EngineProvider } = parts;
+  window.location.hash = FIRST;
+  const tree = h(NextIntlClientProvider, { locale: "en", messages: en, timeZone: "UTC", now: NOW } as never,
+    h(TextProvider, { locale: "en", messages: en as never, timeZone: "UTC" } as never,
+      h(ThemeProvider as never, null, h(ToastHost as never, null,
+        h(EngineProvider, { demo: false, engine } as never, h(StoodOverTheGround, { engine, places, above }))))));
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  stood = createRoot(container);
+  await act(async () => { stood!.render(tree); });
+}
+/** Every `mail_send` the engine is asked for, each held on the wire until `release` is called. */
+function holdingSends(engine: OhmailEngine): { sent: EngineMutation[]; release: () => void } {
+  const sent: EngineMutation[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const mutate = engine.mutate.bind(engine);
+  engine.mutate = (async (m: EngineMutation) => {
+    if (m.kind === "mail_send") {
+      sent.push(m);
+      await gate;
+    }
+    return mutate(m);
+  }) as typeof engine.mutate;
+  return { sent, release };
+}
+const sendSays = (place: string): string =>
+  within(screen.getByRole("region", { name: place })).getByText(/^the reply's send: /).textContent ?? "";
+async function replyAndSendAt(place: string): Promise<void> {
+  const here = within(screen.getByRole("region", { name: place }));
+  for (const verb of ["Reply", "Write", "Send"]) await press(here.getByRole("button", { name: verb }), verb);
+}
+
+describe("one send machine over a host that hands the mail ground", () => {
+  beforeEach(() => {
+    setup();
+  });
+  afterEach(async () => {
+    if (stood) await act(async () => { stood!.unmount(); });
+    stood = null;
+    await teardown();
+  });
+
+  it("a reply sent at one place, another place visited before the answer: one mail_send, the answer applied, the sending state gone", async () => {
+    const engine = engineOver(await storeWith([msg("m1")]));
+    const wire = holdingSends(engine);
+    await standOverTheGround(engine, writingPlaces("above every place"), GroundWithTheComposer);
+    await waitFor(() => at("the first place") && seen.asks > 0, "the first place over the ground");
+    await rounds(8);
+    expect(within(screen.getByRole("region", { name: "the first place" })).queryByText("no draft control"),
+      "this host hands no draft wire, and the composer says no control").not.toBeNull();
+
+    await replyAndSendAt("the first place");
+    await waitFor(() => wire.sent.length === 1, "the send on the wire");
+    expect(sendSays("the first place")).toBe("the reply's send: sending");
+
+    await visit(SECOND);
+    await waitFor(() => at("the second place"), "the second place");
+    await rounds(8);
+    expect(sendSays("the second place"), "the place walked to reads the machine that sent").toBe("the reply's send: sending");
+    expect({ mounts: seen.mounts.composer, live: seen.live.composer }, "the composer over the walk").toEqual({ mounts: 1, live: 1 });
+
+    await act(async () => { wire.release(); });
+    await waitFor(() => sendSays("the second place") !== "the reply's send: sending", "the answer applied on the machine that sent it");
+    await rounds(20);
+    expect(wire.sent, "one send left for one press").toHaveLength(1);
+    expect(sendSays("the second place"), "the answer is applied: it went, and the sending state is gone").toBe("the reply's send: sent");
+    expect(seen.mounts.composer, "nothing mounted the composer again").toBe(1);
+  }, 60_000);
+
+  it("a composer mounted with a place's own body is seen: the place walked to stands another machine, which knows no send", async () => {
+    const engine = engineOver(await storeWith([msg("m1")]));
+    const wire = holdingSends(engine);
+    await standOverTheGround(engine, writingPlaces("with this place's body"), MailGround);
+    await waitFor(() => at("the first place") && seen.asks > 0, "the first place over the ground");
+    await rounds(8);
+    await replyAndSendAt("the first place");
+    await waitFor(() => wire.sent.length === 1, "the send on the wire");
+
+    await visit(SECOND);
+    await waitFor(() => at("the second place"), "the second place");
+    await rounds(8);
+    /* The machine that sent left with its place; this one is another, and says nothing of a send still on the wire. */
+    expect(seen.mounts.composer, "the composers mounted over one walk").toBe(2);
+    expect(sendSays("the second place")).toBe("the reply's send: idle");
+    await act(async () => { wire.release(); });
+    await rounds(8);
   }, 60_000);
 });

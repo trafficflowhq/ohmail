@@ -11,7 +11,6 @@
  * `AppShell.tsx` unchanged (ARCH-022).
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
-import type { useTranslations } from "next-intl";
 import {
   addressBook,
   draftBodyKnown,
@@ -35,7 +34,7 @@ import {
   type SendAndDonePlan,
   type TriagePileEntry,
 } from "@ohmail/client-engine";
-import { type ToastFn } from "@ohmail/ui";
+import type { ToastFn } from "../press/report.js";
 import {
   clearComposeDraft,
   composePlan,
@@ -52,7 +51,7 @@ import {
   type ComposeFields,
   type ComposePrefill,
   type MailSend as MailSendMutation,
-} from "@ohmail/app-logic/writing/compose";
+} from "./compose.js";
 import {
   discardKeepsRow,
   reopenWouldOverwrite,
@@ -62,7 +61,7 @@ import {
   worthSaving,
   type ComposeFate,
   type ComposeFlush,
-} from "@ohmail/app-logic/writing/compose-autosave";
+} from "./compose-autosave.js";
 import {
   formatRecipientChips,
   optionsFromFacts,
@@ -73,13 +72,13 @@ import {
   resolveComposeFrom,
   resolveReplyFrom,
   type ReplyEnvelopeEdit,
-} from "./compose-from";
-import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
-import { NEW_LETTER, useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply";
-import { dropCopy, handleOf, twins } from "@ohmail/app-logic/writing/draft-creates";
-import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "@ohmail/app-logic/writing/reply-autosave";
-import { forwardEnvelopePlan, forwardSend } from "./forward-send";
-import { attachmentBytes, useForwardFiles, type ForwardFilesPlan } from "./forward-files";
+} from "./compose-from.js";
+import type { ConsentState } from "../consent/consent-state.js";
+import { NEW_LETTER, useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply.js";
+import { dropCopy, handleOf, twins } from "./draft-creates.js";
+import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "./reply-autosave.js";
+import { forwardEnvelopePlan, forwardSend } from "./forward-send.js";
+import { attachmentBytes, useForwardFiles, type ForwardFilesPlan } from "./forward-files.js";
 import {
   adoptLegacyReplyLanes,
   clearReplyLane,
@@ -111,34 +110,37 @@ import {
   type ReplyEditorMeta,
   type SendPhase,
   type SendState,
-} from "@ohmail/app-logic/writing/mail-send";
-import { useMailSendText } from "./mail-send-text";
-import { scheduleLabel } from "./format";
-import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
-import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "@ohmail/app-logic/writing/rich-text";
-import { go, type Route } from "./routing";
-import { sendLine, sendLineValues } from "./SendStatus";
-import { documentHidden } from "@ohmail/app-logic/session/document-hidden";
-import { RESTART_FLUSH_MS, holdFilesForRestart, holdForRestart } from "@ohmail/app-logic/doors/app-update";
-import { attachSendLockDraft, discardDecision, holdOf, recordForEndedSend, releaseSendLockForRow, sendRecordsNaming } from "@ohmail/app-logic/writing/send-lock";
-import { setComposeDoor } from "./compose-door";
-import { releaseSendAndDone } from "./send-release";
-import type { DiscardRefusal } from "../views/DraftsView";
+} from "./mail-send.js";
+import { sendLine } from "./send-line.js";
+import { useSendText } from "./mail-send-text.js";
+import type { MailboxFacts } from "../mail-state/mail-state.js";
+import { readColumnHidden } from "../layout/narrow.js";
+import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text.js";
+import { documentHidden } from "../session/document-hidden.js";
+import { RESTART_FLUSH_MS, holdFilesForRestart, holdForRestart } from "../doors/app-update.js";
+import { attachSendLockDraft, discardDecision, holdOf, recordForEndedSend, releaseSendLockForRow, sendRecordsNaming } from "./send-lock.js";
+import { setComposeDoor } from "./compose-door.js";
+import { releaseSendAndDone } from "./send-release.js";
+import type {
+  ComposerPlace,
+  ComposerWords,
+  DiscardRefusal,
+  MailboxEntity,
+  SupportSeed,
+} from "./composer-types.js";
 import {
   effectiveSignature,
   effectiveSignatureHtml,
   SIG_FOLLOWING,
   withSignature,
   type SignatureState,
-} from "./signature";
-import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
-import { UNDO_MS } from "@ohmail/app-logic/press";
-import type { StorageScope } from "@ohmail/app-logic/storage/scope";
-import { noteReplyPress } from "./sent-reveal";
-import type { OhboxReplyDone } from "@ohmail/app-logic/ohbox";
-import type { MailboxEntity } from "../views/SettingsView";
-import type { SupportSeed } from "./HelpContactPane";
+} from "./signature.js";
+import { useStableCallback } from "../press/stable-callback.js";
+import { UNDO_MS } from "../press/index.js";
+import type { StorageScope } from "../storage/scope.js";
+import type { Translator } from "../text/translator.js";
+import { noteReplyPress } from "./sent-reveal.js";
+import type { OhboxReplyDone } from "../ohbox/index.js";
 
 /** How long a Not sent notice stands; a second ending inside it widens it to a count. */
 const NOT_SENT_TOAST_MS = 8000;
@@ -219,12 +221,17 @@ export interface ShellComposeInput {
   engine: OhmailEngine;
   /** The mirror as it is — `engine.read()` from the render, never re-read here. */
   reader: EntityReader;
-  t: ReturnType<typeof useTranslations>;
+  /** The whole catalogue's reader, as the host's text package answers it. */
+  t: Translator;
+  /** What that text reader answers beside the catalogue's sentences: a time to come, a size, the reader's clock. */
+  words: ComposerWords;
   toast: ToastFn;
-  /** The host's draft request path; absent on web, where the Cloud client remains the default. */
-  draftReplyWire?: DraftReplyWire;
+  /** The host's draft wire, or `none`: then no drafted reply is offered here and nothing is asked. */
+  draftReplyWire: DraftReplyWire | "none";
   /** Only `view`, and only so the autosave knows whether the compose form is on screen. */
-  route: Pick<Route, "view">;
+  route: { readonly view: string };
+  /** The host's way to one of the composer's places: the compose form, Drafts, the Ohbox. */
+  go: (to: ComposerPlace) => void;
   /** The three signature members, gated together by `signaturesKnown` — see `consent-state.ts`. */
   consent: Pick<ConsentState, "signatures" | "signaturesHtml" | "signaturesKnown">;
   /** `GET /mailboxes` as the roster reported it, or `null` for "we cannot see" — the From list. */
@@ -273,7 +280,7 @@ export interface ShellComposeInput {
 export type ShellCompose = ReturnType<typeof useShellCompose>;
 
 export function useShellCompose({
-  engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
+  engine, reader, t, words, toast, draftReplyWire, route, go, consent, facts, mailboxes, drafts, ownAddresses,
   fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
   setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor,
   inPlaceHost, scope,
@@ -983,7 +990,7 @@ export function useShellCompose({
     setPendingDraft({ draft, messageId });
   });
 
-  const draftReply = useDraftReply({ onDraft, wire: draftReplyWire });
+  const draftReply = useDraftReply({ onDraft, wire: draftReplyWire, t });
 
   const resolveDraft = useStableCallback((mode: "replace" | "append") => {
     if (!pendingDraft) return;
@@ -996,8 +1003,9 @@ export function useShellCompose({
     setPendingDraft(null);
   });
 
+  /* `null` where the host has no drafter: no offer is drawn, as no control exists. */
   const draftReplyChrome = useMemo(
-    () => ({ control: draftReply, pending: pendingDraft, resolve: resolveDraft }),
+    () => (draftReply === null ? null : { control: draftReply, pending: pendingDraft, resolve: resolveDraft }),
     [draftReply, pendingDraft, resolveDraft],
   );
 
@@ -1089,7 +1097,7 @@ export function useShellCompose({
       /* The letter went: its own text kept beside a draft of it is let go, and a draft still out for it fills no
          letter. Only when the settlement is about the letter on screen: an earlier letter's send settling after the
          hand-off leaves the current letter's alone. */
-      if (aboutThisCompose) draftReply.moved(NEW_LETTER);
+      if (aboutThisCompose) draftReply?.moved(NEW_LETTER);
       /* Invariant T(b), and this is the one implementation of it: the live
          confirmed path and the reload path both call `settleCompose` now
          (they used to clear the compose in different statements and
@@ -1171,7 +1179,7 @@ export function useShellCompose({
     // question, because the AI action behind it has already been spent.
     setPendingDraft((p) => (p?.messageId === key ? null : p));
     // …and the person's own text kept beside a draft of it is let go with it, unless another draft of it stands now.
-    if (!moved) draftReply.forget(key);
+    if (!moved) draftReply?.forget(key);
 
     /**
      * Guarded on the item the run is STANDING ON, not on "a run is open". A confirmation can arrive from a flush
@@ -1436,7 +1444,7 @@ export function useShellCompose({
     const line = sendLine(ended, false);
     if (line === null) return;
     const scope = lane === COMPOSE_SEND_KEY ? "compose" : "reply";
-    toast(t(`${scope}.${line.key}`, sendLineValues()), {
+    toast(t(`${scope}.${line.key}`, words.sendLineValues()), {
       action: t(`${scope}.notSentOpen`),
       onAction: () => { lastSaid.current = null; openNotSent(lane, left); },
       duration: NOT_SENT_TOAST_MS,
@@ -1478,7 +1486,7 @@ export function useShellCompose({
   const markNotSentRow = useStableCallback((lane: string, ended: SendState, left: RefusedRow | undefined) => {
     const line = sendLine(ended, false);
     if (line === null || left === undefined) return;
-    const said = t(`${lane === COMPOSE_SEND_KEY ? "compose" : "reply"}.${line.key}`, sendLineValues());
+    const said = t(`${lane === COMPOSE_SEND_KEY ? "compose" : "reply"}.${line.key}`, words.sendLineValues());
     setNotSentRows((was) => new Map(was).set(left.rowId, said));
   });
   const sayUnshownEnding = useStableCallback((lane: string, ended: SendState, left: RefusedRow | undefined) => {
@@ -1486,7 +1494,7 @@ export function useShellCompose({
     if (line === null) return;
     const scope = lane === COMPOSE_SEND_KEY ? "compose" : "reply";
     if (left !== undefined) {
-      const said = t(`${scope}.${line.key}`, sendLineValues());
+      const said = t(`${scope}.${line.key}`, words.sendLineValues());
       setNotSentRows((was) => new Map(was).set(left.rowId, said));
     }
     if (!documentHidden()) { sayEndings([{ lane, ended, left }]); return; }
@@ -1549,7 +1557,7 @@ export function useShellCompose({
     if (!accepted && (phase === "failed" || phase === "idle") && key !== COMPOSE_SEND_KEY) replyAutosave.notSent(key);
     const intent = detail?.andDone;
     if (intent === undefined || !accepted) return false;
-    const why = detail?.copy ? sentCopySay(detail.copy, scheduleLabel) : null;
+    const why = detail?.copy ? sentCopySay(detail.copy, words.scheduleLabel) : null;
     /* The release read NOW, from the Ohbox as presented — and the row's own Done door
        dispatches it, so a refused step is said in the same words. Nothing to release
        answers `false`, and the send's ordinary sentence is said instead. */
@@ -1574,7 +1582,7 @@ export function useShellCompose({
   /** The composer's binding epoch, late-bound like {@link settleComposeRef}: the sent beat's mark. */
   const composeEpochRef = useRef<() => number>(() => 0);
   const mailSend = useMailSend(
-    engine, scope, toast, useMailSendText(), onSendSettled, onSendOutcome,
+    engine, scope, toast, useSendText(t, words.scheduleLabel), onSendSettled, onSendOutcome,
     (key) => (key === COMPOSE_SEND_KEY ? composeEpochRef.current() : null),
   );
   /**
@@ -1916,6 +1924,7 @@ export function useShellCompose({
         // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
         // showed sits ABOVE the quoted history in what the recipient reads.
         withLaneRow(fwdRow, fwdBase, withSignature(forwardSend(parent, {
+          clock: words.clock(),
           body: replyBody.text,
           html: replyBody.html ? replyBody.html : null,
           // The resolved sender, or the receiving mailbox — the editor's lock judged the
@@ -2195,7 +2204,7 @@ export function useShellCompose({
    */
   const replaceComposer = useStableCallback((seeded: ComposeFields) => {
     // Another letter takes the composer: the one leaving lets its own text go, and a draft still out for it fills none.
-    draftReply.moved(NEW_LETTER);
+    draftReply?.moved(NEW_LETTER);
     const outgoing = readComposeRow(scope);
     const held = holdOf(engine, {
       lane: COMPOSE_SEND_KEY, draftId: outgoing, session: composeSessionId(scope),
@@ -2481,7 +2490,7 @@ export function useShellCompose({
       const openSeeded = (): void => {
         /* Another letter takes the composer: the one leaving lets its own text go, and a draft still out for it fills
            none. The letter's own row opened again is the same letter: its draft and its own text stay. */
-        if (readComposeRow(scope) !== d.id) draftReply.moved(NEW_LETTER);
+        if (readComposeRow(scope) !== d.id) draftReply?.moved(NEW_LETTER);
         if (waiting) letGoOfWaiting();
         setCompose(seeded);
         /**
@@ -3054,8 +3063,8 @@ export function useShellCompose({
          was gone. Asked before the discard, which spends the binding it reads. */
       const keeps = discardKeepsCompose();
       // Its own text kept beside a draft goes with it, and a draft still out fills no letter; Undo puts both back.
-      const kept = draftReply.own.get(NEW_LETTER);
-      draftReply.moved(NEW_LETTER);
+      const kept = draftReply?.own.get(NEW_LETTER);
+      draftReply?.moved(NEW_LETTER);
       // This message's own press, withdrawn or thrown away with it, owes no door anything.
       if (own) handedPress.current.delete(COMPOSE_SEND_KEY);
       if (autosave.draftId) writeReplyMeta(`draft:${autosave.draftId}`, {}, scope);
@@ -3066,8 +3075,8 @@ export function useShellCompose({
           const may = mayReplace(snapshot);
           const open = (): void => {
             replaceComposer(snapshot);
-            if (kept !== undefined) draftReply.keep(kept);
-            draftReply.restore(NEW_LETTER);
+            if (kept !== undefined) draftReply?.keep(kept);
+            draftReply?.restore(NEW_LETTER);
             go("compose");
           };
           if (may === true) open();
@@ -3110,8 +3119,8 @@ export function useShellCompose({
     }
     setReplyTo((cur) => (cur === id ? null : cur));
     // A discarded reply's own text, kept beside a draft of it, goes with it; Undo puts it back.
-    const kept = mode === "reply" ? draftReply.own.get(id) : undefined;
-    if (mode === "reply") draftReply.forget(id);
+    const kept = mode === "reply" ? draftReply?.own.get(id) : undefined;
+    if (mode === "reply") draftReply?.forget(id);
     if (isRichEmpty(snapshot.body) && snapshot.files.length === 0) return;
     const back = (): void => {
       if (mode === "forward") openForward(id);
@@ -3122,8 +3131,8 @@ export function useShellCompose({
       onReplySig(snapshot.sig);
       if (snapshot.subject !== null) onReplySubject(snapshot.subject);
       setReplyAttachments(snapshot.files);
-      if (kept !== undefined) draftReply.keep(kept);
-      if (mode === "reply") draftReply.restore(id);
+      if (kept !== undefined) draftReply?.keep(kept);
+      if (mode === "reply") draftReply?.restore(id);
     };
     toast(t("compose.toastDiscard"), { action: t("ohbox.undo"), duration: UNDO_MS, onAction: back });
   });

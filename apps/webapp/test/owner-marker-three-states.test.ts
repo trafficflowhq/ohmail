@@ -305,6 +305,18 @@ describe("a sentence rendered as the server's is the server's", () => {
     expect(disarmsAutoSuggest(new Error("bridge said no"))).toBe(true);
   });
 
+  it("the mark is read off the refusal itself, whatever class carries it", async () => {
+    const { clientRefusalKey, disarmsAutoSuggest } = await import("../app/shell/screener-suggest.js");
+    // What the server client stamps on a refusal it made itself, carried by a class this file never sees.
+    const made = Object.assign(new Error("raw english"), { status: 0, code: "owner_absent", wire: { coded: false } });
+    expect(clientRefusalKey(made)).toBe("suggest.refusedOwnerAbsent");
+    expect(disarmsAutoSuggest(made)).toBe(false);
+    // And a server's own word stays a server's, whatever carries it.
+    const stated = Object.assign(new Error("m"), { status: 409, code: "ai_disabled", wire: { coded: true } });
+    expect(clientRefusalKey(stated)).toBeNull();
+    expect(disarmsAutoSuggest(stated)).toBe(true);
+  });
+
   it("every key this client can choose exists in BOTH catalogues", () => {
     const keys = [
       "refusedOwnerAbsent", "refusedOwnerSignedOut", "refusedOwnerMismatch",

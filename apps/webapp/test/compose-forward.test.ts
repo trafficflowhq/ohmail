@@ -55,7 +55,7 @@ function readSource(rel: string): string {
 }
 const stripComments = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[^\n]*?\/\/.*$/gm, "");
-const shell = stripComments(readSource("app/shell/shell-compose.ts"));
+const shell = stripComments(readSource("../../packages/app-logic/src/writing/shell-compose.ts"));
 /* The `chrome` memo is the contract between the compose verbs and `MessagePane`, and it stayed
    in the shell frame when the verbs left (ARCH-022) — the two arms that read it read this. */
 const frame = stripComments(readSource("app/shell/AppShell.tsx"));

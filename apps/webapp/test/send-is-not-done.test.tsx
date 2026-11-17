@@ -251,7 +251,7 @@ describe("a plain Send files nothing", () => {
 /** The reader eases the sent reply into view (`sent-reveal.ts`): every Send door tells it, not only the button. */
 describe("every Send door notes the press for the reader", () => {
   async function openAndReply(): Promise<{ id: string; notes: string[]; off: () => void }> {
-    const { onReplyPress } = await import("../app/shell/sent-reveal.js");
+    const { onReplyPress } = await import("@ohmail/app-logic/writing/sent-reveal");
     await mountShell();
     const id = cursorRow(host!)?.dataset.id;
     expect(id, "no row under the cursor").toBeTruthy();

@@ -622,6 +622,8 @@ export function connectionSection(
            `detach()` racing a sync erase a death the bound had correctly concluded. Nothing about
            a runtime that has been told to stop is evidence about its connection. */
         if (box.stopped) return;
+        // A cycle was served: the store counts it toward what its copy from before the update is kept for.
+        void scope.opened.copySettled?.(mb.id);
         box.leaseUnavailableSince = null;
         box.leaseUnavailableCycles = 0;
         box.wentQuiet = false;

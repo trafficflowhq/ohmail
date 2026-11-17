@@ -18,7 +18,7 @@ import { MessageHeader } from "./MessageCard";
 import type { BlockNotice } from "@ohmail/letter-body";
 import { PLACE_LABEL, dayAt, dayValue, firstDayAt, hueOf, resurfaceClock, resurfaceHorizons, tagsOfMessage, withheldCopyKey, type ResurfaceHorizon } from "./format";
 import { activeFormatLocale } from "./locale";
-import { replyAllRecipients } from "./compose-from";
+import { replyAllRecipients } from "@ohmail/app-logic/writing/compose-from";
 import { useBarDensity } from "@ohmail/app-logic/lists/bar-density";
 import { TodaysReplyEditor } from "./TodaysReplyEditor";
 import { ariaShortcut, chordKeys, useBinding, useKeyPress, useModGlyph } from "@ohmail/app-logic/keys/keymap";
@@ -30,7 +30,7 @@ import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { SENDER_SHEET_ID } from "./SenderMenu";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
-import { useSentReveal } from "./sent-reveal";
+import { useSentReveal } from "@ohmail/app-logic/writing/sent-reveal";
 import { useThreadRead, type ThreadReadWiring } from "@ohmail/app-logic/reading/reader-seen";
 import { ThreadMarks } from "./ThreadMarks";
 import type { ThreadWalkChannel } from "@ohmail/app-logic/reading/thread-walk-channel";
@@ -949,12 +949,15 @@ function ActionBar({
         else markRead();
       },
     },
-    {
-      id: "draft",
-      label: t("actionDraftReply"),
-      icon: <Icon name="spark" size={13} />,
-      run: () => { closeMenu(); onAction("draft"); },
-    },
+    /* Only where the chrome hands a drafter: on a host that names none it would promise a draft that cannot come. */
+    ...(chrome.draftReply !== undefined
+      ? [{
+          id: "draft",
+          label: t("actionDraftReply"),
+          icon: <Icon name="spark" size={13} />,
+          run: () => { closeMenu(); onAction("draft"); },
+        } as MoreMenuItem]
+      : []),
     /**
      * DELETE — last, menu-only, and flag-gated (FOLDERS-SPEC.md §16.3/§16.7): the verb ships behind "Use folders",
      * and with the flag off this reader is the pre-verb reader. The item carries NO `group`, like Draft reply, so no

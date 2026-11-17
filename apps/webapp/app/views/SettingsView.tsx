@@ -128,16 +128,10 @@ export interface NotificationsMeta {
 /**
  * The MIRROR's `mailbox` entity shape. This pane no longer reads it — the Mailboxes pane is
  * host-supplied now (see {@link mailboxSection}) — but the shell still lists these for the rail
- * and the compose from-selector's fixture fallback, so the type stays here and `AppShell` imports
- * it. `"mailbox"` is not a `/sync` entity, so only the fixture world ever holds one.
+ * and the compose from-selector's fixture fallback. The type is declared beside the composer and
+ * handed on here under the name `AppShell` imports.
  */
-export interface MailboxEntity {
-  id: string;
-  address: string;
-  provider: string;
-  protocol: string;
-  status: string;
-}
+export type { MailboxEntity } from "@ohmail/app-logic/writing/composer-types";
 
 /**
  * One tag, and the two things that can be done to it. A row with three states — resting, renaming,

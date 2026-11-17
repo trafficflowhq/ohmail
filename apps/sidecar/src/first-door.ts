@@ -7,6 +7,7 @@ import type { LocalDb } from "./db.js";
 import { removeFileSynced, writeAtomic } from "./fs-atomic.js";
 import { mirrorRowsRemain } from "./local-mirror.js";
 import type { Diagnostic } from "./log.js";
+import { forgetStoreCopies } from "./store-copies.js";
 
 /*
  * THE FIRST LOCAL DOOR, UNTIL IT IS SAVED. The window seals the password into a PENDING engine and
@@ -119,6 +120,11 @@ async function undoAttempt(
   if (row === null) return;
   const undone = (verdict: string, reason: string): void => {
     input.log("first_door_attempt_undone", { mailboxId: row.id, verdict, reason });
+    /* A copy of the store kept from before an update may hold what this just removed, so every
+       copy goes with it. One that cannot go now stays owed: the next start removes it first. */
+    try {
+      forgetStoreCopies(input.dataDir, "start_cleanup", input.log);
+    } catch { /* said by the removal's own line */ }
   };
   if (!last.created) {
     if (await incomingAt(db, row.id) === last.kept) return;

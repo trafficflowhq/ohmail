@@ -30,13 +30,13 @@ import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { sendKeyOf, sendRefusal, sendStateFor, sendVerb, type SendState, type ShowSend } from "@ohmail/app-logic/writing/mail-send";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import { parseRecipients, type MailSend } from "@ohmail/app-logic/writing/compose";
-import { forwardEnvelopePlan, forwardSend } from "./forward-send";
+import { forwardEnvelopePlan, forwardSend } from "@ohmail/app-logic/writing/forward-send";
 import { ForwardFiles } from "./ForwardFiles";
-import type { ForwardFilesPlan } from "./forward-files";
+import type { ForwardFilesPlan } from "@ohmail/app-logic/writing/forward-files";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 import { RichEditor } from "./RichEditorLazy";
 import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
-import type { DraftReplyControl, DraftedReply } from "./draft-reply";
+import type { DraftReplyControl, DraftedReply } from "@ohmail/app-logic/writing/draft-reply";
 import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { SendStatus, sendLineValues } from "./SendStatus";
 import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
@@ -49,7 +49,7 @@ import {
   replyRecipients,
   resolveReplyFrom,
   type ReplyEnvelopeEdit,
-} from "./compose-from";
+} from "@ohmail/app-logic/writing/compose-from";
 import {
   RecipientField,
   focusMovedChip,
@@ -59,7 +59,7 @@ import {
   type RecipientRow,
 } from "./RecipientField";
 import { SignatureBlock } from "./SignatureBlock";
-import { SIG_FOLLOWING, type SignatureState } from "./signature";
+import { SIG_FOLLOWING, type SignatureState } from "@ohmail/app-logic/writing/signature";
 import { durableSessionSet } from "@ohmail/app-logic/storage/durable";
 import { scrollIntoViewProgrammatically, scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
 import { stuckDockScroller } from "./reply-dock";

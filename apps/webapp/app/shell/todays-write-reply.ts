@@ -20,9 +20,9 @@ import {
   replyEnvelopePlan,
   replyRecipients,
   resolveReplyFrom,
-} from "./compose-from";
-import { forwardEnvelopePlan, forwardSend } from "./forward-send";
-import type { ShellCompose } from "./shell-compose";
+} from "@ohmail/app-logic/writing/compose-from";
+import { forwardEnvelopePlan, forwardSend } from "@ohmail/app-logic/writing/forward-send";
+import type { ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
 
 export interface ReplyContext {
   readonly engine: OhmailEngine;
