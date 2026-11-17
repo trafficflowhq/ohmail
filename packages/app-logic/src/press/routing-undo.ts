@@ -44,7 +44,7 @@ import {
 } from "@ohmail/client-engine";
 import { createIntentWindows, intentWindowsChannel } from "./intent-windows.js";
 import { localStorageDoor } from "../storage/durable.js";
-import { storageOwner } from "../storage/storage-owner.js";
+import { usePinnedScope, type StorageScope } from "../storage/scope.js";
 import { UNDO_MS } from "./undo-window.js";
 import {
   planScreeningChange,
@@ -185,8 +185,11 @@ export interface RoutingUndoDeps {
    * census exists to refuse. Absent here AND in the browser means one window per device, said.
    */
   windows?: TabWindows | undefined;
-  /** The journal's owner, read at BUILD time like every other owner-keyed store. */
-  owner?: string | null;
+  /**
+   * WHOSE journal and channel the window keeps: the scope its mount hands in, kept from its first render. A press,
+   * its claim, the boot replay and a commit that lands after the mount is gone all name it.
+   */
+  scope: StorageScope;
   windowMs?: number;
   now?: () => number;
   /** `false` on a surface with no server to carry a rule to — the demo. */
@@ -211,6 +214,7 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
      silently un-filed by an unrelated re-render. */
   const latest = useRef(deps);
   latest.current = deps;
+  const owner = useRef(usePinnedScope(deps.scope));
   /** The press's own note, for the correction. Keyed by press id, dropped when it settles. */
   const notes = useRef(new Map<string, RoutingNote>());
   /**
@@ -258,13 +262,13 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
     () => latest.current.windows
       ?? (typeof BroadcastChannel === "undefined"
         ? undefined
-        : createIntentWindows({ channel: `${intentWindowsChannel()}.routing` })),
+        : createIntentWindows({ channel: `${intentWindowsChannel(owner.current)}.routing` })),
     [],
   );
 
   const window_ = useMemo(() => createRoutingWindow<JarIntent>({
     door: localStorageDoor("routing.intents"),
-    key: routingIntentsKey(latest.current.owner ?? storageOwner()),
+    key: routingIntentsKey(owner.current),
     windowMs: latest.current.windowMs ?? UNDO_MS,
     ...(coordinator ? { windows: coordinator } : {}),
     ...(latest.current.now ? { now: () => latest.current.now!() } : {}),

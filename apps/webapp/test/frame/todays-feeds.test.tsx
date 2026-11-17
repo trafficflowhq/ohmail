@@ -65,7 +65,7 @@ beforeEach(() => {
   Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   resetUpdateStoreForTests();
   input = {
-    demo: false, facts: [], mailState: quiet, setupHref: null, mailSend: sendLine([]), desktopSection: true,
+    demo: false, scope: null, facts: [], mailState: quiet, setupHref: null, mailSend: sendLine([]), desktopSection: true,
     railGroups: GROUPS, activeRailId: "ohbox", routeView: "ohbox", activeTagId: null, compose: () => undefined,
     pull: { available: false, pulling: false, pull: () => undefined }, account: null, mailboxes: [],
     organizer: { changes: [], acknowledge: async () => undefined, on: false },

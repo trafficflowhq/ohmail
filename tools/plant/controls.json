@@ -205,6 +205,75 @@
     ]
   },
   {
+    "id": "a press reads the storage owner through the door, under another name",
+    "rule": "ohmail/owner-lookup",
+    "plant": "packages/app-logic/src/press/planted-owner-lookup.ts",
+    "expect": "refused",
+    "source": [
+      "import { storageOwner as whose } from \"@ohmail/app-logic/storage\";",
+      "",
+      "export const scope = (): string | null => whose();"
+    ]
+  },
+  {
+    "id": "a part of today's views outside the closed list reads the shell's scope",
+    "rule": "ohmail/owner-lookup",
+    "plant": "apps/webapp/app/shell/planted-todays-scope.ts",
+    "expect": "refused",
+    "source": [
+      "import { useTodaysScope } from \"./todays-scope\";",
+      "",
+      "export const useScope = useTodaysScope;"
+    ]
+  },
+  {
+    "id": "a part of the shell reads the session's marker by hand, by its cookie's name",
+    "rule": "ohmail/owner-lookup",
+    "plant": "apps/webapp/app/shell/planted-owner-cookie.ts",
+    "expect": "refused",
+    "source": [
+      "import { cookieFromJar } from \"@ohmail/app-logic/storage/cookie-jar\";",
+      "import { OWNER_COOKIE } from \"@ohmail/app-logic/storage/owner-cookie\";",
+      "",
+      "export const plantedOwner = (): string | null =>",
+      "  typeof document === \"undefined\" ? null : cookieFromJar(document.cookie, OWNER_COOKIE);"
+    ]
+  },
+  {
+    "id": "a part of the shell reads the session's marker by hand, spelling its cookie's name",
+    "rule": "ohmail/owner-lookup",
+    "plant": "apps/webapp/app/shell/planted-owner-marker-name.ts",
+    "expect": "refused",
+    "source": [
+      "import { cookieFromJar } from \"@ohmail/app-logic/storage/cookie-jar\";",
+      "",
+      "export const plantedOwner = (): string | null =>",
+      "  typeof document === \"undefined\" ? null : cookieFromJar(document.cookie, \"tf_owner\");"
+    ]
+  },
+  {
+    "id": "a part of the shell keys a stored value on the account the web session client speaks for",
+    "rule": "ohmail/owner-lookup",
+    "plant": "apps/webapp/app/shell/planted-session-client.ts",
+    "expect": "refused",
+    "source": [
+      "import { boundApiOwner } from \"../api-client\";",
+      "",
+      "export const plantedKey = (): string => `ohmail.ui.readingAlong.${boundApiOwner() ?? \"local\"}`;"
+    ]
+  },
+  {
+    "id": "a press asks whether a key is the demo's",
+    "rule": "ohmail/owner-lookup",
+    "plant": "packages/app-logic/src/press/planted-demo-owned.ts",
+    "expect": "passes",
+    "source": [
+      "import { isDemoOwned } from \"@ohmail/app-logic/storage/storage-owner\";",
+      "",
+      "export const demo = (scope: string | null): boolean => isDemoOwned(scope);"
+    ]
+  },
+  {
     "id": "wire exports a value",
     "rule": "ohmail/wire-exports-no-value",
     "plant": "packages/wire/src/planted/value.ts",
@@ -303,6 +372,15 @@
     "expect": "refused",
     "source": [
       "export const saved = localStorage.getItem(\"draft\");"
+    ]
+  },
+  {
+    "id": "the document by the global object's name in shared behaviour",
+    "rule": "no-restricted-properties",
+    "plant": "packages/app-logic/src/planted/global-this.ts",
+    "expect": "refused",
+    "source": [
+      "export const jar = (): string => globalThis.document.cookie;"
     ]
   },
   {
@@ -593,6 +671,7 @@
       "react-hooks/exhaustive-deps",
       "react-hooks/rules-of-hooks",
       "no-restricted-globals",
+      "no-restricted-properties",
       "no-restricted-imports",
       "no-empty",
       "@typescript-eslint/ban-ts-comment",

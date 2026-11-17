@@ -48,9 +48,12 @@ export function PairScreen({
    */
   ended = null,
   signedOut = null,
+  readsCode,
   onPaired,
 }: {
   bearer: BearerManager;
+  /** Whether the address may hold a pairing code. False for a pairing with no scope: the address is a mail view's. */
+  readsCode: boolean;
   ended?: "revoked" | "signed-out" | null;
   signedOut?: SignOutOutcome | null;
   onPaired: () => void;
@@ -71,6 +74,10 @@ export function PairScreen({
   const fragment = useRef<string | null>(null);
   const redeem = useRef<Promise<{ ok: boolean; answer: RedeemAnswer } | null> | null>(null);
   useEffect(() => {
+    if (!readsCode) {
+      setPhase({ kind: "missing" });
+      return;
+    }
     if (fragment.current === null) {
       const hash = window.location.hash;
       fragment.current = hash.startsWith("#") ? hash.slice(1).trim() : "";

@@ -18,6 +18,7 @@ import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
 import { KeymapProvider } from "@ohmail/app/keys";
 import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
+import { TodaysScopeProvider } from "../app/shell/todays-scope";
 import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**
@@ -73,11 +74,16 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+/** The scope of the shell the view is drawn in. */
+const SEARCH_SCOPE = "acc-search";
+
 async function render(engine: OhmailEngine, query: string): Promise<void> {
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(KeymapProvider, { children: h(SearchView, { engine, version: 1, now: NOW, query, onQuery: () => {}, onOpen: () => {} }) }),
+      /* Drawn in a shell, as Search always is: the order is kept under the shell's scope. */
+      children: h(TodaysScopeProvider, { value: SEARCH_SCOPE },
+        h(KeymapProvider, { children: h(SearchView, { engine, version: 1, now: NOW, query, onQuery: () => {}, onOpen: () => {} }) })),
     }));
   });
 }
@@ -308,7 +314,7 @@ describe("Search pages the store", () => {
     const engine = await engineWith([newer, older], async (_q, o) => (o.parts === "summary"
       ? { items: [], total: 2, totalExact: true }
       : { items: o.sort === "date_asc" ? [older, newer] : [newer, older], total: 2, nextCursor: null, ms: 3 }));
-    window.localStorage.setItem(searchSortKey(null), "date_asc");
+    window.localStorage.setItem(searchSortKey(SEARCH_SCOPE), "date_asc");
     await render(engine, "axa");
     await settle();
     expect(hits()).toEqual(["AXA old", "AXA new"]);

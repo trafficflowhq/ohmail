@@ -59,7 +59,8 @@ import {
   type NotificationHost,
   type PushSyncOutcome,
 } from "../shell/notification-settings";
-import { isDemoOwned, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { isDemoOwned } from "@ohmail/app-logic/storage/storage-owner";
+import { useTodaysScope } from "../shell/todays-scope";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { settingsPanes } from "./settings-panes";
 import { RulesView, type RuleOutcome } from "./RulesView";
@@ -742,6 +743,8 @@ export function SettingsView({
   onSelectPane?: (pane: PaneId) => void;
 }) {
   const t = useTranslations("settings");
+  /* The scope of the shell Settings is drawn in: the demo's own word says the pane stands in the demo. */
+  const scope = useTodaysScope();
   /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
   const tg = useTranslations("tag");
   /** The zone keys' shared vocabulary — the same words the rail's arrows carry. */
@@ -872,7 +875,7 @@ export function SettingsView({
        boot door already refuses this (`AppShell`, `resolvedDemo`); this is its other half. The
        press below needs no such gate: its switches render only under `!notifications`, and that
        `view_meta` row exists in the fixture world alone. */
-    if (isDemoOwned(storageOwner())) return;
+    if (isDemoOwned(scope)) return;
     let alive = true;
     const wanted = subscriptionWanted(notifyChannels, notifyPermission);
     void applyWakeIntent(notificationHost, wanted, t("notifyClosedBody")).then((o) => {

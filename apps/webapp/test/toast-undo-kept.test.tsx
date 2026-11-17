@@ -315,6 +315,7 @@ describe("an Undo whose window closed early is withdrawn, never left above its o
     const signals: AbortSignal[] = [];
     let n = 0;
     const queue = createDeleteUndo({
+      scope: null,
       mutate: async () => ({ status: "confirmed" }) as never,
       toast: (_m, o) => { if (o?.signal) signals.push(o.signal); },
       copy: {

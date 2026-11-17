@@ -19,7 +19,8 @@ import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/sto
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const OWED = { demo: false, known: true, supported: true, seedConfirmedAt: null };
+/* The scope the shell hands: the account this file names. */
+const OWED = { demo: false, known: true, supported: true, seedConfirmedAt: null, scope: "acct_a" };
 let offer: SeedOffer | null = null;
 function Probe(props: { input: Parameters<typeof useSeedOffer>[0] }) {
   offer = useSeedOffer(props.input);

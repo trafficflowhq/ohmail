@@ -123,6 +123,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
             flavor={flavorOf(status)}
             server={selfHostedServerOf(status)}
             onShellStatus={onStatus}
+            scope={p.scope}
           />
           <MailboxFilings api={filingsOverBridge} />
           {status.mode === "local" ? <MailboxSelfCheck check={checkMailboxHere} /> : null}
@@ -158,7 +159,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
       help: entry("help", null),
     };
     // The entries change with the door and what they draw; the callbacks above are stable.
-  }, [status, session, paired, hostLabel, freshness, storage, mayLinkOut, p.sealFailed, p.firstRunOpen, sweeps,
+  }, [status, session, paired, hostLabel, freshness, storage, mayLinkOut, p.sealFailed, p.firstRunOpen, p.scope, sweeps,
     onStatus, openOverlay, takeOver, setAi, withdrawManage, rereadAccess, recheckSweeps]);
 
   const draftReply = useMemo(() => draftReplyOverBridgeFor(status), [status]);

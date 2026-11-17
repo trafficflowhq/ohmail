@@ -605,6 +605,7 @@ describe("the delete window holds a whole press, not a message", () => {
     let actions: Array<() => void> = [];
     let n = 0;
     const queue = createDeleteUndo({
+      scope: null,
       mutate: async (messageId) => {
         sentHere.push({ kind: "message_delete", messageId });
         return { status: n++ < (opts.rollback ?? 0) ? "rolled_back" : "confirmed" };

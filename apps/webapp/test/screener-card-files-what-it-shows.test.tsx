@@ -267,7 +267,7 @@ describe("the card's press past the gate where a rule change travels to the orga
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       const raw = engine.read();
-      const d = useShellDispatch({ engine, reader: raw, t: useTranslations(), placeLabel, demo: false, refreshFacts: () => {}, toast: () => {} });
+      const d = useShellDispatch({ engine, reader: raw, t: useTranslations(), placeLabel, demo: false, refreshFacts: () => {}, toast: () => {}, scope: null });
       // As the shell's verbs set it.
       d.routing.planOver.current = travels
         ? (read) => pressRules(read, { travels: true, queued: [], applied: [], unsettled: [], now: NOW }) : null;

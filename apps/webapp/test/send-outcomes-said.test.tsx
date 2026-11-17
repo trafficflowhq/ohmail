@@ -6,10 +6,13 @@ import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { readComposeDraft } from "@ohmail/app-logic/writing/compose";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import {
   act, message, mountShell, NOW, press, replyDraft, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
+
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-send-outcomes";
 
 /**
  * EVERY ENDING OF A SEND IS SAID, TRUTHFULLY, through the whole shell.
@@ -29,9 +32,10 @@ import {
 
 beforeEach(() => {
   try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
+  setStorageOwner(OWNER);
   stubDom();
 });
-afterEach(unmountAll);
+afterEach(async () => { await unmountAll(); resetStorageOwnerForTest(); });
 
 const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind === "mail_send");
 const replySend = (el: HTMLElement): HTMLButtonElement | undefined =>

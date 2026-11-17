@@ -47,6 +47,7 @@ export {
   type ImageQualityLevel,
   type ImageQualityRule,
 } from "@ohmail/client-engine";
+import { scopeSuffix, type StorageScope } from "@ohmail/app-logic/storage/scope";
 import {
   DEFAULT_IMAGE_QUALITY_LEVEL,
   IMAGE_QUALITY_RULES,
@@ -59,9 +60,9 @@ import {
 /**
  * Where the level lives — this browser, per account. `localStorage` like the theme (per-machine, worth neither a
  * column nor a request), keyed by account because a browser is not a person: one account's "send my photos at full
- * size" must not become another's default. The id is `storageOwner` — so the standalone desktop keeps one preference
- * per MAILBOX; the demo passes `null` and gets the account-less key, which also holds every pre-scoping value,
- * honored as the fallback. A NEW key, because the old values mean the opposite: the previous key held an EFFORT axis
+ * size" must not become another's default. The id is the scope of the shell the dial is drawn in — so the standalone
+ * desktop keeps one preference per MAILBOX; `null` names the account-less key, which also holds every pre-scoping
+ * value, honored as the fallback, and a scope nobody handed in is refused. A NEW key, because the old values mean the opposite: the previous key held an EFFORT axis
  * (old `high` = squeeze hardest = new `low`), so reading it as this one would invert everyone's choice — the old key
  * is a migration source only ({@link LEGACY_LEVEL_MIGRATION}, write-once; only the new key is ever written). Kept
  * here rather than in `UI_KEYS` so the table, storage and transform stay one unit.
@@ -86,15 +87,17 @@ export const LEGACY_LEVEL_MIGRATION: Readonly<Record<string, ImageQualityLevel>>
 };
 
 /** The storage key for one account's level — the bare key for a surface with no account. */
-export function imageQualityKeyFor(accountId: string | null): string {
-  return accountId ? `${IMAGE_QUALITY_STORAGE_KEY}:${accountId}` : IMAGE_QUALITY_STORAGE_KEY;
+export function imageQualityKeyFor(accountId: StorageScope): string {
+  scopeSuffix(accountId);
+  return accountId === null ? IMAGE_QUALITY_STORAGE_KEY : `${IMAGE_QUALITY_STORAGE_KEY}:${accountId}`;
 }
 
 /** The legacy key for one account — the same scoping the new key uses. */
-export function legacyImageShrinkKeyFor(accountId: string | null): string {
-  return accountId
-    ? `${LEGACY_IMAGE_SHRINK_STORAGE_KEY}:${accountId}`
-    : LEGACY_IMAGE_SHRINK_STORAGE_KEY;
+export function legacyImageShrinkKeyFor(accountId: StorageScope): string {
+  scopeSuffix(accountId);
+  return accountId === null
+    ? LEGACY_IMAGE_SHRINK_STORAGE_KEY
+    : `${LEGACY_IMAGE_SHRINK_STORAGE_KEY}:${accountId}`;
 }
 
 /**
@@ -112,11 +115,12 @@ export function legacyImageShrinkKeyFor(accountId: string | null): string {
  * A blocked or throwing storage (Safari private mode, site data blocked) resolves to the default rather than
  * propagating: a preference is never worth breaking an attach over.
  */
-export function readImageQualityLevel(accountId: string | null = null): ImageQualityLevel {
+export function readImageQualityLevel(accountId: StorageScope): ImageQualityLevel {
+  imageQualityKeyFor(accountId);
   try {
     const ls = (globalThis as { localStorage?: Storage }).localStorage;
     if (!ls) return DEFAULT_IMAGE_QUALITY_LEVEL;
-    if (accountId) {
+    if (accountId !== null) {
       const scoped = ls.getItem(imageQualityKeyFor(accountId));
       if (isImageQualityLevel(scoped)) return scoped;
     }
@@ -124,7 +128,7 @@ export function readImageQualityLevel(accountId: string | null = null): ImageQua
     if (isImageQualityLevel(bare)) return bare;
 
     // Nothing on the new key. Fall back to the pre-rename one, MAPPED — see the header.
-    if (accountId) {
+    if (accountId !== null) {
       const legacyScoped = LEGACY_LEVEL_MIGRATION[ls.getItem(legacyImageShrinkKeyFor(accountId)) ?? ""];
       if (legacyScoped) return legacyScoped;
     }
@@ -139,7 +143,7 @@ export function readImageQualityLevel(accountId: string | null = null): ImageQua
 
 export function writeImageQualityLevel(
   level: ImageQualityLevel,
-  accountId: string | null = null,
+  accountId: StorageScope,
 ): void {
   // The choice still holds for this session; a jar that refused it says so once.
   durableSet(imageQualityKeyFor(accountId), level, "compose.imageQuality");

@@ -19,6 +19,7 @@ import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
 import { KeymapProvider } from "@ohmail/app/keys";
 import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
+import { TodaysScopeProvider } from "../app/shell/todays-scope";
 
 /**
  * THE ORDER CONTROL, AND THE HALF OF IT THAT IS NOT THE PARAMETER.
@@ -97,9 +98,12 @@ async function engineWith(over: Partial<EngineAdapter> = {}): Promise<OhmailEngi
 let host: HTMLDivElement;
 let root: Root;
 
+/** The scope of the shell Search is drawn in: the order is kept under it. */
+const SEARCH_SCOPE = "acc-search";
+
 beforeEach(() => {
-  // A device with no session cookie — `readOwner()` is null, so the preference lands under the
-  // `local` key. Cleared per test so persistence is proven by a WRITE, never inherited.
+  // The order lands under the key of the scope the shell hands the view (`SEARCH_SCOPE`). Cleared per test so
+  // persistence is proven by a WRITE, never inherited.
   window.localStorage.clear();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -116,12 +120,12 @@ async function render(engine: OhmailEngine, query: string): Promise<void> {
     root.render(
       h(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(KeymapProvider, {
+        children: h(TodaysScopeProvider, { value: SEARCH_SCOPE }, h(KeymapProvider, {
           children: h(SearchView, {
             engine, version: 1, now: NOW, query,
             onQuery: () => {}, onOpen: () => {},
           }),
-        }),
+        })),
       }),
     );
   });
@@ -232,7 +236,7 @@ describe("the search header offers an order", () => {
     await choose("date_desc");
 
     // Written under the account-scoped key, so two people on one browser cannot inherit it.
-    expect(window.localStorage.getItem(searchSortKey(null))).toBe("date_desc");
+    expect(window.localStorage.getItem(searchSortKey(SEARCH_SCOPE))).toBe("date_desc");
 
     // A reload: the whole tree goes away and comes back.
     await act(async () => root.unmount());
@@ -249,7 +253,7 @@ describe("the search header offers an order", () => {
     // The upgrade case. A stale key naming a sort the server would refuse with a 400 must read
     // as "no preference" — otherwise every search a returning user runs fails, with nothing on
     // screen to say why and no way to clear it but wiping site data.
-    window.localStorage.setItem(searchSortKey(null), "by_size");
+    window.localStorage.setItem(searchSortKey(SEARCH_SCOPE), "by_size");
 
     const asked: ServerSearchOpts[] = [];
     const engine = await engineWith({
@@ -292,9 +296,9 @@ describe("the search header offers an order", () => {
     await act(async () => {
       root.render(h(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(KeymapProvider, { children: h(SearchView, {
+        children: h(TodaysScopeProvider, { value: SEARCH_SCOPE }, h(KeymapProvider, { children: h(SearchView, {
           engine, version: 1, now: NOW, query: "berth plan", onQuery: () => {}, onOpen: (hit) => { opened.push(hit.message.id); },
-        }) }),
+        }) })),
       }));
     });
     const settle = () => act(async () => { await new Promise((r) => setTimeout(r, STORE_SEARCH_FOLLOWUP_HOLD_MS + 70)); });
@@ -342,7 +346,7 @@ describe("the search header offers an order", () => {
   });
 
   it("a question asked with a saved order starts at the top when the store holds more", async () => {
-    window.localStorage.setItem(searchSortKey(null), "date_asc");
+    window.localStorage.setItem(searchSortKey(SEARCH_SCOPE), "date_asc");
     const { opened, press, rows, cursorRow } = await berthRig(10);
     expect(rows()[0]).toBe("b0");
     expect(cursorRow(), `oldest first: ${rows().join(",")}`).toBe(0);

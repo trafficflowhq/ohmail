@@ -13,7 +13,10 @@ import {
   attach, composeLine, composeSend, composeSubject, composerOn, footButton, footLine, holdTheWire, letter, navigate, openDraftRow,
   railCompose, rounds, sends, toasts,
 } from "./_handoff-steps.js";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-handoff-other";
 
 /**
  * A HANDED-OFF SEND'S ENDING IS SAID ABOUT ITS OWN MESSAGE, NEVER OVER ANOTHER (PR #198 review,
@@ -27,10 +30,11 @@ import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 beforeEach(() => {
   try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
+  setStorageOwner(OWNER);
   stubDom();
   Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => true });
 });
-afterEach(async () => { await unmountAll(); });
+afterEach(async () => { await unmountAll(); resetStorageOwnerForTest(); });
 
 const A = letter("d-a", "Plans for Friday", "Shall we meet at noon?");
 const B = letter("d-b", "Budget review", "The numbers for the fourth quarter.", { name: "Noah", address: "noah@example.invalid" });

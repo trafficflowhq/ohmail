@@ -32,6 +32,7 @@ import {
   type DeleteIntent, type HeldVerb,
 } from "./delete-intents.js";
 import { UNDO_MS } from "./undo-window.js";
+import { scopeSuffix, usePinnedScope, type StorageScope } from "../storage/scope.js";
 
 export { UNDO_MS };
 
@@ -149,6 +150,11 @@ export interface HeldOutcome {
 
 export interface DeleteUndoDeps {
   /**
+   * WHOSE JOURNAL the window keeps its presses in: the scope its mount hands in, read once as the window is made. The
+   * press, Undo and a settle that lands after the mount is gone all name it, whatever the storage owner says then.
+   */
+  scope: StorageScope;
+  /**
    * The verb this window holds — `"delete"` unless a caller says otherwise, so every existing
    * construction site is unchanged and the journal keeps writing the legacy shape it wrote.
    */
@@ -219,6 +225,8 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
   const disarm = deps.clearTimer ?? ((h) => clearTimeout(h));
   const clock = deps.now ?? (() => Date.now());
   const mintPress = deps.pressId ?? (() => crypto.randomUUID());
+  const scope = deps.scope;
+  scopeSuffix(scope);
 
   /** One entry per OPEN PRESS. The ids it holds, and the timer that will commit them. */
   interface Press { ids: string[]; timer: ReturnType<typeof setTimeout>; ends: AbortController; undone?: (() => void) | undefined }
@@ -275,7 +283,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
     const settled = () => {
       outstanding -= 1;
       if (outstanding > 0) return;
-      disarmDeleteIntent(pressId);
+      disarmDeleteIntent(pressId, scope);
       if (refused > 0 && trashless === refused && deps.copy.noTrash) { deps.toast(deps.copy.noTrash); return; }
       if (refused > 0) { deps.toast(say(deps.copy.failed, deps.copy.failedMany, refused)); return; }
       if (waiting > 0 && deps.copy.queued) deps.toast(say(deps.copy.queued, deps.copy.queuedMany, waiting));
@@ -318,7 +326,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
     const ids = forget(pressId);
     for (const id of ids) mailboxOf.delete(id);
     press.undone?.();
-    disarmDeleteIntent(pressId);
+    disarmDeleteIntent(pressId, scope);
     const left = deps.onUndone?.(ids) === true;
     publish();
     deps.toast(left && deps.copy.undoneLeft !== undefined
@@ -367,7 +375,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
          it. Synchronous, and it cannot throw — see `delete-intents.ts`. */
       /* THE VERB RIDES THE ROW. `"delete"` is the default, so a caller that says nothing writes
          exactly the shape previous builds wrote and a replay in an OLDER build reads it. */
-      const written = armDeleteIntent({ id: pressId, messageIds: ids, at: clock(), kind: deps.verb ?? "delete" });
+      const written = armDeleteIntent({ id: pressId, messageIds: ids, at: clock(), kind: deps.verb ?? "delete" }, scope);
       /* A REFUSED JAR TAKES THE UNDO AWAY, NOT THE DELETE.
          The window is only reversible because nothing has been sent yet, and the only thing that
          made it safe to postpone was the record on disk. With no record, a tab closed inside the
@@ -516,6 +524,8 @@ async function settlePress(
 export function replayDeleteIntents(
   mutate: HeldDispatch,
   nowMs: number,
+  /** Whose journal is replayed and cleared: the scope the mount hands in, also at a settle that lands later. */
+  scope: StorageScope,
   /**
    * THE RESTORE'S DISPATCH — and its ABSENCE is a real state, not a missing argument. A surface can have the delete
    * key and no restore transport: the demo, a build talking to a server with no restore route, a shell that never
@@ -533,7 +543,7 @@ export function replayDeleteIntents(
    */
   env?: ReplayEnv,
 ): number {
-  const intents = takeDeleteIntents(nowMs);
+  const intents = takeDeleteIntents(nowMs, scope);
   for (const intent of intents) {
     /* DISPATCH BY KIND. A row with no `kind` reads as `delete` (the journal's own default — see
        `DeleteIntent.kind`), so every row a previous build wrote replays exactly as it did. */
@@ -544,7 +554,7 @@ export function replayDeleteIntents(
          the one row that is dropped rather than carried. Retrying it for ever would be a journal
          that only grows, and replaying it as a DELETE would be the product doing the opposite of
          what was asked. */
-      disarmDeleteIntent(intent.id);
+      disarmDeleteIntent(intent.id, scope);
       continue;
     }
     /* THE ENTRY IS CLEARED WHEN THE WHOLE PRESS HAS SETTLED, not per message: a press is the unit
@@ -552,7 +562,7 @@ export function replayDeleteIntents(
        flight. A press with anything still owed stays written down whole — the messages that did
        settle answer `not_found` on the next launch and settle again, which costs nothing. */
     void settlePress(fn, intent, env).then((settled) => {
-      if (settled) disarmDeleteIntent(intent.id);
+      if (settled) disarmDeleteIntent(intent.id, scope);
     });
   }
   return intents.length;
@@ -714,8 +724,11 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
      silently un-deleted by an unrelated re-render. */
   const latest = useRef(deps);
   latest.current = deps;
+  /* The scope of the first render, for every press, Undo and settle of this window: a new scope is a new mount. */
+  const owner = useRef(usePinnedScope(deps.scope));
   const queue = useMemo(
     () => createDeleteUndo({
+      scope: owner.current,
       mutate: (id, pressId) => latest.current.mutate(id, pressId).then((res) => {
         if (pressVerdict(res as PressAnswer).kind === "applied") {
           setLandedIds((ids) => [...ids, id]);
@@ -766,6 +779,8 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
  * replay (a surface with no engine to dispatch on) should be able to say so by not calling it.
  */
 export interface DeleteIntentReplayOptions extends ReplayEnv {
+  /** Whose journal is replayed: the scope the mount hands in, kept from its first render. */
+  scope: StorageScope;
   mutate: HeldDispatch;
   now: () => number;
   /** `false` on a surface with no server to carry a delete to — the demo. */
@@ -783,13 +798,14 @@ export function useDeleteIntentReplay(opts: DeleteIntentReplayOptions): void {
      seconds after the effect ran, and `copy` and `tell` change identity on most renders. */
   const latest = useRef(opts);
   latest.current = opts;
+  const owner = useRef(usePinnedScope(opts.scope));
   const ran = useRef(false);
   const enabled = opts.enabled ?? true;
   useEffect(() => {
     if (!enabled || ran.current) return;
     ran.current = true;
     const at = latest.current;
-    replayDeleteIntents(at.mutate, at.now(), at.restore, {
+    replayDeleteIntents(at.mutate, at.now(), owner.current, at.restore, {
       hydrated: () => latest.current.hydrated(),
       tell: (sentence) => latest.current.tell(sentence),
       get copy() { return latest.current.copy; },

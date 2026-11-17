@@ -264,9 +264,10 @@ import { DraftsView } from "../views/DraftsView";
 import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "@ohmail/app-logic/storage/persisted-ui";
 import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
+import { TodaysScopeProvider } from "./todays-scope";
 import { useShellSetup } from "@ohmail/app-logic/doors/setup-resume";
 import { durableSessionSet } from "@ohmail/app-logic/storage/durable";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { usePinnedScope } from "@ohmail/app-logic/storage/scope";
 import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
 import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
@@ -441,7 +442,7 @@ export function TodaysViews(_: PaneProps) {
   const live = useTodaysSignals(useFrame().host.signals);
   return (
     <MailStateHost probe={fixed.mailboxFacts} freshnessProbe={mirrorFreshness}>
-      <ShellMount {...fixed} {...live} />
+      <ShellInner {...fixed} {...live} />
     </MailStateHost>
   );
 }
@@ -485,17 +486,6 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
       {children}
     </MailStateProvider>
   );
-}
-
-/**
- * ONE MOUNT PER ENGINE MODE. The engine provider changes a live engine for the demo's in place (a
- * client-side navigation to `/?demo=1`), and `ShellInner` reads whose stored keys it keeps once,
- * as it mounts. Keyed by the mode, that change is a new mount, so the demo keeps its words in its
- * own partition and never edits the account's. The desktop and the paired page key their frame by
- * their scope already.
- */
-function ShellMount(props: ComponentProps<typeof ShellInner>) {
-  return <ShellInner key={useResolvedDemoMode() ? "demo" : "live"} {...props} />;
 }
 
 function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, storageSection, storageCard, liveBodyWire, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
@@ -563,9 +553,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   onMailtoDraftSeeded?: () => void;
   onUnread?: (unread: number) => void;
 }) {
-  /* WHOSE STORED KEYS THIS MOUNT READS AND WRITES: read once, as the shell mounts, and handed to every
-     hook that keeps something per account. A host that changes the account mounts the shell again. */
-  const scope = useState(() => storageOwner())[0];
+  /* WHOSE STORED KEYS THIS MOUNT READS AND WRITES: the host's scope, read as the shell mounts and held for the
+     life of the mount. The frame mounts everything again under another scope; a shell handed another one throws. */
+  const scope = usePinnedScope(useFrame().host.session.scope);
   const demo = useDemoMode();
   /* For EFFECT GATES only — see `useResolvedDemoMode`. Never rendered: reading it in output
      would reintroduce the hydration mismatch `useDemoMode` exists to prevent. */
@@ -637,7 +627,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
     toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast, screenerRelease,
     undoLink,
-  } = useShellDispatch({ engine, reader, toast: hostToast, t, placeLabel, demo, refreshFacts });
+  } = useShellDispatch({ engine, reader, toast: hostToast, t, placeLabel, demo, refreshFacts, scope });
   /* Every sentence below leaves through the undo door, so an Undo raised anywhere is one `z` takes. */
   const toast = undoToast;
   /** Re-take the hold an undone act ended — `engine.restoreOpenRow`, for `OhboxView`. */
@@ -811,7 +801,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   const seedSupported = consent.cloudClient;
   const seedOffer = useSeedOffer({ demo, known: consent.known, supported: seedSupported,
-    seedConfirmedAt: consent.seedConfirmedAt, hasMailbox: hasLiveMailbox(facts) });
+    seedConfirmedAt: consent.seedConfirmedAt, hasMailbox: hasLiveMailbox(facts), scope });
   const seedOwed = seedOffer.owed;
   /**
    * THE WHOLE-MIRROR DERIVATIONS — the consent partition, the presentation projection and every
@@ -1379,7 +1369,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     activeRailId, commands, effectiveView, mobileTitle, narrowNow, paletteRef, pushTier, railGroupsWithHints, settingsSection,
     inPiles, railNow, railRef, readerRef, tagGroup,
   } = useShellKeys({
-    engine, reader, demo, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
+    engine, reader, demo, scope, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
     facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
     receiptsNew,
     accountSection, mailboxSection, aiSection, billingSection, storageSection, invitesSection, securitySection,
@@ -1614,7 +1604,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   const firstRunOpen = Boolean(firstRun && route.firstRun && onboardingFacts && consent.known);
   const todaysShown = useTodaysFeeds({
-    demo, t, facts, mailState, copyAsOf: freshness.asOf, setupHref: setupHref ?? null, mailSend, desktopSection: desktopSection != null,
+    demo, scope, t, facts, mailState, copyAsOf: freshness.asOf, setupHref: setupHref ?? null, mailSend, desktopSection: desktopSection != null,
     railGroups: railGroupsWithHints, activeRailId, routeView: route.view, activeTagId: route.tagId ?? null,
     compose: () => goCompose(), pull: pullBinding, account: account?.email ?? null, mailboxes,
     organizer: { changes: organizerChanges, acknowledge: acknowledgeOrganizerNotice, on: noticeOn },
@@ -1628,6 +1618,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     // `MailStateProvider` used to open here. It is now ABOVE this component
     // (`MailStateHost`) so the shell can READ the mailbox facts as well as publish them — see
     // the note there. Every surface that reports mailbox state is still inside it.
+    // THE SHELL'S SCOPE, outermost, for the parts drawn deep in the views that keep a look per account.
+    <TodaysScopeProvider value={scope}>
     <MessageChromeProvider value={chrome}>
     <ListGoneProvider value={listGone}>
     <SendReleaseProvider value={releaseConfirmed}>
@@ -3122,5 +3114,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     </SendReleaseProvider>
     </ListGoneProvider>
     </MessageChromeProvider>
+    </TodaysScopeProvider>
   );
 }

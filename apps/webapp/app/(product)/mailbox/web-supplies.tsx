@@ -12,6 +12,7 @@ import type { FrameNotice } from "@ohmail/app/frame";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { mirrorOwnerOf } from "@ohmail/app-logic/session/sync-scheduler";
 import { ApiError, account, api, away, mailboxes as mailboxApi } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 import { signOut } from "../../sign-out";
@@ -145,7 +146,9 @@ export interface WebWords {
  */
 export function useWebHost(engine: HostContract["engine"], words: WebWords, frame: FrameSupplies): HostContract {
   const { server, invites, subscriptionPage, withdrawManage, storageBlock, account: confirmed, firstRun } = words;
-  const scope = useMemo(() => readOwner(), [engine]);
+  /* WHOSE KEYS TODAY'S VIEWS KEEP: the account the engine's mirror is named for, read off the engine itself, never a
+     second read of the session's marker (which another tab may have moved since the engine was opened). */
+  const scope = useMemo(() => mirrorOwnerOf(engine), [engine]);
   const devices = server.pairing;
   const features = useMemo((): WebSupplies["features"] => ({
     account: entryOf("account", <><PasswordSection /><AccountSection /></>),

@@ -9,5 +9,7 @@ export function isPlatformPackage(source: string, platforms: Platform[]): boolea
 export function isPlatformName(text: string, platforms: Platform[]): boolean;
 export function isDoorFile(rel: string, doors: string[]): boolean;
 export function readDoors(root: string): { doors: string[]; platforms: Platform[] };
+/** The session's marker's cookie name, as `ohmail/owner-lookup` looks for it. */
+export const OWNER_MARKER_NAME: string;
 declare const plugin: ESLint.Plugin;
 export default plugin;

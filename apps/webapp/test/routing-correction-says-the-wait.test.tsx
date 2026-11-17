@@ -40,13 +40,15 @@ async function correctionFor(answer: RoutingSendResult): Promise<ScreeningToastK
   const said: ScreeningToastKey[] = [];
   const sent: EngineMutation[] = [];
   let latest: ReturnType<typeof useRoutingUndo> | null = null;
+  /* One account per case, named once: a mount keeps the scope of its first render. */
+  const scope = `acct-${++seq}`;
   function Probe(): null {
     latest = useRoutingUndo({
       read: () => store,
       send: async (m) => { sent.push(m); return answer; },
       toast: () => {},
       copy: { gone: "gone", expired: () => "expired", correction: (key) => { said.push(key); return key; } },
-      owner: `acct-${++seq}`, windowMs: 1_000, now: () => Date.now(),
+      scope, windowMs: 1_000, now: () => Date.now(),
     });
     return null;
   }

@@ -14,21 +14,23 @@ import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seedNotNowKey, useSeedOffer, type SeedOffer } from "../app/shell/seed-offer";
-import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const OWED = { demo: false, known: true, supported: true, seedConfirmedAt: null, hasMailbox: true };
+type SeedInput = Omit<Parameters<typeof useSeedOffer>[0], "scope">;
+const OWED: SeedInput = { demo: false, known: true, supported: true, seedConfirmedAt: null, hasMailbox: true };
 let offer: SeedOffer | null = null;
-function Probe(props: { input?: Parameters<typeof useSeedOffer>[0] }) {
-  offer = useSeedOffer(props.input ?? OWED);
+/* The shell hands its own scope: here the storage owner each case names, as a shell mounted for it would. */
+function Probe(props: { input?: SeedInput }) {
+  offer = useSeedOffer({ ...(props.input ?? OWED), scope: storageOwner() });
   return null;
 }
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 /** A mount is one page load: a fresh tree over whatever this device's storage holds. */
-async function load(input?: Parameters<typeof useSeedOffer>[0]) {
+async function load(input?: SeedInput) {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
   host = document.createElement("div");

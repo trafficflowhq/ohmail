@@ -22,11 +22,11 @@
  * again rather than staying quiet about a holder that may be new. The alternative, an opaque
  * per-mailbox holder ref on the DTO, is a wire change and is filed as one.
  *
- * NEVER A SERVER WRITE, and never account-wide: `storageOwner()` scopes it to the account, the
- * browser scopes it to the install, and that is the whole of what "here" means.
+ * NEVER A SERVER WRITE, and never account-wide: the scope the surface's mount hands in scopes it to
+ * the account, the browser scopes it to the install, and that is the whole of what "here" means.
  */
 import { durableSet, type DurableWrite } from "../storage/durable.js";
-import { storageOwner } from "../storage/storage-owner.js";
+import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 import type { HolderWho } from "./reader-holder.js";
 
 /** The record's shape. `v` is the version, every other key a mailbox id. */
@@ -46,11 +46,11 @@ export const READING_ALONG_PREFIX = "ohmail.ui.readingAlong.";
 /**
  * One record per account, on this install. Per account because two people sharing a browser must
  * not inherit each other's intentions, and per install because that is the whole of what "here"
- * means. `storageOwner()`, never `readOwner()` — the second is null on the whole standalone
- * desktop and would give every account one shared key (`persisted-ui.ts` records that measurement).
+ * means. The scope is the one the surface's mount hands in — the shell's, the desktop's mounted
+ * mailbox — never looked up; no scope keeps the `local` key, and a scope nobody handed in is refused.
  */
-export function readingAlongKey(owner: string | null): string {
-  return `${READING_ALONG_PREFIX}${owner ?? "local"}`;
+export function readingAlongKey(owner: StorageScope): string {
+  return `${READING_ALONG_PREFIX}${scopeSuffix(owner)}`;
 }
 
 /**
@@ -71,9 +71,10 @@ export function holderFingerprint(who: HolderWho | null | undefined): string | n
   return JSON.stringify([kind, name, since]);
 }
 
-function load(owner: string | null): Record<string, string> {
+function load(owner: StorageScope): Record<string, string> {
+  const key = readingAlongKey(owner);
   try {
-    const raw = globalThis.localStorage?.getItem(readingAlongKey(owner));
+    const raw = globalThis.localStorage?.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (typeof parsed !== "object" || parsed === null) return {};
@@ -90,7 +91,7 @@ function load(owner: string | null): Record<string, string> {
   }
 }
 
-function save(rows: Record<string, string>, owner: string | null): DurableWrite {
+function save(rows: Record<string, string>, owner: StorageScope): DurableWrite {
   return durableSet(readingAlongKey(owner), JSON.stringify({ v: VERSION, ...rows }), "ui.readalong");
 }
 
@@ -104,7 +105,7 @@ function save(rows: Record<string, string>, owner: string | null): DurableWrite 
 export function readingAlong(
   mailboxId: string,
   who: HolderWho | null | undefined,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
   /**
    * A CALLER'S OWN "the record moved" COUNTER, read and ignored.
    *
@@ -116,6 +117,7 @@ export function readingAlong(
    */
   _said?: number,
 ): boolean {
+  readingAlongKey(owner);
   const fingerprint = holderFingerprint(who);
   if (fingerprint === null) return false;
   return load(owner)[mailboxId] === fingerprint;
@@ -125,8 +127,9 @@ export function readingAlong(
 export function setReadingAlong(
   mailboxId: string,
   who: HolderWho | null | undefined,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): DurableWrite {
+  readingAlongKey(owner);
   const fingerprint = holderFingerprint(who);
   /* No holder, no intention: there is nothing to read along WITH, and storing one would silence
      the next holder to arrive before anybody had seen it. */
@@ -143,7 +146,7 @@ export function setReadingAlong(
  */
 export function clearReadingAlong(
   mailboxId: string,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): DurableWrite {
   const rows = load(owner);
   if (!(mailboxId in rows)) return "stored";

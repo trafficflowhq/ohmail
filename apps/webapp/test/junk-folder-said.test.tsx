@@ -128,6 +128,7 @@ async function mountRail(
         locale, messages: (locale === "de" ? fillFrom(messages as never, de as never) : messages) as never,
         timeZone: "UTC", now: NOW,
         children: h(FoldersRailGroup, {
+          scope: "acc-junk",
           folders: [{ id: "f1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.test" }],
           unread: new Map<string, number>(),
           onNavigate: () => {},

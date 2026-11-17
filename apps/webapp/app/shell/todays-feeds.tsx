@@ -14,6 +14,7 @@ import { flushBeforeRestart, putUpdateAway, restartHold, type UpdateOffer } from
 import { dismissDurabilityLost } from "@ohmail/app-logic/storage/durable";
 import { usePersistedFlag, UI_KEYS } from "@ohmail/app-logic/storage/persisted-ui";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import type { StorageScope } from "@ohmail/app-logic/storage/scope";
 import { useFrame, useNotice, useRailModel, type FrameNotice, type PlaceId, type RailEntryModel, type RailModel } from "@ohmail/app/frame";
 import { Dialog } from "@ohmail/ui/base";
 import { RailEntry } from "@ohmail/ui/mail";
@@ -67,6 +68,8 @@ const hueDegrees = (name: string): number => Math.max(0, TAG_HUES.indexOf(name a
 
 export interface TodaysFeedsInput {
   demo: boolean;
+  /** Whose choices the feeds read (reading along): the shell's own scope. */
+  scope: StorageScope;
   t: T;
   facts: readonly MailboxFacts[] | null;
   mailState: MailState;
@@ -96,7 +99,7 @@ export function useTodaysFeeds(input: TodaysFeedsInput): ReactNode {
   const { commands } = useFrame();
   const [shown, setShown] = useState<"unsaved" | "sending" | null>(null);
   useTodaysNotices(input, setShown);
-  useTodaysConnection(input.mailState, input.setupHref, input.copyAsOf ?? null);
+  useTodaysConnection(input.mailState, input.setupHref, input.copyAsOf ?? null, input.scope);
   useEffect(() => {
     commands.hold(input.hold);
     return () => commands.hold(false);

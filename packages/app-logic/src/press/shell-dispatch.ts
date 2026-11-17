@@ -35,6 +35,7 @@ import { usePressWatch, type PressWatch } from "./press-watch.js";
 import { useStableCallback } from "./stable-callback.js";
 import { createUndoDoor, type UndoClaim, type UndoToastFn } from "./undo-door.js";
 import type { ScreenerReleaseWindow } from "./release-window.js";
+import type { StorageScope } from "../storage/scope.js";
 
 /**
  * WHAT THE SPINE IS HANDED. Every field is required and none has a default: a forgotten `demo`
@@ -52,6 +53,8 @@ export interface ShellDispatchInput {
   placeLabel: (folder: string) => string;
   demo: boolean;
   refreshFacts: () => void;
+  /** Whose journals the windows keep their presses in: the scope of the shell's own mount. */
+  scope: StorageScope;
 }
 
 /**
@@ -111,7 +114,7 @@ export interface ShellDispatch {
 }
 
 export function useShellDispatch({
-  engine, reader, toast: show, t, placeLabel, demo, refreshFacts,
+  engine, reader, toast: show, t, placeLabel, demo, refreshFacts, scope,
 }: ShellDispatchInput): ShellDispatch {
   /* THE ONE UNDO DOOR (`undo-door.ts`), built once over the host's toast. Every sentence below
      goes out through it; only the ones marked `undo` arm `z`. */
@@ -156,6 +159,7 @@ export function useShellDispatch({
      starts there, and one that has none is corrected by the effect on its first commit. */
   const rosterRef = useRef<RosterState>({ kind: "pending" });
   const deleting = useDeleteUndo({
+    scope,
     /* THE FIFTH DOOR, WRAPPED AT THE DEP AND NOT AT THE PRESS. The delete arm below opens a
        window rather than dispatching, so the mutation leaves from `delete-undo.ts` — after the
        undo window closes, and for a selection in a batch. Wrapping the injected dispatcher is
@@ -207,6 +211,7 @@ export function useShellDispatch({
    * between the page and the press.
    */
   const restoring = useDeleteUndo({
+    scope,
     verb: "restore",
     /* THE DISPATCH RAISES THE PLACE SENTENCE, because that is the one moment the place is known
        — see `restoreDispatch`, where the alternative (a second call at the press) is named as
@@ -252,6 +257,7 @@ export function useShellDispatch({
    * carry a delete to, and replaying one there would mutate a demo somebody is looking at.
    */
   useDeleteIntentReplay({
+    scope,
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH: a replayed delete moves mail,
        so the count the filing strip renders is stale until the facts are re-read. */
     /* AND IT IS `replayDelete`, NOT `mutate`: by this launch the row may be gone from the mirror
@@ -310,6 +316,7 @@ export function useShellDispatch({
    * `useDeleteIntentReplay`'s reason.
    */
   const routing = useRoutingUndo({
+    scope,
     read: () => engine.verbRead(),
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH — a rule landing re-places the
        sender's mail, so the filing strip's counts are stale until the facts are re-read. */

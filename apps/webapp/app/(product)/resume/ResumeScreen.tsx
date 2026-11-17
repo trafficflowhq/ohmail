@@ -33,7 +33,7 @@ import {
  * Survives the reload a successful resume performs; scoped to this tab AND to the account, so a
  * second account resuming in the same tab never reads the first one's loop guard as its own.
  */
-export function resumeOnceKey(owner: string | null = storageOwner()): string {
+export function resumeOnceKey(owner: string | null): string {
   return `ohmail.resume-attempted.${owner ?? "local"}`;
 }
 
@@ -86,7 +86,7 @@ function isAnswer(v: unknown): v is ResumeAnswer {
 /** The previous pass, or null. The previous build wrote a bare timestamp; it reads as no answer. */
 function readStamp(): Stamp | null {
   try {
-    const raw = sessionStorage.getItem(resumeOnceKey());
+    const raw = sessionStorage.getItem(resumeOnceKey(storageOwner()));
     if (raw === null) return null;
     if (/^\d+$/.test(raw)) return { at: Number(raw), answer: null, reloads: 0 };
     const v = JSON.parse(raw) as Partial<Stamp> | null;
@@ -102,7 +102,7 @@ function readStamp(): Stamp | null {
 }
 
 function writeStamp(answer: ResumeAnswer, reloads = 0): void {
-  durableSessionSet(resumeOnceKey(), JSON.stringify({ at: Date.now(), answer, reloads }), "resume.once");
+  durableSessionSet(resumeOnceKey(storageOwner()), JSON.stringify({ at: Date.now(), answer, reloads }), "resume.once");
 }
 
 /**

@@ -9,7 +9,10 @@ import {
   act, FORWARD_PARTS, fillForward, forwardDock, message, mountShell, NOW, press, pressRestart, replyDraft, replySurface, stubDom, unmountAll, waitFor,
   type DraftShell,
 } from "./_draft-shell.js";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-reply-draft";
 
 /**
  * A REPLY DRAFT PRESSED IN DRAFTS OPENS ITS CONVERSATION WITH THE DRAFT IN THE EDITOR. The press
@@ -21,9 +24,10 @@ import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 beforeEach(() => {
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
+  setStorageOwner(OWNER);
   stubDom();
 });
-afterEach(unmountAll);
+afterEach(async () => { await unmountAll(); resetStorageOwnerForTest(); });
 
 const DRAFT_TEXT = "Thursday works, I will bring the samples";
 

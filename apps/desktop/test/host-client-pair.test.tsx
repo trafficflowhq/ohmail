@@ -71,7 +71,7 @@ async function mount(props: { ended?: "revoked" | null; onPaired?: () => void; s
   document.body.append(hostEl);
   root = createRoot(hostEl);
   const screen = h(NextIntlClientProvider, { locale: "en", messages: messages as never },
-    h(PairScreen, { bearer, ended: props.ended ?? null, onPaired: props.onPaired ?? (() => undefined) }));
+    h(PairScreen, { bearer, readsCode: true, ended: props.ended ?? null, onPaired: props.onPaired ?? (() => undefined) }));
   await act(async () => {
     root.render(props.strict ? h(React.StrictMode, null, screen) : screen);
   });

@@ -10,13 +10,15 @@ import { createFeed, NONE } from "@ohmail/app/host";
 import { browserWindowFacts, fragmentAddress } from "@ohmail/app/host/browser";
 import { Frame, PLACE_IDS, type FramePlaces, type PaneProps } from "@ohmail/app/frame";
 import { TextProvider } from "@ohmail/app/text";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { useMailState } from "../app/shell/MailStateProvider";
 import { useTodaysConnection } from "../app/shell/todays-reasons";
 import { demoHost } from "../app/(product)/demo/host";
 
 function Feeding(_: PaneProps): ReactNode {
   const read = useMailState();
-  useTodaysConnection(read.state, null, read.freshness.asOf);
+  /* Whose choice to read along is asked: the storage owner the test named, as the strip's own read was. */
+  useTodaysConnection(read.state, null, read.freshness.asOf, storageOwner());
   return null;
 }
 

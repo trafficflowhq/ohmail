@@ -370,7 +370,7 @@ describe("a Move out of a domain rule's pile holds an address rule, and Undo tak
         send: async (m) => { out.push(m); return { status: "confirmed" as const }; },
         toast: (sentence) => { toasts.push(sentence); },
         copy: { gone: "gone", expired: () => "expired", correction: () => "correction" },
-        owner: "acct", windowMs: 1_000, now: () => Date.now(),
+        scope: "acct", windowMs: 1_000, now: () => Date.now(),
       });
       return null;
     }

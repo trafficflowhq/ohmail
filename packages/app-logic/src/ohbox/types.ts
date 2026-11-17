@@ -14,7 +14,7 @@ import type {
 import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import type { ThreadReadWiring } from "../reading/reader-seen.js";
 import type { ThreadWalkChannel } from "../reading/thread-walk-channel.js";
-import type { ActedMarker } from "../press/after-verb.js";
+import type { ActedMarker, AfterVerbChoice } from "../press/after-verb.js";
 import type { NotOrganizingYet } from "../mail-state/mail-state.js";
 import type { UndoLink } from "../press/shell-dispatch.js";
 import type { ListWindow } from "../lists/list-window.js";
@@ -128,6 +128,11 @@ export interface OhboxListInput {
   t: Translator;
   /** Is the reading column hidden at this width? Asked at the moment it matters, never cached. */
   columnHidden: () => boolean;
+  /**
+   * The after-verb choice the pane obeys once a verb took the open row: asked at that moment, so a change applies
+   * to the next verb. The view that mounts the list answers it from its own scope's stored choice.
+   */
+  afterVerb: () => AfterVerbChoice;
   /** A row in the list's scroller, carrying `data-id` (and `data-ids` for a folded row). */
   rowSelector: string;
   /** A row's sender circle, whose press is its own; `null` where a row draws none. */

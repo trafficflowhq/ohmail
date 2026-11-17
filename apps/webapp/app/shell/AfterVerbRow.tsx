@@ -8,7 +8,7 @@
  * arrives one frame late (no `localStorage` on the server), read in an effect.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow } from "@ohmail/ui";
 import {
@@ -18,17 +18,17 @@ import {
   readAfterVerb,
   writeAfterVerb,
 } from "@ohmail/app-logic/press/after-verb";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { useTodaysScope } from "./todays-scope";
 
 export function AfterVerbRow() {
   const t = useTranslations("settings");
   const [choice, setChoice] = useState<AfterVerbChoice>(DEFAULT_AFTER_VERB);
-  const owner = useRef<string | null>(null);
+  /* The scope of the shell this row is drawn in; drawn in none, it shows the default and stores nothing. */
+  const scope = useTodaysScope();
 
   useEffect(() => {
-    owner.current = storageOwner();
-    setChoice(readAfterVerb(owner.current));
-  }, []);
+    if (scope !== null) setChoice(readAfterVerb(scope));
+  }, [scope]);
 
   return (
     <SettingsRow
@@ -41,7 +41,7 @@ export function AfterVerbRow() {
           onChange={(next) => {
             if (next === choice) return;
             // Storage first, then the control — the ImageQualityRow ordering, same reason.
-            writeAfterVerb(next, owner.current);
+            if (scope !== null) writeAfterVerb(next, scope);
             setChoice(next);
           }}
           className="afterverb-seg"

@@ -62,6 +62,9 @@ function folder(name: string, mailboxId = "mb1", mailbox = "a@x.example"): Folde
   return { id: `f-${mailboxId}-${name}`, name, mailboxId, mailbox };
 }
 
+/** The scope the shell hands the rail's folder tree, as a mounted shell names its account. */
+const RAIL_SCOPE = "acct_A";
+
 async function mount(
   folders: FolderEntity[],
   unread: Map<string, number> = new Map(),
@@ -79,6 +82,7 @@ async function mount(
         messages,
         timeZone: "Europe/Zurich",
         children: h(FoldersRailGroup, {
+          scope: RAIL_SCOPE,
           folders,
           unread,
           mailboxCount,
@@ -131,9 +135,9 @@ describe("first level only, and the opened-set", () => {
 
   it("the opened set is each account's own, and a device-wide set an earlier build kept is dropped unread", async () => {
     const tree = [folder("Projects"), folder("Projects/Acme"), folder("Invoices")];
-    const rail = (): React.ReactElement => h(NextIntlClientProvider, {
+    const rail = (scope: string): React.ReactElement => h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "Europe/Zurich",
-      children: h(FoldersRailGroup, { folders: tree, unread: new Map(), onNavigate: () => {} }),
+      children: h(FoldersRailGroup, { scope, folders: tree, unread: new Map(), onNavigate: () => {} }),
     });
     // Every account's folder paths, in one value no erasure could find by its key.
     window.localStorage.setItem("ohmail.ui.rail.foldersOpened", JSON.stringify(["mb1|Projects"]));
@@ -145,7 +149,7 @@ describe("first level only, and the opened-set", () => {
       await click(el.querySelector("button.ftw"));
       const as = async (owner: string): Promise<string[]> => {
         document.cookie = `tf_owner=${owner}; Path=/`;
-        await act(() => root!.render(rail()));
+        await act(() => root!.render(rail(owner)));
         return rowLabels(el);
       };
       expect(await as("acct_B"), "another account opened on A's branch").toEqual(["Invoices", "Projects"]);
@@ -833,6 +837,7 @@ async function mountVerbs(
         messages,
         timeZone: "Europe/Zurich",
         children: h(FoldersRailGroup, {
+          scope: RAIL_SCOPE,
           folders,
           unread: new Map<string, number>(),
           onNavigate: () => {},

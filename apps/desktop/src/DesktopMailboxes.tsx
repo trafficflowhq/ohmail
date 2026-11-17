@@ -692,7 +692,7 @@ const signInEnded = (id: string): void => {
  * confirmation states the extra consequence only when it is true.
  */
 export function DesktopMailboxes(
-  { door, host, flavor, server, onShellStatus }: {
+  { door, host, flavor, server, onShellStatus, scope }: {
     door?: string | null;
     /**
      * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it reads through one.
@@ -709,6 +709,8 @@ export function DesktopMailboxes(
     /** A SELF-HOSTED door's server, by host (`selfHostedServerOf`): the place its mailboxes are managed. */
     server?: string | null;
     onShellStatus?: (next: EngineStatus) => void;
+    /** The mounted mailbox's scope: whose choice to read along this pane reads and keeps. */
+    scope: string;
   },
 ) {
   const t = useTranslations("mailboxes");
@@ -1204,7 +1206,7 @@ export function DesktopMailboxes(
         /* A PRESS WITHDRAWS THE INTENTION, and a refused one is exactly when the sentence is
            needed back: somebody who asked to organize the mailbox here is no longer reading
            along on purpose, whatever they pressed earlier. */
-        clearReadingAlong(id);
+        clearReadingAlong(id, scope);
       } finally {
         setReclaiming((q) => {
           const next = new Set(q);
@@ -1945,14 +1947,14 @@ export function DesktopMailboxes(
             everything, because the intention was about the one that was there. Offered only on a
             reader row with a holder to be reading along WITH. */}
         {role === "reader" && whoOf(m) && !lapsed ? (
-          readingAlong(m.id, whoOf(m), undefined, alongSaid) ? (
+          readingAlong(m.id, whoOf(m), scope, alongSaid) ? (
             <span className="mbx-say-set">{t("readerAlongSet", { name: holderOf(m) })}</span>
           ) : (
             <Button
               variant="ghost"
               className="mbx-quiet"
               onClick={() => {
-                setReadingAlong(m.id, whoOf(m));
+                setReadingAlong(m.id, whoOf(m), scope);
                 /* See {@link alongSaid}: the record moved, and only this makes the pane read it
                    again. `refresh()` is the SHARED poller and answers a different question. */
                 setAlongSaid((n) => n + 1);

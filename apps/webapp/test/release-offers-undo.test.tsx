@@ -148,7 +148,7 @@ async function mount(engine: OhmailEngine): Promise<void> {
     const t = useTranslations();
     const reader = engine.read();
     const d = useShellDispatch({
-      engine, reader, t, placeLabel, demo: false, refreshFacts: () => {},
+      engine, reader, t, placeLabel, demo: false, refreshFacts: () => {}, scope: null,
       toast: (message: string, opts?: { onAction?: () => void }) => { toasts.push({ message, onAction: opts?.onAction }); },
     });
     dispatch.current = d;

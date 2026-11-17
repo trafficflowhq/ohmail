@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { durableSet } from "@ohmail/app-logic/storage/durable";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { scopeSuffix, type StorageScope } from "@ohmail/app-logic/storage/scope";
 
 /**
  * `ohmail.ui.seed.notNow.<owner>` — "Not now" on the sent-mail review, for one account on this
  * device. A dismissal and no mail, so it survives sign-out (`sign-out-clears-durable-stores`).
+ * The scope is the one the shell hands in; a scope nobody handed in is refused.
  */
-export function seedNotNowKey(owner: string | null): string {
-  return `ohmail.ui.seed.notNow.${owner ?? "local"}`;
+export function seedNotNowKey(owner: StorageScope): string {
+  return `ohmail.ui.seed.notNow.${scopeSuffix(owner)}`;
 }
 
 /** Whether the polled `/mailboxes` facts hold a live mailbox (`null` while unread) — the sync strip's `noMailbox` rule. */
@@ -37,30 +38,37 @@ export interface SeedOffer {
  * `null` is not known yet and is not owed), where the browser client that runs it exists, until it
  * is answered, put off, or found to have nobody in it. The stored "Not now" is read after mount
  * (hydration) and held as the KEY it was read under, so another account's answer never applies.
+ * The key is the scope's the shell hands in (`scope`); with none, "Not now" holds for the mount and
+ * nothing is stored.
  */
 export function useSeedOffer(input: {
   demo: boolean; known: boolean; supported: boolean; seedConfirmedAt: string | null;
   hasMailbox: boolean | null;
+  /** Whose "Not now" this is: the shell's own scope. */
+  scope: StorageScope;
 }): SeedOffer {
-  const key = seedNotNowKey(storageOwner());
+  const key = input.scope === null ? null : seedNotNowKey(input.scope);
   const [heldKey, setHeldKey] = useState<string | null>(null);
   const [handedBack, setHandedBack] = useState(false);
   const [reopened, setReopened] = useState(false);
   useEffect(() => {
+    if (key === null) return;
     try {
       setHeldKey(window.localStorage.getItem(key) === "1" ? key : null);
     } catch {
       /* storage blocked — the offer stands, as it did before "Not now" was kept */
     }
   }, [key]);
-  const notNow = heldKey === key;
+  const notNow = key !== null && heldKey === key;
   const owed = !input.demo && input.known && input.hasMailbox === true && input.supported
     && (reopened || (input.seedConfirmedAt === null && !handedBack && !notNow));
 
   const reopen = useCallback(() => setReopened(true), []);
   const later = useCallback(() => {
-    setHeldKey(key);
-    durableSet(key, "1", "ui.flag");
+    if (key !== null) {
+      setHeldKey(key);
+      durableSet(key, "1", "ui.flag");
+    }
     setHandedBack(true);
     setReopened(false);
   }, [key]);

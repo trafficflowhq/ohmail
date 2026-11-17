@@ -15,6 +15,7 @@
  */
 
 import { durableSet } from "../storage/durable.js";
+import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 
 export const AFTER_VERB_CHOICES = ["advance", "stay", "close"] as const;
 
@@ -22,23 +23,28 @@ export type AfterVerbChoice = (typeof AFTER_VERB_CHOICES)[number];
 
 export const DEFAULT_AFTER_VERB: AfterVerbChoice = "advance";
 
-/** One key, scoped per account exactly as picture quality is (`image-quality.ts`). */
+/**
+ * One key, scoped per account exactly as picture quality is (`image-quality.ts`): the scope the reader's shell hands
+ * in. No scope keeps the bare key; a scope nobody handed in is refused.
+ */
 export const AFTER_VERB_STORAGE_KEY = "ohmail.ui.reader.afterVerb";
 
-function afterVerbKeyFor(accountId: string | null): string {
-  return accountId ? `${AFTER_VERB_STORAGE_KEY}:${accountId}` : AFTER_VERB_STORAGE_KEY;
+function afterVerbKeyFor(scope: StorageScope): string {
+  scopeSuffix(scope);
+  return scope === null ? AFTER_VERB_STORAGE_KEY : `${AFTER_VERB_STORAGE_KEY}:${scope}`;
 }
 
 function isAfterVerbChoice(v: unknown): v is AfterVerbChoice {
   return typeof v === "string" && (AFTER_VERB_CHOICES as readonly string[]).includes(v);
 }
 
-export function readAfterVerb(accountId: string | null = null): AfterVerbChoice {
+export function readAfterVerb(scope: StorageScope): AfterVerbChoice {
+  const key = afterVerbKeyFor(scope);
   try {
     const ls = (globalThis as { localStorage?: Storage }).localStorage;
     if (!ls) return DEFAULT_AFTER_VERB;
-    if (accountId) {
-      const scoped = ls.getItem(afterVerbKeyFor(accountId));
+    if (scope !== null) {
+      const scoped = ls.getItem(key);
       if (isAfterVerbChoice(scoped)) return scoped;
     }
     const bare = ls.getItem(AFTER_VERB_STORAGE_KEY);
@@ -49,9 +55,9 @@ export function readAfterVerb(accountId: string | null = null): AfterVerbChoice 
   }
 }
 
-export function writeAfterVerb(choice: AfterVerbChoice, accountId: string | null = null): void {
+export function writeAfterVerb(choice: AfterVerbChoice, scope: StorageScope): void {
   // A refused jar is announced once by the door itself; the choice still holds for the session.
-  durableSet(afterVerbKeyFor(accountId), choice, "reader.afterVerb");
+  durableSet(afterVerbKeyFor(scope), choice, "reader.afterVerb");
 }
 
 /**

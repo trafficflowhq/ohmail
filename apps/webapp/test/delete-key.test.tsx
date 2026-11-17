@@ -410,6 +410,7 @@ function queueOver(roster: RosterState, catalogue: typeof en) {
   const said: string[] = [];
   let actions: Array<() => void> = [];
   const queue = createDeleteUndo({
+    scope: null,
     mutate: async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status: "confirmed" }; },
     toast: (msg, opts) => {
       said.push(msg);
@@ -442,8 +443,8 @@ function queueOver(roster: RosterState, catalogue: typeof en) {
     /** How many toasts carried an Undo — the affordance itself, not the sentence about it. */
     undoable: () => actions.length,
     pressUndo: () => { const a = actions; actions = []; a.forEach((f) => f()); },
-    stored: () => takeDeleteIntents(1_000_000).flatMap((r) => r.messageIds),
-    presses: () => takeDeleteIntents(1_000_000).length,
+    stored: () => takeDeleteIntents(1_000_000, null).flatMap((r) => r.messageIds),
+    presses: () => takeDeleteIntents(1_000_000, null).length,
   };
 }
 
@@ -537,6 +538,7 @@ describe("the undo window", () => {
     const sent: Sent[] = [];
     const said: string[] = [];
     const queue = createDeleteUndo({
+      scope: null,
       // A mailbox with no Trash folder: the server answers 422 and the engine rolls the overlay
       // back whole, so the row is where it was and the toast has to say so.
       mutate: async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status: "rolled_back" }; },
@@ -559,6 +561,7 @@ describe("the undo window", () => {
     const sent: string[] = [];
     const said: string[] = [];
     const queue = createDeleteUndo({
+      scope: null,
       mutate: async (messageId) => {
         sent.push(messageId);
         return messageId === "m3" ? { status: "confirmed" } : { status: "rolled_back", error: { code: "no_trash_folder" } };
@@ -721,11 +724,11 @@ describe("the durable intent", () => {
     queue.remove(target);
     // The tab dies here: the timer never fires, and the journal is the only record.
     const sent: Sent[] = [];
-    const count = replayDeleteIntents(async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status: "confirmed" }; }, 1_000_001);
+    const count = replayDeleteIntents(async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status: "confirmed" }; }, 1_000_001, null);
     expect(count).toBe(1);
     await act(async () => { await Promise.resolve(); });
     expect(sent).toEqual([{ kind: "message_delete", messageId: "m1" }]);
-    expect(takeDeleteIntents(1_000_002)).toEqual([]);
+    expect(takeDeleteIntents(1_000_002, null)).toEqual([]);
   });
 
   it("an EXPIRED intent is swept rather than replayed for ever", () => {
@@ -735,10 +738,11 @@ describe("the durable intent", () => {
     const count = replayDeleteIntents(
       async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status: "confirmed" }; },
       1_000_000 + DELETE_INTENT_TTL_MS + 1,
+      null,
     );
     expect(count).toBe(0);
     expect(sent).toEqual([]);
-    expect(window.localStorage.getItem(deleteIntentsKey()), "and the row is gone").toBeNull();
+    expect(window.localStorage.getItem(deleteIntentsKey(null)), "and the row is gone").toBeNull();
   });
 
   it("THE ENTRY CLEARS ON THE LAST SETTLE, not the first — a half-sent press stays written down", async () => {
@@ -748,6 +752,7 @@ describe("the durable intent", () => {
        later. Held open here with deferred promises. */
     const resolvers: Array<() => void> = [];
     const queue = createDeleteUndo({
+      scope: null,
       mutate: () => new Promise((resolve) => {
         resolvers.push(() => resolve({ status: "confirmed" }));
       }),
@@ -772,44 +777,45 @@ describe("the durable intent", () => {
 
     resolvers[0]!();
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(takeDeleteIntents(1_000_000), "still written down after the FIRST settles").toHaveLength(1);
+    expect(takeDeleteIntents(1_000_000, null), "still written down after the FIRST settles").toHaveLength(1);
 
     resolvers[1]!();
     resolvers[2]!();
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-    expect(takeDeleteIntents(1_000_000), "and gone once the LAST one has").toHaveLength(0);
+    expect(takeDeleteIntents(1_000_000, null), "and gone once the LAST one has").toHaveLength(0);
   });
 
   it("REPLAY holds the entry until the whole press has settled too", async () => {
     /* Same rule on the boot path, where it matters more: this runs precisely because a previous
        tab died, so a second death mid-replay must not lose what is left. */
-    window.localStorage.setItem(deleteIntentsKey(), JSON.stringify([
+    window.localStorage.setItem(deleteIntentsKey(null), JSON.stringify([
       { id: "press-9", messageIds: ["m1", "m2"], at: 1_000_000 },
     ]));
     const resolvers: Array<() => void> = [];
     replayDeleteIntents(
       () => new Promise((resolve) => { resolvers.push(() => resolve({ status: "confirmed" })); }),
       1_000_001,
+      null,
     );
     await act(async () => { await Promise.resolve(); });
     expect(resolvers).toHaveLength(2);
     resolvers[0]!();
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(takeDeleteIntents(1_000_002), "one still in flight, so the record stands").toHaveLength(1);
+    expect(takeDeleteIntents(1_000_002, null), "one still in flight, so the record stands").toHaveLength(1);
     resolvers[1]!();
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-    expect(takeDeleteIntents(1_000_003)).toHaveLength(0);
+    expect(takeDeleteIntents(1_000_003, null)).toHaveLength(0);
   });
 
   it("a message belongs to AT MOST ONE press on disk", () => {
     /* Two presses naming the same message would replay it twice after a crash, and the second
        would fail against a row that is already gone — a refusal sentence for a delete that in
        fact happened. `armDeleteIntent` takes the id off every older press. */
-    window.localStorage.setItem(deleteIntentsKey(), JSON.stringify([
+    window.localStorage.setItem(deleteIntentsKey(null), JSON.stringify([
       { id: "press-1", messageIds: ["m1", "m2"], at: 1_000_000 },
     ]));
-    armDeleteIntent({ id: "press-2", messageIds: ["m2", "m3"], at: 1_000_001 });
-    const rows = takeDeleteIntents(1_000_002);
+    armDeleteIntent({ id: "press-2", messageIds: ["m2", "m3"], at: 1_000_001 }, null);
+    const rows = takeDeleteIntents(1_000_002, null);
     expect(rows.map((r) => r.id)).toEqual(["press-1", "press-2"]);
     expect(rows[0]!.messageIds, "m2 left the older press").toEqual(["m1"]);
     expect(rows[1]!.messageIds).toEqual(["m2", "m3"]);
@@ -818,11 +824,11 @@ describe("the durable intent", () => {
   });
 
   it("a press left holding NOTHING is removed rather than kept empty", () => {
-    window.localStorage.setItem(deleteIntentsKey(), JSON.stringify([
+    window.localStorage.setItem(deleteIntentsKey(null), JSON.stringify([
       { id: "press-1", messageIds: ["m1"], at: 1_000_000 },
     ]));
-    armDeleteIntent({ id: "press-2", messageIds: ["m1"], at: 1_000_001 });
-    expect(takeDeleteIntents(1_000_002).map((r) => r.id)).toEqual(["press-2"]);
+    armDeleteIntent({ id: "press-2", messageIds: ["m1"], at: 1_000_001 }, null);
+    expect(takeDeleteIntents(1_000_002, null).map((r) => r.id)).toEqual(["press-2"]);
   });
 
   it("A ROW THE PREVIOUS BUILD WROTE is still acted on — the upgrade must not eat the request", async () => {
@@ -830,28 +836,28 @@ describe("the durable intent", () => {
        inside the window and reloads onto a new build must not lose the delete BECAUSE the record
        changed shape: that is the failure this file exists to prevent, arriving through the
        upgrade instead of through the crash. */
-    window.localStorage.setItem(deleteIntentsKey(), JSON.stringify([
+    window.localStorage.setItem(deleteIntentsKey(null), JSON.stringify([
       { messageId: "legacy-1", at: 1_000_000 },
     ]));
     const sent: Sent[] = [];
     const count = replayDeleteIntents(
-      async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status: "confirmed" }; }, 1_000_001,
+      async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status: "confirmed" }; }, 1_000_001, null,
     );
     expect(count).toBe(1);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(sent).toEqual([{ kind: "message_delete", messageId: "legacy-1" }]);
-    expect(takeDeleteIntents(1_000_002)).toEqual([]);
+    expect(takeDeleteIntents(1_000_002, null)).toEqual([]);
   });
 
   it("a row that parses but names no message is dropped, not guessed at", () => {
-    window.localStorage.setItem(deleteIntentsKey(), JSON.stringify([
+    window.localStorage.setItem(deleteIntentsKey(null), JSON.stringify([
       { id: "x", messageIds: [], at: 1_000_000 },
       { id: "y", at: 1_000_000 },
       { id: "z", messageIds: ["ok"], at: "not a number" },
       "a string",
       { id: "w", messageIds: ["kept"], at: 1_000_000 },
     ]));
-    expect(takeDeleteIntents(1_000_001).map((r) => r.id)).toEqual(["w"]);
+    expect(takeDeleteIntents(1_000_001, null).map((r) => r.id)).toEqual(["w"]);
   });
 
   /**
@@ -904,6 +910,7 @@ describe("useDeleteUndo", () => {
     const api = { remove: (() => false) as (t: { id: string; mailboxId: string }) => boolean, landed: -1 };
     function Probe(): null {
       const d = useDeleteUndo({
+        scope: null,
         mutate: async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status }; },
         toast: () => {},
         copy: {

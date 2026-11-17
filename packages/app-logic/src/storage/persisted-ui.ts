@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { durableSet } from "./durable.js";
+import { scopeSuffix, type StorageScope } from "./scope.js";
 
 /**
  * UI state that must survive a reload — "saved if it's collapsed or not so ui stays as one left
@@ -51,14 +52,22 @@ export function usePersistedFlag(
  */
 const OVERRIDE_CAP = 300;
 
+/**
+ * A NULL KEY is a part drawn where no scope names an account: it reads nothing and writes nothing, and the set lives
+ * for the mount alone. The same for {@link usePersistedChoice}.
+ */
 export function usePersistedIdSet(
-  key: string,
+  key: string | null,
   cap = OVERRIDE_CAP,
 ): { has: (id: string) => boolean; set: (id: string, on: boolean) => void } {
   const [ids, setIds] = useState<string[]>([]);
 
   // Read AFTER mount — the hydration note above. Runs once per key.
   useEffect(() => {
+    if (key === null) {
+      setIds((prev) => (prev.length === 0 ? prev : []));
+      return;
+    }
     try {
       // Every account's ids in one value, which no erasure could find by its key: dropped, never adopted.
       for (const old of RETIRED_ID_SETS) window.localStorage.removeItem(old);
@@ -83,7 +92,7 @@ export function usePersistedIdSet(
         const without = prev.filter((x) => x !== id);
         const next = on ? [...without, id].slice(-cap) : without;
         // The choice still holds for this session; a jar that refused it says so once.
-        durableSet(key, JSON.stringify(next), "ui.idset");
+        if (key !== null) durableSet(key, JSON.stringify(next), "ui.idset");
         return next;
       });
     },
@@ -105,13 +114,14 @@ export function usePersistedIdSet(
  * for this session only, the right failure for a preference.
  */
 export function usePersistedChoice<T extends string>(
-  key: string,
+  key: string | null,
   allowed: readonly T[],
   fallback: T,
 ): [T, (next: T) => void] {
   const [value, setValue] = useState<T>(fallback);
 
   useEffect(() => {
+    if (key === null) return;
     try {
       const raw = window.localStorage.getItem(key);
       // The membership test IS the validator — see the note above on why a stale value is
@@ -130,7 +140,7 @@ export function usePersistedChoice<T extends string>(
     (next: T) => {
       setValue(next);
       // The choice still holds for this session; a jar that refused it says so once.
-      durableSet(key, next, "ui.choice");
+      if (key !== null) durableSet(key, next, "ui.choice");
     },
     [key],
   );
@@ -163,13 +173,12 @@ export const UI_KEYS = {
  * The Search result order, per account and per device. Per account because two people sharing a
  * browser must not inherit each other's preferences — the rule `boot-cache.ts` keys on, for a weaker
  * reason here but the same habit. Per device because it is chrome: a laptop and a phone may
- * disagree. `owner` is `storageOwner()` — the account cookie where there is one, otherwise whatever
- * identity the HOST established (`storage-owner.ts`); `null` only before sign-in and on a surface
- * with genuinely no account, which gets its own stable key rather than a blank suffix. NOT
- * `readOwner()`, which is null on the whole standalone desktop and gave every mailbox one shared key.
+ * disagree. `owner` is the scope the view's shell hands in, never looked up: the account on the
+ * web, the mounted mailbox on the desktop, the pairing on the paired page. `null` keeps the `local`
+ * key a surface with no account always had, and a scope nobody handed in is refused.
  */
-export function searchSortKey(owner: string | null): string {
-  return `ohmail.ui.search.sort.${owner ?? "local"}`;
+export function searchSortKey(owner: StorageScope): string {
+  return `ohmail.ui.search.sort.${scopeSuffix(owner)}`;
 }
 
 /**
@@ -178,13 +187,13 @@ export function searchSortKey(owner: string | null): string {
  * anywhere, and one the user opens stays open across sessions. Per account, `owner` as in
  * {@link searchSortKey}: the paths are the account's folder names, and its erasure finds them by the key.
  */
-export function foldersOpenedKey(owner: string | null): string {
-  return `ohmail.ui.rail.foldersOpened.${owner ?? "local"}`;
+export function foldersOpenedKey(owner: StorageScope): string {
+  return `ohmail.ui.rail.foldersOpened.${scopeSuffix(owner)}`;
 }
 
 /** Ids the reader chose to view in their ORIGINAL (light) rendering despite a dark theme; per account, as above. */
-export function mailOriginalKey(owner: string | null): string {
-  return `ohmail.ui.mail.original.${owner ?? "local"}`;
+export function mailOriginalKey(owner: StorageScope): string {
+  return `ohmail.ui.mail.original.${scopeSuffix(owner)}`;
 }
 
 /** The two sets as earlier builds kept them, every account's ids in one device-wide value: never read again. */

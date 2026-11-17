@@ -25,7 +25,11 @@ import {
 } from "@ohmail/app-logic/writing/compose";
 import { typeInto as typeIntoEditor } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
+
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-typed-text";
 
 /**
  * TEXT A PERSON TYPED REACHES A SERVER DRAFT OR A NAMED LOCAL UNIT ON EVERY EXIT, and no exit
@@ -336,6 +340,7 @@ beforeEach(() => {
   window.localStorage.clear();
   window.sessionStorage.clear();
   resetComposerForTest();
+  setStorageOwner(OWNER);
   Object.defineProperty(window, "matchMedia", {
     configurable: true, writable: true,
     value: (query: string) => ({
@@ -370,6 +375,7 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
+  resetStorageOwnerForTest();
 });
 
 const message = (subject: string, body = `${subject} words`) =>
@@ -389,7 +395,7 @@ describe("a tab that closes inside the autosave window", () => {
     expect(drafts(), "the debounce did not hold — this case measures nothing").toHaveLength(0);
 
     await closeTab(first);
-    const slot = JSON.parse(window.localStorage.getItem("ohmail.ui.compose.local") ?? "{}") as { subject?: string };
+    const slot = JSON.parse(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}`) ?? "{}") as { subject?: string };
     expect(slot.subject, "the closing tab's last keystroke is not in the local unit").toBe("Friday");
     expect(drafts(), "the closed page reached the account after all").toHaveLength(0);
 
@@ -436,21 +442,21 @@ describe("a duplicated tab", () => {
     await typeInto("#compose-subject", "B's own");
     await waitFor(() => drafts().length > 0, "the duplicate's own save", AUTOSAVE_DELAY_MS + 2000);
     expect(drafts()[0]!.draftId, "the duplicate wrote into the other tab's draft").toBeNull();
-    const aUnit = JSON.parse(window.localStorage.getItem("ohmail.ui.compose.local.dup-x") ?? "{}") as { subject?: string };
+    const aUnit = JSON.parse(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.dup-x`) ?? "{}") as { subject?: string };
     expect(aUnit.subject, "the duplicate wrote over the other tab's local unit").toBe("A's message");
-    expect(window.localStorage.getItem("ohmail.compose.row.local.dup-x")).toBe("row-a");
+    expect(window.localStorage.getItem(`ohmail.compose.row.${OWNER}.dup-x`)).toBe("row-a");
     expect(window.sessionStorage.getItem(COMPOSER_KEY)).not.toBe("dup-x");
   });
 
   it("puts a closed tab's waiting message in its own composer, never in the original's keys", async () => {
     const locks = installLocks();
-    window.localStorage.setItem("ohmail.ui.compose.local", JSON.stringify(message("left by a closed tab")));
+    window.localStorage.setItem(`ohmail.ui.compose.${OWNER}`, JSON.stringify(message("left by a closed tab")));
     locks.held.set(`${COMPOSER_KEY}.dup-z`, "the original tab, composing nothing");
     tabNamed("dup-z");
 
     await mountShell({ hash: "#/compose" });
     await waitFor(() => subjectShown() === "left by a closed tab", "the waiting message in the duplicate");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.dup-z"), "it landed in the original tab's keys")
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.dup-z`), "it landed in the original tab's keys")
       .toBeNull();
   });
 
@@ -518,7 +524,7 @@ describe("a tab that dies without pagehide", () => {
     expect(subjectShown(), "the dead tab's message was not offered back").toBe("lost in a crash");
     expect(document.body.textContent ?? "", "the message came back without a word")
       .toContain(messages.compose.recoveredFromClosedTab);
-    expect(window.localStorage.getItem(`ohmail.ui.compose.local.${deadId}`), "the dead tab's unit outlived the adoption")
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.${deadId}`), "the dead tab's unit outlived the adoption")
       .toBeNull();
     await waitFor(() => drafts().length > 0, "the recovered message reaching the account", AUTOSAVE_DELAY_MS + 2000);
     expect(drafts()[0]!.draftId, "a second row for a message that already had one").toBe("row-x");
@@ -526,7 +532,7 @@ describe("a tab that dies without pagehide", () => {
 
   /** A unit as a tab of this bundle leaves it: written while that tab held its composer. */
   const unitOf = (id: string, subject: string, locked: boolean): void => {
-    window.localStorage.setItem(`ohmail.ui.compose.local.${id}`, JSON.stringify({
+    window.localStorage.setItem(`ohmail.ui.compose.${OWNER}.${id}`, JSON.stringify({
       ...message(subject), attachments: undefined, ...(locked ? { locked: true } : {}),
     }));
   };
@@ -540,7 +546,7 @@ describe("a tab that dies without pagehide", () => {
     await mountShell({ hash: "#/compose" });
     await pause(200);
     expect(subjectShown(), "an open tab's message was taken from it").toBe("");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.alive-x")).not.toBeNull();
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.alive-x`)).not.toBeNull();
   });
 
   it("CONTROL: a unit no lock ever covered (a tab of an older build, maybe still open) is left", async () => {
@@ -551,7 +557,7 @@ describe("a tab that dies without pagehide", () => {
     await mountShell({ hash: "#/compose" });
     await pause(200);
     expect(subjectShown(), "an unmarked unit was taken from a tab that may still be open").toBe("");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.older-x")).not.toBeNull();
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.older-x`)).not.toBeNull();
   });
 
   it("CONTROL: a recovery answered after the restore has run moves nothing", async () => {
@@ -569,7 +575,7 @@ describe("a tab that dies without pagehide", () => {
     await mountShell({ hash: "#/compose" });
     await pause(4_500);
     expect(subjectShown()).toBe("");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.dead-late"), "moved under a composer that was not told")
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.dead-late`), "moved under a composer that was not told")
       .not.toBeNull();
   });
 
@@ -582,7 +588,7 @@ describe("a tab that dies without pagehide", () => {
     await mountShell({ hash: "#/compose" });
     await pause(200);
     expect(subjectShown(), "the dead tab's unit replaced a message in progress").toBe("already writing");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.dead-y"), "it waits for the next composer")
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.dead-y`), "it waits for the next composer")
       .not.toBeNull();
   });
 });
@@ -618,7 +624,7 @@ describe("the body ceiling", () => {
 });
 
 describe("a reply whose send was under way when its parent was deleted elsewhere", () => {
-  const laneBody = (): string | null => window.localStorage.getItem("ohmail.ui.reply:m1");
+  const laneBody = (): string | null => window.localStorage.getItem(replyDraftKey("m1", OWNER));
 
   async function replySentThenParentGone(text: string): Promise<void> {
     newTab();

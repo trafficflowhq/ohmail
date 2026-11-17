@@ -9,7 +9,11 @@ import { readComposeRow, resetComposerForTest } from "@ohmail/app-logic/writing/
 import {
   act, message, mountShell, NOW, press, replyDraft, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
+
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-sent-offline";
 
 /**
  * A MESSAGE SENT WHILE OFFLINE LEAVES DRAFTS AS AN ONLINE ONE DOES (a tester report).
@@ -45,9 +49,10 @@ import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 beforeEach(() => {
   try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
+  setStorageOwner(OWNER);
   stubDom();
 });
-afterEach(unmountAll);
+afterEach(async () => { await unmountAll(); resetStorageOwnerForTest(); });
 
 type Entry = { mutation: EngineMutation; withdrawn?: boolean };
 const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind === "mail_send");
@@ -344,7 +349,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 90_000);
 
   it("11 — a reply typed offline, then another device's draft of it opened from Drafts: both rows stay", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     s.offline.on = true;
     await replyOn(s, "m1", "Laptop words, written offline");
@@ -388,7 +393,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   };
 
   it("13 — a reply typed offline, then another device's draft of it sent offline: the typed words stay a draft", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     s.spendSentRow.on = true;
     s.offline.on = true;
@@ -405,7 +410,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 90_000);
 
   it("14 — the same with the typed reply's create on the wire at the press: it stays a draft", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     s.spendSentRow.on = true;
     s.offline.on = true;
@@ -468,7 +473,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 90_000);
 
   it("17 — another device's draft opened, then the reply's own waiting create from Drafts and sent: the phone's draft stays", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     await reopenedAndSent(s, "Laptop words, written offline", async () => {
       await openPhoneDraft(s);
@@ -504,7 +509,7 @@ describe("a create that waited offline lands on the reconnect", () => {
     mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("zz-phone", "m1", "Words from the phone")]);
 
   it("19 — the phone's draft edited, then the reply's own waiting create, then Reply and typed on: the phone's words stay its own", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await phoneEdited();
     await staleReopen(s);
     await act(async () => { typeInto(replySurface(s.el)!, "Laptop words, written offline, and one more line"); });
@@ -515,7 +520,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 120_000);
 
   it("20 — the same, then Send: the phone's draft is not spent, and no copy of the sent words stays", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await phoneEdited();
     s.spendSentRow.on = true;
     await staleReopen(s);

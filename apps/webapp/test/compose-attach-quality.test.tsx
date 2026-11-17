@@ -15,6 +15,15 @@ import type { ComposeAttachment } from "@ohmail/client-engine";
 import { enableDesktopDroppedFiles } from "../app/shell/dropped-files";
 import { restartHold } from "@ohmail/app-logic/doors/app-update";
 import { KeymapProvider } from "@ohmail/app/keys";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { TodaysScopeProvider } from "../app/shell/todays-scope";
+
+/**
+ * The scope of the shell the composer is drawn in: the account the case names (its owner marker), else an account of
+ * the test's own, as a mounted shell always names one.
+ */
+const inShell = (node: React.ReactElement): React.ReactElement =>
+  h(TodaysScopeProvider, { value: storageOwner() ?? "acc-attach" }, node);
 
 /* The compose preview's PDF opens through pdf.js, which jsdom cannot run: a load that fails. */
 vi.mock("pdfjs-dist", () => ({
@@ -255,7 +264,7 @@ async function mountLab(o: { initial?: ComposeAttachment[]; maxTotalBytes?: numb
         messages,
         timeZone: "UTC",
         now: new Date("2026-08-11T09:00:00.000Z"),
-        children: h(LabWrap, o),
+        children: inShell(h(LabWrap, o)),
       }),
     );
   });
@@ -299,9 +308,9 @@ async function mount(
         messages: o.locale === "de" ? de : messages,
         timeZone: "UTC",
         now: new Date("2026-08-11T09:00:00.000Z"),
-        children: o.keys
+        children: inShell(o.keys
           ? h(KeymapProvider, null, h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, onAttaching: o.onAttaching }))
-          : h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, onAttaching: o.onAttaching }),
+          : h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, onAttaching: o.onAttaching })),
       }),
     );
   });

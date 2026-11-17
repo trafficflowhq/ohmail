@@ -7,8 +7,20 @@
  */
 
 import { useRef } from "react";
+import { isOwnerShaped } from "./owner-cookie.js";
+import { isDemoOwned } from "./storage-owner.js";
 
 export type StorageScope = string | null;
+
+/**
+ * May a place be mounted under this scope: an id that spells no key's word for "no scope", or the demo's own. The
+ * shape is the session's marker's (`isOwnerShaped`), so a colon is refused and a dot is not.
+ */
+export function scopeMayMount(scope: StorageScope): scope is string {
+  if (scope === null || scope === undefined) return false;
+  if (isDemoOwned(scope)) return true;
+  return isOwnerShaped(scope) && scope !== "local" && scope !== "anon";
+}
 
 /** The scope as a key spells it: the scope itself, or `local` for none. Throws on a missing or empty one. */
 export function scopeSuffix(scope: StorageScope): string {

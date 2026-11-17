@@ -34,7 +34,7 @@ import {
 } from "./BodyText";
 import { mailOriginalKey, usePersistedIdSet } from "@ohmail/app-logic/storage/persisted-ui";
 import { linkHref, useRenderedLinks } from "./rendered-links";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { useTodaysScope } from "../shell/todays-scope";
 import { externalLinksEnabled } from "@ohmail/app-logic/session/open-external";
 import "./message-body.css";
 import { activeFormatLocale, liveCopy } from "../shell/locale";
@@ -4423,7 +4423,9 @@ export function MessageBody({
    */
   const theme = useOptionalTheme();
   const themeDark = theme?.resolved === "dark";
-  const overrides = usePersistedIdSet(mailOriginalKey(storageOwner()));
+  /* Kept under the scope of the shell this body is drawn in; drawn in none, the choice holds for the mount alone. */
+  const scope = useTodaysScope();
+  const overrides = usePersistedIdSet(scope === null ? null : mailOriginalKey(scope));
   const [sessionOriginal, setSessionOriginal] = useState(false);
   const original = messageId ? overrides.has(messageId) : sessionOriginal;
   const setOriginal = useCallback(

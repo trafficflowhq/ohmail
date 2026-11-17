@@ -26,6 +26,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import {
   AFTER_VERB_STORAGE_KEY,
   DEFAULT_AFTER_VERB,
@@ -44,9 +45,13 @@ let seq = 0;
 /** What the next `/sync` page carries: another device's work, applied by the engine's own drain. */
 let pending: SyncChange[] = [];
 
+/* The account the shell is mounted for, named before it mounts: its views read the choice kept beside it. */
+const SHELL_OWNER = "acc-after-verb";
+
 beforeEach(() => {
   window.location.hash = "";
   window.localStorage.clear();
+  setStorageOwner(SHELL_OWNER);
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -85,6 +90,7 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
   vi.useRealTimers();
+  resetStorageOwnerForTest();
 });
 
 const address = (id: string): string => `p${id}@example.invalid`;
@@ -174,8 +180,9 @@ const ROSTER: MailboxFacts[] = [{
   organizedBy: null, organizeConsentedAt: "2026-09-01T00:00:00.000Z",
 }];
 
+/** `scope`: the account the host hands the shell; left out, the storage owner the file named. */
 async function shell(
-  specs: (string | Spec)[] = ["m1", "m2", "m3"], older: EngineMessage[] = [],
+  specs: (string | Spec)[] = ["m1", "m2", "m3"], older: EngineMessage[] = [], scope?: string,
 ): Promise<{ container: HTMLElement; store: MirrorStore; engine: OhmailEngine }> {
   const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
@@ -191,6 +198,7 @@ async function shell(
       children: h(ThemeProvider, {
         children: h(ToastHost, {
           children: h(AppShell as never, {
+            ...(scope === undefined ? {} : { scope }),
             demo: false,
             engine,
             mailboxFacts: async () => ROSTER,
@@ -257,11 +265,11 @@ describe("nextRowAfter — the row walk", () => {
 describe("the stored choice", () => {
   it("defaults to advance, and refuses a foreign value", () => {
     expect(DEFAULT_AFTER_VERB).toBe("advance");
-    expect(readAfterVerb()).toBe("advance");
+    expect(readAfterVerb(null)).toBe("advance");
     window.localStorage.setItem(AFTER_VERB_STORAGE_KEY, "sideways");
-    expect(readAfterVerb()).toBe("advance");
+    expect(readAfterVerb(null)).toBe("advance");
     window.localStorage.setItem(AFTER_VERB_STORAGE_KEY, "close");
-    expect(readAfterVerb()).toBe("close");
+    expect(readAfterVerb(null)).toBe("close");
   });
 });
 
@@ -340,6 +348,24 @@ describe("after a verb, on the shipped shell", () => {
   it("`close` clears the selection back to the list", async () => {
     window.localStorage.setItem(AFTER_VERB_STORAGE_KEY, "close");
     const { container } = await shell();
+    await key("j");
+    await waitFor(() => selId(container) != null, "the cursor to stand");
+    const first = selId(container)!;
+    await key("Backspace");
+    await waitFor(() => !rowIds(container).includes(first), "the acted row to leave");
+    await settle();
+    expect(selId(container)).toBeNull();
+    expect(container.textContent).toContain("Nothing open.");
+  });
+
+  /* The choice obeyed is the one kept for the shell's own account: its host hands it one account while the storage
+     owner names another (another tab signed in as somebody else), whose own choice is to advance. */
+  it("obeys the choice kept for the account its host hands it, whatever the storage owner names", async () => {
+    const other = "acc-another-tab";
+    window.localStorage.setItem(`${AFTER_VERB_STORAGE_KEY}:${SHELL_OWNER}`, "close");
+    window.localStorage.setItem(`${AFTER_VERB_STORAGE_KEY}:${other}`, "advance");
+    setStorageOwner(other);
+    const { container } = await shell(["m1", "m2", "m3"], [], SHELL_OWNER);
     await key("j");
     await waitFor(() => selId(container) != null, "the cursor to stand");
     const first = selId(container)!;
