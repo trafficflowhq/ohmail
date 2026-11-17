@@ -1,0 +1,379 @@
+[
+  {
+    "subject": "frame",
+    "reason": "No shell loads the design's font files: packages/ui/src/base/index.ts imports @ohmail/tokens/design.css and design/motion.css and leaves out @ohmail/tokens/design/fonts.css. So on paper every word falls back to the system's face (Helvetica Neue on a Mac, Arial or its twin elsewhere) where the reference draws Hanken Grotesk and Bricolage Grotesque, and on ohmarchy JetBrains Mono comes from the machine's install, not the bundled file. The rows of the face itself, and the widths that follow it (a title, Mark all read, a count's digit).",
+    "since": "2026-11-17",
+    "removedBy": "r2-fonts",
+    "rows": [
+      {"element": "compose.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "compose.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono Medium (system)"},
+      {"element": "Ohbox.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Ohbox.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono SemiBold (system)"},
+      {"element": "Ohbox.count", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Ohbox.count", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono SemiBold (system)"},
+      {"element": "News.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "News.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "News.count", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "News.count", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Receipts.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Receipts.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Receipts.count", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Receipts.count", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Screener.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Screener.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Screener.count", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Screener.count", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono SemiBold (system)"},
+      {"element": "Answer Later.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Answer Later.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Answer Later.count", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Answer Later.count", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Parked.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Parked.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Parked.count", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Parked.count", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Resurface.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Resurface.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Resurface.count", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Resurface.count", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Tags.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Tags.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "History.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "History.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Search.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Search.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Drafts.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Drafts.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Drafts.count", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Drafts.count", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "Settings.label", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "Settings.label", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "foot.account.avatar", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "foot.account.avatar", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "foot.account.name", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "foot.account.name", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono SemiBold (system)"},
+      {"element": "dock.Ohbox.count", "property": "face", "looks": ["390-paper-light", "390-paper-dark"], "app": "Arimo (system)"},
+      {"element": "dock.Screener.count", "property": "face", "looks": ["390-paper-light", "390-paper-dark"], "app": "Arimo (system)"},
+      {"element": "dock.News.count", "property": "face", "looks": ["390-paper-light", "390-paper-dark"], "app": "Arimo (system)"},
+      {"element": "dock.Receipts.count", "property": "face", "looks": ["390-paper-light", "390-paper-dark"], "app": "Arimo (system)"}
+    ]
+  },
+  {
+    "subject": "frame",
+    "reason": "No calendar stands in the app: the frame hands the rail no ohmail/ohcal switch, which the reference draws over Write. So Write and the rail's body stand 52 px higher, ohmarchy's rail pads 10 px over its first control where the switch's 12 stand, and on a phone the list's head has no ohcal button and its title stands at the head's edge. The states pages declare the same (packages/app/test/compare/declared.json, removed by the calendar's views).",
+    "since": "2026-11-17",
+    "removedBy": "r2-mount-calendar",
+    "rows": [
+      {"element": "rail.switch (ohmail | ohcal)", "property": "present", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "no"},
+      {"element": "compose", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "12"},
+      {"element": "compose", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "22"},
+      {"element": "compose.label", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "28"},
+      {"element": "compose.label", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "33.5"},
+      {"element": "compose.icon", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "26"},
+      {"element": "compose.icon", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "30"},
+      {"element": "rail.scroll", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "76"},
+      {"element": "rail.scroll", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "72"},
+      {"element": "list.head.switch (ohcal)", "property": "present", "looks": ["390-paper-light", "390-paper-dark"], "app": "no"},
+      {"element": "rail", "property": "padding", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "10px 10px 10px 10px"}
+    ]
+  },
+  {
+    "subject": "frame",
+    "reason": "Today's rail feed words the write button Compose (apps/webapp/app/shell/todays-feeds.tsx:198, rail.compose) where the reference says Write, and the button is as much wider. The feed leaves with today's shell at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "compose", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "140.9"},
+      {"element": "compose.label", "property": "text", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "Compose"},
+      {"element": "compose.label", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "72.9"},
+      {"element": "compose.label", "property": "w", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "54.6"}
+    ]
+  },
+  {
+    "subject": "frame",
+    "reason": "Today's rail feed opens Tags by default (usePersistedFlag(UI_KEYS.tagsOpen, true), apps/webapp/app/shell/todays-feeds.tsx:145); the reference's default is shut. So Tags is taller and every entry under it stands lower. The feed leaves with today's shell at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "History", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "512"},
+      {"element": "History", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "424"},
+      {"element": "History.label", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "520.8"},
+      {"element": "History.label", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "430.9"},
+      {"element": "History.icon", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "522"},
+      {"element": "History.icon", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "430"},
+      {"element": "Search", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "554"},
+      {"element": "Search", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "456"},
+      {"element": "Search.label", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "562.8"},
+      {"element": "Search.label", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "462.9"},
+      {"element": "Search.icon", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "564"},
+      {"element": "Search.icon", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "462"},
+      {"element": "Drafts", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "596"},
+      {"element": "Drafts", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "488"},
+      {"element": "Drafts.label", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "604.8"},
+      {"element": "Drafts.label", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "494.9"},
+      {"element": "Drafts.icon", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "606"},
+      {"element": "Drafts.icon", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "494"},
+      {"element": "Drafts.count", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "606.9"},
+      {"element": "Drafts.count", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "495.6"},
+      {"element": "Settings", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "638"},
+      {"element": "Settings", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "520"},
+      {"element": "Settings.label", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "646.8"},
+      {"element": "Settings.label", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "526.9"},
+      {"element": "Settings.icon", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "648"},
+      {"element": "Settings.icon", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "526"},
+      {"element": "rail.group 4", "property": "h", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "176"},
+      {"element": "rail.group 4", "property": "h", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "144"},
+      {"element": "rail.group 5", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "512"},
+      {"element": "rail.group 5", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "424"}
+    ]
+  },
+  {
+    "subject": "frame",
+    "reason": "Today's rail feed gives the foot the mailbox's address as the account's name and an empty note (apps/webapp/app/shell/todays-feeds.tsx:195,199), no tools (the palette, the scheme), and Pull new mail only where the host has it (:202; the demo's host has not). So the foot is shorter, the account line wider and the rail's body taller. The foot is fed by the ground at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "rail.scroll", "property": "h", "looks": ["1440-paper-light", "1440-paper-dark"], "app": "752"},
+      {"element": "rail.scroll", "property": "h", "looks": ["2000-paper-light", "2000-paper-dark"], "app": "1092"},
+      {"element": "rail.scroll", "property": "h", "looks": ["1440-ohmarchy-dark"], "app": "746"},
+      {"element": "rail.scroll", "property": "h", "looks": ["2000-ohmarchy-dark"], "app": "1086"},
+      {"element": "rail.foot", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark"], "app": "840"},
+      {"element": "rail.foot", "property": "y", "looks": ["2000-paper-light", "2000-paper-dark"], "app": "1180"},
+      {"element": "rail.foot", "property": "y", "looks": ["1440-ohmarchy-dark"], "app": "832"},
+      {"element": "rail.foot", "property": "y", "looks": ["2000-ohmarchy-dark"], "app": "1172"},
+      {"element": "rail.foot", "property": "h", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "48"},
+      {"element": "rail.foot", "property": "h", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "46"},
+      {"element": "foot.pull", "property": "present", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "no"},
+      {"element": "foot.pull.label", "property": "present", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "no"},
+      {"element": "foot.account", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "0"},
+      {"element": "foot.account", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "8"},
+      {"element": "foot.account", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "232"},
+      {"element": "foot.account", "property": "w", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "204"},
+      {"element": "foot.account.avatar", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "10"},
+      {"element": "foot.account.avatar", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "14"},
+      {"element": "foot.account.name", "property": "text", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "mila@lichtgrat.example"},
+      {"element": "foot.account.name", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "14"},
+      {"element": "foot.account.name", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "18.9"},
+      {"element": "foot.account.name", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "170"},
+      {"element": "foot.account.name", "property": "w", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "154"},
+      {"element": "foot.account.note", "property": "visible", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "false"},
+      {"element": "foot.tools (palette, scheme)", "property": "present", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "no"},
+      {"element": "foot.account", "property": "h", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "38"}
+    ]
+  },
+  {
+    "subject": "frame",
+    "reason": "Ohmarchy: today's rail feed hands Search's entry no standing key (placeEntry in apps/webapp/app/shell/todays-feeds.tsx), so its name takes the room the reference's / takes. The feed leaves with today's shell at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "Search.label", "property": "w", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "152"}
+    ]
+  },
+  {
+    "subject": "frame",
+    "reason": "The Ohbox stands in today's split, not in the frame's columns: .view.split (apps/webapp/app/app.css:211-219) with --split minmax(320px, 400px) 1fr and --gap-tile 16px, where the frame's own columns give 420 and 12 and a handle for the list's width (packages/app/src/frame/placement.css). So the list is narrower, the reading column starts further left, the head's controls move, and on ohmarchy the list's ring is not the one with the keys; on a phone the list is today's sheet under the head where the reference draws on the ground. Today's view leaves at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "handle.list", "property": "present", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "no"}
+    ]
+  },
+  {
+    "subject": "frame",
+    "reason": "The phone's dock draws the Ohbox's count hot: today's rail group gives the Ohbox hot: true (apps/webapp/app/shell/shell-keys.tsx:1080), handed on as countHot (todays-feeds.tsx:133); in the design only a count of somebody waiting is hot (the Screener's). It leaves with today's shell at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "dock.Ohbox.count", "property": "background", "looks": ["390-paper-light"], "app": "rgb(248, 67, 26)"},
+      {"element": "dock.Ohbox.count", "property": "background", "looks": ["390-paper-dark"], "app": "rgb(255, 106, 61)"},
+      {"element": "dock.Ohbox.count", "property": "color", "looks": ["390-paper-dark"], "app": "rgb(18, 16, 14)"}
+    ]
+  },
+  {
+    "subject": "frame",
+    "reason": "The kit's dock leaves its places' gap at normal (packages/ui/src/mail/Shell/dock.css, .oh-dock-places) where the reference writes 0. On a flex row both are no gap: nothing drawn differs. The kit's last review writes it.",
+    "since": "2026-11-17",
+    "removedBy": "kit-last-review",
+    "rows": [
+      {"element": "dock.places", "property": "gap", "looks": ["390-paper-light", "390-paper-dark"], "app": "normal"}
+    ]
+  },
+  {
+    "subject": "ohbox",
+    "reason": "No shell loads the design's font files: packages/ui/src/base/index.ts imports @ohmail/tokens/design.css and design/motion.css and leaves out @ohmail/tokens/design/fonts.css. So on paper every word falls back to the system's face (Helvetica Neue on a Mac, Arial or its twin elsewhere) where the reference draws Hanken Grotesk and Bricolage Grotesque, and on ohmarchy JetBrains Mono comes from the machine's install, not the bundled file. The rows of the face itself, and the widths that follow it (a title, Mark all read, a count's digit).",
+    "since": "2026-11-17",
+    "removedBy": "r2-fonts",
+    "rows": [
+      {"element": "list.head.title", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "390-paper-light", "390-paper-dark"], "app": "Arimo (system)"},
+      {"element": "list.head.title", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "list.head.bell.count", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "390-paper-light", "390-paper-dark"], "app": "8.5"},
+      {"element": "list.head.bell.count", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "390-paper-light", "390-paper-dark"], "app": "Arimo (system)"},
+      {"element": "list.head.bell.count", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "list.head.markall", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "113.8"},
+      {"element": "list.head.markall", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "list.head.markall", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system)"},
+      {"element": "list.group.New", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "390-paper-light", "390-paper-dark"], "app": "Arimo (system)"},
+      {"element": "list.group.New", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono (system) + JetBrains Mono (system)"}
+    ]
+  },
+  {
+    "subject": "ohbox",
+    "reason": "No calendar stands in the app: the frame hands the rail no ohmail/ohcal switch, which the reference draws over Write. So Write and the rail's body stand 52 px higher, ohmarchy's rail pads 10 px over its first control where the switch's 12 stand, and on a phone the list's head has no ohcal button and its title stands at the head's edge. The states pages declare the same (packages/app/test/compare/declared.json, removed by the calendar's views).",
+    "since": "2026-11-17",
+    "removedBy": "r2-mount-calendar",
+    "rows": [
+      {"element": "list.head.title", "property": "x", "looks": ["390-paper-light", "390-paper-dark"], "app": "16"}
+    ]
+  },
+  {
+    "subject": "ohbox",
+    "reason": "Today's Ohbox draws the doorbell's keys g s at rest (keysShown: plan.pointer !== \"coarse\", apps/webapp/app/shell/TodaysOhbox.tsx:137), which beats the face's --keys; the reference shows them on no face at rest. So the bell is wider and what stands beside it moves. Today's Ohbox view leaves at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "list.head.aside", "property": "x", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "166.8"},
+      {"element": "list.head.aside", "property": "x", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "175.3"},
+      {"element": "list.head.aside", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "221.2"},
+      {"element": "list.head.aside", "property": "w", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "212.7"},
+      {"element": "list.head.bell", "property": "x", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "166.8"},
+      {"element": "list.head.bell", "property": "x", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "175.3"},
+      {"element": "list.head.bell", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "59.3"},
+      {"element": "list.head.bell", "property": "w", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "55.3"},
+      {"element": "list.head.bell.count", "property": "x", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "174.8"},
+      {"element": "list.head.bell.count", "property": "x", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "179.3"},
+      {"element": "list.head.bell.key (g s)", "property": "visible", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "true"}
+    ]
+  },
+  {
+    "subject": "ohbox",
+    "reason": "The Ohbox stands in today's split, not in the frame's columns: .view.split (apps/webapp/app/app.css:211-219) with --split minmax(320px, 400px) 1fr and --gap-tile 16px, where the frame's own columns give 420 and 12 and a handle for the list's width (packages/app/src/frame/placement.css). So the list is narrower, the reading column starts further left, the head's controls move, and on ohmarchy the list's ring is not the one with the keys; on a phone the list is today's sheet under the head where the reference draws on the ground. Today's view leaves at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "list.sheet", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "400"},
+      {"element": "list.head", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "400"},
+      {"element": "list.head.markall", "property": "x", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "230.2"},
+      {"element": "list.head.markall", "property": "x", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "234.6"},
+      {"element": "list.head.more", "property": "x", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "348"},
+      {"element": "list.head.more", "property": "x", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "356"},
+      {"element": "list.group.New", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "72"},
+      {"element": "list.group.New", "property": "y", "looks": ["390-paper-light", "390-paper-dark"], "app": "64"},
+      {"element": "list.group.New", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "68"},
+      {"element": "list.group.New", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "400"},
+      {"element": "list.sheet", "property": "y", "looks": ["390-paper-light", "390-paper-dark"], "app": "64"},
+      {"element": "list.sheet", "property": "h", "looks": ["390-paper-light", "390-paper-dark"], "app": "1136"},
+      {"element": "list.sheet", "property": "background", "looks": ["390-paper-light"], "app": "rgb(255, 255, 255)"},
+      {"element": "list.sheet", "property": "background", "looks": ["390-paper-dark"], "app": "rgb(35, 32, 28)"},
+      {"element": "list.sheet", "property": "radius", "looks": ["390-paper-light", "390-paper-dark"], "app": "20px 20px 20px 20px"},
+      {"element": "list.sheet", "property": "shadow", "looks": ["390-paper-light"], "app": "rgb(240, 235, 227) 0px 0px 0px 0px"},
+      {"element": "list.sheet", "property": "shadow", "looks": ["390-paper-dark"], "app": "rgb(35, 32, 28) 0px 0px 0px 0px"},
+      {"element": "list.sheet", "property": "shadow", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "rgb(66, 66, 69) 0px 0px 0px 2px"}
+    ]
+  },
+  {
+    "subject": "reader",
+    "reason": "No shell loads the design's font files: packages/ui/src/base/index.ts imports @ohmail/tokens/design.css and design/motion.css and leaves out @ohmail/tokens/design/fonts.css. So on paper every word falls back to the system's face (Helvetica Neue on a Mac, Arial or its twin elsewhere) where the reference draws Hanken Grotesk and Bricolage Grotesque, and on ohmarchy JetBrains Mono comes from the machine's install, not the bundled file. The rows of the face itself, and the widths that follow it (a title, Mark all read, a count's digit).",
+    "since": "2026-11-17",
+    "removedBy": "r2-fonts",
+    "rows": [
+      {"element": "read.empty.words", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "read.empty.words", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono SemiBold (system)"}
+    ]
+  },
+  {
+    "subject": "reader",
+    "reason": "The Ohbox stands in today's split, not in the frame's columns: .view.split (apps/webapp/app/app.css:211-219) with --split minmax(320px, 400px) 1fr and --gap-tile 16px, where the frame's own columns give 420 and 12 and a handle for the list's width (packages/app/src/frame/placement.css). So the list is narrower, the reading column starts further left, the head's controls move, and on ohmarchy the list's ring is not the one with the keys; on a phone the list is today's sheet under the head where the reference draws on the ground. Today's view leaves at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "read.column", "property": "x", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "672"},
+      {"element": "read.column", "property": "x", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "664"},
+      {"element": "read.column", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark"], "app": "756"},
+      {"element": "read.column", "property": "w", "looks": ["2000-paper-light", "2000-paper-dark"], "app": "1316"},
+      {"element": "read.column", "property": "w", "looks": ["1440-ohmarchy-dark"], "app": "764"},
+      {"element": "read.column", "property": "w", "looks": ["2000-ohmarchy-dark"], "app": "1324"},
+      {"element": "read.column", "property": "y", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "12"},
+      {"element": "read.column", "property": "h", "looks": ["1440-ohmarchy-dark"], "app": "876"},
+      {"element": "read.column", "property": "h", "looks": ["2000-ohmarchy-dark"], "app": "1216"}
+    ]
+  },
+  {
+    "subject": "reader",
+    "reason": "With nothing open the reading column is today's empty view (.view-ohbox .read-col .empty, apps/webapp/app/app.css:3228): a sheet saying Nothing open., where the reference draws no sheet and shows the count of unread letters and today's agenda on the ground. Today's view leaves at the switch, when the reader draws its column.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "read.column", "property": "background", "looks": ["1440-paper-light", "2000-paper-light"], "app": "oklch(1 0 0)"},
+      {"element": "read.column", "property": "background", "looks": ["1440-paper-dark", "2000-paper-dark"], "app": "oklch(0.208 0.01 55)"},
+      {"element": "read.column", "property": "background", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "rgb(26, 27, 38)"},
+      {"element": "read.column", "property": "radius", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "20px 20px 20px 20px"},
+      {"element": "read.column", "property": "shadow", "looks": ["1440-paper-light", "2000-paper-light"], "app": "oklch(0.4 0.05 55 / 0.025) 0px 0px 0px 1px, oklch(0.4 0.05 55 / 0.03) 0px 2px 4px 0px, oklch(0.35 0.05 52 / 0.07) 0px 14px 32px -10px, oklch(0.3 0.05 50 / 0.1) 0px 40px 96px -28px"},
+      {"element": "read.column", "property": "shadow", "looks": ["1440-paper-dark", "2000-paper-dark"], "app": "oklch(0 0 0 / 0.3) 0px 1px 2px 0px, oklch(0 0 0 / 0.38) 0px 8px 20px -8px, oklch(0 0 0 / 0.36) 0px 24px 56px -20px"},
+      {"element": "read.column", "property": "shadow", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "rgba(89, 89, 89, 0.67) 0px 0px 0px 2px"},
+      {"element": "read.empty", "property": "x", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "0"},
+      {"element": "read.empty", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "0"},
+      {"element": "read.empty", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark"], "app": "756"},
+      {"element": "read.empty", "property": "w", "looks": ["2000-paper-light", "2000-paper-dark"], "app": "1316"},
+      {"element": "read.empty", "property": "w", "looks": ["1440-ohmarchy-dark"], "app": "764"},
+      {"element": "read.empty", "property": "w", "looks": ["2000-ohmarchy-dark"], "app": "1324"},
+      {"element": "read.empty", "property": "h", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "239.3"},
+      {"element": "read.empty", "property": "padding", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "96px 20px 52px 20px"},
+      {"element": "read.empty", "property": "gap", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "normal"},
+      {"element": "read.empty.words", "property": "text", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "Nothing open."},
+      {"element": "read.empty.words", "property": "x", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "20"},
+      {"element": "read.empty.words", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "144.4"},
+      {"element": "read.empty.words", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark"], "app": "716"},
+      {"element": "read.empty.words", "property": "w", "looks": ["2000-paper-light", "2000-paper-dark"], "app": "1276"},
+      {"element": "read.empty.words", "property": "w", "looks": ["1440-ohmarchy-dark"], "app": "724"},
+      {"element": "read.empty.words", "property": "w", "looks": ["2000-ohmarchy-dark"], "app": "1284"},
+      {"element": "read.empty.words", "property": "h", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "18.2"},
+      {"element": "read.empty.words", "property": "fontFamily", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif"},
+      {"element": "read.empty.words", "property": "fontWeight", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "600"},
+      {"element": "read.empty.words", "property": "fontSize", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "13px"},
+      {"element": "read.empty.words", "property": "lineHeight", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "18.2px"},
+      {"element": "read.empty.words", "property": "letterSpacing", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "normal"},
+      {"element": "read.empty.words", "property": "fontVariation", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "normal"},
+      {"element": "read.empty.words", "property": "color", "looks": ["1440-paper-light", "2000-paper-light"], "app": "oklch(0.245 0.012 60)"},
+      {"element": "read.empty.words", "property": "color", "looks": ["1440-paper-dark", "2000-paper-dark"], "app": "oklch(0.932 0.007 80)"},
+      {"element": "read.empty.words", "property": "color", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "rgb(169, 177, 214)"},
+      {"element": "read.empty.agenda", "property": "present", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "no"}
+    ]
+  },
+  {
+    "subject": "frame-web",
+    "reason": "No shell loads the design's font files: packages/ui/src/base/index.ts imports @ohmail/tokens/design.css and design/motion.css and leaves out @ohmail/tokens/design/fonts.css. So on paper every word falls back to the system's face (Helvetica Neue on a Mac, Arial or its twin elsewhere) where the reference draws Hanken Grotesk and Bricolage Grotesque, and on ohmarchy JetBrains Mono comes from the machine's install, not the bundled file. The rows of the face itself, and the widths that follow it (a title, Mark all read, a count's digit).",
+    "since": "2026-11-17",
+    "removedBy": "r2-fonts",
+    "rows": [
+      {"element": "foot.offer.title", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "foot.offer.title", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono SemiBold (system)"},
+      {"element": "foot.offer.act", "property": "face", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "Arimo (system)"},
+      {"element": "foot.offer.act", "property": "face", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "JetBrains Mono Medium (system)"}
+    ]
+  },
+  {
+    "subject": "frame-web",
+    "reason": "The web's offer of the desktop app is fed by today's rail feed with the word Download (apps/webapp/app/shell/todays-feeds.tsx:458, rail.getDesktopOpen) where the reference words it shorter, and stands lower for the Pull new mail it lacks. It leaves with today's feed at the switch.",
+    "since": "2026-11-17",
+    "removedBy": "r2-switch",
+    "rows": [
+      {"element": "foot.offer", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark"], "app": "794.4"},
+      {"element": "foot.offer", "property": "y", "looks": ["2000-paper-light", "2000-paper-dark"], "app": "1134.4"},
+      {"element": "foot.offer", "property": "y", "looks": ["1440-ohmarchy-dark"], "app": "796.5"},
+      {"element": "foot.offer", "property": "y", "looks": ["2000-ohmarchy-dark"], "app": "1136.5"},
+      {"element": "foot.offer.title", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark"], "app": "808.4"},
+      {"element": "foot.offer.title", "property": "y", "looks": ["2000-paper-light", "2000-paper-dark"], "app": "1148.4"},
+      {"element": "foot.offer.title", "property": "y", "looks": ["1440-ohmarchy-dark"], "app": "806.5"},
+      {"element": "foot.offer.title", "property": "y", "looks": ["2000-ohmarchy-dark"], "app": "1146.5"},
+      {"element": "foot.offer.title", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "181"},
+      {"element": "foot.offer.title", "property": "h", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "17"},
+      {"element": "foot.offer.act", "property": "text", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark", "1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "Download"},
+      {"element": "foot.offer.act", "property": "y", "looks": ["1440-paper-light", "1440-paper-dark"], "app": "836"},
+      {"element": "foot.offer.act", "property": "y", "looks": ["2000-paper-light", "2000-paper-dark"], "app": "1176"},
+      {"element": "foot.offer.act", "property": "y", "looks": ["1440-ohmarchy-dark"], "app": "832"},
+      {"element": "foot.offer.act", "property": "y", "looks": ["2000-ohmarchy-dark"], "app": "1172"},
+      {"element": "foot.offer.act", "property": "w", "looks": ["1440-paper-light", "1440-paper-dark", "2000-paper-light", "2000-paper-dark"], "app": "100.4"},
+      {"element": "foot.offer.act", "property": "w", "looks": ["1440-ohmarchy-dark", "2000-ohmarchy-dark"], "app": "82.4"}
+    ]
+  }
+]
