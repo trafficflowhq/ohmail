@@ -17,6 +17,7 @@ import {
 } from "../rule-order.js";
 import { DESTINATIONS, canonicalDestination, isConsentingDestination, type Destination } from "../types.js";
 import type { KnownSenders, Rule } from "../rules.js";
+import { isSubjectHeading, type SubjectHeading } from "../preferences.js";
 
 /**
  * The portable organizer profile — how a mailbox carries its own organizer configuration. The
@@ -262,6 +263,18 @@ export interface ProfileGap {
   at: string;
 }
 
+/**
+ * WHAT THE PERSON STATED FOR EVERY INSTALL OF THE MAILBOX. An ENVELOPE key, outside the payload and
+ * the fingerprint as `screening` is, so a document differing only here is no import question. Each
+ * member is a closed word with the instant it was stated (`toISOString`'s form): the newer
+ * statement holds. A member that is absent is NOT STATED: a reader leaves what it holds alone, and
+ * an organizer that does not know the key writes a document without it. `PROFILE_VERSION` does not move.
+ */
+export interface ProfilePreferences {
+  /** Where a conversation's subject stands in the reader. */
+  subject?: { value: SubjectHeading; at: string };
+}
+
 /** The longest install id a gap key may name; the lease's ids are far shorter. */
 const GAP_BY_MAX = 256;
 
@@ -300,6 +313,8 @@ export interface OrganizerProfileDoc extends OrganizerProfilePayload {
    * ENVELOPE key, out of the fingerprint; absent = none recorded (an older organizer records none).
    */
   removedRules?: ProfileRemovedRule[];
+  /** What the person stated for every install ({@link ProfilePreferences}); absent = nothing stated. */
+  preferences?: ProfilePreferences;
 }
 
 /**
@@ -830,6 +845,8 @@ export function makeProfileDoc(
   meta: {
     updatedAt: Date; producer: { kind: string; version: string }; screening?: ProfileScreening; gap?: ProfileGap;
     applied?: readonly string[]; removedRules?: readonly ProfileRemovedRule[];
+    /** REQUIRED, so that no site that makes a document can leave it out: `{}` states nothing and writes no key. */
+    preferences: ProfilePreferences;
   },
   version: number = PROFILE_VERSION,
 ): OrganizerProfileDoc {
@@ -850,6 +867,8 @@ export function makeProfileDoc(
     ...(meta.applied === undefined ? {} : { applied: meta.applied.slice(0, PROFILE_APPLIED_MAX) }),
     // ENVELOPE, after `applied`: absent when there is none to record.
     ...(removedRules.length === 0 ? {} : { removedRules }),
+    // ENVELOPE, after `removedRules`: only what is stated, in the form its reader reads back.
+    ...preferencesAsWritten(meta.preferences),
     screener: canonical.screener,
     rules: withRuleAges(canonical.rules, payload.rules),
     notifyRules: canonical.notifyRules,
@@ -864,6 +883,18 @@ export function makeProfileDoc(
     // The same rule: present only when the canonical form kept it, so an older copy's bytes stand.
     ...(canonical.impersonationFiling === false ? { impersonationFiling: false as const } : {}),
   };
+}
+
+/**
+ * The stated preferences as a document carries them. A member is written only as a word of its
+ * closed set with an instant in the written form; anything else is left out, and nothing stated is
+ * no key at all. A caller that is not compiled hands none, which states nothing.
+ */
+function preferencesAsWritten(stated: ProfilePreferences | undefined): { preferences?: ProfilePreferences } {
+  const subject = stated?.subject;
+  if (subject === undefined || !isSubjectHeading(subject.value)) return {};
+  if (typeof subject.at !== "string" || !isWrittenInstant(subject.at)) return {};
+  return { preferences: { subject: { value: subject.value, at: subject.at } } };
 }
 
 /** A removal's order among same-instant ties: its rule key as the import spells it. */

@@ -10,7 +10,7 @@ import {
 } from "../src/push-wake.js";
 import type { PushEndpointGuard, VapidFromEnv, WebPushKeys } from "@trafficflow/core/net";
 import { makeVapidIdentity } from "@trafficflow/core/net";
-import type { Tx } from "@trafficflow/db";
+import { changeLog, type Tx } from "@trafficflow/db";
 import {
   makeSubscriber, openAes128Gcm, parseVapidAuthorization, type FakeSubscriber,
 } from "../../../packages/core/test/webpush-subscriber.js";
@@ -122,12 +122,23 @@ interface Row {
   auth?: string | null;
 }
 
-/** A db double: the sender does exactly one SELECT and (on 404/410) one DELETE. */
-function fakeDb(rows: Row[]): { db: Tx; deleted: string[] } {
+/**
+ * A db double: the sender reads the registrations, asks the change log whether the window held a
+ * record that is not the calendar's, and (on 404/410) deletes one row. `held` is that answer: a
+ * mail advance unless a case says the window was the calendar's alone. `asked` counts the question.
+ */
+function fakeDb(rows: Row[], held = true): { db: Tx; deleted: string[]; asked: () => number } {
   const deleted: string[] = [];
+  let asked = 0;
   const filled = rows.map((r) => ({ p256dh: null, auth: null, ...r }));
   const db = {
-    select: () => ({ from: () => ({ where: () => Promise.resolve(filled) }) }),
+    select: () => ({
+      from: (table: unknown) => ({
+        where: () => (table === changeLog
+          ? { limit: () => { asked += 1; return Promise.resolve(held ? [{ one: 1 }] : []); } }
+          : Promise.resolve(filled)),
+      }),
+    }),
     delete: () => ({
       where: () => {
         deleted.push("one");
@@ -135,7 +146,7 @@ function fakeDb(rows: Row[]): { db: Tx; deleted: string[] } {
       },
     }),
   } as unknown as Tx;
-  return { db, deleted };
+  return { db, deleted, asked: () => asked };
 }
 
 /** A hub double. `emit` is what the real hub's LISTEN dispatch calls. */
@@ -390,6 +401,23 @@ describe("census 2 — the sender's SOURCE names no message-derived value", () =
     expect(code).toMatch(/auth:\s*pushSubscriptions\.auth/);
   });
 
+  it("asks the change log one question, by the literal 1, and reads no column of it", () => {
+    /**
+     * The second read decides whether a window dials at all. It is in scope of the request, so
+     * its shape is pinned like the first: one projection, the literal `1`, and three columns named
+     * only to bound it: the account, the window's seqs and the kind. A fourth name here is a value
+     * of somebody's mail log on its way into the sender.
+     */
+    const selects = [...code.matchAll(/db\.select\(\{([\s\S]*?)\}\)/g)].map((m) => m[1]!.trim());
+    expect(selects).toHaveLength(2);
+    expect(selects[1]).toBe("one: sql<number>`1`");
+    const cols = [...code.matchAll(/changeLog\.(\w+)/g)].map((m) => m[1]!);
+    expect([...new Set(cols)].sort()).toEqual(["accountId", "entityType", "seq"]);
+    expect([...code.matchAll(/\.from\((\w+)\)/g)].map((m) => m[1])).toEqual(["pushSubscriptions", "changeLog"]);
+    // The kinds it leaves out are the calendar's own list, by name: not a list typed here.
+    expect(code).toMatch(/notInArray\(changeLog\.entityType,\s*\[\.\.\.CALENDAR_RECORD_KINDS\]\)/);
+  });
+
   it("every field it logs SURVIVES the logger's allow-list", async () => {
     /**
      * ══════════════════════════════════════════════════════════════════════════════════════
@@ -443,11 +471,23 @@ describe("census 2 — the sender's SOURCE names no message-derived value", () =
     }
   });
 
-  it("drops the hub's seq at the boundary — it is never bound to a name", () => {
-    // The hub hands (accountId, seq). `seq` is an activity counter, so the callback takes ONE
-    // parameter and the second is discarded by arity rather than by discipline.
-    expect(code).toMatch(/subscribeAll\(\(accountId\)\s*=>/);
-    expect(code).not.toMatch(/subscribeAll\(\(accountId,\s*seq\)/);
+  it("keeps the hub's seq as a window's two bounds, and hands them to the deciding read alone", () => {
+    // The hub hands (accountId, seq). `seq` is an activity counter: it bounds the one read that
+    // asks whether the window held anything but the calendar's records, and goes nowhere else.
+    // That it reaches no request and no log line is run below, on numbers that could not be missed.
+    // Here: the only uses of the two bounds.
+    expect(code).toMatch(/subscribeAll\(\(accountId,\s*seq\)\s*=>/);
+    const uses = code.split("\n").filter((line) => /\b(lowest|highest)\b/.test(line)).map((line) => line.trim());
+    expect(uses).toEqual([
+      "const pending = new Map<string, { timer: ReturnType<typeof setTimeout>; lowest: bigint; highest: bigint }>();",
+      "const fire = async (accountId: string, lowest: bigint, highest: bigint): Promise<void> => {",
+      "gte(changeLog.seq, lowest),",
+      "lte(changeLog.seq, highest),",
+      "if (seq < open.lowest) open.lowest = seq;",
+      "if (seq > open.highest) open.highest = seq;",
+      "void fire(accountId, window.lowest, window.highest).catch((err: unknown) => {",
+      "const window = { timer, lowest: seq, highest: seq };",
+    ]);
   });
 });
 
@@ -967,6 +1007,66 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
 
     expect(dialled, "a stopped sender kept dialling the rest of the account's rows")
       .toEqual(["https://push.example.com/up/a"]);
+  });
+});
+
+describe("a window of the calendar's records alone dials nothing", () => {
+  const ROW = { id: "r", endpoint: "https://push.example.com/up/abc" };
+  const run = async (rows: Row[], held: boolean): Promise<{ posts: number; asked: number }> => {
+    const { db, asked } = fakeDb(rows, held);
+    let posts = 0;
+    const post: PushWakePost = () => { posts += 1; return Promise.resolve({ status: 201 }); };
+    const { source, emit } = fakeSource();
+    const wake = startPushWake({ db, source, guard: PERMIT, post, ownsAccount: OWN_ALL, vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0 });
+    emit("acct-1", 4n);
+    emit("acct-1", 9n);
+    await tick(200);
+    wake.stop();
+    return { posts, asked: asked() };
+  };
+
+  it("no record but the calendar's: no request, however many registrations stand", async () => {
+    expect(await run([ROW, { ...ROW, id: "r2", endpoint: "https://push.example.com/up/def" }], false)).toEqual({ posts: 0, asked: 1 });
+  });
+
+  it("a record that is not the calendar's: one request per registration, and the question asked once for the window", async () => {
+    expect(await run([ROW, { ...ROW, id: "r2", endpoint: "https://push.example.com/up/def" }], true)).toEqual({ posts: 2, asked: 1 });
+  });
+
+  it("no registration: the change log is not asked at all", async () => {
+    expect(await run([], true)).toEqual({ posts: 0, asked: 0 });
+  });
+
+  it("the window's seqs reach no request and no log line, on every path that writes one", async () => {
+    const SEQS = [7300017300017n, 7300027300027n];
+    const said: unknown[] = [];
+    const log = {
+      info: (event: string, fields?: Record<string, unknown>) => { said.push([event, fields]); },
+      warn: (event: string, fields?: Record<string, unknown>) => { said.push([event, fields]); },
+    };
+    const sent: unknown[][] = [];
+    /** One pass over two registrations: a refusing gate, then a dead endpoint that is pruned. */
+    const pass = async (db: Tx): Promise<void> => {
+      const refuseFirst: PushEndpointGuard = { async check(url) { if (url.endsWith("/refused")) throw new Error("no"); return ["203.0.113.9"]; } };
+      const post: PushWakePost = (...args) => { sent.push(args); return Promise.resolve({ status: 410 }); };
+      const { source, emit } = fakeSource();
+      const wake = startPushWake({ db, source, guard: refuseFirst, post, ownsAccount: OWN_ALL, vapid: NO_VAPID, log, debounceMs: 5, minIntervalMs: 0 });
+      for (const seq of SEQS) emit("acct-1", seq);
+      await tick(200);
+      wake.stop();
+    };
+    await pass(fakeDb([{ id: "a", endpoint: "https://push.example.com/refused" }, { id: "b", endpoint: "https://push.example.com/gone" }]).db);
+    // And a pass whose own read fails: the one line that carries a thrown value.
+    await pass({ select: () => { throw new Error(`a driver's words: ${SEQS.join(" ")}`); } } as unknown as Tx);
+
+    expect(said.map((line) => (line as [string])[0]).sort()).toEqual(["push_wake_endpoint_pruned", "push_wake_endpoint_refused", "push_wake_pass_failed"]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toHaveLength(3);
+    const fields = said.flatMap((line) => Object.entries((line as [string, Record<string, unknown> | undefined])[1] ?? {}));
+    // The failed pass hands the thrown value to the logger whole, which writes its class and code and no word of it.
+    expect(fields.filter(([name]) => name === "err")).toHaveLength(1);
+    const written = JSON.stringify([fields.filter(([name]) => name !== "err"), sent], (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value));
+    expect(written).not.toContain("73000");
   });
 });
 
