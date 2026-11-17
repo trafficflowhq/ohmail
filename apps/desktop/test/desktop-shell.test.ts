@@ -3126,6 +3126,26 @@ describe("the UI bundle's build config", () => {
   });
 
   /**
+   * The stylesheets the tokens package exports (the design's tokens, its motion and its typefaces, which the kit's base
+   * door imports, and today's) are found by the alias table alone on that install: each subpath, by the first alias
+   * that takes it, reaches the file the package's exports name, never a longer subpath's prefix.
+   */
+  it("takes every stylesheet the tokens package exports, by the alias table, to the file its exports name", () => {
+    const tokens = path.resolve(APP, "../../packages/tokens");
+    const exported = JSON.parse(fs.readFileSync(path.join(tokens, "package.json"), "utf8")).exports as Record<string, unknown>;
+    const sheets = Object.entries(exported).filter(([key, to]) => key.endsWith(".css") && typeof to === "string") as [string, string][];
+    expect(sheets.map(([key]) => key)).toContain("./design/fonts.css");
+    const aliases = viteConfig.resolve!.alias as Array<{ find: string | RegExp; replacement: string }>;
+    const aliased = (spec: string) => {
+      const hit = aliases.find(({ find }) =>
+        typeof find === "string" ? spec === find || spec.startsWith(`${find}/`) : find.test(spec));
+      return hit && path.resolve(spec.replace(hit.find, hit.replacement));
+    };
+    expect(Object.fromEntries(sheets.map(([key]) => [key, aliased(`@ohmail/tokens/${key.slice(2)}`)])))
+      .toEqual(Object.fromEntries(sheets.map(([key, to]) => [key, path.join(tokens, to)])));
+  });
+
+  /**
    * CI typechecks and bundles the window on this directory's install alone, where no workspace
    * link resolves `@trafficflow/*` or `@ohmail/*`: `paths` and the alias table are then the only
    * resolvers. So the window's program is walked here with those links hidden.

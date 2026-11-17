@@ -9,11 +9,12 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vitest";
 import type { ShellConfig } from "../src/shell/bridge-kinds";
 import { BENCH_MARKER, buildShell, policyOf } from "../scripts/build-shell.mjs";
+import { design } from "@ohmail/tokens/design";
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
 const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");
@@ -40,7 +41,10 @@ describe("the shell's page", () => {
     // Its icon is in the page itself, so the web view asks the app for nothing but the listed files.
     expect(html.match(/<link rel="icon"[^>]*>/g)).toEqual(['<link rel="icon" href="data:,">']);
     const listed = Object.keys(manifest.files).sort();
-    expect(listed).toEqual(readdirSync(out).filter((f) => f !== "shell.manifest.json").sort());
+    // Every file the build wrote, in its folders too (the font files the page's sheet names stand in `assets/`).
+    const written = readdirSync(out, { recursive: true, withFileTypes: true }).filter((f) => f.isFile())
+      .map((f) => relative(out, join(f.parentPath, f.name)).split("\\").join("/"));
+    expect(listed).toEqual(written.filter((f) => f !== "shell.manifest.json").sort());
     for (const name of listed) {
       expect(manifest.files[name]).toBe(createHash("sha256").update(readFileSync(join(out, name))).digest("hex"));
     }
@@ -274,7 +278,8 @@ describe("the built page in a browser", () => {
       const path = new URL(req.url ?? "/", "http://door").pathname;
       const name = path.replace(/^\/shell\//, "");
       if (path.startsWith("/shell/") && built.files[name]) {
-        const type = name.endsWith(".js") ? "text/javascript" : name.endsWith(".css") ? "text/css" : "text/html";
+        // The native doors' types (AssetDoor.kt, SchemeDoor.swift) for what the page is built of.
+        const type = name.endsWith(".js") ? "text/javascript" : name.endsWith(".css") ? "text/css" : name.endsWith(".woff2") ? "font/woff2" : "text/html";
         res.writeHead(200, { "content-type": type, "content-security-policy": `${built.csp}; frame-ancestors 'none'` });
         res.end(readFileSync(join(out, name)));
         return;
@@ -324,6 +329,33 @@ describe("the built page in a browser", () => {
       }
     }, 120_000);
   }
+
+  /*
+   * The page's words stand in the design's face, from the page's own files: the face the dock is set in is the first
+   * a look of the design asks for, and asked for, a face of it loads from the files the page is served with. Without
+   * the faces the browser draws a fallback face and `document.fonts` holds none.
+   */
+  it("draws its words in the design's face, loaded from the page's own files", async () => {
+    const { page, left, outside, close } = await drawn({ ...CONFIG, language: "en" });
+    try {
+      const seen = await page.getByRole("navigation", { name: "Places" }).evaluate(async (dock) => {
+        const unquoted = (family: string) => family.trim().replace(/^["']|["']$/g, "");
+        const face = unquoted(getComputedStyle(dock).fontFamily.split(",")[0]!);
+        // The page in this state shows no words yet (the dock is its icons), so it asks for its face as a word would.
+        await document.fonts.load(`16px "${face}"`, "Ohbox Später");
+        await document.fonts.ready;
+        return { face, loaded: [...document.fonts].filter((f) => f.status === "loaded").map((f) => unquoted(f.family)) };
+      });
+      const asked = Object.values(design.faces).flatMap((face) => Object.values(face))
+        .flatMap((look) => [look["f-text"], look["f-display"]].map((stack) => stack.split(",")[0]!.replaceAll('"', "")));
+      expect(asked).toContain(seen.face);
+      expect(seen.loaded).toContain(seen.face);
+      expect(left).toEqual([]);
+      expect(outside).toEqual([]);
+    } finally {
+      await close();
+    }
+  }, 120_000);
 
   /*
    * The frame stands #root at its parent's height, and the page's own document is that parent's parent: it hands html

@@ -5,6 +5,7 @@
  */
 import "@ohmail/tokens/design.css";
 import "@ohmail/tokens/design/motion.css";
+import "@ohmail/tokens/design/fonts.css";
 import "./base.css";
 
 export { Icon, icons, ICON_SIZES } from "../icons/Icon.js";
