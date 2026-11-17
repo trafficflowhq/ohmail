@@ -286,6 +286,12 @@
       "node": "./dist/doors/wall/index.js",
       "default": "./src/doors/wall/index.ts"
     },
+    "./touch": {
+      "types": "./src/touch/index.ts",
+      "ohmail-source": "./src/touch/index.ts",
+      "node": "./dist/touch/index.js",
+      "default": "./src/touch/index.ts"
+    },
     "./ohbox": {
       "types": "./src/ohbox/index.ts",
       "ohmail-source": "./src/ohbox/index.ts",

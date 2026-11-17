@@ -1,0 +1,24 @@
+/* A list under a finger: the browser keeps the vertical pan and leaves a row's sideways travel to the layer. A hold
+   picks a row and never selects its text or opens the system's callout. */
+[data-touch-list] {
+  touch-action: pan-y;
+  overscroll-behavior-y: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.tc-pull {
+  flex: none;
+}
+
+/* The end of a list's run: as much room as the glass's inset, so the last row comes clear of the system's bar. On a
+   phone's width the list already ends with the dock's room, which covers its own margin: only what the inset adds. */
+.tc-run {
+  flex: none;
+  height: var(--sys-b, 0px);
+}
+
+:root[data-device="phone"] .tc-run {
+  height: calc(max(var(--s4), var(--sys-b, 0px)) - var(--s4));
+}

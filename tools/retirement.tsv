@@ -1053,6 +1053,7 @@ packages/app/test/frame/rooms-in-a-browser.test.tsx	source-text	through test/sup
 packages/app/test/frame/seam.test.ts	artifact	reads generated files (css): the seam sheets against what their script writes	layer 5	frame	
 packages/app/test/month/range-fit-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts and the views' own sheets: laid out in Chromium	layer 2	cal-views	
 packages/app/test/states/ohbox-window-in-a-browser.test.ts	artifact	builds the Ohbox's states page (the feature bundled, the tokens' sheets) and reads its list window in a real browser	none	ohbox	
+packages/app/test/states/touch-in-a-browser.test.ts	artifact	builds the touch layer's page (the feature bundled, the tokens' sheets) and reads its list under a finger in a real browser	none	phone-touch	
 packages/app/test/week/time-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	cal-views	
 packages/cal-core/test/calendar.test.ts	data	reads files it wrote itself	none	cal-core	
 packages/cal-core/test/pure.test.ts	artifact	reads what was built: the bundle of its own source; and its manifest	layer 5	cal-core	

@@ -832,6 +832,18 @@
       "node": "./dist/text/translator.js",
       "default": "./src/text/translator.ts"
     },
+    "./touch": {
+      "types": "./src/touch/index.ts",
+      "ohmail-source": "./src/touch/index.ts",
+      "node": "./dist/touch/index.js",
+      "default": "./src/touch/index.ts"
+    },
+    "./touch/row-swipe": {
+      "types": "./src/touch/row-swipe.ts",
+      "ohmail-source": "./src/touch/row-swipe.ts",
+      "node": "./dist/touch/row-swipe.js",
+      "default": "./src/touch/row-swipe.ts"
+    },
     "./writing": {
       "types": "./src/writing/index.ts",
       "ohmail-source": "./src/writing/index.ts",

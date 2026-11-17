@@ -2,7 +2,8 @@
  * ONE LAYOUT FROM THE SIZE CLASS. Pure: its inputs come only from the host's window. Under 700 wide one column
  * stands with the dock at its foot (a phone, and an unfolded phone that narrow, as the open Duo); from 700 on an
  * unfolded phone is two columns beside a rail of icons, upright or (from 840 on, under a finger) on its side; a fine
- * pointer from 840 on is the desktop, with words and its handles.
+ * pointer from 840 on is the desktop, with words and its handles. A book (the window's posture) is two columns at
+ * whatever width it holds them.
  */
 import type { LayoutPlan, Posture, SizeClass, WindowFacts } from "./contract.js";
 
@@ -21,9 +22,11 @@ function sizeOf(width: number): SizeClass {
 }
 
 /** Every posture is named here; a new one is a compile error until it is laid out. */
-function laidFlat(posture: Posture): true {
+function laidAsBook(posture: Posture): boolean {
   switch (posture) {
     case "flat":
+      return false;
+    case "book":
       return true;
     default:
       return posture satisfies never;
@@ -31,9 +34,19 @@ function laidFlat(posture: Posture): true {
 }
 
 export function layoutPlan(w: WindowFacts): LayoutPlan {
-  laidFlat(w.posture);
   const size = sizeOf(w.width);
   const common = { size, short: w.height < SHORT, pointer: w.pointer } as const;
+  /* A book's fold stands between the two columns at any width it holds them, half open under 700 too: nothing is laid
+     on the crease. Upright under 840, on its side from 840. */
+  if (laidAsBook(w.posture))
+    return {
+      ...common,
+      device: "fold",
+      pose: w.width >= EXPANDED ? "land" : null,
+      rail: "icons",
+      columns: 2,
+      handles: false,
+    };
   if (w.width < TWO_COLUMNS)
     return { ...common, device: "phone", pose: null, rail: "dock", columns: 1, handles: false };
   if (size === "medium")
