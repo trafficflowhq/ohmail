@@ -201,6 +201,11 @@ export default defineConfig({
       { find: "@ohmail/letter-body/cache", replacement: r("./packages/letter-body/src/mail-doc-cache.ts") },
       { find: "@ohmail/letter-body/words", replacement: r("./packages/letter-body/src/words.ts") },
       { find: /^@ohmail\/letter-body$/, replacement: r("./packages/letter-body/src/index.ts") },
+      // The calendar's doors that are folders, above the file rule that would read them as files.
+      { find: "@ohmail/app-logic/calendar/beside", replacement: r("./packages/app-logic/src/calendar/beside/index.ts") },
+      { find: "@ohmail/app-logic/calendar/found", replacement: r("./packages/app-logic/src/calendar/found/index.ts") },
+      { find: "@ohmail/app-logic/calendar/invitations", replacement: r("./packages/app-logic/src/calendar/invitations/index.ts") },
+      { find: "@ohmail/app-logic/calendar/setup", replacement: r("./packages/app-logic/src/calendar/setup/index.ts") },
       { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1/index.ts` },
       { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1.ts` },
       // The browser shells' device answers, ABOVE the contract's door (the prefix-match reason above).

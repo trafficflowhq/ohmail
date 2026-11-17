@@ -10,11 +10,35 @@
       "node": "./dist/calendar/index.js",
       "default": "./src/calendar/index.ts"
     },
+    "./calendar/beside": {
+      "types": "./src/calendar/beside/index.ts",
+      "ohmail-source": "./src/calendar/beside/index.ts",
+      "node": "./dist/calendar/beside/index.js",
+      "default": "./src/calendar/beside/index.ts"
+    },
+    "./calendar/found": {
+      "types": "./src/calendar/found/index.ts",
+      "ohmail-source": "./src/calendar/found/index.ts",
+      "node": "./dist/calendar/found/index.js",
+      "default": "./src/calendar/found/index.ts"
+    },
+    "./calendar/invitations": {
+      "types": "./src/calendar/invitations/index.ts",
+      "ohmail-source": "./src/calendar/invitations/index.ts",
+      "node": "./dist/calendar/invitations/index.js",
+      "default": "./src/calendar/invitations/index.ts"
+    },
     "./calendar/port": {
       "types": "./src/calendar/port.ts",
       "ohmail-source": "./src/calendar/port.ts",
       "node": "./dist/calendar/port.js",
       "default": "./src/calendar/port.ts"
+    },
+    "./calendar/setup": {
+      "types": "./src/calendar/setup/index.ts",
+      "ohmail-source": "./src/calendar/setup/index.ts",
+      "node": "./dist/calendar/setup/index.js",
+      "default": "./src/calendar/setup/index.ts"
     },
     "./consent": {
       "types": "./src/consent/index.ts",

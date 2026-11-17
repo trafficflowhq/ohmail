@@ -10,6 +10,36 @@
       "node": "./dist/calendar/index.js",
       "default": "./src/calendar/index.ts"
     },
+    "./calmail": {
+      "types": "./src/calmail/index.ts",
+      "ohmail-source": "./src/calmail/index.ts",
+      "node": "./dist/calmail/index.js",
+      "default": "./src/calmail/index.ts"
+    },
+    "./calsettings": {
+      "types": "./src/calsettings/index.ts",
+      "ohmail-source": "./src/calsettings/index.ts",
+      "node": "./dist/calsettings/index.js",
+      "default": "./src/calsettings/index.ts"
+    },
+    "./calsetup": {
+      "types": "./src/calsetup/index.ts",
+      "ohmail-source": "./src/calsetup/index.ts",
+      "node": "./dist/calsetup/index.js",
+      "default": "./src/calsetup/index.ts"
+    },
+    "./frommail": {
+      "types": "./src/frommail/index.ts",
+      "ohmail-source": "./src/frommail/index.ts",
+      "node": "./dist/frommail/index.js",
+      "default": "./src/frommail/index.ts"
+    },
+    "./invitations": {
+      "types": "./src/invitations/index.ts",
+      "ohmail-source": "./src/invitations/index.ts",
+      "node": "./dist/invitations/index.js",
+      "default": "./src/invitations/index.ts"
+    },
     "./host": {
       "types": "./src/host/index.ts",
       "ohmail-source": "./src/host/index.ts",

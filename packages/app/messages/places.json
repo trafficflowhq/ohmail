@@ -76,6 +76,11 @@
   "year": ["year"],
   "agenda": ["agenda"],
   "calsearch": ["calsearch"],
+  "invitations": ["invitations"],
+  "frommail": ["frommail"],
+  "calsetup": ["calsetup"],
+  "calsettings": ["calsettings"],
+  "calmail": ["calmail"],
   "site": [
     "nav",
     "hero",
