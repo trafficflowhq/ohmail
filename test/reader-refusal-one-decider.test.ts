@@ -235,6 +235,15 @@ const EXEMPT: Record<string, string> = {
   "mailboxes.stopOrganizingSiblingLapseHost": "about this install's own copy on the paired computer, not a reader's holder",
 };
 
+/**
+ * Files that name a registered key as a declaration, never a render: a site's key quoted there is not "rendered
+ * outside its site". One row each, its reason in the row.
+ */
+const DECLARED: Record<string, string> = {
+  "apps/mobile/src/refusal-keys.ts": "the phone's list of every key refuse() takes, which the compiler reads and nothing renders; "
+    + "the one registry of those keys is the phone catalogue's phoneRefusal namespace, and @ohmail/app exports no catalogue for the phone to take them from",
+};
+
 /** Positions of the function `name`'s body, found in the literal-blanked text. */
 function bodySpan(blank: string, name: string): { start: number; end: number } | null {
   const decl = new RegExp(`(?:function\\s+${name}\\s*|const\\s+${name}\\s*=\\s*(?:use(?:StableCallback|Callback|Memo)\\()?\\s*)(?=[<(])`);
@@ -284,7 +293,7 @@ function doorViolations(files: SourceFile[], doors: typeof DOORS): string[] {
 }
 
 /** Every reason a tree's holder sentences do not ask the decider — empty when every one does. */
-function holderSentenceViolations(files: SourceFile[], sites: Site[]): string[] {
+function holderSentenceViolations(files: SourceFile[], sites: Site[], declared: Record<string, string> = DECLARED): string[] {
   const out: string[] = [];
   const byFile = new Map(files.map((f) => [f.file, f.raw]));
   const commented = new Map(files.map((f) => [f.file, withoutComments(f.raw)]));
@@ -299,7 +308,7 @@ function holderSentenceViolations(files: SourceFile[], sites: Site[]): string[] 
       if (seen.length === 0) out.push(`${site.file}: ${key} is not rendered where it is registered`);
       for (const at of seen) if (!inFn(site.file, site.fn, at)) out.push(`${site.file}: ${key} outside ${site.fn}`);
       for (const [file, text] of commented) {
-        if (file !== site.file && text.includes(key.startsWith('"') ? key.slice(1, -1) : key)
+        if (file !== site.file && !(file in declared) && text.includes(key.startsWith('"') ? key.slice(1, -1) : key)
           && keyUses(text, key).length > 0) out.push(`${file}: ${key} rendered outside its site`);
       }
     }
@@ -382,6 +391,12 @@ describe("every sentence that names who organizes a mailbox asks the same decide
       { file: "apps/webapp/app/shell/elsewhere.ts", raw: `const s = t("plantedHolderNamed");\n` }];
     expect(holderSentenceViolations(twice, [site]))
       .toEqual(["apps/webapp/app/shell/elsewhere.ts: \"plantedHolderNamed\" rendered outside its site"]);
+    // …unless that file is a declared list, by its own row; a row for another file admits nothing.
+    expect(holderSentenceViolations(twice, [site], { "apps/webapp/app/shell/elsewhere.ts": "a planted list" })).toEqual([]);
+    expect(holderSentenceViolations(twice, [site], { "apps/webapp/app/shell/other.ts": "a planted list" }))
+      .toEqual(["apps/webapp/app/shell/elsewhere.ts: \"plantedHolderNamed\" rendered outside its site"]);
+    // Every declared file is one that stands, so a row outlives no list.
+    for (const file of Object.keys(DECLARED)) expect(existsSync(join(REPO, file)), `${file} is declared and missing`).toBe(true);
     // A door whose body names the decider only in a comment is refused; one that calls it is not.
     const door = (body: string): SourceFile[] => [{
       file: "apps/webapp/app/shell/planted-door.ts",

@@ -7,7 +7,7 @@
     "loading": "Dieser Ordner wird geladen",
     "group": {
       "new": "Neu",
-      "earlier": "Früher"
+      "earlier": "Gesehen"
     },
     "step": {
       "up": "Neuer",
@@ -39,7 +39,7 @@
       "menu": "Liste"
     },
     "move": {
-      "moved": "Nach {name} verschoben.",
+      "moved": "Verschoben: {name}.",
       "outdated": "{by} organisiert dieses Postfach mit einer älteren ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
       "outdatedUnknown": "Die Installation, die dieses Postfach organisiert, hat eine ältere ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
       "nobody": "Nichts organisiert dieses Postfach, deshalb bleibt die Nachricht, wo sie ist.",

@@ -1410,7 +1410,7 @@
     "loading": "Dieser Ordner wird geladen",
     "group": {
       "new": "Neu",
-      "earlier": "Früher"
+      "earlier": "Gesehen"
     },
     "step": {
       "up": "Neuer",
@@ -1442,7 +1442,7 @@
       "menu": "Liste"
     },
     "move": {
-      "moved": "Nach {name} verschoben.",
+      "moved": "Verschoben: {name}.",
       "outdated": "{by} organisiert dieses Postfach mit einer älteren ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
       "outdatedUnknown": "Die Installation, die dieses Postfach organisiert, hat eine ältere ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
       "nobody": "Nichts organisiert dieses Postfach, deshalb bleibt die Nachricht, wo sie ist.",
@@ -5396,12 +5396,8 @@
         "handedBack": "Ein anderer Computer kann dieses Postfach jetzt übernehmen.",
         "paused": "Das Organisieren war pausiert, während der Account geschlossen war, und läuft von selbst wieder an.",
         "none": "Dieses Postfach wird gerade von nichts organisiert. Von diesem Handy aus organisieren, solange ohmail darauf läuft?",
-        "reader": "{name} organisiert dieses Postfach. Dieses Handy liest es, und es verschiebt nichts und sortiert nichts aus.",
         "readerUnnamed": "Eine andere Installation organisiert dieses Postfach. Dieses Handy liest es, und es verschiebt nichts und sortiert nichts aus.",
-        "readerPhone": "{name} organisiert dieses Postfach, und ein Handy organisiert nur, solange ohmail darauf offen ist. Dieses Handy liest es, und es verschiebt nichts und sortiert nichts aus.",
         "server": "Der gekoppelte Server organisiert dieses Postfach, ob ohmail auf diesem Handy offen ist oder nicht. Dieses Handy liest es, und es verschiebt nichts und sortiert nichts aus.",
-        "heldKept": "{name} organisiert dieses Postfach. Dieses Handy liest es, und deine Zustimmung bleibt gespeichert. Sobald {name} es freigibt, bietet dieses Handy das Postfach an, und ein Tippen übernimmt es.",
-        "heldReturns": "{name} organisiert dieses Postfach. Dieses Handy liest es und übernimmt es von selbst wieder, sobald {name} es freigibt, solange ohmail darauf offen ist.",
         "ios": "Es organisiert, solange ohmail geöffnet ist. Wenn du die App verlässt, gibt es das Postfach zurück.",
         "battery": "Der Energiesparmodus lässt ohmail auf diesem Handy nicht im Hintergrund organisieren. Es organisiert, solange die App offen ist, und gibt das Postfach zurück, wenn du sie verlässt.",
         "notificationsOff": "Benachrichtigungen sind aus, deshalb wird nur organisiert, solange die App offen ist.",
@@ -5493,7 +5489,7 @@
     "baseCleartext": "Das ist eine unverschlüsselte Adresse, und ohmail sendet deine Mails nicht darüber. Gib die https-Adresse an, unter der du ohmail im Browser öffnest.",
     "baseNeedsTheCode": "Das ist eine numerische Adresse in einem Netz, und dafür kann keine Zertifizierungsstelle bürgen. ohmail kann ihr nur über den Code vertrauen, den dein Computer zeigt, also öffne dort Einstellungen › Geräte und scanne den.",
     "baseNotAnAddress": "Das sieht nicht nach einer Serveradresse aus. Gib die Adresse an, unter der du ohmail im Browser öffnest, zum Beispiel ohmail.example.com, mit nichts hinter dem Host.",
-    "bootAccountMismatch": "Diese Anmeldung gehört zu einem anderen Konto als dem genannten, deshalb hat ohmail nichts geöffnet. Prüfe, welches Konto sie öffnen soll.",
+    "bootAccountMismatch": "Diese Anmeldung gehört zu einem anderen Account als dem genannten, deshalb hat ohmail nichts geöffnet. Prüfe, welchen Account sie öffnen soll.",
     "bootApiBaseOffOrigin": "Die Mail-API dieses Servers liegt nicht unter der Adresse, mit der dieses Handy gekoppelt ist. Kopple diesen Server noch einmal.",
     "bootBadApiBase": "Das ist keine Adresse der Mail-API eines Servers.",
     "bootBadOrigin": "Das ist keine Server-Adresse, die ohmail öffnen kann.",
@@ -5749,8 +5745,8 @@
     "toastMoveAlready": "Schon in {0}.",
     "toastMoveQueued": "Für {1} vorgemerkt — beim nächsten Durchgang: {0}.",
     "toastMoveQueuedUnknown": "Für den Organizer vorgemerkt — beim nächsten Durchgang: {0}.",
-    "toastMoveQueuedWithRule": "Für {1} vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach {0}.",
-    "toastMoveQueuedWithRuleUnknown": "Für den Organizer vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach {0}.",
+    "toastMoveQueuedWithRule": "Für {1} vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: {0}.",
+    "toastMoveQueuedWithRuleUnknown": "Für den Organizer vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: {0}.",
     "toastMoved": "Verschoben: {0}.",
     "toastQueued": "In „Später antworten“ vorgemerkt",
     "toastQueuedRuleUndone": "Keine Regel angelegt. Die Nachricht wartet weiter auf {0}.",
