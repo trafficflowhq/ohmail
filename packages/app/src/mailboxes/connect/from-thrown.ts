@@ -6,7 +6,7 @@
  */
 import type { FirstRunMailboxInput, FirstRunProbeOk } from "@ohmail/app-logic/doors/first-run-host";
 import { echoes, reveal, type Secret } from "@ohmail/app-logic/mailboxes/connect/secret";
-import { mailboxIdOfAnswer } from "@ohmail/app-logic/mailboxes/connect/subject";
+import { mailboxIdOfAnswer } from "@ohmail/app-logic/mailboxes/connect/mailbox-id";
 import { refusalOfThrown } from "@ohmail/app-logic/mailboxes/connect/thrown";
 import type {
   Answered,
@@ -14,7 +14,7 @@ import type {
   ConnectProbed,
   Connected,
 } from "@ohmail/app-logic/mailboxes/connect/types";
-import { NONE, type ConnectWire } from "../../host/index.js";
+import { NONE, type ConnectWire, type None } from "../../host/index.js";
 
 /** The first-run verbs this adapter takes: each resolves on success and throws on every refusal. */
 export interface ThrowingFirstRun {
@@ -66,7 +66,10 @@ function probedOf(r: FirstRunProbeOk): ConnectProbed {
   };
 }
 
-export function connectWireOver(old: ThrowingFirstRun): ConnectWire {
+/** This wire tests: its `probe` is a call, and its type says so. */
+export function connectWireOver(
+  old: ThrowingFirstRun,
+): ConnectWire & { probe: Exclude<ConnectWire["probe"], None> } {
   const discover = old.discover;
   return {
     probe: (input) => answered(async () => probedOf(await old.probe(inputOf(input))), input.imap.pass),

@@ -10,7 +10,7 @@
 import { Redirect, usePathname } from "expo-router";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ActivityIndicator, View } from "react-native";
-import { useConnection } from "../net/connection";
+import { MAIL_SURFACE, useConnection } from "../net/connection";
 import { accessLock, onAccessLock } from "../net/access-lock";
 import { onUpdateAnswer, updateAnswer } from "../net/update-answer";
 import { readAccess } from "../net/account";
@@ -114,6 +114,9 @@ export function Gated({ children }: { children: ReactNode }) {
   // connection layer goes live off the on-device mirror; sync runs behind the mail UI).
   if (verdict.to === "boot") return <BootShell />;
   if (verdict.to === "connecting") return <BootShell migrating={verdict.migrating} />;
+  /* UNDER THE SHELL the ways in are the door's page (`app/door.tsx`). A connect in flight and the list of servers
+     stay here until the door's list is built: the door opens a connect at that list. */
+  if (MAIL_SURFACE === "shell" && verdict.to === "welcome") return <Redirect href="/door" />;
   if (verdict.to === "welcome") return <Redirect href="/welcome" />;
   if (verdict.to === "servers") return <Redirect href="/servers" />;
   if (verdict.to === "shell") return <Redirect href="/shell" />;

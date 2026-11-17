@@ -5257,6 +5257,7 @@
       "hiddenBlank": "type it",
       "appHiddenBlank": "16 letters",
       "nameLabel": "Your name (optional)",
+      "nameHint": "Shown to the people you write to, beside your address.",
       "nameBlank": "name",
       "imapHost": "Incoming server (IMAP)",
       "imapPort": "IMAP port",
@@ -5301,6 +5302,11 @@
       "say": "Paired.",
       "line": "Opening the copy of your mail on this phone.",
       "syncing": "Syncing your mail"
+    },
+    "upgrade": {
+      "migrating": "Updating the mail store on this phone…",
+      "migratingOf": "Updating the mail store on this phone… ({applied} of {pending})",
+      "migratingSlow": "This can take several minutes on a large mailbox."
     }
   },
   "servers": {

@@ -30,7 +30,8 @@ const BELOW: Record<string, string[]> = {
   mail: ["base", "mail", "icons", "motion"],
   calendar: ["base", "mail", "calendar", "icons", "motion"],
 };
-const OUTSIDE = /^react(\/jsx-runtime)?$|^@ohmail\/tokens\/design(\.css|\/motion\.css)?$/;
+/** From outside: React, and the next design's values and its own generated sheets (its typefaces, its motion). */
+const OUTSIDE = /^react(\/jsx-runtime)?$|^@ohmail\/tokens\/design(\.css|\/fonts\.css|\/motion\.css)?$/;
 
 /** Every import that crosses the line, as `file: specifier`. */
 function crossings(files: Map<string, string>): string[] {

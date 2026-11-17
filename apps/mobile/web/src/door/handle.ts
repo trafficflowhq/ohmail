@@ -24,7 +24,7 @@ export interface DoorHandle {
   };
   /** Back: handlers newest first, the first to answer true took it. Not taken, native takes the door's way out. */
   readonly back: BackSignal;
-  /** Told to every listener as it is read; held nowhere. */
+  /** Told to every listener as it is read; held nowhere. An offer no listener hears is given back. */
   onScan(heard: (scan: Scanned) => void): () => void;
   /** A request of the door's table. */
   readonly ask: DoorBridge["request"];
@@ -48,7 +48,15 @@ export function doorHandle(bridge: DoorBridge, config: DoorConfig): DoorHandle {
       case "insets": return insets.set(e.insets);
       case "keyboard": return keyboard.set(e.reading);
       case "network": return online.set(e.online);
-      case "scan": for (const heard of [...scans]) heard(e.scan); return;
+      case "scan": {
+        // An offer told after its step stopped listening, while the camera's stop was on its way: given back, not dropped.
+        if (scans.size === 0 && e.scan.k === "offers") {
+          void bridge.request("dismiss", { ticket: e.scan.ticket }).catch(() => {});
+          return;
+        }
+        for (const heard of [...scans]) heard(e.scan);
+        return;
+      }
       case "ask": {
         void bridge.request("answer", { askId: e.askId, what: "back", took: back.took() }).catch(() => {});
         return;

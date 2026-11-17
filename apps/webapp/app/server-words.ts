@@ -2,10 +2,10 @@
 
 /**
  * WHAT THE SERVER'S HANDSHAKE SAYS a page builds its host from: pairing, pictures and search, read from ONE
- * `GET /hello` per mount that asks ({@link serverHello} keeps no answer, so a page that needs several words reads them
- * here and hands them on rather than asking twice). Each word is `false` while pending, on an older server that does
- * not send it, on a failed hello and on the demo, which pays no round trip: a word the server has not said is the
- * safe answer (search sends `to` or `party` only where `searchPeople` reads true).
+ * `GET /hello` per mount that asks, until it answers ({@link serverHello} keeps no answer, so a page that needs
+ * several words reads them here and hands them on rather than asking twice). Each word is `false` while pending, on
+ * an older server that does not send it, on a failed hello and on the demo, which pays no round trip: a word the
+ * server has not said is the safe answer (search sends `to` or `party` only where `searchPeople` reads true).
  */
 import { useEffect, useState } from "react";
 import { serverHello } from "./hello";
@@ -26,7 +26,8 @@ const ASK_AGAIN_AT_MOST = 3;
 /**
  * The handshake's words a page builds its host from, read once. An ask that got no answer (`null`: a failed request,
  * the deadline) is asked again on the window's next `online` event or after 30 seconds, whichever comes first, at most
- * three times: else a page whose first ask failed would offer no pictures and no Devices for its life.
+ * three times: else a page whose first ask failed would offer no pictures, no Devices and no search by a person
+ * for its life.
  */
 export function useServerWords(demo: boolean): ServerWords {
   const [words, setWords] = useState<ServerWords>(SAYS_NOTHING);

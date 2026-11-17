@@ -1,8 +1,11 @@
 /** @vitest-environment jsdom */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { heard } from "../heard.js";
 import {
   BlockedImages,
   DesignedLetter,
@@ -12,10 +15,98 @@ import {
   LetterQuote,
   LetterViews,
   MessageHead,
+  SendStatus,
   TextNotKept,
 } from "../../src/mail/index.js";
 
 afterEach(cleanup);
+
+describe("a region of a letter that is said when it appears", () => {
+  const nothing = () => {};
+  const regions: [string, ReactElement, string][] = [
+    [
+      "why a letter was not sent",
+      <SendStatus place="foot" verdict="Not sent." acts={[{ label: "Try again", onPress: nothing }]}>
+        The server refused the letter.
+      </SendStatus>,
+      "Not sent. The server refused the letter.",
+    ],
+    [
+      "the short line over a control",
+      <SendStatus place="end">The draft was refused.</SendStatus>,
+      "The draft was refused.",
+    ],
+    [
+      "a text that is not kept here",
+      <TextNotKept
+        kind="kept"
+        label="Not on this device"
+        line="The text is on your mail server."
+        act={{ label: "Load it", onPress: nothing }}
+        fine="Kept for 30 days."
+      />,
+      "Not on this device The text is on your mail server. Kept for 30 days.",
+    ],
+    [
+      "where a loaded text came from",
+      <TextNotKept
+        kind="loaded"
+        line="Loaded from your mail server."
+        more={{ label: "Keep it", onPress: nothing }}
+      />,
+      "Loaded from your mail server.",
+    ],
+    [
+      "a fine line that says what is happening",
+      <TextNotKept kind="fine" line="Loading the text…" live />,
+      "Loading the text…",
+    ],
+  ];
+
+  it.each(regions)(
+    "%s: its words are drawn at once and kept from a screen reader until the region stands, then given; its controls are there throughout",
+    async (_name, region, words) => {
+      const controls = () => screen.queryAllByRole("button").length;
+      render(region);
+      const status = screen.getByRole("status");
+      const there = controls();
+      expect(heard(status)).toBe("");
+      /* Drawn all the same: every word of it is on the page. */
+      expect(words.split(" ").every((word) => status.textContent?.includes(word))).toBe(true);
+      await waitFor(() => expect(heard(status)).toBe(words));
+      expect(controls()).toBe(there);
+      /* Drawn by a server the words are the reader's from the start. */
+      const page = document.createElement("div");
+      page.innerHTML = renderToStaticMarkup(region);
+      expect(heard(page.querySelector('[role="status"]')!)).toBe(words);
+    },
+  );
+
+  it("a fine line that only stands under what is shown is no region and keeps nothing back", () => {
+    render(<TextNotKept kind="fine" line="Kept for 30 days." />);
+    expect(screen.getByText("Kept for 30 days.").closest('[aria-hidden="true"]')).toBeNull();
+  });
+
+  it("a text not kept that takes the loading line's place, and the line that it was loaded, are each a region that appears: held, then said", async () => {
+    const { rerender } = render(<TextNotKept kind="fine" line="Loading the text…" live />);
+    await waitFor(() => expect(heard(screen.getByRole("status"))).toBe("Loading the text…"));
+    rerender(
+      <TextNotKept
+        kind="kept"
+        label="Not on this device"
+        line="The text is on your mail server."
+        act={{ label: "Load it", onPress: nothing }}
+      />,
+    );
+    expect(heard(screen.getByRole("status"))).toBe("");
+    await waitFor(() =>
+      expect(heard(screen.getByRole("status"))).toBe("Not on this device The text is on your mail server."),
+    );
+    rerender(<TextNotKept kind="loaded" line="Loaded from your mail server." />);
+    expect(heard(screen.getByRole("status"))).toBe("");
+    await waitFor(() => expect(heard(screen.getByRole("status"))).toBe("Loaded from your mail server."));
+  });
+});
 
 describe("DesignedLetter", () => {
   const letter = { title: "Message content", document: "<!doctype html><p>Programme</p>" };

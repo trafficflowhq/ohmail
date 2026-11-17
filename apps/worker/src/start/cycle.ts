@@ -465,7 +465,7 @@ export function cycleSection(scope: WorkerScope): void {
                  write-behind share one anchor. */
               const io = mkIo.call(rt.adapter, { installId: "reader-profile-mirror", mailboxId: rt.mailboxId });
               await asDatabaseFault("cycle.syncProfileMirror", () => syncProfileMirror({
-                db: scope.db, accountId: rt.accountId, mailboxId: rt.mailboxId, io,
+                db: scope.forAccount(rt.accountId).db, accountId: rt.accountId, mailboxId: rt.mailboxId, io,
                 now: new Date(), log: (event, detail) => { scope.log.info(event, detail); },
               }));
             }
@@ -583,7 +583,7 @@ export function cycleSection(scope: WorkerScope): void {
           if (organize && cycleMayStillWrite && cycleError === null && syncOutcome !== null
             && !syncOutcome.hasBacklog && census.observed > 0 && rt.claimServerAt) {
             try {
-              await markOrganizedThrough(scope.db, rt.mailboxId, rt.claimServerAt);
+              await markOrganizedThrough(scope.forAccount(rt.accountId).db, rt.mailboxId, rt.claimServerAt);
             } catch (err) {
               scope.log.warn("organized_through_write_failed", {
                 mailboxId: rt.mailboxId, accountId: rt.accountId, err,
@@ -610,7 +610,7 @@ export function cycleSection(scope: WorkerScope): void {
           } else if (!organize) {
             try {
               await driveOutstandingRequests(
-                scope.db, { mailboxId: rt.mailboxId, accountId: rt.accountId, installId: scope.organizerInstallId, adapter: rt.adapter, requestKey: rt.requestKey },
+                scope.forAccount(rt.accountId).db, { mailboxId: rt.mailboxId, accountId: rt.accountId, installId: scope.organizerInstallId, adapter: rt.adapter, requestKey: rt.requestKey },
                 { installId: scope.organizerInstallId, kind: "cloud" }, new Date(),
                 (event, detail) => scope.log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
               );
@@ -623,7 +623,7 @@ export function cycleSection(scope: WorkerScope): void {
           } else {
             try {
               await applyMetaRequests(
-                scope.db, { mailboxId: rt.mailboxId, accountId: rt.accountId, installId: scope.organizerInstallId, adapter: rt.adapter, requestKey: rt.requestKey }, new Date(),
+                scope.forAccount(rt.accountId).db, { mailboxId: rt.mailboxId, accountId: rt.accountId, installId: scope.organizerInstallId, adapter: rt.adapter, requestKey: rt.requestKey }, new Date(),
                 (event, detail) => scope.log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
               );
               // THE ROLE FLIP'S OWN DEBT. Rows this install queued while it was a READER are
@@ -631,7 +631,7 @@ export function cycleSection(scope: WorkerScope): void {
               // no ack will ever arrive because the organizer they are waiting for is this
               // process. Settled here, where the flip has demonstrably happened.
               await settleOwnOutstandingRequests(
-                scope.db, { mailboxId: rt.mailboxId, accountId: rt.accountId }, new Date(),
+                scope.forAccount(rt.accountId).db, { mailboxId: rt.mailboxId, accountId: rt.accountId }, new Date(),
                 (event, detail) => scope.log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
               );
             } catch (err) {
@@ -731,7 +731,7 @@ export function cycleSection(scope: WorkerScope): void {
               // settle signal and is compared against a `sync_requested_at` the API stamped
               // with SQL `now()` — one clock or the comparison lies (see `stampMailboxSyncNow`).
               await asDatabaseFault("cycle.stampMailboxSync",
-                () => stampMailboxSyncNow(scope.db, [rt.mailboxId], Date.now() - visitStartedMs));
+                () => stampMailboxSyncNow(scope.forAccount(rt.accountId).db, [rt.mailboxId], Date.now() - visitStartedMs));
             } catch (err) {
               // Swallowed for the MAILBOX, announced for the SHARD — see
               // `noteIfSharedDatabaseFault`. Nothing below changes.
@@ -758,7 +758,7 @@ export function cycleSection(scope: WorkerScope): void {
           if (!hasBacklog) {
             try {
               await asDatabaseFault("cycle.stampInitialImportComplete",
-                () => stampInitialImportComplete(scope.db, rt.mailboxId, new Date()));
+                () => stampInitialImportComplete(scope.forAccount(rt.accountId).db, rt.mailboxId, new Date()));
             } catch (err) {
               scope.noteIfSharedDatabaseFault(err, rt);
               scope.log.error("mailbox_import_complete_stamp_failed", {
@@ -773,7 +773,7 @@ export function cycleSection(scope: WorkerScope): void {
             // reads it past the first day (`stampImportProgress`). Best-effort, like the stamp above.
             try {
               await asDatabaseFault("cycle.stampImportProgress",
-                () => stampImportProgress(scope.db, rt.mailboxId, new Date()));
+                () => stampImportProgress(scope.forAccount(rt.accountId).db, rt.mailboxId, new Date()));
             } catch (err) {
               scope.noteIfSharedDatabaseFault(err, rt);
               scope.log.error("mailbox_import_progress_stamp_failed", {
@@ -797,7 +797,7 @@ export function cycleSection(scope: WorkerScope): void {
           // never walks a mailbox toward `error` because a two-week-old newsletter could not be re-read.
           try {
             const repaired = await sensitiveBackfillPass({
-              db: scope.db as unknown as Tx, adapter: rt.adapter,
+              db: scope.forAccount(rt.accountId).db as unknown as Tx, adapter: rt.adapter,
               accountId: rt.accountId, mailboxId: rt.mailboxId, log: scope.log,
             });
             if (repaired.ran) {
@@ -1007,7 +1007,7 @@ export function cycleSection(scope: WorkerScope): void {
           if (rt.lastSuccessAt === null && isImapBoundExceeded(err)) {
             try {
               await asDatabaseFault("cycle.stampSyncProgress",
-                () => stampSyncProgress(scope.db, rt.mailboxId, { fence: scope.fence }));
+                () => stampSyncProgress(scope.forAccount(rt.accountId).db, rt.mailboxId, { fence: scope.fence }));
             } catch (stampErr) {
               scope.noteIfSharedDatabaseFault(stampErr, rt);
               scope.log.warn("mailbox_progress_stamp_failed", {
@@ -1194,7 +1194,8 @@ export function cycleSection(scope: WorkerScope): void {
       // what happens to a different one below.
       try {
         await asDatabaseFault("cycle.stampMailboxSync",
-          () => stampMailboxSyncNow(scope.db, synced, Date.now() - passStartedMs));
+          // ONE statement over the mailboxes of every account this cycle synced: on the roster's view.
+          () => stampMailboxSyncNow(scope.roster, synced, Date.now() - passStartedMs));
       } catch (err) {
         scope.noteIfSharedDatabaseFault(err);
         scope.log.error("mailbox_sync_stamp_failed", {

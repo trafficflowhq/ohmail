@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
-import { dialect, dialectOf } from "@trafficflow/db/dialect";
-import { drafts, scheduledSendFiles, type Tx } from "@trafficflow/db";
+import { drafts, reclaimSpace, scheduledSendFiles, type Tx } from "@trafficflow/db";
 import { bridgeTx, type Db } from "./context.js";
 
 /**
@@ -225,7 +224,8 @@ export async function readScheduledFiles(
  * Remove the files no appointment carries any more: rows whose draft is gone or no longer holds
  * their key. Every ending of an appointment clears or replaces the key, so this catches each one.
  * Answers how many rows went; on the desktop's PGlite the space is handed back when any did
- * (`vacuum: false` on a server, whose own autovacuum does that).
+ * (`reclaimSpace`, which sends a server nothing: its own autovacuum does that; `vacuum: false`
+ * for a caller that reclaims it itself).
  */
 export async function sweepScheduledSendFiles(
   db: Db, opts: { mailboxIds?: readonly string[]; vacuum?: boolean } = {},
@@ -241,9 +241,7 @@ export async function sweepScheduledSendFiles(
             and ${drafts.sendKey} = ${scheduledSendFiles.sendKey})`,
     ))
     .returning({ draftId: scheduledSendFiles.draftId });
-  if (gone.length > 0 && opts.vacuum !== false && dialectOf(db) === "pg") {
-    await dialect(db).exec(db, sql`VACUUM scheduled_send_files`).catch(() => { /* the store's open reclaims it */ });
-  }
+  if (gone.length > 0 && opts.vacuum !== false) await reclaimSpace(db, "scheduled_send_files");
   return gone.length;
 }
 

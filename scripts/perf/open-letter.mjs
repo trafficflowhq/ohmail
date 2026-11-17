@@ -18,24 +18,28 @@
  */
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { main, openPage, stats } from "./speed-check.mjs";
+import { inOhbox, main, openPage, stats } from "./speed-check.mjs";
 
 const KINDS = ["plain", "prose", "designed"];
 const PER_KIND = 4;
-/** The reader as a narrow window shows it: a sheet over the list, which Escape closes. */
-const SHEET = '.reader[role="dialog"]';
+/** The reader as a narrow window shows it: today's sheet, or the seated reading column, over the list; Escape closes it. */
+const SHEET = '.reader[role="dialog"], section.fr-reading[data-over]';
+/** A row of the Ohbox, today's or the seated list's; `id` names one. */
+const ROW = (id) => inOhbox(`:is(button.row, [role=option])[data-id${id === undefined ? "" : `="${id}"`}]`);
+/** The Ohbox's scroller, today's or the seated list's. */
+const SCROLLER = inOhbox(":is(.scroller, .ob-scroll)");
 
 /** The next row of the Ohbox that holds a letter of `kind` not opened yet, scrolled to where a press reaches it. */
-const nextRow = (page, kind, opened) => page.evaluate(([k, done]) => {
-  const rows = [...document.querySelectorAll(".view-ohbox :is(button.row, [role=option])[data-id]")];
+const nextRow = (page, kind, opened) => page.evaluate(([k, done, rowSel, scrollerSel]) => {
+  const rows = [...document.querySelectorAll(rowSel)];
   const row = rows.find((r) => !done.includes(r.dataset.id) && window.__speed.kindOf(r.dataset.id) === k);
   if (row === undefined) {
-    document.querySelector(".view-ohbox :is(.scroller, .ob-scroll)")?.scrollBy(0, 600);
+    document.querySelector(scrollerSel)?.scrollBy(0, 600);
     return null;
   }
   row.scrollIntoView({ block: "center" });
   return row.dataset.id;
-}, [kind, opened]);
+}, [kind, opened, ROW(), SCROLLER]);
 
 /** One arm: `reps` fresh pages, twelve opens each. Every open is in `opens`; one that never showed its letter has `ms: null`. */
 export async function runOpens({ dist, engine, viewport, messages, bodyMs = 0, trace = null, reps = 5 }) {
@@ -62,7 +66,7 @@ export async function runOpens({ dist, engine, viewport, messages, bodyMs = 0, t
       opened.push(id);
       const wait = visit.arm("letter", id, 10000);
       await page.waitForTimeout(30);
-      await page.click(`.view-ohbox :is(button.row, [role=option])[data-id="${id}"]`);
+      await page.click(ROW(id));
       opens.push({ rep: r, kind, id, ...((await wait) ?? { ms: null, why: "the letter's first lines never came on screen" }) });
       /* Past the moment an opened letter turns read, so that its own bookkeeping is not the next open's. */
       await page.waitForTimeout(1000);

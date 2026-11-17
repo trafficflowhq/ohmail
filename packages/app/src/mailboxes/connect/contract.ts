@@ -20,11 +20,15 @@ export interface ConnectSubject {
   readonly signsIn: "password" | "provider";
 }
 
-/** What the form is opened for. `join` and `firstRun` connect an install's first mailbox, `add` a further one. */
+/**
+ * What the form is opened for. `join` and `firstRun` connect an install's first mailbox, `add` a further one;
+ * `standalone` opens a phone's own mailbox, which that phone organizes itself.
+ */
 export type ConnectPurpose =
   | { readonly kind: "join" }
   | { readonly kind: "firstRun" }
   | { readonly kind: "add" }
+  | { readonly kind: "standalone" }
   | { readonly kind: "edit"; readonly mailbox: ConnectSubject }
   | { readonly kind: "reconnect"; readonly mailbox: ConnectSubject };
 

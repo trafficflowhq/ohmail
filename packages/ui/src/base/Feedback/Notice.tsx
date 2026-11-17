@@ -1,5 +1,6 @@
 import { Button } from "../Primitives/Button.js";
 import { EndDot } from "../Primitives/EndDot.js";
+import { useSaidOnArrival } from "../said-on-arrival.js";
 import "./notice.css";
 
 export interface NoticeAct {
@@ -29,9 +30,11 @@ export interface NoticeProps {
 
 /** Something needs you. It stands in the one slot, one at a time. */
 export function Notice({ place, title, hot, line, acts }: NoticeProps) {
+  /* Said when it appears: its words are given to a screen reader once the region stands; its answers at once. */
+  const held = useSaidOnArrival(true) ? true : undefined;
   return (
     <div className="oh-notice" role="status" data-place={place}>
-      <p className="oh-text oh-notice-say">
+      <p className="oh-text oh-notice-say" aria-hidden={held}>
         <b className="oh-notice-title">
           <EndDot kind={hot ? "hot" : "ink"}>{title}</EndDot>
         </b>

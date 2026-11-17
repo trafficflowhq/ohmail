@@ -121,9 +121,12 @@ export {
 export { readFlightOf } from "./read-flight.js";
 // The account's binding on a handle: the two types and the one function that mints them (`bound.ts`).
 export {
-  bindDb, rebindTx, carryBinding, bindingOf, poolKeyOf, BindingRefusedError, BindingFailedError, BINDING_KEY_MAX,
-  type AccountBound, type NothingBound, type BindTo, type Binding,
+  bindDb, rebindTx, carryBinding, bindingOf, poolKeyOf, assertBinding, refuseBound, onServerPool,
+  BindingRefusedError, BindingFailedError, BINDING_KEY_MAX,
+  type AccountBound, type NothingBound, type NoBinding, type Unbranded, type BindTo, type Binding,
 } from "./bound.js";
+// A device store's deleted bytes handed back; a server pool is sent nothing (`reclaim-space.ts`).
+export { reclaimSpace, type ReclaimedTable } from "./reclaim-space.js";
 // The relations an account's index-driven reads name, as a shape, and the tables' answer: all a store
 // without the row lock reads (`account-rows.ts`). The views' answer and the catalog read that picks
 // between the two are the hosted database's, on `@trafficflow/db/cloud`: never exported here, where

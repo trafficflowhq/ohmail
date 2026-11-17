@@ -943,8 +943,12 @@ export interface ApiDeps {
    * oauth mailbox refuses at {@link buildImapAuth} rather than sending its refresh token as a
    * password. Present (wired from `MS_OAUTH_*` when onboarding lands) ⇒ the IMAP + SMTP dialers mint
    * access tokens through it. A password mailbox never touches it.
+   *
+   * A dial hands it its own handle beside the mailbox (`deps.oauth.forMailbox(mailboxId, deps.db)`):
+   * the handle it read the mailbox's credential on, a request's or a pass's row's. A refresh token
+   * Microsoft replaces during that dial is written there, in a flight that names what the dial names.
    */
-  oauth?: OAuthTokenProvider;
+  oauth?: OAuthTokenProvider<Db>;
   /** Set by `withIdempotency`; consumed by the handler's service. */
   idempotency?: IdempotencyContext | null;
   /** Set by `withPressAge`; threaded onto the service context as `pressFloor`. */

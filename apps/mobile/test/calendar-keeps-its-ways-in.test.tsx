@@ -3,9 +3,9 @@
  * THE CALENDAR APP KEEPS ITS WAYS IN until the door's pages are built. That app carries no screens and is always the
  * shell (`mail-surface.ts`), so a route to the door before the page it lands on exists would leave it on an empty
  * stage: no way to pair, no list of servers, nothing after a sign-out. Each route moves to the door with the pull
- * request that fills its page; until then the gate's welcome, list and connect in flight, and the shell page's two
- * acts that open the list, reach what they reached before the door. Rendered in the calendar app, as its switch
- * module names it.
+ * request that fills its page: the gate's welcome has (the ways in); until then its list and connect in flight, and
+ * the shell page's two acts that open the list, reach what they reached before the door. Rendered in the calendar
+ * app, as its switch module names it.
  */
 import { act, createElement as h } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -120,7 +120,7 @@ describe("the calendar app before the door's pages are built", () => {
       refused: reached({ k: "refused", reason: refuse("pairEnded") }, 1),
       connecting: reached({ k: "connecting", origin: "https://mail.example.test" }, 1),
     }).toEqual({
-      nothingPaired: "/welcome", paired: "/servers", refused: "/servers", connecting: "the connect's own screen",
+      nothingPaired: "/door", paired: "/servers", refused: "/servers", connecting: "the connect's own screen",
     });
   });
 

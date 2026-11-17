@@ -15,7 +15,7 @@ import { DEFAULT_ALERT_THRESHOLDS, alertSchemaReadable, type EvaluateOptions } f
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { actorOf, listStaffMembers, resolveStaffSession } from "./admin-staff.js";
 import {
-  queryHmacOf, recordStaffEvents, adoptRequestId, rolesAdmit, type StaffEventInput,
+  queryHmacOf, recordStaffEvents, adoptRequestId, rolesAdmit, staffDb, type StaffEventInput,
 } from "../staff-audit.js";
 import { API_VERSION } from "../version.js";
 import { healthFault, probeDatabase } from "./health.js";
@@ -327,7 +327,7 @@ function adminRoute(name: string, action: StaffAuditAction, read: StaffRead, pol
     let staffWho;
     try {
       staffWho = await resolveStaffSession(
-        deps.db, req.headers.get(STAFF_SESSION_HEADER)?.trim() || undefined, deps.now(),
+        staffDb(deps), req.headers.get(STAFF_SESSION_HEADER)?.trim() || undefined, deps.now(),
       );
     } catch (err) {
       log.error("admin_read_failed", { err });
@@ -349,7 +349,7 @@ function adminRoute(name: string, action: StaffAuditAction, read: StaffRead, pol
     const refused = !rolesAdmit(staffWho.roles, policy.roles)
       || (policy.admits !== undefined && !policy.admits(req, reader));
     try {
-      await recordStaffEvents(deps.db, [refused ? { ...row, outcome: "refused", refusalCode: "role_required" } : row]);
+      await recordStaffEvents(staffDb(deps), [refused ? { ...row, outcome: "refused", refusalCode: "role_required" } : row]);
     } catch (err) {
       log.error("admin_audit_failed", { err });
       return json(503, { error: { code: "audit_failed" } });
@@ -604,7 +604,7 @@ export const adminRoutes: Route[] = [
     // connection; the read is handed the list as a closure, never the handle. A POST because the
     // staff group is, and it reads no body: its session rides in the header like every read here.
     handler: (req, deps, params) => {
-      const list = (): ReturnType<typeof listStaffMembers> => listStaffMembers(deps.db);
+      const list = (): ReturnType<typeof listStaffMembers> => listStaffMembers(staffDb(deps));
       return adminRoute("staff/list", "read.staff_list", async (_req, ctx): Promise<StaffList> =>
         ({ now: ctx.now().toISOString(), ...(await list()) }), { roles: ["owner"] })(req, deps, params);
     },

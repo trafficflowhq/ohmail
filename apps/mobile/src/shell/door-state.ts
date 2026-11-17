@@ -7,14 +7,15 @@ import { organizesHere } from "../engine/standalone-door";
 import type { Connection } from "../net/connection";
 import { isNotTls, isPinFailure } from "../net/host-pinning";
 import {
-  parsePairLink, shortPin, unreachableSaid, type Negotiation, type PairAdmission, type PickerStep,
+  MANAGED_ORIGIN, parsePairLink, shortPin, unreachableSaid, type Negotiation, type PairAdmission, type PickerStep,
 } from "../net/pairing";
 import { refuse, type Refusal, type RefusalArg, type RefusalKey } from "../refusal";
 import { gateFor } from "../state/gate";
 import type { ServerProfile } from "../state/servers";
 import { EMPTY_STANDALONE, type StandaloneFields } from "../ui/standalone-form";
 import {
-  SAID_ARG_MAX, SAID_DEPTH, type DoorAt, type DoorState, type OpenInput, type PairFacts, type PairedRow, type SaidRefusal,
+  SAID_ARG_MAX, SAID_DEPTH, type DoorAt, type DoorMigrating, type DoorState, type OpenInput, type PairFacts, type PairedRow,
+  type SaidRefusal,
 } from "./door-kinds";
 
 /** The part of the connection the door stands on. */
@@ -54,9 +55,12 @@ export function negotiationSaid(n: Negotiation, step?: PickerStep): Refusal {
   return step?.kind === "managed-signin-later" ? refuse("managedDeferred") : refuse("noPairing");
 }
 
+/** Hosted is said of the hosted address alone: any server's first word can say "managed". */
+const hosted = (flavor: string, origin: string): boolean => flavor === "managed" && origin === MANAGED_ORIGIN;
+
 /** What a probe measured, as the confirmation draws it: never a field of the link. */
 export function factsOf(admission: PairAdmission): PairFacts {
-  const what = admission.flavor === "desktop-host" ? "computer" : admission.flavor === "managed" ? "hosted"
+  const what = admission.flavor === "desktop-host" ? "computer" : hosted(admission.flavor, admission.origin) ? "hosted"
     : admission.flavor === "local" ? "local" : "server";
   return { what, address: admission.origin, key: admission.pin === null ? null : shortPin(admission.pin) };
 }
@@ -66,12 +70,24 @@ function rowOf(p: ServerProfile, activeId: string | null): PairedRow {
   const needsPair = !own && p.refreshToken === null;
   return {
     id: p.id,
-    kind: own ? "own" : p.flavor === "managed" ? "hosted" : p.flavor === "desktop-host" || p.flavor === "local" ? "computer" : "server",
+    kind: own ? "own" : hosted(p.flavor, p.origin) ? "hosted"
+      : p.flavor === "desktop-host" || p.flavor === "local" ? "computer" : "server",
     address: own ? "" : p.origin,
     account: own || needsPair ? null : p.accountId,
     open: p.id === activeId,
     needsPair,
   };
+}
+
+/**
+ * A store's upgrade as the door says it: only under the connect that waits on it, and only where the boot screen
+ * counts one (a store that is not fresh, more than one entry owed). A first launch's empty store and a single entry
+ * are over before anybody reads a number.
+ */
+function migratingOf(s: DoorConnection["state"]): DoorMigrating | null {
+  const m = s.k === "connecting" ? s.migrating : undefined;
+  if (m === undefined || m.fresh || m.pending <= 1) return null;
+  return { applied: m.applied, pending: m.pending, since: m.since };
 }
 
 /** The connection as the door draws it. Under the shell this side holds no mail, so it counts none. */
@@ -86,6 +102,7 @@ export function doorStateOf(conn: DoorConnection, after: SaidRefusal | null): Do
   const held = heldTokens(conn.profiles);
   return {
     session: open !== null ? "live" : s.k === "connecting" ? "opening" : s.k === "refused" ? "refused" : s.k === "ended" ? "ended" : "none",
+    migrating: migratingOf(s),
     said: s.k === "refused" || s.k === "ended" ? said(s.reason, held) : null,
     openId: open?.id ?? null,
     syncing: conn.syncing,

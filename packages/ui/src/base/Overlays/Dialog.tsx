@@ -3,6 +3,7 @@ import { RefusalLine } from "../Feedback/RefusalLine.js";
 import { Button } from "../Primitives/Button.js";
 import { EndDot } from "../Primitives/EndDot.js";
 import { Sentence } from "../Primitives/Sentence.js";
+import { useSaidOnArrival } from "../said-on-arrival.js";
 import "./dialog.css";
 import { Overlay } from "./Overlay.js";
 
@@ -76,6 +77,8 @@ export function Dialog(props: DialogProps) {
     under,
   } = props;
   const name = useId();
+  /* What a press came to is said when it appears: by a change inside a region that stands. */
+  const held = useSaidOnArrival(Boolean(props.open && props.said && !props.said.refused)) ? true : undefined;
   const keys = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "Enter" || kind !== "delete" || !confirm || confirm.disabled) return false;
     e.preventDefault();
@@ -110,7 +113,7 @@ export function Dialog(props: DialogProps) {
             </RefusalLine>
           ) : (
             <p className="oh-text" role="status">
-              {said.line}
+              <span aria-hidden={held}>{said.line}</span>
             </p>
           )}
         </div>

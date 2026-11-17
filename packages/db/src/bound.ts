@@ -15,6 +15,9 @@
  * here, so every store can use it.
  */
 import { BINDING_BRAND, IN_TRANSACTION_BRAND, SAVEPOINT_BRAND } from "./dialect/index.js";
+// From `logins.ts` and never `names.ts`: that one imports the staff role's grants, and this module
+// loads in a device's engine.
+import { ACCOUNT_SETTING, KEY_SETTING } from "./row-security/logins.js";
 
 declare const boundTo: unique symbol;
 
@@ -23,6 +26,20 @@ export interface AccountBound { readonly [boundTo]: "account" }
 
 /** A handle whose transactions run for no account: the binder ran and named none. */
 export interface NothingBound { readonly [boundTo]: "nothing" }
+
+/**
+ * A handle that carries no binding: the pool's own. What a session-level statement takes (an index
+ * built concurrently, a session's advisory lock, LISTEN): a flight would wrap it in a transaction.
+ * A bound handle does not fit, by its brand; {@link refuseBound} says the same at run time.
+ */
+export interface NoBinding { readonly [boundTo]?: never }
+
+/**
+ * `D` without the nothing brand. An account bound over a handle bound to nothing is the handle's
+ * own type with the account's brand in place of the other: intersecting the two brands is `never`,
+ * and `never` fits every parameter unchecked.
+ */
+export type Unbranded<D> = D extends infer P & NothingBound ? P : D;
 
 /** What a binding names: an account or none, and the key a look-up made before sign-in compares. */
 export type BindTo =
@@ -69,18 +86,7 @@ export const BINDING_KEY_MAX = 512;
  * both columns to echo what it sent.
  */
 export const BINDER_SQL =
-  "select set_config('ohmail.account', $1, true) as account, set_config('ohmail.key', $2, true) as key";
-
-/**
- * The two readers a policy calls, run by the setup that makes the policies (never a journal).
- * Missing and empty both read NULL, so no account row matches; a value that is not an id fails
- * the statement. Never SECURITY DEFINER.
- */
-export const BINDING_READERS_SQL = `create schema if not exists ohmail;
-create or replace function ohmail.current_account() returns uuid language sql stable parallel safe
-  as $$ select nullif(pg_catalog.current_setting('ohmail.account', true), '')::uuid $$;
-create or replace function ohmail.current_key() returns text language sql stable parallel safe
-  as $$ select nullif(pg_catalog.current_setting('ohmail.key', true), '') $$;`;
+  `select set_config('${ACCOUNT_SETTING}', $1, true) as account, set_config('${KEY_SETTING}', $2, true) as key`;
 
 /** What a door writes for a binding: the binder's two parameters, `""` for none. */
 export interface BindingValues { readonly account: string; readonly key: string }
@@ -220,7 +226,7 @@ export function refuseBinding(db: object): void {
  * copy did not mint, and a handle whose factory refused binding. An id with no account behind it
  * binds: the binder asks the database nothing.
  */
-export function bindDb<D extends object>(db: D, to: { readonly account: string; readonly key?: string | null }): D & AccountBound;
+export function bindDb<D extends object>(db: D, to: { readonly account: string; readonly key?: string | null }): Unbranded<D> & AccountBound;
 export function bindDb<D extends object>(db: D, to: { readonly account: null; readonly key?: string | null }): D & NothingBound;
 export function bindDb(db: object, to: BindTo): object {
   if (to === null || typeof to !== "object") refuse("no binding was named");
@@ -310,6 +316,47 @@ export function carryBinding<P extends object>(parent: P, tx: object): P {
 export function bindingOf(db: unknown): Binding | undefined {
   const mark = markOf(db);
   return mark === "foreign" ? undefined : mark;
+}
+
+/**
+ * Is `db` a server pool's handle, or a bound view of one? True where the pool's factory registered
+ * a door (`client.ts`): there a role and its policies stand behind every statement. A device store
+ * (PGlite, SQLite) has no door and answers false, and so do the staff handle, whose role is its
+ * whole binding, and a transaction opened on a pool's own handle, which is no handle a door knows.
+ */
+export function onServerPool(db: unknown): boolean {
+  return db !== null && typeof db === "object" && doors.has(roots.get(db) ?? db);
+}
+
+/**
+ * REFUSE A HANDLE THAT DOES NOT NAME `account` (`null`: no account). What a caller that holds both
+ * a handle and the account it acts for asks before it opens a transaction: the two came by separate
+ * ways, and here they must agree. Refused: a mark this copy did not mint; a handle that names
+ * another account, or nothing where an account is asked, or an account where none is; and a handle
+ * with no binding at all. With `"device"` that last one passes off a server pool and is refused on
+ * one: the two fences of this package, which a device's organizer reaches on its plain store. The
+ * reason is fixed text and never an id.
+ */
+export function assertBinding<D extends object>(db: D, account: string): asserts db is D & AccountBound;
+export function assertBinding<D extends object>(db: D, account: null): asserts db is D & NothingBound;
+export function assertBinding<D extends object>(db: D, account: string | null): asserts db is D & (AccountBound | NothingBound);
+export function assertBinding(db: object, account: string | null, unmarked: "device"): void;
+export function assertBinding(db: object, account: string | null, unmarked?: "device"): void {
+  const held = markOf(db);
+  if (held === "foreign") refuse("the handle carries a binding this module did not mint");
+  if (held === undefined) {
+    if (unmarked === "device" && !onServerPool(db)) return;
+    refuse("a transaction was asked on a handle that names no binding");
+  }
+  if (held.account !== account) refuse("the context's account is not the one its handle names");
+}
+
+/**
+ * REFUSE A BOUND HANDLE where a session-level statement is about to be sent: `what` names the
+ * caller in the refusal. Thrown before anything is written; a plain handle passes.
+ */
+export function refuseBound(db: unknown, what: string): void {
+  if (markOf(db) !== undefined) refuse(`${what} runs on the pool's own handle, never on a bound one: its statements are the session's`);
 }
 
 /**

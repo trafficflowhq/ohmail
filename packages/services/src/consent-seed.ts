@@ -3,8 +3,9 @@ import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { isSubjectHeading, subjectHeadingOf, type SubjectHeading } from "@trafficflow/core/adapters/organizer-profile";
 import {
-  accountSettings, clearRuleRemovals, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
-  lockAccountRuleKeys, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, statePreference, PROFILE_SIGNATURE_MAX,
+  accountSettings, carryBinding, clearRuleRemovals, contacts, mailboxes, mailboxProfileMirror, messageBodies,
+  messages, lockAccountRuleKeys, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, statePreference,
+  PROFILE_SIGNATURE_MAX,
   TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type LedgerTx, type OrganizedBy, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
@@ -921,7 +922,7 @@ export async function setFoldersEnabled(
     // covers the case the entity rows cannot: an account with zero user folders appends nothing
     // below, so this is the only thing that rings the wake at all for its flip.
     await recordSettingsChange(tx, ctx.accountId);
-    const rows = await listUserFolders(tx as unknown as typeof ctx.db, ctx.accountId);
+    const rows = await listUserFolders(carryBinding(ctx.db, tx), ctx.accountId);
     if (rows.length > 0) {
       await recordChanges(tx, rows.map((r) => ({
         accountId: ctx.accountId,
@@ -989,7 +990,7 @@ export async function setMailboxFoldersEnabled(
       .limit(1);
     if ((master?.at ?? null) === null) return;   // master off ⇒ nothing on the wire to move
     const rows = await listMailboxUserFolders(
-      tx as unknown as typeof ctx.db, ctx.accountId, mailboxId,
+      carryBinding(ctx.db, tx), ctx.accountId, mailboxId,
     );
     if (rows.length > 0) {
       await recordChanges(tx, rows.map((r) => ({

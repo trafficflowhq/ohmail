@@ -42,6 +42,7 @@ import {
   ColumnHandle,
   Composer,
   Dock,
+  Doorbell,
   FigureLine,
   FigureTable,
   FolderShelf,
@@ -54,6 +55,7 @@ import {
   MessageHead,
   MonthRail,
   MovePicker,
+  RailEntry,
   ReadingHead,
   ReadingLine,
   Row,
@@ -247,6 +249,86 @@ describe("the product's mark", () => {
       expect(seen.bell).toEqual(seen.plainStop);
       expect([seen.ground, seen.round, seen.marksAlike]).toEqual([true, true, true]);
       expect(seen.reached).toBe(Math.max(size / 4, seen.least));
+    },
+  );
+});
+
+describe("a ring", () => {
+  it("is one motion wherever it rings: the mark's stop and the doorbell knock and ring out by the same frames, over the same time", async () => {
+    const seen = await drawn(
+      <>
+        <Mark hot ringing>
+          oh
+        </Mark>
+        <Doorbell count="6" label="6 waiting, Screener" ringing />
+      </>,
+      () => {
+        const ring = (el: Element) =>
+          el
+            .getAnimations({ subtree: true })
+            .map((move) => {
+              const effect = move.effect as KeyframeEffect;
+              const { duration, easing, fill } = effect.getComputedTiming();
+              return [
+                effect.pseudoElement ?? "itself",
+                (move as CSSAnimation).animationName,
+                duration,
+                easing,
+                fill,
+              ];
+            })
+            .sort();
+        return { stop: ring(document.querySelector("p i")!), bell: ring(document.querySelector("button")!) };
+      },
+      { entry: "mail", still: false },
+    );
+    expect(seen.stop.map(([on]) => on)).toEqual(["::before", "itself"]);
+    expect(seen.bell).toEqual(seen.stop);
+  });
+});
+
+describe("what an open fold says where it holds nothing", () => {
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s: a quiet line as high as a tag's, in the second ink, starting where the design starts it",
+    async (face) => {
+      const seen = await drawn(
+        <div className="oh-rail" style={{ width: 240 }}>
+          <RailEntry kind="fold" expanded none="No tags yet.">
+            Tags
+          </RailEntry>
+          <RailEntry kind="sub" hue={150}>
+            Pottery Project
+          </RailEntry>
+        </div>,
+        () => {
+          const note = document.querySelector("p")!;
+          const tag = [...document.querySelectorAll("button")].at(-1)!;
+          const words = (node: Element) => {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            return range.getBoundingClientRect().left;
+          };
+          const probe = document.createElement("i");
+          probe.style.cssText = "color:var(--ink2)";
+          document.body.append(probe);
+          const quiet = getComputedStyle(probe).color;
+          probe.remove();
+          const [n, t] = [note.getBoundingClientRect(), tag.getBoundingClientRect()];
+          return {
+            high: [n.height, t.height],
+            under: n.top >= document.querySelector("button")!.getBoundingClientRect().bottom,
+            quiet: getComputedStyle(note).color === quiet,
+            lead: words(note) - n.left,
+            tagName: words(tag.querySelector("span")!) - t.left,
+            tagLead: parseFloat(getComputedStyle(tag).paddingLeft),
+          };
+        },
+        { entry: "mail", face },
+      );
+      expect(seen.high[0]).toBe(seen.high[1]);
+      expect([seen.under, seen.quiet]).toEqual([true, true]);
+      /* Paper: under the tags' names. Ohmarchy: at a smaller entry's own lead, as its sheet has it. */
+      expect(seen.lead).toBe(face === "paper" ? seen.tagName : seen.tagLead);
     },
   );
 });

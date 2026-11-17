@@ -71,11 +71,7 @@ function world() {
     }),
   );
   w.put("calendar", "cal-1", calendarRecord());
-  w.put(
-    "calendar",
-    "cal-2",
-    calendarRecord({ id: "cal-2", connectionId: "conn-2", name: "Family", isDefault: false }),
-  );
+  w.put("calendar", "cal-2", calendarRecord({ id: "cal-2", connectionId: "conn-2", name: "Family" }));
   return w;
 }
 

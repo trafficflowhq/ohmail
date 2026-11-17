@@ -1,13 +1,13 @@
 import { UNMETERED_STORAGE_CAP, type Logger } from "@trafficflow/core";
 import {
-  makeSendAdapter,
+  makeSendAdapter, doorDb,
   ALERT_CRON_PATH, SESSIONS_REAP_CRON_PATH, SMTP_SIZE_CRON_PATH, SCHEDULED_SEND_CRON_PATH,
   SEND_RECONCILE_CRON_PATH, SENT_COPIES_CRON_PATH, UNSUB_DRAIN_CRON_PATH,
   type ApiDeps,
 } from "@trafficflow/api";
 import {
   runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, runOwedSentCopyPass, SEND_RECONCILE_NET_TIMEOUTS,
-  OWED_COPY_SELF_HOST, dbFor, type AuthService,
+  OWED_COPY_SELF_HOST, type AuthService,
 } from "@trafficflow/services";
 import { ALERT_PASS_EVERY_MS, ALERT_PASS_FIRST_DELAY_MS, ownAlertClock } from "./alert-clock.js";
 import { API_CLOCK_LOCK_KEY, acquireLeaderLock, type LeaderLock } from "./clock-lock.js";
@@ -292,8 +292,12 @@ export function startPlainChain(runtime: Runtime): Stoppable {
   // The names the chain below was written with, bound to the one wiring's runtime.
   const { logger } = runtime;
   const cfg = { origin: runtime.cfg.origin.appOrigin ?? "http://localhost" };
-  const owned = { db: runtime.db.request() };
   const rt = runtime;
+  /**
+   * A pass's own container, built as a request's is: its handle is bound to nothing, and the pass
+   * walks on it ({@link doorDb}). What a pass does for one row runs on that row's own handle,
+   * bound to the row's account inside the pass.
+   */
   const buildDeps = (req: Request, of: Runtime): ApiDeps => depsFor(req, of);
   let sendClock: ReturnType<typeof setTimeout> | null = null;
   let sendClockStopped = false;
@@ -313,13 +317,13 @@ export function startPlainChain(runtime: Runtime): Stoppable {
   const reconcileStrandedSends = async (): Promise<void> => {
     try {
       const passDeps = buildDeps(new Request(cfg.origin), rt);
-      const r = await runSendReconcilePass(owned.db, {
+      const r = await runSendReconcilePass(doorDb(passDeps), {
         // THE SAME DEADLINES THE HOSTED DOOR THREADS, and this caller was missed when they were
         // introduced — leaving the only other production runner of this pass with no dial bound
         // at all. It matters differently here: nothing kills this process, so one mailbox whose
         // LIST trickles parks the awaited pass and stalls the whole send clock behind it.
-        openSendAdapter: (mailboxId) =>
-          makeSendAdapter(passDeps, mailboxId, { timeouts: SEND_RECONCILE_NET_TIMEOUTS }),
+        openSendAdapter: (mailboxId, db) =>
+          makeSendAdapter({ ...passDeps, db }, mailboxId, { timeouts: SEND_RECONCILE_NET_TIMEOUTS }),
         log: logger,
       });
       if (r.claimed > 0) {
@@ -339,9 +343,9 @@ export function startPlainChain(runtime: Runtime): Stoppable {
   const fileOwedSentCopies = async (): Promise<void> => {
     try {
       const passDeps = buildDeps(new Request(cfg.origin), rt);
-      const r = await runOwedSentCopyPass(owned.db, {
-        openSendAdapter: (mailboxId) =>
-          makeSendAdapter(passDeps, mailboxId, { timeouts: SEND_RECONCILE_NET_TIMEOUTS }),
+      const r = await runOwedSentCopyPass(doorDb(passDeps), {
+        openSendAdapter: (mailboxId, db) =>
+          makeSendAdapter({ ...passDeps, db }, mailboxId, { timeouts: SEND_RECONCILE_NET_TIMEOUTS }),
         resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
         log: logger,
       });
@@ -357,8 +361,9 @@ export function startPlainChain(runtime: Runtime): Stoppable {
         try {
           const passDeps = buildDeps(new Request(cfg.origin), rt);
           const kept = rt.services.scheduledFiles;
-          const r = await runScheduledSendPass(owned.db, {
-            openSendAdapter: (mailboxId) => makeSendAdapter(passDeps, mailboxId),
+          const r = await runScheduledSendPass(doorDb(passDeps), {
+            // Each appointment dials on its own handle, bound to the account of the row the pass claimed.
+            openSendAdapter: (mailboxId, db) => makeSendAdapter({ ...passDeps, db }, mailboxId),
             resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
             keepOwedCopy: OWED_COPY_SELF_HOST,
             // This server's sealed files (mail 0180): opened for the send, tidied before the claim.
@@ -406,8 +411,9 @@ export function startPlainChain(runtime: Runtime): Stoppable {
            * organizer JOIN is what keeps it off a mailbox this install merely reads.
            */
           try {
-            const a = await runAwayResponderPass(owned.db, {
-              openSendAdapter: (mailboxId) => makeSendAdapter(buildDeps(new Request(cfg.origin), rt), mailboxId),
+            const awayDeps = buildDeps(new Request(cfg.origin), rt);
+            const a = await runAwayResponderPass(doorDb(awayDeps), {
+              openSendAdapter: (mailboxId, db) => makeSendAdapter({ ...awayDeps, db }, mailboxId),
               log: logger,
             });
             if (a.examined > 0) {
@@ -428,7 +434,8 @@ export function startPlainChain(runtime: Runtime): Stoppable {
           try {
             const auth = rt.services.auth as unknown as { drainSecurityNotices?: AuthService["drainSecurityNotices"] };
             const n = await auth.drainSecurityNotices?.({
-              db: dbFor(owned.db, ""), accountId: "", userId: null, now: () => new Date(), requestId: "",
+              db: doorDb(buildDeps(new Request(cfg.origin), rt)),
+              accountId: "", userId: null, now: () => new Date(), requestId: "",
             });
             if (n && n.sent + n.failed + n.dropped > 0) logger.info("security_notices_drained", { ...n });
           } catch (err) {

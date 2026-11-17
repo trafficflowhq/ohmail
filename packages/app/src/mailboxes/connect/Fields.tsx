@@ -77,17 +77,22 @@ function EditFields({ d }: { d: Drawn }): ReactNode {
         labels={{ imap: say(words.imapHost), smtp: say(words.smtpHost) }}
         ports={{ imap: say(EDIT_WORDS.imapPort), smtp: say(EDIT_WORDS.smtpPort), keep: say(EDIT_WORDS.keep) }}
       />
-      <Field
-        label={say(words.user)}
-        value={form.state.typed.user}
-        placeholder={say(EDIT_WORDS.keep)}
-        onChange={(v) => form.type("user", v)}
-      />
+      {words.user ? (
+        <Field
+          label={say(words.user)}
+          value={form.state.typed.user}
+          placeholder={say(EDIT_WORDS.keep)}
+          onChange={(v) => form.type("user", v)}
+        />
+      ) : null}
     </>
   );
 }
 
-/** A new connection's fields: the two servers on the manual entry, the username if it is not the address, the password. */
+/**
+ * A new connection's fields: the two servers on the manual entry, the username if it is not the address, the
+ * password; and, where the mount asks for one, the name the mailbox's letters carry.
+ */
 function NewFields({ d }: { d: Drawn }): ReactNode {
   const { form, words, say } = d;
   const { typed } = form.state;
@@ -100,18 +105,28 @@ function NewFields({ d }: { d: Drawn }): ReactNode {
           ports={null}
         />
       ) : null}
-      <Field
-        label={say(words.user)}
-        value={typed.user}
-        placeholder={typed.address || (words.userPlaceholder ? say(words.userPlaceholder) : undefined)}
-        onChange={(v) => form.type("user", v)}
-      />
+      {words.user ? (
+        <Field
+          label={say(words.user)}
+          value={typed.user}
+          placeholder={typed.address || (words.userPlaceholder ? say(words.userPlaceholder) : undefined)}
+          onChange={(v) => form.type("user", v)}
+        />
+      ) : null}
       <PasswordField
         label={say(words.password)}
         hint={words.passwordHint ? say(words.passwordHint) : undefined}
         handle={form.password}
         onChange={form.passwordChanged}
       />
+      {words.name ? (
+        <Field
+          label={say(words.name.label)}
+          hint={say(words.name.hint)}
+          value={typed.displayName ?? ""}
+          onChange={(v) => form.type("displayName", v)}
+        />
+      ) : null}
     </>
   );
 }

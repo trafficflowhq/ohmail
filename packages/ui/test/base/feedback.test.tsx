@@ -1,11 +1,13 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { createRef, useState } from "react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { createRef, useState, type ReactElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Button,
   CameraSquare,
   Counters,
+  Dialog,
   Empty,
   Mark,
   Notice,
@@ -22,7 +24,89 @@ import {
   type SlotNotice,
 } from "../../src/base/index.js";
 
+import { heard } from "../heard.js";
+
 afterEach(cleanup);
+
+describe("a region that is said when it appears", () => {
+  const nothing = () => {};
+  const regions: [string, ReactElement, string, boolean][] = [
+    [
+      "a report",
+      <Report undo={{ label: "Undo", onPress: nothing }}>Moved to News</Report>,
+      "Moved to News",
+      true,
+    ],
+    [
+      "a report that says why",
+      <Report kind="why" why="The server did not answer." act={{ label: "Mailboxes", onPress: nothing }}>
+        Not moved
+      </Report>,
+      "Not moved The server did not answer.",
+      true,
+    ],
+    [
+      "a notice",
+      <Notice
+        place="rail"
+        title="The mailbox is full"
+        line="Sent copies wait."
+        acts={[{ label: "Mailboxes", onPress: nothing }]}
+      />,
+      "The mailbox is full Sent copies wait.",
+      true,
+    ],
+    [
+      "what a press inside a dialog came to",
+      <Dialog
+        open
+        onClose={nothing}
+        title="Rename the tag"
+        cancel={{ label: "Cancel" }}
+        said={{ line: "Saved on this device." }}
+      />,
+      "Saved on this device.",
+      false,
+    ],
+    [
+      "the opening's line",
+      <Opening
+        kind="phone"
+        status={{ label: "Updating the mail store", count: "3 of 12", note: "This can take a minute." }}
+      />,
+      "Updating the mail store 3 of 12 This can take a minute.",
+      true,
+    ],
+  ];
+
+  it.each(regions)(
+    "%s: its words are drawn at once and kept from a screen reader until the region stands, then given; its controls are there throughout",
+    async (_name, region, words, server) => {
+      const controls = () => screen.queryAllByRole("button").length;
+      render(region);
+      const status = screen.getByRole("status");
+      const there = controls();
+      expect(heard(status)).toBe("");
+      /* Drawn all the same: every word of it is on the page. */
+      expect(words.split(" ").every((word) => status.textContent?.includes(word))).toBe(true);
+      await waitFor(() => expect(heard(status)).toBe(words));
+      expect(controls()).toBe(there);
+      if (!server) return;
+      /* Drawn by a server the words are the reader's from the start: nothing would give them back without script. */
+      const page = document.createElement("div");
+      page.innerHTML = renderToStaticMarkup(region);
+      expect(heard(page.querySelector('[role="status"]')!)).toBe(words);
+    },
+  );
+
+  it("other words while a report stands are a change of the region itself: nothing is held back", async () => {
+    const { rerender } = render(<Report>Moved to News</Report>);
+    const status = screen.getByRole("status");
+    await waitFor(() => expect(heard(status)).toBe("Moved to News"));
+    rerender(<Report>Moved to Receipts</Report>);
+    expect(heard(status)).toBe("Moved to Receipts");
+  });
+});
 
 describe("Notice", () => {
   it("is a status with its title, its line and up to two answers", () => {
@@ -145,6 +229,24 @@ describe("NoticeSlot", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Trial ends Wed" }));
     expect(screen.queryByRole("menu")).toBeNull();
     expect(screen.getByRole("status").textContent).toContain("Trial ends Wed");
+  });
+
+  it("a notice already said stays the region it was when a second one joins it behind the line, or leaves: it is not said again", async () => {
+    const [behind, , first] = NOTICES as [SlotNotice, SlotNotice, SlotNotice];
+    const { rerender } = render(<Slot notices={[first]} />);
+    const status = screen.getByRole("status");
+    await waitFor(() => expect(heard(status)).toBe("Offline since 09:24"));
+    const frames = () => new Promise((done) => setTimeout(done, 80));
+    rerender(<Slot notices={[first, behind]} />);
+    expect(screen.getByRole("status")).toBe(status);
+    expect(heard(status)).toBe("Offline since 09:24");
+    await frames();
+    expect(heard(status)).toBe("Offline since 09:24");
+    rerender(<Slot notices={[first]} />);
+    expect(screen.getByRole("status")).toBe(status);
+    expect(heard(status)).toBe("Offline since 09:24");
+    await frames();
+    expect(heard(status)).toBe("Offline since 09:24");
   });
 
   it("one notice stands alone, and none draws nothing", () => {

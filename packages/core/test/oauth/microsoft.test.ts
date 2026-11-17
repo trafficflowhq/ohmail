@@ -169,6 +169,21 @@ describe("MicrosoftTokenProvider — cache, rotation persistence, and the named 
     expect(updates).toEqual([]);
   });
 
+  it("hands the persist port what the dial handed over beside the mailbox, each dial its own", async () => {
+    const written: Array<{ mailboxId: string; dial: string }> = [];
+    const provider = new MicrosoftTokenProvider<string>({
+      clientId: "cid", clientSecret: "csec", defaultTenant: "common",
+      keyProvider: new StaticKeyProvider({ 1: KEK }),
+      updateSecret: async (mailboxId, _ciphertext, _keyVersion, dial) => { written.push({ mailboxId, dial }); },
+      fetch: fakeFetch(() => ({ status: 200, json: { access_token: "AT", expires_in: 3600, refresh_token: "RT-NEW" } })).fetch,
+      now: () => 1_000_000,
+    });
+    const asked = { refreshToken: "RT", tenant: "common", provider: "microsoft" };
+    await provider.forMailbox("mbx-1", "the first dial")(asked)();
+    await provider.forMailbox("mbx-2", "the second dial")(asked)();
+    expect(written).toEqual([{ mailboxId: "mbx-1", dial: "the first dial" }, { mailboxId: "mbx-2", dial: "the second dial" }]);
+  });
+
   it("caches a token within its life and re-fetches near expiry (<5min + skew)", async () => {
     let n = 0;
     const ff = fakeFetch(() => { n += 1; return { status: 200, json: { access_token: `AT-${n}`, expires_in: 3600 } }; });

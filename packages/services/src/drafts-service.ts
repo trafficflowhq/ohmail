@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
-  claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, recordChanges,
+  carryBinding, claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, recordChanges,
   threads, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -260,7 +260,7 @@ export class DraftsService {
         // RETURNS this snapshot rather than re-reading after commit, where a concurrent
         // mutation (a thread merge repointing the row) could make the live answer differ
         // from every later replay of the same key.
-        inTx = await materializeDraft(tx as unknown as typeof ctx.db, ctx.accountId, row!.id);
+        inTx = await materializeDraft(carryBinding(ctx.db, tx), ctx.accountId, row!.id);
         if (!inTx) throw new ServiceError("internal", 500, "draft vanished inside its own transaction");
         const draft = inTx;
         const claimed = await claimIdempotencyKey(tx, {

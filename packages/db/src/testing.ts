@@ -15,6 +15,7 @@ import { migrateSqlite } from "./sqlite-migrate.js";
 import { ACCOUNT_NAMED_BY_EVERY_INSERT } from "./account-scope.js";
 import { probedService, serviceAddressOf, serviceUp } from "./test-services.js";
 import { isProtocolOpener } from "./pg-socket.js";
+import { BINDER_SQL } from "./bound.js";
 import {
   declaredMigrations, journalMismatch, keyInputs, migrateFresh, templateDisabled, templatedPglite, templateKey,
   type AppliedRow,
@@ -743,24 +744,71 @@ export async function dropPgTemplate(serverUrl: string, name: string): Promise<v
  * between two receipts. It is the measure of waits, which a count of Sync and Flush is not: a
  * flight that writes begin, its statements and commit before reading an answer is one burst and
  * several round trips by that count. `burstShapes` holds each burst's message kinds.
+ *
+ * `lines` holds, for each connection, every statement it was sent in the order written: what
+ * {@link flightsOf} walks.
  */
 export interface PgWireReading {
   statements: number; roundTrips: number; flushes: string[]; binds: Buffer[];
   bursts: number; burstShapes: string[];
   /** Each Parse and simple Query message's bytes: the statements' text as written. */
   texts: Buffer[];
+  /** One list per connection that wrote since `start()`: its statements in write order. */
+  lines: PgWireStatement[][];
+}
+
+/**
+ * One statement as a connection was sent it: a simple Query, or a Bind (one execution of a parsed
+ * statement, whose text is the Parse it names: a statement prepared once by name is sent again as
+ * a Bind alone). `burst` is the index, in the reading's `burstShapes`, of the burst it was written in.
+ */
+export interface PgWireStatement {
+  readonly text: string;
+  /** A Bind's parameters as written (`null`: SQL NULL); a simple Query carries none. */
+  readonly params: readonly (Buffer | null)[];
+  readonly burst: number;
 }
 export interface PgWireRecorder { start(): void; read(): PgWireReading; connections(): number }
 
-interface WireSeen { wrote(sock: object, kinds: string, binds: Buffer[], texts: Buffer[]): void; heard(sock: object): void }
+/** What one write held, per message that is a statement: a Query's text, or a Bind's text and parameters. */
+interface WireSent { readonly text: string; readonly params: readonly (Buffer | null)[] }
+interface WireSeen { wrote(sock: object, kinds: string, binds: Buffer[], texts: Buffer[], sent: WireSent[]): void; heard(sock: object): void }
 let wireSeen: Set<WireSeen> | null = null;
 let wireOpened = 0;
+
+/** A C string of a frontend message, from `at`: its text and where the next field starts. */
+function cString(buf: Buffer, at: number): { text: string; next: number } {
+  const end = buf.indexOf(0, at);
+  return end === -1 ? { text: buf.toString("utf8", at), next: buf.length } : { text: buf.toString("utf8", at, end), next: end + 1 };
+}
+
+/**
+ * A Bind message's statement name and parameters: the portal's name, the statement's, the format
+ * codes, then each parameter as a length and its bytes (-1 is NULL).
+ */
+function readBind(bind: Buffer): { statement: string; params: (Buffer | null)[] } {
+  const portal = cString(bind, 5);
+  const statement = cString(bind, portal.next);
+  let at = statement.next;
+  at += 2 + bind.readInt16BE(at) * 2;
+  const count = bind.readInt16BE(at);
+  at += 2;
+  const params: (Buffer | null)[] = [];
+  for (let i = 0; i < count; i++) {
+    const len = bind.readInt32BE(at);
+    at += 4;
+    if (len < 0) { params.push(null); continue; }
+    params.push(Buffer.from(bind.subarray(at, at + len)));
+    at += len;
+  }
+  return { statement: statement.text, params };
+}
 
 export function recordPgWire(): PgWireRecorder {
   if (wireSeen === null) {
     const seen = new Set<WireSeen>();
     wireSeen = seen;
-    const state = new WeakMap<object, { buf: Buffer; opened: boolean } | "skip">();
+    const state = new WeakMap<object, { buf: Buffer; opened: boolean; parsed: Map<string, string> } | "skip">();
     const emit = net.Socket.prototype.emit;
     net.Socket.prototype.emit = function (this: net.Socket, event: string | symbol, ...args: unknown[]): boolean {
       if (event === "data") {
@@ -774,18 +822,19 @@ export function recordPgWire(): PgWireRecorder {
       if (chunk instanceof Uint8Array) {
         let st = state.get(this);
         if (st === undefined) {
-          st = isProtocolOpener(chunk) ? { buf: Buffer.alloc(0), opened: false } : "skip";
+          st = isProtocolOpener(chunk) ? { buf: Buffer.alloc(0), opened: false, parsed: new Map() } : "skip";
           state.set(this, st);
         }
         if (st !== "skip") readFrontend(this, st, Buffer.from(chunk));
       }
       return (write as (...a: unknown[]) => boolean).apply(this, [chunk, ...rest]);
     } as typeof write;
-    const readFrontend = (sock: object, st: { buf: Buffer; opened: boolean }, chunk: Buffer): void => {
+    const readFrontend = (sock: object, st: { buf: Buffer; opened: boolean; parsed: Map<string, string> }, chunk: Buffer): void => {
       st.buf = st.buf.length === 0 ? chunk : Buffer.concat([st.buf, chunk]);
       let kinds = "";
       const binds: Buffer[] = [];
       const texts: Buffer[] = [];
+      const sent: WireSent[] = [];
       for (;;) {
         if (!st.opened) {
           if (st.buf.length < 8 || st.buf.length < st.buf.readInt32BE(0)) break;
@@ -798,12 +847,24 @@ export function recordPgWire(): PgWireRecorder {
         if (st.buf.length < 5 || st.buf.length < st.buf.readInt32BE(1) + 1) break;
         const len = st.buf.readInt32BE(1);
         const kind = String.fromCharCode(st.buf[0]!);
-        if (kind === "B") binds.push(Buffer.from(st.buf.subarray(0, len + 1)));
-        if (kind === "P" || kind === "Q") texts.push(Buffer.from(st.buf.subarray(0, len + 1)));
+        const message = st.buf.subarray(0, len + 1);
+        if (kind === "B") binds.push(Buffer.from(message));
+        if (kind === "P" || kind === "Q") texts.push(Buffer.from(message));
+        // A connection's parsed statements by name (the unnamed one is ""), kept for as long as the
+        // connection lives: a statement prepared before `start()` is executed after it by name alone.
+        if (kind === "P") {
+          const name = cString(message, 5);
+          st.parsed.set(name.text, cString(message, name.next).text);
+        } else if (kind === "Q") {
+          sent.push({ text: cString(message, 5).text, params: [] });
+        } else if (kind === "B") {
+          const bind = readBind(message);
+          sent.push({ text: st.parsed.get(bind.statement) ?? "", params: bind.params });
+        }
         kinds += kind;
         st.buf = st.buf.subarray(len + 1);
       }
-      if (kinds !== "") for (const s of seen) s.wrote(sock, kinds, binds, texts);
+      if (kinds !== "") for (const s of seen) s.wrote(sock, kinds, binds, texts, sent);
     };
   }
   let flushes: string[] = [];
@@ -812,28 +873,171 @@ export function recordPgWire(): PgWireRecorder {
   let bursts: string[] = [];
   /** Per connection since `start()`: the burst it is writing, or none once the server answered. */
   let open = new WeakMap<object, number>();
+  /** Per connection since `start()`: its statements in write order; `lines` holds each list once. */
+  let lineOf = new WeakMap<object, PgWireStatement[]>();
+  let lines: PgWireStatement[][] = [];
   wireSeen.add({
-    wrote(sock, k, b, t) {
+    wrote(sock, k, b, t, sent) {
       flushes.push(k);
       binds.push(...b);
       texts.push(...t);
-      const at = open.get(sock);
-      if (at === undefined) { open.set(sock, bursts.length); bursts.push(k); } else bursts[at] += k;
+      let at = open.get(sock);
+      if (at === undefined) { at = bursts.length; open.set(sock, at); bursts.push(k); } else bursts[at] += k;
+      if (sent.length === 0) return;
+      let line = lineOf.get(sock);
+      if (line === undefined) { line = []; lineOf.set(sock, line); lines.push(line); }
+      for (const m of sent) line.push({ text: m.text, params: m.params, burst: at });
     },
     heard(sock) { open.delete(sock); },
   });
   const count = (all: string, of: string): number => [...all].filter((c) => of.includes(c)).length;
   return {
-    start() { flushes = []; binds = []; texts = []; bursts = []; open = new WeakMap(); },
+    start() { flushes = []; binds = []; texts = []; bursts = []; open = new WeakMap(); lineOf = new WeakMap(); lines = []; },
     read() {
       const all = flushes.join("");
       return {
         statements: count(all, "PQ"), roundTrips: count(all, "SHQ"), flushes: [...flushes], binds: [...binds],
-        bursts: bursts.length, burstShapes: [...bursts], texts: [...texts],
+        bursts: bursts.length, burstShapes: [...bursts], texts: [...texts], lines: lines.map((l) => [...l]),
       };
     },
     connections: () => wireOpened,
   };
+}
+
+/**
+ * ONE FLIGHT AS THE WIRE SHOWS IT: the statements one connection was sent under one binding.
+ *
+ * `door` is how they were sent: `read` (a bound transaction begun read only: door one), `write`
+ * (any other bound transaction: door two), `lone` (begin, the binder, one statement and commit
+ * written before any answer: a statement on a bound handle), `plain` (no binder rode: a statement
+ * outside any transaction, or a transaction the binder was never written in).
+ *
+ * `account` is what the binder named: an id, or `null` for nothing, and for a plain flight, which
+ * named nothing either (its `door` tells the two apart). `keyed` says a key rode; its value is
+ * answered by {@link keyEquals} alone and is on no field. What its statements were sent as
+ * parameters is answered by {@link carries} alone, for the same reason.
+ *
+ * A transaction named again inside itself (`rebindTx`) reads as one flight per binding, in order:
+ * `continues` is true on each after the first, and `closed` is set on the last alone.
+ */
+export interface PgWireFlight {
+  readonly door: "read" | "write" | "lone" | "plain";
+  readonly account: string | null;
+  readonly keyed: boolean;
+  /** The body's statements in the order written, without begin, the binder, a savepoint's own statements and the close. */
+  readonly statements: readonly string[];
+  /** How many bursts the flight was written in: its waits. */
+  readonly bursts: number;
+  /** How many of `statements` were written before the server had answered the flight's begin. */
+  readonly ahead: number;
+  /** How the transaction ended, or `null`: a statement outside one, a transaction named again after this binding, or one still open when the reading was taken. */
+  readonly closed: "commit" | "rollback" | null;
+  /** This flight is a transaction's next binding, after the one before it on the same connection. */
+  readonly continues: boolean;
+}
+
+/** The binder's statement, for a reading a test writes by hand: {@link flightsOf} knows a binding by this text. */
+export { BINDER_SQL } from "./bound.js";
+
+/** Each flight's key, beside it and never on it: a failed expectation prints a flight, and a key is a credential's digest. */
+const flightKeys = new WeakMap<PgWireFlight, string>();
+/** Each flight's parameters as text, one list per statement of `statements`: beside it too, a parameter may be a digest. */
+const flightParams = new WeakMap<PgWireFlight, readonly (readonly string[])[]>();
+
+/** Did `flight`'s binder name exactly `value` as its key? False for a flight no key rode in. */
+export function keyEquals(flight: PgWireFlight, value: string): boolean {
+  const key = flightKeys.get(flight);
+  return key !== undefined && key === value;
+}
+
+/**
+ * Did a statement of `flight` carry `value` in a parameter? Asked with an id (an account's, a
+ * mailbox's, a letter's) to tell whose rows a flight's statements named. A parameter that holds
+ * several values (an array, a document) carries each of them. False for an empty `value`.
+ */
+export function carries(flight: PgWireFlight, value: string): boolean {
+  if (value === "") return false;
+  return (flightParams.get(flight) ?? []).some((params) => params.some((p) => p.includes(value)));
+}
+
+/** A statement's text as the walk compares it: without the space around it, a closing semicolon, or case. */
+function wordsOf(text: string): string {
+  let t = text.trim();
+  while (t.endsWith(";")) t = t.slice(0, -1).trimEnd();
+  return t.toLowerCase();
+}
+
+const startsWord = (text: string, word: string): boolean =>
+  text === word || text.startsWith(`${word} `) || text.startsWith(`${word}\n`) || text.startsWith(`${word}\t`);
+
+/**
+ * THE FLIGHTS OF A READING: every statement the recorder saw, grouped as its connection was sent
+ * it. One walk over each connection's statements, in the order written: `begin` opens a
+ * transaction, the binder's statement (`BINDER_SQL`, by its text) names it, `commit` or `rollback`
+ * closes it, and a statement outside any transaction is a plain flight of its own. A binder
+ * written anywhere but inside a transaction is a statement like any other, and shows as one.
+ * Flights are answered connection by connection, each connection's in the order written.
+ */
+export function flightsOf(reading: Pick<PgWireReading, "lines">): PgWireFlight[] {
+  const out: PgWireFlight[] = [];
+  interface Open {
+    readOnly: boolean; bound: { account: string | null; key: string | null } | null;
+    statements: string[]; params: string[][]; bursts: Set<number>; begun: number; ahead: number; continues: boolean;
+  }
+  const textOf = (m: PgWireStatement): string[] => m.params.map((p) => (p === null ? "" : p.toString("utf8")));
+  const push = (o: Open, closed: PgWireFlight["closed"], closedIn: number | null): void => {
+    const door = o.bound === null ? "plain" : closedIn === o.begun ? "lone" : o.readOnly ? "read" : "write";
+    const flight: PgWireFlight = {
+      door, account: o.bound?.account ?? null, keyed: o.bound !== null && o.bound.key !== null,
+      statements: o.statements, bursts: o.bursts.size, ahead: o.ahead, closed, continues: o.continues,
+    };
+    if (o.bound !== null && o.bound.key !== null) flightKeys.set(flight, o.bound.key);
+    flightParams.set(flight, o.params);
+    out.push(flight);
+  };
+  for (const line of reading.lines) {
+    let open: Open | null = null;
+    for (const m of line) {
+      const words = wordsOf(m.text);
+      if (open === null) {
+        if (startsWord(words, "begin") || startsWord(words, "start transaction")) {
+          open = {
+            readOnly: words.includes("read only"), bound: null, statements: [], params: [], bursts: new Set([m.burst]),
+            begun: m.burst, ahead: 0, continues: false,
+          };
+        } else {
+          const alone: PgWireFlight = { door: "plain", account: null, keyed: false, statements: [m.text], bursts: 1, ahead: 0, closed: null, continues: false };
+          flightParams.set(alone, [textOf(m)]);
+          out.push(alone);
+        }
+        continue;
+      }
+      open.bursts.add(m.burst);
+      if (words === "commit" || words === "rollback" || words === "end" || words === "abort") {
+        push(open, words === "commit" || words === "end" ? "commit" : "rollback", m.burst);
+        open = null;
+      } else if (m.text === BINDER_SQL && m.params.length === 2) {
+        const account = m.params[0]?.toString("utf8") ?? "";
+        const key = m.params[1]?.toString("utf8") ?? "";
+        const bound = { account: account === "" ? null : account, key: key === "" ? null : key };
+        if (open.bound === null && open.statements.length === 0) {
+          open.bound = bound;
+        } else {
+          // Named again inside the transaction: what was sent so far ran under the binding before.
+          push(open, null, null);
+          open = { ...open, bound, statements: [], params: [], bursts: new Set([m.burst]), ahead: 0, continues: true };
+        }
+      } else if (startsWord(words, "savepoint") || startsWord(words, "rollback to") || startsWord(words, "release")) {
+        // A savepoint's own statements name no table and stay inside the flight.
+      } else {
+        open.statements.push(m.text);
+        open.params.push(textOf(m));
+        if (m.burst === open.begun && !open.continues) open.ahead++;
+      }
+    }
+    if (open !== null) push(open, null, null);
+  }
+  return out;
 }
 
 /**

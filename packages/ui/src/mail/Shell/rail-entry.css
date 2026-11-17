@@ -1,15 +1,22 @@
 @layer oh {
-  .oh-railentry {
-    /* Measures of this part that no token carries yet. */
+  /* The measures an entry shares with the two lines under a fold that are no entry: what an open fold says
+     where it holds nothing, and the line a name is typed into. */
+  .oh-railentry,
+  .oh-railnote,
+  .oh-railfield {
     --oh-railentry-gap: 10px;
     --oh-railentry-sign: 20px;
+    --oh-railentry-dot-side: 6px;
+    --oh-railentry-ground: var(--oh-hover, var(--hover-ground));
+  }
+
+  .oh-railentry {
+    /* Measures of this part that no token carries yet. */
     --oh-railentry-step: 12px;
     --oh-railentry-depth: 0;
     --oh-railentry-lead: calc(var(--s3) + var(--oh-railentry-step) * var(--oh-railentry-depth));
-    --oh-railentry-ground: var(--oh-hover, var(--hover-ground));
     --oh-railentry-cursor: inset 0 0 0 2px var(--focus);
     --oh-railentry-takes: inset 0 0 0 1.5px var(--ctl-ring);
-    --oh-railentry-dot-side: 6px;
 
     box-sizing: border-box;
     position: relative;
@@ -199,6 +206,57 @@
     background: var(--oh-railentry-ground);
   }
 
+  /* Under a fold, two lines that are no entry. Both stand as a smaller entry stands. */
+  .oh-railnote,
+  .oh-railfield {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    height: var(--h-s);
+    margin: 0;
+    color: var(--ink2);
+    font-size: var(--t-ui);
+    font-weight: var(--w-text);
+    white-space: nowrap;
+  }
+
+  /* The note starts where a smaller entry's name starts. */
+  .oh-railnote {
+    --oh-railnote-lead: calc(var(--s3) + var(--oh-railentry-sign) + var(--oh-railentry-gap));
+
+    padding: 0 var(--s3) 0 var(--oh-railnote-lead);
+    overflow: hidden;
+  }
+
+  .oh-railfield {
+    --oh-railfield-lead: var(--s3);
+    --oh-railfield-high: 26px;
+    --oh-railfield-ring: inset 0 0 0 var(--oh-focus) var(--focus);
+
+    gap: var(--oh-railentry-gap);
+    padding: 0 var(--s3) 0 var(--oh-railfield-lead);
+    border-radius: var(--r-pill);
+  }
+
+  /* Under the pointer the line wears an entry's ground, as the line that stood there did. */
+  .oh-railfield:hover {
+    background: var(--oh-railentry-ground);
+  }
+
+  /* It stands only while it is typed into, so it always wears the keys' ring, inside its own edge. */
+  .oh-railfield > .oh-railfield-input {
+    flex: 1;
+    min-width: 0;
+    height: var(--oh-railfield-high);
+    padding: 0 var(--s2);
+    border-radius: var(--r-row);
+    background: var(--soft);
+    box-shadow: var(--oh-railfield-ring);
+    color: var(--ink);
+    cursor: text;
+    outline: none;
+  }
+
   /* A row is dragged: a place that takes it says so, the one under the pointer most. */
   .oh-railentry[data-drop] {
     box-shadow: var(--oh-railentry-takes);
@@ -258,6 +316,20 @@
 
   :root[data-face="ohmarchy"] .oh-railentry[data-kind="sub"] {
     --oh-railentry-lead: calc(var(--s5) + var(--oh-railentry-step) * var(--oh-railentry-depth));
+  }
+
+  :root[data-face="ohmarchy"] .oh-railnote {
+    --oh-railnote-lead: var(--s5);
+
+    padding-right: var(--s2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-railfield {
+    --oh-railentry-gap: var(--s2);
+    --oh-railentry-ground: var(--oh-hover, var(--hover));
+    --oh-railfield-lead: var(--s5);
+
+    padding-right: var(--s2);
   }
 
   :root[data-face="ohmarchy"] .oh-railentry[data-kind="tool"] {

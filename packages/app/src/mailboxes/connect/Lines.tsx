@@ -2,11 +2,12 @@ import type { ReactNode } from "react";
 import { Button, RefusalLine } from "@ohmail/ui/base";
 import { SettingActs, SettingNote } from "@ohmail/ui/mail";
 import { authHintPreset, authHintWantsLinks } from "@ohmail/app-logic/mailboxes/connect/providers";
-import type { Said } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import { helpFacts } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
 import { useRefusalAtThePress } from "@ohmail/app-logic/press/refusal-at-the-press";
+import { NONE } from "../../host/index.js";
 import type { Drawn } from "./drawn.js";
 import { ProviderHelp } from "./ProviderNote.js";
+import { sentenceOf } from "./sentence.js";
 import { Tested } from "./Tested.js";
 import { EDIT_WORDS } from "./words.js";
 
@@ -18,10 +19,8 @@ import { EDIT_WORDS } from "./words.js";
 export function Outcome({ d }: { d: Drawn }): ReactNode {
   const { form, ask, words, say, text } = d;
   const { state } = form;
-  const sayIt = (said: Said): string =>
-    "server" in said ? said.server : text(said.ns)(said.key, said.values);
   const guarded = ask.guard?.said ?? null;
-  const shown = guarded ?? (state.shown === null ? null : sayIt(state.shown.said));
+  const shown = guarded ?? (state.shown === null ? null : sentenceOf(state.shown.said, text));
   const calm = guarded === null && state.shown?.calm === true;
   /* The refusal is brought into view and takes the keys. */
   const saidAt = useRefusalAtThePress<HTMLParagraphElement>(shown !== null && !calm ? shown : null);
@@ -97,7 +96,7 @@ export function Acts({ d }: { d: Drawn }): ReactNode {
       <Button type="submit" size="l" disabled={off}>
         {busy === "connect" || busy === "edit" ? say(words.working) : say(words.submit)}
       </Button>
-      {words.test ? (
+      {words.test && d.door.probe !== NONE ? (
         <Button kind="two" disabled={off} onPress={form.test}>
           {busy === "test"
             ? say(words.test.waiting, { host: form.hosts.imap })

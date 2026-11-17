@@ -132,6 +132,7 @@
     { "component": "RailEntry", "state": "key", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
     { "component": "RailEntry", "state": "tag", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
     { "component": "RailEntry", "state": "working" },
+    { "component": "RailField", "state": "rest", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
     {
       "component": "Dock",
       "state": "upright",

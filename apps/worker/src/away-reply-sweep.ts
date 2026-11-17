@@ -30,9 +30,12 @@ export interface AwayReplySweepRun {
 export interface AwayReplySweep {
   /** Has the gate closed for this process. */
   readonly done: boolean;
-  /** One attempt over the given accounts. A no-op once {@link done}. */
+  /**
+   * One attempt over the given accounts. A no-op once {@link done}. `handleOf` answers each
+   * account's own handle: an account's pages are read and written on it and on no other's.
+   */
   runOnce(
-    db: Tx, accountIds: readonly string[],
+    handleOf: (accountId: string) => Tx, accountIds: readonly string[],
     opts?: { log?: Logger; batch?: number; maxPages?: number;
              onError?: (accountId: string, err: unknown) => void },
   ): Promise<AwayReplySweepRun>;
@@ -56,7 +59,7 @@ export function makeAwayReplySweep(): AwayReplySweep {
   return {
     get done() { return done; },
 
-    async runOnce(db, accountIds, opts = {}) {
+    async runOnce(handleOf, accountIds, opts = {}) {
       if (done) return { accounts: 0, redelivered: 0, failed: 0, done: true };
 
       let redelivered = 0;
@@ -66,7 +69,7 @@ export function makeAwayReplySweep(): AwayReplySweep {
       for (const accountId of accountIds) {
         // ONE ACCOUNT'S FAILURE MUST NOT SKIP THE REST, and must not close the gate either.
         try {
-          const r = await awayReplyFlagRedeliverPass(db, {
+          const r = await awayReplyFlagRedeliverPass(handleOf(accountId), {
             accountId,
             afterId: cursors.get(accountId) ?? null,
             ...(opts.log === undefined ? {} : { log: opts.log }),

@@ -60,6 +60,18 @@
     "plain": ["[role=\"menu\"]"]
   },
   {
+    "key": "Menu/groups",
+    "reason": "The reference draws each group's title as a heading over its items and nothing around them; the kit holds each titled group in a group named by that title, so that a screen reader says the title as the keys enter it. The groups are read as plain boxes: their headings, items, words and surfaces stand where the reference's stand and every question still binds them.",
+    "since": "2026-11-17",
+    "plain": ["[role=\"group\"]"]
+  },
+  {
+    "key": "Menu/groups@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference's menu stands over a page's large sentence and starts on a fraction of a pixel, so the one pixel column at its left edge shows the letters behind it (56 pixels, from 93 to 149 under its top); the specimen stands on the plain ground. Names, boxes and drawn values bind, and the same menu in the other face is equal in its picture too.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "Dialog/delete",
     "reason": "The reference's specimen is a still box: no dialog role, and its sentence is a paragraph. The kit's dialog and its heading are read as such boxes, so their words, their dot and their sheet stand outside every node as the reference's do and still bind.",
     "since": "2026-11-15",

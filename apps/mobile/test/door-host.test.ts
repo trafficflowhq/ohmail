@@ -10,7 +10,7 @@ import {
   armConsentPress, forgetOrganizerSessionForTests, organizerDoor, organizerRestrictedSaid, standaloneLaunchGeneration,
   takeConsentPress,
 } from "../src/engine/organizer-session";
-import type { StandaloneEngine, StartPhoneEngine } from "../src/engine/standalone-door";
+import type { StandaloneEngine, StartPhoneEngine, StoreMigrating } from "../src/engine/standalone-door";
 import type { Attempt, ConnectionState, ForgetAttempt } from "../src/net/connection";
 import { installPinning, type PinningNative } from "../src/net/host-pinning";
 import type { Negotiation, PairAdmission, ProbeOutcome, ShellSession } from "../src/net/pairing";
@@ -20,6 +20,7 @@ import type { DoorAt, DoorConfig, DoorEvent, DoorKind, DoorRequests, DoorState, 
 import { DoorHost, SCAN_REARM_MS, type DoorConnection } from "../src/shell/door-host";
 import { said } from "../src/shell/door-state";
 import { TICKET_LIFE_MS } from "../src/shell/door-tickets";
+import { bootMigratingLines, type BootMigrating } from "../src/ui/boot-migrating";
 
 const ORIGIN = "https://appassets.androidplatform.net";
 const LOCAL = "http://sidecar";
@@ -315,6 +316,54 @@ describe("the door's host: pairing", () => {
     expect(w.conn.probes).toHaveLength(2);
   });
 
+  it("reads a typed address as the server step does: the confirmation shows the host the code goes to", async () => {
+    const w = world();
+    // Each would be shown whole on the confirmation and dialled at the host after the "@", or under a path.
+    for (const address of ["https://mail.example.test@other.example.test", "mail.example.test:8443@other.example.test", "https://mail.example.test/pair"]) {
+      expect(await w.ask("hand", { address, token: CODE_TYPED }), address).toEqual({ k: "refused", said: { code: "baseNotAnAddress", args: [] } });
+    }
+    expect(w.conn.probes).toEqual([]);
+    const offer = await w.ask("hand", { address: " Mail.Example.Test/ ", token: CODE_TYPED });
+    expect(w.conn.probes).toEqual([["https://mail.example.test", null]]);
+    expect(offer).toMatchObject({ k: "offers", facts: { address: "https://mail.example.test" } });
+  });
+
+  it("a link the grammar refuses is no code: a newer code's link or one with a query goes to no server", async () => {
+    const w = world();
+    await w.ask("server.ask", { address: "mail.example.test" });
+    for (const token of [`https://other.example.test/pair#k2.${KEY}.${CODE_PASTED}`, `https://other.example.test/pair?from=desk#${CODE_PASTED}`]) {
+      for (const address of ["https://mail.example.test", null]) {
+        expect(await w.ask("hand", { address, token }), `${token} at ${address}`).toEqual({ k: "refused", said: { code: "pairCodeRejected", args: [] } });
+      }
+    }
+    expect(w.conn.probes).toEqual([]);
+    expect(w.conn.redeemed).toEqual([]);
+  });
+
+  it("calls a server hosted only at the hosted address, on the confirmation and in the list", async () => {
+    const w = world();
+    w.conn.probe = (origin) => ({ kind: "offers", admission: { origin, pin: null, flavor: "managed", apiBase: origin, provisionalPin: false, probed: true } });
+    expect(await w.ask("hand", { address: "https://mail.example.test", token: CODE_TYPED }))
+      .toMatchObject({ k: "offers", facts: { what: "server", address: "https://mail.example.test" } });
+    expect(await w.ask("hand", { address: "https://api.ohmail.app", token: CODE_TYPED }))
+      .toMatchObject({ k: "offers", facts: { what: "hosted", address: "https://api.ohmail.app" } });
+    w.conn.profiles = [profile({ flavor: "managed" }), profile({ id: "row-2", origin: "https://api.ohmail.app", flavor: "managed" })];
+    expect((await w.ask("config", {})).state.paired.map((row) => [row.address, row.kind]))
+      .toEqual([["https://mail.example.test", "server"], ["https://api.ohmail.app", "hosted"]]);
+  });
+
+  it("a link whose host reads as one name and is dialled as another is no code, pasted or scanned", async () => {
+    const w = world();
+    // A Cyrillic "е": drawn as desk, dialled as its xn-- name.
+    const lookalike = `https://dеsk.example.test/pair#${CODE_PASTED}`;
+    expect(await w.ask("hand", { address: null, token: lookalike })).toEqual({ k: "refused", said: { code: "pairCodeRejected", args: [] } });
+    await w.ask("scan.start", { rect: { x: 0, y: 0, w: 10, h: 10 } });
+    w.host.scanned(lookalike);
+    await settle();
+    expect(w.events.at(-1)).toMatchObject({ type: "scan", scan: { k: "notACode" } });
+    expect(w.conn.probes).toEqual([]);
+  });
+
   it("asks an address what it is, holds a reached one for the code typed next, and says why an unreached one is not", async () => {
     const w = world();
     expect(await w.ask("server.ask", { address: "mail.example.test" }))
@@ -394,6 +443,7 @@ describe("the door's host: nothing secret crosses outward", () => {
     await w.ask("hand", { address: "ignored", token: `https://192.168.1.20:8443/pair#k1.${KEY}.${CODE_PASTED}` });
     // A refused probe that repeats what was typed, and a link pasted where the address goes.
     w.conn.probe = (origin) => ({ kind: "refused", reason: refuse("pairBadAddress", `${origin} ${CODE_TYPED}`) });
+    await w.ask("hand", { address: "https://192.168.1.20:8443", token: CODE_TYPED });
     await w.ask("hand", { address: `https://192.168.1.20:8443/pair#${CODE_PASTED}`, token: CODE_TYPED });
     w.conn.probe = (origin) => ({ kind: "refused", reason: refuse("pairBadAddress", origin) });
     await w.ask("hand", { address: `https://192.168.1.20:8443/pair#${CODE_PASTED}`, token: "x" });
@@ -408,7 +458,7 @@ describe("the door's host: nothing secret crosses outward", () => {
     expect(await w.ask("open", { input: INPUT })).toEqual({ ok: true, mailboxId: "engine-account" });
     forgetOrganizerSessionForTests();
     w.conn.adopt = async () => ({ ok: false, reason: refuse("standaloneNotStored", `the keystore said ${PASSWORD}`) });
-    expect(await w.ask("open", { input: INPUT })).toEqual({ ok: false, code: "standaloneNotStored", field: null, args: [""] });
+    expect(await w.ask("open", { input: INPUT })).toEqual({ ok: false, code: "standaloneNotStored", field: null, args: [] });
     // A session refused, a sync failed and a forget left something, each in words of the platform's.
     w.conn.state = { k: "refused", reason: refuse("pairingsUnreadable", "the keystore could not be read") };
     w.conn.syncError = "the round failed";
@@ -504,6 +554,15 @@ describe("the door's host: a mailbox opened on this phone", () => {
     expect(organizerRestrictedSaid()).toBe(true);
   });
 
+  it("a refused open crosses as its code and its field alone: native's words, a fault's or a server's, stay native", async () => {
+    const w = world();
+    w.conn.adopt = async () => ({ ok: false, reason: refuse("standaloneNotStored", "the keystore is held by another app") });
+    expect(await w.ask("open", { input: INPUT })).toEqual({ ok: false, code: "standaloneNotStored", field: null, args: [] });
+    forgetOrganizerSessionForTests();
+    w.conn.adopt = async () => ({ ok: false, reason: refuse("standaloneNotStored", refuse("verbatimDetail", "the server said: try later")) });
+    expect(await w.ask("open", { input: INPUT })).toEqual({ ok: false, code: "standaloneNotStored", field: null, args: [] });
+  });
+
   it("withholds the way in a build that cannot organize: told so, and an open is refused before anything is taken", async () => {
     const w = world({ offered: false });
     expect((await w.ask("config", {})).organizes).toBe("withheld");
@@ -536,6 +595,36 @@ describe("the door's host: the list of servers", () => {
     w.conn.state = { k: "ended", reason: refuse("pairEnded") };
     expect((await w.ask("config", {})).state).toMatchObject({ session: "ended", said: { code: "pairEnded", args: [] }, openId: null });
     expect((await world({ asked: "servers" }).ask("config", {})).at, "asked for by the open mailbox's page").toBe("servers");
+  });
+
+  it("tells a store's upgrade under a connect as its count and its start, only where the boot screen would count it, and nothing of it once the connect is over", async () => {
+    const w = world();
+    const origin = "https://mail.example.test";
+    const upgrade = (m: StoreMigrating): BootMigrating => ({ ...m, since: 1_700_000_000_000 });
+    const told = async (m: BootMigrating | undefined) => {
+      w.conn.state = m === undefined ? { k: "connecting", origin } : { k: "connecting", origin, migrating: m };
+      w.host.changed();
+      const event = lastState(w.events)!;
+      expect((await w.ask("config", {})).state.migrating, "the config says what the event says").toEqual(event.migrating);
+      expect(event.session).toBe("opening");
+      return event.migrating;
+    };
+    expect(await told(undefined)).toBeNull();
+    expect(await told(upgrade({ applied: 3, pending: 12, fresh: false }))).toEqual({ applied: 3, pending: 12, since: 1_700_000_000_000 });
+    // The later announcement of the same upgrade keeps the phase's start.
+    expect(await told(upgrade({ applied: 11, pending: 12, fresh: false }))).toEqual({ applied: 11, pending: 12, since: 1_700_000_000_000 });
+    // A first launch's empty store and a single entry have nothing to count: the boot screen's own rule, row by row.
+    for (const m of [
+      { applied: 0, pending: 12, fresh: true }, { applied: 0, pending: 1, fresh: false }, { applied: 0, pending: 0, fresh: false },
+      { applied: 1, pending: 2, fresh: false }, { applied: 4, pending: 40, fresh: true },
+    ])
+      expect((await told(upgrade(m))) !== null, JSON.stringify(m)).toBe(bootMigratingLines(upgrade(m), 0).count !== null);
+    // Over: a live session, a refusal and an idle phone say none.
+    for (const state of [shell(profile({})), { k: "refused", reason: refuse("pairEnded") }, { k: "idle" }] as ConnectionState[]) {
+      w.conn.state = state;
+      w.host.changed();
+      expect(lastState(w.events)!.migrating, state.k).toBeNull();
+    }
   });
 
   it("after a forget of the open pairing the next state holds no row of it, and what could not be taken back stands", async () => {

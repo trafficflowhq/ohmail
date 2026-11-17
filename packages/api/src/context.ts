@@ -1,5 +1,5 @@
-import { bindDb } from "@trafficflow/db";
-import type { BoundDb, Db, ServiceContext, UnboundDb } from "@trafficflow/services/mail";
+import { assertBinding, bindDb, bindingOf, BindingRefusedError } from "@trafficflow/db";
+import type { BoundDb, ServiceContext, UnboundDb } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 
 /**
@@ -34,30 +34,73 @@ export function clientIp(req: Request): string {
   return hops.length > 0 ? hops[hops.length - 1]! : "";
 }
 
-/** The handle each request's context holds, re-minted when the handle or the session's account changes. */
-const contextHandles = new WeakMap<ApiDeps, { readonly db: Db; readonly account: string | null; readonly bound: BoundDb | UnboundDb }>();
+/**
+ * Refuse a request's handle that is not as its host minted it: bound to an account, or carrying a
+ * key. The host hands every request a handle bound to nothing; one that names more was bound for
+ * another request, and a second request on its container must fail, never run as the first.
+ */
+function refuseSpentHandle(deps: ApiDeps, what: string): void {
+  const held = bindingOf(deps.db);
+  if (held !== undefined && (held.account !== null || held.keyed)) {
+    throw new BindingRefusedError(`${what} was asked on a request whose handle is bound already`);
+  }
+}
 
 /**
- * The request's handle: bound to the session's account, or to nothing when the request has no
- * session. Chosen by the session alone, never by an id the request carries; a session whose account
- * is empty or malformed is refused by the binder. One per request (`withSessionAcquireCeiling`
- * swaps `deps.db` before the session is read, and a later call sees the swap).
+ * BIND THE REQUEST TO ITS SESSION'S ACCOUNT: the one place a request's handle comes to name an
+ * account. Called by `withSession` alone, as its last step: after the token was resolved, after an
+ * enrollment session was dropped on a route that does not admit it, after the 401. From then on
+ * `deps.db` is the request's handle, and every statement a route or a service makes through it
+ * rides a transaction that names the account first.
+ *
+ * The account is `deps.session.accountId`, the session row's own, and nothing else is read: no
+ * body, query, path, header or cookie, and no other field of `deps`. A session whose account is
+ * empty or no id is refused by the binder, never bound to nothing. A request with no session keeps
+ * the handle bound to nothing. The session doors' second handle (`deps.sessionDb`) is closed here:
+ * nothing swaps the request's handle after it was bound.
+ *
+ * A handle that already names an account, or carries a key, is refused: a container handed to a
+ * second request fails here. A handle with no binding at all is one no host minted (a test's
+ * container, the desktop's until its host mints too): it is left as it is, and
+ * {@link serviceContext} binds each context from the session.
+ */
+export function bindRequest(deps: ApiDeps): void {
+  refuseSpentHandle(deps, "the session's binding");
+  delete deps.sessionDb;
+  if (deps.session && bindingOf(deps.db) !== undefined) {
+    deps.db = bindDb(deps.db, { account: deps.session.accountId });
+  }
+}
+
+/**
+ * THE HANDLE OF A DOOR THAT RUNS FOR NO ACCOUNT: a clock's route, which walks rows of many accounts
+ * and binds each row's own (`passContext`). Bound to nothing, with no key: the request's handle as
+ * the host minted it. A request that was bound to an account has no such door, and is refused.
+ */
+export function doorDb(deps: ApiDeps): UnboundDb {
+  refuseSpentHandle(deps, "a door without an account");
+  return bindDb(deps.db, { account: null });
+}
+
+/**
+ * A context's handle. On a host that mints the request's handle it is `deps.db` itself, which
+ * {@link bindRequest} bound: the session and the handle must agree, and a handle that names
+ * another account, or nothing while a session stands, is refused. A handle with no binding (no
+ * host minted it) is bound here from the session's row, each time it is asked.
  */
 function contextDb(deps: ApiDeps): BoundDb | UnboundDb {
-  const session = deps.session;
-  const account = session ? session.accountId : null;
-  const held = contextHandles.get(deps);
-  if (held !== undefined && held.db === deps.db && held.account === account) return held.bound;
-  const bound = session ? bindDb(deps.db, { account: session.accountId }) : bindDb(deps.db, { account: null });
-  contextHandles.set(deps, { db: deps.db, account, bound });
-  return bound;
+  const account = deps.session ? deps.session.accountId : null;
+  const db = deps.db;
+  if (bindingOf(db) === undefined) return account === null ? bindDb(db, { account: null }) : bindDb(db, { account });
+  assertBinding(db, account);
+  return db;
 }
 
 /**
  * Build the {@link ServiceContext} an AuthService method runs against. Identity comes from
  * `deps.session` (the session row, never the body): protected routes carry
- * accountId/userId/sessionId and a handle bound to that account; public pre-session routes have
- * accountId="" / userId=null and a handle bound to nothing. `ip`/`userAgent` are threaded for
+ * accountId/userId/sessionId and the request's handle, bound to that account; public pre-session
+ * routes have accountId="" / userId=null and a handle bound to nothing. `ip`/`userAgent` are threaded for
  * audit + lockout. `origin` is the raw `Origin` header, threaded for multi-origin WebAuthn:
  * ceremonies are admitted only from an allow-listed origin and then bound to it; native clients
  * send none, which means the deployment's default origin.

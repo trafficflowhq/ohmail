@@ -62,7 +62,6 @@ const studio: CalendarRecord = {
   color: "#3366cc",
   access: "owner",
   shown: true,
-  isDefault: true,
   timeZone: ZURICH,
   window: null,
   defaultAlarms: [],

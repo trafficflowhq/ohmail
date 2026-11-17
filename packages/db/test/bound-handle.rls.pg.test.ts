@@ -2,11 +2,19 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { sql } from "drizzle-orm";
-import { bindDb, BINDING_READERS_SQL } from "../src/bound.js";
+import { bindDb, BindingRefusedError, onServerPool } from "../src/bound.js";
 import { closePooledDbs, FlightClosedError, makeOwnedDb, makePooledDb, type OwnedDb } from "../src/client.js";
+import { dropInvalidLeftovers, ensureConcurrentIndexes, type ConcurrentIndexSpec } from "../src/concurrent-index.js";
+import { brandDialect } from "../src/dialect/index.js";
+import { ensureHotPathIndexes } from "../src/hot-path-indexes.js";
 import { readFlightOf } from "../src/read-flight.js";
-import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
+import { reclaimSpace } from "../src/reclaim-space.js";
+import { LOCK_READERS, READER_SCHEMA, readerStatement } from "../src/row-security/names.js";
+import { ensureSearchExtensions, ensureWithheldProvenanceIndex, ensureWordIndex, retireOldSearch } from "../src/search-setup.js";
+import { PG_TEST_URL, realPgAvailable, recordPgWire } from "../src/testing.js";
 import { rlsBench, type Bench, type BenchRole } from "./_rls-bench.js";
 
 /**
@@ -21,6 +29,8 @@ import { rlsBench, type Bench, type BenchRole } from "./_rls-bench.js";
  * database, a pooler in transaction mode with one backend per role. `TF_REQUIRE_POOLER=1` makes its
  * absence a failure; without it the pooler half is skipped and says why.
  */
+// Before the first connection: the recorder reads what a session-level function writes, or does not.
+const wire = recordPgWire();
 const PG_UP = await realPgAvailable();
 const POOLER = (process.env.TF_POOLER_ADDRESS ?? "").trim();
 const REQUIRE_POOLER = process.env.TF_REQUIRE_POOLER === "1";
@@ -62,10 +72,12 @@ describe.skipIf(!PG_UP)("the account's binding under forced policies (real Postg
     admin = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
     bench = await rlsBench(admin, PG_TEST_URL);
     s = bench.schema;
-    // The readers as the setup runs them, made in this file's own schema (the settings' names untouched).
-    await admin.unsafe(BINDING_READERS_SQL
-      .replace("create schema if not exists ohmail;", `create schema if not exists ${s};`)
-      .replaceAll("function ohmail.", `function ${s}.`));
+    // The lock's own readers, as its setup makes them, in this file's own schema (the settings' names untouched).
+    for (const r of LOCK_READERS) {
+      const made = readerStatement(r);
+      expect(made).toContain(`function ${READER_SCHEMA}.${r.name}()`);
+      await admin.unsafe(made.replace(`function ${READER_SCHEMA}.${r.name}()`, `function ${s}.${r.name}()`));
+    }
     await admin.unsafe(`create table ${s}.owned_rows (id serial primary key, account_id uuid not null, note text not null)`);
     await admin.unsafe(`create table ${s}.keyed_rows (id serial primary key, key text not null, note text not null)`);
     await admin.unsafe(`create table ${s}.staff_rows (id serial primary key, note text not null)`);
@@ -226,5 +238,87 @@ describe.skipIf(!PG_UP)("the account's binding under forced policies (real Postg
         kept!.execute(sql`select note from owned_rows`).then(notes, (e: unknown) => e));
       expect(late).toBeInstanceOf(FlightClosedError);
     });
+
+    it.skipIf(skip)("a bound handle handed to a session-level build is refused before a byte is written", async () => {
+      const spec: ConcurrentIndexSpec = {
+        name: "owned_rows_note_idx", table: "owned_rows",
+        ddl: sql`create index concurrently if not exists "owned_rows_note_idx" on owned_rows (note)`,
+      };
+      // Warm: the pool's connection is open, so a write below would be a statement's and not a sign-in's.
+      await db.execute(sql`select 1`);
+      for (const view of [bindDb(db, { account: A }), bindDb(db, { account: null }), bindDb(db, { account: null, key: "k-one" })]) {
+        // Each call below is also the type's refusal: a bound handle does not fit the parameter.
+        const builds: Array<() => Promise<unknown>> = [
+          // @ts-expect-error a bound handle is not the pool's own
+          () => ensureConcurrentIndexes(view, [spec], { label: "a test's index build" }),
+          // @ts-expect-error a bound handle is not the pool's own
+          () => dropInvalidLeftovers(view, [spec.name], { label: "a test's drop of leftovers" }),
+          // @ts-expect-error a bound handle is not the pool's own
+          () => ensureSearchExtensions(view),
+          // @ts-expect-error a bound handle is not the pool's own
+          () => ensureWordIndex(view),
+          // @ts-expect-error a bound handle is not the pool's own
+          () => retireOldSearch(view),
+          // @ts-expect-error a bound handle is not the pool's own
+          () => ensureWithheldProvenanceIndex(view),
+          // @ts-expect-error a bound handle is not the pool's own
+          () => ensureHotPathIndexes(view),
+        ];
+        for (const build of builds) {
+          wire.start();
+          await expect(build()).rejects.toBeInstanceOf(BindingRefusedError);
+          expect(wire.read().flushes).toEqual([]);
+        }
+      }
+      const [built] = rows(await admin.unsafe(`select count(*)::int as n from pg_indexes where schemaname = '${s}' and indexname = 'owned_rows_note_idx'`));
+      expect(built?.n).toBe(0);
+    });
+
+    it.skipIf(skip)("a server pool is sent nothing to reclaim a table's space: not on its own handle, not on a view", async () => {
+      expect(onServerPool(db)).toBe(true);
+      await db.execute(sql`select 1`);
+      for (const handle of [db, bindDb(db, { account: A }), bindDb(db, { account: null })]) {
+        expect(onServerPool(handle)).toBe(true);
+        wire.start();
+        await reclaimSpace(handle, "scheduled_send_files");
+        await reclaimSpace(handle, "outbound_sent_copies");
+        expect(wire.read().flushes).toEqual([]);
+      }
+    });
+  });
+});
+
+describe("a device's store is sent the statement that hands a table's space back", () => {
+  it("on PGlite, once per call, outside any transaction, on the store's own handle and through a view of it", async () => {
+    const client = new PGlite();
+    await client.exec("create table scheduled_send_files (id int primary key, data text)");
+    await client.exec("create table outbound_sent_copies (id int primary key, data text)");
+    await client.exec("insert into scheduled_send_files select g, repeat('x', 2000) from generate_series(1, 200) g");
+    await client.exec("delete from scheduled_send_files");
+    const store = brandDialect(drizzlePglite(client), "pg");
+    expect(onServerPool(store)).toBe(false);
+    const sent: string[] = [];
+    const failed: unknown[] = [];
+    const query = client.query.bind(client);
+    client.query = ((text: string, ...rest: unknown[]) => {
+      sent.push(text);
+      const answer = (query as (...a: unknown[]) => Promise<unknown>)(text, ...rest);
+      answer.catch((err: unknown) => { failed.push(err); });
+      return answer;
+    }) as typeof client.query;
+    await reclaimSpace(store, "scheduled_send_files");
+    await reclaimSpace(bindDb(store, { account: A }), "outbound_sent_copies");
+    expect(sent).toEqual(["VACUUM scheduled_send_files", "VACUUM outbound_sent_copies"]);
+    expect(failed).toEqual([]);
+    await client.close();
+  });
+
+  it("a store that is not Postgres is sent nothing, and a table outside the two is refused", async () => {
+    const sent: unknown[] = [];
+    const sqlite = brandDialect({ run: (q: unknown) => { sent.push(q); } }, "sqlite");
+    await reclaimSpace(sqlite, "scheduled_send_files");
+    expect(sent).toEqual([]);
+    const store = brandDialect(drizzlePglite(new PGlite()), "pg");
+    await expect(reclaimSpace(store, "accounts" as never)).rejects.toBeInstanceOf(TypeError);
   });
 });

@@ -1,8 +1,8 @@
 import { and, asc, count, desc, eq, gt, isNotNull, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { mailboxes, outboundSentCopies } from "@trafficflow/db";
-import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
-import { bridgeDb, bridgeTx, dbFor, type Db, type ServiceContext } from "./context.js";
+import { createLogger, type Logger, type SendAdapter } from "@trafficflow/core/mail";
+import { bridgeDb, bridgeTx, passContext, type Db, type OpenPassSendAdapter, type PassContext } from "./context.js";
 import { ServiceError, TransientDialRefusal } from "./errors.js";
 import { SEND_RECONCILE_BATCH, SEND_RECONCILE_CLOSE_CEILING_MS } from "./send-reconcile-pass.js";
 import {
@@ -120,7 +120,7 @@ export const SEND_COPY_OWED_DIAL_DEADLINE_MS = 10_000;
 
 export interface OwedSentCopyPassDeps {
   /** The send transport — admitted on Cloud, `makeSendAdapter` with the reconciler's deadlines on self-host. */
-  openSendAdapter: OpenSendAdapter;
+  openSendAdapter: OpenPassSendAdapter;
   /** The projection's storage cap, as on the send door. */
   resolveStorageCap: NonNullable<SendDeps["resolveStorageCap"]>;
   /** The wall's gate, read on the claim transaction's handle; absent ⇒ every account may dial. */
@@ -202,7 +202,7 @@ function triesFirst(a: DueRow, b: DueRow): number {
 }
 
 /** One bounded pass. Never throws for a per-row fault; a claim fault propagates (the route's 503). */
-export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): Promise<OwedSentCopyPassResult> {
+export async function runOwedSentCopyPass(walk: Db, deps: OwedSentCopyPassDeps): Promise<OwedSentCopyPassResult> {
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());
   const sends = deps.sends ?? sendService;
@@ -211,7 +211,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
   const startedAt = now().getTime();
   const ceilingMs = deps.budgetMs === undefined ? SEND_COPY_OWED_HOST_CALL_CEILING_MS : SEND_COPY_OWED_CALL_CEILING_MS;
 
-  const rows = await claimOwed(db, now(), deps.accountEligible, sends, log, out);
+  const rows = await claimOwed(walk, now(), deps.accountEligible, sends, log, out);
   out.claimed = rows.length;
   /** The copies this pass leased (send → mailbox), in the order it took them; a charged one keeps its own wait. */
   const leased = new Map<string, string>();
@@ -244,9 +244,8 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
   const forgetIfSpent = (mailboxId: string): void => {
     if (breached.has(mailboxId) || held.get(mailboxId)?.isLive?.() === false) forget(mailboxId);
   };
-  const contextOf = (row: DueRow): ServiceContext => (
-    { db: dbFor(db, row.accountId), accountId: row.accountId, userId: null, now, requestId: `sent-copy:${row.sendId}` }
-  );
+  const contextOf = (row: DueRow): PassContext =>
+    passContext(walk, row.accountId, { userId: null, now, requestId: `sent-copy:${row.sendId}` });
   /** One row's filing; null when it is left for a later pass with no verdict (parked, late, no login left, a fault). */
   const fileRow = async (row: DueRow): Promise<(OwedCopyFiling & { admissionRefused: boolean }) | null> => {
     tried.add(row.sendId);
@@ -261,7 +260,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
       if (open) return open;
       let real: SendAdapter;
       try {
-        real = await deps.openSendAdapter(row.mailboxId);
+        real = await deps.openSendAdapter(row.mailboxId, contextOf(row).db);
       } catch (err) {
         admissionRefused = err instanceof TransientDialRefusal;
         // Refused before the wire (admission, no credentials): no login spent.
@@ -296,7 +295,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
       // Refused, or its mailbox not reached: tried. A host-wide admission refusal tried nothing.
       else if (filing.step === "refused" || !admissionRefused) {
         if (filing.step === "refused" && sentCopyRefusalOf(filing.err, filing.files) === "full") full.add(row.mailboxId);
-        await takeTurn(db, row).catch((err: unknown) => {
+        await takeTurn(contextOf(row).db, row).catch((err: unknown) => {
           log.error("send_sent_copy_pass_turn_failed", { accountId: row.accountId, sendId: row.sendId, err });
         });
       }
@@ -332,7 +331,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
     const mine = [row.sendId, ...[...leased.keys()].filter((id) => leased.get(id) === row.mailboxId && id !== row.sendId)];
     try {
       const isFull = full.has(row.mailboxId);
-      const wait = await waitOnLadder(db, row, now(), mine, isFull);
+      const wait = await waitOnLadder(contextOf(row).db, row, now(), mine, isFull);
       if (wait) {
         log.warn("send_sent_copy_mailbox_waits", {
           accountId: row.accountId, mailboxId: row.mailboxId, run: wait.run, until: wait.until.toISOString(),
@@ -350,7 +349,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
   const nextToTry = async (failed: DueRow): Promise<DueRow | null> => {
     const here = rows.filter((r) => !tried.has(r.sendId) && r.eligible
       && r.mailboxId === failed.mailboxId && r.accountId === failed.accountId).sort(triesFirst)[0] ?? null;
-    const more = await claimToTell(db, failed, now(), tried, here, sends);
+    const more = await claimToTell(contextOf(failed).db, failed, now(), tried, here, sends);
     if (more !== null) {
       out.claimed += 1;
       leased.set(more.sendId, more.mailboxId);
@@ -447,7 +446,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
       fetch: (accountId, ids, at) => within("uploads", source.fetch(accountId, ids, at), SEND_COPY_OWED_FILES_FETCH_CEILING_MS),
     };
     const connect = async (): Promise<SendAdapter> => {
-      const dialing = deps.openSendAdapter(row.mailboxId);
+      const dialing = deps.openSendAdapter(row.mailboxId, contextOf(row).db);
       try {
         real = await within("dial", dialing);
       } catch (err) {
@@ -480,17 +479,17 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
       if (filing.step === "dropped") { out.dropped += 1; return true; }
       if (filing.step === "skipped" || (filing.step === "unreachable" && admissionRefused)) {
         out.deferred += 1;
-        await takeTurn(db, row).catch((err: unknown) => {
+        await takeTurn(contextOf(row).db, row).catch((err: unknown) => {
           log.error("send_sent_copy_pass_turn_failed", { accountId: row.accountId, sendId: row.sendId, err });
         });
         return false;
       }
       if (filing.step === "refused" && sentCopyRefusalOf(filing.err, filing.files) === "full") {
         // Its turn taken, the mailbox's next ask is another copy's: one that fits a little room goes.
-        await takeTurn(db, row).catch((err: unknown) => {
+        await takeTurn(contextOf(row).db, row).catch((err: unknown) => {
           log.error("send_sent_copy_pass_turn_failed", { accountId: row.accountId, sendId: row.sendId, err });
         });
-        await waitFull(db, row, now());
+        await waitFull(contextOf(row).db, row, now());
         out.failed += 1;
         log.warn("send_sent_copy_mailbox_waits", { accountId: row.accountId, mailboxId: row.mailboxId, sendId: row.sendId, kind: "full" });
         return true;
@@ -512,7 +511,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
   /** Mailboxes the lane took a copy of in this pass: one each, so no one mailbox holds the lane. */
   const takenFrom = new Set<string>();
   for (let taken = 0; taken < SENT_COPY_FILES_PER_PASS && filesLeft() >= filesLeast; taken += 1) {
-    const row = await claimFilesCopy(db, now(), deps.accountEligible, sends, out, takenFrom);
+    const row = await claimFilesCopy(walk, now(), deps.accountEligible, sends, out, takenFrom);
     if (row === null || row.filesUntil === null) break;
     out.claimed += 1;
     takenFrom.add(row.mailboxId);
@@ -520,7 +519,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
   }
 
   // scoped-by: a count over every account for the scheduler's health row; no row's content leaves
-  const [left] = await db.select({ n: count() }).from(outboundSentCopies).where(eq(outboundSentCopies.seq, 0));
+  const [left] = await walk.select({ n: count() }).from(outboundSentCopies).where(eq(outboundSentCopies.seq, 0));
   out.remaining = Number(left?.n ?? 0);
   return out;
 }

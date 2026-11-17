@@ -22,6 +22,7 @@ import {
   KeyHelp,
   KeyHint,
   Menu,
+  MenuGroup,
   MenuItem,
   MenuRule,
   Notice,
@@ -784,6 +785,39 @@ const overlays: KitSubject[] = [
     ),
     force('[role="menuitemradio"]', "focus", "focus-visible"),
   ),
+  /* A sender's place in the first run: two groups said by their own titles, a rule, and one answer to tick. */
+  menu("groups", null, () => (
+    <Menu open onClose={shut} anchor={NOWHERE} label="Lena Kaufmann" kind="context">
+      <MenuGroup title="Goes to">
+        <MenuItem checked note="suggested" keyHint="o">
+          Ohbox
+        </MenuItem>
+        <MenuItem checked={false} keyHint="r">
+          News
+        </MenuItem>
+        <MenuItem checked={false} keyHint="c">
+          Receipts
+        </MenuItem>
+        <MenuItem checked={false} keyHint="n">
+          Screen out
+        </MenuItem>
+        <MenuItem checked={false} keyHint="x">
+          Spam
+        </MenuItem>
+      </MenuGroup>
+      <MenuRule />
+      <MenuGroup title="Applies to">
+        <MenuItem checked>This sender</MenuItem>
+        <MenuItem checked={false} note="atelier-eichspan.example">
+          Whole domain
+        </MenuItem>
+      </MenuGroup>
+      <MenuRule />
+      <MenuItem checked={false} keyHint="⇧">
+        Mark read too
+      </MenuItem>
+    </Menu>
+  )),
   menu(
     "field",
     290,

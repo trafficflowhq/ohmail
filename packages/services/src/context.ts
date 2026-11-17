@@ -2,9 +2,11 @@ import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type { mailSchema } from "@trafficflow/db/mail";
 import { carryDialect, dialect, type LockMode } from "@trafficflow/db/dialect";
 import {
-  AccountErasedError, bindDb, carryBinding, claimIdempotencyKey, fencedAccountOf, fencedAccountWrite, inTransactionHandle,
-  markFenced, readAccountErasedAt, type AccountBound, type LedgerTx, type NothingBound, type Tx,
+  AccountErasedError, bindDb, bindingOf, BindingRefusedError, carryBinding, claimIdempotencyKey, fencedAccountOf,
+  fencedAccountWrite, inTransactionHandle, markFenced, readAccountErasedAt,
+  type AccountBound, type LedgerTx, type NothingBound, type Tx,
 } from "@trafficflow/db";
+import type { SendAdapter } from "@trafficflow/core/mail";
 import { asServiceRefusal } from "./erasure-fence.js";
 import { IdempotencyRaceLost } from "./errors.js";
 import type { SearchTiming } from "./search-timing.js";
@@ -180,6 +182,38 @@ export interface ServiceContext {
   /** Where a search answer spent its time, by phase (`search-timing.ts`). Absent: not recorded. */
   timing?: SearchTiming;
 }
+
+/**
+ * THE CONTEXT OF ONE ROW OF A PASS. A pass walks rows of many accounts on a handle that names none
+ * (`walk`), and whatever it does for one row runs on this: a context whose handle is bound to
+ * `accountId`. The handle and the context's account come from the one argument, so they cannot
+ * disagree.
+ *
+ * `accountId` is the account of the row that named the work, read or claimed in this pass: never
+ * an id the request carries, never the row before it, never one kept from outside the loop. An
+ * empty or malformed id is refused by the binder, and no context is ever bound to nothing here. A
+ * walk that carries a key is refused: a keyed door (the session's look-up, the staff door) binds
+ * no account. No other place builds a context for an account outside a request.
+ */
+export function passContext(
+  walk: Db, accountId: string, rest: Omit<ServiceContext, "db" | "accountId">,
+): PassContext {
+  if (bindingOf(walk)?.keyed === true) {
+    throw new BindingRefusedError("a pass's context was asked on a handle that carries a key");
+  }
+  return { ...rest, db: bindDb(walk, { account: accountId }), accountId };
+}
+
+/** What {@link passContext} answers: a context whose handle is bound to its own account. */
+export type PassContext = ServiceContext & { db: BoundDb };
+
+/**
+ * A PASS'S DIAL FOR ONE ROW: the adapter of `mailboxId`, opened on `db`, the handle of the row the
+ * pass is working on ({@link passContext}). What the opening reads of that mailbox (its credential,
+ * its Sent folder, its connection slot) it reads there, under the row's account, and never on the
+ * walk. A host with one store and one account may ignore `db`.
+ */
+export type OpenPassSendAdapter = (mailboxId: string, db: BoundDb) => Promise<SendAdapter>;
 
 /** A search's supersede checks: `check` throws once replaced; `turn` lets the loop read the next request first, then checks. */
 export interface SearchSupersede {

@@ -16,7 +16,7 @@ import {
  * is the same surface minus `ai/*`; every name below lives outside it. */
 import { CONSENTING_DESTINATIONS, normalizeMime } from "@trafficflow/core/mail";
 import {
-  ServiceError, dbFor, requireImapUint32, withAccountTx, type ServiceContext,
+  ServiceError, requireImapUint32, withAccountTx, type ServiceContext,
 } from "@trafficflow/services/mail";
 import {
   WINDOW_CURSOR_MAX_CHARS, mergeWindowLanes, midKey, mintWindowCursor, parseWindowCursor,
@@ -574,7 +574,7 @@ export async function rescueJunk(
     return allowed !== undefined
       ? { status: "queued" as const, rescueId: row!.id, allowed }
       : { status: "queued" as const, rescueId: row!.id };
-  }, { db: dbFor(deps.db, accountId) });
+  });
 }
 
 /**
@@ -600,7 +600,7 @@ export async function dismissJunkRescue(
       .returning({ id: junkRescues.id });
     if (gone.length === 0) throw new ServiceError("conflict", 409, "that move is still being made on your mail server");
     return { dismissed: true as const };
-  }, { db: dbFor(deps.db, accountId), mailboxId: row.mailboxId });
+  }, { mailboxId: row.mailboxId });
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════

@@ -15,10 +15,10 @@ import { useTopPad } from "../src/ui/base";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 export default function Door() {
-  if (MAIL_SURFACE !== "shell") return <Redirect href="/" />;
+  /* Under the boundary, as every route stands under one; the build decides, so a screens build never mounts the door. */
   return (
     <SurfaceBoundary surface="shell">
-      <DoorRoute />
+      {MAIL_SURFACE === "shell" ? <DoorRoute /> : <Redirect href="/" />}
     </SurfaceBoundary>
   );
 }

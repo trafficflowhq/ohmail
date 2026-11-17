@@ -1,4 +1,5 @@
 import { Button } from "../../base/index.js";
+import { useSaidOnArrival } from "../../base/said-on-arrival.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./send-status.css";
 
@@ -22,6 +23,8 @@ export interface SendStatusProps {
 /** The line at a letter being written that says it was not sent, why, and what to do. The draft is kept. */
 export function SendStatus({ place, verdict, children, sign = "warn", acts }: SendStatusProps) {
   const short = place === "end" || place === "start";
+  /* Said when it appears: its words are given to a screen reader once the region stands; its answers at once. */
+  const held = useSaidOnArrival(true) ? true : undefined;
   const buttons = acts?.map((act, at) => (
     <Button key={act.label} kind={at ? "quiet" : "two"} size="s" onPress={act.onPress}>
       {act.label}
@@ -32,14 +35,16 @@ export function SendStatus({ place, verdict, children, sign = "warn", acts }: Se
       {short ? (
         <>
           <Icon name={sign} size={18} />
-          <span className="oh-sendstatus-words">{children}</span>
+          <span className="oh-sendstatus-words" aria-hidden={held}>
+            {children}
+          </span>
           {buttons}
         </>
       ) : (
         <>
           <span className="oh-sendstatus-line">
             <Icon name={sign} size={18} />
-            <span className="oh-sendstatus-words">
+            <span className="oh-sendstatus-words" aria-hidden={held}>
               {verdict ? <b className="oh-sendstatus-verdict">{verdict} </b> : null}
               {children}
             </span>

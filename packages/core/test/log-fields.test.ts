@@ -288,6 +288,24 @@ describe("the real logger emits the fields call sites pass", () => {
   });
 
   /**
+   * `namedAccountId` — the `accounts.id` ROW UUID the worker's roster names for a mailbox whose
+   * connection was attached under another account (`mailbox_account_changed`,
+   * `apps/worker/src/start/roster.ts`). `accountId` on the same line is the account the connection
+   * was attached under; this is the one the mailbox's row names now. The census dropped it
+   * (`droppedFields=["namedAccountId"]`), so the line said where the mailbox had been and never
+   * where it went. RED before the allowlist entry.
+   */
+  it("emits the account a mailbox's row names now beside the one its connection was attached under", () => {
+    const was = "0b6f3c1e-5a2d-4e7f-9c8b-1a2b3c4d5e6f";
+    const now = "7e8d9c0b-1a2f-4b3c-8d4e-5f6a7b8c9d0e";
+    const out = JSON.parse(capture((log) => {
+      log.error("mailbox_account_changed", { mailboxId: "mb", accountId: was, namedAccountId: now, reason: "x" });
+    })) as Record<string, unknown>;
+    expect(out.droppedFields, `the census refused a field the call site passed: ${JSON.stringify(out)}`).toBeUndefined();
+    expect([out.accountId, out.namedAccountId]).toEqual([was, now]);
+  });
+
+  /**
    * `outageMs` + `faults` — the worker's shared-database condition.
    *
    * Pinned here because for THIS pair a census drop is worse than usual: the condition they

@@ -25,8 +25,10 @@ export interface DockProps {
   floor: number;
   /** The rest of the places, behind one entry. It is the current one while the open place stands behind it. */
   more: { label: string; current?: boolean; expanded?: boolean; onPress?: () => void };
-  search: { label: string; current?: boolean; onPress?: () => void };
-  write: { label: string; onPress?: () => void };
+  /** The way to search. Left out where the host hands no place to search: the dock draws none. */
+  search?: { label: string; current?: boolean; onPress?: () => void };
+  /** The way to write. Left out where the host hands no place to write: the dock draws none. */
+  write?: { label: string; onPress?: () => void };
   /** The way to the other product, where the rail stands upright: the round button, first. */
   switcher?: ReactNode;
   /**
@@ -40,7 +42,7 @@ export interface DockProps {
   onFit?: (ids: readonly string[]) => void;
 }
 
-/** The rail on touch: the app's tabs, More, Search and Write. Upright on an unfolded phone, with every place that fits. */
+/** The rail on touch: the app's tabs, More, and Search and Write where the host has them. Upright on an unfolded phone, with every place that fits. */
 export function Dock({
   label,
   places,
@@ -57,6 +59,9 @@ export function Dock({
   const told = useRef("");
   const tell = useRef(onFit);
   tell.current = onFit;
+  /* The way to search and the way to write take room too: the rail fits again when either comes or goes. */
+  const searches = Boolean(search);
+  const writes = Boolean(write);
 
   /* Upright, places leave from the end until the rail fits its height. */
   useLayoutEffect(() => {
@@ -77,7 +82,7 @@ export function Dock({
     const watch = new ResizeObserver(fit);
     watch.observe(el);
     return () => watch.disconnect();
-  }, [places, floor, upright]);
+  }, [places, floor, upright, searches, writes]);
 
   return (
     <nav ref={rail} className="oh-dock" aria-label={label} data-upright={upright ? "" : undefined}>
@@ -118,30 +123,36 @@ export function Dock({
           <span className="oh-dock-word">{more.label}</span>
         </button>
       </div>
-      <div className="oh-dock-end">
-        <button
-          type="button"
-          className="oh-control oh-dock-entry"
-          data-search=""
-          aria-current={search.current ? "page" : undefined}
-          aria-label={search.label}
-          title={search.label}
-          onClick={search.onPress}
-        >
-          <Icon name="search" size={20} />
-          <span className="oh-dock-word">{search.label}</span>
-        </button>
-        <button
-          type="button"
-          className="oh-control oh-dock-write"
-          aria-label={write.label}
-          title={write.label}
-          onClick={write.onPress}
-        >
-          <Icon name="write" size={22} />
-          <span className="oh-dock-word">{write.label}</span>
-        </button>
-      </div>
+      {search || write ? (
+        <div className="oh-dock-end">
+          {search ? (
+            <button
+              type="button"
+              className="oh-control oh-dock-entry"
+              data-search=""
+              aria-current={search.current ? "page" : undefined}
+              aria-label={search.label}
+              title={search.label}
+              onClick={search.onPress}
+            >
+              <Icon name="search" size={20} />
+              <span className="oh-dock-word">{search.label}</span>
+            </button>
+          ) : null}
+          {write ? (
+            <button
+              type="button"
+              className="oh-control oh-dock-write"
+              aria-label={write.label}
+              title={write.label}
+              onClick={write.onPress}
+            >
+              <Icon name="write" size={22} />
+              <span className="oh-dock-word">{write.label}</span>
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </nav>
   );
 }

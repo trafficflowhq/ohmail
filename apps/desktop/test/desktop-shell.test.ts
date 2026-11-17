@@ -652,7 +652,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these sixty-four files and no others", () => {
+  it("is these sixty-six files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -765,6 +765,14 @@ describe("the Rust side", () => {
       // `default-src 'none'`, which binds pdf.js's worker.
       "navigation.rs",
       "navigation_tests.rs",
+      // THE NOTICE THE WINDOW HANDS THE SHELL, READ CLOSED, AND THE WORDS THE SHELL SHOWS FOR IT.
+      // ALWAYS compiled (unused in the preview, which has no command that reads it) and Tauri-free:
+      // a kind with its count or closed word, refused whole on anything else, and the title and the
+      // body written from `words.rs`'s table. It opens, spawns and reads nothing at run time; its one
+      // reader is the engine build's `notify` in `engine.rs`. Its tests read the window's table of
+      // dropped characters and the window's catalogue.
+      "notice.rs",
+      "notice_tests.rs",
       // The Omarchy theme feed (§3c): `omarchy_core.rs` is the Tauri-free machinery — detection,
       // the raw read, the quiet-debounced watch — kept std+serde_json only so a standalone
       // harness can compile and run it against a real Omarchy install (this repo's machine has
