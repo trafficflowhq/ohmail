@@ -1,0 +1,18 @@
+Subject: You already have an ohmail account
+
+ohmail.
+
+You already have an ohmail account.
+
+Someone tried to create an ohmail account with this address. One exists already, so nothing was created and nothing changed.
+
+If that was you, sign in instead. Your account is as it was.
+
+If it was not you, you can ignore this mail. Whoever tried was not told whether this address has an account, and cannot get in without your password or your passkey.
+
+Sign in to ohmail:
+https://ohmail.app/login
+
+--
+Write to support@ohmail.app and a person answers.
+TrafficFlow GmbH, Zürich, Switzerland

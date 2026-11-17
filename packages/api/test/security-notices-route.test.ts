@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { eq } from "drizzle-orm";
+import { accountSettings, users } from "@trafficflow/db";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { SECURITY_NOTICES_CRON_PATH } from "../src/routes/internal.js";
 import { makeDeps, req } from "./helpers.js";
@@ -57,5 +59,30 @@ describe("GET /internal/security-notices/run", () => {
     expect(await res.json()).toMatchObject({ sent: 1, dropped: 0, failed: 0 });
     const notices = mailer.sent.slice(before).filter((s) => s.template === "security_notice");
     expect(notices.map((s) => s.to)).toEqual(["target@example.com"]);
+    expect(notices[0]!.rendered.subject, "no language set: English").toBe("Failed sign-in attempts on your ohmail account");
+  });
+
+  it("the door writes each account's notice in that account's language, and only that account's", async () => {
+    const { db, deps, mailer } = await makeDeps();
+    const armed = { ...deps, alerts: { secret: SECRET, sinks: [] } as unknown as ApiDeps["alerts"] };
+    for (const [email, ip] of [["deutsch@example.com", "10.210.0.1"], ["english@example.com", "10.211.0.1"]] as const) {
+      const reg = await H(new Request("https://api.test/auth/register", {
+        method: "POST", headers: { "Content-Type": "application/json", "x-vercel-forwarded-for": ip },
+        body: JSON.stringify({ email, password: "long-signin-password", displayName: "T", inviteCode: "INVITE-OK" }),
+      }), armed);
+      expect(reg.status).toBeLessThan(300);
+    }
+    const [de] = await db.select({ accountId: users.accountId }).from(users).where(eq(users.email, "deutsch@example.com"));
+    await db.insert(accountSettings).values({ accountId: de!.accountId, locale: "de" })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { locale: "de" } });
+    for (const [email, net] of [["deutsch@example.com", "10.212.0"], ["english@example.com", "10.213.0"]] as const) {
+      for (let i = 0; i < 21; i++) await H(login(email, `${net}.${i + 1}`), armed);
+    }
+    const res = await H(run(SECRET), armed);
+    expect(await res.json()).toMatchObject({ sent: 2, dropped: 0, failed: 0 });
+    const by = (to: string) => mailer.sent.find((s) => s.to === to && s.template === "security_notice")!;
+    expect(by("deutsch@example.com").rendered.subject).toBe("Fehlgeschlagene Anmeldeversuche bei deinem ohmail-Konto");
+    expect(by("deutsch@example.com").rendered.html).toContain('<html lang="de" ');
+    expect(by("english@example.com").rendered.subject).toBe("Failed sign-in attempts on your ohmail account");
   });
 });

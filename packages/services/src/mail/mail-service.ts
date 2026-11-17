@@ -437,15 +437,17 @@ export class MailService {
   /**
    * A security notice the sign-in throttle recorded (`AuthService.drainSecurityNotices`), never
    * sent from a request. `transactional`: the recipient is the account's own address, read from
-   * `users`. Keyed on (recipient, kind, day) so a re-driven drain sends once.
+   * `users`, in the account's language. Keyed on (recipient, kind, day) so a re-driven drain sends once.
    */
   async sendSecurityNotice(
-    ctx: MailContext, input: { to: string; kind: "sign_in_slowed" | "factor_refused"; at: Date },
+    ctx: MailContext, input: { to: string; kind: "sign_in_slowed" | "factor_refused"; at: Date; locale?: MailLocale },
   ): Promise<MailSendResult> {
+    const locale = mailLocaleOf(input.locale) ?? "en";
     return this.guarded(ctx, input.to, "transactional", (to) =>
       this.deps.mailer.send(to, "security_notice", {
         kind: input.kind,
-        at: formatUtc(input.at),
+        locale,
+        at: formatUtc(input.at, locale),
         devicesUrl: `${trimSlash(this.cfg.appUrl)}/settings/devices`,
         supportEmail: this.cfg.supportEmail,
       }, {
@@ -535,8 +537,8 @@ export class MailService {
       this.deps.mailer.send(to, "lifecycle_notice", {
         kind: input.kind,
         locale: input.locale,
-        anchorDate: formatUtc(input.anchor),
-        erasureDate: input.erasureAt ? formatUtc(input.erasureAt) : null,
+        anchorDate: formatUtc(input.anchor, input.locale),
+        erasureDate: input.erasureAt ? formatUtc(input.erasureAt, input.locale) : null,
         // The app routes by hash; a `/settings/account` path is the web app's 404.
         accountUrl: `${trimSlash(this.cfg.appUrl)}/#/settings/account`,
         // Sign-in if needed, then the signup wizard's mailbox step, which asks for a lapsed step-up in place.
@@ -706,20 +708,23 @@ export function makeMailService(deps: MailServiceDeps): MailService {
 
 // ── Formatting helpers — deterministic, so the snapshots are stable ────────────
 
-const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
+const MONTHS: Record<MailLocale, readonly string[]> = {
+  en: ["January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"],
+  de: ["Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember"],
+};
 
 /**
- * `31 July 2026, 14:05 UTC`. Hand-rolled rather than `Intl`: `Intl` output moves with
+ * `31 July 2026, 14:05 UTC`, in German `31. Juli 2026, 14:05 UTC`. Hand-rolled rather than `Intl`: `Intl` output moves with
  * the ICU build, which would make a template snapshot fail on a different Node image
  * for no product reason. UTC because we do not know the recipient's zone and guessing
  * one from an IP would be both wrong and creepy.
  */
-export function formatUtc(d: Date): string {
+export function formatUtc(d: Date, locale: MailLocale = "en"): string {
   const pad = (n: number): string => String(n).padStart(2, "0");
-  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ` +
+  const de = locale === "de";
+  return `${d.getUTCDate()}${de ? "." : ""} ${MONTHS[de ? "de" : "en"][d.getUTCMonth()]} ${d.getUTCFullYear()}, ` +
     `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
 }
 

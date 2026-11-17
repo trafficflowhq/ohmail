@@ -1,0 +1,18 @@
+Subject: Your ohmail subscription has ended
+
+ohmail.
+
+Your subscription has ended.
+
+Your subscription ended on 16 September 2026, 00:00 UTC, so ohmail has stopped organizing and syncing. Your mailbox stays yours. ohmail touches nothing in it, and your own mail server keeps the mail.
+
+Sign in to subscribe again, export your settings or delete your account.
+
+If you do nothing, we erase your ohmail account data on 16 October 2026, 00:00 UTC: your rules, your Screener decisions and your settings.
+
+Open your ohmail account:
+https://app.ohmail.app/#/settings/account
+
+--
+Write to support@ohmail.app and a person answers.
+TrafficFlow GmbH, Zürich, Switzerland

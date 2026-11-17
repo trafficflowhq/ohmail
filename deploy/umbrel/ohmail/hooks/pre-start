@@ -332,41 +332,41 @@ else
 # real front door.
 :8099 {
 	header Content-Type "text/html; charset=utf-8"
+	header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+	header X-Content-Type-Options nosniff
+	header Cache-Control no-store
 	respond <<HTML
 		<!doctype html>
 		<html lang="en">
 		<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<title>ohmail — one thing to set up</title>
+		<meta name="viewport" content="width=device-width,initial-scale=1">
+		<meta name="color-scheme" content="light dark">
+		<title>ohmail is installed, with one thing to set up</title>
 		<style>
-		body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; line-height: 1.6; color: #1a1a1a; background: #fafafa; }
-		@media (prefers-color-scheme: dark) { body { color: #e8e8e8; background: #161616; } code { background: #2a2a2a; } }
-		code { background: #ececec; padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.95em; }
-		h1 { font-size: 1.4rem; } ol { padding-left: 1.4rem; } li { margin-bottom: 0.8rem; }
+		:root{color-scheme:light dark}
+		@media (prefers-color-scheme:dark){
+		.g{background:#0E0D0C !important}
+		.s{background:#23201C !important}
+		.i{color:#F6F1E9 !important}
+		.j{color:#B8AFA3 !important}
+		.q{background:#34302B !important}
+		}
 		</style>
 		</head>
-		<body>
-		<h1>ohmail is installed — one thing to set up</h1>
-		<p>ohmail serves your household's mail over an https address of its own. Secure
-		cookies and passkeys do not exist on plain <code>http://umbrel.local</code>, so the
-		address must be <code>https://</code> — that is a rule in the server, not a preference.</p>
-		<ol>
-		<li>Point a domain at your home's public IP address — <code>mail.yourhome.example</code>.
-		A dynamic-DNS name works if your home IP changes.</li>
-		<li>On your router, forward outside port <strong>443</strong> to this Umbrel's port
-		<strong>4443</strong>. The app fetches and renews its TLS certificate itself once
-		traffic on 443 reaches it.</li>
-		<li>Open a terminal on your Umbrel (Settings &rarr; Advanced &rarr; Terminal, or SSH)
-		and set the one required line:<br>
-		<code>nano ~/umbrel/app-data/ohmail/data/env/settings.env</code><br>
-		<code>OHMAIL_ORIGIN=https://mail.yourhome.example</code></li>
-		<li>Restart the ohmail app from the Umbrel dashboard, then open your address in a
-		browser. A fresh server greets you with its setup page; the one-time setup token is
-		in the app's log (Settings &rarr; Troubleshoot &rarr; ohmail).</li>
+		<body class="g" style="margin:0;padding:48px 16px;background:#F0EBE3;font:400 17px/27px Arial,Helvetica,sans-serif;">
+		<main class="s" style="display:block;max-width:536px;margin:0 auto;padding:32px;background:#FFFFFF;border-radius:20px;">
+		<h1 class="i" style="margin:0 0 16px;font:900 28px/32px 'Arial Black',Arial,Helvetica,sans-serif;color:#12100E;letter-spacing:-0.02em;">ohmail is installed, with one thing to set up.</h1>
+		<p class="i" style="margin:0 0 14px;font-weight:700;color:#12100E;">ohmail serves your household’s mail over an https address of its own.</p>
+		<p class="j" style="margin:0 0 20px;color:#5A534B;">Secure cookies and passkeys do not exist on plain http://umbrel.local, so the address must be https. That is a rule in the server, not a preference.</p>
+		<ol class="i" style="margin:0;padding:0 0 0 22px;color:#12100E;">
+		<li style="margin:0 0 12px;">Point a domain at your home’s public IP address, for example <code class="q i" style="padding:1px 6px;background:#F0EBE3;border-radius:6px;font:700 15px/22px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#12100E;">mail.yourhome.example</code>. A dynamic-DNS name works if your home IP changes.</li>
+		<li style="margin:0 0 12px;">On your router, forward outside port 443 to this Umbrel’s port 4443. The app fetches and renews its certificate itself once traffic on 443 reaches it.</li>
+		<li style="margin:0 0 12px;">Open a terminal on your Umbrel (Settings → Advanced → Terminal, or SSH) and set the one required line in its settings file.<code class="q i" style="display:block;margin:8px 0 0;padding:8px 12px;background:#F0EBE3;border-radius:12px;font:700 15px/22px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#12100E;overflow-wrap:anywhere;">~/umbrel/app-data/ohmail/data/env/settings.env</code><code class="q i" style="display:block;margin:8px 0 0;padding:8px 12px;background:#F0EBE3;border-radius:12px;font:700 15px/22px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#12100E;overflow-wrap:anywhere;">OHMAIL_ORIGIN=https://mail.yourhome.example</code></li>
+		<li style="margin:0;">Restart the ohmail app from the Umbrel dashboard, then open your address in a browser. A fresh server greets you with its setup page, and the one-time setup token is in the app’s log (Settings → Troubleshoot → ohmail).</li>
 		</ol>
-		<p>The full guide, including connecting your first mailbox, lives in the
-		repository: <code>docs/self-host/UMBREL.md</code>.</p>
+		<p class="j" style="margin:20px 0 0;color:#5A534B;">The full guide, connecting your first mailbox included, is in the repository: <code class="q i" style="padding:1px 6px;background:#F0EBE3;border-radius:6px;font:700 15px/22px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#12100E;">docs/self-host/UMBREL.md</code>.</p>
+		</main>
 		</body>
 		</html>
 		HTML 200

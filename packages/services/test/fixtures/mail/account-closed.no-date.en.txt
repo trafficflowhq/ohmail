@@ -1,0 +1,17 @@
+Subject: Your ohmail account has closed
+
+ohmail.
+
+Your account has closed.
+
+Your ohmail account closed on 16 September 2026, 00:00 UTC. It had no mailbox connected, so ohmail never read or moved any of your mail.
+
+Sign in to subscribe and connect a mailbox after all, or to delete your account.
+
+If you have questions or are stuck connecting, reply to this mail and a person answers.
+
+Open your ohmail account:
+https://app.ohmail.app/#/settings/account
+
+--
+TrafficFlow GmbH, Zürich, Switzerland

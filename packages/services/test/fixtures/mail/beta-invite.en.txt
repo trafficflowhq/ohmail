@@ -1,0 +1,20 @@
+Subject: Your ohmail beta invite
+
+ohmail.
+
+Beta accounts are open.
+
+One is reserved for you.
+
+Your invite code: OHMAIL-7QR4-2K9F
+
+The code stops working on 8 August 2026, 09:05 UTC. Keep it to yourself: anyone who has it can open an ohmail account.
+
+ohmail asks you to set up a passkey or an authenticator app, and to connect a mailbox you already own. It then organizes that mailbox where it is and copies nothing to a new address.
+
+Redeem the invite:
+https://app.ohmail.app/join?code=OHMAIL-7QR4-2K9F
+
+--
+If you have questions, or it does not work, write to support@ohmail.app.
+TrafficFlow GmbH, Zürich, Switzerland

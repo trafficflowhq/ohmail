@@ -1,0 +1,19 @@
+Subject: Your ohmail storage is 90% full
+
+ohmail.
+
+Your storage is 90% full.
+
+1.8 GB of 2 GB used, your plan's storage. Your mail needs about 3.6 GB.
+
+When it is full, ohmail Cloud keeps the text of your newest mail. Your mail server keeps the older mail complete, and ohmail still lists it and finds it.
+
+Plus keeps all your mail: 5 GB for $15 a month.
+
+Choose storage:
+https://app.ohmail.app/#/settings/storage
+
+--
+Only the text of your mail counts. Attachments never do.
+ohmail sends this mail once at 90% and once when storage is full. To stop storage mails, turn them off in Settings › Storage.
+TrafficFlow GmbH, Zürich, Switzerland

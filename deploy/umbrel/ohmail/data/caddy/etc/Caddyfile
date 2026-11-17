@@ -3,5 +3,35 @@
 # has a source even if the hook never ran; if the page below is what you are seeing,
 # that is what happened.
 :8099 {
-	respond "ohmail is starting. If this page persists, the app's pre-start hook did not run — restart the ohmail app from the Umbrel dashboard." 200
+	header Content-Type "text/html; charset=utf-8"
+	header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+	header X-Content-Type-Options nosniff
+	header Cache-Control no-store
+	respond <<HTML
+		<!doctype html>
+		<html lang="en">
+		<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width,initial-scale=1">
+		<meta name="color-scheme" content="light dark">
+		<title>ohmail is starting</title>
+		<style>
+		:root{color-scheme:light dark}
+		@media (prefers-color-scheme:dark){
+		.g{background:#0E0D0C !important}
+		.s{background:#23201C !important}
+		.i{color:#F6F1E9 !important}
+		.j{color:#B8AFA3 !important}
+		}
+		</style>
+		</head>
+		<body class="g" style="margin:0;padding:48px 16px;background:#F0EBE3;font:400 17px/27px Arial,Helvetica,sans-serif;">
+		<main class="s" style="display:block;max-width:536px;margin:0 auto;padding:32px;background:#FFFFFF;border-radius:20px;">
+		<h1 class="i" style="margin:0 0 16px;font:900 28px/32px 'Arial Black',Arial,Helvetica,sans-serif;color:#12100E;letter-spacing:-0.02em;">ohmail is starting.</h1>
+		<p class="i" style="margin:0 0 14px;font-weight:700;color:#12100E;">If this page stays, the app’s pre-start hook did not run.</p>
+		<p class="j" style="margin:0;color:#5A534B;">Restart the ohmail app from the Umbrel dashboard.</p>
+		</main>
+		</body>
+		</html>
+		HTML 200
 }

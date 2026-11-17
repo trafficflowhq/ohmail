@@ -168,6 +168,19 @@ describe("MailService — the four beta sends", () => {
   it("formatUtc is stable regardless of the host timezone", () => {
     expect(formatUtc(new Date("2026-01-09T23:04:00.000Z"))).toBe("9 January 2026, 23:04 UTC");
     expect(formatUtc(new Date("2026-12-31T00:00:00.000Z"))).toBe("31 December 2026, 00:00 UTC");
+    expect(formatUtc(new Date("2026-03-09T23:04:00.000Z"), "de")).toBe("9. März 2026, 23:04 UTC");
+    expect(formatUtc(new Date("2026-03-09T23:04:00.000Z"), "en")).toBe("9 March 2026, 23:04 UTC");
+  });
+
+  it("a lifecycle notice writes its dates in the notice's language", async () => {
+    const h = await harness();
+    const erasureAt = new Date("2026-10-13T00:00:00.000Z");
+    await h.svc.sendLifecycleNotice(h.ctx, { to: "de@example.com", kind: "closed", locale: "de", anchor: START, erasureAt });
+    await h.svc.sendLifecycleNotice(h.ctx, { to: "en@example.com", kind: "closed", locale: "en", anchor: START, erasureAt });
+    const [de, en] = h.spy.sent;
+    expect(de!.data).toMatchObject({ anchorDate: formatUtc(START, "de"), erasureDate: "13. Oktober 2026, 00:00 UTC" });
+    expect(en!.data).toMatchObject({ anchorDate: formatUtc(START), erasureDate: "13 October 2026, 00:00 UTC" });
+    expect(de!.rendered.text).toContain("am 13. Oktober 2026, 00:00 UTC: deine Regeln");
   });
 
   it("the billing link points at the app's own /account/manage door, in the account's language", async () => {

@@ -159,20 +159,29 @@ export async function ensureSetupTokenInvariant(
 /**
  * The one place the raw token is EVER written out. A fenced, unmistakable block on stdout — the
  * operator's `docker compose logs api` moment — and nothing else ever sees the value: only its
- * sha256 is at rest, and the boot log line above it carries no secret.
+ * sha256 is at rest, and the boot log line above it carries no secret. Its shape is read by the
+ * self-host boot smoke and by the guides: the marker line, the token alone on a line six spaces in,
+ * five lines below it, no other line four spaces in, and a fence at column 0 on either side.
  */
+export function setupTokenBlock(minted: PairingTokenMinted): string[] {
+  const fence = "─".repeat(70);
+  return [
+    "",
+    fence,
+    "  FIRST-RUN SETUP",
+    "",
+    "  No account exists on this server yet. Open ohmail in a browser and",
+    "  type this setup token to make the first account:",
+    "",
+    `      ${minted.token}`,
+    "",
+    `  It works once, until ${minted.expiresAt.toISOString()}.`,
+    "  A restart prints a new token, and this one stops working.",
+    fence,
+    "",
+  ];
+}
+
 export function printSetupToken(minted: PairingTokenMinted, print: (line: string) => void): void {
-  print("");
-  print("──────────────────────────────────────────────────────────────────────");
-  print("  FIRST-RUN SETUP");
-  print("");
-  print("  No account exists on this server yet. Open the app in a browser and");
-  print("  enter this one-time setup token to create the first account:");
-  print("");
-  print(`      ${minted.token}`);
-  print("");
-  print(`  It can be used once and expires ${minted.expiresAt.toISOString()}.`);
-  print("  Restarting the server prints a fresh token and retires this one.");
-  print("──────────────────────────────────────────────────────────────────────");
-  print("");
+  for (const line of setupTokenBlock(minted)) print(line);
 }

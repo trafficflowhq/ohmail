@@ -1419,6 +1419,7 @@ test/journeys/journeys/trash.journeys.test.ts	data	through test/journeys/bench/w
 test/journeys/journeys/triage.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/landing-pricing-matches-plan-card.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/macos-update-signing.test.ts	data	reads data files (plist, yml)	none	unassigned	
+test/mail-colours-are-the-tokens.test.ts	data	reads data files (json): the paper face's colours and measures	none	around	
 test/mail-stamp-census.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
 test/mailboxes-handback-copy.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
 test/message-files-census.test.ts	source-text	reads source as text (tsx)	layer 5	unassigned	
@@ -1482,6 +1483,8 @@ test/selfhost-images-are-ours.test.ts	data	reads data files (lock, sh, yml)	none
 test/selfhost-images-name-their-commit.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/selfhost-organizer-display-name.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/selfhost-proxy-reload.test.ts	data	reads data files (caddy, env, sh)	none	unassigned	
+test/selfhost-server-pages.test.ts	data	reads data files (caddy): the proxy's own pages	none	around	
+test/selfhost-setup-token-block.test.ts	source-text	reads the boot smoke's token reader as text (mjs)	layer 5	around	
 test/selfhost-smoke.test.ts	data	reads data files (env, example, json, sh, yml)	none	unassigned	
 test/selfhost-store-upgrade.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
 test/selfhost-trusted-proxies-compose.test.ts	data	reads data files (caddy, sh, yml)	none	unassigned	
