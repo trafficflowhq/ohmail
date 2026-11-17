@@ -253,10 +253,11 @@ describe("what the form says", () => {
     await press();
     const working = screen.getByRole("button", { name: pc("working") }) as HTMLButtonElement;
     expect(working.disabled).toBe(true);
-    expect(blanks().map((b) => b.readOnly)).toEqual([true, true, true]);
+    // A password blank of the kit always takes keys unless it is disabled: off takes no keys and is said unavailable.
+    expect(blanks().map((b) => b.disabled)).toEqual([true, true, true]);
     await act(async () => answer.settle(changed(0)));
     expect(theVerb().disabled).toBe(false);
-    expect(blanks().map((b) => b.readOnly)).toEqual([false, false, false]);
+    expect(blanks().map((b) => b.disabled)).toEqual([false, false, false]);
   });
 
   it("hands the factor's dialog the line that says the change leaves the moment it verifies", () => {
