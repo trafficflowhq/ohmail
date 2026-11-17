@@ -2,10 +2,12 @@
 // The one runner of the repository's tools: the linter with the import borders, the style linter,
 // the formatter and the checks around the typed contracts. tools/README.md says how to use it.
 //
-//   node tools/check.mjs --base <rev>     everything, and the baseline against <rev>'s
+//   node tools/check.mjs --base <rev>     everything (the older tests' checklist too), and the baseline against <rev>'s
 //   node tools/check.mjs --controls       every rule refuses its planted violation, in a copy of HEAD
 //   node tools/check.mjs --by-task        the baseline's counts per task
 //   node tools/check.mjs --retirement [--base <rev>] | --references | --coverage   one part alone
+//   node tools/check.mjs --old-tests [--base <rev>] [--scope]   the older tests' checklist against the tree, and its
+//                                         two lists against <rev>'s (--scope: its files)
 //   node tools/check.mjs --list <rule>    every finding of one rule
 //   node tools/check.mjs --format        format the new tree (npm run format)
 //   node tools/check.mjs --write-baseline | --write-prettierignore
@@ -48,6 +50,14 @@ import {
   runStylelint,
 } from "./lib/findings.mjs";
 import { inNewTree, parseNewTree, renderPrettierIgnore } from "./lib/new-tree.mjs";
+import {
+  checkOldTests,
+  compareOldTestsWithBase,
+  parseNeverRed,
+  parseOldTests,
+  readState,
+} from "./lib/old-tests.mjs";
+import { readOldTestsTree } from "./lib/old-tests-tree.mjs";
 import { checkReferences, explicitTypechecks } from "./lib/references.mjs";
 import { checkRetirement, isSuiteTest, parseRetirement, readingTests } from "./lib/retirement.mjs";
 import { checkTable } from "./lib/table.mjs";
@@ -250,6 +260,72 @@ function retirement(root, files, base) {
   ];
 }
 
+/**
+ * tools/old-tests.tsv and tools/never-red.tsv against the tree, and, with a base, against the base's two lists:
+ * tools/README.md, "The older tests".
+ */
+function oldTests(root, files, flags, base = flags.get("base")?.[0]) {
+  const present = new Set(files);
+  const texts = new Map();
+  const textOf = (rel) => {
+    if (!present.has(rel)) return null;
+    if (!texts.has(rel)) texts.set(rel, read(root, rel));
+    return texts.get(rel);
+  };
+  const manifests = Object.fromEntries(
+    files
+      .filter((rel) => /^(apps|packages)\/[^/]+\/package\.json$/.test(rel))
+      .map((rel) => [path.posix.dirname(rel), JSON.parse(textOf(rel))]),
+  );
+  const tree = readOldTestsTree({ files, textOf, manifests });
+  if (flags.has("scope")) {
+    for (const file of [...tree.scope].sort()) say(file);
+    return tree.refusals;
+  }
+  const listed = readIf(root, "tools/old-tests.tsv");
+  const neverRed = readIf(root, "tools/never-red.tsv");
+  if (listed === null || neverRed === null)
+    return [
+      "old tests: tools/old-tests.tsv and tools/never-red.tsv are read together, and one is not in the tree",
+    ];
+  const rows = parseOldTests(listed);
+  const red = parseNeverRed(neverRed);
+  const retired = new Map(
+    parseRetirement(readIf(root, "tools/retirement.tsv") ?? "").rows.map((row) => [row.file, row.verdict]),
+  );
+  for (const line of tree.said) say(line);
+  const states = new Map();
+  for (const row of rows.rows) {
+    const word = readState(row.state).word;
+    states.set(word, (states.get(word) ?? 0) + 1);
+  }
+  say(
+    `old tests: ${rows.rows.length} rows (${[...states].map(([word, n]) => `${word} ${n}`).join(", ") || "none"}), ${tree.scope.size} files in scope, ${red.rows.length} never red; mounted: ${[...tree.mounted].sort().join(", ") || "nothing"}`,
+  );
+  return [
+    ...rows.refusals,
+    ...red.refusals,
+    ...tree.refusals,
+    ...checkOldTests({ ...tree, rows: rows.rows, neverRed: red.rows, retired, isSuiteTest }),
+    ...oldTestsAgainstBase(root, base, rows.rows, red.rows),
+  ];
+}
+
+/** A row and a never-red row never leave: the two lists against the base's, where the base holds them. */
+function oldTestsAgainstBase(root, base, rows, neverRed) {
+  if (!base) return [];
+  git(root, "rev-parse", "--verify", "--quiet", `${base}^{commit}`); // an unknown revision is an error, not a pass
+  const listed = showAt(root, base, "tools/old-tests.tsv");
+  const red = showAt(root, base, "tools/never-red.tsv");
+  if (listed === null || red === null) return []; // the base is older than the lists: nothing can have left
+  return compareOldTestsWithBase({
+    rows,
+    neverRed,
+    baseRows: parseOldTests(listed).rows,
+    baseNeverRed: parseNeverRed(red).rows,
+  });
+}
+
 /** A file's text at a revision, null when git refuses (no such file there, or a folder: a blob only). */
 function showAt(root, rev, rel) {
   try {
@@ -310,6 +386,8 @@ async function everything(root, flags) {
     );
   }
   refusals.push(...references(root), ...retirement(root, files, base));
+  // The older tests' checklist: from here on a WAITS row for a place a host's entry mounts is refused on every pull request.
+  refusals.push(...oldTests(root, files, new Map(), base));
   // "Checked by a tool" is said of a rule only with the record of its planted violation.
   const planted = JSON.parse(read(root, "tools/plant/controls.json")).filter((c) => c.expect === "refused");
   for (const rule of new Set(planted.flatMap((control) => control.rule))) {
@@ -414,6 +492,7 @@ async function main() {
     );
   }
   if (flags.has("retirement")) return retirement(root, treeFiles(root), flags.get("base")?.[0]);
+  if (flags.has("old-tests")) return oldTests(root, treeFiles(root), flags);
   if (flags.has("references")) return references(root);
   if (flags.has("coverage")) {
     const { active, unreached } = await coverage(root, treeFiles(root));
