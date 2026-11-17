@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PlaceId } from "../vocabulary/places.js";
 import { PEOPLE, type ConversationSpec, type Planted } from "../vocabulary/world.js";
-import { benchOf, sizeOf, type Account, type Bench, type BenchId, type Guard, type Person, type Setting, type Size } from "./seam.js";
+import { benchOf, sizeOf, type Account, type Bench, type BenchId, type Guard, type Person, type Setting, type Size, type Stack } from "./seam.js";
 import { runsOn } from "./standing/index.js";
 
 /**
@@ -106,4 +106,10 @@ export async function signedIn(b: Bench): Promise<{ person: Person; account: Acc
   const account = await b.account();
   await account.planter.plant({ conversations: [{ from: PEOPLE.ben, subject: "Kiln is fixed", pile: "ohbox", unread: false }] });
   return { person: await b.person({ account }), account };
+}
+
+/** The self-hosted stack's own doors, for a journey that walks the stack: refused on any other bench. */
+export function stackOf(b: Bench): Stack {
+  if (!b.stack) throw new Error("this journey walks the self-hosted stack");
+  return b.stack;
 }

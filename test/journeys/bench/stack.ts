@@ -48,6 +48,7 @@ export async function startStack(recordAs: string, size: Size): Promise<Bench> {
   const browser = await chromium.launch({ args: [`--host-resolver-rules=MAP ${ELSEWHERE} 127.0.0.1`] });
   const people: PlaywrightPerson[] = [];
   const sessions = new WeakMap<Account, Session>();
+  const mailboxes = new WeakMap<Account, string>();
   const lang = language();
   console.log(`journeys bench: W-i ${size} at ${origin} · the stack from images of ${h.commit} · ${far.used()} of ${h.invites.length} invites taken · ${lang} · ${recordAs}`);
 
@@ -65,11 +66,11 @@ export async function startStack(recordAs: string, size: Size): Promise<Bench> {
     held: () => [],
     release() {},
     fixtures: null,
-    has: (need) => need === "pg" || need === "stack",
+    has: (need) => need === "pg" || need === "stack" || need === "mail",
     async ask(a, method, path) { return far.ask(jar(a).cookies, method, path); },
     async account() {
       const session = await far.signIn(await far.register());
-      await far.connectMailbox(session);
+      const { address } = await far.connectMailbox(session);
       const account: Account = {
         accountId: session.accountId, userId: session.userId, email: session.email,
         access: session.cookies.find((c) => c.name === "tf_session")?.value ?? "",
@@ -81,6 +82,7 @@ export async function startStack(recordAs: string, size: Size): Promise<Bench> {
         } as unknown as Account["planter"],
       };
       sessions.set(account, session);
+      mailboxes.set(account, address);
       return account;
     },
     async person(o = {}) {
@@ -116,6 +118,15 @@ export async function startStack(recordAs: string, size: Size): Promise<Bench> {
           if (Date.now() > deadline) throw new Error(`the new ${service} container never answered /health with ${h.commit}`);
           await new Promise((r) => setTimeout(r, 500));
         }
+      },
+      mailbox(account) {
+        const address = mailboxes.get(account);
+        if (address === undefined) throw new Error("this account was not made by the stack's bench");
+        return address;
+      },
+      async deliver(account, letter) {
+        await far.deliver(bench.stack!.mailbox(account), letter);
+        return far.arrived(jar(account).cookies, letter.subject);
       },
       async inside({ host, path, account }) {
         const cookie = cookieHeader(jar(account).cookies);

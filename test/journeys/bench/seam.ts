@@ -127,6 +127,13 @@ export interface Stack {
   recreate(service: "api"): Promise<void>;
   /** The API asked inside its container, under a Host of the journey's choosing. */
   inside(ask: { host: string; path: string; account: Account }): Promise<{ status: number; user: boolean }>;
+  /** The address of the mailbox the bench connected for the account, on the stack's own mail server. */
+  mailbox(account: Account): string;
+  /**
+   * A letter from an invented sender, delivered to the account's mailbox through the stack's mail server and
+   * brought in by its organizer: resolves with the letter's message ids once /sync names it.
+   */
+  deliver(account: Account, letter: { from: { name: string; address: string }; subject: string; text: string }): Promise<string[]>;
 }
 
 export interface Bench {
