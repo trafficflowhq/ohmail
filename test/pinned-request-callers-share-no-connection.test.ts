@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HostResolver } from "@trafficflow/core/net";
-import type { Tx } from "@trafficflow/db";
+import { changeLog, type Tx } from "@trafficflow/db";
 import { makeNodeOneClickPost, makeNodeRemoteFetch } from "@trafficflow/services";
 import { namedHostRequest } from "@ohmail/cal-providers";
 import { makePlaceSuggester, readPlaceQuestion } from "@trafficflow/api/calendar";
@@ -33,7 +33,11 @@ async function wake(url: string, address: string, heard: () => number): Promise<
   const listeners: ((accountId: string, seq: bigint) => void)[] = [];
   const source: WakeSource = { subscribeAll: (on) => { listeners.push(on); return () => undefined; } };
   const rows = [{ id: "row", endpoint: url, p256dh: null, auth: null }];
-  const db = { select: () => ({ from: () => ({ where: async () => rows }) }), delete: () => ({ where: async () => [] }) } as unknown as Tx;
+  // The sender's two reads, answered as the store answers them: the account's registrations, then the change log's one row, which says a wake is due.
+  const db = {
+    select: () => ({ from: (table: unknown) => ({ where: () => (table === changeLog ? { limit: async () => [{ one: 1 }] } : Promise.resolve(rows)) }) }),
+    delete: () => ({ where: async () => [] }),
+  } as unknown as Tx;
   const sender = startPushWake({
     db, source, guard: { check: async () => [address] }, ownsAccount: async () => true,
     vapid: { kind: "absent", why: "none on this machine" }, debounceMs: 1, minIntervalMs: 0,

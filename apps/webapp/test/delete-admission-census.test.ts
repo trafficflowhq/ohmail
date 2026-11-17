@@ -95,7 +95,9 @@ describe("the delete admission reads the verb reader, and nothing about Use fold
     },
     {
       name: "`deleteKeyBindings`' `canDelete` (`shell-keys.tsx`) — ⌫ and ⌦",
-      body: region(shell, "...deleteKeyBindings({", "}),", "deleteKeyBindings"),
+      /* The call's own closing line, at the spread's indentation: the same end whether a comma follows it or the
+         bracket of an array the spread stands in. */
+      body: region(shell, "...deleteKeyBindings({", "\n    })", "deleteKeyBindings"),
       must: 'engine.verbRead().get<EngineMessage>("message", focused.id) != null',
     },
     {
