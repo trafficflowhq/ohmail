@@ -1,6 +1,6 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, notInArray, sql } from "drizzle-orm";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
-import type { Tx } from "@trafficflow/db";
+import { CALENDAR_RECORD_KINDS, changeLog, type Tx } from "@trafficflow/db";
 import {
   SsrfRefusal, pinnedHttpRequest, makePushEndpointGuard, nodeHostResolver,
   encryptWebPushBody, vapidIdentityFromEnv,
@@ -13,7 +13,8 @@ import {
  * endpoint; the device then pulls `/sync` over its own authenticated connection. {@link WAKE_BODY} is a
  * module-level `const` with no interpolation — a wake travels through a third party (often somebody's
  * `ntfy`), so no count/folder/sender rides it; the only thing learned from the hub is `(accountId, seq)`,
- * the id used only to SELECT rows and `seq` dropped. Two wire forms: a row with `p256dh` AND `auth` gets
+ * the id used only to SELECT rows and `seq` only to bound the one read that asks whether the window held
+ * anything but the calendar's records (a wake draws "New mail" on a closed app). Two wire forms: a row with `p256dh` AND `auth` gets
  * the constant SEALED (RFC 8291 `aes128gcm`) and signed (RFC 8292 VAPID); neither gets `application/json`,
  * fifteen bytes. NOT here: a wake to a DEAD process (`{"type":"wake"}` has no `id`, connector renders
  * nothing) and desktop-host wake (`push_subscriptions` is cloud-half) — both need native/foreground work. */
@@ -77,7 +78,10 @@ export interface WakeSource {
 }
 
 export interface PushWakeDeps {
-  /** The worker's own db handle. Reads `push_subscriptions`, deletes dead rows, nothing else. */
+  /**
+   * The worker's own db handle. Reads `push_subscriptions`, deletes dead rows, and asks `change_log`
+   * one question per window ("is there a record here that is not the calendar's") by the literal `1`.
+   */
   db: Tx;
   /** The change-wake hub. Every account's advances, one subscription — see `ChangeWakeFanout`. */
   source: WakeSource;
@@ -310,8 +314,11 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
   const stopping = new AbortController();
   const post = deps.post ?? makeDefaultPost({ signal: stopping.signal, timeoutMs, vapid });
 
-  /** One pending debounce per account. The VALUE is a timer and nothing else — no payload. */
-  const pending = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * One pending window per account: its timer, and the lowest and the highest seq the hub named in
+   * it. Two numbers, used once to bound the deciding read in {@link fire}, never sent and never logged.
+   */
+  const pending = new Map<string, { timer: ReturnType<typeof setTimeout>; lowest: bigint; highest: bigint }>();
   /** Last successful POST per endpoint URL, for {@link WAKE_MIN_INTERVAL_MS}. */
   const lastSentAt = new Map<string, number>();
   let sentCount = 0;
@@ -337,7 +344,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
    * other reason — they are the device's own material, they are never logged, and they never leave
    * this function except as the encryptor's input.
    */
-  const fire = async (accountId: string): Promise<void> => {
+  const fire = async (accountId: string, lowest: bigint, highest: bigint): Promise<void> => {
     /**
      * IS THIS ACCOUNT OURS? Asked before the query, not after.
      *
@@ -369,6 +376,25 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
        */
       inArray(pushSubscriptions.transport, ["unifiedpush", "webpush"]),
     ));
+    if (rows.length === 0) return;
+
+    /**
+     * DID THIS WINDOW HOLD ANYTHING BUT THE CALENDAR'S RECORDS? Asked once, after the registrations
+     * are read and only when there are any. A closed app draws its one fixed notice for a wake, and
+     * that notice says new mail: a calendar that moved must not ring it, so a window of calendar
+     * records alone dials nothing, and the device finds the change when it next syncs. The answer is
+     * the literal `1` or no row: no column of the log is read. The kinds are the calendar's own list,
+     * which does not compile while a kind of the wire's union is missing from it. Bounded by the
+     * window's two seqs: a batch names its highest, and the calendar's writers record their kinds in
+     * batches of their own.
+     */
+    const held = await db.select({ one: sql<number>`1` }).from(changeLog).where(and(
+      eq(changeLog.accountId, accountId),
+      gte(changeLog.seq, lowest),
+      lte(changeLog.seq, highest),
+      notInArray(changeLog.entityType, [...CALENDAR_RECORD_KINDS]),
+    )).limit(1);
+    if (held.length === 0) return;
 
     for (const row of rows) {
       /**
@@ -482,24 +508,30 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
     }
   };
 
-  const unsubscribe = source.subscribeAll((accountId) => {
-    // `seq` IS DELIBERATELY NOT DESTRUCTURED. It is a per-account activity counter and this
-    // function has no use for one; the parameter is dropped at the boundary so there is nothing
-    // in scope for a later edit to reach for. The wake is "something changed", full stop.
+  const unsubscribe = source.subscribeAll((accountId, seq) => {
+    // `seq` is a per-account activity counter. It is kept as the window's two bounds and handed to
+    // the deciding read alone: it reaches no request and no log line. The wake stays "something
+    // changed", full stop.
     if (stopped) return;
-    if (pending.has(accountId)) return;          // already coalescing this account's window
+    const open = pending.get(accountId);
+    if (open !== undefined) {                     // already coalescing this account's window
+      if (seq < open.lowest) open.lowest = seq;
+      if (seq > open.highest) open.highest = seq;
+      return;
+    }
 
     const timer = setTimeout(() => {
       pending.delete(accountId);
       if (stopped) return;
       // `void` + a terminal catch: nothing awaits this, so an escaped rejection would be an
       // unhandled rejection inside the always-on worker. See the header — degradation, never a crash.
-      void fire(accountId).catch((err: unknown) => {
+      void fire(accountId, window.lowest, window.highest).catch((err: unknown) => {
         log?.warn("push_wake_pass_failed", { err });
       });
     }, debounceMs);
     (timer as unknown as { unref?: () => void }).unref?.();
-    pending.set(accountId, timer);
+    const window = { timer, lowest: seq, highest: seq };
+    pending.set(accountId, window);
   });
 
   return {
@@ -507,7 +539,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
       if (stopped) return;
       stopped = true;
       unsubscribe();
-      for (const t of pending.values()) clearTimeout(t);
+      for (const open of pending.values()) clearTimeout(open.timer);
       pending.clear();
       // The socket, not just the schedule. A POST already on the wire is cut here; `fire`'s
       // per-row check stops the ones that had not started.
