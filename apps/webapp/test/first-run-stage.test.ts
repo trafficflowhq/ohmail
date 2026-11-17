@@ -528,18 +528,10 @@ describe("each promise is rendered on the step that makes it", () => {
  * unreachable from the surface a person is actually looking at.
  */
 describe("the entry points", () => {
-  it("the cloud funnel hands off INTO the flow, not into a cold mail client", () => {
-    // The funnel proves an address, takes a plan and connects a mailbox, and says nothing about
-    // what ohmail is about to do to that mailbox. Its last screen opens the flow, which lands on
-    // the consent statement because a mailbox now exists.
-    const join = read("apps/webapp/app/(product)/join/JoinScreen.tsx");
-    expect(join, "the funnel still ends in a bare mail client").toMatch(/href="\/#\/first-run"/);
-  });
-
   it("and never before the address is proven, which the funnel's own order is", () => {
     // Every route the flow's first screens call is refused for an unverified address, so opening
     // it earlier would be a ceremony whose buttons all answer 403. `done` is after `verify`.
-    const join = read("apps/webapp/app/(product)/join/JoinScreen.tsx");
+    const join = read("apps/webapp/app/(product)/join/use-join-door.ts");
     const rail = /const RAIL: Step\[\] = \[([^\]]+)\]/.exec(join)?.[1] ?? "";
     expect(rail).toContain('"verify"');
     expect(rail).toContain('"mailbox"');

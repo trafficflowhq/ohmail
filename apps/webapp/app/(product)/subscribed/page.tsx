@@ -1,4 +1,4 @@
-import { SubscribedScreen } from "./SubscribedScreen";
+import { SubscribedRoute } from "./SubscribedRoute";
 
 /**
  * `/subscribed` — where the payment page sends a person back to. PUBLIC: the hand-off may have run
@@ -7,5 +7,5 @@ import { SubscribedScreen } from "./SubscribedScreen";
  * about the payment; the wall's own fresh read is that claim.
  */
 export default function SubscribedPage() {
-  return <SubscribedScreen />;
+  return <SubscribedRoute />;
 }

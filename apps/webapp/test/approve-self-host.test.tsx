@@ -64,10 +64,11 @@ async function mountPage(locale: "en" | "de"): Promise<HTMLDivElement> {
 describe("/approve on a self-hosted build", () => {
   it.each([["en", en], ["de", de]] as const)("says in %s that this server approves no computer sign-in, and does nothing else", async (locale, cat) => {
     const el = await mountPage(locale);
-    expect(el.querySelector("h1")?.textContent).toBe(cat.approve.unavailableTitle);
-    expect(el.querySelector(".sub")?.textContent).toBe(cat.approve.notOffered);
+    // The page's sentence: its line, as the design draws it, not a heading.
+    expect(el.querySelector("main p")?.textContent).toBe(cat.approve.unavailableTitle);
+    expect(el.textContent).toContain(cat.approve.notOffered);
     expect(el.querySelectorAll("button")).toHaveLength(0);
-    expect(el.textContent, "the confirm page's footer is not on a page with nothing to confirm").not.toContain(cat.approve.footer);
+    expect(el.textContent, "the confirm's line is not on a page with nothing to confirm").not.toContain(cat.approve.onlyYours);
     expect(fetched, "a request left the browser").toEqual([]);
     expect(sessionStorage.length, "a request id was kept for after a sign-in").toBe(0);
     expect(replaced, "the page sent the browser somewhere").toEqual([]);

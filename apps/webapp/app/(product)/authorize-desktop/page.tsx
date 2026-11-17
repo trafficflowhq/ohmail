@@ -1,4 +1,4 @@
-import { AuthorizeDesktopScreen } from "./AuthorizeDesktopScreen";
+import { AuthorizeDesktopRoute } from "./AuthorizeDesktopRoute";
 import type { SearchParamsLike } from "../../demo-mode";
 
 /**
@@ -20,5 +20,5 @@ export default async function AuthorizeDesktopPage(props: { searchParams?: Promi
   const raw = searchParams?.request;
   const first = Array.isArray(raw) ? raw[0] : raw;
   const handle = typeof first === "string" ? first.trim() : "";
-  return <AuthorizeDesktopScreen request={HANDLE_RE.test(handle) ? handle : ""} />;
+  return <AuthorizeDesktopRoute request={HANDLE_RE.test(handle) ? handle : ""} />;
 }

@@ -356,13 +356,13 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.resume.passes", store: "sessionStorage", owner: "web",
-    at: ["apps/webapp/app/(product)/resume/ResumeScreen.tsx"],
+    at: ["apps/webapp/app/(product)/resume/use-resume-door.ts"],
     holds: "how often this tab passed the resume splash",
     words: false, erased: "never", mark: "kept",
   },
   {
     key: "ohmail.resume-attempted.", family: true, store: "sessionStorage", owner: "web",
-    at: ["apps/webapp/app/(product)/resume/ResumeScreen.tsx"],
+    at: ["apps/webapp/app/(product)/resume/use-resume-door.ts"],
     holds: "that this tab tried to resume a session, per account",
     words: false, erased: "account-erase", mark: "kept",
   },

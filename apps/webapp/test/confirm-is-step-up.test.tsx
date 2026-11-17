@@ -189,14 +189,17 @@ async function submit(form: Element | null): Promise<void> {
   await settle();
 }
 
-const prompt = (el: HTMLElement): Element | null => el.querySelector('[data-testid="step-up-prompt"]');
+/** The pane's step-up: today's prompt, or the one dialog where a page stands on it. */
+const prompt = (el: HTMLElement): Element | null => el.querySelector('[data-testid="step-up-prompt"], [role="dialog"]');
+const codeField = (el: HTMLElement): HTMLInputElement | null =>
+  el.querySelector<HTMLInputElement>('#stepup-code, [role="dialog"] input');
 const called = (name: string) => rig.calls.filter((c) => c.name === name);
 
 /** The prompt's code path, the one a fresh-code person takes. */
 async function verifyCode(el: HTMLElement): Promise<void> {
-  await waitFor(() => el.querySelector("#stepup-code") != null, "the prompt's code field");
-  await typeInto(el.querySelector("#stepup-code"), "123456");
-  await submit(el.querySelector("#stepup-code")!.closest("form"));
+  await waitFor(() => codeField(el) != null, "the prompt's code field");
+  await typeInto(codeField(el), "123456");
+  await submit(codeField(el)!.closest("form"));
 }
 
 const row = (over: Partial<MailboxDTO> = {}): MailboxDTO => ({
@@ -321,10 +324,10 @@ const PANES: Pane[] = [
     },
   },
   {
-    name: "LinkDesktopScreen: mint", verb: "auth.desktopLink", signIn: link.signInFirst!,
+    name: "LinkDesktopRoute: mint", verb: "auth.desktopLink", signIn: link.signInFirst!,
     walk: async () => {
-      const { LinkDesktopScreen } = await import("../app/(product)/link-desktop/LinkDesktopScreen.js");
-      const el = await render(h(LinkDesktopScreen, { challenge: CHALLENGE }));
+      const { LinkDesktopRoute } = await import("../app/(product)/link-desktop/LinkDesktopRoute.js");
+      const el = await render(h(LinkDesktopRoute, { challenge: CHALLENGE }));
       await click(press(el, link.mint!));
       return el;
     },
@@ -397,9 +400,9 @@ describe("each confirm is a step-up on the session this browser holds", () => {
     rig.script["auth.desktopLink"] = ["unauthorized"];
     const el = await PANES.find((p) => p.verb === "auth.desktopLink")!.walk();
     await waitFor(() => (el.textContent ?? "").includes(link.signInFirst!), "the sign-in sentence");
-    const door = [...el.querySelectorAll("a")].find((a) => a.getAttribute("href") === "/login");
+    const door = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === en.login.title);
     expect(door, "no way to the sign-in").toBeTruthy();
-    expect(el.querySelector("#link-pw"), "the page asked for a password itself").toBeNull();
+    expect(el.querySelector('input[type="password"]'), "the page asked for a password itself").toBeNull();
     expect(prompt(el)).toBeNull();
   }, 20000);
 
@@ -479,6 +482,6 @@ describe("the census of sign-ins under (product)", () => {
       .map((abs) => ({ file: abs.slice(PRODUCT.length + 1), n: loginCalls(readFileSync(abs, "utf8")) }))
       .filter((f) => f.n > 0)
       .map((f) => f.file);
-    expect(hits, "a confirmation that signs in mints a web session per press").toEqual(["login/LoginScreen.tsx"]);
+    expect(hits, "a confirmation that signs in mints a web session per press").toEqual(["login/use-sign-in-door.ts"]);
   });
 });

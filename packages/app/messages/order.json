@@ -101,5 +101,7 @@
   "subscribed",
   "appError",
   "mailboxFilings",
-  "frame"
+  "frame",
+  "stepUp",
+  "deleteAccount"
 ]

@@ -234,9 +234,9 @@ describe("the sign-out CONTROL is wired", () => {
     // …and it is finished where the form is, never behind a page with nothing on it: the sign-in
     // page asks the sign-out door under the marker, and so do the sign-up and confirmation pages one
     // link away (one hook, `pending-sign-out.tsx`); the splash never finishes a sign-out.
-    const login = read("../app/(product)/login/LoginScreen.tsx");
+    const login = read("../app/(product)/login/use-sign-in-door.ts") + read("../app/(product)/login/SignInRoute.tsx");
     expect(login).toMatch(/if \(readOwnerMarker\(\)\.kind === "signed-out"\) \{\s*void pending\.finish\(/);
-    const join = read("../app/(product)/join/JoinScreen.tsx");
+    const join = read("../app/(product)/join/use-join-door.ts") + read("../app/(product)/join/JoinRoute.tsx");
     const branch = join.indexOf('if (apiConfigured() && readOwnerMarker().kind === "signed-out") {');
     const finish = join.indexOf("void pending.finish(", branch);
     const back = join.indexOf("return () => { cancelled = true; };", finish);
@@ -245,16 +245,18 @@ describe("the sign-out CONTROL is wired", () => {
     expect(join.indexOf("void bootstrap();", branch), "the sign-up page reads the session under a pending sign-out")
       .toBeGreaterThan(back);
     expect(back).toBeGreaterThan(finish);
-    const verify = read("../app/(product)/verify-email/VerifyEmailScreen.tsx");
+    const verify = read("../app/(product)/verify-email/use-verify-door.ts") + read("../app/(product)/verify-email/VerifyRoute.tsx");
     expect(verify).toMatch(/void pending\.finish\(/);
     for (const [page, src] of [["sign-in", login], ["sign-up", join], ["confirmation", verify]] as const) {
       expect(src, `the ${page} page starts a ceremony beside the pending sign-out`).toMatch(/if \(!await pending\.settle\(\)\) return;/);
-      expect(src, `the ${page} page does not say how the sign-out ended`).toMatch(/<PendingSignOutSaid pending=\{pending\}/);
+      // An old card says it itself; a door's route hands it to the page, which says it first among its refusals.
+      expect(src, `the ${page} page does not say how the sign-out ended`)
+        .toMatch(/<PendingSignOutSaid pending=\{pending\}|usePendingDoor\(c\.pending\)/);
     }
     // …and what it ends on is said there, in this pane's words, through the same reader.
-    const said = read("../app/(product)/login/pending-sign-out.tsx");
+    const said = read("../app/(product)/login/use-pending-door.ts");
     expect(said).toMatch(/ta\(pending\.said\.key, \{ reason: pending\.said\.reason \}\)/);
-    const splash = read("../app/(product)/resume/ResumeScreen.tsx");
+    const splash = read("../app/(product)/resume/use-resume-door.ts");
     expect(splash).not.toMatch(/import\(["']\.\.\/\.\.\/sign-out["']\)|from ["']\.\.\/\.\.\/sign-out(?:-trouble)?["']/);
     const copy = JSON.parse(read("../messages/en.json")) as Record<string, Record<string, string>>;
     expect(copy.account!.signOutServerRefused).toMatch(/could not be ended/i);

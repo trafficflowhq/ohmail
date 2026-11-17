@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { CSRF_COOKIE, csrfMark } from "../../csrf";
 import { cookieFromStore } from "@ohmail/app-logic/storage/cookie-jar";
 import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
-import { ResumeScreen } from "./ResumeScreen";
+import { ResumeRoute } from "./ResumeRoute";
 
 /**
  * The resume splash. Reached ONLY as `/` — `middleware.ts` rewrites the root here when the session
@@ -11,7 +11,7 @@ import { ResumeScreen } from "./ResumeScreen";
  * URL. The gate sends a browser here when it holds the `tf_resume` marker but no usable access
  * cookie: the fifteen-minute access token lapsed, or `SameSite=Strict` withheld it on a cross-site
  * navigation — either way a ninety-day rolling refresh token is probably still in the jar, and
- * only the browser can spend it (see `ResumeScreen`). Never for a sign-out this browser asked for:
+ * only the browser can spend it (see `use-resume-door.ts`). Never for a sign-out this browser asked for:
  * the gate sends that to the sign-in page, which finishes it.
  */
 export default async function Page() {
@@ -30,5 +30,5 @@ export default async function Page() {
   // And the jar it judged stale, as a mark: one another tab renews past it is taken, not rotated again.
   // Only beside the marker: a cross-site navigation carries neither cookie, and the screen judges the jar.
   const staleJar = owner === null ? undefined : csrfMark(cookieFromStore(await cookies(), CSRF_COOKIE));
-  return <ResumeScreen initialOwner={owner} staleJar={staleJar} />;
+  return <ResumeRoute initialOwner={owner} staleJar={staleJar} />;
 }

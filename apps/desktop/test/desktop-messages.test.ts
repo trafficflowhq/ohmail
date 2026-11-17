@@ -184,26 +184,74 @@ function sourceFiles(): string[] {
  * German translation of the whole reading pane invisible to this guard — the shape of failure the
  * header above describes ("correct when written, silently stale afterwards").
  */
-function namespacesUsed(): Set<string> {
+function namespacesRead(src: string): Set<string> {
   const found = new Set<string>();
-  for (const rel of sourceFiles()) {
-    const src = read(rel);
-
-    for (const m of src.matchAll(/useTranslations\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
-    // The one text reader's door reads a namespace the same way (`@ohmail/app/text`).
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-    for (const m of code.matchAll(/\buseText\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
-    for (const m of src.matchAll(/\b(?:liveCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
-      found.add(m[1]!);
-    }
-
-    // Unscoped: collect dotted keys from `t("a.b")` in files that call useTranslations().
-    if (/useTranslations\(\s*\)/.test(src)) {
-      for (const m of src.matchAll(/\bt\(\s*"([A-Za-z0-9_]+)\.[A-Za-z0-9_.]+"/g)) found.add(m[1]!);
-    }
-    for (const ns of computedKeyNamespaces(src)) found.add(ns);
+  for (const m of src.matchAll(/useTranslations\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
+  // The one text reader's door reads a namespace the same way (`@ohmail/app/text`).
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  for (const m of code.matchAll(/\buseText\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
+  for (const m of src.matchAll(/\b(?:liveCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
+    found.add(m[1]!);
   }
+
+  // Unscoped: collect dotted keys from `t("a.b")` in files that call useTranslations().
+  if (/useTranslations\(\s*\)/.test(src)) {
+    for (const m of src.matchAll(/\bt\(\s*"([A-Za-z0-9_]+)\.[A-Za-z0-9_.]+"/g)) found.add(m[1]!);
+  }
+  for (const ns of computedKeyNamespaces(src)) found.add(ns);
   return found;
+}
+
+/** Every scanned source file and the namespaces it reads. */
+function readsByFile(): Map<string, Set<string>> {
+  return new Map(sourceFiles().map((rel) => [rel, namespacesRead(read(rel))]));
+}
+
+function namespacesUsed(): Set<string> {
+  return new Set([...readsByFile().values()].flatMap((reads) => [...reads]));
+}
+
+/**
+ * ── THE DOORS' PAGES ARE SCANNED, AND THE DESKTOP MOUNTS NONE OF THEM ──────────────────────────
+ *
+ * `packages/app/src` is a scan root because the frame and its text reader ship in the window. The doors live in the
+ * same package (`packages/app/src/doors`), and only the web's routes under `apps/webapp/app/(product)` mount them:
+ * the window opens every page of an account in the system browser (`WEB_PLACES` in `apps/desktop/src/native.ts`),
+ * and neither entry imports a door. So a namespace read only by the doors' pages does not ship; each is named here
+ * with the door that reads it and why the desktop cannot reach it. An exception covers the doors' pages alone: the
+ * same namespace read anywhere else in the bundle's roots is a surface the desktop draws, and is red below.
+ */
+const DOORS = "packages/app/src/doors/";
+const DOOR_ONLY: Record<string, string> = {
+  approve: "the approval (/approve) and the words the link, the authorization and the erase share: opened in the browser",
+  authorizeDesktop: "the native authorization (/authorize-desktop): a web route, in the browser",
+  deleteAccount: "the erase (/account/delete): a web route; the window's Account opens the browser",
+  gate: "the doors' sentence for a build with no server (no page, setup, signed out, after paying): web routes",
+  joinInvite: "the household invite (/join/invite): a link in a letter, opened in the browser",
+  linkDesktop: "the desktop link (/link-desktop): the browser half of the window's sign-in (DoorChooser's openWeb)",
+  login: "the sign-in (/login) and the words the link and the authorization share: the window signs in by its own door",
+  resume: "the signed-out page (/resume) and the sign-in's reason line: web routes; the window's door is desktopDoor",
+  setup: "the server setup (/setup): the window opens it in the browser (WEB_PLACES)",
+  stepUp: "the step-up dialog: the web's mailbox and account routes mount it; the window's first run hands no step-up",
+  subscribed: "the return after paying (/subscribed): the payment page returns to the browser",
+  verify: "the email confirmation (/verify-email): a link in a letter, opened in the browser",
+};
+
+/**
+ * What the shipped lists and the doors' exceptions leave unexplained: a namespace on neither list and not excepted,
+ * or an excepted one read outside the doors' pages. Empty is green.
+ */
+function unexplained(reads: ReadonlyMap<string, ReadonlySet<string>>): string[] {
+  const shipped = new Set<string>([...SHELL_MESSAGE_NAMESPACES, ...Object.keys(SHELL_MESSAGE_KEYS)]);
+  const out = new Set<string>();
+  for (const [file, namespaces] of reads) {
+    for (const ns of namespaces) {
+      if (shipped.has(ns)) continue;
+      if (!Object.hasOwn(DOOR_ONLY, ns)) out.add(ns);
+      else if (!file.startsWith(DOORS)) out.add(`${ns} in ${file}`);
+    }
+  }
+  return [...out].sort();
 }
 
 /**
@@ -375,12 +423,32 @@ describe("desktop message filter", () => {
   });
 
   it("SHELL_MESSAGE_NAMESPACES is exactly what the sources read", () => {
-    const used = [...namespacesUsed()].sort();
+    const reads = readsByFile();
+    const used = [...new Set([...reads.values()].flatMap((r) => [...r]))].sort();
     /* BOTH LISTS, because both ship. A namespace the shell reads is satisfied by the wholesale
        list or by the subset one, and a namespace on NEITHER is the omission this guard exists
        for — a raw key in front of a user. Concatenated rather than made optional: a subset entry
-       for a namespace nobody reads is dead payload and this still catches it. */
-    expect(used).toEqual([...SHELL_MESSAGE_NAMESPACES, ...Object.keys(SHELL_MESSAGE_KEYS)].sort());
+       for a namespace nobody reads is dead payload and this still catches it. The doors' own
+       namespaces are read and not shipped ({@link DOOR_ONLY}); an exception nobody reads is red
+       here as well, and one read outside the doors' pages is red by `unexplained`. */
+    expect(unexplained(reads)).toEqual([]);
+    expect(used).toEqual(
+      [...SHELL_MESSAGE_NAMESPACES, ...Object.keys(SHELL_MESSAGE_KEYS), ...Object.keys(DOOR_ONLY)].sort(),
+    );
+  });
+
+  it("a namespace neither shipped nor excepted is red, and so is a door's namespace read outside the doors", () => {
+    const reads = readsByFile();
+    expect(unexplained(reads)).toEqual([]);
+    const planted = (file: string, ns: string) => new Map([...reads, [file, new Set([ns])]]);
+    expect(unexplained(planted(`${DOORS}sign-in/Planted.tsx`, "plantedDoor"))).toEqual(["plantedDoor"]);
+    expect(unexplained(planted("apps/desktop/src/Planted.tsx", "plantedDoor"))).toEqual(["plantedDoor"]);
+    expect(unexplained(planted("apps/desktop/src/Planted.tsx", "login"))).toEqual([
+      "login in apps/desktop/src/Planted.tsx",
+    ]);
+    expect(unexplained(planted("apps/webapp/app/shell/Planted.tsx", "stepUp"))).toEqual([
+      "stepUp in apps/webapp/app/shell/Planted.tsx",
+    ]);
   });
 
   it("every listed namespace exists in en.json", () => {

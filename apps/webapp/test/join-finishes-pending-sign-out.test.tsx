@@ -25,6 +25,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 const A = messages.account as Record<string, string>;
 const J = messages.join as Record<string, string>;
 const V = messages.verify as Record<string, string>;
+const I = messages.joinInvite as Record<string, string>;
 const PENDING = "signed_out_pending";
 const refusedSaying = (reason: string): string => A.signOutServerRefused!.replace("{reason}", reason);
 
@@ -134,9 +135,9 @@ afterEach(async () => {
 async function mount(which: "join" | "verify" | "invite"): Promise<HTMLElement> {
   if (which === "invite") window.history.replaceState(null, "", "/join/invite#tok_1");
   const child = which === "join"
-    ? h((await import("../app/(product)/join/JoinScreen.js")).JoinScreen, { initialCode: "", publicSignup: true })
-    : which === "invite" ? h((await import("../app/(product)/join/invite/InviteScreen.js")).InviteScreen)
-    : h((await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen, { initialToken: "tok_1" });
+    ? h((await import("../app/(product)/join/JoinRoute.js")).JoinRoute, { initialCode: "", publicSignup: true })
+    : which === "invite" ? h((await import("../app/(product)/join/invite/InviteRoute.js")).InviteRoute)
+    : h((await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute, { initialToken: "tok_1" });
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -164,15 +165,24 @@ async function tick(ms: number): Promise<void> {
 }
 
 const text = (el: HTMLElement): string => el.textContent ?? "";
-/** The sign-out's own sentence, in the block that offers Sign out. */
+/** The sign-out's own sentence: the first alert, as the card says it in the block that offers Sign out and a door's page first among its refusals. */
 const troubleText = (el: HTMLElement): string | null =>
-  el.querySelector('.join-error-note [role="alert"]')?.textContent ?? null;
+  el.querySelector('[role="alert"]')?.textContent ?? null;
+/** A door's page says the sign-out's sentence first among its refusals. */
+const firstAlert = (el: HTMLElement): string | null => el.querySelector('[role="alert"]')?.textContent ?? null;
 const signOutButton = (el: HTMLElement): HTMLButtonElement | null =>
   [...el.querySelectorAll("button")].find((b) => b.textContent === A.signOut) ?? null;
 
+/** A blank, by its id (an old card) or by the name its label gives it (a door's page). */
+function blankOf(el: HTMLElement, key: string): HTMLInputElement | null {
+  if (key.startsWith("#")) return el.querySelector<HTMLInputElement>(key);
+  const label = [...el.querySelectorAll("label")].find((l) => l.textContent === key);
+  return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+}
+
 async function fill(el: HTMLElement, selector: string, value: string): Promise<void> {
   await act(async () => {
-    const input = el.querySelector<HTMLInputElement>(selector)!;
+    const input = blankOf(el, selector)!;
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
@@ -194,15 +204,15 @@ async function createAccount(el: HTMLElement): Promise<void> {
 
 /** The confirmation form, its password typed and sent. */
 async function confirmAddress(el: HTMLElement): Promise<void> {
-  await fill(el, "#verify-pw", fixturePassword("join-finishes-pending-sign-out"));
+  await fill(el, V.passwordLabel!, fixturePassword("join-finishes-pending-sign-out"));
   await submit(el);
 }
 
 /** The invitation's form, filled and sent. */
 async function acceptInvite(el: HTMLElement): Promise<void> {
-  await fill(el, "#invite-email", "new-person@example.invalid");
-  await fill(el, "#invite-name", "New Person");
-  await fill(el, "#invite-pw", fixturePassword("join-finishes-pending-sign-out"));
+  await fill(el, I.emailLabel!, "new-person@example.invalid");
+  await fill(el, I.nameLabel!, "New Person");
+  await fill(el, I.passwordLabel!, fixturePassword("join-finishes-pending-sign-out"));
   await submit(el);
 }
 
@@ -310,7 +320,8 @@ describe("/verify-email finishes a pending sign-out before it confirms", () => {
     expect(count("door"), "the unfinished sign-out was not presented at the sign-out door").toBe(1);
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
     expect(count("door")).toBe(CONFIRM_ATTEMPTS);
-    expect(troubleText(el)).toBe(refusedSaying("busy"));
+    expect(firstAlert(el)).toBe(refusedSaying("busy"));
+    expect(signOutButton(el), "the sentence says to press Sign out, and nothing offers it").not.toBeNull();
     await confirmAddress(el);
     await tick(2_000);
     expect(count("door"), "the confirmation did not ask the door first").toBe(CONFIRM_ATTEMPTS + 1);
@@ -340,7 +351,7 @@ describe("/join/invite finishes a pending sign-out before the token is spent", (
     const el = await mount("invite");
     expect(count("door"), "the unfinished sign-out was not presented at the sign-out door").toBe(1);
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
-    expect(troubleText(el)).toBe(refusedSaying("busy"));
+    expect(firstAlert(el)).toBe(refusedSaying("busy"));
     expect(signOutButton(el), "the sentence says to press Sign out, and nothing offers it").not.toBeNull();
     await acceptInvite(el);
     await tick(2_000);
@@ -371,7 +382,7 @@ describe("/join/invite finishes a pending sign-out before the token is spent", (
     await acceptInvite(el);
     await tick(2_000);
     expect([count("redeem"), count("door"), count("register")]).toEqual([1, 1, 0]);
-    expect(troubleText(el)).toBe(refusedSaying("busy"));
+    expect(firstAlert(el)).toBe(refusedSaying("busy"));
   });
 });
 
@@ -411,6 +422,6 @@ describe("THE CONTROL — no pending sign-out, both pages as before", () => {
     await tick(1_000);
     expect(wire.filter((w) => ACCOUNT_READS.includes(w))).toEqual(["session", "refresh"]);
     expect(count("door")).toBe(0);
-    expect(el.querySelector("#invite-email")).not.toBeNull();
+    expect(blankOf(el, I.emailLabel!)).not.toBeNull();
   });
 });

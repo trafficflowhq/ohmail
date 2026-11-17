@@ -116,7 +116,7 @@ async function tick(ms: number): Promise<void> {
 }
 
 async function mountLogin(): Promise<HTMLElement> {
-  const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+  const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);

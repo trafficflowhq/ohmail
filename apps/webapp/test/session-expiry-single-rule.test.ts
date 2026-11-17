@@ -104,7 +104,7 @@ describe("the census reads the tree it claims to", () => {
     expect(FILES.length).toBeGreaterThan(100);
     const asking = FILES.filter((f) => ASKS.test(scan.withoutComments(f.src))).map((f) => f.rel);
     expect(asking).toContain("apps/webapp/app/session-refresh.ts");
-    expect(asking).toContain("apps/webapp/app/(product)/resume/ResumeScreen.tsx");
+    expect(asking).toContain("apps/webapp/app/(product)/resume/use-resume-door.ts");
     expect(asking.length).toBeGreaterThan(5);
   });
 });
@@ -123,23 +123,35 @@ describe("the two writers of a sign-in verdict, and only those", () => {
   it("the splash sends a browser to /login only from its refusal arm; sign-out is the other door", () => {
     const found = sites(loginNavigations).map((s) => `${s.file} [${s.guard}]`);
     expect(found).toEqual([
+      // The no-server page's Sign in: a person's press, as the gate card's link to the sign-in page was. Not a verdict.
+      "apps/webapp/app/(product)/NoPageRoute.tsx []",
       // The desktop approval's "sign in first", read off the refresh door's confirmed verdict.
-      "apps/webapp/app/(product)/approve/ApproveScreen.tsx [sessionIsDead()]",
+      "apps/webapp/app/(product)/approve/use-approve-door.ts [sessionIsDead()]",
       // …and before its first read, off the front-door classifier's `none` (`approve/settle-owner.ts`).
-      'apps/webapp/app/(product)/approve/ApproveScreen.tsx [settled.kind === "none"]',
+      'apps/webapp/app/(product)/approve/use-approve-door.ts [settled.kind === "none"]',
+      // The native authorization's Sign in: a person's press, as the card's link to the sign-in page was. Not a verdict.
+      "apps/webapp/app/(product)/authorize-desktop/AuthorizeDesktopRoute.tsx []",
       // After the person's own sign-out succeeded — the invariant's first door, not a verdict.
       'apps/webapp/app/(product)/error.tsx []',
+      // The desktop link's Sign in: a person's press, as the card's link to the sign-in page was. Not a verdict.
+      "apps/webapp/app/(product)/link-desktop/LinkDesktopRoute.tsx []",
       // …and the lock screen's, the same door past the same one reader.
-      'apps/webapp/app/(product)/mailbox/AccessLock.tsx []',
+      'apps/webapp/app/(product)/mailbox/use-wall-door.ts []',
+      // The signed-out page's Sign in: a person's press, as the splash's link to the sign-in page was. Not a verdict.
+      "apps/webapp/app/(product)/resume/ResumeRoute.tsx []",
       // A jar holding this browser's own unfinished sign-out, met by the splash: no door asked, the
       // sign-in page finishes it (`resume-never-loops`, `login-finishes-sign-out`). Not a verdict.
-      "apps/webapp/app/(product)/resume/ResumeScreen.tsx [signOutPending()]",
+      "apps/webapp/app/(product)/resume/use-resume-door.ts [signOutPending()]",
       // The jar lost the account the edge saw while the splash waited: another tab heard the door's
       // refusal (or signed out), and only a server answer or a sign-out takes `tf_owner`. Not a fault.
-      "apps/webapp/app/(product)/resume/ResumeScreen.tsx [initialOwner !== null && readOwnerCookie() === null]",
-      'apps/webapp/app/(product)/resume/ResumeScreen.tsx [answer !== "unavailable"]',
+      "apps/webapp/app/(product)/resume/use-resume-door.ts [initialOwner !== null && readOwnerCookie() === null]",
+      'apps/webapp/app/(product)/resume/use-resume-door.ts [answer !== "unavailable"]',
+      // The setup page's Sign in, once the server is set up: a person's press, as the card's link was. Not a verdict.
+      "apps/webapp/app/(product)/setup/SetupRoute.tsx []",
+      // The confirmation's Sign in, once the address is confirmed: a person's press, as the card's link was. Not a verdict.
+      "apps/webapp/app/(product)/verify-email/VerifyRoute.tsx []",
     ]);
-    for (const file of ["apps/webapp/app/(product)/error.tsx", "apps/webapp/app/(product)/mailbox/AccessLock.tsx"]) {
+    for (const file of ["apps/webapp/app/(product)/error.tsx", "apps/webapp/app/(product)/mailbox/use-wall-door.ts"]) {
       const src = scan.withoutComments(readFileSync(resolve(file), "utf8"));
       expect(src.slice(0, src.indexOf('window.location.assign("/login")')), file).toMatch(/await signOut\(/);
     }
@@ -148,8 +160,8 @@ describe("the two writers of a sign-in verdict, and only those", () => {
   it("the sign-out note is left only beside those navigations", () => {
     expect(sites((src) => callSites(src, "leaveSignedOutNote")).map((s) => `${s.file} [${s.guard}]`)).toEqual([
       // The sentence the other tab heard, copied for this tab's `/login`.
-      "apps/webapp/app/(product)/resume/ResumeScreen.tsx [initialOwner !== null && readOwnerCookie() === null]",
-      'apps/webapp/app/(product)/resume/ResumeScreen.tsx [answer !== "unavailable"]',
+      "apps/webapp/app/(product)/resume/use-resume-door.ts [initialOwner !== null && readOwnerCookie() === null]",
+      'apps/webapp/app/(product)/resume/use-resume-door.ts [answer !== "unavailable"]',
     ]);
   });
 

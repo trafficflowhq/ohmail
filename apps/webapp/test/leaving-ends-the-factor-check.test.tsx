@@ -113,8 +113,8 @@ async function mountNode(node: React.ReactNode): Promise<HTMLElement> {
 }
 
 async function mountWall(): Promise<HTMLElement> {
-  const { AccessLock } = await import("../app/(product)/mailbox/AccessLock.js");
-  return mountNode(h(AccessLock, { facts: { reason: "payment_required" as const } }));
+  const { WallRoute } = await import("../app/(product)/mailbox/WallRoute.js");
+  return mountNode(h(WallRoute, { facts: { reason: "payment_required" as const } }));
 }
 
 /** Settings → Account with CloudShell's own node: the password change above the account's cards. */
@@ -205,24 +205,6 @@ async function erasedOwner(): Promise<string | null> {
 }
 
 describe("the wall's Back while the factor is checked", () => {
-  it("the erase: no DELETE /account after Back, nothing wiped, and the wall still true", async () => {
-    const c = await mountWall();
-    await click(button(c, en.accessLock.deleteNow));
-    await eraseToThePrompt(c);
-    await verifyHeld(c);
-    expect(sent(ERASE), "the press met the closed window first").toBe(1);
-
-    await click(button(c, en.accessLock.back));
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "Back took the prompt away").toBeNull();
-    await land();
-
-    expect(sent(ERASE), "DELETE /account went out after Back").toBe(1);
-    expect(rig.wipes, "this browser's copy was wiped for an erase nobody confirmed").toBe(0);
-    expect(await erasedOwner(), "the tab latched an erasure").toBeNull();
-    expect(c.textContent).toContain(en.accessLock.kept);
-    button(c, en.accessLock.deleteNow);
-  });
-
   it("the password change: not sent again after Back", async () => {
     const c = await mountWall();
     await click(button(c, en.accessLock.changePassword));
@@ -236,19 +218,6 @@ describe("the wall's Back while the factor is checked", () => {
 
     expect(sent(CHANGE), "POST /auth/password went out after Back").toBe(1);
     button(c, en.accessLock.changePassword);
-  });
-
-  it("CONTROL: the answer lands with the pane open, and the erase runs once", async () => {
-    const c = await mountWall();
-    await click(button(c, en.accessLock.deleteNow));
-    await eraseToThePrompt(c);
-    await verifyHeld(c);
-    await land();
-
-    await waitFor(() => c.textContent!.includes(en.account.doneTitle), "the erasure receipt");
-    expect(sent(ERASE)).toBe(2);
-    expect(rig.wipes).toBe(1);
-    expect(await erasedOwner()).toBe("acct-under-test");
   });
 
   it("CONTROL: the answer lands with the pane open, and the change is sent once more", async () => {

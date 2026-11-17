@@ -120,7 +120,7 @@ afterEach(async () => {
 async function mountJoin(props: {
   initialCode?: string; publicSignup?: boolean; billingReturn?: "success" | "cancelled";
 } = {}): Promise<HTMLElement> {
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -754,8 +754,10 @@ describe("the plan poll asks whose account it is reading", () => {
 const settled = async (): Promise<void> => {
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
 };
+/** A button by its words; a door's ink button carries its key after them. */
 const pressed = async (c: HTMLElement, label: string): Promise<void> => {
-  const button = [...c.querySelectorAll("button")].find((b) => b.textContent === label);
+  const buttons = [...c.querySelectorAll("button")];
+  const button = buttons.find((b) => b.textContent === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
   expect(button, `no "${label}" button`).toBeTruthy();
   await act(async () => { (button as HTMLButtonElement).click(); });
   await settled();

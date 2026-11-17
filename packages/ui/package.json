@@ -22,6 +22,12 @@
       "node": "./dist/squares-window.js",
       "default": "./src/squares-window.ts"
     },
+    "./theme": {
+      "types": "./src/theme/ThemeProvider.tsx",
+      "ohmail-source": "./src/theme/ThemeProvider.tsx",
+      "node": "./dist/theme/ThemeProvider.js",
+      "default": "./src/theme/ThemeProvider.tsx"
+    },
     "./base": {
       "types": "./src/base/index.ts",
       "ohmail-source": "./src/base/index.ts",

@@ -65,7 +65,7 @@ async function mount(messages: Messages = en, props: { initialCode: string; publ
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -89,8 +89,10 @@ async function mount(messages: Messages = en, props: { initialCode: string; publ
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
     await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
   };
+  /** A button by its words; a door's ink button carries its key after them. */
   const submit = async (label: string) => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+    const buttons = [...host.querySelectorAll("button")];
+    const button = buttons.find((b) => b.textContent === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     await settle();

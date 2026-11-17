@@ -21,8 +21,8 @@ import {
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { SELF_HOST_BUILD } from "../../hello";
-import { AccessLock } from "./AccessLock";
-import { ErasedWall } from "./ErasedWall";
+import { WallRoute } from "./WallRoute";
+import { ErasedRoute } from "./ErasedRoute";
 import { useErasedWall, watchErasedElsewhere } from "../../erased-door";
 import { useRevokedHere } from "../../revoked-door";
 import { AccountLocale } from "./AccountLocale";
@@ -265,14 +265,14 @@ export function CloudShell({ demo, drawMail }: {
   if (erased) {
     return (
       <AccountLocale>
-        <ErasedWall blocked={(erased.remaining ?? []).some((n) => n.startsWith("ohmail-mirror"))} />
+        <ErasedRoute blocked={(erased.remaining ?? []).some((n) => n.startsWith("ohmail-mirror"))} />
       </AccountLocale>
     );
   }
   if (refused) {
     return (
       <AccountLocale>
-        <AccessLock facts={refused} onLifted={lift} />
+        <WallRoute facts={refused} onLifted={lift} />
       </AccountLocale>
     );
   }

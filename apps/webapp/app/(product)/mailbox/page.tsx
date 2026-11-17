@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { headers } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import { DEFAULT_LOCALE } from "../../shell/locale";
+import { NoPageRoute } from "../NoPageRoute";
 import { CloudShell } from "./CloudShell";
 import { isDemoBuild, isDemoRequested, type SearchParamsLike } from "../../demo-mode";
 
@@ -35,28 +35,5 @@ export default async function Page(props: { searchParams?: Promise<SearchParamsL
   /* English explicitly — the request config resolves `requestLocale` since the bilingual
      marketing slice, and no layout pins one for this route. Same string as before. */
   const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "gate" });
-  return (
-    <div className="gate">
-      <div className="gate-card">
-        {/* oh | mail, split so `.gate-card .wordmark em` can carry accent-ink; the
-            rendered text is pinned by a suite. */}
-        <span className="wordmark">
-          <b>
-            <em>oh</em>mail
-          </b>
-        </span>
-        <h1>{t("lede")}</h1>
-        <p>{t("body")}</p>
-        <div className="gate-actions">
-          <Link className="btn primary" href="/?demo=1">
-            {t("openDemo")}
-          </Link>
-          <Link className="btn" href="/login">
-            {t("signIn")}
-          </Link>
-        </div>
-      </div>
-      <p className="gate-foot">{t("footer")}</p>
-    </div>
-  );
+  return <NoPageRoute at="noserver" words={{ title: t("lede"), body: t("body"), note: t("note"), demo: t("openDemo"), signIn: t("signIn") }} />;
 }

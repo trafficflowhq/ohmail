@@ -75,7 +75,7 @@ afterEach(async () => {
 });
 
 async function mount(next: "/account/manage" | "/join" | null): Promise<void> {
-  const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+  const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

@@ -208,6 +208,8 @@ export default defineConfig({
       // The squares' window as a leaf, for the same reason: the phone's MarkSquare links it.
       { find: "@ohmail/ui/squares-window", replacement: r("./packages/ui/src/squares-window.ts") },
       // The next design's components, three entries, above the bare name for the same reason.
+      // The theme provider and its readers as a leaf, for the same reason: a door's device reads the theme and nothing else of today's kit.
+      { find: "@ohmail/ui/theme", replacement: r("./packages/ui/src/theme/ThemeProvider.tsx") },
       { find: "@ohmail/ui/base", replacement: r("./packages/ui/src/base/index.ts") },
       { find: "@ohmail/ui/mail", replacement: r("./packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui/calendar", replacement: r("./packages/ui/src/calendar/index.ts") },

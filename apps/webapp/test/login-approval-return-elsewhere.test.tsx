@@ -147,7 +147,7 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 const pause = async (ms: number): Promise<void> => { await act(async () => { await new Promise((r) => setTimeout(r, ms)); }); };
 
 async function mount(): Promise<HTMLDivElement> {
-  const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+  const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

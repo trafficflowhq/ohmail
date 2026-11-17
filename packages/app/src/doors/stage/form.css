@@ -1,0 +1,15 @@
+/* A door's form lays out nothing of its own; its blanks stand one under the other at a reading measure. */
+.way-door-form {
+  display: contents;
+}
+
+.way-door-fields {
+  display: grid;
+  gap: var(--s4);
+  max-width: 28em;
+}
+
+/* Under the page's sentence, where the material stands beside it: the room the page leaves above its material. */
+.way-door-fields[data-under] {
+  margin-top: var(--s5);
+}

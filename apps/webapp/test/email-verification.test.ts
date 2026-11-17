@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { config as middlewareConfig } from "../middleware.js";
 import { OWN_PATHS } from "../next.config.mjs";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push() {}, replace() {} }) }));
 
 /**
  * Stage-2 the webapp half of email verification.
@@ -87,14 +89,30 @@ describe("the credential-page duties are discharged, not merely promised", () =>
   });
 
   it("the token is scrubbed out of the address bar on load", () => {
-    const screen = read("../app/(product)/verify-email/VerifyEmailScreen.tsx");
+    const screen = read("../app/(product)/verify-email/use-verify-door.ts");
     expect(screen).toMatch(/history\.replaceState/);
     expect(screen).toMatch(/searchParams\.delete\("token"\)/);
+  });
+
+  it("the page the server draws carries no part of the link's code: the ceremony holds it", async () => {
+    process.env.NEXT_PUBLIC_API_BASE = "/api";
+    const React = await import("react");
+    const { renderToString } = await import("react-dom/server");
+    const { NextIntlClientProvider } = await import("next-intl");
+    const { VerifyRoute } = await import("../app/(product)/verify-email/VerifyRoute");
+    const code = ["link", "code", "a1b2c3d4"].join("-");
+    const html = renderToString(React.createElement(NextIntlClientProvider, {
+      locale: "en", messages: MESSAGES, timeZone: "UTC",
+      children: React.createElement(VerifyRoute, { initialToken: code }),
+    }));
+    expect(html, "the form was not drawn").toContain(MESSAGES.verify.passwordLabel);
+    expect(html, "the page carried the link's code").not.toContain(code);
   });
 });
 
 describe("the screen never verifies on a token alone", () => {
-  const screen = read("../app/(product)/verify-email/VerifyEmailScreen.tsx");
+  /* The ceremony moved into its hook; the doors' page draws the form over it. */
+  const screen = read("../app/(product)/verify-email/use-verify-door.ts") + read("../../../packages/app/src/doors/verify/VerifyPage.tsx");
 
   it("there is a password field, and it is REQUIRED", () => {
     expect(screen).toMatch(/type="password"/);
