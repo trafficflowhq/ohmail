@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { readBorders, readPlanted, type Borders } from "../../../test/support/borders-census.js";
 
 /**
- * What this package may reach, held on its bundle: the client engine and the core, and nothing
- * else of the product. No app, no component kit, no tokens, no web framework, no markup, no styles.
+ * What this package may reach, held on its bundle: the client engine, the core and the calendar's
+ * pure rules (`cal-core`, its row in tools/borders.json), and nothing else of the product. No app, no component kit, no tokens, no web framework, no markup, no styles.
  */
 const BORDERS: Borders = {
   folder: "packages/app-logic",
-  mayImport: ["@ohmail/client-engine", "@trafficflow/core"],
+  mayImport: ["@ohmail/client-engine", "@trafficflow/core", "@ohmail/cal-core"],
   neverLibraries: ["next", "next-intl", "use-intl"],
   neverEndings: [".css", ".tsx"],
 };

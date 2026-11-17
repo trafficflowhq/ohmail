@@ -104,6 +104,8 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       liveBody: selfHost ? NONE : has.wires.liveBody,
       images: server.remoteImages ? has.wires.images : NONE,
       ownModelAutoSuggest: NONE,
+      // The calendar's port is built at its seating, beside the engine.
+      calendar: NONE,
     },
     capabilities: {
       service: selfHost ? "self" : "managed",
@@ -120,6 +122,8 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       firstRunDoor: selfHost ? "selfhost" : "cloud",
       mailboxes: "here",
       language: "account",
+      // The switch to the calendar is answered from the server's word at its seating.
+      products: CANNOT.products,
     },
     features: {
       ...has.features,
@@ -134,6 +138,7 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       stageCard: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      calendar: has.frame.calendar,
     },
     device: {
       build: { surface: "web", version: facts.build.version, commit: facts.build.commit, mailtoLeaves: true },

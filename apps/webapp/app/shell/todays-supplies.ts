@@ -26,5 +26,6 @@ export function useTodaysSupplies(recover: HostSession["recover"]): FrameSupplie
     appearance: createFeed(look, (a, b) => a.face === b.face && a.scheme === b.scheme),
   }));
   useLayoutEffect(() => made.appearance.set({ face, scheme }), [made, face, scheme]);
-  return useMemo(() => ({ ...made, stages: NO_STAGE, recover }), [made, recover]);
+  /* No calendar is seated yet: its entry is handed in by the seating step. */
+  return useMemo(() => ({ ...made, stages: NO_STAGE, calendar: NONE, recover }), [made, recover]);
 }

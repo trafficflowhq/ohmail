@@ -1,0 +1,15 @@
+{
+  "calsearch": {
+    "title": "Search",
+    "field": "Search",
+    "placeholder": "Title, place, people",
+    "clear": "Clear",
+    "count": "{count, plural, one {# event} other {# events}}",
+    "readAs": "Read as {words}",
+    "nothing": "Nothing found",
+    "unplaced": "{count, plural, one {# event} other {# events}} in a time zone this device does not know",
+    "held": "Searched from {from} to {to}",
+    "allDay": "all day",
+    "span": "{from}–{to}"
+  }
+}

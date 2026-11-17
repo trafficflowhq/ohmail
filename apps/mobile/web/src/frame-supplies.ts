@@ -70,6 +70,8 @@ export function phoneFrameSupplies(
     address: keptAddress(address, kept),
     window: browserWindowFacts(win),
     appearance: systemAppearance(win),
+    // No calendar is seated yet: its entry is handed in by the seating step.
+    calendar: NONE,
     recover: NONE,
   };
 }

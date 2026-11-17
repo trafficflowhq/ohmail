@@ -11,6 +11,7 @@
  * that replace no input, and a browser's `images`. The `none:` sentences below say what a 2.0 view does with that answer.
  */
 import type { OlderBodyWire } from "@ohmail/client-engine";
+import type { CalendarPort } from "@ohmail/app-logic/calendar/port";
 import type { None } from "./contract.js";
 import type {
   AutoFiled, AutoFiledPutBack, AwayDraft, AwaySaved, AwayState, ConsentReadFailure, ConsentState, DraftReplyRead,
@@ -239,4 +240,6 @@ export interface HostWires {
   readonly ownModelAutoSuggest: OwnModelAutoSuggestWire | None;
   /** `none`, with the capability `mailboxes` at `none`. */
   readonly mailboxes: MailboxesWire | None;
+  /** The calendar's port over this shell's engine. `none`: no calendar here; with the capability `products` at `none`. */
+  readonly calendar: CalendarPort | None;
 }

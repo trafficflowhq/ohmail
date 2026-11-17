@@ -98,7 +98,7 @@ describe("the phone shell's answers, per setting", () => {
     notifications: named<DeviceNotifications>("notifications"),
     frame: {
       places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
-      appearance: named("appearance"), recover: named("recover"),
+      appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
     },
     signals: {
       linkIn: named("linkIn"), posture: named("posture"), insets: named("insets"), keyboard: named("keyboard"),
@@ -113,6 +113,7 @@ describe("the phone shell's answers, per setting", () => {
   const NO_WIRE = Object.fromEntries([
     "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk", "trash",
     "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "ownModelAutoSuggest", "mailboxes",
+    "calendar",
   ].map((w) => [w, NONE]));
   const NO_FEATURE = {
     ...Object.fromEntries([
@@ -121,6 +122,7 @@ describe("the phone shell's answers, per setting", () => {
     ].map((f) => [f, NONE])),
     places: has.frame.places,
     stages: has.frame.stages,
+    calendar: has.frame.calendar,
   };
   const DEVICE = {
     build: { surface: "phone", version: "2.0.0", commit: "abc", mailtoLeaves: true },
@@ -199,6 +201,7 @@ describe("what the page hands the frame", () => {
       expect(Object.values(mounted.stages).every((s) => s === NONE)).toBe(true);
       expect(frame.places).toBe(mounted.places);
       expect(frame.stages).toBe(mounted.stages);
+      expect(frame.calendar).toBe(NONE);
       expect(frame.recover).toBe(NONE);
       expect(frame.address.read()).toBe("");
     }

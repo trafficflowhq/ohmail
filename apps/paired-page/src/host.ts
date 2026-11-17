@@ -69,6 +69,7 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       folderSummary: NONE,
       ownModelAutoSuggest: NONE,
       mailboxes: NONE,
+      calendar: NONE,
     },
     capabilities: {
       service: "ownComputer",
@@ -86,6 +87,7 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       firstRunDoor: CANNOT.firstRunDoor,
       mailboxes: CANNOT.mailboxes,
       language: "install",
+      products: CANNOT.products,
     },
     features: {
       ...has.features,
@@ -104,6 +106,7 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       help: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      calendar: has.frame.calendar,
     },
     device: {
       build: {

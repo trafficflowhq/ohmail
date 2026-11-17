@@ -1,0 +1,14 @@
+{
+  "day": {
+    "hours": "The day's hours",
+    "allDay": "all day",
+    "chip": "{title}, {from} to {to}",
+    "chipAllDay": "{title}, all day",
+    "above": "{count, plural, one {An event above the hours in view: show it} other {# events above the hours in view: show the nearest}}",
+    "below": "{count, plural, one {An event below the hours in view: show it} other {# events below the hours in view: show the nearest}}",
+    "freeHours": "{hours} h",
+    "freeHoursMinutes": "{hours} h {minutes} min",
+    "unplaced": "{count, plural, one {1 event is not shown: its time zone is not known on this device.} other {# events are not shown: their time zone is not known on this device.}}",
+    "capped": "This day holds more than can be worked out at once. Some events may not be shown."
+  }
+}

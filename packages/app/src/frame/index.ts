@@ -20,3 +20,13 @@ export { attributesOf, ROOT_ATTRIBUTES } from "./root-attributes.js";
 export { ADDRESS, fragmentOf, routeOf } from "./route.js";
 export { Scoped } from "./scope.js";
 export { useSignal } from "./feeds.js";
+export {
+  CALENDAR_HOME,
+  MAIL_HOME,
+  SWITCH_CHORDS,
+  eventRefOf,
+  eventRefString,
+  isCalendarPlace,
+  productOf,
+} from "./product.js";
+export { CALENDAR_ADDRESS, isCalendarFragment, isRealDay } from "./route.js";

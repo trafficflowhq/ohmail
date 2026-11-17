@@ -17,6 +17,7 @@ import type {
   Route,
 } from "./contract.js";
 import { PLACE_IDS, RAIL_GROUPS } from "./contract.js";
+import { isCalendarPlace } from "./product.js";
 import { useSignal } from "./feeds.js";
 import type { Signal } from "../host/index.js";
 import { useText, useTextLookup, type Text } from "../text/index.js";
@@ -90,8 +91,12 @@ function PlaceRailEntry({
   );
 }
 
-function registered(places: FramePlaces): PlaceEntry[] {
-  return Object.values(places).filter((p): p is PlaceEntry => p !== "none" && p.rail !== null);
+/** Mail's places with a rail entry: the frame's places are mail's sixteen, each registered under its own id. */
+function registered(places: FramePlaces): (PlaceEntry & { readonly id: PlaceId })[] {
+  return Object.values(places).filter(
+    (p): p is PlaceEntry & { readonly id: PlaceId } =>
+      p !== "none" && p.rail !== null && !isCalendarPlace(p.id),
+  );
 }
 
 export interface RailHostProps {

@@ -58,6 +58,14 @@
     "deleteAccount"
   ],
   "desktop": ["host", "aiProvider", "ohmarchy", "desktopScreener", "desktopDoor"],
+  "calendar": ["calendar"],
+  "event": ["event"],
+  "week": ["week"],
+  "day": ["day"],
+  "month": ["month"],
+  "year": ["year"],
+  "agenda": ["agenda"],
+  "calsearch": ["calsearch"],
   "site": [
     "nav",
     "hero",

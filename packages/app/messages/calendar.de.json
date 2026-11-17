@@ -1,0 +1,29 @@
+{
+  "calendar": {
+    "landmark": "Kalender",
+    "unreadable": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
+    "noZone": "Der Kalender kann nicht gezeichnet werden: Dieses Gerät kennt seine Zeitzone nicht.",
+    "notHere": "Dieser Teil des Kalenders ist noch nicht da.",
+    "views": "Ansicht",
+    "view": {
+      "day": "Tag",
+      "week": "Woche",
+      "month": "Monat",
+      "year": "Jahr",
+      "agenda": "Agenda"
+    },
+    "before": "Früher",
+    "after": "Später",
+    "today": "Heute",
+    "search": "Suchen",
+    "agenda": "Agenda",
+    "held": {
+      "from": "Gezeigt ab {day}",
+      "load": "Früher laden",
+      "none": "Frühere Tage bleiben beim Kalender.",
+      "failed": "Frühere Tage konnten nicht gelesen werden.",
+      "until": "Gezeigt bis {day}",
+      "after": "Spätere Tage bleiben beim Kalender."
+    }
+  }
+}

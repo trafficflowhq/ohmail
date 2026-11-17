@@ -63,7 +63,7 @@ export interface DesktopSupplies {
     readonly consent: { readonly account: Transports["consent"]; readonly standalone: Transports["consent"] };
   };
   /** The desktop's own feature, Mailboxes, and the ways out to the browser. Never Invites. */
-  readonly features: Entries<Exclude<keyof HostContract["features"], "invites" | "places" | "stages">>;
+  readonly features: Entries<Exclude<keyof HostContract["features"], "invites" | "places" | "stages" | "calendar">>;
   readonly notifications: DeviceNotifications;
   /** The places, the address bar, the window, the look and the way back. */
   readonly frame: FrameSupplies;
@@ -124,6 +124,8 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       folderSummary: NONE,
       ownModelAutoSuggest: suggest === "local" ? has.wires.ownModelAutoSuggest : NONE,
       mailboxes: has.wires.mailboxes,
+      // A desktop signed in to a server answers its calendar at the seating; one on its own has none.
+      calendar: NONE,
     },
     capabilities: {
       service: isManagedDoor(status) ? "managed" : local || paired ? "ownComputer" : "self",
@@ -143,6 +145,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       // On its own it changes everything; signed in, a re-sync and a way out; paired, a re-sync alone.
       mailboxes: local ? "here" : paired ? "resyncOnly" : cloud ? "resyncAndOut" : CANNOT.mailboxes,
       language: "install",
+      products: CANNOT.products,
     },
     features: {
       ...has.features,
@@ -158,6 +161,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       invites: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      calendar: has.frame.calendar,
     },
     device: {
       build: { surface: "desktop", version: facts.build.version, commit: facts.build.commit, mailtoLeaves: false },

@@ -1,0 +1,15 @@
+{
+  "calsearch": {
+    "title": "Suche",
+    "field": "Suche",
+    "placeholder": "Titel, Ort, Personen",
+    "clear": "Leeren",
+    "count": "{count, plural, one {# Termin} other {# Termine}}",
+    "readAs": "Gelesen als {words}",
+    "nothing": "Nichts gefunden",
+    "unplaced": "{count, plural, one {# Termin} other {# Termine}} in einer Zeitzone, die dieses Gerät nicht kennt",
+    "held": "Gesucht vom {from} bis {to}",
+    "allDay": "ganztägig",
+    "span": "{from}–{to}"
+  }
+}

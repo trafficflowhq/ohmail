@@ -103,5 +103,13 @@
   "mailboxFilings",
   "frame",
   "stepUp",
-  "deleteAccount"
+  "deleteAccount",
+  "week",
+  "day",
+  "month",
+  "year",
+  "agenda",
+  "calsearch",
+  "calendar",
+  "event"
 ]

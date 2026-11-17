@@ -7,15 +7,17 @@ import { NO_PLACES, NO_STAGES } from "./support/fake-host.js";
 
 const entry = {} as FeatureEntry;
 const noFeature: HostFeatures = {
-  ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Omit<HostFeatures, "places" | "stages">),
+  ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Omit<HostFeatures, "places" | "stages" | "calendar">),
   places: NO_PLACES,
   stages: NO_STAGES,
+  calendar: NONE,
 };
 const still = <T,>(value: T): Signal<T> => ({ read: () => value, subscribe: () => () => undefined });
 const noWire: HostWires = {
   organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: NONE, profileImport: NONE, consent: NONE,
   images: NONE, olderBody: NONE, junk: NONE, trash: NONE, suggest: NONE, draftReply: NONE, firstRun: NONE,
   screening: NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, mailboxes: NONE,
+  calendar: NONE,
 };
 
 /** A host that cannot do anything: every wire, read, feature, device verb and signal `none`. */
@@ -99,7 +101,7 @@ describe("what a host that cannot answers", () => {
     expect(CANNOT).toEqual({
       prices: "none", sendCeiling: "strict", awayRunsOn: "none", rulesMarked: false, imagesFrom: "none",
       unsubscribeFrom: "none", foldersStorable: false, suggest: "none", pairing: "none", account: "none",
-      firstRunDoor: "none", mailboxes: "none", language: "none",
+      firstRunDoor: "none", mailboxes: "none", language: "none", products: "none",
     });
     expect("service" in CANNOT).toBe(false);
   });

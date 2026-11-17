@@ -1,0 +1,15 @@
+{
+  "month": {
+    "title": "Month",
+    "more": "+{count}",
+    "moreLabel": "{count, plural, one {# more} other {# more}} on {day}, Day",
+    "week": "Week {number}",
+    "weekLabel": "Week {number}, Week",
+    "nothing": "Nothing",
+    "unplaced": "{count, plural, one {# event} other {# events}} in a time zone this device does not know",
+    "allDay": "all day",
+    "until": "until {time}",
+    "untilDay": "until {day}",
+    "span": "{from}–{to}"
+  }
+}

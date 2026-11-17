@@ -4,6 +4,12 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
+    "./calendar": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
+    },
     "./host": {
       "types": "./src/host/index.ts",
       "ohmail-source": "./src/host/index.ts",

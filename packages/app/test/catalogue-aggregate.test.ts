@@ -99,24 +99,21 @@ describe("the catalogues, one file per place", () => {
   it("append a new place's namespace at the end, in both languages and in the order", () => {
     const root = copy();
     const table = places(root);
+    writeFileSync(join(root, `${MESSAGES}/places.json`), JSON.stringify({ ...table, almanac: ["almanac"] }));
     writeFileSync(
-      join(root, `${MESSAGES}/places.json`),
-      JSON.stringify({ ...table, calendar: ["calendar"] }),
+      join(root, `${MESSAGES}/almanac.en.json`),
+      '{\n  "almanac": {\n    "today": "Today"\n  }\n}\n',
     );
     writeFileSync(
-      join(root, `${MESSAGES}/calendar.en.json`),
-      '{\n  "calendar": {\n    "today": "Today"\n  }\n}\n',
-    );
-    writeFileSync(
-      join(root, `${MESSAGES}/calendar.de.json`),
-      '{\n  "calendar": {\n    "today": "Heute"\n  }\n}\n',
+      join(root, `${MESSAGES}/almanac.de.json`),
+      '{\n  "almanac": {\n    "today": "Heute"\n  }\n}\n',
     );
     expect(write(root)).toEqual([]);
     expect(check(root)).toEqual([]);
     const en = JSON.parse(read(root, AGGREGATE("en"))) as Record<string, unknown>;
     const de = JSON.parse(read(root, AGGREGATE("de"))) as Record<string, unknown>;
-    expect(Object.keys(en).at(-1)).toBe("calendar");
-    expect(de.calendar).toEqual({ today: "Heute" });
-    expect((JSON.parse(read(root, `${MESSAGES}/order.json`)) as string[]).at(-1)).toBe("calendar");
+    expect(Object.keys(en).at(-1)).toBe("almanac");
+    expect(de.almanac).toEqual({ today: "Heute" });
+    expect((JSON.parse(read(root, `${MESSAGES}/order.json`)) as string[]).at(-1)).toBe("almanac");
   });
 });

@@ -12,7 +12,7 @@ import { browserNotificationHost } from "../../shell/notification-settings";
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk",
   "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary",
-  "ownModelAutoSuggest", "mailboxes",
+  "ownModelAutoSuggest", "mailboxes", "calendar",
 ] as const;
 
 /** What the demo's page says of itself: which service it shows, and what a send from it may carry. */
@@ -42,11 +42,13 @@ export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, s
       firstRunDoor: CANNOT.firstRunDoor,
       mailboxes: CANNOT.mailboxes,
       language: CANNOT.language,
+      products: CANNOT.products,
     },
     features: {
       ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Record<(typeof FEATURE_NAMES)[number], typeof NONE>),
       places: frame.places,
       stages: frame.stages,
+      calendar: frame.calendar,
     },
     device: {
       build: { surface: "web", version: null, commit: null, mailtoLeaves: true },
