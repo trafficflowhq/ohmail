@@ -1377,8 +1377,37 @@
     "way": {
       "all": "Folders"
     },
+    "rail": {
+      "label": "Folders",
+      "all": "All folders",
+      "allUnread": "All folders, {count} unread",
+      "unread": "{name}, {count} unread",
+      "find": "Find a folder",
+      "none": "No folder matches.",
+      "expand": "Expand {name}",
+      "collapse": "Collapse {name}",
+      "menu": "Folder menu for {name}",
+      "pin": "Pin",
+      "unpin": "Unpin"
+    },
     "list": {
       "menu": "List"
+    },
+    "move": {
+      "moved": "Moved to {name}.",
+      "outdated": "{by} organizes this mailbox with an older ohmail, which can't move into folders. Update ohmail there.",
+      "outdatedUnknown": "The install that organizes this mailbox runs an older ohmail, which can't move into folders. Update ohmail there.",
+      "nobody": "Nothing organizes this mailbox, so the message stays where it is.",
+      "elsewhere": "Nothing moved — {by} organizes this mailbox, so moves into folders are made where it runs.",
+      "elsewhereUnknown": "Nothing moved — moves into folders are made where the install that organizes this mailbox runs.",
+      "busy": "“{name}” is being changed. Try again in a moment.",
+      "cannot": "This message can't move to “{name}”.",
+      "refused": "That move didn't go through.",
+      "queued": "Waiting for {by}, which organizes this mailbox.",
+      "queuedUnknown": "Waiting for the install that organizes this mailbox.",
+      "waitingGone": "Nothing moved — this mailbox no longer has a folder “{name}”.",
+      "waitingLetterGone": "Nothing moved — the message is no longer in the mailbox.",
+      "waitingUnreadable": "Nothing moved — the install that organizes this mailbox couldn't read the request."
     }
   },
   "search": {
