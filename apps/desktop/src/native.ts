@@ -8,7 +8,6 @@
  * global (`withGlobalTauri` is false); listening is `plugin:event|listen` under the one grant
  * `core:event:allow-listen`, and emitting is NOT granted — the window cannot make the shell hear.
  */
-import type { MailNotice } from "./notice-emitter.js";
 
 /** The event the shell emits when a navigation item is chosen from the menu. */
 export const MENU_NAVIGATE_EVENT = "menu:navigate";
@@ -415,12 +414,12 @@ async function listen<T>(
  * (`src-tauri/src/notice.rs`): the page has no notification permission under this CSP, and a window
  * that could post any title and body is a door for whatever reached the page. A refusal
  * (notifications off, a platform without them) comes back as a rejection and is the caller's to
- * swallow: a notice that could not be shown must never take a mail client down. NAMED
- * `postOsNotice`, NOT `notify`: `notify` is also the client-engine's subscriber callback with
- * dozens of unrelated call sites, and the census that enforces "nothing draws a notice outside an
- * emitter" keys on a name. The Rust command is still `notify`.
+ * swallow. NAMED `postOsNotice`, NOT `notify`: the census "nothing draws a notice outside an
+ * emitter" keys on a name, and `notify` is also the client-engine's subscriber callback. The
+ * notice's type is the emitter's (`NoticeShell.post`), not this file's: the first frame's stamp
+ * reaches this file and may reach no package, not even for a type.
  */
-export async function postOsNotice(notice: MailNotice): Promise<void> {
+export async function postOsNotice(notice: object): Promise<void> {
   const shell = internals();
   if (!shell) return;
   await shell.invoke(NOTIFY_COMMAND, { notice });

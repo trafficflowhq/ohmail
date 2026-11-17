@@ -119,7 +119,11 @@ describe("German at text size 1.5", () => {
             if (!text) continue;
             if (el.scrollWidth > el.clientWidth + 1)
               out.push(`${text} (${el.scrollWidth} > ${el.clientWidth})`);
-            const part = el.parentElement!.getBoundingClientRect();
+            // The part is the nearest box around it: a wrapper drawn as `display: contents` has none.
+            let holder = el.parentElement!;
+            while (getComputedStyle(holder).display === "contents" && holder.parentElement)
+              holder = holder.parentElement;
+            const part = holder.getBoundingClientRect();
             const box = el.getBoundingClientRect();
             if (
               box.width > 0 &&

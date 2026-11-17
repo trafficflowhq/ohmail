@@ -1410,7 +1410,7 @@
     "loading": "Dieser Ordner wird geladen",
     "group": {
       "new": "Neu",
-      "earlier": "Früher"
+      "earlier": "Gesehen"
     },
     "step": {
       "up": "Neuer",
@@ -1442,7 +1442,7 @@
       "menu": "Liste"
     },
     "move": {
-      "moved": "Nach {name} verschoben.",
+      "moved": "Verschoben: {name}.",
       "outdated": "{by} organisiert dieses Postfach mit einer älteren ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
       "outdatedUnknown": "Die Installation, die dieses Postfach organisiert, hat eine ältere ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
       "nobody": "Nichts organisiert dieses Postfach, deshalb bleibt die Nachricht, wo sie ist.",
@@ -5487,7 +5487,7 @@
     "baseCleartext": "Das ist eine unverschlüsselte Adresse, und ohmail sendet deine Mails nicht darüber. Gib die https-Adresse an, unter der du ohmail im Browser öffnest.",
     "baseNeedsTheCode": "Das ist eine numerische Adresse in einem Netz, und dafür kann keine Zertifizierungsstelle bürgen. ohmail kann ihr nur über den Code vertrauen, den dein Computer zeigt, also öffne dort Einstellungen › Geräte und scanne den.",
     "baseNotAnAddress": "Das sieht nicht nach einer Serveradresse aus. Gib die Adresse an, unter der du ohmail im Browser öffnest, zum Beispiel ohmail.example.com, mit nichts hinter dem Host.",
-    "bootAccountMismatch": "Diese Anmeldung gehört zu einem anderen Konto als dem genannten, deshalb hat ohmail nichts geöffnet. Prüfe, welches Konto sie öffnen soll.",
+    "bootAccountMismatch": "Diese Anmeldung gehört zu einem anderen Account als dem genannten, deshalb hat ohmail nichts geöffnet. Prüfe, welchen Account sie öffnen soll.",
     "bootApiBaseOffOrigin": "Die Mail-API dieses Servers liegt nicht unter der Adresse, mit der dieses Handy gekoppelt ist. Kopple diesen Server noch einmal.",
     "bootBadApiBase": "Das ist keine Adresse der Mail-API eines Servers.",
     "bootBadOrigin": "Das ist keine Server-Adresse, die ohmail öffnen kann.",
@@ -5743,8 +5743,8 @@
     "toastMoveAlready": "Schon in {0}.",
     "toastMoveQueued": "Für {1} vorgemerkt — beim nächsten Durchgang: {0}.",
     "toastMoveQueuedUnknown": "Für den Organizer vorgemerkt — beim nächsten Durchgang: {0}.",
-    "toastMoveQueuedWithRule": "Für {1} vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach {0}.",
-    "toastMoveQueuedWithRuleUnknown": "Für den Organizer vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach {0}.",
+    "toastMoveQueuedWithRule": "Für {1} vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: {0}.",
+    "toastMoveQueuedWithRuleUnknown": "Für den Organizer vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: {0}.",
     "toastMoved": "Verschoben: {0}.",
     "toastQueued": "In „Später antworten“ vorgemerkt",
     "toastQueuedRuleUndone": "Keine Regel angelegt. Die Nachricht wartet weiter auf {0}.",
