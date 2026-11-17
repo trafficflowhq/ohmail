@@ -539,6 +539,66 @@
         "paper-light-phone",
         "ohmarchy-light-phone"
       ]
+    },
+    {
+      "component": "ListLine",
+      "state": "busy",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "ListLine",
+      "state": "warn",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "ListLine",
+      "state": "act",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "ListLine",
+      "state": "plain",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "Row",
+      "state": "waiting",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
     }
   ]
 }

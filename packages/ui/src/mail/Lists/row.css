@@ -16,11 +16,11 @@
     --oh-row-reach: -5px -4px;
     --oh-row-layer: 1;
     --oh-row-layer-up: 2;
+    --oh-row-between: 2px;
   }
 
   .oh-row {
     --oh-row-second: var(--ink2);
-    --oh-row-between: 2px;
     --oh-row-under-off: 0.16em;
     --oh-row-pair-in: 0 3px 3px 0;
     --oh-row-peek: calc(var(--av) * 20 / 36);
@@ -276,6 +276,81 @@
   .oh-row[data-open] .oh-readsquares,
   .oh-row[data-open] .oh-tag {
     background: var(--sheet);
+    color: var(--ink2);
+  }
+
+  /* Labels before the time: each is whole or not there. One that does not fit beside the name wraps out of the
+     line and is not seen, the last first. The address gives way before a label does, and a label before the
+     name: each gives way a million times sooner than the next, so none is cut while the one before it has room. */
+  .oh-row-labels {
+    --oh-row-labels-h: 22px;
+    --oh-row-labels-yield: 1000000;
+
+    display: flex;
+    flex: 0 var(--oh-row-labels-yield) auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0 var(--s2);
+    overflow: hidden;
+    min-width: 0;
+    height: var(--oh-row-labels-h);
+  }
+
+  /* Nothing, first in the line and as high as it: so the first label too can leave the line whole when it no
+     longer fits, and what has left stands under the line's foot, unseen. */
+  .oh-row-labels::before {
+    --oh-row-labels-first: calc(var(--s2) * -1);
+
+    content: "";
+    flex: none;
+    width: 0;
+    height: var(--oh-row-labels-h);
+    margin-left: var(--oh-row-labels-first);
+  }
+
+  .oh-row-first:has(> .oh-row-labels) > .oh-row-address {
+    --oh-row-address-yield: 1000000000000;
+
+    flex-shrink: var(--oh-row-address-yield);
+  }
+
+  /* Beside labels the address too is whole or not there: it leaves the line before a label does, never as a stub. */
+  .oh-row-address[data-whole] {
+    display: flex;
+    flex-wrap: wrap;
+    height: 1lh;
+    text-overflow: clip;
+  }
+
+  .oh-row-address[data-whole]::before {
+    content: "";
+    flex: none;
+    width: 0;
+    height: 1lh;
+  }
+
+  /* Beside labels the name is cut only once no label is left: it keeps no share of the line back for the address. */
+  .oh-row-first:has(> .oh-row-labels) > .oh-row-who {
+    flex: 0 1 auto;
+    max-width: none;
+  }
+
+  /* A sender that is not who the name says: the sign and its word stand where the address would, whole. */
+  .oh-row-flag {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s1);
+  }
+
+  .oh-row-flag-sign {
+    display: inline-flex;
+    flex: none;
+  }
+
+  /* A sender taken for junk recedes; the row that is open never does. */
+  .oh-row[data-receded]:not([data-open]) .oh-row-who,
+  .oh-row[data-receded]:not([data-open]) .oh-row-subject {
     color: var(--ink2);
   }
 

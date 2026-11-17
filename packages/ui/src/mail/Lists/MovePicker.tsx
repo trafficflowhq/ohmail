@@ -7,6 +7,9 @@ export interface MovePickerProps {
   open: boolean;
   onClose: () => void;
   anchor?: MenuProps["anchor"];
+  /** Open upwards; end at the anchor's right edge. As the menu takes them. */
+  up?: boolean;
+  right?: boolean;
   /** The menu's name, and the title over its list. */
   label: string;
   title: string;
@@ -22,8 +25,11 @@ export interface MovePickerProps {
   };
   /** The mailbox whose folders these are, where it has to be said. */
   mailbox?: string;
-  /** The folders offered: the name, and the way to it where two could be meant. The best match first. */
-  folders: readonly { id: string; name: string; path?: string }[];
+  /**
+   * The folders offered: the name, and the way to it where two could be meant. The best match first. One that is
+   * `disabled` cannot take mail now (it is being renamed or moved): it is listed, said so, and takes no press.
+   */
+  folders: readonly { id: string; name: string; path?: string; disabled?: boolean }[];
   /** A place or a folder was taken. */
   onMove?: (id: string) => void;
 }
@@ -34,11 +40,19 @@ export function MovePicker(props: MovePickerProps) {
   const enter = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
-    const first = folders[0];
+    const first = folders.find((folder) => !folder.disabled);
     if (first) onMove?.(first.id);
   };
   return (
-    <Menu open={open} onClose={onClose} anchor={anchor} label={label} title={title}>
+    <Menu
+      open={open}
+      onClose={onClose}
+      anchor={anchor}
+      up={props.up}
+      right={props.right}
+      label={label}
+      title={title}
+    >
       {places.map((place) => (
         <MenuItem key={place.id} onPress={() => onMove?.(place.id)}>
           {place.label}
@@ -68,6 +82,7 @@ export function MovePicker(props: MovePickerProps) {
             type="button"
             className="oh-control oh-menu-item oh-movepicker-folder"
             role="menuitem"
+            disabled={folder.disabled}
             onClick={() => onMove?.(folder.id)}
           >
             <Icon name="folder" size={18} />

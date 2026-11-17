@@ -20,6 +20,26 @@
     letter-spacing: 0;
   }
 
+  /* A label at its end, in the text's face. With it the heading may take a second line; its name never breaks. */
+  .oh-groupheading[data-tag] {
+    flex-wrap: wrap;
+    row-gap: var(--s1);
+    height: auto;
+    min-height: var(--group);
+    padding-bottom: var(--s2);
+  }
+
+  .oh-groupheading[data-tag] > :first-child {
+    white-space: nowrap;
+  }
+
+  .oh-groupheading > .oh-tag {
+    align-self: center;
+    margin-left: var(--s1);
+    font-family: var(--f-text);
+    letter-spacing: 0;
+  }
+
   /* One that shuts, or opens a menu: the name is the button. */
   .oh-groupheading-fold {
     --oh-groupheading-in: 2px var(--s1) 2px 0;

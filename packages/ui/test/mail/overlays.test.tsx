@@ -189,6 +189,28 @@ describe("MovePicker", () => {
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Move to a folder" }), { key: "Enter" });
     expect(onMove).not.toHaveBeenCalled();
   });
+
+  it("lists a folder that cannot take mail now as disabled: no press moves there, and Enter takes the next", () => {
+    const onMove = vi.fn();
+    render(
+      <MovePicker
+        open
+        onClose={() => {}}
+        label="Move"
+        title="Move"
+        places={places}
+        folders={[{ ...folders[0]!, disabled: true }, folders[1]!]}
+        find={{ label: "Move to a folder", value: "" }}
+        onMove={onMove}
+      />,
+    );
+    const held = screen.getByRole("menuitem", { name: /Gartenlokal Rosa/ });
+    expect((held as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(held);
+    expect(onMove).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Move to a folder" }), { key: "Enter" });
+    expect(onMove).toHaveBeenCalledWith("2026");
+  });
 });
 
 describe("QuickLook", () => {

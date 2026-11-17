@@ -1,0 +1,163 @@
+/* The line a place is searched from. Its sign takes the room of a row's circle, so where the place stands the
+   field at its rows' left edge, what is typed lines up with the names under it. */
+@layer oh {
+  .oh-findfield {
+    --oh-findfield-sign: 20px;
+    --oh-findfield-gap: calc((var(--gutter) - var(--oh-findfield-sign)) / 2);
+    --oh-findfield-ring: var(--oh-ring-btn);
+
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: var(--oh-findfield-gap);
+    box-sizing: border-box;
+    min-width: 0;
+    height: var(--h-l);
+    padding: 0 var(--s3) 0 var(--oh-findfield-gap);
+    border-radius: var(--r-row);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-findfield-ring);
+    color: var(--ink2);
+    cursor: text;
+  }
+
+  .oh-findfield:focus-within {
+    --oh-findfield-ring: var(--oh-ring-focus);
+  }
+
+  .oh-findfield > .oh-icon {
+    flex: none;
+  }
+
+  .oh-findfield-input {
+    --oh-findfield-words-min: 3em;
+
+    flex: 1;
+    min-width: var(--oh-findfield-words-min);
+    height: 100%;
+    padding: 0;
+    background: transparent;
+    color: var(--ink);
+    font-weight: var(--w-mid);
+    text-overflow: ellipsis;
+    cursor: text;
+  }
+
+  .oh-findfield-input::placeholder {
+    color: var(--ink2);
+    font-weight: var(--w-text);
+    opacity: 1;
+  }
+
+  /* The box wears the keys' ring for the words inside it. */
+  .oh-findfield-input:focus-visible {
+    outline: none;
+  }
+
+  /* What the search took is whole or not there: where the words need the room it wraps out of the line, unseen. */
+  .oh-findfield-took {
+    --oh-findfield-took-yield: 1000000;
+
+    display: flex;
+    flex: 0 var(--oh-findfield-took-yield) auto;
+    flex-wrap: wrap;
+    overflow: hidden;
+    min-width: 0;
+    height: 1lh;
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* Nothing, first in its line and as high as it: so the words after it can leave the line whole, under its foot. */
+  .oh-findfield-took::before {
+    content: "";
+    flex: none;
+    width: 0;
+    height: 1lh;
+  }
+
+  .oh-findfield > .oh-button {
+    --oh-findfield-clear-pull: calc(var(--s2) * -1);
+
+    flex: none;
+    margin-right: var(--oh-findfield-clear-pull);
+    color: var(--ink2);
+  }
+
+  .oh-findfield > .oh-button:hover {
+    color: var(--ink);
+  }
+
+  /* What the words are narrowed to: a picked thing, whole, that a press takes off. */
+  .oh-findfield[data-chip] {
+    --oh-findfield-gap-chip: var(--s2);
+
+    column-gap: var(--oh-findfield-gap-chip);
+  }
+
+  .oh-findfield-chip {
+    --oh-findfield-chip-in: 0 6px 0 4px;
+    --oh-findfield-chip-gap: 6px;
+    --oh-findfield-chip-max: 56%;
+    --oh-findfield-chip-off: 0.7;
+
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: var(--oh-findfield-chip-gap);
+    min-width: 0;
+    max-width: var(--oh-findfield-chip-max);
+    height: var(--h-s);
+    padding: var(--oh-findfield-chip-in);
+    border-radius: var(--r-pill);
+    background: var(--pick);
+    box-shadow: var(--oh-ring-pick);
+    color: var(--on-pick);
+    font-weight: var(--w-mid);
+  }
+
+  .oh-findfield-chip-name {
+    overflow: hidden;
+    min-width: 0;
+    font-weight: var(--w-bold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .oh-findfield-chip > .oh-icon,
+  .oh-findfield-chip > .oh-avatar {
+    flex: none;
+  }
+
+  .oh-findfield-chip > .oh-icon {
+    opacity: var(--oh-findfield-chip-off);
+  }
+
+  .oh-findfield-chip:hover > .oh-icon {
+    opacity: 1;
+  }
+
+  /* A phone: the list stands on the ground, and the field a step in from its edge. */
+  :root[data-device="phone"] .oh-findfield {
+    --oh-findfield-gap: var(--s2);
+
+    padding-left: var(--s3);
+    background: var(--soft);
+  }
+
+  /* Under a finger the chip is lower than the smallest control, and with it the time gives way to the words. */
+  :root[data-touch="1"] .oh-findfield-chip {
+    --oh-findfield-chip-h: 32px;
+
+    height: var(--oh-findfield-chip-h);
+  }
+
+  :root[data-touch="1"] .oh-findfield[data-chip] > .oh-findfield-took {
+    display: none;
+  }
+
+  :root[data-face="ohmarchy"] .oh-findfield-chip {
+    border-radius: 0;
+  }
+}

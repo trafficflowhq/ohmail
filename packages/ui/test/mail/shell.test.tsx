@@ -94,6 +94,27 @@ describe("ColumnHandle", () => {
   });
 });
 
+describe("Rail and RailEntry, for a host that is not mail", () => {
+  it("the head's one act wears the sign it is given, and stays named by its word", () => {
+    const { container, rerender } = render(<Rail label="Places" write={{ label: "Write" }} groups={[]} />);
+    const pen = container.querySelector("button svg")?.innerHTML;
+    rerender(<Rail label="Places" write={{ label: "Find an account", icon: "search" }} groups={[]} />);
+    const find = screen.getByRole("button", { name: "Find an account" });
+    expect(find.querySelector("svg")?.innerHTML).not.toBe(pen);
+  });
+
+  it("an entry draws a host's own sign in the icon's place, unsaid: the entry is named by its word alone", () => {
+    render(
+      <RailEntry kind="place" sign={<svg data-own="" viewBox="0 0 24 24" width={20} height={20} />}>
+        Health
+      </RailEntry>,
+    );
+    const entry = screen.getByRole("button", { name: "Health" });
+    expect(entry.querySelector("svg[data-own]")).not.toBeNull();
+    expect(entry.querySelector("svg[data-own]")?.closest("[aria-hidden='true']")).not.toBeNull();
+  });
+});
+
 describe("RailEntry", () => {
   it("is a button that says where you are, and carries its count in its name", () => {
     const onPress = vi.fn();

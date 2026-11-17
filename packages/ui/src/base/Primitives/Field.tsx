@@ -14,6 +14,8 @@ export interface FieldProps {
   refusal?: string;
   /** Several lines: how many it starts with. */
   lines?: number;
+  /** Off while what it holds is being saved: it takes no keys, and a screen reader hears that it is unavailable. */
+  disabled?: boolean;
   /** In a menu: one line, the label beside the field. */
   row?: boolean;
   /** Only its box: the label is not drawn and names it to a screen reader alone (a list's search, whose placeholder says what it finds). */
@@ -32,7 +34,10 @@ export interface FieldProps {
   ref?: Ref<HTMLInputElement | HTMLTextAreaElement>;
 }
 
-/** A labelled field. The label is bound to it; a refusal is said with it. */
+/**
+ * A labelled field. The label is bound to it; a refusal is said with it, and said when it appears or changes
+ * while the keys are already in the field (the field is a polite live region; what is typed is not its text).
+ */
 export function Field({
   label,
   value,
@@ -42,6 +47,7 @@ export function Field({
   hint,
   refusal,
   lines,
+  disabled,
   row,
   bare,
   sign,
@@ -69,11 +75,13 @@ export function Field({
     inputMode,
     maxLength,
     readOnly: !onChange,
+    disabled,
     spellCheck: false,
   } as const;
   return (
     <div
       className="oh-field"
+      aria-live="polite"
       data-refused={refusal ? "" : undefined}
       data-row={row ? "" : undefined}
       data-sign={sign ? "" : undefined}

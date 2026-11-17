@@ -1,10 +1,12 @@
 import { useId, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
-import { Avatar, Sign, Where } from "../../base/index.js";
+import { Avatar, Sign, Tag, Where } from "../../base/index.js";
 import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./row.css";
+import { RowPlaceFace, type RowPlace } from "./row-place.js";
 import { useRowSwipe, type RowSwipe } from "./row-swipe.js";
 
+export type { RowPlace } from "./row-place.js";
 export type { RowSwipe, RowSwipeVerb } from "./row-swipe.js";
 
 /** Somebody of a conversation, as the row's circles show them. */
@@ -82,6 +84,18 @@ export interface RowProps {
   tag?: ReactNode;
   /** The place the letter is in, as a word. */
   where?: string;
+  /**
+   * What there is to say about the sender, as labels before the time ("Needs you", "2 held"). Each is whole or
+   * not there: where the name needs the room a label goes, the last first.
+   */
+  labels?: readonly string[];
+  /**
+   * A sender that is not who the name says: the warning sign, named by `label`, and its word, where the address
+   * would stand. Never by colour alone.
+   */
+  flag?: { label: string; word: string };
+  /** A row that recedes (a sender taken for junk): its name and subject in the second ink, unless it is the open one. */
+  receded?: boolean;
   /** Not read yet: bold, in the ink, the dot on the circle. */
   unread?: boolean;
   /** It is the one open in the reading column. */
@@ -96,6 +110,8 @@ export interface RowProps {
   quick?: { label: string; icon: IconName; onPress?: () => void };
   /** A button of its own that always stands: Discard, Cancel send. */
   own?: { label: string; icon?: IconName; onPress?: () => void };
+  /** Where a waiting sender's mail would go, at the end of the last line: accepted by one press, or chosen. */
+  place?: RowPlace;
   /** Under a finger: the verb at each side, and what a swipe that went far enough does. */
   swipe?: RowSwipe;
   onOpen?: () => void;
@@ -115,8 +131,8 @@ const stop = (event: { stopPropagation(): void }) => event.stopPropagation();
 export function Row(props: RowProps) {
   const { subject, preview, unread, open, picked, entry, quick, own, onOpen, onContact, onMenu } = props;
   const swipe = useRowSwipe(props.swipe);
-  const { listing, mark } = props;
-  const slotted = Boolean(props.swipe || quick || own);
+  const { listing, mark, place } = props;
+  const slotted = Boolean(props.swipe || quick || own || place);
   /* WebKitGTK does not expose aria-description; a description a hidden node carries, it does. */
   const saidId = useId();
   const said = listing?.spoken ? saidId : undefined;
@@ -163,6 +179,7 @@ export function Row(props: RowProps) {
       data-cursor={props.cursor ? "" : undefined}
       data-picked={picked ? "" : undefined}
       data-located={props.located ? "" : undefined}
+      data-receded={props.receded ? "" : undefined}
       data-own={own ? "" : undefined}
       data-swiping={swipe.moving ? "" : undefined}
       aria-selected={listing ? listing.selected : picked ? true : undefined}
@@ -174,7 +191,7 @@ export function Row(props: RowProps) {
     >
       <RowFace {...props} />
       <RowFirst {...props} contact={contact} />
-      <span className="oh-row-second" id={section ? secondId : undefined}>
+      <span className="oh-row-second" id={section ? secondId : undefined} data-place={place ? "" : undefined}>
         <span className="oh-row-subject">{subject}</span>
         {preview ? <> </> : null}
         {preview ? (
@@ -183,6 +200,7 @@ export function Row(props: RowProps) {
             {preview}
           </span>
         ) : null}
+        {place ? <RowPlaceFace place={place} room /> : null}
       </span>
       {own ? <OwnRoom own={own} /> : null}
       {said ? <span id={said} hidden aria-label={listing?.spoken} /> : null}
@@ -197,6 +215,7 @@ export function Row(props: RowProps) {
       {swipe.back}
       {row}
       <RowVerbs quick={quick} own={own} travel={swipe.style} />
+      {place ? <RowBeside {...props} place={place} travel={swipe.style} /> : null}
     </div>
   );
 }
@@ -232,7 +251,7 @@ function RowFace({ people, peopleMore, peopleLabel, sign, entry, unread }: RowPr
 }
 
 /** Line one: who, the address, and at its end the marks and the time. */
-function RowFirst(props: RowProps & { contact?: (event: MouseEvent<HTMLElement>) => void }) {
+function RowFirst(props: RowProps & { contact?: (event: MouseEvent<HTMLElement>) => void; twin?: boolean }) {
   const { who, address, contact, onWhen } = props;
   const flip = onWhen
     ? (event: MouseEvent<HTMLElement>) => {
@@ -241,14 +260,33 @@ function RowFirst(props: RowProps & { contact?: (event: MouseEvent<HTMLElement>)
       }
     : undefined;
   return (
-    <span className="oh-row-first">
+    <span className="oh-row-first" aria-hidden={props.twin ? true : undefined}>
       <b className="oh-row-who">{who}</b>
-      {address ? (
-        <span className="oh-row-address" data-press={contact ? "" : undefined} onClick={contact}>
-          {address}
+      {props.flag ? (
+        <span className="oh-row-flag">
+          <span className="oh-row-flag-sign" role="img" aria-label={props.flag.label}>
+            <Icon name="warn" size={18} />
+          </span>
+          <Tag>{props.flag.word}</Tag>
+        </span>
+      ) : address ? (
+        <span
+          className="oh-row-address"
+          data-press={contact ? "" : undefined}
+          data-whole={props.labels?.length ? "" : undefined}
+          onClick={contact}
+        >
+          {props.labels?.length ? <span>{address}</span> : address}
         </span>
       ) : null}
       <span className="oh-row-room" />
+      {props.labels && props.labels.length > 0 ? (
+        <span className="oh-row-labels">
+          {props.labels.map((label) => (
+            <Tag key={label}>{label}</Tag>
+          ))}
+        </span>
+      ) : null}
       {props.squares}
       {props.where ? <Where>{props.where}</Where> : null}
       {props.tag}
@@ -269,6 +307,29 @@ function RowFirst(props: RowProps & { contact?: (event: MouseEvent<HTMLElement>)
           {props.when}
         </time>
       ) : null}
+    </span>
+  );
+}
+
+/**
+ * The place beside the row. The row's two lines stand here once more, unseen and unsaid, so the place's controls
+ * lie exactly over the room the row keeps for them, whatever the lines hold and however the row folds.
+ */
+function RowBeside(props: RowProps & { place: RowPlace; travel?: CSSProperties }) {
+  return (
+    <span className="oh-row-beside" style={props.travel}>
+      <RowFirst {...props} onWhen={undefined} twin />
+      <span className="oh-row-second" data-place="">
+        <span className="oh-row-subject" aria-hidden="true">
+          {props.subject}
+        </span>
+        {props.preview ? (
+          <span className="oh-row-preview" aria-hidden="true">
+            {props.preview}
+          </span>
+        ) : null}
+        <RowPlaceFace place={props.place} />
+      </span>
     </span>
   );
 }

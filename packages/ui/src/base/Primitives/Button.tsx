@@ -8,6 +8,11 @@ interface ButtonLook {
   kind?: "ink" | "two" | "quiet";
   /** `s` small, `l` a decision. Left out: the button's own height. */
   size?: "s" | "l";
+  /**
+   * A mark after the word: the arrow of a control that opens a short menu, or the way off once what it opens
+   * has been set. It is drawn, never said: the word and the control's state say what a press does.
+   */
+  mark?: IconName;
   /** The key that runs it, as it is printed. */
   keyHint?: string;
   /** Show the key whatever the face says. */
@@ -54,12 +59,13 @@ export type ButtonProps = ButtonLook &
 
 /** An ink capsule, a second button, or a word that acts; with an address, a link drawn the same. */
 export function Button(props: ButtonProps) {
-  const { kind = "ink", size, keyHint, keyShown, shortcut, icon, label, children } = props;
+  const { kind = "ink", size, mark, keyHint, keyShown, shortcut, icon, label, children } = props;
   const look = {
     className: "oh-control oh-button",
     "data-kind": kind,
     "data-size": size,
     "data-bare": children === undefined ? "" : undefined,
+    "data-mark": mark ? "" : undefined,
     "aria-label": label,
     title: label,
     "aria-keyshortcuts": shortcut,
@@ -68,6 +74,7 @@ export function Button(props: ButtonProps) {
     <>
       {icon ? <Icon name={icon} size={20} /> : null}
       {children === undefined ? null : <span>{children}</span>}
+      {mark ? <Icon name={mark} size={16} className="oh-button-mark" /> : null}
       {keyHint ? <KeyHint shown={keyShown}>{keyHint}</KeyHint> : null}
     </>
   );

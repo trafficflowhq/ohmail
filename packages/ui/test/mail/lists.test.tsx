@@ -8,6 +8,7 @@ import {
   FolderShelf,
   GroupHeading,
   ListHead,
+  ListLine,
   ListTail,
   ReadSquares,
   SelectionBar,
@@ -111,6 +112,17 @@ describe("GroupHeading", () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
+  it("carries one word about the whole group as a label at its end, inside the heading", () => {
+    render(
+      <GroupHeading count="0" tag="Read-only">
+        On your mail server
+      </GroupHeading>,
+    );
+    const heading = screen.getByRole("heading", { level: 2 });
+    expect(heading.textContent).toContain("On your mail server");
+    expect(heading.lastElementChild?.textContent).toBe("Read-only");
+  });
+
   it("says that it opens a menu where it does", () => {
     render(<GroupHeading opensMenu>Newest first</GroupHeading>);
     const name = screen.getByRole("button", { name: /Newest first/ });
@@ -125,6 +137,43 @@ describe("ListTail", () => {
     render(<ListTail way={{ label: "History", onPress }}>Older mail</ListTail>);
     expect(screen.getByText(/Older mail/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ListLine", () => {
+  it("says what the list is reading as a status that is busy", () => {
+    render(<ListLine busy>Loading more senders…</ListLine>);
+    const line = screen.getByRole("status");
+    expect(line.textContent).toBe("Loading more senders…");
+    expect(line.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("says a refusal as a status, with the one press that tries again", () => {
+    const onPress = vi.fn();
+    render(
+      <ListLine warn act={{ label: "Try again", onPress }}>
+        More senders could not be loaded.
+      </ListLine>,
+    );
+    const line = screen.getByRole("status");
+    expect(line.textContent).toContain("More senders could not be loaded.");
+    expect(line.hasAttribute("aria-busy")).toBe(false);
+    fireEvent.click(within(line).getByRole("button", { name: "Try again" }));
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("is plain words where nothing happened: no status, and no button without an act", () => {
+    render(<ListLine>That is everything on your mail server.</ListLine>);
+    expect(screen.getByText("That is everything on your mail server.")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("can be its press alone", () => {
+    const onPress = vi.fn();
+    render(<ListLine act={{ label: "Show more senders", quiet: true, onPress }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show more senders" }));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 });
@@ -184,6 +233,25 @@ describe("SelectionBar", () => {
     fireEvent.click(within(bar).getByRole("button", { name: "3 selected" }));
     fireEvent.click(within(bar).getByRole("button", { name: "Later" }));
     expect([onClear, onLater].map((f) => f.mock.calls.length)).toEqual([1, 1]);
+  });
+});
+
+describe("SelectionBar, the count", () => {
+  it("is said, whole, when it changes: it stands in a polite live region that stays the same node", () => {
+    const bar = (n: string) => (
+      <SelectionBar
+        label="Selection"
+        count={{ count: n, word: "selected", label: `${n} selected` }}
+        verbs={[]}
+      />
+    );
+    const { rerender, container } = render(bar("3"));
+    const live = container.querySelector("[aria-live='polite']");
+    expect(live?.getAttribute("aria-atomic")).toBe("true");
+    expect(live?.textContent).toBe("3 selected");
+    rerender(bar("4"));
+    expect(container.querySelector("[aria-live='polite']")).toBe(live);
+    expect(live?.textContent).toBe("4 selected");
   });
 });
 

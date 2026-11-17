@@ -40,17 +40,20 @@ export function SettingsSheet({ title, person, sign, hot, aside, wants, children
             {aside ? <span className="oh-settingssheet-aside">{aside}</span> : null}
           </header>
         ) : null}
-        {wants ? (
-          <div className="oh-settingssheet-say">
-            <p className="oh-text oh-settingssheet-line">
-              <b className="oh-settingssheet-word">
-                <EndDot kind="hot">{wants.word}</EndDot>
-              </b>
-              {wants.line ? ` ${wants.line}` : null}
-            </p>
-            {wants.acts ? <span className="oh-settingssheet-acts">{wants.acts}</span> : null}
-          </div>
-        ) : null}
+        {/* It stands before the sheet wants anything, so what the sheet then wants is said when it appears. */}
+        <div className="oh-settingssheet-said" aria-live="polite">
+          {wants ? (
+            <div className="oh-settingssheet-say">
+              <p className="oh-text oh-settingssheet-line">
+                <b className="oh-settingssheet-word">
+                  <EndDot kind="hot">{wants.word}</EndDot>
+                </b>
+                {wants.line ? ` ${wants.line}` : null}
+              </p>
+              {wants.acts ? <span className="oh-settingssheet-acts">{wants.acts}</span> : null}
+            </div>
+          ) : null}
+        </div>
         {children}
       </div>
     </Sheet>

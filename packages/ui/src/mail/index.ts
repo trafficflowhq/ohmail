@@ -26,9 +26,19 @@ export type { GroupHeadingProps } from "./Lists/GroupHeading.js";
 export { ListHead } from "./Lists/ListHead.js";
 export type { ListHeadProps, Way, WayPart } from "./Lists/ListHead.js";
 export { Row, Rows } from "./Lists/Row.js";
-export type { RowListing, RowMark, RowPerson, RowProps, RowSwipe, RowSwipeVerb } from "./Lists/Row.js";
+export type {
+  RowListing,
+  RowMark,
+  RowPerson,
+  RowPlace,
+  RowProps,
+  RowSwipe,
+  RowSwipeVerb,
+} from "./Lists/Row.js";
 export { ListTail } from "./Lists/ListTail.js";
 export type { ListTailProps } from "./Lists/ListTail.js";
+export { ListLine } from "./Lists/ListLine.js";
+export type { ListLineProps } from "./Lists/ListLine.js";
 export { ReadSquares } from "./Lists/ReadSquares.js";
 export type { ReadSquaresProps, SquareKind, SquaresRun } from "./Lists/ReadSquares.js";
 export { SelectionBar } from "./Lists/SelectionBar.js";

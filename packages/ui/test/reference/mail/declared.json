@@ -511,5 +511,71 @@
     "question": "picture",
     "since": "2026-11-16",
     "reason": "On an ohmarchy page the specimen's own Paper tile is not pure: the page's ohmarchy rules reach into its nested picture, so its circles wear ohmarchy's tint (oklch(0.9468 0.0182 78) where Paper's open row draws white, and the second row's circle tinted as well), its unread dots are 8 at -4 where Paper draws 10 at -3, and the second row's time is the third ink where Paper's is the second (the look tiles' ruling, case 5; for the studio). The kit draws the pure Paper on every page. Drawn with those three taken from the specimen, this key is identical to the reference, pixel for pixel; so the Paper tile is left out of the names, boxes and drawn values here, and the picture is declared, every other node still binding."
+  },
+  {
+    "key": "ListLine/busy",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "the reference was taken in a whole list scrolled to its end, where the button that jumps back to the top stands over the line's right end; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "ListLine/warn",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "the reference was taken in a whole list scrolled to its end, where the button that jumps back to the top stands over the line's right end; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "ListLine/act",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "the reference was taken in a whole list scrolled to its end, where the button that jumps back to the top stands over the line's right end; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "ListLine/plain",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "the reference was taken in a whole list scrolled to its end, where the button that jumps back to the top stands over the line's right end; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "Row/waiting",
+    "question": "names",
+    "since": "2026-11-16",
+    "reason": "The row's name holds the address, which has left the line whole beside the label (the kit lets it leave by layout alone; the reference's script takes it out of the row). The control that chooses another place says whether its menu is open and carries its name alone, where the reference's holds unseen words. Every node's box and drawn values are read."
+  },
+  {
+    "key": "Row/waiting@paper-light-desktop",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "The reference holds the unseen words of the control that chooses another place in a box of one pixel inside it; the kit names the control and draws no such box. The place's two controls stand on the reference's boxes."
+  },
+  {
+    "key": "Row/waiting@paper-dark-desktop",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "The reference holds the unseen words of the control that chooses another place in a box of one pixel inside it; the kit names the control and draws no such box. The place's two controls stand on the reference's boxes."
+  },
+  {
+    "key": "Row/waiting@ohmarchy-light-desktop",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "The reference holds the unseen words of the control that chooses another place in a box of one pixel inside it; the kit names the control and draws no such box. The place's two controls stand on the reference's boxes."
+  },
+  {
+    "key": "Row/waiting@ohmarchy-dark-desktop",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "The reference holds the unseen words of the control that chooses another place in a box of one pixel inside it; the kit names the control and draws no such box. The place's two controls stand on the reference's boxes."
+  },
+  {
+    "key": "SettingsSheet/choice@paper-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "At the phone's scale a corner of the pressed segment differs by a hair (34 and 28 pixels that touch; under seven hundred-thousandths of the picture). The segments' names, boxes and drawn values are the reference's, and the same control compared alone is equal on this look: the sheet stands a fraction of a pixel off its reference in this subject, and an arc is drawn by that fraction."
+  },
+  {
+    "key": "SettingsSheet/look@paper-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "At the phone's scale a corner of the pressed segment differs by a hair (34 and 28 pixels that touch; under seven hundred-thousandths of the picture). The segments' names, boxes and drawn values are the reference's, and the same control compared alone is equal on this look: the sheet stands a fraction of a pixel off its reference in this subject, and an arc is drawn by that fraction."
   }
 ]

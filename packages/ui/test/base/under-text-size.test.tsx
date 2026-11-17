@@ -155,6 +155,19 @@ describe.each(ZOOMS)("at a text size of %s", (zoom) => {
     }
   }, 60_000);
 
+  it("the Move menu asked to end at its control and open upwards ends at the control's right edge, above it", async () => {
+    const page = await mount("move", zoom);
+    try {
+      await page.getByRole("button", { name: "More" }).click();
+      const control = await rectOf(page, "button[aria-haspopup]");
+      const menu = await rectOf(page, "[role='menu']");
+      near(menu.right, control.right);
+      near(control.top - menu.bottom, 8 * zoom);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
   it.each([
     /* one column from 600 wide (the open Duo held upright is 669 by 951): the sheet keeps a phone's 460 in the middle */
     [600, 951, true],

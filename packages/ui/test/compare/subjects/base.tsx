@@ -8,6 +8,7 @@ import {
   Empty,
   Faces,
   Field,
+  FindField,
   HintLine,
   InfoMark,
   JumpBack,
@@ -303,6 +304,77 @@ const field: KitSubject[] = [
     place: "block",
     width: 320,
     render: () => <Field label="Signature" lines={3} value={`${ME}\nLichtgrat Studio`} onChange={typed} />,
+  },
+];
+
+/* The find field and its filters stand in a list's head: on the list's sheet with a pointer, on the ground on a
+   phone. What a second button stands on says its tone, as the head of a list says it. */
+const inHead = (look: Look): "ground" | "sheet" => (look.device === "phone" ? "ground" : "sheet");
+const headSoft = (look: Look) =>
+  ({ "--oh-soft": look.device === "phone" ? "var(--soft)" : "var(--soft-sheet)" }) as React.CSSProperties;
+
+const find: KitSubject[] = [
+  {
+    key: "FindField/rest",
+    place: "block",
+    on: inHead,
+    render: () => <FindField label="Search" value="" placeholder="Search" onChange={typed} />,
+  },
+  {
+    key: "FindField/typed",
+    place: "block",
+    on: inHead,
+    render: () => (
+      <FindField
+        label="Search"
+        value="glaze"
+        placeholder="Search"
+        took="20 ms"
+        clear={{ label: "Clear" }}
+        onChange={typed}
+      />
+    ),
+  },
+  {
+    key: "FindField/person",
+    place: "block",
+    on: inHead,
+    render: () => (
+      <FindField
+        label="Search"
+        value=""
+        placeholder="In this mail"
+        took="10 ms"
+        chip={{
+          label: "Petra Wyss",
+          person: { name: "Petra Wyss", address: "petra@makersfest.example" },
+          remove: "Remove Petra Wyss",
+        }}
+        onChange={typed}
+      />
+    ),
+  },
+  {
+    key: "Button/mark",
+    on: inHead,
+    render: (look) => (
+      <span style={headSoft(look)}>
+        <Button kind="two" size="s" mark="down" opens="menu">
+          Place
+        </Button>
+      </span>
+    ),
+  },
+  {
+    key: "Button/mark-set",
+    on: inHead,
+    render: (look) => (
+      <span style={headSoft(look)}>
+        <Button kind="two" size="s" mark="x" pressed>
+          Ohbox
+        </Button>
+      </span>
+    ),
   },
 ];
 
@@ -1051,6 +1123,7 @@ export const subjects: KitSubject[] = [
   ...sentence,
   ...slot,
   ...field,
+  ...find,
   ...toggle,
   ...seg,
   ...avatar,
