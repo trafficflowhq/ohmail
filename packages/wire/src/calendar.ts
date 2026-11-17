@@ -273,6 +273,63 @@ export interface CalendarSettingsBody {
   newEventsCalendarId?: string | null;
 }
 
+// ── connecting ───────────────────────────────────────────────────────────────
+
+/**
+ * A way an account connects a calendar. `icloud` is CalDAV at Apple's own address with the Apple
+ * Account and an app password; `caldav` any other server by its address; `ics` a subscription by
+ * address. `google` and `microsoft` sign in at their provider, and are offered only where the
+ * server says so.
+ */
+export type CalendarWay = "icloud" | "caldav" | "ics" | "google" | "microsoft";
+
+/** `GET /calendar/connect`: the ways this server offers this account now. A way that is absent is off. */
+export interface CalendarConnectWire {
+  ways: CalendarWay[];
+}
+
+/**
+ * `POST /calendar/connections`: what a person typed, sent once. `connectionId` is a uuid the device
+ * makes and the server adopts, so the device knows which record to wait for. `password`, and a
+ * subscription's `address` whole (whoever has it reads the calendar), are secrets: the server seals
+ * them and no route reads them back; of an address only its host is ever answered.
+ */
+export type CalendarConnectBody =
+  | { way: "icloud"; connectionId: string; user: string; password: string }
+  | { way: "caldav"; connectionId: string; server: string; user: string; password: string }
+  | { way: "ics"; connectionId: string; address: string };
+
+/**
+ * `POST /calendar/connections/:id/sign-in`: the connection's sign-in typed again, whole. A CalDAV
+ * connection takes a user and a password, a subscription its address; the other shape is refused.
+ */
+export type CalendarSignInBody = { user: string; password: string } | { address: string };
+
+/**
+ * `PATCH /calendar/calendars/:id`: a field present is acted on, and at least one is present.
+ * `shown` is taken for every calendar. `name` and `color` (`#rrggbb`, or null for none) are taken
+ * for a subscription's calendar only: where a provider lists its calendars, both are the provider's.
+ */
+export interface CalendarPatchBody {
+  shown?: boolean;
+  name?: string;
+  color?: string | null;
+}
+
+/** `DELETE /calendar/connections/:id`: `false` (202) while the connection's records are still going. */
+export interface CalendarRemovalWire {
+  removed: boolean;
+}
+
+/**
+ * What a refused connect or sign-in names in its envelope's `details`: the word a client has a
+ * sentence for. An address refused by its shape says which rule, and a way that is switched off
+ * says `provider_off`.
+ */
+export interface CalendarConnectRefusal {
+  fault: CalendarSyncFault;
+}
+
 // ── acts ─────────────────────────────────────────────────────────────────────
 
 /**

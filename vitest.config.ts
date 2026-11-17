@@ -146,6 +146,8 @@ export default defineConfig({
       // standing ordering reason: the table is scanned in order and a string `find` is a prefix
       // match, so "@trafficflow/services" would otherwise swallow it.
       { find: "@trafficflow/services/auth", replacement: r("./packages/services/src/auth.ts") },
+      // The calendar's connect door: an entry of its own, which only a server's routes import.
+      { find: "@trafficflow/services/calendar-connect", replacement: r("./packages/services/src/calendar/connect-door.ts") },
       { find: "@trafficflow/services/calendar", replacement: r("./packages/services/src/calendar/index.ts") },
       // An invitation's answer by mail: an entry of its own, in no barrel, for its one route.
       { find: "@trafficflow/services/invitation-answer", replacement: r("./packages/services/src/invitation-answer-service.ts") },

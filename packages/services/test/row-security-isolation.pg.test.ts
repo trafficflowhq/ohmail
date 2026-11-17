@@ -84,7 +84,6 @@ async function plantUnwritten(m: postgres.Sql, a: SeededAccount): Promise<void> 
   const u = a.accountId.slice(0, 8);
   const [conn] = await m.unsafe(`select id from cal_connections where account_id = $1`, [a.accountId]);
   const [cal] = await m.unsafe(`select id from cal_calendars where account_id = $1`, [a.accountId]);
-  await m.unsafe(`insert into cal_credentials (account_id, connection_id, kind, secret_enc, key_version) values ($1, $2, 'oauth', 'enc:x', 1)`, [a.accountId, conn!.id]);
   await m.unsafe(`insert into cal_links (account_id, message_id, mailbox_id, uid, kind) values ($1, $2, $3, $4, 'invite')`, [a.accountId, a.messageId, a.mailboxId, `uid-${u}`]);
   await m.unsafe(`insert into cal_push_channels (account_id, connection_id, provider, channel_id, token_hash, expires_at)
     values ($1, $2, 'google', $3, $4, now() + interval '1 day')`, [a.accountId, conn!.id, `ch-${u}`, `th-${u}`]);
@@ -1524,7 +1523,7 @@ for (const major of PG_MAJORS) {
 }
 
 /** What `plantUnwritten` plants for the tables nothing writes yet (and `erased_bearers`, which only an erasure writes). */
-const PLANTED = ["account_closures", "cal_credentials", "cal_links", "cal_push_channels"];
+const PLANTED = ["account_closures", "cal_links", "cal_push_channels"];
 
 describe("the rows planted beside the erasure's seed", () => {
   it("are exactly the tables nothing writes yet: a table that gains a writer is the seed's to plant", () => {

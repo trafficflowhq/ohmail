@@ -64,6 +64,7 @@ import {
   writePassProgress,
   listAddresses,
   calConnections,
+  calCredentials,
   calCalendars,
   calEvents,
   calAttendees,
@@ -1719,6 +1720,9 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     accountId, provider: "caldav", label: `Diary ${tag}`, serverUrl: `https://dav-${tag}.example/cal/`,
     principal: `/principals/${tag}/`, sourceHost: `dav-${tag}.example`, mailboxId,
   }).returning();
+  // Its sealed sign-in, the connect door's row. No staff role reads the table, and the sweep
+  // taints its two text columns.
+  await db.insert(calCredentials).values({ accountId, connectionId: calConn!.id, kind: "basic", secretEnc: `sealed-${tag}`, keyVersion: 1 });
   const [calCal] = await db.insert(calCalendars).values({
     accountId, connectionId: calConn!.id, providerId: `/cal/${tag}/`, name: `Clinic ${tag}`, timeZone: "Europe/Zurich",
   }).returning();

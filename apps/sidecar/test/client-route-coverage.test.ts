@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { localRoutes, matchRoute } from "@trafficflow/api/local";
+import { relayVerdict } from "@trafficflow/api/relay-allowlist";
 import { matchReadRoute } from "../src/cloud-read.js";
 import { SUGGEST_ROUTES } from "../../desktop/src/cloud-suggest.js";
 
@@ -453,10 +454,55 @@ function calendarIsHostedOnly(): { exempt: Set<string>; holds: Record<string, bo
   return { exempt: new Set(all ? CALENDAR_HOSTED_DOOR_ONLY : []), holds };
 }
 
+/**
+ * THE CALENDAR'S CONNECT DOOR IS ASKED OF THE ACCOUNT'S OWN SERVER, AND NO DOOR OF THIS APP CARRIES IT.
+ *
+ * The wire client composes its six routes (a browser asks them of its server), and this process
+ * answers none of them: the standalone engine holds no calendar ({@link calendarIsHostedOnly}'s
+ * facts), and on the hosted door the relay REFUSES each. That refusal is the door's own ruling: a
+ * route that carries a typed sign-in, and the routes that act on what it made, are forwarded by
+ * nobody until a ruling says a relay may carry them. So there is a third answer beside "served
+ * here" and "forwarded", and it is the very failure this file exists to catch when it is an
+ * accident: a route the window asks for that nothing here has a handler for.
+ *
+ * Here it is a decision, so it is MEASURED and never assumed. Each name must be one the client
+ * composes, must match no route of the standalone table and no read of the mirror, and must be
+ * refused by the verdict the relay itself asks (`relayVerdict`, read off the projection the proxy
+ * reads). {@link connectDoorIsOwnServerOnly} hands back NOTHING when one of those stops holding: a
+ * route that becomes relayable then turns the hosted census red, and joins
+ * {@link FORWARDED_IN_CLOUD_MODE} on purpose. What a window on either door sees meanwhile is the
+ * client's own answer to a missing route: no way to connect is listed.
+ */
+const CALENDAR_CONNECT_OWN_SERVER_ONLY = [
+  "GET /calendar/connect",
+  "POST /calendar/connections",
+  "DELETE /calendar/connections/x",
+  "POST /calendar/connections/x/check",
+  "POST /calendar/connections/x/sign-in",
+  "PATCH /calendar/calendars/x",
+] as const;
+
+function connectDoorIsOwnServerOnly(): { exempt: Set<string>; holds: Record<string, boolean> } {
+  const each = (ok: (method: string, pattern: string) => boolean): boolean =>
+    CALENDAR_CONNECT_OWN_SERVER_ONLY.every((name) => {
+      const [method, pattern] = name.split(" ") as [string, string];
+      return ok(method, pattern);
+    });
+  const holds = {
+    "the standalone door holds no calendar": Object.values(calendarIsHostedOnly().holds).every(Boolean),
+    "the standalone table matches none of them": each((m, p) => !matchRoute(localRoutes, m, p).matched),
+    "the mirror reads none of them": each((m, p) => matchReadRoute(m, p) === null),
+    "the relay refuses every one of them": each((m, p) => relayVerdict(m, p) === "refuse"),
+  };
+  const all = Object.values(holds).every(Boolean);
+  return { exempt: new Set(all ? CALENDAR_CONNECT_OWN_SERVER_ONLY : []), holds };
+}
+
 describe("the client's route list against the local engine", () => {
   const { calls: allCalls, sites, named: namedSites } = clientCalls();
   const { exempt: stagingOnly } = stagingIsHostedOnly();
   const { exempt: calendarOnly } = calendarIsHostedOnly();
+  const { exempt: connectOnly } = connectDoorIsOwnServerOnly();
   const calls = allCalls;
   const named = allCalls.map((c) => `${c.method} ${c.pattern}`);
 
@@ -509,6 +555,7 @@ describe("the client's route list against the local engine", () => {
       .filter((c) => !hostedOnly.has(`${c.method} ${c.pattern}`))
       .filter((c) => !stagingOnly.has(`${c.method} ${c.pattern}`))
       .filter((c) => !calendarOnly.has(`${c.method} ${c.pattern}`))
+      .filter((c) => !connectOnly.has(`${c.method} ${c.pattern}`))
       .filter((c) => !matchRoute(localRoutes, c.method, c.pattern).matched);
     expect(missing.map((c) => `${c.method} ${c.pattern}`)).toEqual([]);
   });
@@ -552,10 +599,30 @@ describe("the client's route list against the local engine", () => {
     }
   });
 
+  it("the connect door's exemption is EARNED: composed, served by neither door, and refused by the relay", () => {
+    // Fact by fact, as for the three lists above. Then the directions that keep the list from
+    // outliving its subject: each name is one the client really composes, and none is claimed as
+    // forwarded, which would be a promise the relay does not keep.
+    const { holds, exempt } = connectDoorIsOwnServerOnly();
+    for (const [fact, ok] of Object.entries(holds)) {
+      expect(ok, `no longer true: ${fact} — the connect door's exemption is not licensed`).toBe(true);
+    }
+    expect([...exempt]).toEqual([...CALENDAR_CONNECT_OWN_SERVER_ONLY]);
+    for (const name of CALENDAR_CONNECT_OWN_SERVER_ONLY) {
+      expect(named, `${name} is exempted but the wire client never composes it`).toContain(name);
+      expect(FORWARDED_IN_CLOUD_MODE, `${name} is refused by the relay and must not be listed as forwarded`).not.toContain(name);
+    }
+    // The measure bites: a route the relay does carry is not refused by the same verdict.
+    expect(relayVerdict("POST", "/calendar/writes")).toBe("forward");
+  });
+
   it("serves the reads it can from the mirror in CLOUD mode, and forwards exactly the rest", () => {
+    // Minus the connect door's six, which the relay refuses on purpose and only while the case
+    // above still measures that it does.
     const forwarded = calls
       .filter((c) => !(c.method === "GET" && c.pattern === "/sync"))
       .filter((c) => matchReadRoute(c.method, c.pattern) === null)
+      .filter((c) => !connectOnly.has(`${c.method} ${c.pattern}`))
       .map((c) => `${c.method} ${c.pattern}`);
     expect(forwarded.sort()).toEqual([...FORWARDED_IN_CLOUD_MODE].sort());
   });

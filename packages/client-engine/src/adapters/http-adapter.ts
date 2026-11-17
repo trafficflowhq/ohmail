@@ -45,10 +45,12 @@ import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
 import { waitingRequestsOf } from "../organizer-requests-wire.js";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import type {
-  AddressSearchResult, AnswerOf, CalendarEventAct, CalendarWriteAnswer, MessageDTO, PlaceSuggestAnswer, PlaceSuggestBody,
+  AddressSearchResult, AnswerOf, CalendarConnectBody, CalendarConnectionRecord, CalendarEventAct, CalendarPatchBody, CalendarRecord,
+  CalendarSignInBody, CalendarWay, CalendarWriteAnswer, MessageDTO, PlaceSuggestAnswer, PlaceSuggestBody,
   RequestOf, RouteName, SearchResult, Untrusted,
 } from "@ohmail/wire";
 import { routePath, type CallOf, type WireCall } from "./route-path.js";
+import { calendarWaysOf } from "../calendar-connect.js";
 import { calendarWindowOf } from "../calendar-window.js";
 import type { SnapshotParams } from "../engine/server-wire.js";
 
@@ -914,6 +916,57 @@ export class HttpAdapter implements EngineAdapter {
     const res = await this.call("POST /calendar/places/suggest", { body: question, ...(signal ? { signal } : {}) });
     if (!res.ok) throw await this.rejectionOf(res, "read");
     return this.readAnswer<"POST /calendar/places/suggest">(res);
+  }
+
+  /**
+   * THE CALENDAR'S CONNECT DOOR (`calendar-connect.ts`, its `CalendarConnectTransport`). Sent as it
+   * is asked, once: none of these is queued or kept, because what a person types to connect a
+   * calendar is never a stored record. Asked of our server's own door alone; a door that does not
+   * carry a route answers 404, and `calendarWays` then names no way.
+   */
+  async calendarWays(): Promise<CalendarWay[]> {
+    try {
+      const res = await this.call("GET /calendar/connect", {});
+      if (!res.ok) return [];
+      return calendarWaysOf((await this.readUntrusted<"GET /calendar/connect">(res)).ways);
+    } catch {
+      // No answer is no way: the setup then draws none, and holds no list of its own.
+      return [];
+    }
+  }
+
+  async connectCalendar(ask: CalendarConnectBody, key: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    // The call's check of a body's names reads one member of a union at a time; the ask is the wire's own type whole.
+    const body = ask as Extract<CalendarConnectBody, { way: "caldav" }>;
+    const res = await this.call("POST /calendar/connections", { body, idempotencyKey: key });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { connection: await this.readAnswer<"POST /calendar/connections">(res), seq: this.noteSeq(res) };
+  }
+
+  async removeCalendarConnection(connectionId: string): Promise<{ removed: boolean; seq: number | null }> {
+    const res = await this.call("DELETE /calendar/connections/:id", { params: { id: connectionId } });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { removed: (await this.readAnswer<"DELETE /calendar/connections/:id">(res)).removed === true, seq: this.noteSeq(res) };
+  }
+
+  async checkCalendarConnection(connectionId: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    const res = await this.call("POST /calendar/connections/:id/check", { params: { id: connectionId } });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { connection: await this.readAnswer<"POST /calendar/connections/:id/check">(res), seq: this.noteSeq(res) };
+  }
+
+  async signInCalendarAgain(connectionId: string, signIn: CalendarSignInBody): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    // One member of the union at a time, as above.
+    const body = signIn as Extract<CalendarSignInBody, { user: string }>;
+    const res = await this.call("POST /calendar/connections/:id/sign-in", { params: { id: connectionId }, body });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { connection: await this.readAnswer<"POST /calendar/connections/:id/sign-in">(res), seq: this.noteSeq(res) };
+  }
+
+  async setCalendar(calendarId: string, patch: CalendarPatchBody): Promise<{ calendar: CalendarRecord; seq: number | null }> {
+    const res = await this.call("PATCH /calendar/calendars/:id", { params: { id: calendarId }, body: patch });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { calendar: await this.readAnswer<"PATCH /calendar/calendars/:id">(res), seq: this.noteSeq(res) };
   }
 
   async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<PullRing> {

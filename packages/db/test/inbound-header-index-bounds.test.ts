@@ -256,7 +256,7 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   "cal_attendees.address": { inbound: "calendarAddress" },
   "cal_links.uid": { unwritten: "the UID a letter named, bounded where the link is written" },
   "cal_links.recurrence_id": { unwritten: "the instance's id, bounded with the UID" },
-  "cal_credentials.kind": { unwritten: "a closed set of kinds the product writes; classed `not` by its writer" },
+  "cal_credentials.kind": { not: "a closed set of kinds the product writes: the connect door's `basic` and `address`, a provider's `oauth`" },
   "cal_writes.idempotency_key": { inbound: "calendarWriteKey" },
   // cloud 0105, a calendar's notice channels. The channel's id is minted by the service or handed
   // back by the provider; either way it is bounded where the channel is opened.

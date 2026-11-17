@@ -12,7 +12,8 @@ import {
   DEFAULT_LIMITS, MAX_CALENDAR_TEXT_CHARS, calendarInfo, componentsOf, exactSeconds, nominalDays, propertyOf, readCalendars, writeComponent,
   type CalEvent, type CalObject, type Component, type DroppedComponent, type Duration, type EventTime, type Limits, type Property, type ReadRefusal,
 } from "@ohmail/cal-core";
-import { MAX_CALENDAR_NAME_CHARS, MAX_COLOR_CHARS, MAX_FEED_ZONE_DEFINITIONS, MAX_URL_CHARS } from "../limits.js";
+import { subscriptionAddresses } from "../address.js";
+import { MAX_CALENDAR_NAME_CHARS, MAX_COLOR_CHARS, MAX_FEED_ZONE_DEFINITIONS } from "../limits.js";
 import type { Answer, CalendarReader, ChangeItem, ChangePage, Connection, LeftReason } from "../port.js";
 import type { ProviderRefusal } from "../refusals.js";
 import { retryAfterMs, textOf, type AdapterDeps, type HttpAnswer } from "../request/index.js";
@@ -37,27 +38,11 @@ const CALENDAR_ID = "subscription";
 /** What an event's own object says made it: this program, from a file's event. */
 const PRODID = "-//ohmail//Calendar subscription//EN";
 const ACCEPT = "text/calendar, text/plain;q=0.5, */*;q=0.1";
-const SCHEME = /^(webcals?|https?):\/\//i;
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_DAY = 86_400;
 
 /** The calendar reader's refusals that say "more than is read"; its others say "not readable". */
 const TOO_MUCH: ReadonlySet<ReadRefusal> = new Set(["too_large", "too_many_lines", "too_many_parts", "line_too_long", "too_many_parameters", "too_many_components", "too_deep"]);
-
-/**
- * The addresses to ask for what was typed, in order; `null` for what is no address of a calendar.
- * `webcal` only ever meant "fetch this and subscribe", and is asked over https. An address typed
- * with http is asked as typed first: the request port lets that through for a person's own server
- * on the person's own network and for nothing else, and then it is asked over https.
- */
-function addressesOf(typed: string): readonly string[] | null {
-  if (typed.length > MAX_URL_CHARS) return null;
-  const address = typed.trim();
-  const scheme = SCHEME.exec(address);
-  if (scheme === null) return null;
-  const rest = address.slice(scheme[0].length);
-  return scheme[1]!.toLowerCase() === "http" ? [`http://${rest}`, `https://${rest}`] : [`https://${rest}`];
-}
 
 /** A status that is no file, as a word. */
 function refusalOf(status: number): ProviderRefusal {
@@ -93,7 +78,7 @@ type ReadText = { readonly ok: true; readonly calendars: readonly CalObject[]; r
 /** The reader with its ceilings named. `makeReader` is the door; a test lowers a ceiling here to see it hold. */
 export function makeIcsReader(deps: AdapterDeps, limits: IcsLimits): CalendarReader {
   async function ask(c: Connection, since: FeedState | null, signal: AbortSignal): Promise<Got> {
-    const addresses = c.credential.kind === "address" ? addressesOf(c.credential.url()) : null;
+    const addresses = c.credential.kind === "address" ? subscriptionAddresses(c.credential.url()) : null;
     if (addresses === null) return { kind: "refused", answer: refuse("address_invalid") };
     let answer: HttpAnswer = { arrived: false, reason: "address_invalid" };
     let from = "";

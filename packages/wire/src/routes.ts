@@ -13,7 +13,10 @@
  */
 import type { AuthVerdict, ISODateTime, Page, UnsubscribeHeaderState } from "./base.js";
 import type { HelloAnswer } from "./client.js";
-import type { CalendarEventAct, CalendarSettingsBody, CalendarSettingsWire, CalendarWriteAnswer } from "./calendar.js";
+import type {
+  CalendarConnectBody, CalendarConnectWire, CalendarConnectionRecord, CalendarEventAct, CalendarPatchBody, CalendarRecord,
+  CalendarRemovalWire, CalendarSettingsBody, CalendarSettingsWire, CalendarSignInBody, CalendarWriteAnswer,
+} from "./calendar.js";
 import type { PlaceSuggestAnswer, PlaceSuggestBody } from "./places.js";
 import type { FetchingDTO } from "./mailboxes.js";
 import type { SnapshotResponse, SyncResponse } from "./records.js";
@@ -155,6 +158,22 @@ export interface Routes {
   "DELETE /calendar/writes/:id": { params: Id; body: never; answer: CalendarWriteAnswer };
   /** Places for an event's place field. 200 for every well-formed question, its state in the answer. */
   "POST /calendar/places/suggest": { params: None; body: PlaceSuggestBody; answer: PlaceSuggestAnswer };
+  /** The ways this server offers the account now; none while its calendar is off. */
+  "GET /calendar/connect": { params: None; body: never; answer: CalendarConnectWire };
+  /**
+   * A calendar connected, under the press's `Idempotency-Key` (required). `202`: the sign-in is
+   * sealed and the worker tries it; nothing is asked of the provider inside the request. What came
+   * of it is the record's `status` and `errorCode`, by the feed.
+   */
+  "POST /calendar/connections": { params: None; body: CalendarConnectBody; answer: CalendarConnectionRecord };
+  /** A connection removed with everything that hangs on it. `200` gone; `202` its records are still going. */
+  "DELETE /calendar/connections/:id": { params: Id; body: never; answer: CalendarRemovalWire };
+  /** Ask the provider now, once a minute for each connection: `202`, or `429` inside the minute. */
+  "POST /calendar/connections/:id/check": { params: Id; body: never; answer: CalendarConnectionRecord };
+  /** The connection's sign-in typed again: sealed in place of the old one, and tried by the worker. `202`. */
+  "POST /calendar/connections/:id/sign-in": { params: Id; body: CalendarSignInBody; answer: CalendarConnectionRecord };
+  /** What is the person's own of one calendar. `X-Sync-Seq` names the change when a field changed. */
+  "PATCH /calendar/calendars/:id": { params: Id; body: CalendarPatchBody; answer: CalendarRecord };
   /** Ring the worker's doorbell. `mailboxIds` narrows the ring; absent, every connected mailbox. */
   "POST /sync/pull": {
     params: None;

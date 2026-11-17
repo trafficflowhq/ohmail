@@ -44,6 +44,7 @@ import {
   calAttendees,
   calCalendars,
   calConnections,
+  calCredentials,
   calEvents,
   calSettings,
   calSuggestions,
@@ -668,6 +669,8 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
     accountId, provider: "caldav", label: "Mila's work", serverUrl: "https://dav.lichtgrat.example/cal/",
     principal: "/principals/mila/", mailboxId,
   }).returning();
+  // Its sealed sign-in, as the connect door writes one: the row an erasure may least leave behind.
+  await db.insert(calCredentials).values({ accountId, connectionId: conn!.id, kind: "basic", secretEnc: `sealed-${u}`, keyVersion: 1 });
   const [cal] = await db.insert(calCalendars).values({
     accountId, connectionId: conn!.id, providerId: `/cal/mila/${u}/`, name: "Clinic appointments",
   }).returning();
