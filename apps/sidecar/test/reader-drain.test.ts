@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ import { createSidecar, type Sidecar } from "../src/engine.js";
 import { requestOrganizerTakeover } from "../src/organize-here.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 import {
   lineOf, span, withoutCommentsAndLiterals,
 } from "../../../scripts/lib/source-scan.mjs";
@@ -591,7 +592,7 @@ describe("a stood-down install keeps reading its mailbox", () => {
      * drain was gated that was true by accident; the drain is now reachable by a reader, so the
      * line needs its own gate and this is what keeps it.
      */
-    const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8");
+    const src = readEngineAsOneText();
     expect(
       /if\s*\(\s*organizing\s*\)\s*await\s+profileSync\.armHoldFromFolder\([^)]*\)/.test(src),
       "engine.ts arms the incoming-organizer hold on a drain a READER can now reach",
@@ -795,7 +796,7 @@ describe("a stood-down install keeps reading its mailbox", () => {
    */
   it("every pass the drain schedules through `onceForTheAccount` is gated, or named here", () => {
     const src = withoutCommentsAndLiterals(
-      readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8"),
+      readEngineAsOneText(),
     );
     /**
      * The passes this file has looked at and decided may run on a reader — see the block above.

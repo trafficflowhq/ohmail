@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * WHERE THE AWAY RESPONDER'S PASS RUNS — a source census, because the failure it guards against is
@@ -31,7 +32,7 @@ import { tmpdir } from "node:os";
  */
 
 const REPO = existsSync("packages/services") ? "." : "../..";
-const read = (p: string): string => readFileSync(join(REPO, p), "utf8");
+const read = (p: string): string => readAsUnit(join(REPO, p));
 
 /**
  * CODE ONLY — comments and string literals removed.
@@ -77,7 +78,7 @@ function codeOnly(src: string): string {
   return out;
 }
 
-const mentionsInCode = (p: string, name: string): boolean => codeOnly(readFileSync(p, "utf8")).includes(name);
+const mentionsInCode = (p: string, name: string): boolean => codeOnly(readAsUnit(p)).includes(name);
 
 /**
  * Directories this walk never enters. All three are generated output rather than source, so
@@ -154,6 +155,7 @@ describe("the away responder's pass runs on exactly the three hosts that can dia
     const callers = [
       ...sources("apps"), ...sources("packages"),
     ].filter((p) => !p.includes("node_modules") && !p.includes("/dist/") && !/\.test\.tsx?$/.test(p))
+      .filter((p) => !isEnginePart(p))
       .filter((p) => !p.endsWith("away-responder-pass.ts"))      // the definition itself
       .filter((p) => !p.endsWith("packages/services/src/index.ts"))   // the two barrels
       .filter((p) => !p.endsWith("packages/services/src/mail.ts"))

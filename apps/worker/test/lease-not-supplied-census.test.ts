@@ -6,6 +6,7 @@ import { WriteDeclinedError, type MailboxWriteKind } from "@trafficflow/core/ada
 import { assertMayWriteToMailbox, writeDoorOf, type NoOrganizerLease } from "@ohmail/organizer/lease";
 import { FIXTURE_AUTHORITY, FIXTURE_DOOR } from "../../../packages/organizer/test/_door.js";
 import { readSource } from "./_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * A WRITE WITH NO LEASE IS REFUSED, AND ONLY A TEST CAN RIDE A LEASE IT DID NOT TAKE. The census
@@ -26,7 +27,9 @@ function productionSources(): Array<{ rel: string; text: string }> {
       if (e === "node_modules" || e === "dist" || e === "test" || e === "__tests__") continue;
       const p = join(d, e);
       if (statSync(p).isDirectory()) { walk(p); continue; }
-      if (/\.tsx?$/.test(p) && !/\.d\.ts$|\.test\.tsx?$/.test(p)) out.push({ rel: p.slice(REPO.length + 1), text: readSource(p) });
+      if (/\.tsx?$/.test(p) && !/\.d\.ts$|\.test\.tsx?$/.test(p) && !isEnginePart(p)) {
+        out.push({ rel: p.slice(REPO.length + 1), text: readingTheUnit(readSource)(p) });
+      }
     }
   };
   for (const bucket of ["apps", "packages"]) {

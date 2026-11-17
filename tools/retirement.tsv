@@ -1374,6 +1374,7 @@ test/diagnostics-census.test.ts	source-text	an import census: reads source as te
 test/dockerignore-carries-patches.test.ts	source-text	an import census: reads source as text (mjs, ts)	ohmail/package-borders	tools	
 test/drizzle-identifier-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/drop-database-sessions.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/engine-unit.test.ts	source-text	reads source as text (ts): the desktop engine's door, through its helper; and files it wrote itself	layer 1	desktop-engine	
 test/engine-version-baked.test.ts	data	reads data files (json)	none	unassigned	
 test/erase-doors-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/every-dial-is-guarded.test.ts	source-text	an import census: reads source as text (ts)	bundle contents	tools	

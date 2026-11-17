@@ -2,7 +2,11 @@ import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { readSource } from "./_start-function.js";
+import { readSource as readStartFunction } from "./_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
+
+/** The worker's start function and the desktop's engine each read as one text. */
+const readSource = readingTheUnit(readStartFunction);
 
 /**
  * ═══ EVERY DESTRUCTIVE IMAP WRITE ASKS ONE FUNCTION ════════════════════════════════════════
@@ -102,7 +106,7 @@ function tsFilesUnder(dir: string): string[] {
     for (const e of readdirSync(d)) {
       const p = join(d, e);
       if (statSync(p).isDirectory()) { walk(p); continue; }
-      if (p.endsWith(".ts") && !p.endsWith(".d.ts")) out.push(p);
+      if (p.endsWith(".ts") && !p.endsWith(".d.ts") && !isEnginePart(p)) out.push(p);
     }
   };
   walk(dir);

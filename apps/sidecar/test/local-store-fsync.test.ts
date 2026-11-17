@@ -14,6 +14,7 @@ import { LocalStoreOpenError, PGDATA_SUBDIR, openLocalDb, type OpenLocalDb } fro
 import * as store from "../src/db.js";
 import * as transport from "../src/pglite-transport.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 /**
  * ═══ THE LOCAL STORE SYNCS THROUGH AN FSYNC OF ITS OWN ═══════════════════════════════════════
@@ -41,7 +42,7 @@ function nodefsOf(client: PGlite): NodeFsOps {
   return mod.FS.filesystems.NODEFS;
 }
 
-const clientOf = (h: OpenLocalDb): PGlite => (h.db as unknown as { $client: PGlite }).$client;
+const clientOf = (h: OpenLocalDb): PGlite => pgliteOf(h.db);
 
 /** Every host fsync made while `work` runs, by what it synced. The original call runs first. */
 async function hostSyncs<T>(work: () => Promise<T>): Promise<{ files: number; directories: number; result: T }> {

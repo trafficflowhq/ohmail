@@ -9,6 +9,7 @@ import {
 } from "../src/search-backfill.js";
 import { COMPOSITION_STORE_PASSES, runsStorePass } from "../src/composition-passes.js";
 import { maskSource } from "./_mask.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * THE DESKTOP'S SEARCH BACKFILL RUNS ONLY WHILE NOBODY IS USING THE APP, NO DRAIN IS TAKING MAIL IN,
@@ -276,7 +277,7 @@ describe("the power reader is injected", () => {
   });
 
   it("the shared engine names it by type only, and the desktop entry supplies it", () => {
-    const engine = code("engine.ts");
+    const engine = maskSource(readEngineAsOneText()).code;
     const named = engine.match(/["']\.\/host-power\.js["']/g) ?? [];
     const typeOnly = engine.match(/\bimport\s+type\s*\{[^}]*\}\s*from\s*["']\.\/host-power\.js["']/g) ?? [];
     expect(named.length, "every naming of host-power.js in engine.ts is a type import").toBe(typeOnly.length);

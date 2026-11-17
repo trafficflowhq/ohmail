@@ -4,6 +4,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { cycleWriteAuthority, type LeasePermit } from "@ohmail/organizer/lease";
 import { readSource } from "./_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * ONE COMPOSITION OF A CYCLE'S AUTHORITY, IN EVERY ROOT. The hosted worker handed `runSyncCycle`
@@ -75,7 +76,8 @@ function compositionsIn(file: string, text: string): Composition[] {
 }
 
 describe("every cycle's authority is composed from its own role, by one function", () => {
-  const found = productionFiles().flatMap((f) => compositionsIn(f.slice(REPO.length + 1), readSource(f)));
+  const found = productionFiles().filter((f) => !isEnginePart(f))
+    .flatMap((f) => compositionsIn(f.slice(REPO.length + 1), readingTheUnit(readSource)(f)));
 
   it("the three composing roots are the known ones, and each composes through the one function", () => {
     expect({ refused: found.filter((c) => c.verdict !== "ok").map((c) => `${c.where}: ${c.verdict}`) })

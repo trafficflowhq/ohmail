@@ -3,7 +3,11 @@ import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { bracketSpan, lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
-import { readSource } from "./_start-function.js";
+import { readSource as readStartFunction } from "./_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
+
+/** The worker's start function and the desktop's engine each read as one text. */
+const readSource = readingTheUnit(readStartFunction);
 
 /**
  * EVERY CALLER HANDS THE ACT ITS OWN CONSENT, AND NOTHING ELSE. `screenerAutoActPass` files a
@@ -29,7 +33,7 @@ function* walk(dir: string): Generator<string> {
     if (SKIP_DIRS.has(name)) continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) yield* walk(p);
-    else if (/\.(ts|tsx|mts|mjs)$/.test(name) && !/\.test\.tsx?$/.test(name)) yield p;
+    else if (/\.(ts|tsx|mts|mjs)$/.test(name) && !/\.test\.tsx?$/.test(name) && !isEnginePart(p)) yield p;
   }
 }
 

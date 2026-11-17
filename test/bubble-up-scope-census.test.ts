@@ -4,6 +4,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withoutCommentsAndLiterals, lineOf, span } from "../scripts/lib/source-scan.mjs";
 import { readSource } from "../apps/worker/test/_start-function.js";
+import { isEnginePart, readingTheUnit } from "./support/engine-unit.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -33,7 +34,9 @@ function sources(): { file: string; src: string }[] {
       if (e === "node_modules" || e === "dist") continue;
       const p = join(dir, e);
       if (statSync(p).isDirectory()) walk(p);
-      else if (e.endsWith(".ts")) out.push({ file: relative(REPO, p), src: withoutCommentsAndLiterals(readSource(p)) });
+      else if (e.endsWith(".ts") && !isEnginePart(p)) {
+        out.push({ file: relative(REPO, p), src: withoutCommentsAndLiterals(readingTheUnit(readSource)(p)) });
+      }
     }
   };
   for (const r of ROOTS) walk(join(REPO, r));
