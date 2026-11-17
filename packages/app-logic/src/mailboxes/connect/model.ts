@@ -186,7 +186,8 @@ function answered(state: ConnectState, answer: Answered<unknown>, facts: Connect
         ? { leg: tls.transport, host: tls.suggestedHost }
         : null,
     offerHosts: preset?.manual === true && (reason === "connect" || reason === "timeout"),
-    authHint: reason === "auth" ? refusal.details.authHint : null,
+    // A phone's own mailbox is refused by native's code, which carries the hint itself: there is no server's reason.
+    authHint: reason === "auth" || facts.purpose === "standalone" ? refusal.details.authHint : null,
     lastReason: reasonCodeOf(refusal),
     tested: null,
   });

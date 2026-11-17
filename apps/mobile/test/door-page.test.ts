@@ -83,7 +83,7 @@ describe("the door's page, built", () => {
     expect(readFileSync(join(out, "door.js"), "utf8")).not.toContain(BENCH_MARKER);
     expect((await buildShell({ out: join(out, "bench"), bench: true })).doorInputs.filter((p: string) => scoped.test(p))).toEqual([]);
     expect(readFileSync(join(out, "bench", "door.js"), "utf8")).not.toContain(BENCH_MARKER);
-    expect(DOOR_NAMESPACES).toEqual(["phoneDoor", "phoneRefusal", "providerPicker", "mailboxes"]);
+    expect(DOOR_NAMESPACES).toEqual(["phoneDoor", "phoneRefusal", "servers", "providerPicker", "mailboxes"]);
   }, 120_000);
 
   it("may hold the provider table because that file imports nothing: built alone, it names no import and is its bundle's one input", async () => {
@@ -183,8 +183,21 @@ describe("the door's page, built", () => {
       expect(seen.stage).toBe(1);
       expect(seen.stamped).toBe(true);
       // Its first page is the ways in: the first screen says the app's one sentence (its full stop drawn as the dot).
-      const first = (pageCatalogue(undefined, DOOR_NAMESPACES).en as { phoneDoor: { welcome: { line: { ohmail: string } } } }).phoneDoor;
+      const { phoneDoor: first, servers } = pageCatalogue(undefined, DOOR_NAMESPACES).en as typeof import("../../../packages/app/messages/phone.en.json");
       expect(seen.words).toContain(first.welcome.line.ohmail.replace(/\.$/, ""));
+      await page.getByRole("button", { name: first.welcome.servers, exact: true }).click();
+      const title = page.getByRole("heading", { name: servers.title, exact: true });
+      await title.waitFor();
+      await page.getByText(servers.empty, { exact: true }).waitFor();
+      const server = page.getByRole("button", { name: servers.ways.server.name, exact: true });
+      await server.focus({ timeout: 2_000 });
+      await page.keyboard.press("Enter");
+      await page.getByRole("textbox", { name: first.server.label }).waitFor();
+      await page.getByRole("button", { name: first.back, exact: true }).click();
+      await title.waitFor();
+      await page.getByRole("button", { name: servers.back, exact: true }).click();
+      await page.getByRole("button", { name: first.welcome.servers, exact: true }).waitFor();
+      expect(await page.evaluate(() => (window as unknown as Seen).__native)).toEqual({ asked: ["config", "ready"], touched: [] });
       expect(left).toEqual([]);
       expect(outside).toEqual([]);
       expect(faults).toEqual([]);

@@ -4,6 +4,7 @@
  * bring (the new design's tokens, the kit's layer, the seam the doors' stage stands on, the pages' placement), under
  * today's sheets as a door's page loads them beside those, as the doors' page
  * is built (`build-doors.mjs`). `phoneDoorPage()` returns the document; run alone, it writes it to the path given.
+ * The door's other page, the list of servers, has its states page built the same way (`servers-page.tsx`).
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -52,10 +53,10 @@ async function faces() {
     .join("\n");
 }
 
-export async function phoneDoorPage() {
+export async function phoneDoorPage(entry = "packages/app/test/states/phonedoor-page.tsx") {
   const result = await build({
     absWorkingDir: ROOT,
-    entryPoints: ["packages/app/test/states/phonedoor-page.tsx"],
+    entryPoints: [entry],
     bundle: true,
     write: false,
     outdir: "out",

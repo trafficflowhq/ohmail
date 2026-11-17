@@ -8,6 +8,7 @@
  */
 import { useMemo, type ReactNode } from "react";
 import { NO_DETAILS } from "@ohmail/app-logic/mailboxes/connect/refusal";
+import { standaloneAuthHint } from "@ohmail/app-logic/mailboxes/connect/standalone-said";
 import type { Answered, Connected } from "@ohmail/app-logic/mailboxes/connect/types";
 import { NONE, type ConnectWire } from "../../src/host/index.js";
 import { DoorStage } from "../../src/doors/stage/index.js";
@@ -152,7 +153,7 @@ export function stepsOf(drawn: Drawn, lang: Lang): readonly Step[] {
   ];
 }
 
-/** The stand-in of the phone's connect wire: the state's refusal, or no answer yet. */
+/** The stand-in of the phone's connect wire: the state's refusal as the wire hands it, or no answer yet. */
 function standInWire(data: StateData): ConnectWire {
   const form = "form" in data ? data.form : undefined;
   return {
@@ -166,7 +167,7 @@ function standInWire(data: StateData): ConnectWire {
               status: 0,
               code: form.code,
               message: "",
-              details: { ...NO_DETAILS, field: form.field },
+              details: { ...NO_DETAILS, field: form.field, authHint: standaloneAuthHint(form.code) },
             },
           }),
     edit: NONE,
@@ -253,8 +254,8 @@ export const DECLARED_CLASSES = {
     "fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on " +
     "every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks " +
     "(the address and the password, the name), a host tag that opens the server fields, the app password's help " +
-    "under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider " +
-    "(asked of the wire), and the studio is asked which the step follows.",
+    "under a refused sign-in and a suggested host: the form draws the help as its own links under the refusal, " +
+    "and the studio is asked which the step follows.",
   named:
     "What answered, at which address, with which key, as the kit's setting lines on the doors' sheet: the doors' " +
     "named facts (the reference's three rows of a name and its value, the key set apart) are asked of the doors.",

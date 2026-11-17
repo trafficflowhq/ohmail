@@ -766,6 +766,12 @@
       "node": "./dist/phone/said.js",
       "default": "./src/phone/said.ts"
     },
+    "./phone/stop-and-remove": {
+      "types": "./src/phone/stop-and-remove.ts",
+      "ohmail-source": "./src/phone/stop-and-remove.ts",
+      "node": "./dist/phone/stop-and-remove.js",
+      "default": "./src/phone/stop-and-remove.ts"
+    },
     "./press": {
       "types": "./src/press/index.ts",
       "ohmail-source": "./src/press/index.ts",

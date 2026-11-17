@@ -194,6 +194,18 @@ describe("by hand", () => {
     expect(screen.getByLabelText(W.hand.tokenLabel).getAttribute("aria-invalid")).toBeNull();
   });
 
+  it.each(["baseAddressMissing", "baseNotAnAddress", "baseCleartext", "baseNeedsTheCode"])(
+    "marks the address on the server's validation answer %s",
+    async (code) => {
+      const fake = fakePhoneDoor({ answers: { hand: () => ({ k: "refused", said: { code, args: [] } }) } });
+      draw(fake, { step: "hand" });
+      press(W.hand.pair);
+      await settle();
+      expect(screen.getByLabelText(W.hand.addressLabel).getAttribute("aria-invalid")).toBe("true");
+      expect(screen.getByLabelText(W.hand.tokenLabel).getAttribute("aria-invalid")).toBeNull();
+    },
+  );
+
   it("gives back a ticket that answers after its step was left, once, and goes nowhere with it", async () => {
     for (const way of ["token", "link"] as const) {
       let answer: (offer: typeof OFFER) => void = () => undefined;

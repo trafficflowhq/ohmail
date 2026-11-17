@@ -5311,6 +5311,7 @@
   },
   "servers": {
     "title": "Servers",
+    "back": "Back",
     "connected": "Connected",
     "opening": "Opening",
     "openingLine": "Opening the copy on this phone",
@@ -5370,6 +5371,10 @@
       "keep": "Keep the mailbox",
       "drafts": "{count, plural, one {Removing it deletes the unsent draft on this phone. No mail server has it.} other {Removing it deletes the # unsent drafts on this phone. No mail server has them.}}",
       "draftsUnknown": "Removing it deletes any unsent drafts on this phone. No mail server has them.",
+      "settingsAnswer": "Settings you changed on this phone are not in the mailbox yet. They wait for your answer to the settings question above your mail. Answer it first, or removing deletes them.",
+      "settingsNewer": "Settings you changed on this phone are not in the mailbox, because a newer ohmail saved the mailbox’s settings. Update ohmail first, or removing deletes them.",
+      "settingsUnsaved": "Settings you changed on this phone could not be saved to the mailbox, so nothing was removed. Removing it now deletes them.",
+      "settingsUnknown": "Removing it may delete settings you changed on this phone that are not in the mailbox yet.",
       "removeDrafts": "Remove and delete drafts",
       "removeAnyway": "Remove anyway"
     }

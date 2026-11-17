@@ -113,11 +113,13 @@ export function Gated({ children }: { children: ReactNode }) {
   // milliseconds with no text screen, and nothing here ever waits on the network (the
   // connection layer goes live off the on-device mirror; sync runs behind the mail UI).
   if (verdict.to === "boot") return <BootShell />;
+  /* UNDER THE SHELL the ways in and the list of servers are the door's page (`app/door.tsx`), and a connect in flight
+     stands on that list. A connect that upgrades the store keeps its own screen, which counts the upgrade. */
+  if (MAIL_SURFACE === "shell" && verdict.to === "connecting" && verdict.migrating === undefined) return <Redirect href="/door" />;
   if (verdict.to === "connecting") return <BootShell migrating={verdict.migrating} />;
-  /* UNDER THE SHELL the ways in are the door's page (`app/door.tsx`). A connect in flight and the list of servers
-     stay here until the door's list is built: the door opens a connect at that list. */
   if (MAIL_SURFACE === "shell" && verdict.to === "welcome") return <Redirect href="/door" />;
   if (verdict.to === "welcome") return <Redirect href="/welcome" />;
+  if (MAIL_SURFACE === "shell" && verdict.to === "servers") return <Redirect href="/door" />;
   if (verdict.to === "servers") return <Redirect href="/servers" />;
   if (verdict.to === "shell") return <Redirect href="/shell" />;
   /* THE SENTENCE ABOUT THE APP COMES FIRST: an app too old to speak to its server cannot read that server's

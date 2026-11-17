@@ -7,7 +7,7 @@
  * A sentence's places are filled from this side alone: the provider's two names from the provider table, where the
  * sentence names the provider, and nothing everywhere else.
  */
-import { authHintPreset } from "./providers.js";
+import { authHintPreset, type AuthHint } from "./providers.js";
 import type { Said } from "./refusal.js";
 import type { Refusal } from "./types.js";
 
@@ -17,13 +17,23 @@ const PLAIN = /^[a-z][A-Za-z0-9]{0,63}$/;
 const UNKNOWN = "unknown";
 /** A sentence of the phone's refusals has at most six places. Each is said empty unless this side knows it. */
 const NOTHING = Object.freeze({ 0: "", 1: "", 2: "", 3: "", 4: "", 5: "" });
-/** The refused sign-ins whose sentence names the provider and its account: the provider table's own two names. */
-const NAMES_THE_PROVIDER: ReadonlySet<string> = new Set([
-  "standaloneAuthAppOnly",
-  "standaloneAuthInvalid",
-  "standaloneAuthWebLogin",
-  "standaloneAuthImapDisabled",
-]);
+/**
+ * The refused sign-ins whose sentence names the provider and its account (the provider table's own two names), each
+ * with the hint a refused sign-in carries on every other purpose: the form draws the app password's help by it.
+ */
+const PROVIDER_HINT: Readonly<Record<string, AuthHint>> = Object.freeze({
+  standaloneAuthAppOnly: "app_password_required",
+  standaloneAuthInvalid: "invalid",
+  standaloneAuthWebLogin: "web_login",
+  standaloneAuthImapDisabled: "imap_disabled",
+});
+
+/** The hint a refused open carries by its code: one of the four sign-ins that name the provider, else none. */
+export function standaloneAuthHint(code: string | null): AuthHint | null {
+  return code !== null && Object.prototype.hasOwnProperty.call(PROVIDER_HINT, code)
+    ? PROVIDER_HINT[code]!
+    : null;
+}
 /** This build cannot say why: no answer, a code that is no key, and the rows a phone's wire never reaches. */
 export const STANDALONE_UNKNOWN: Said = Object.freeze({ ns: "phoneRefusal", key: UNKNOWN });
 
@@ -38,7 +48,7 @@ export function standaloneSaid(r: Refusal): Said {
   const code = r.code;
   if (code === null || code === UNKNOWN || !PLAIN.test(code) || code in Object.prototype)
     return STANDALONE_UNKNOWN;
-  if (!NAMES_THE_PROVIDER.has(code))
+  if (standaloneAuthHint(code) === null)
     return { ns: "phoneRefusal", key: code, values: NOTHING, orElse: UNKNOWN };
   const preset = authHintPreset();
   return {
