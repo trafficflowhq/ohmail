@@ -60,6 +60,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.
  *  · `organizeHere` reverted to its own `asTx(ctx).transaction(…)` → the call-site case red
  *    naming all three consent-settings writes, which is the door this census FOUND: the consent
  *    write was never among the four hand-written fence calls;
+ *  · the stamp's read taken out of the send's `settleLocks` → ONLY "a send's settle opens on the
+ *    account's stamp" goes red here, for the seam case's reason: the settle's write still sits
+ *    behind the call, and the helper's own source is what says the call reads the stamp. What
+ *    the read buys is behaviour: `send-settle-erasure.pg.test.ts` goes red on both its races;
+ *  · `settleLocks` taken out of the spellings → the allow-list case red naming the send service's
+ *    contacts write by line, which is how this spelling came to be learned;
  *  · `readAccountErasedAt`'s `{ mode: "share" }` deleted → nothing here moves, and the race pg
  *    test's CONCURRENT arm goes red. A lock is behaviour, not text: this file cannot see it, and
  *    saying so is why both guards exist.
@@ -386,8 +392,15 @@ function bodies(src: string): Array<[number, number]> {
   return out;
 }
 
-/** The seam and the two edge translations of it. One mechanism; these are its spellings. */
-const SEAM = String.raw`(?:fencedAccountWrite|withAccountTx|fenceErasedScope|fenceErasedAccount|fenceErased|readAccountErasedAt)`;
+/**
+ * The seam and the two edge translations of it. One mechanism; these are its spellings.
+ *
+ * `settleLocks` is the send service's: every settle of a send opens with it, and its first
+ * statement is the fence's own read. It is spelled here because a settle may not go through the
+ * door — the door refuses on a stamp, and a letter the server has accepted is recorded all the
+ * same — and the settle case below reads its source, as the seam case reads the seam's.
+ */
+const SEAM = String.raw`(?:fencedAccountWrite|withAccountTx|fenceErasedScope|fenceErasedAccount|fenceErased|readAccountErasedAt|settleLocks)`;
 
 /**
  * The MAILBOX ARM asked alone — its own pattern rather than another `SEAM` alternative, because
@@ -775,6 +788,33 @@ describe("the erasure fence census", () => {
     const body = src.slice(at, src.indexOf("\n}\n", at));
     expect(body, "the services door opens its own transaction again").not.toContain(".transaction(");
     expect(body, "the services door no longer goes through the seam").toContain("fencedAccountWrite(");
+  });
+
+  it("a send's settle opens on the account's stamp — `settleLocks` reads it before it takes a row", () => {
+    /**
+     * WHAT MAKES `settleLocks` A SPELLING OF THE FENCE, read off its own body as the seam's is
+     * above. A settle writes what became of a letter the server may already have accepted, so it
+     * READS the stamp and is never refused on it; the read is `readAccountErasedAt`, FOR SHARE,
+     * ahead of the draft row and of everything else the settle takes. What a settle then does with
+     * the answer is behaviour, and `send-settle-erasure.pg.test.ts` holds it against
+     * `deleteAccount` in both orders.
+     */
+    const file = "packages/services/src/send-service.ts";
+    // ONE declaration: the spelling is a name, and a second function of that name anywhere in the
+    // server would be read as fenced for carrying it.
+    expect(serverSources().filter((f) => /\bfunction\s+settleLocks\s*\(/.test(withoutComments(read(f)))),
+      "`settleLocks` is declared once, in the send service").toEqual([file]);
+    const src = withoutComments(read(file));
+    const at = src.indexOf("async function settleLocks(");
+    const body = src.slice(at, src.indexOf("\n}", at));
+    const fence = body.indexOf("readAccountErasedAt(");
+    expect(fence, "`settleLocks` no longer reads the account's stamp").toBeGreaterThan(-1);
+    // The one `await` up to the read is the read's own: no row is locked in front of the account's.
+    expect(body.slice(0, fence).match(/\bawait\b/g) ?? []).toHaveLength(1);
+    // …and the write this spelling was learned for is SEEN, once, and reads as fenced by position:
+    // the contacts a delivered letter teaches, behind the settle's own call.
+    expect(DOORS.filter((d) => d.file === file && d.op === "insert" && d.table === "contacts").map((d) => d.cls))
+      .toEqual(["a-fenced"]);
   });
 
   it("every unfenced writer is on the written allow-list — a new one is red by name", () => {
