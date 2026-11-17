@@ -21,6 +21,42 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.13] — 2026-11-17
+
+### The Screener's offer answers on a large account
+
+The Screener offers to screen the Ohbox mail of senders you never decided about. To find it, the server read
+the Ohbox letter by letter and asked about each one. On an account with tens of thousands of letters, most of
+them from people already decided, that took longer than a request may last: the offer never came, and on ohmail
+Cloud several of these reads at once kept the database connections of one server busy, so other requests were
+answered "busy" and a send could be refused.
+
+The read now goes by sender: it leaves out every sender you have decided about before it reads any mail, and
+reads only the letters of the rest. One request reads for at most four seconds and says where it stopped; the
+app asks on from there, so on a very large account the number appears as "at least" and grows instead of
+failing. An app asks one such read at a time, and a server answers at most two of them at once, whoever asks.
+
+On your own server and on the desktop and phone apps the same read is shorter for the same reason. A letter
+whose From line names several mailboxes is no longer offered when the first of them is somebody you decided
+about: the Screener's list would not have shown it.
+
+### A letter your mail server accepts late is recorded as sent
+
+On ohmail Cloud and on your own server, a letter that the mail server took longer than twenty seconds to accept
+could end as "We couldn't confirm this send" with no copy in the Sent folder although it had been delivered, and
+pressing Send again then delivered it a second time. It is now recorded as sent and its copy is filed. The
+desktop and phone apps that keep their mail themselves were not affected.
+
+### A send waits for a busy server instead of failing
+
+Before a message is sent, ohmail saves it. When the server answered that save with "busy, try again in a few
+seconds", a message with a Bcc was refused at once and the app said only "Sending didn't work". Nothing was sent
+and nothing was lost, but the app did not say so, and pressing Send again a little later worked.
+
+The send now waits as long as the server asked, ten seconds at most, and saves once more. If the save still
+cannot be confirmed, the web and desktop apps say that the message was not sent because it could not be saved
+first, instead of the general sentence.
+
 ## [1.0.12] — 2026-11-14
 
 ### One organizer fetches mail, also when its database connection goes silent
@@ -17564,7 +17600,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.12...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.13...HEAD
+[1.0.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.13
 [1.0.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.12
 [1.0.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.11
 [1.0.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.10
