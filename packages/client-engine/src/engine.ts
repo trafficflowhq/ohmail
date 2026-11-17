@@ -14,7 +14,7 @@
 import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarBodyPart, isCalendarMime } from "@trafficflow/core/ics";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
-  StayedWhy, UnscreenedPileWire, WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
+  StayedWhy, UnscreenedPileWire, UnscreenedWire, WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
   AutoFiledUndoWire, AutoFiledWire, PullRing,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
@@ -158,6 +158,13 @@ export const STALE_PRESS_CODE = "stale_press";
 const OHBOX_FOLDER = "INBOX";
 /** Ohbox mail coming in re-asks the undecided-sender offer at most this often. */
 export const UNSCREENED_REASK_MS = 30_000;
+
+/**
+ * Parts one read of the undecided-sender offer asks for. The server reads for a bounded time per
+ * request and says where it stopped; this many requests go on from there, then what is held stands
+ * as a floor until the next ask.
+ */
+export const UNSCREENED_PARTS_MAX = 8;
 
 /**
  * WHAT A WITHDRAWAL FOUND — {@link OhmailEngine.withdrawQueued}'s answer. `withdrawn` is the
@@ -2708,6 +2715,26 @@ export const SENT_FORWARD_MAX_PARTS = 100;
 const PAGE_IS_NOT_CONTENT: ReadonlySet<string> = new Set(["ask", "walked"]);
 
 /**
+ * TWO PARTS OF ONE OFFER, AS ONE ANSWER. A sender whose mail the server's stop cut in two is one
+ * group holding both counts, the totals add, and the later part says whether the read reached the
+ * end and where it goes on.
+ */
+function unscreenedParts(held: UnscreenedWire, part: UnscreenedWire): UnscreenedWire {
+  const by = new Map(held.groups.map((g) => [g.address, g]));
+  for (const g of part.groups) {
+    const had = by.get(g.address);
+    by.set(g.address, had === undefined ? g : {
+      address: g.address, count: had.count + g.count, newestAt: had.newestAt > g.newestAt ? had.newestAt : g.newestAt,
+    });
+  }
+  return {
+    groups: [...by.values()], total: held.total + part.total, complete: part.complete !== false, max: part.max,
+    ...(held.pile === undefined ? {} : { pile: held.pile }),
+    ...(part.next === undefined ? {} : { next: part.next }),
+  };
+}
+
+/**
  * Do these puts restate exactly the stored rows of their type — same ids, same entities? Compared
  * as key-sorted JSON (the rows are small and bounded: one queue page, the offer's groups), with
  * `ignore` naming fields — at any depth — that number a write rather than state anything.
@@ -3055,10 +3082,12 @@ export class OhmailEngine {
    * `owed`: a page changed what it counts (a rule's walk ended, a mailbox or the settings changed),
    * so the settle asks again. `ohboxDue`: Ohbox mail came or went, asked at most once per
    * {@link UNSCREENED_REASK_MS} from `askedAt` and kept until a settle makes it. `bell`: the ask in flight.
+   * `reading`: the read in the air, and `queued` the one read every caller that came meanwhile shares.
    */
   private unscreenedAsk: {
     armed: boolean; owed: boolean; ohboxDue: boolean; askedAt: number | null; bell: Promise<void> | null;
-  } = { armed: false, owed: false, ohboxDue: false, askedAt: null, bell: null };
+    reading: Promise<void> | null; queued: Promise<void> | null;
+  } = { armed: false, owed: false, ohboxDue: false, askedAt: null, bell: null, reading: null, queued: null };
   /** Representatives served on pages past the first, which the mirror never holds (capped). */
   private readonly screenerPageReps = new Set<string>();
   /** Which index answered — see {@link OhmailEngine.searchIndexRevision}. */
@@ -7008,23 +7037,55 @@ export class OhmailEngine {
    * another. The whole set is replaced under ONE version bump, because a half-old list is a wrong
    * number on screen. A door that cannot answer leaves the mirror EMPTY, which every surface reads
    * as "no such row here" — never as "nothing undecided", a different sentence.
+   *
+   * ONE READ AT A TIME. The server's read walks the store, so a second one beside it only costs: a
+   * caller that comes while one is in the air waits for it and then shares one read made after it
+   * (never the one in the air: a press's re-read must not be an answer from before the press).
    */
-  async refreshUnscreened(): Promise<void> {
+  refreshUnscreened(): Promise<void> {
+    const u = this.unscreenedAsk;
+    if (!this.adapter.unscreened) return Promise.resolve();
+    if (u.reading === null) {
+      const mine = this.readUnscreened().finally(() => { if (u.reading === mine) u.reading = null; });
+      u.reading = mine;
+      return mine;
+    }
+    u.queued ??= u.reading.catch(() => { /* its own callers hear it */ }).then(() => {
+      u.queued = null;
+      return this.refreshUnscreened();
+    });
+    return u.queued;
+  }
+
+  /**
+   * The read itself. A large account's answer comes IN PARTS (`next`): each is written as it lands,
+   * marked not complete, so the surface shows a floor that grows and never waits on the whole walk.
+   */
+  private async readUnscreened(): Promise<void> {
     const ask = this.adapter.unscreened;
     if (!ask) return;
     this.unscreenedAsk.armed = true;
     this.unscreenedAsk.owed = false;
     this.unscreenedAsk.ohboxDue = false;
     this.unscreenedAsk.askedAt = this.now().getTime();
-    const wire = await ask.call(this.adapter);
+    let wire = await ask.call(this.adapter);
+    await this.storeUnscreened(wire);
+    for (let part = 1; wire.next !== undefined && part < UNSCREENED_PARTS_MAX; part++) {
+      wire = unscreenedParts(wire, await ask.call(this.adapter, undefined, wire.next));
+      await this.storeUnscreened(wire);
+    }
+  }
+
+  /** The offer as far as it is read, into the mirror: with more to come it is a floor. */
+  private async storeUnscreened(wire: UnscreenedWire): Promise<void> {
+    const complete = wire.complete !== false && wire.next === undefined;
     const before = this.read().list<UnscreenedGroupDTO>(UNSCREENED_TYPE);
     const keep = new Set(wire.groups.map((g) => g.address));
     const puts = wire.groups.map((g) => ({
       type: UNSCREENED_TYPE,
       id: g.address,
       entity: {
-        id: g.address, count: g.count, newestAt: g.newestAt, total: wire.total,
-        complete: wire.complete !== false,
+        id: g.address, count: g.count, newestAt: g.newestAt, total: wire.total, complete,
       } satisfies UnscreenedGroupDTO,
     }));
     const gone = before.filter((g) => !keep.has(g.id)).map((g) => ({ type: UNSCREENED_TYPE, id: g.id }));
@@ -7062,9 +7123,13 @@ export class OhmailEngine {
   async pileUnscreened(pile: UnscreenedPileWire): Promise<{ total: number; atLeast: boolean } | null> {
     const ask = this.adapter.unscreened;
     if (!ask) return null;
-    const wire = await ask.call(this.adapter, pile);
+    let wire = await ask.call(this.adapter, pile);
     if (wire.pile !== pile) return null;
-    return { total: wire.total, atLeast: wire.complete === false };
+    // A large pile's note comes in parts too; what the parts did not reach makes the figure a floor.
+    for (let part = 1; wire.next !== undefined && part < UNSCREENED_PARTS_MAX; part++) {
+      wire = unscreenedParts(wire, await ask.call(this.adapter, pile, wire.next));
+    }
+    return { total: wire.total, atLeast: wire.complete === false || wire.next !== undefined };
   }
 
   /**

@@ -292,6 +292,11 @@ export interface UnscreenedWire {
   max: number;
   /** The pile the answer is about, said back; absent from the Ohbox's offer and from a server before piles. */
   pile?: UnscreenedPileWire;
+  /**
+   * This answer is one part: the server read for as long as one request may and stopped here. Asked
+   * again with it (`after`), the read goes on; the parts add up. Absent: nothing to go on to.
+   */
+  next?: string;
 }
 
 /** One waiting sender as `GET /screener` lists it: the representative held message and its author. */
@@ -604,9 +609,10 @@ export interface EngineAdapter {
    * A derivation the server does over the caller's own Ohbox against their own rules and
    * contacts, asked rather than mirrored for `heldReleases`' reason: the deciding fact is the
    * ARRIVAL GATE's answer, which `/sync` carries no vocabulary for. Given a `pile`, the same
-   * question of News or Receipts, at any age: that pile's note.
+   * question of News or Receipts, at any age: that pile's note. `after` is an earlier answer's
+   * `next`: the read goes on from there.
    */
-  unscreened?(pile?: UnscreenedPileWire): Promise<UnscreenedWire>;
+  unscreened?(pile?: UnscreenedPileWire, after?: string): Promise<UnscreenedWire>;
 
   /**
    * `GET /screener` — one page of the waiting queue, read from the store rather than the mirror,

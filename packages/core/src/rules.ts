@@ -474,6 +474,21 @@ function isKnownAuthor(author: string | null, knownSenders: ReadonlySet<string>)
 }
 
 /**
+ * HAS THE ACCOUNT DECIDED ABOUT THIS ADDRESS, whatever a letter from it says — the sender half of
+ * {@link evaluateRules}, for a reader that asks about a sender before it reads their mail
+ * (`unscreened-set.ts`). True for the account's own address, a known contact and an address a
+ * {@link standingRule} names: with no identity fact and no failed authentication the gate never
+ * answers `"screener"` by itself for such an author. An address that is not one usable mailbox is
+ * never decided: the gate fails closed on it. `sender` is lower-cased, as the gate reads an author.
+ */
+export function senderIsDecided(
+  sender: string, rules: readonly Rule[], known: KnownSenders, ownAddresses: ReadonlySet<string>,
+): boolean {
+  if (!isSingleUsableAddress(sender)) return false;
+  return ownAddresses.has(sender) || isKnownAuthor(sender, known.addresses) || standingRule(rules, sender) !== null;
+}
+
+/**
  * CONSENT GIVEN BY A PERSON ABOUT THIS ADDRESS — the one thing the identity fact yields to: an enabled
  * allow `sender` rule a person wrote naming the author (`personConsentRule`, which the client's held-claim
  * term asks too), or a contact a person's act wrote, a press's included. A `promoted` rule, a domain or

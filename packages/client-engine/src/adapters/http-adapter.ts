@@ -111,6 +111,11 @@ export interface HttpAdapterOptions {
    */
   readWaitFor?: (ms: number) => Promise<void>;
   /**
+   * The wait a send's save takes when the server put it off ({@link SAVE_PUT_OFF_WAIT_MAX_MS}), for
+   * a guard that must assert the interval. Production leaves it unset and `setTimeout` waits.
+   */
+  saveWaitFor?: (ms: number) => Promise<void>;
+  /**
    * The reader's IANA zone, asked at each History rail read so its months are the ones the rows
    * are dated in. Defaults to the platform's zone, the one every stamp renders in.
    */
@@ -287,6 +292,13 @@ export const BODY_FETCH_TIMEOUT_MS = 12_000;
  */
 export const PULL_RING_TIMEOUT_MS = 8_000;
 
+/**
+ * The longest a send waits for a save the server put off (a 503 or a 429 naming its wait) before it
+ * saves once more. The API names 5 s when its database is busy; a longer wait named by anything in
+ * front of it is not sat through inside a press.
+ */
+export const SAVE_PUT_OFF_WAIT_MAX_MS = 10_000;
+
 /** How long a Cancel's question to the server may take before it is `unreachable` (asked again later). */
 export const WITHDRAW_SEND_TIMEOUT_MS = 12_000;
 
@@ -426,6 +438,8 @@ export class HttpAdapter implements EngineAdapter {
    * kept beside `fetchImpl` rather than replacing it because the wrapper REFUSES a write.
    */
   private readonly readImpl: FetchLike;
+  /** {@link HttpAdapterOptions.saveWaitFor}, resolved once. */
+  private readonly saveWaitFor: (ms: number) => Promise<void>;
   private readonly getCookie: (name: string) => string | null;
   private readonly readerZone: () => string | null;
   private readonly csrfCookieName: string;
@@ -554,6 +568,7 @@ export class HttpAdapter implements EngineAdapter {
     this.readImpl = retryingRead(this.fetchImpl, {
       ...(opts.readWaitFor ? { waitFor: opts.readWaitFor } : {}),
     });
+    this.saveWaitFor = opts.saveWaitFor ?? ((ms) => new Promise((resolve) => { setTimeout(resolve, ms); }));
     this.readerZone = opts.readerZone ?? platformZone;
     this.getCookie = opts.getCookie ?? defaultGetCookie;
     this.csrfCookieName = opts.csrfCookieName ?? "tf_csrf";
@@ -1412,10 +1427,16 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
-  async unscreened(pile?: UnscreenedPileWire): Promise<UnscreenedWire> {
-    const res = await this.request("GET", pile === undefined ? "/screener/unscreened" : `/screener/unscreened?pile=${pile}`);
+  async unscreened(pile?: UnscreenedPileWire, after?: string): Promise<UnscreenedWire> {
+    const q = new URLSearchParams();
+    if (pile !== undefined) q.set("pile", pile);
+    if (after !== undefined) q.set("after", after);
+    const query = q.toString();
+    const res = await this.request("GET", query === "" ? "/screener/unscreened" : `/screener/unscreened?${query}`);
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { groups?: unknown; total?: unknown; complete?: unknown; max?: unknown; pile?: unknown };
+    const wire = (await res.json()) as {
+      groups?: unknown; total?: unknown; complete?: unknown; max?: unknown; pile?: unknown; next?: unknown;
+    };
     const groups = Array.isArray(wire.groups)
       ? wire.groups.map((g) => HttpAdapter.unscreenedGroupOf(g)).filter((g): g is UnscreenedGroupWire => g !== null)
       : [];
@@ -1427,6 +1448,7 @@ export class HttpAdapter implements EngineAdapter {
       complete: wire.complete !== false,
       max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
       ...(wire.pile === "news" || wire.pile === "receipts" ? { pile: wire.pile } : {}),
+      ...(typeof wire.next === "string" && wire.next !== "" ? { next: wire.next } : {}),
     };
   }
 
@@ -2582,6 +2604,18 @@ export class HttpAdapter implements EngineAdapter {
         return null;
       };
       let echoed = await writeTheRow();
+      /**
+       * A SAVE THE SERVER PUT OFF (a 503 or a 429 that names its wait: its database was busy) SAYS
+       * NOTHING OF THE ROW, THE BCC OR THE FROM EITHER, and the guards below would word it as theirs
+       * and end the press. It waits as the answer says and saves once more; they read that answer.
+       * An update answer names a wait too and keeps its own road, just below.
+       */
+      const putOff = refusal as MutationRejectedError | null;
+      if (ended === "unanswered" && putOff !== null && (putOff.status === 503 || putOff.status === 429)
+          && putOff.retryAfterMs !== null && !UPDATE_ANSWER_CODES.has(putOff.code as UpdateAnswerCode)) {
+        await this.saveWaitFor(Math.min(putOff.retryAfterMs, SAVE_PUT_OFF_WAIT_MAX_MS));
+        echoed = await writeTheRow();
+      }
       /**
        * A SAVE THAT MET AN UPDATE ANSWER (this app is too old for the server, or the server is being
        * updated) SAYS NOTHING OF THE ROW, THE BCC OR THE FROM. The guards below would word it as
