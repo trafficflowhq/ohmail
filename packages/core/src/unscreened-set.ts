@@ -1,12 +1,12 @@
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
 import {
   accountOfMessage, accountSettings, approvals, auditAction, auditLog, cutlineInstant, drafts, folderState, mailboxes,
-  messageBodies, messageStates, messageTags, messages, readOwnAddresses, recordChanges, senderIsDecidedSql,
+  messageBodies, messageStates, messageTags, messages, readOwnAddresses, recordChanges,
   weAnsweredThisSenderWhere, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
-  DEFAULT_OHBOX_POLICY, evaluateRules, resolveScreeningCutoff, screenerAdmits,
+  DEFAULT_OHBOX_POLICY, evaluateRules, resolveScreeningCutoff, screenerAdmits, senderIsDecided,
   type KnownSenders, type Rule, type ScreeningScope,
 } from "./rules.js";
 import { correspondentAtGate } from "./pipeline.js";
@@ -23,7 +23,15 @@ import { LEGACY_NEWS_FOLDER, NEWS_FOLDER, type Destination, type NormalizedMessa
    with a letter that has no recorded arrival outside the window, and the gate's reply arm. A bulk
    move also needs the date the person sees (the queue's `cutlineInstant`) inside the window, so
    migrated mail with a fresh arrival stays. Writes are intents only: the organizer's reconciler
-   performs every move. */
+   performs every move.
+
+   THE OFFER AND A PILE'S NOTE WALK SENDERS, THEN THEIR MAIL. Most of a large Ohbox is mail from
+   people the account decided about, and no index holds one account's letters in the order a letter
+   walk reads them: read letter by letter, a page cost the whole account and 25 pages found a tenth
+   of the answer. So the walk reads the account's senders off the sender index, drops every sender
+   already decided ({@link senderIsDecided}, the gate's own reading), and reads candidate letters
+   only for the rest, in that index's order. Its work follows the senders and the answer, never the
+   size of the Ohbox. The agree scope keeps its letter walk: its order, newest first, is the sweep's. */
 
 const OHBOX: Destination = "INBOX";
 const SCREENER: Destination = "ohmail/Screener";
@@ -38,6 +46,14 @@ const BATCH = 200;
 const INTENT_SLICE = 200;
 /** Pages one walk may read: a bound on rows READ, so a large Ohbox answers with what it has. */
 const MAX_PAGES = 25;
+/** Senders one read of the sender index lists, and so the most one candidate page names. */
+const SENDER_PAGE = 1000;
+/** The id behind every other: a cursor at `(sender, LAST_ID)` stands past all of that sender's mail. */
+const LAST_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+/** Before every sender and every letter: where a walk nobody handed a cursor starts. */
+export const UNSCREENED_FIRST_CURSOR: UnscreenedCursor = { sender: "", id: "00000000-0000-0000-0000-000000000000" };
+/** The longest cursor text a door reads back ({@link unscreenedCursorOf}): an address, an id, the brackets. */
+export const UNSCREENED_CURSOR_MAX_CHARS = 1000;
 /** How much wider than the window the SQL prefilter reads; the window itself is `screenerAdmits`. */
 const PREFILTER_SLACK_MS = 86_400_000;
 
@@ -85,9 +101,35 @@ export function unscreenedSourceFolder(scope: UnscreenedScope): Destination {
  * `pile`: News or Receipts account-wide, with no window — an old letter there is offered too.
  */
 export type UnscreenedScope =
-  | { kind: "offer"; cutoff: Date | undefined }
+  | { kind: "offer"; cutoff: Date | undefined; from?: UnscreenedCursor | null }
   | { kind: "agree"; mailboxId: string; cutoff: Date | undefined; storedBy?: Date; after?: string | null }
-  | { kind: "pile"; pile: UnscreenedPile };
+  | { kind: "pile"; pile: UnscreenedPile; from?: UnscreenedCursor | null };
+
+/**
+ * WHERE A SENDER WALK STANDS: every letter up to this one, by sender address and then id, is read.
+ * A walk its budget stopped answers it ({@link UnscreenedWalk.next}) and the next call's scope
+ * carries it back (`from`), so a large account is read over several calls, never by a longer one.
+ */
+export interface UnscreenedCursor { sender: string; id: string }
+
+/** The cursor as a door sends it. */
+export function unscreenedCursorText(c: UnscreenedCursor): string {
+  return JSON.stringify([c.sender, c.id]);
+}
+
+/** A letter's id as the store holds it: any other 36 characters fail its cast a statement later. */
+const CURSOR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The cursor a door was handed back, or null for anything that is not one. */
+export function unscreenedCursorOf(text: string): UnscreenedCursor | null {
+  if (text.length > UNSCREENED_CURSOR_MAX_CHARS) return null;
+  let raw: unknown;
+  try { raw = JSON.parse(text); } catch { return null; }
+  if (!Array.isArray(raw) || raw.length !== 2) return null;
+  const [sender, id] = raw as unknown[];
+  if (typeof sender !== "string" || typeof id !== "string" || !CURSOR_ID.test(id)) return null;
+  return { sender, id };
+}
 
 /** The scope's window; a pile has none. */
 const cutoffOf = (scope: UnscreenedScope): Date | undefined => (scope.kind === "pile" ? undefined : scope.cutoff);
@@ -120,10 +162,16 @@ export interface UnscreenedWalk {
   matched: number;
   /** Distinct senders among every member seen. */
   senders: number;
-  /** False when `stopAt` or the page bound stopped the walk, so `matched` is a floor. */
+  /** False when `stopAt`, the page bound or the time budget stopped the walk, so `matched` is a floor. */
   complete: boolean;
   /** The last letter the walk read, where a next slice goes on from. */
   last: string | null;
+  /**
+   * Where a sender walk goes on, when its page bound or its budget stopped it with senders unread.
+   * Null when it read to the end, when `stopAt` filled it (there is nothing to go on to), and for
+   * the agree scope, whose slices carry `last`.
+   */
+  next: UnscreenedCursor | null;
 }
 
 function asRuleInput(row: UnscreenedRow): NormalizedMessage {
@@ -183,8 +231,18 @@ export async function unscreenedWalk(
     maxPages?: number;
     /** The host's loop turn, awaited once per {@link ROWS_PER_TURN} rows checked. */
     turn?: LoopTurn;
+    /**
+     * How long this walk may run, read before every statement: out of time it answers what it has,
+     * `complete: false`. Absent, only its bounds stop it (the organizer's slices).
+     */
+    budgetMs?: number;
+    /** The clock the budget is read on; `Date.now` unless a caller brings its own. */
+    clock?: () => number;
   },
 ): Promise<UnscreenedWalk> {
+  const clock = opts.clock ?? Date.now;
+  const started = clock();
+  const spent = (): boolean => opts.budgetMs !== undefined && clock() - started >= opts.budgetMs;
   // The walk starts on a turn of its own, apart from the request or slice before it.
   if (opts.turn) await opts.turn();
   const rules = await knowledge.listRules(accountId);
@@ -199,24 +257,20 @@ export async function unscreenedWalk(
   const out: UnscreenedRow[] = [];
   const senders = new Set<string>();
   let matched = 0;
-  let complete = false;
-  let afterId = opts.scope.kind === "agree" ? opts.scope.after ?? null : null;
-  if (afterId !== null) {
-    // A cursor letter gone from the store restarts the walk from the top.
-    const [still] = await t.select({ id: messages.id }).from(messages)
-      .where(eq(messages.id, dialect(t).castUuid(sql`${afterId}`))).limit(1);
-    if (!still) afterId = null;
-  }
-  let last: string | null = afterId;
+  let last: string | null = null;
   const checked = turnsEvery(ROWS_PER_TURN, opts.turn);
-  pages: for (let page = 0; page < (opts.maxPages ?? MAX_PAGES); page++) {
-    const rows = await selectCandidates(t, {
-      accountId, ownAddresses, needsBody, afterId, lock: opts.lock, scope: opts.scope,
-    });
-    // A page read is its own stretch, apart from the reads before it and the checks after it.
-    if (opts.turn) await opts.turn();
-    for (const row of rows) {
+  /** Where a sender walk stands: every letter up to here, by sender address and then id, is asked. */
+  let stood = opts.scope.kind === "agree" ? UNSCREENED_FIRST_CURSOR : opts.scope.from ?? UNSCREENED_FIRST_CURSOR;
+  /**
+   * The gate, asked of one page's letters. `"full"` once `stopAt` members are held; `"spent"` when
+   * the budget ended first: the gate's reply arm may cost a statement a letter, so the budget is
+   * read before each one, and the letters not asked are the next call's.
+   */
+  const take = async (rows: readonly PageRow[]): Promise<"full" | "spent" | null> => {
+    for (const { letter: row, at } of rows) {
+      if (spent()) return "spent";
       last = row.messageId;
+      stood = at;
       const holds = await gateHoldsSender(row, {
         rules, known, own: ownSet, cutoff: cutoffOf(opts.scope), ask: knowledge, accountId,
         window: opts.scope.kind !== "pile",
@@ -226,12 +280,60 @@ export async function unscreenedWalk(
       matched++;
       senders.add(row.fromAddress.toLowerCase());
       if (out.length < OHBOX_UNSCREENED_MESSAGES_MAX) out.push(row);
-      if (opts.stopAt !== undefined && out.length >= opts.stopAt) break pages;
+      if (opts.stopAt !== undefined && out.length >= opts.stopAt) return "full";
     }
-    if (rows.length < BATCH) { complete = true; break; }
-    afterId = rows[rows.length - 1]!.messageId;
+    return null;
+  };
+  const answer = (complete: boolean, next: UnscreenedCursor | null): UnscreenedWalk =>
+    ({ rows: out, matched, senders: senders.size, complete, last, next });
+  const maxPages = opts.maxPages ?? MAX_PAGES;
+  const page = { accountId, ownAddresses, needsBody, lock: opts.lock, scope: opts.scope };
+
+  if (opts.scope.kind === "agree") {
+    let afterId = opts.scope.after ?? null;
+    if (afterId !== null) {
+      // A cursor letter gone from the store restarts the walk from the top.
+      const [still] = await t.select({ id: messages.id }).from(messages)
+        .where(eq(messages.id, dialect(t).castUuid(sql`${afterId}`))).limit(1);
+      if (!still) afterId = null;
+    }
+    last = afterId;
+    for (let n = 0; n < maxPages && !spent(); n++) {
+      const read = await selectCandidates(t, { ...page, afterId });
+      // A page read is its own stretch, apart from the reads before it and the checks after it.
+      if (opts.turn) await opts.turn();
+      // Full, or out of time: `last` is the last letter asked, where a next slice goes on.
+      if (await take(read.rows) !== null) break;
+      if (read.end === null) return answer(true, null);
+      // The page is read to its end: a next slice goes on behind it, the answered letters at its end too.
+      afterId = read.end.id;
+      last = afterId;
+    }
+    return answer(false, null);
   }
-  return { rows: out, matched, senders: senders.size, complete, last };
+
+  // SENDERS FIRST: a page of the account's senders, then the mail of those nobody decided about.
+  let pages = 0;
+  for (;;) {
+    if (spent()) return answer(false, stood);
+    const listed = await selectSenders(t, accountId, stood);
+    if (opts.turn) await opts.turn();
+    const open = listed.filter((s) => !senderIsDecided(s.toLowerCase(), rules, known, ownSet));
+    while (open.length > 0) {
+      if (pages >= maxPages || spent()) return answer(false, stood);
+      const read = await selectCandidates(t, { ...page, senders: open, from: stood });
+      pages++;
+      if (opts.turn) await opts.turn();
+      const stop = await take(read.rows);
+      // `stopAt` members: the set is full, and there is nothing to go on to.
+      if (stop === "full") return answer(false, null);
+      if (stop === "spent") return answer(false, stood);
+      if (read.end === null) break;
+      stood = read.end;
+    }
+    if (listed.length < SENDER_PAGE) return answer(true, null);
+    stood = { sender: listed[listed.length - 1]!, id: LAST_ID };
+  }
 }
 
 /**
@@ -244,24 +346,55 @@ export function placementUndecided(): SQL {
 }
 
 /**
- * ONE PAGE. Candidates are desired `INBOX`; the offer reads every mailbox this install organizes,
- * oldest id first; the agree scope one mailbox whatever its role (the count is read before the
- * press), newest arrival first. Exclusions: a decided placement ({@link placementUndecided}), a
- * triage pile, a reply draft, a decided approval, an answered sender, the account's own mail, a
- * tag, a letter with no recorded arrival, one whose shown date is older than the window and, for
- * the sweep, one stored after its start — with the arrival window as a prefilter
- * {@link gateHoldsSender} re-asks. A pile's candidates are desired in that pile on a mailbox this
- * install organizes, placed by ohmail (never `'external'`: a hand filing, or a letter an open import
- * question kept for the travelling document), the offer's exclusions but the window's, from an
- * author the Screener has no decision about (`senderIsDecidedSql`: no contact, no rule naming them).
+ * THE ACCOUNT'S NEXT SENDERS in address order from the cursor on, at most {@link SENDER_PAGE}: the
+ * distinct addresses of the sender index (`messages_account_from_addr_idx`). Every sender of any
+ * letter the account holds: whose mail is a candidate is {@link selectCandidates}' question. A
+ * plain distinct read on purpose: one index descent per sender is ten times cheaper while the
+ * planner knows the account, and re-reads the whole account for every sender when it does not
+ * (measured: 14.6 s for one page of senders on 80,000 letters the statistics had not seen). No plan
+ * of this one reads the account more than once.
+ */
+async function selectSenders(t: Tx, accountId: string, from: UnscreenedCursor): Promise<string[]> {
+  const sender = sql<string>`lower(${messages.fromAddress})`;
+  const rows = await t.selectDistinct({ sender }).from(messages)
+    .where(and(
+      eq(messages.accountId, accountId),
+      // A cursor behind all of a sender's mail starts after them; one inside their mail, with them.
+      from.id === LAST_ID ? sql`${sender} > ${from.sender}` : sql`${sender} >= ${from.sender}`,
+    ))
+    .orderBy(asc(sender))
+    .limit(SENDER_PAGE);
+  return rows.map((r) => r.sender);
+}
+
+/** One letter of a page, and where a sender walk stands once the gate is asked about it. */
+interface PageRow { letter: UnscreenedRow; at: UnscreenedCursor }
+
+/**
+ * ONE PAGE. Candidates are desired `INBOX`. The offer reads every mailbox this install organizes,
+ * and only the mail of `senders` (the ones nobody decided about), by sender address and then id
+ * from `from` on: the sender index's own order, so a page costs its own rows. The agree scope reads
+ * one mailbox whatever its role (the count is read before the press), newest arrival first.
+ * Exclusions: a decided placement ({@link placementUndecided}), a triage pile, a reply draft, a
+ * decided approval, an answered sender, the account's own mail, a tag, a letter with no recorded
+ * arrival, one whose shown date is older than the window and, for the sweep, one stored after its
+ * start — with the arrival window as a prefilter {@link gateHoldsSender} re-asks. A pile's
+ * candidates are desired in that pile on a mailbox this install organizes, placed by ohmail (never
+ * `'external'`: a hand filing, or a letter an open import question kept for the travelling
+ * document), the offer's exclusions but the window's. `end` is where the next page goes on, null
+ * when this one was the last.
+ *
+ * WHO THE PERSON ANSWERED IS ASKED OF THE PAGE, NOT INSIDE IT. Inside, the planner knows the
+ * account as a constant and, on an account its statistics under-count, reads the account's whole
+ * index for every candidate instead of the candidate's thread (measured: 7.3 s for a page of 200 on
+ * 80,000 letters). Asked of the page's own rows it can only be a lookup by thread.
  */
 async function selectCandidates(
   t: Tx,
   opts: {
-    accountId: string; ownAddresses: readonly string[]; needsBody: boolean;
-    afterId: string | null; lock: boolean; scope: UnscreenedScope;
-  },
-): Promise<UnscreenedRow[]> {
+    accountId: string; ownAddresses: readonly string[]; needsBody: boolean; lock: boolean; scope: UnscreenedScope;
+  } & ({ afterId: string | null } | { senders: readonly string[]; from: UnscreenedCursor }),
+): Promise<{ rows: PageRow[]; end: UnscreenedCursor | null }> {
   const d = dialect(t);
   const pile = opts.scope.kind === "pile" ? opts.scope.pile : null;
   const filters: SQL[] = [
@@ -289,9 +422,6 @@ async function selectCandidates(
   if (pile === null) {
     filters.push(isNotNull(messages.arrivedAt));
   } else {
-    // Most of a pile is mail from decided senders: only an author with no contact and no rule naming
-    // them is read, the queue's own predicate (the gate asks again).
-    filters.push(sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${messages.fromAddress})`)}`);
     // Only ohmail's own placements: an open import question keeps the travelling document's letters 'external'.
     filters.push(ne(folderState.lastSetBy, "external"));
   }
@@ -316,21 +446,16 @@ async function selectCandidates(
   if (opts.ownAddresses.length > 0) {
     const own = sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`;
     filters.push(sql`lower(${messages.fromAddress}) not in ${own}`);
-    filters.push(sql`not ${weAnsweredThisSenderWhere(d, {
-      accountId: sql`${messages.accountId}`,
-      threadId: sql`${messages.threadId}`,
-      fromAddress: sql`${messages.fromAddress}`,
-      ownAddresses: opts.ownAddresses,
-    })}`);
   }
-  const newestFirst = opts.scope.kind === "agree";
-  if (opts.afterId && newestFirst) {
+  const bySender = "senders" in opts;
+  if (bySender) {
+    filters.push(sql`lower(${messages.fromAddress}) in (${sql.join(opts.senders.map((s) => sql`${s}`), sql`, `)})`);
+    filters.push(sql`(lower(${messages.fromAddress}), ${messages.id}) > (${opts.from.sender}, ${d.castUuid(sql`${opts.from.id}`)})`);
+  } else if (opts.afterId) {
     // Past the last row read, by the stored values themselves: no timestamp crosses into JS and back.
     filters.push(sql`(${messages.arrivedAt}, ${messages.id}) < (
       select m2.arrived_at, m2.id from ${messages} m2 where m2.id = ${d.castUuid(sql`${opts.afterId}`)}
     )`);
-  } else if (opts.afterId) {
-    filters.push(gt(messages.id, d.castUuid(sql`${opts.afterId}`)));
   }
 
   // Each placeholder its own expression: on the device store two identical ones collapse.
@@ -344,26 +469,52 @@ async function selectCandidates(
     messageIdHeader: messages.messageIdHeader,
     at: sql<string>`coalesce(${messages.date}, ${messages.createdAt})`,
     arrivedAt: messages.arrivedAt,
+    // The address as the store orders it: the next page's key, never re-derived here.
+    sender: sql<string>`lower(${messages.fromAddress})`,
+    threadId: messages.threadId,
   }).from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
     .where(and(...filters))
-    .orderBy(...(newestFirst ? [desc(messages.arrivedAt), desc(messages.id)] : [asc(messages.id)]))
+    .orderBy(...(bySender
+      ? [asc(sql`lower(${messages.fromAddress})`), asc(messages.id)]
+      : [desc(messages.arrivedAt), desc(messages.id)]))
     .limit(BATCH)
     .$dynamic();
   const rows = await (opts.lock ? d.forUpdate(q, { of: folderState }) : q);
 
-  return rows.map((r) => ({
-    messageId: r.messageId,
-    fromAddress: r.fromAddress,
-    subject: r.subject,
-    bodyText: (r.bodyText as string | null) ?? "",
-    headers: (r.headers as Record<string, string[]> | null) ?? {},
-    observedFolder: r.observedFolder,
-    messageIdHeader: r.messageIdHeader ?? null,
-    at: new Date(r.at),
-    arrivedAt: r.arrivedAt === null || r.arrivedAt === undefined ? null : new Date(r.arrivedAt),
-  }));
+  // A letter with no thread answers nobody, so only the threaded ones are asked; null: none was.
+  const threaded = opts.ownAddresses.length === 0 ? [] : rows.filter((r) => r.threadId !== null).map((r) => r.messageId);
+  const unanswered = threaded.length === 0 ? null : new Set((
+    await t.select({ id: messages.id }).from(messages).where(and(
+      inArray(messages.id, threaded),
+      sql`not ${weAnsweredThisSenderWhere(d, {
+        accountId: sql`${messages.accountId}`,
+        threadId: sql`${messages.threadId}`,
+        fromAddress: sql`${messages.fromAddress}`,
+        ownAddresses: opts.ownAddresses,
+      })}`,
+    ))
+  ).map((r) => r.id));
+
+  const tail = rows.length < BATCH ? undefined : rows[rows.length - 1];
+  return {
+    rows: rows.filter((r) => unanswered === null || r.threadId === null || unanswered.has(r.messageId)).map((r) => ({
+      letter: {
+        messageId: r.messageId,
+        fromAddress: r.fromAddress,
+        subject: r.subject,
+        bodyText: (r.bodyText as string | null) ?? "",
+        headers: (r.headers as Record<string, string[]> | null) ?? {},
+        observedFolder: r.observedFolder,
+        messageIdHeader: r.messageIdHeader ?? null,
+        at: new Date(r.at),
+        arrivedAt: r.arrivedAt === null || r.arrivedAt === undefined ? null : new Date(r.arrivedAt),
+      },
+      at: { sender: r.sender, id: r.messageId },
+    })),
+    end: tail === undefined ? null : { sender: tail.sender, id: tail.messageId },
+  };
 }
 
 /** Sender groups, largest first, bounded by {@link OHBOX_UNSCREENED_GROUPS_MAX}; ties by address. */

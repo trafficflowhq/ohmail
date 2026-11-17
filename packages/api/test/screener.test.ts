@@ -462,6 +462,31 @@ describe("GET/POST /screener/unscreened — a pile's note", () => {
     expect(fs!.d).toBe("ohmail/Screener");
   });
 
+  it("says `next` only for a read that has more to go on to, and refuses an `after` that is not one", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example", date: new Date("2024-03-01T08:00:00Z") });
+
+    // A read that reached the end carries no `next`: nothing to go on to.
+    const whole = await (await H(req("GET", "/screener/unscreened?pile=news", { bearer: s.token }), deps)).json();
+    expect(whole).toMatchObject({ total: 1, complete: true });
+    expect(whole).not.toHaveProperty("next");
+
+    // `after` is an earlier answer's `next`: from behind every sender there is nothing left, and it is complete.
+    const last = encodeURIComponent(JSON.stringify(["zzz@last.example", "ffffffff-ffff-ffff-ffff-ffffffffffff"]));
+    const rest = await H(req("GET", `/screener/unscreened?pile=news&after=${last}`, { bearer: s.token }), deps);
+    expect(rest.status).toBe(200);
+    expect(await rest.json()).toMatchObject({ groups: [], total: 0, complete: true, pile: "news" });
+
+    // The last: 36 characters of hex and hyphens with the hyphens in no id's places, which the store's cast refuses.
+    const noId = encodeURIComponent(JSON.stringify(["a@x.example", "0123456-789ab-cdef-0123-456789abcdef"]));
+    for (const after of ["somewhere", encodeURIComponent(JSON.stringify(["a@x.example"])), "x".repeat(1001), noId]) {
+      const refused = await H(req("GET", `/screener/unscreened?after=${after}`, { bearer: s.token }), deps);
+      expect(refused.status, after.slice(0, 20)).toBe(400);
+    }
+  });
+
   it("a pile that is neither News nor Receipts is a 400, on the read and on the press", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });

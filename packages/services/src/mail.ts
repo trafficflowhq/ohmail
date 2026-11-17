@@ -67,9 +67,9 @@ export {
 } from "./auto-filed-service.js";
 export {
   unscreenedSummary, screenUnscreened, organizeDecisionCount, isUnscreenedPile,
-  OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_AUDIT_ACTION,
+  OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_AUDIT_ACTION, UNSCREENED_CURSOR_MAX_CHARS,
   type UnscreenedSenderGroup, type UnscreenedSummary, type UnscreenedResult, type OrganizeDecisionCount,
-  type UnscreenedPile,
+  type UnscreenedPile, type UnscreenedRead,
 } from "./ohbox-unscreened-service.js";
 export {
   TriageService, triageService,

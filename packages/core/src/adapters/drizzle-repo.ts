@@ -67,6 +67,7 @@ export {
   isUnscreenedPile, unscreenedGroups, unscreenedSourceFolder, unscreenedWalk, writeScreenerIntents, type AgreeSweepCursor, type AgreeSweepInput, type AgreeSweepOutcome,
   type AgreeSweepRun, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedPile, type UnscreenedRow,
   type UnscreenedScope, type UnscreenedSenderGroup, type UnscreenedWalk,
+  UNSCREENED_CURSOR_MAX_CHARS, UNSCREENED_FIRST_CURSOR, unscreenedCursorOf, unscreenedCursorText, type UnscreenedCursor,
 } from "../unscreened-set.js";
 
 export interface PersistedFolderCursor {

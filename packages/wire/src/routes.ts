@@ -264,8 +264,10 @@ export interface Routes {
   };
   "GET /screener/unscreened": {
     params: None; body: never;
+    /** `next`: one part of a large account's answer; the same request with `?after=<next>` goes on. */
     answer: {
       groups: UnscreenedGroupWire[]; total: number; complete: boolean; max: number; pile?: UnscreenedPileWire;
+      next?: string;
     };
   };
   "POST /screener/unscreened": {
