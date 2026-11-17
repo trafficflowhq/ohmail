@@ -153,6 +153,68 @@ What a `home` says:
 `artifact` and `data` rows are checks of what is built or shipped as data; they stay. A `source-text` row waits
 until its home has refused a planted violation. No test file is retired by having a row.
 
+## The older tests
+
+On `next`, the shell the app had before the new frame is not kept alive: each place is mounted on the new shell
+and today's view of it leaves in the same pull request. The tests written against today's shell are sorted once,
+by one checklist, `old-tests.tsv`: a test that states what a person meets is the specification, is pointed at the
+new part and kept green; a test that only draws a view that leaves goes with it, its behaviour's new holder named
+and seen green first. `never-red.tsv` lists the cases that are never left red: what files, trashes, sends or takes
+back mail, the remote pictures' consent, a person's unsent words, sign-in and the account's scope.
+
+`old-tests.tsv` has one row a test file, or, where a file's cases differ, one row a case and then every case:
+
+| Column   | What it holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`   | the test file, or `<file>#<case>`: the describes' titles and the case's own, joined by `>` with a space each side, each as written between its quotes (a loop's or a table's case once, by its template: `` `${verb} files` ``, `moves %s`; a title that is no literal, as the expression)                                                                                                                                                                                                                                                                                                                                                                       |
+| `class`  | `behaviour` (a person meets it), `markup` (an old view's markup alone), `census` (it reads source as text), `gap` (today's shell has it and the new part does not)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `holder` | `KEPT`: the test file, or `<file>#<case>`, that holds it; `RETIRED`: the `<file>#<case>` that holds it now; `WAITS`: the mount that will (`mount-lists`, …) or the switch's commit (`switch-ohbox`, `switch-write`, …), alone or followed by `: ` and what it is handed in one line (a ruled answer: kept, re-pointed, or the view it retires with and the case that holds what a person still meets); `GAP`: what is missing, in one line. A behaviour or a look that a named ruling dropped and nothing replaces is held by the ruling: `dropped: <ruling>` (a `RETIRED` row's whole holder, a `WAITS` holder's last part after `: `), never on a `census` row |
+| `share`  | the census's share that sorted it, two digits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `state`  | `KEPT`, `RETIRED`, `WAITS:<what it waits for>` (a place id, `pane:<id>`, `stage:<id>`, `reader`, `ground` or `calendar`), `GAP:<owner>` (a mount, the switch or its commit, `kit`, or `dispatcher` for a product decision)                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+The switch's commits, in their order: `switch-contract` (what a place's model takes, the mail's supplies, the
+frame's changes), `switch-tests` (the keys' table and the hostile sequences, written red first), `switch-ohbox`
+(the Ohbox's own seat), `switch-reader` (the reader's parts from the ground), `switch-write` (Write and the
+reply), `switch-feeders` (the keys, the notices, the restart hold, the boot duties), `switch-way-out` (Settings'
+Account pane), `switch-entries` (the hosts' entries hand the new shell), `switch-deletions` (today's composition
+leaves), `switch-rows` (the rows of the test files whose subject left).
+
+`never-red.tsv` has one row a case: `test` (the older `<file>#<case>` that states it today, or `none`), `act`
+(`FILE`, `TRASH`, `UNDO`, `SEND`, `UNSENT`, `PICTURES`, `SIGNIN`, `SCOPE`), `place` (what it is met at, as a
+`WAITS` names it), `holder` (its case at the new part, or the mount that will hold it) and `states` (the promise,
+in one line).
+
+What is mounted is read from the tree as text, never run: the places of the record `SEATED` in
+`packages/app/src/mail/places.ts`; the stages and the Settings panes the mail entry hands (a record typed
+`FrameStages` or `SettingsPanes`, or handed to `settingsPlace`), each entry that is not `NONE`; and what
+`packages/app/src/mail/supplies.ts` hands beside them (`reader`, `above` as `ground`, `calendar`). A file of these
+that is not in the tree mounts nothing of its kind, and the check says so in one line. The hosts' entries (the
+web's route files, the desktop's window, the paired page, the phone's routes and page) are followed through
+every import by value, through the workspace's packages by their `exports`.
+
+`node tools/check.mjs --old-tests [--base <rev>]` reads the checklist alone; the whole check (`--base <rev>`, as CI
+runs it on every pull request) reads it too. It refuses
+
+- against the base's two lists: a row that is gone (a row never leaves: a file or case that goes is `RETIRED` by its
+  row; a whole file's row may only give way to its case rows), and a never-red row that is gone (it leaves only
+  with an act a named ruling dropped, its case's row `RETIRED`);
+- a test file in scope without a row: it names `app/shell/` or `app/views/` (or the two segments handed to a join),
+  comments aside, or imports a helper under a test folder that does, at any depth, or its imports by value reach,
+  through any module, a file that leaves with the switch (`--old-tests --scope` prints them);
+- a row of a file that is not in the tree unless it is `RETIRED`, its holder a case that stands by name and its
+  proof in `retirement.tsv`; a `RETIRED` row of a file or case that is still there; a holder written `it.todo`,
+  `it.skip`, `it.fails` or `test.fixme`, or under a skipped describe (a case run on a condition, `skipIf` or
+  `runIf`, stands where its condition holds);
+- a `WAITS` row for anything a host's entry mounts;
+- a `KEPT` row whose test runs anything that leaves with the switch (a view, today's composition and feeds, the
+  first run's old files) or imports a part of the app that no host's entry reaches: it `WAITS`;
+- a never-red case whose place is mounted while its row is `WAITS` or `GAP`, or its holder is still a mount; a
+  never-red case without its own row (a file with one is sorted case by case); a never-red case classed `markup`;
+- a file with a whole row and case rows; a file sorted case by case with a case that has no row, or a row naming a
+  case the file does not hold; a class, state, share or holder out of its form, a `WAITS` whose holder does not
+  mount what it waits for, `markup` that is `KEPT`, a `gap` that is not `GAP` (and the other way round); rows out
+  of order or not five columns.
+
 ## Adding a rule
 
 Switch it on in `eslint.config.mjs` or `stylelint.config.mjs`, add its planted violation and its clean file to
