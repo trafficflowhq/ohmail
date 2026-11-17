@@ -1,4 +1,5 @@
 import type { ReactNode, Ref } from "react";
+import { Button } from "../../base/index.js";
 import "./sheet.css";
 
 interface PaperProps {
@@ -16,7 +17,12 @@ interface ReadingProps {
   kind: "reading";
   label?: string;
   focused?: boolean;
-  /** The bar over the column on a phone: the way back, and the squares along it. */
+  /**
+   * The way back on a phone, first in the bar over the column: the place it returns to, as its word. `label` names
+   * it where the word is not its whole name; without a word it is the arrow alone, and `label` is its name.
+   */
+  back?: { onPress?: () => void } & ({ word: string; label?: string } | { label: string; word?: undefined });
+  /** What else stands in the bar over the column on a phone: the squares along it. */
   top?: ReactNode;
   /** What stands beside the sheets: a conversation's squares. A single letter has nothing there and starts at the edge. */
   gutter?: ReactNode;
@@ -50,7 +56,7 @@ export function Sheet(props: SheetProps) {
       </div>
     );
   }
-  const { top, gutter, head, foot, jump, scroller, children } = props;
+  const { back, top, gutter, head, foot, jump, scroller, children } = props;
   return (
     <div
       className="oh-sheet"
@@ -59,7 +65,22 @@ export function Sheet(props: SheetProps) {
       data-focused={focused}
       {...region}
     >
-      {top ? <div className="oh-sheet-top">{top}</div> : null}
+      {back || top ? (
+        <div className="oh-sheet-top">
+          {back ? (
+            <span className="oh-sheet-back">
+              {back.word === undefined ? (
+                <Button kind="quiet" icon="back" label={back.label} onPress={back.onPress} />
+              ) : (
+                <Button kind="quiet" icon="back" label={back.label} onPress={back.onPress}>
+                  {back.word}
+                </Button>
+              )}
+            </span>
+          ) : null}
+          {top}
+        </div>
+      ) : null}
       <div className="oh-sheet-body">
         <div className="oh-sheet-gutter">{gutter}</div>
         <div ref={scroller} className="oh-sheet-scroll" tabIndex={-1}>

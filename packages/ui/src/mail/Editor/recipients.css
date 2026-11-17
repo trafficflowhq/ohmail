@@ -16,6 +16,8 @@
     --oh-recipients-layer-ghost: 60;
     --oh-recipients-layer-caret: 59;
     --oh-recipients-layer-under: -1;
+    --oh-recipients-layer-suggest: 6;
+    --oh-recipients-suggest: 400px;
     --oh-recipients-caret: 2px;
     --oh-recipients-caret-out: -1px;
     --oh-recipients-caret-r: 1px;
@@ -116,6 +118,17 @@
   .oh-recipients-in:focus-visible,
   .oh-recipients-subject:focus-visible {
     outline: none;
+  }
+
+  /* The people a line can take stand under it, from the label's end, over what follows the line. */
+  .oh-recipients-suggest {
+    --oh-suggest-max: none;
+    position: absolute;
+    top: 100%;
+    left: var(--oh-recipients-label);
+    z-index: var(--oh-recipients-layer-suggest);
+    min-width: min(var(--oh-recipients-suggest), calc(100% - var(--oh-recipients-label)));
+    max-width: calc(100% - var(--oh-recipients-label));
   }
 
   .oh-recipients-more,

@@ -1,7 +1,11 @@
 @layer oh {
   .oh-sheet {
     /* Measures of this part that no token carries yet. */
-    --oh-sheet-foot-room: 104px;
+    --oh-sheet-foot-room: calc(104px + var(--oh-sheet-foot-own) - var(--s4));
+    /* At a glass's edge the foot keeps the larger of its own margin and the inset the system reports there
+       (`--oh-inset-foot`, the kit's root), never the two added. */
+    --oh-sheet-foot-own: max(var(--s4), var(--oh-inset-foot));
+    --oh-sheet-jump-own: max(var(--s3), var(--oh-inset-foot));
     --oh-sheet-top-h: 56px;
     --oh-sheet-layer-foot: 5;
     --oh-sheet-layer-ring: 4;
@@ -31,9 +35,11 @@
     box-shadow: 0 0 0 var(--ringw) var(--focus);
   }
 
-  /* The reading column: no paper of its own, the sheets stand on the ground. */
+  /* The reading column: no paper of its own, the sheets stand on the ground. It fills a column that lays its
+     children out one under the other, so its foot is that column's foot however short what is read. */
   .oh-sheet[data-kind="reading"] {
     position: relative;
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -91,7 +97,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    bottom: var(--s4);
+    bottom: var(--oh-sheet-foot-own);
     z-index: var(--oh-sheet-layer-foot);
     display: flex;
     justify-content: center;
@@ -100,6 +106,7 @@
   }
   /* The way back stands at the right corner of what is read: a step over the foot, or at the column's foot. */
   .oh-sheet > .oh-button.oh-jumpback {
+    bottom: var(--oh-sheet-jump-own);
     margin-inline: var(--oh-sheet-side);
   }
 
@@ -162,6 +169,50 @@
     gap: var(--s2);
     height: var(--oh-sheet-top-h);
     padding: 0 var(--s2) 0 var(--s3);
+  }
+
+  /* The way back: the place it returns to, a capsule of the sheet's own tone, first in the bar. It is whole up to
+     six tenths of the bar, then its word is cut; a finger reaches it a little outside its edge. */
+  :root[data-device="phone"] .oh-sheet-back {
+    --oh-sheet-back-h: 40px;
+    --oh-sheet-back-most: 60%;
+    --oh-sheet-back-icon: 22px;
+    --oh-sheet-back-gap: 2px;
+    --oh-sheet-back-pad: 0 var(--s4) 0 var(--s2);
+    --oh-sheet-back-reach: -8px -4px;
+    display: flex;
+    flex: none;
+    min-width: 0;
+    max-width: var(--oh-sheet-back-most);
+  }
+
+  :root[data-device="phone"] .oh-sheet-back > .oh-button:not([data-bare]) {
+    --oh-button-pad: var(--oh-sheet-back-pad);
+    position: relative;
+    flex: 0 1 auto;
+    gap: var(--oh-sheet-back-gap);
+    min-width: 0;
+    height: var(--oh-sheet-back-h);
+    background: var(--sheet);
+    box-shadow: var(--oh-ring-ctl);
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  :root[data-device="phone"] .oh-sheet-back > .oh-button:not([data-bare])::after {
+    content: "";
+    position: absolute;
+    inset: var(--oh-sheet-back-reach);
+  }
+
+  :root[data-device="phone"] .oh-sheet-back > .oh-button > .oh-icon {
+    width: var(--oh-sheet-back-icon);
+    height: var(--oh-sheet-back-icon);
+  }
+
+  :root[data-device="phone"] .oh-sheet-back > .oh-button > :not(.oh-icon) {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   :root[data-device="phone"] .oh-sheet-body {

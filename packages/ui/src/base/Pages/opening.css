@@ -44,6 +44,11 @@
     --oh-opening-rows-pad: 0 var(--s2) var(--s1);
     padding: var(--oh-opening-rows-pad);
   }
+  /* Among a list's own rows the list's box is already there. */
+  .oh-opening-rows[data-within] {
+    --oh-opening-rows-pad: 0;
+  }
+
   .oh-opening-row {
     --oh-opening-row-pad: 0 var(--s3) 0 var(--s1);
     display: grid;
@@ -77,6 +82,11 @@
   }
   :root[data-touch="1"] .oh-opening-row {
     height: calc(var(--row) + var(--s4));
+  }
+
+  /* Among a list's rows a shape keeps exactly a row's room, so the list does not move when the row arrives. */
+  :root[data-touch="1"] .oh-opening-rows[data-within] > .oh-opening-row {
+    height: var(--row);
   }
 
   .oh-opening[data-kind="window"] {

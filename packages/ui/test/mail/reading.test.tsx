@@ -257,6 +257,85 @@ describe("Message", () => {
   });
 });
 
+describe("Message, in a stream", () => {
+  const letter = { head: <p>head</p>, files: <p>the files</p>, after: <p>an invitation</p> };
+
+  it("is cut until it is opened: what follows its text waits, and its control says whether it stands open", () => {
+    const onPress = vi.fn();
+    const { rerender } = render(
+      <Message {...letter} clip={{ open: false, word: "Expand", onPress }}>
+        The first lines of a long letter.
+      </Message>,
+    );
+    const article = screen.getByRole("article");
+    expect(within(article).getByText("The first lines of a long letter.")).toBeTruthy();
+    expect(within(article).queryByText("the files")).toBeNull();
+    expect(within(article).queryByText("an invitation")).toBeNull();
+    const open = within(article).getByRole("button", { name: "Expand" });
+    expect(open.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(open);
+    expect(onPress).toHaveBeenCalledTimes(1);
+    rerender(
+      <Message {...letter} clip={{ open: true, word: "Collapse", onPress }}>
+        The first lines of a long letter.
+      </Message>,
+    );
+    expect(within(article).getByText("the files")).toBeTruthy();
+    expect(within(article).getByText("an invitation")).toBeTruthy();
+    expect(within(article).getByRole("button", { name: "Collapse" }).getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+  });
+
+  it("offers the way to the whole letter where a press leaves for it, as a way on with no open state", () => {
+    const onPress = vi.fn();
+    render(
+      <Message {...letter} clip={{ open: false, word: "Read in full", goes: true, onPress }}>
+        The first lines.
+      </Message>,
+    );
+    const way = screen.getByRole("button", { name: "Read in full" });
+    expect(way.getAttribute("aria-expanded")).toBeNull();
+    fireEvent.click(way);
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers nothing to open where the cut text fits and nothing waits under it; a file that waits keeps the control", () => {
+    /* What a browser would measure of the cut box: the text is no taller than its box. */
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(120);
+    const tall = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(120);
+    const { rerender } = render(
+      <Message head={<p>head</p>} clip={{ open: false, word: "Expand" }}>
+        Short.
+      </Message>,
+    );
+    expect(screen.queryByRole("button", { name: "Expand" })).toBeNull();
+    expect(screen.getByText("Short.")).toBeTruthy();
+    rerender(
+      <Message {...letter} clip={{ open: false, word: "Expand" }}>
+        Short.
+      </Message>,
+    );
+    expect(screen.getByRole("button", { name: "Expand" })).toBeTruthy();
+    /* A text taller than its box is cut, and says so with its control. */
+    tall.mockReturnValue(900);
+    cleanup();
+    render(
+      <Message head={<p>head</p>} clip={{ open: false, word: "Expand" }}>
+        Long.
+      </Message>,
+    );
+    expect(screen.getByRole("button", { name: "Expand" })).toBeTruthy();
+    vi.restoreAllMocks();
+  });
+
+  it("is whole, with nothing waiting and no control, where it is not in a stream", () => {
+    render(<Message {...letter}>The first lines.</Message>);
+    expect(screen.getByText("the files")).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+});
+
 describe("FileTile", () => {
   const file = { kind: "JPG", name: "grat-01.jpg", size: "2.4 MB" };
 

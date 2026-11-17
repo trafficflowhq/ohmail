@@ -14,7 +14,8 @@ export interface ComposerMark {
   /** The mark holds where the caret is. */
   pressed?: boolean;
   disabled?: boolean;
-  onPress?: () => void;
+  /** A press hands the mark's own element: what the mark opens (a link's card) comes out of it. */
+  onPress?: (anchor: HTMLElement) => void;
 }
 
 export interface ComposerMarksProps {
@@ -45,7 +46,7 @@ export function ComposerMarks({ label, groups }: ComposerMarksProps) {
               title={mark.title ?? mark.label}
               aria-pressed={mark.pressed ?? false}
               disabled={mark.disabled}
-              onClick={mark.onPress}
+              onClick={(event) => mark.onPress?.(event.currentTarget)}
             >
               {mark.icon ? (
                 <Icon name={mark.icon} size={18} />

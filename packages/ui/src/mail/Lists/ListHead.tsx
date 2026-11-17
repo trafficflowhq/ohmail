@@ -31,6 +31,10 @@ export interface ListHeadProps {
   way?: Way;
   /** What stands under the title on a line of its own: a search field, a filter. */
   below?: ReactNode;
+  /** A quiet line under the title, over what stands below: a person's address. */
+  meta?: string;
+  /** How many the list holds, in words, at the line's end before its tools: "1 draft". */
+  count?: string;
 }
 
 /* A way longer than its line gives up parts, never letters: the ones nearest the root, and one mark stands for them. */
@@ -47,7 +51,7 @@ function fitWay(line: HTMLElement): void {
 }
 
 /** Where you are, and the list's own tools. */
-export function ListHead({ title, hot, aside, way, below }: ListHeadProps) {
+export function ListHead({ title, hot, aside, way, below, meta, count }: ListHeadProps) {
   const line = useRef<HTMLParagraphElement>(null);
   useLayoutEffect(() => {
     const el = line.current;
@@ -65,9 +69,13 @@ export function ListHead({ title, hot, aside, way, below }: ListHeadProps) {
         {title}
         <Dot kind={hot ? "hot" : "ink"} />
       </h1>
-      <div className="oh-listhead-aside">{aside}</div>
-      {way || below ? (
+      <div className="oh-listhead-aside">
+        {count ? <span className="oh-listhead-count">{count}</span> : null}
+        {aside}
+      </div>
+      {way || below || meta ? (
         <div className="oh-listhead-below">
+          {meta ? <p className="oh-text oh-listhead-meta">{meta}</p> : null}
           {way ? (
             <p ref={line} className="oh-text oh-listhead-way" title={way.title}>
               {way.parts.map((part, index) => (

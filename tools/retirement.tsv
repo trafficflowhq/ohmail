@@ -640,6 +640,7 @@ apps/webapp/test/drafts-resolve-held.test.tsx	source-text	reads source as text (
 apps/webapp/test/drafts-unverified.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	write	
 apps/webapp/test/drain-mark.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
 apps/webapp/test/durability-notice.test.tsx	source-text	reads source as text (tsx)	layer 2	notices	
+apps/webapp/test/editor-list-spacing-geometry.test.ts	source-text	reads source as text (css): the app's stylesheets, drawn in Chromium to measure a list in the editor against the lines of the text	layer 2	write	
 apps/webapp/test/email-verification.test.ts	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/empty-explainer-gutter.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/engine-armed.test.ts	source-text	reads source as text (mjs, ts)	layer 2	removals	
@@ -1302,6 +1303,7 @@ packages/ui/test/avatar-theme.test.ts	source-text	reads source as text (css)	sty
 packages/ui/test/banner-form.test.ts	source-text	reads source as text (css, mjs, tsx)	layer 2	kit	
 packages/ui/test/base/drawn-in-a-browser.test.tsx	artifact	through the comparison's harness: reads what the bundler builds from the kit's stylesheets, and the typefaces, and draws the parts in Chromium	layer 5	kit	
 packages/ui/test/base/scheme-under-the-stamp.test.ts	artifact	through the comparison's harness and the bundler: reads what the bundler builds from the kit's and today's stylesheets, and reads the colour scheme in Chromium with and without the frame's stamp	layer 5	kit	
+packages/ui/test/base/suggestions-in-a-browser.test.tsx	artifact	through the comparison's harness and the bundler: reads what the bundler builds from its page of the kit's parts and from the kit's stylesheets, and the typefaces, and drives a field that suggests in Chromium with real keys and a real pointer	layer 5	kit	
 packages/ui/test/base/under-text-size.test.tsx	artifact	through the comparison's harness and the bundler: reads what the bundler builds from its page of the kit's parts and from the kit's stylesheets, and the typefaces, and drives the parts in Chromium under the web door's Text size	layer 5	kit	
 packages/ui/test/base/under-todays-sheets.test.ts	artifact	through the comparison's harness: reads what the bundler builds from the kit's and today's stylesheets, and draws every state in Chromium beside them	layer 5	kit	
 packages/ui/test/bulk-strip.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	

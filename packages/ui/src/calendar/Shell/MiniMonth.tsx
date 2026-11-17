@@ -30,6 +30,8 @@ export interface MiniMonthHead {
   hot: boolean;
   before: { label: string; onPress?: MouseEventHandler<HTMLButtonElement> };
   after: { label: string; onPress?: MouseEventHandler<HTMLButtonElement> };
+  /** A press on the month's name goes to that month: its name where the title is not its whole name. */
+  open?: { label?: string; onPress?: MouseEventHandler<HTMLButtonElement> };
 }
 
 export interface MiniMonthProps {
@@ -64,10 +66,23 @@ export function MiniMonth({
     <div className="oh-mini" data-size={size === "rail" ? undefined : size}>
       {head ? (
         <div className="oh-mini-head">
-          <span className="oh-display oh-mini-title">
-            {head.title}
-            <Dot kind={head.hot ? "hot" : "ink"} />
-          </span>
+          {head.open ? (
+            <button
+              type="button"
+              className="oh-control oh-display oh-mini-title"
+              data-press=""
+              aria-label={head.open.label}
+              onClick={head.open.onPress}
+            >
+              {head.title}
+              <Dot kind={head.hot ? "hot" : "ink"} />
+            </button>
+          ) : (
+            <span className="oh-display oh-mini-title">
+              {head.title}
+              <Dot kind={head.hot ? "hot" : "ink"} />
+            </span>
+          )}
           <Button kind="quiet" size="s" icon="back" label={head.before.label} onPress={head.before.onPress} />
           <Button kind="quiet" size="s" icon="fwd" label={head.after.label} onPress={head.after.onPress} />
         </div>

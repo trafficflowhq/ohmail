@@ -22,6 +22,20 @@
     line-height: 1.2;
     white-space: nowrap;
   }
+  /* A name that is a way on: a pill under the pointer, reaching a little past its letters. */
+  .oh-mini-title[data-press] {
+    --oh-mini-title-out: calc(var(--s2) * -1);
+
+    margin-left: var(--oh-mini-title-out);
+    padding: var(--s1) var(--s2);
+    border-radius: var(--r-pill);
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+
+  .oh-mini-title[data-press]:hover {
+    background: var(--hover);
+  }
+
   .oh-mini-head .oh-button[data-bare][data-size="s"] {
     width: 28px;
     height: 28px;

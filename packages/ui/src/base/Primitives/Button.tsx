@@ -28,10 +28,18 @@ interface ButtonRuns {
   pressed?: boolean;
   /** Off. While it works, the app hands in the working label and sets this. */
   disabled?: boolean;
+  /**
+   * Under way after its own press: it stays where it is, takes no second press and says that it is busy. It is
+   * off to a screen reader and to the eye, yet keeps the keys: a button the browser itself turns off can drop
+   * the keys of the person who pressed it.
+   */
+  busy?: boolean;
   /** What it opens, said to a screen reader, and whether that stands open. */
   opens?: "menu" | "dialog";
+  /** Whether what it opens stands open. Without `opens`: what it shows and hides in place, shown or not. */
   expanded?: boolean;
   type?: "button" | "submit";
+  outside?: never;
   onPress?: MouseEventHandler<HTMLButtonElement>;
   ref?: Ref<HTMLButtonElement>;
 }
@@ -40,8 +48,14 @@ interface ButtonRuns {
 interface ButtonGoes {
   /** The address it goes to. */
   href: string;
+  /**
+   * The address is another site's: it opens beside the app, and that site is told nothing of where the person came
+   * from and is handed no way back into the app's window. The design's sign for a way that leaves is `icon="go"`.
+   */
+  outside?: boolean;
   pressed?: never;
   disabled?: never;
+  busy?: never;
   opens?: never;
   expanded?: never;
   type?: never;
@@ -80,22 +94,30 @@ export function Button(props: ButtonProps) {
   );
   if (props.href !== undefined) {
     return (
-      <a ref={props.ref} href={props.href} {...look}>
+      <a
+        ref={props.ref}
+        href={props.href}
+        target={props.outside ? "_blank" : undefined}
+        rel={props.outside ? "noreferrer noopener" : undefined}
+        {...look}
+      >
         {inside}
       </a>
     );
   }
-  const { pressed, disabled, opens, expanded, type = "button", onPress, ref } = props;
+  const { pressed, disabled, busy, opens, expanded, type = "button", onPress, ref } = props;
   return (
     <button
       ref={ref}
-      type={type}
+      type={busy ? "button" : type}
       {...look}
       aria-pressed={pressed}
       aria-haspopup={opens}
-      aria-expanded={opens ? (expanded ?? false) : undefined}
+      aria-expanded={opens ? (expanded ?? false) : expanded}
+      aria-busy={busy ? true : undefined}
+      aria-disabled={busy ? true : undefined}
       disabled={disabled}
-      onClick={onPress}
+      onClick={busy ? undefined : onPress}
     >
       {inside}
     </button>

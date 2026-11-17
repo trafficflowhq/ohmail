@@ -40,6 +40,27 @@
     letter-spacing: 0;
   }
 
+  /* With a control of the group's own: the heading keeps its line, the control stands at the line's end. */
+  .oh-groupheading-line {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+  }
+
+  .oh-groupheading-line > .oh-groupheading {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .oh-groupheading-aside {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    padding-right: var(--s3);
+    color: var(--ink2);
+  }
+
   /* One that shuts, or opens a menu: the name is the button. */
   .oh-groupheading-fold {
     --oh-groupheading-in: 2px var(--s1) 2px 0;

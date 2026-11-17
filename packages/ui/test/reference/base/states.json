@@ -3,13 +3,16 @@
     "Icon": "Button",
     "EndDot": "Dot",
     "Blank": "Sentence",
+    "FieldPair": "FieldStack",
     "Faces": "Avatar",
     "Sign": "Avatar",
     "TagDot": "Tag",
     "Where": "Tag",
+    "RowsShape": "Opening",
     "MenuItem": "Menu",
     "MenuRule": "Menu",
     "MenuNote": "Menu",
+    "SuggestionCredit": "SuggestionList",
     "Overlay": "Dialog"
   },
   "rows": [
@@ -108,6 +111,11 @@
       ]
     },
     { "component": "Field", "state": "lines" },
+    {
+      "component": "FieldStack",
+      "state": "rest",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
     { "component": "Switch", "state": "off", "looks": "all" },
     {
       "component": "Switch",
@@ -134,6 +142,11 @@
       ]
     },
     { "component": "Seg", "state": "five" },
+    {
+      "component": "ChoiceTiles",
+      "state": "rest",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
     { "component": "Avatar", "state": "row", "looks": "all" },
     { "component": "Avatar", "state": "card" },
     { "component": "Avatar", "state": "account" },
@@ -319,6 +332,58 @@
       ]
     },
     {
+      "component": "SuggestionList",
+      "state": "place",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SuggestionList",
+      "state": "keys",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "SuggestionList",
+      "state": "groups",
+      "looks": ["paper-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "SuggestionList",
+      "state": "busy",
+      "looks": ["paper-light-desktop", "paper-dark-desktop"]
+    },
+    {
+      "component": "SuggestionList",
+      "state": "people",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "SuggestionList",
+      "state": "long",
+      "looks": ["paper-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "SuggestionList",
+      "state": "inline",
+      "looks": ["paper-light-desktop", "paper-light-phone", "ohmarchy-light-phone"]
+    },
+    {
       "component": "PhoneSheet",
       "state": "more",
       "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
@@ -436,6 +501,11 @@
     },
     { "component": "RefusalLine", "state": "start" },
     { "component": "Page", "state": "refused", "looks": "all" },
+    {
+      "component": "StepDots",
+      "state": "rest",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
     {
       "component": "Opening",
       "state": "window",

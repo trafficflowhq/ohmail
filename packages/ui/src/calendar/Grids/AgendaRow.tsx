@@ -32,6 +32,8 @@ export interface AgendaRowProps {
   waits?: boolean;
   /** The one that is open. */
   open?: boolean;
+  /** The keys are on it: it wears the ground a row under the pointer wears. */
+  cursor?: boolean;
   /** What the typing line makes: dashed, and no button. */
   draft?: boolean;
   /** Controls of the row's own under its lines: the answers, Add. */
@@ -97,6 +99,7 @@ export function AgendaRow(p: AgendaRowProps) {
       data-quiet={p.quiet ? "" : undefined}
       data-off={p.off ? "" : undefined}
       data-open={p.open ? "" : undefined}
+      data-cursor={p.cursor ? "" : undefined}
       data-draft={p.draft ? "" : undefined}
       data-tail={p.tail ? "" : undefined}
       {...press}

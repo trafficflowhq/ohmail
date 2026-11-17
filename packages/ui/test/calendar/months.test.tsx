@@ -211,3 +211,30 @@ describe("the mini month", () => {
     expect(screen.queryByRole("button", { name: "Week 46" })).toBeNull();
   });
 });
+
+describe("a mini-month whose name is a way on", () => {
+  const head = {
+    title: "March",
+    hot: false,
+    before: { label: "February" },
+    after: { label: "April" },
+  };
+
+  it("makes the month's name a press of its own where the app hands one, and plain words where it does not", () => {
+    const onOpen = vi.fn();
+    const { rerender } = render(
+      <MiniMonth
+        head={{ ...head, open: { label: "Open March", onPress: onOpen } }}
+        weekdays={["M", "T", "W", "T", "F", "S", "S"]}
+        days={days}
+      />,
+    );
+    const name = screen.getByRole("button", { name: "Open March" });
+    expect(name.textContent).toBe("March");
+    fireEvent.click(name);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    rerender(<MiniMonth head={head} weekdays={["M", "T", "W", "T", "F", "S", "S"]} days={days} />);
+    expect(screen.queryByRole("button", { name: /March/ })).toBeNull();
+    expect(screen.getByText("March")).toBeTruthy();
+  });
+});

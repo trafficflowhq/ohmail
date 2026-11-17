@@ -10,6 +10,8 @@ export interface ShelfFolder {
   label?: string;
   /** The folder that is open. */
   current?: boolean;
+  /** A row is being dragged and this folder takes it; `over` while the pointer is on it. */
+  drop?: "ready" | "over";
 }
 
 export interface FolderShelfProps {
@@ -20,6 +22,8 @@ export interface FolderShelfProps {
   /** The few folders the rail has room for: the pinned ones, the open one, the ones used last. */
   folders: readonly ShelfFolder[];
   onOpen?: (id: string) => void;
+  /** A folder's own menu was asked for (a right click, the menu key): which folder, and where the pointer is. */
+  onMenu?: (id: string, at: { x: number; y: number }) => void;
   /** The fold that opens the rest: its name, its name with the unread mail it hides, that count, whether it stands. */
   all?: { name: string; label: string; count?: string; expanded: boolean; onToggle?: () => void };
   /** The open fold. */
@@ -27,7 +31,8 @@ export interface FolderShelfProps {
 }
 
 /** The few folders the rail has room for, and the one fold that opens the rest. */
-export function FolderShelf({ label, expanded, onToggle, folders, onOpen, all, children }: FolderShelfProps) {
+export function FolderShelf(props: FolderShelfProps) {
+  const { label, expanded, onToggle, folders, onOpen, onMenu, all, children } = props;
   return (
     <div className="oh-foldershelf">
       <RailEntry kind="fold" expanded={expanded} onPress={onToggle}>
@@ -43,7 +48,9 @@ export function FolderShelf({ label, expanded, onToggle, folders, onOpen, all, c
               label={folder.label}
               title={folder.name}
               current={folder.current}
+              drop={folder.drop}
               onPress={() => onOpen?.(folder.id)}
+              onMenu={onMenu ? (at) => onMenu(folder.id, at) : undefined}
             >
               {folder.name}
             </RailEntry>

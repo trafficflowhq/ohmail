@@ -50,6 +50,21 @@
     overflow-wrap: anywhere;
     text-overflow: ellipsis;
   }
+  /* A plan as one of a choice: a word after its name, and its figure at the line's end, whole. */
+  .oh-radioline-word > .oh-tag {
+    margin-left: var(--s2);
+    vertical-align: middle;
+  }
+
+  .oh-radioline-figure {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    align-self: center;
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
   .oh-radioline-note {
     grid-column: 2;
     justify-self: start;
