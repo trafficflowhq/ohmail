@@ -41,6 +41,21 @@ import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 const HOUR = 60 * 60 * 1000;
 
+/** The text from `const <name>: ImapConfig = {` to that object's own closing brace; null when the code has none. */
+function configObject(code: string, name: string): string | null {
+  const head = new RegExp(`const ${name}\\s*:\\s*ImapConfig\\s*=\\s*\\{`).exec(code);
+  if (head === null) return null;
+  let depth = 0;
+  for (let i = head.index + head[0].length - 1; i < code.length; i += 1) {
+    if (code[i] === "{") depth += 1;
+    if (code[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return code.slice(head.index, i + 1);
+    }
+  }
+  return null;
+}
+
 describe("the sidecar dials with the persistent-process deadlines", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => {
@@ -130,11 +145,10 @@ describe("the sidecar dials with the persistent-process deadlines", () => {
         const configName = m[1]!;
         /* The config identifier is followed to its construction: the deadlines are set on the
            OBJECT, not at the call, so a site that names a config assembled with `timeouts` is
-           covered and one that names a bare passthrough is not. */
-        const assembled = new RegExp(
-          `const ${configName}\\s*:\\s*ImapConfig\\s*=\\s*\\{[\\s\\S]*?\\btimeouts\\s*:`,
-        ).test(code);
-        sites.push({ file: name, ok: assembled });
+           covered and one that names a bare passthrough is not. Read to the object's own closing
+           brace: a `timeouts:` further down the text belongs to another config. */
+        const assembled = configObject(code, configName);
+        sites.push({ file: name, ok: assembled !== null && /\btimeouts\s*:/.test(assembled) });
       }
     }
     expect(sites.length, "the census found no `new ImapAdapter(` at all — it is measuring nothing")
