@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import {
   type ImapConfig, type MailboxAdapter,
 } from "@trafficflow/core/adapters/imap";
 import { SIDECAR_NET_TIMEOUTS, createSidecar, type AdapterDialContext } from "../src/engine.js";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -118,8 +119,10 @@ describe("the sidecar dials with the persistent-process deadlines", () => {
     const src = fileURLToPath(new URL("../src/", import.meta.url));
     const sites: Array<{ file: string; ok: boolean }> = [];
     for (const name of readdirSync(src)) {
-      if (!name.endsWith(".ts")) continue;
-      const text = readFileSync(join(src, name), "utf8");
+      // The engine's parts are read inside its door, as one text: a dial and its config's
+      // construction stand in different section files.
+      if (!name.endsWith(".ts") || isEnginePart(join(src, name))) continue;
+      const text = readAsUnit(join(src, name));
       // Comments stripped first: several headers in this package DISCUSS `new ImapAdapter(`, and
       // a census that counted prose would be measuring the documentation.
       const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");

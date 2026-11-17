@@ -221,7 +221,7 @@ describe("the substitutes that are unreachable refuse by name", () => {
 
 describe("the duplicated send ceiling cannot drift", () => {
   it("is the same number the desktop uses", () => {
-    // `engine.ts` reads this constant into the send surface on every composition, host mode or not,
+    // `engine-press.ts` reads this constant into the send surface on every composition, host mode or not,
     // so the phone needs a value for it. It is duplicated BY VALUE rather than imported, because
     // importing it would bring the desktop's listener module into the phone's graph — which is the
     // thing the substitution exists to prevent. A duplicated constant is a drift hazard, so the

@@ -409,6 +409,7 @@ apps/sidecar/test/edits-follow-the-takeover.imap.test.ts	data	through apps/sidec
 apps/sidecar/test/engine-build-commit.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/engine-clock-step-intervals.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/engine-closure-no-cli-entry.test.ts	source-text	walks source files	layer 1	desktop-engine	
+apps/sidecar/test/engine-door.test.ts	source-text	an import census: reads source as text (ts): the engine's files, and every source that names an engine- part	lint rule: an engine part is imported by the engine's own files alone, and the door by none of them	desktop-engine	
 apps/sidecar/test/first-connect-seal.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/first-page-gate.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
 apps/sidecar/test/first-sync.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
