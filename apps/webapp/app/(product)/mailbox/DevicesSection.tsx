@@ -38,6 +38,7 @@ import {
 import { useRefusalSentence } from "../refusal-sentence";
 import { ALLOWED_API_ORIGINS } from "../../api-origin";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
+import { useServerWords } from "../../server-words";
 import { QrCode } from "../../shell/QrCode";
 import { StepUpPrompt } from "./StepUpPrompt";
 
@@ -62,36 +63,6 @@ const MINTED_LABEL: Readonly<Partial<Record<DeviceDTO["kind"], string>>> = {
 
 export function useDevicePairing(demo: boolean): boolean {
   return useServerWords(demo).pairing;
-}
-
-/** What the server's handshake says about pairing and pictures: ONE `GET /hello` per mount that asks. */
-export interface ServerWords {
-  readonly pairing: boolean;
-  readonly remoteImages: boolean;
-}
-const SAYS_NOTHING: ServerWords = { pairing: false, remoteImages: false };
-
-/**
- * The handshake's two words a page builds its host from, read once. `serverHello()` keeps no answer, so a page that
- * needs both reads them here and hands them on rather than asking twice. `false` while pending, on an older server
- * and on the demo, which pays no round trip.
- */
-export function useServerWords(demo: boolean): ServerWords {
-  const [words, setWords] = useState<ServerWords>(SAYS_NOTHING);
-  useEffect(() => {
-    if (demo) return;
-    let alive = true;
-    void serverHello().then((h) => {
-      if (!alive) return;
-      const pairing = h?.features?.pairing === true;
-      const remoteImages = h?.features?.remoteImages === true;
-      setWords((was) => (was.pairing === pairing && was.remoteImages === remoteImages ? was : { pairing, remoteImages }));
-    });
-    return () => {
-      alive = false;
-    };
-  }, [demo]);
-  return words;
 }
 
 /** Where the scanned link points — the origin the API answers at the root. See the header. */

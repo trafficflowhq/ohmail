@@ -23,8 +23,8 @@ const has: WebSupplies = {
   features: Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, named(feature)])) as WebSupplies["features"],
   notifications: named("notifications"),
   frame: {
-    places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
-    appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
+    places: named("places"), stages: named("stages"), reader: named("reader"), above: named("above"), overs: named("overs"), address: named("address"),
+    window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
   },
 };
 const engine = named<HostContract["engine"]>("engine");
@@ -32,7 +32,7 @@ const engine = named<HostContract["engine"]>("engine");
 /** The managed build, as it was read: the server pairs devices and fetches pictures, and meters nothing. */
 const managed: WebFacts = {
   selfHost: false,
-  server: { pairing: true, remoteImages: true },
+  server: { pairing: true, remoteImages: true, searchPeople: false },
   invites: false,
   subscriptionPage: false,
   storageBlock: false,
@@ -53,7 +53,9 @@ const entries = (...handedOn: FeatureName[]) =>
     ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (has.features as Record<string, unknown>)[feature] : NONE])),
     places: has.frame.places,
     stages: has.frame.stages,
-    reader: NONE,
+    overs: has.frame.overs,
+    reader: has.frame.reader,
+    above: has.frame.above,
     calendar: has.frame.calendar,
   });
 /** A page in a browser: its own notification reader, a mailto that leaves, no badge, and no verb or signal wired yet. */
@@ -84,7 +86,7 @@ describe("the web shell's answers on the managed service", () => {
     expect(host.capabilities).toEqual({
       service: "managed", prices: "none", sendCeiling: "strict", awayRunsOn: "service", rulesMarked: true,
       imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced", pairing: "account",
-      account: "here", firstRunDoor: "cloud", mailboxes: "here", language: "account", products: "none",
+      account: "here", firstRunDoor: "cloud", mailboxes: "here", language: "account", searchBy: "words", products: "none",
     });
   });
 
@@ -119,11 +121,18 @@ describe("the web shell's answers on the managed service", () => {
   });
 
   it("draws no pictures and pairs nothing where the server does not say it will", () => {
-    const quiet = webHost(engine, { ...managed, server: { pairing: false, remoteImages: false } }, has);
+    const quiet = webHost(engine, { ...managed, server: { pairing: false, remoteImages: false, searchPeople: false } }, has);
     expect(quiet.capabilities).toMatchObject({ imagesFrom: "none", pairing: "none" });
     expect(quiet.wires.images).toBe(NONE);
     expect(listed(quiet)).not.toContain("devices");
     expect(quiet.features).toEqual(entries(...THE_ACCOUNT, "help"));
+  });
+
+  it("searches by a person only where the server's hello says its search takes one", () => {
+    expect(webHost(engine, managed, has).capabilities.searchBy).toBe("words");
+    const people = { ...managed, server: { ...managed.server, searchPeople: true } };
+    expect(webHost(engine, people, has).capabilities.searchBy).toBe("people");
+    expect(webHost(engine, { ...selfHosted, server: people.server }, has).capabilities.searchBy).toBe("people");
   });
 });
 
@@ -140,7 +149,7 @@ describe("the web shell's answers on a self-hosted server", () => {
     expect(host.capabilities).toEqual({
       service: "self", prices: "none", sendCeiling: 20 * 1024 * 1024, awayRunsOn: "service", rulesMarked: true,
       imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced", pairing: "account",
-      account: "here", firstRunDoor: "selfhost", mailboxes: "here", language: "account", products: "none",
+      account: "here", firstRunDoor: "selfhost", mailboxes: "here", language: "account", searchBy: "words", products: "none",
     });
   });
 
@@ -165,7 +174,7 @@ describe("the web shell's account and pictures, in every setting", () => {
   const SETTINGS: [string, WebFacts][] = [
     ["managed", managed],
     ["self-hosted", selfHosted],
-    ["a server that pairs nothing and fetches no picture", { ...managed, server: { pairing: false, remoteImages: false } }],
+    ["a server that pairs nothing and fetches no picture", { ...managed, server: { pairing: false, remoteImages: false, searchPeople: false } }],
     ["before the account is confirmed", { ...managed, account: null }],
   ];
 

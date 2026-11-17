@@ -1,6 +1,7 @@
 import { and, asc, eq, ne } from "drizzle-orm";
 import type { Tx } from "@trafficflow/db";
 import { accountSettings, mailboxes } from "@trafficflow/db";
+import { subjectHeadingOf } from "@trafficflow/core/adapters/organizer-profile";
 import { serializeOrganizerProfileCounted } from "@trafficflow/core/adapters/organizer-profile-store";
 import { calendarExport } from "@trafficflow/services/calendar";
 import { serviceContext } from "../context.js";
@@ -52,6 +53,8 @@ export const exportRoutes: Route[] = [
         dormancyDays: s?.dormancyDays ?? null,
         locale: s?.locale ?? null,
         themeFace: s?.themeFace ?? null,
+        // The word as stated; the instant stays behind, as every consent's does.
+        subjectHeading: subjectHeadingOf(s?.subjectHeading, s?.subjectHeadingAt),
         resurfaceTime: s?.resurfaceTime ?? null,
         screeningScope: s?.screeningScope ?? "window",
         ohboxPolicy: s?.ohboxPolicy ?? null,

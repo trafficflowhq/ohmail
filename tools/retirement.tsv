@@ -121,6 +121,7 @@ apps/mobile/test/death-nobody-heard.test.ts	source-text	reads source as text (ts
 apps/mobile/test/diagnostic-file.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/disabled-control-dims.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/domain-card-files-the-domain.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/door-page.test.ts	artifact	reads what was built: the door's page, its policy, its manifest and its bundle's inputs	layer 5	phone-screens	
 apps/mobile/test/doorbell-cap.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/doors-answer-under-its-option.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/doors.test.ts	source-text	reads source as text (js, mjs, ts, tsx)	layer 2	phone-screens	
@@ -408,6 +409,7 @@ apps/sidecar/test/edits-follow-the-takeover.imap.test.ts	data	through apps/sidec
 apps/sidecar/test/engine-build-commit.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/engine-clock-step-intervals.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/engine-closure-no-cli-entry.test.ts	source-text	walks source files	layer 1	desktop-engine	
+apps/sidecar/test/engine-door.test.ts	source-text	an import census: reads source as text (ts): the engine's files, and every source that names an engine- part	lint rule: an engine part is imported by the engine's own files alone, and the door by none of them	desktop-engine	
 apps/sidecar/test/first-connect-seal.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/first-page-gate.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
 apps/sidecar/test/first-sync.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
@@ -654,6 +656,7 @@ apps/webapp/test/first-run-stale-holder.test.tsx	source-text	reads source as tex
 apps/webapp/test/fold-band-ladder-polish.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/folders-rail.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/forward-always-offered.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/frame/first-run-in-a-browser.test.ts	source-text	reads its own bundle as text (css, js): the web shell in the frame at its first run, run in Chromium	layer 2	frame	
 apps/webapp/test/frame/seam-in-a-browser.test.ts	source-text	reads source as text (css): the shipped sheets, laid out in Chromium	layer 2	frame	
 apps/webapp/test/frame/todays-selection-in-a-browser.test.ts	source-text	reads its own bundle as text (css, js): the demo's page and the product's sheets, run in Chromium	layer 2	frame	
 apps/webapp/test/freshness-first-frame.test.tsx	behaviour	a copy stale by days says so at the first frame; on a desktop whose host is quiet the host's line speaks instead	layer 1: red with catching up ranked above the host's silence	frame	held:packages/app/test/frame/connection.test.tsx#lets the host's silence quiet the catching up
@@ -790,9 +793,11 @@ apps/webapp/test/screener-held-body-door.test.tsx	source-text	reads source as te
 apps/webapp/test/screener-last-decision-narrow.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
 apps/webapp/test/screener-row-actions-overlay.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
 apps/webapp/test/screening-count-is-what-you-gain.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	
+apps/webapp/test/search-calls-per-setting.test.tsx	data	through apps/webapp/test/_search-mount.tsx: reads the process's own scheduler reading	none	search	
 apps/webapp/test/search-locate.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	search	
 apps/webapp/test/search-open-exact.test.tsx	source-text	reads source as text (tsx)	layer 2	search	
 apps/webapp/test/search-render-budget.test.tsx	data	through apps/webapp/test/_search-mount.tsx: reads the process's own scheduler reading	none	removals	
+apps/webapp/test/search-screen/german-in-a-browser.test.ts	artifact	builds Search's states page (the feature bundled, the tokens' sheets) and reads the comparison's manifest for every state's window, and draws each in German and English at Text size 1.5 in a real browser	none	search	
 apps/webapp/test/secondary-ink-contrast.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/security-headers.test.ts	source-text	reads source as text (js, ts)	layer 2	removals	
 apps/webapp/test/seed-offer-needs-a-mailbox.test.tsx	source-text	reads source as text (tsx)	layer 2	mailboxes	
@@ -815,6 +820,7 @@ apps/webapp/test/sender-sheet-now-in.test.tsx	source-text	through apps/webapp/te
 apps/webapp/test/sender-sheet-reachable.test.tsx	source-text	reads source as text (tsx)	layer 2	write	
 apps/webapp/test/sender-sheet-resolve-step.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	
 apps/webapp/test/sender-sheet-scope-fits.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	write	
+apps/webapp/test/service-worker-words-bounded.test.ts	source-text	runs the service worker's own file (js) over a stand-in for the browser: the words it draws	layer 1	notices	
 apps/webapp/test/session-cookie-spellings.test.ts	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/session-expiry-single-rule.test.ts	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/session-gate.test.ts	source-text	reads source as text (mjs, ts)	layer 2	doors	
@@ -1085,6 +1091,7 @@ packages/client-engine/test/engine-owns-no-timers.test.ts	source-text	reads sour
 packages/client-engine/test/folder-labels.test.ts	data	through test/support/guard-list.ts: reads a list the environment names	none	engine	
 packages/client-engine/test/hour12-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
 packages/client-engine/test/import-corpus-identity.test.ts	source-text	an import census: reads source as text (mjs)	ohmail/package-borders	tools	
+packages/client-engine/test/notices-seam.test.ts	data	reads data files (json): what a notice's title does with each character, the table the desktop shell's test reads too	none	notices	
 packages/client-engine/test/open-read-flag-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
 packages/client-engine/test/outbox-hold-ceiling.test.ts	source-text	reads source as text (ts): the fallback door's route	layer 1	engine	
 packages/client-engine/test/outbox-lifecycle.test.ts	source-text	reads source as text (ts)	layer 1	engine	
@@ -1311,6 +1318,7 @@ packages/tokens/test/omarchy-settings.test.ts	data	reads data files (toml)	none	
 packages/ui/test/avatar-theme.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
 packages/ui/test/banner-form.test.ts	source-text	reads source as text (css, mjs, tsx)	layer 2	kit	
 packages/ui/test/base/drawn-in-a-browser.test.tsx	artifact	through the comparison's harness: reads what the bundler builds from the kit's stylesheets, and the typefaces, and draws the parts in Chromium	layer 5	kit	
+packages/ui/test/base/forms-in-a-browser.test.tsx	artifact	through the bundler: reads what the bundler builds from its page of the kit's parts, and drives forms of the kit's fields, buttons and tiles in Chromium with real keys	layer 5	kit	
 packages/ui/test/base/scheme-under-the-stamp.test.ts	artifact	through the comparison's harness and the bundler: reads what the bundler builds from the kit's and today's stylesheets, and reads the colour scheme in Chromium with and without the frame's stamp	layer 5	kit	
 packages/ui/test/base/suggestions-in-a-browser.test.tsx	artifact	through the comparison's harness and the bundler: reads what the bundler builds from its page of the kit's parts and from the kit's stylesheets, and the typefaces, and drives a field that suggests in Chromium with real keys and a real pointer	layer 5	kit	
 packages/ui/test/base/under-text-size.test.tsx	artifact	through the comparison's harness and the bundler: reads what the bundler builds from its page of the kit's parts and from the kit's stylesheets, and the typefaces, and drives the parts in Chromium under the web door's Text size	layer 5	kit	
@@ -1363,6 +1371,7 @@ test/clients-name-themselves.test.ts	source-text	walks source files: every clien
 test/compare/compare.test.ts	data	reads data files (json) through its helpers: the tolerance and the paint lists; the design tokens' stylesheet (css), drawn in a page; and files it wrote itself	none	compare	
 test/compare/count.test.ts	data	reads data files (json, png): the registry, the manifest, the archive's lock and the own subjects' pictures and readings, the folder's file sizes; and files it wrote itself	none	compare	
 test/compare/paint-properties.test.ts	data	reads data files (json) through its helpers: the tolerance and the paint lists	none	compare	
+test/compare/real/real.test.ts	data	reads data files (json): the declared list of the real-app measure	none	compare	
 test/compare/tolerance-pinned.test.ts	data	reads data files (json): the root manifest's pinned Playwright; and, through its helper, the tolerance	none	compare	
 test/compose-db-shm-size.test.ts	data	reads data files (json, yml)	none	unassigned	
 test/consent-stamps-the-baseline-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
@@ -1466,6 +1475,7 @@ test/pg-url-one-resolver.test.ts	source-text	reads source as text (mjs, mts, ts)
 test/pglite-template-env-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/phone-relay-routes-copy.test.ts	data	reads data files (json): the phone shell's copy of the relay's routes	none	phone-shell	
 test/pin-released-migrations.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/pin-released-organizer.test.ts	data	reads data files (json, mjs): the released organizer's fixture and its lock	none	notices	
 test/pr-build-scope.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 5	unassigned	
 test/pr-guard.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
 test/published-images-pin-their-base.test.ts	data	reads data files (selfhost, yml)	none	unassigned	

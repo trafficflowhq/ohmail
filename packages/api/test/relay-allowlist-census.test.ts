@@ -8,6 +8,7 @@ import { selfHostRoutes } from "../src/routes/self-host.js";
 import { desktopHostRoutes } from "../src/routes/desktop-host.js";
 import { mailboxDeviceOAuthRoutes } from "../src/routes/mailbox-oauth-device.js";
 import { calendarRoutes } from "../src/calendar/index.js";
+import { calendarNoticeRoutes } from "../src/routes/calendar-notices.js";
 import type { Route } from "../src/router.js";
 import { RELAY_ALLOWLIST, mayRelay } from "../src/relay-allowlist.js";
 import { normalizePathname } from "../src/canonical-path.js";
@@ -29,6 +30,7 @@ const TABLES: ReadonlyArray<readonly [string, readonly Route[]]> = [
   ["desktopHostRoutes", desktopHostRoutes],
   ["mailboxDeviceOAuthRoutes", mailboxDeviceOAuthRoutes],
   ["calendarRoutes", calendarRoutes],
+  ["calendarNoticeRoutes", calendarNoticeRoutes],
 ];
 
 const key = (r: { method: string; pattern: string }) => `${r.method.toUpperCase()} ${r.pattern}`;
@@ -125,7 +127,11 @@ describe("the projection the sidecar reads matches the table", () => {
     // install drains nothing of its own, so a write it is asked for is the account's server's.
     // 203 -> 204 with the place field's question: the account's server holds the geocoder, and a
     // Cloud-mode install asks it there, as the window would itself.
-    expect(RELAY_ALLOWLIST.length).toBe(204);
+    // 204 -> 210 with the calendar's connect door, all six: a phone and a desktop on a hosted account
+    // connect a calendar in the app, as `POST /mailboxes` adds a mailbox with its password. Each is a
+    // signed-in session's route that reads every id with its account; none signs in, pairs or ends
+    // a session; a typed sign-in rides in a body alone, as a mailbox's password does.
+    expect(RELAY_ALLOWLIST.length).toBe(210);
   });
 
   it("every pattern in the projection is a real route", () => {

@@ -575,6 +575,11 @@ const ALLOWLIST: Record<string, string> = {
     "a listed calendar, written on the turn's transaction that only `inConnection` opens, through the store's " +
     "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
     "the calendar call-site case",
+  "apps/worker/src/calendar/notice-channels.ts insert calPushChannels":
+    "a provider's notice channel, written by the worker's channel pass on the transaction that only `inConnection` " +
+    "(`@ohmail/organizer/calendar-sync`) opens, through the store's `fencedConnectionWrite`, which opens it with " +
+    "`fencedAccountWrite`, the account's erasure fence; the row's key (connection_id, account_id) also hangs on a " +
+    "connection the sweep deletes",
 
   // ── db-layer primitives: they write inside the CALLER's transaction ────────────────────────
   // Each takes a handle it did not open. The fence belongs to the door that opened it, which is

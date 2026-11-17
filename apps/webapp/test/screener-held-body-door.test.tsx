@@ -139,7 +139,7 @@ async function mount(
   }
   /* The shell's attachment holder, so every mounted letter's list read is the one the app makes. */
   function Chrome(): React.ReactElement {
-    const attachments = useMessageAttachments(engine, null, { conversationOf: () => [], onDownloadAllFailed: () => {} });
+    const attachments = useMessageAttachments(engine, null, { shell: "none", conversationOf: () => [], onDownloadAllFailed: () => {} });
     return h(MessageChromeProvider as never, {
       value: { bodyOf: door, hydrateBody: () => {}, hydrateBodies: () => {}, hydrateThread: () => {}, conversationOf: () => [], attachments },
       children: h(KeymapProvider, { children: h(Probe) }),

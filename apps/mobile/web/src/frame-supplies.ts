@@ -67,6 +67,11 @@ export function phoneFrameSupplies(
   return {
     places: mounted.places,
     stages: mounted.stages,
+    /* No place of the phone's has a reading column yet, and no old shell stands here: nothing above the panes. */
+    reader: NONE,
+    above: NONE,
+    // A phone shell holds no keyboard registry, so it hands no over.
+    overs: { palette: NONE, keys: NONE },
     address: keptAddress(address, kept),
     window: browserWindowFacts(win),
     appearance: systemAppearance(win),

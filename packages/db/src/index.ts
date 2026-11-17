@@ -274,6 +274,11 @@ export {
   RULE_REMOVAL_KEY_MAX_BYTES, RULE_REMOVAL_MAX_AGE_MS, ruleRemovalKey, recordRuleRemovals, readRuleRemovals, clearRuleRemovals,
   type RuleRemoval, type RuleRemovalKeyParts,
 } from "./rule-removals.js";
+// What a person stated for every install of a mailbox (mail 0210): the row's pairs, a press, and a found copy
+// taken in. Reaches `schema-mail.js` and the change log alone.
+export {
+  readPreferences, statePreference, adoptPreferences, type HeldPreferences, type StoredPreferences,
+} from "./preferences.js";
 export {
   convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, deleteRulesById, keptProvenance, endOwedWalk,
   isRefileRun, owesWholeWalk, pendingRefileFrom, refileOwed, isParkedFence, PARKED_FENCE_PREFIX,

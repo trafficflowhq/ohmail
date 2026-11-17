@@ -495,8 +495,10 @@ describe("a sender not let in", () => {
     const el = await mountScreener(PICTURED, function useDesktopChrome() {
       const real = useRemoteImages({
         onFailed: () => {}, mode: "auto", loadPixels: false,
-        fetchImage: async (id, url) => { fetched.push(`${id} ${url}`); await new Promise((r) => setTimeout(r, 0)); return PNG; },
-        recordRemote: async (id) => { recorded.push(id); },
+        wire: {
+          fetch: async (id, url) => { fetched.push(`${id} ${url}`); await new Promise((r) => setTimeout(r, 0)); return PNG; },
+          record: async (id) => { recorded.push(id); },
+        },
       });
       // The desktop's `tauri://localhost` window (macOS, Linux): no proxy source a frame could name.
       const tauri = (id: string) => {

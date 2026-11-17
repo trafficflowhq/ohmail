@@ -56,6 +56,8 @@ export function smokeFailure(event) {
 
 /** The views the smoke opens, by hash route; each one's root carries `.view-<id>`. */
 const ROUTES = ["ohbox", "reads", "receipts"];
+/** A seated place draws its own list in the frame's list section and no `.view-<id>`: the Ohbox's is `.ob-list`. */
+const SEATED = { ohbox: "section.fr-list .ob-list" };
 
 async function freePort() {
   const s = createServer();
@@ -104,7 +106,7 @@ async function smoke(webapp) {
       // A hash change, as a press of the rail does: the shell switches views without a reload.
       await page.evaluate((v) => { window.location.hash = `#/${v}`; }, view);
       const drawn = await page
-        .waitForSelector(`.view-${view}, .view-fail`, { state: "visible", timeout: 30_000 })
+        .waitForSelector([`.view-${view}`, SEATED[view], ".view-fail"].filter(Boolean).join(", "), { state: "visible", timeout: 30_000 })
         .then(() => true, () => false);
       await page.waitForTimeout(1_000);
       const failed = (await page.locator(".view-fail:visible").count()) > 0;

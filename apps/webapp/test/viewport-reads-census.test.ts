@@ -38,10 +38,6 @@ const ADMITTED: Record<string, { count: number; why: string }> = {
     count: 5,
     why: "the helper itself: the next design's twin, inside the border its parts may not cross to today's",
   },
-  "packages/ui/src/mail/Lists/row-swipe.tsx": {
-    count: 4,
-    why: "a finger's claim of the row: two pointer reads compared, the hand's own travel; the row's travel goes through cssPoint",
-  },
   "packages/ui/src/mail/Editor/recipient-drag.ts": {
     count: 4,
     why: "the lift's slop: two pointer reads compared, the hand's own travel; the ghost, the caret and the hit test go through cssPoint and cssRect",

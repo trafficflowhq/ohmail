@@ -18,7 +18,8 @@ const SURFACES: Array<{ file: string; door: RegExp }> = [
   { file: "../app/views/HistoryView.tsx", door: /useStoreTimeline\(/ },
   { file: "../../../packages/app-logic/src/session/store-timeline.ts", door: /StoreTimelineWalker/ },
   { file: "../../../packages/client-engine/src/store-timeline.ts", door: /engine\.pageStore\("all"[\s\S]*engine\.pageSearch\(/ },
-  { file: "../app/views/SearchView.tsx", door: /new StoreSearchWalker\(/ },
+  { file: "../../../packages/app-logic/src/search/store-pass.ts", door: /new StoreSearchWalker\(/ },
+  { file: "../../../packages/app-logic/src/search/search-list.ts", door: /useStorePass\(/ },
   { file: "../../mobile/app/history.tsx", door: /useStoreHistory\(\)/ },
   { file: "../../mobile/app/search.tsx", door: /useStoreSearch\(/ },
   { file: "../../mobile/src/state/store-views.ts", door: /walker\.(start|want)\(/ },
@@ -48,7 +49,7 @@ describe("History and Search read the store, never the mirror's window", () => {
    * walks, so neither Search surface asks the store for a page or keeps a page array of its own.
    */
   const OWN_PAGING = /\.searchServer\(|\bnextCursor\b|\bloadMore\s*=|\.outcome\.items\b/;
-  for (const file of ["../app/views/SearchView.tsx", "../../mobile/src/state/store-views.ts"]) {
+  for (const file of ["../../../packages/app-logic/src/search/search-list.ts", "../../../packages/app-logic/src/search/store-pass.ts", "../../mobile/src/state/store-views.ts"]) {
     it(`${file.replace(/^(\.\.\/)+/, "")}: holds no page array of its own`, () => {
       expect(read(file).match(OWN_PAGING)?.[0] ?? null, "a surface paging the store itself").toBeNull();
     });

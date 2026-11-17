@@ -59,8 +59,8 @@ describe.skipIf(!AVAILABLE)("a press, from the door to the provider", () => {
       calendars: [{ id: `cal-${tag}`, name: "Studio", color: null, writable: true, byToken: true, zone: null }],
       readings: new Map([["", [{ items }]], ["t1", [{ items: [] }]]]), endToken: () => "t1",
     });
-    const credential = { kind: "basic" as const, user: "mila", password: new Secret(`pw-${randomUUID().slice(0, 8)}`) };
     const serverUrl = `http://127.0.0.1:1/${tag}/`;
+    const credential = { kind: "basic" as const, server: serverUrl, user: "mila", password: new Secret(`pw-${randomUUID().slice(0, 8)}`) };
     let seeded: { readonly accountId: string; readonly connectionId: string };
     if (accountId === null) seeded = await seedConnection(w, { provider: "caldav", credential, serverUrl });
     else {

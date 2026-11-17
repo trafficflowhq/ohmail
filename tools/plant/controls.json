@@ -730,6 +730,35 @@
     ]
   },
   {
+    "id": "a new file of the old shell's side of the frame, named for a place",
+    "rule": "ohmail/old-shell-adapters",
+    "plant": "apps/webapp/app/shell/TodaysPlantedAbove.tsx",
+    "expect": "refused",
+    "source": [
+      "export const planted = 1;"
+    ]
+  },
+  {
+    "id": "a context the old shell would feed a place through",
+    "rule": "ohmail/old-shell-adapters",
+    "plant": "apps/webapp/app/shell/planted-feed.ts",
+    "expect": "refused",
+    "source": [
+      "import { createContext } from \"react\";",
+      "export const PlantedFed = createContext<string | null>(null);"
+    ]
+  },
+  {
+    "id": "a file of the old shell's folder that is neither",
+    "rule": "ohmail/old-shell-adapters",
+    "plant": "apps/webapp/app/shell/planted-plain.ts",
+    "expect": "passes",
+    "source": [
+      "import { createContext } from \"react\";",
+      "export const Planted = createContext(0);"
+    ]
+  },
+  {
     "id": "a project the build references",
     "rule": "references",
     "plant": "packages/core/tsconfig.json",

@@ -37,7 +37,7 @@ export const PROVIDER_REFUSALS = [
   /** A port below 1024 that is neither 80 nor 443. No calendar server is known there; mail servers are. */
   "port_not_allowed",
   "host_unresolved",
-  /** A redirect or a discovered address names a host the credential may not travel to. No request is made. */
+  /** A redirect, a discovered address or a stored one names a host the credential may not travel to. No request is made. */
   "host_changed",
   "too_many_redirects",
   /** A redirect with no target, an unreadable one, or one from https to http. */

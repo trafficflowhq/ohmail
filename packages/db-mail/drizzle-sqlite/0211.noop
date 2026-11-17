@@ -1,0 +1,5 @@
+0211_cal_calendars_default_leaves — NOT CARRIED AS A STEP: A DEVICE'S OWN STORE HAS NO CALENDAR.
+
+The shared entry drops `cal_calendars.is_default`, a column of one of the ten `cal_*` tables a
+server holds. This store has none of them (`0205.noop` says why), so there is no column to drop.
+A desktop's engine runs the shared journal and loses the column there.

@@ -3621,7 +3621,8 @@ const CSP_HOST_SOURCE = /^https?:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5}
  * (query/fragment ignored); prefixes and case variants blocked; `%`-spellings match after
  * decoding ({@link CSP_HOST_SOURCE} refuses `%`). The redirect hole is closed at the proxy
  * (never 3xx, mutation-watched). Minted via the caller's proxy fn ({@link CSP_PROBE_URL});
- * fail-closed null.
+ * fail-closed null. An empty answer (a window that may not read for this account) and the
+ * origin's root are null too: either would name every path of the origin.
  */
 export function proxyImgSource(proxy: (url: string) => string, pageOrigin: string): string | null {
   let minted: string;
@@ -3630,6 +3631,7 @@ export function proxyImgSource(proxy: (url: string) => string, pageOrigin: strin
   } catch {
     return null;
   }
+  if (minted === "") return null;
   let origin: string;
   try {
     origin = new URL(pageOrigin).origin;
@@ -3647,6 +3649,7 @@ export function proxyImgSource(proxy: (url: string) => string, pageOrigin: strin
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") return null;
   if (u.origin !== origin) return null;
+  if (u.pathname === "/") return null;
   const source = `${u.origin}${u.pathname}`;
   return CSP_HOST_SOURCE.test(source) ? source : null;
 }
@@ -4383,10 +4386,10 @@ export interface MessageBodyProps {
   scheme?: "light" | "dark";
   /**
    * THE SCOPE the per-message "original" choice is kept under, handed by whoever mounts the body: today's views
-   * their shell's, the reader its host's. The body looks nobody up: handed none (`null`, or nothing on a bare
-   * mount), the choice holds for the mount alone and nothing is stored.
+   * their shell's, the reader its host's. Every mount hands it, and the body looks nobody up and takes no default:
+   * handed `null`, the choice holds for the mount alone and nothing is stored.
    */
-  owner?: string | null;
+  owner: string | null;
   /**
    * THE HOST DRAWS THE BODY'S CONTROLS. Present, the body draws none of its four controls ("Show images", the dark
    * toggle, the flip, the history) and reports them here instead, from an effect, never during render, and again only

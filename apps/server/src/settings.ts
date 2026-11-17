@@ -137,11 +137,17 @@ export interface Settings {
    * the managed service is `cloud` whatever its environment holds. `connect` holds, for the two
    * ways that sign in at their provider, the operator's switch (`OHCAL_CONNECT_GOOGLE`,
    * `OHCAL_CONNECT_MICROSOFT`: exactly `1`) and whether that provider's client is configured.
+   *
+   * `notices.microsoftValidation`: whether the notice door answers Microsoft's validation call.
+   * Only where Microsoft's calendars are served (`OHCAL_MICROSOFT=1`) AND a public address for
+   * notices is named (`OHCAL_NOTICE_ORIGIN`, which the worker reads too and is what opens a
+   * channel). Either one missing: the door echoes nothing.
    */
   calendar: {
     enabled: boolean;
     policy: "cloud" | "own-network";
     connect: Record<"google" | "microsoft", { on: boolean; configured: boolean }>;
+    notices: { microsoftValidation: boolean };
   };
   /**
    * The geocoder the calendar's place field is suggested from (`PLACES_SUGGEST_URL`), and its bearer
@@ -589,6 +595,7 @@ function loadCalendar(env: NodeJS.ProcessEnv, privateDials: boolean): Settings["
       },
       microsoft: { on: offered("OHCAL_CONNECT_MICROSOFT"), configured: trimmed(env, "OHCAL_MICROSOFT") === "1" },
     },
+    notices: { microsoftValidation: trimmed(env, "OHCAL_MICROSOFT") === "1" && present(env, "OHCAL_NOTICE_ORIGIN") },
   };
 }
 

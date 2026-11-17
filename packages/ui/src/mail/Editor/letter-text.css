@@ -11,7 +11,7 @@
     --oh-lettertext-gap: var(--s2);
     --oh-lettertext-indent: 1.4em;
     --oh-lettertext-quote: inset 3px 0 0 var(--ctl-ring);
-    --oh-lettertext-mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    --oh-lettertext-mono: var(--oh-face-mono);
     --oh-lettertext-mono-size: 0.9em;
     --oh-lettertext-code-pad: 0 0.3em;
     --oh-lettertext-offset: 0.14em;

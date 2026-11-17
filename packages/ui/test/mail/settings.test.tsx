@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { useRef, useState } from "react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Button, Field, InfoMark, Menu, RadioLines, Seg, Slot } from "../../src/base/index.js";
 import {
@@ -245,7 +246,58 @@ describe("SettingNote, on a sheet that counts and waits", () => {
     expect(screen.getByRole("status").textContent).toBe("The payment did not go through.");
     rerender(<SettingNote busy>Reading the plans</SettingNote>);
     expect(screen.getByRole("status").textContent).toBe("Reading the plans");
-    expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
+    /* A live region that says it is busy asks a screen reader to wait with what it holds: it does not say so. */
+    expect(screen.getByRole("status").hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("says a settled outcome when it appears, where the app marks it as said: calmly, with no sign", () => {
+    render(<SettingNote said>The mailbox is connected.</SettingNote>);
+    const note = screen.getByRole("status");
+    expect(note.textContent).toBe("The mailbox is connected.");
+    expect(note.querySelector("svg")).toBeNull();
+    expect(note.hasAttribute("aria-busy")).toBe(false);
+    expect(note.tagName).toBe("P");
+  });
+
+  it("is said by a change inside a region that already stands: its words are drawn at once and kept from a screen reader for its first draw, then given to it; drawn by a server they are the reader's from the start", async () => {
+    /* What a screen reader has of the region's words, read in the commit that first draws it. */
+    const atFirstDraw: (string | null)[] = [];
+    const words = () => screen.getByRole("status").querySelector("span")!;
+    function FirstDraw() {
+      useLayoutEffect(() => {
+        atFirstDraw.push(words().getAttribute("aria-hidden"));
+      }, []);
+      return null;
+    }
+    const { rerender } = render(
+      <>
+        <SettingNote said>The mailbox is connected.</SettingNote>
+        <FirstDraw />
+      </>,
+    );
+    expect(atFirstDraw).toEqual(["true"]);
+    expect(screen.getByRole("status").textContent).toBe("The mailbox is connected.");
+    await waitFor(() => expect(words().hasAttribute("aria-hidden")).toBe(false));
+
+    /* Other words while it stands are a change of the region itself: nothing is held back. */
+    rerender(<SettingNote said>The mailbox is paused.</SettingNote>);
+    expect([words().textContent, words().hasAttribute("aria-hidden")]).toEqual([
+      "The mailbox is paused.",
+      false,
+    ]);
+
+    /* A note that only explained and now warns becomes a region with its words in it: held back once more. */
+    cleanup();
+    const explains = render(<SettingNote>Kept for 30 days.</SettingNote>);
+    expect(screen.getByText("Kept for 30 days.").hasAttribute("aria-hidden")).toBe(false);
+    explains.rerender(<SettingNote warn>The payment did not go through.</SettingNote>);
+    expect(words().getAttribute("aria-hidden")).toBe("true");
+    await waitFor(() => expect(words().hasAttribute("aria-hidden")).toBe(false));
+
+    /* A page drawn by a server is read from its top, and without script nothing would give the words back. */
+    expect(renderToStaticMarkup(<SettingNote said>The mailbox is connected.</SettingNote>)).not.toContain(
+      "aria-hidden",
+    );
   });
 });
 
@@ -302,6 +354,36 @@ describe("a plan's line", () => {
     cleanup();
     render(<RadioLines label="Whose mail" value="a" options={[{ value: "a", label: "This address" }]} />);
     expect(screen.getByRole("radio").textContent).toBe("This address");
+  });
+
+  it("on a sheet a plan among the plans is one radio a line, named by all it shows, with a mark that is drawn and never said", () => {
+    const onChange = vi.fn();
+    render(
+      <RadioLines
+        kind="sheet"
+        label="Plans"
+        value="plus"
+        onChange={onChange}
+        options={[
+          { value: "solo", label: "Solo", note: "2 mailboxes · 2 GB", figure: "$9" },
+          { value: "plus", label: "Plus", tag: "Your plan", note: "5 mailboxes · 5 GB", figure: "$15" },
+        ]}
+      />,
+    );
+    const lines = within(screen.getByRole("radiogroup", { name: "Plans" })).getAllByRole("radio");
+    const [solo, plus] = lines as [HTMLElement, HTMLElement];
+    expect(lines.map((line) => line.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+    expect(screen.getByRole("radio", { name: /^Plus\s*Your plan\s*5 mailboxes · 5 GB\s*\$15$/ })).toBe(plus);
+    /* Its mark is a drawn thing of its own, one a line, and holds no word. */
+    for (const line of lines) {
+      const marks = [...line.children].filter((part) => part.getAttribute("aria-hidden") === "true");
+      expect(marks.map((mark) => mark.textContent)).toEqual([""]);
+    }
+    /* One stop of Tab, on the taken plan; a press takes a plan, and the arrows move the choice. */
+    expect(lines.map((line) => line.tabIndex)).toEqual([-1, 0]);
+    fireEvent.click(solo);
+    fireEvent.keyDown(plus, { key: "ArrowDown" });
+    expect(onChange.mock.calls).toEqual([["solo"], ["solo"]]);
   });
 });
 

@@ -21,7 +21,7 @@ export function WarnRow({ children, way }: WarnRowProps) {
   return (
     <div className="oh-warnrow" aria-busy={way.busy || undefined}>
       {warn}
-      <Button kind="two" size="s" disabled={way.busy} onPress={way.onPress}>
+      <Button kind="two" size="s" busy={way.busy} onPress={way.onPress}>
         {way.label}
       </Button>
     </div>

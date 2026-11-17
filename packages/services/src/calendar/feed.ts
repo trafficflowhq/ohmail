@@ -97,7 +97,7 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
   if (ids.length === 0) return new Map();
   const rows = await db.select({
     id: calCalendars.id, connectionId: calCalendars.connectionId, name: calCalendars.name, color: calCalendars.color,
-    access: calCalendars.access, shown: calCalendars.shown, isDefault: calCalendars.isDefault, timeZone: calCalendars.timeZone,
+    access: calCalendars.access, shown: calCalendars.shown, timeZone: calCalendars.timeZone,
     windowStart: calCalendars.windowStart, windowEnd: calCalendars.windowEnd, lastSyncedAt: calCalendars.lastSyncedAt,
     errorCode: calCalendars.errorCode, updatedAt: calCalendars.updatedAt,
   }).from(calCalendars).where(and(eq(calCalendars.accountId, accountId), inArray(calCalendars.id, [...ids])));
@@ -109,7 +109,6 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
     color: r.color,
     access: accessOf(r.access),
     shown: r.shown,
-    isDefault: r.isDefault,
     timeZone: r.timeZone,
     window: r.windowStart !== null && r.windowEnd !== null ? { from: String(r.windowStart), to: String(r.windowEnd) } : null,
     defaultAlarms: alarms.get(r.id) ?? [],

@@ -173,9 +173,9 @@ describe("the move destinations are the webapp's", () => {
   });
 
   it("each destination is labelled with the webapp's place name", () => {
-    // PLACE_EN in apps/webapp/app/shell/format.ts is the catalogue's English half — the same
+    // PLACE_EN in packages/app-logic/src/text/format.ts is the catalogue's English half — the same
     // labels the webapp's move panel renders (`PLACE_LABEL[v]`).
-    const format = read("../../webapp/app/shell/format.ts");
+    const format = read("../../../packages/app-logic/src/text/format.ts");
     const block = format.match(/const PLACE_EN = \{([\s\S]*?)\};/);
     expect(block).not.toBeNull();
     const places = new Map<string, string>();

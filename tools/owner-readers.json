@@ -96,7 +96,7 @@
       "apps/webapp/app/letter-body/MessageBody.tsx",
       "apps/webapp/app/shell/AfterVerbRow.tsx",
       "apps/webapp/app/shell/ImageQualityRow.tsx",
-      "apps/webapp/app/shell/TodaysOhbox.tsx",
+      "apps/webapp/app/shell/TodaysOhboxAbove.tsx",
       "apps/webapp/app/views/SearchView.tsx",
       "apps/webapp/app/views/SettingsView.tsx"
     ]

@@ -19,23 +19,4 @@
     justify-content: center;
     gap: var(--s2);
   }
-  /* The mark: the product's two letters and its full stop. */
-  .oh-empty-mark {
-    --oh-empty-mark-track: -0.05em;
-    color: var(--ink);
-    font-family: var(--f-display);
-    font-size: var(--t-mark);
-    font-weight: var(--w-display);
-    font-variation-settings: var(--opsz-x);
-    letter-spacing: var(--oh-empty-mark-track);
-    line-height: 0.86;
-  }
-  .oh-empty-mark > .oh-dot {
-    --dot-size: 0.25em;
-    --oh-empty-mark-gap: 0 0 0 0.045em;
-    margin: var(--oh-empty-mark-gap);
-  }
-  :root[data-face="ohmarchy"] .oh-empty-mark {
-    --oh-empty-mark-track: -0.04em;
-  }
 }

@@ -3,7 +3,7 @@ import { DEFAULT_NET_TIMEOUTS, IMAP_READ_DEADLINE_MS } from "@trafficflow/core/a
 import { OhmailEngine } from "@ohmail/client-engine";
 
 import { ATTACHMENT_BYTES_DEADLINE_MS, BRIDGE_DEADLINE_MS, bridgeFetch, createEngineAdapter } from "../src/bridge-fetch.js";
-import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
+import { desktopFileShell, enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
 import { ensurePreview } from "../../webapp/app/shell/attachments.js";
 
 /**
@@ -71,7 +71,7 @@ describe("the preview's read of a PDF over the real bridge adapter", () => {
     engineAnswering(75_000);
     const engine = new OhmailEngine({ adapter: createEngineAdapter() });
     await engine.loadAttachments("m1");
-    const preview = ensurePreview(engine, "m1", PDF);
+    const preview = ensurePreview(engine, desktopFileShell(), "m1", PDF);
     await vi.advanceTimersByTimeAsync(75_000);
     await preview;
     const held = engine.attachmentsOf("m1", { includeInlineParts: true });

@@ -7,9 +7,14 @@
  * sign-in typed again, or beside a second removal, leaves nothing standing; connects in flight at
  * the same instant never pass the account's ceiling.
  * Who may: signed out, nothing; another account's ids and its key, nothing of theirs and a random
- * id's answer byte for byte; the calendar off with a connection standing, nothing written and
- * nothing woken; after the account's erasure, no sealed sign-in, no connection, nothing on the
- * roster, and a turn from a roster read before dials nothing.
+ * id's answer byte for byte; the calendar off with connections standing, nothing written and
+ * nothing woken, but that a removal is let through and takes the sealed sign-in with it; after
+ * the account's erasure, no sealed sign-in, no connection, nothing on the roster, and a turn from
+ * a roster read before dials nothing.
+ * Whose sign-in: a sealed sign-in opens for the connection it was typed for and for no other row.
+ * Where it goes: a CalDAV password is sent to the server it was typed for and to no other. A row
+ * whose server somebody moved holds no sign-in: nothing is dialled for it, and a password typed
+ * again for it is sealed for nobody.
  *
  * A root test, because it holds the routes and the worker's pass together and neither imports the
  * other.
@@ -32,6 +37,7 @@ import { accountShardFilter } from "../apps/worker/src/mailboxes.js";
 import { calendarSyncPass } from "../packages/organizer/src/calendar/sync-pass.js";
 import { AVAILABLE, ZONES, depsFor, openWorld, type World } from "../packages/organizer/test/_calendar-world.js";
 import { makeDeps, req, seedSession } from "../packages/api/test/helpers.js";
+import { startCalDavStandIn, type StandIn } from "../packages/cal-providers/test/caldav-stand-in.js";
 
 const app = createApp([...apiRoutes, ...calendarRoutes]);
 const marker = (tag: string): string => `${tag}${randomUUID().replaceAll("-", "")}`;
@@ -42,7 +48,7 @@ const CEILING = 20;
 
 let served: OwnedDb | null = null;
 
-async function doorOn(w: World) {
+async function doorOn(w: World, policy: "cloud" | "own-network" = "cloud") {
   const { deps } = await makeDeps(new Date());
   served ??= makeOwnedDb(PG_TEST_URL, { role: "api" });
   deps.db = served.db as never;
@@ -50,7 +56,7 @@ async function doorOn(w: World) {
   deps.keyProvider = w.keys;
   deps.logger = createLogger({ service: "api", level: "debug", sink: () => {} });
   deps.services = {
-    ...deps.services, calendar: calendarFeed, calendarConnect: { policy: "cloud", ceremonies: { google: NO_WAY, microsoft: NO_WAY } },
+    ...deps.services, calendar: calendarFeed, calendarConnect: { policy, ceremonies: { google: NO_WAY, microsoft: NO_WAY } },
   } as never;
   const s = await seedSession(w.db as never, { now: new Date() });
   await w.db.insert(calSettings).values({ accountId: s.accountId, enabledAt: new Date() });
@@ -76,6 +82,14 @@ const codeOf = async (res: Response): Promise<[number, string | null]> => {
   return [res.status, text === "" ? null : (JSON.parse(text) as { error?: { code?: string } }).error?.code ?? null];
 };
 
+/** A refusal whole: its status, our server's word, and the closed word beside it where the door names one. */
+const faultOf = async (res: Response): Promise<[number, string | null, string | null]> => {
+  const error = (await res.json() as { error?: { code?: string; details?: { fault?: string } } }).error;
+  return [res.status, error?.code ?? null, error?.details?.fault ?? null];
+};
+/** What the door answers a sign-in typed again that it can seal for no server: the person connects again. */
+const CONNECT_AGAIN = [400, "validation_failed", "sign_in_incomplete"];
+
 describe.skipIf(!AVAILABLE)("who may act at the connect door, on Postgres", () => {
   let w: World;
   beforeAll(async () => { w = await openWorld(8); }, 120_000);
@@ -83,6 +97,14 @@ describe.skipIf(!AVAILABLE)("who may act at the connect door, on Postgres", () =
     await served?.close();
     await w?.close();
   });
+
+  /** A connection's sealed sign-in as the store holds it: unchanged means nothing was sealed over it. */
+  const sealedOf = async (id: string): Promise<string> =>
+    JSON.stringify(await w.sql`select md5(secret_enc) as sealed, key_version, updated_at from cal_credentials where connection_id = ${id}`);
+  /** A connection that waits for its person made live again by somebody who can write rows: nothing sealed changes. */
+  const live = async (id: string): Promise<void> => {
+    await w.sql`update cal_connections set status = 'active', error_code = null where id = ${id}`;
+  };
 
   it("side by side: two checks are one check, and a removal beside a sign-in or a removal leaves nothing standing", async () => {
     const door = await doorOn(w);
@@ -128,6 +150,168 @@ describe.skipIf(!AVAILABLE)("who may act at the connect door, on Postgres", () =
     expect(atOnce.map((x) => x.status).sort()).toEqual([202, 409, 409, 409, 409, 409, 409, 409]);
     expect((await w.sql`select 1 from cal_connections where account_id = ${door.s.accountId}`).length).toBe(CEILING);
   }, 60_000);
+
+  it("a sealed sign-in opens for its own connection alone: copied to another connection of the account, or to another account's, it is refused at the open", async () => {
+    const mine = await doorOn(w);
+    const theirs = await doorOn(w);
+    const looked: string[] = [];
+    const nowhere: HostResolver = { resolve: async (name) => { looked.push(name); return []; } };
+    const providers = makeCalendarProviders({
+      clock: { now: () => Date.now() }, zones: ZONES, resolver: nowhere, policy: { kind: "cloud" },
+      enabled: new Set(["ics", "caldav"] as const), microsoft: null, writes: true,
+    });
+    /** One turn of a connection: how it ended, every name it looked up on the way to a dial, and the row as it stands after. */
+    const turn = async (door: typeof mine, id: string, provider: "ics" | "caldav") => {
+      looked.length = 0;
+      const outcome = await calendarSyncPass(depsFor(w, providers), { accountId: door.s.accountId, id, provider, status: "active" }, new AbortController().signal);
+      const [row] = await w.sql<{ status: string; word: string | null }[]>`select status, error_code as word from cal_connections where id = ${id}`;
+      return { ended: outcome.kind, looked: [...new Set(looked)], status: row!.status, word: row!.word };
+    };
+    /** The sealed text of one connection written over another's, as somebody who can write rows and holds no key would. */
+    const copied = async (from: string, to: string): Promise<void> => {
+      const moved = await w.sql`update cal_credentials t set secret_enc = s.secret_enc, key_version = s.key_version
+        from cal_credentials s where s.connection_id = ${from} and t.connection_id = ${to} returning t.connection_id`;
+      expect(moved.length).toBe(1);
+    };
+    const REFUSED = { ended: "stopped", looked: [], status: "reconnect", word: "sign_in_incomplete" };
+    /** How the turn of each connection that holds a copied text ended. */
+    const turns: Record<string, unknown> = {};
+
+    for (const kind of ["caldav", "ics"] as const) {
+      const typed = (name: string): Record<string, unknown> => (kind === "caldav"
+        ? { way: "caldav", server: `https://${name}.example.test/`, user: "mila", password: marker("pw") }
+        : { way: "ics", address: `https://${name}.example.test/${marker("mk")}/a.ics` });
+      const source = await mine.connect(typed(`${kind}-source`));
+      const beside = await mine.connect(typed(`${kind}-beside`));
+      const foreign = await theirs.connect(typed(`${kind}-foreign`));
+      // The controls: each connection's own sealed sign-in opens, and its turn reaches the lookup of its own host.
+      expect(await turn(mine, source, kind), kind).toMatchObject({ looked: [`${kind}-source.example.test`], word: "host_unresolved" });
+      expect(await turn(mine, beside, kind), kind).toMatchObject({ looked: [`${kind}-beside.example.test`], word: "host_unresolved" });
+      expect(await turn(theirs, foreign, kind), kind).toMatchObject({ looked: [`${kind}-foreign.example.test`], word: "host_unresolved" });
+
+      // Copied to another connection of the same account, and to a connection of another account.
+      await copied(source, beside);
+      turns[`${kind}, the same account`] = await turn(mine, beside, kind);
+      await copied(source, foreign);
+      turns[`${kind}, another account`] = await turn(theirs, foreign, kind);
+
+      // The sign-in it was typed for still opens it.
+      expect(await turn(mine, source, kind), kind).toMatchObject({ looked: [`${kind}-source.example.test`] });
+      if (kind === "ics") {
+        // An address typed again is a sign-in whole: it is the refused connection's own, and read at its own host.
+        const again = { address: `https://ics-again.example.test/${marker("mk")}/a.ics` };
+        expect((await mine.call("POST", `/calendar/connections/${beside}/sign-in`, { body: again })).status).toBe(202);
+        expect(await turn(mine, beside, kind), kind).toMatchObject({ looked: ["ics-again.example.test"], word: "host_unresolved" });
+      } else {
+        // A password typed again is half of one: its server is the kept sign-in's, and the text this row holds is
+        // not this connection's. Nothing is sealed for it, and nothing is dialled: the person connects again.
+        const held = await sealedOf(beside);
+        expect(await faultOf(await mine.call("POST", `/calendar/connections/${beside}/sign-in`, { body: { user: "mila", password: marker("pw") } }))).toEqual(CONNECT_AGAIN);
+        await live(beside);
+        expect([await sealedOf(beside), await turn(mine, beside, kind)]).toEqual([held, REFUSED]);
+      }
+    }
+    // It opened for nobody: nothing was looked up on the way to a dial, and each connection waits for its person.
+    expect(turns).toEqual({
+      "caldav, the same account": REFUSED, "caldav, another account": REFUSED, "ics, the same account": REFUSED, "ics, another account": REFUSED,
+    });
+  }, 120_000);
+
+  it("a sealed CalDAV sign-in goes to the server it was typed for and to no other: where the connection's server was moved it opens for nobody, and typed again it is sealed for nobody", async () => {
+    const mine = await doorOn(w);
+    const looked: string[] = [];
+    const nowhere: HostResolver = { resolve: async (name) => { looked.push(name); return []; } };
+    const providers = makeCalendarProviders({
+      clock: { now: () => Date.now() }, zones: ZONES, resolver: nowhere, policy: { kind: "cloud" },
+      enabled: new Set(["ics", "caldav"] as const), microsoft: null, writes: true,
+    });
+    const turn = async (id: string) => {
+      looked.length = 0;
+      const outcome = await calendarSyncPass(depsFor(w, providers), { accountId: mine.s.accountId, id, provider: "caldav", status: "active" }, new AbortController().signal);
+      const [row] = await w.sql<{ status: string; word: string | null }[]>`select status, error_code as word from cal_connections where id = ${id}`;
+      return { ended: outcome.kind, looked: [...new Set(looked)], status: row!.status, word: row!.word };
+    };
+    /** ONE COLUMN, written by somebody who can write rows and holds no key: where the connection's sign-in is sent. Answers what stood there. */
+    const moved = async (id: string, to: string): Promise<string> => {
+      const [was] = await w.sql<{ start: string }[]>`select server_url as start from cal_connections where id = ${id}`;
+      expect((await w.sql`update cal_connections set server_url = ${to} where id = ${id} returning id`).length).toBe(1);
+      return was!.start;
+    };
+    const typedAgain = async (id: string, user: string) =>
+      faultOf(await mine.call("POST", `/calendar/connections/${id}/sign-in`, { body: { user, password: marker("pw") } }));
+    const ELSEWHERE = "https://dav.elsewhere.example.net/";
+    const REFUSED = { ended: "stopped", looked: [], status: "reconnect", word: "sign_in_incomplete" };
+    const seen: Record<string, unknown> = {};
+
+    const ways = [
+      { way: "icloud", host: "caldav.icloud.com", body: { way: "icloud", user: "mila@studio.example.test", password: marker("pw") } },
+      { way: "caldav", host: "dav.studio.example.test", body: { way: "caldav", server: "https://dav.studio.example.test/", user: "mila", password: marker("pw") } },
+    ];
+    for (const { way, host, body } of ways) {
+      const id = await mine.connect(body);
+      // The control: the turn asks for the host the person typed (at iCloud, Apple's own).
+      expect(await turn(id), way).toMatchObject({ looked: [host], word: "host_unresolved" });
+      const sealed = await sealedOf(id);
+      const own = await moved(id, ELSEWHERE);
+      // Typed again before any turn has seen the row: the door seals no server it read off the row.
+      const first = await typedAgain(id, body.user);
+      const afterMove = await turn(id);
+      // The connection now waits for its person, and its record still shows the host that was typed. The person types the password again.
+      const second = await typedAgain(id, body.user);
+      await live(id);
+      seen[way] = { first, afterMove, second, sealedOver: await sealedOf(id) !== sealed, afterAgain: await turn(id) };
+      // And back: with the row's own server put back, the same sealed text opens again. The refusal was the place, not a spoiled text.
+      await moved(id, own);
+      await live(id);
+      expect(await turn(id), way).toMatchObject({ looked: [host], word: "host_unresolved" });
+    }
+    // Nothing was looked up on the way to a dial, nothing was sealed over the kept sign-in, and the door said to connect again.
+    const refusedEverywhere = { first: CONNECT_AGAIN, afterMove: REFUSED, second: CONNECT_AGAIN, sealedOver: false, afterAgain: REFUSED };
+    expect(seen).toEqual({ icloud: refusedEverywhere, caldav: refusedEverywhere });
+  }, 120_000);
+
+  describe("the password itself, at a second server (a person's own network, numbered addresses of this machine)", () => {
+    let typed: StandIn;
+    let other: StandIn;
+    const password = marker("pw");
+    beforeAll(async () => {
+      typed = await startCalDavStandIn({ password });
+      typed.addCalendar("work", { name: "Work" });
+      // A second server that would take the same sign-in: `signedIn` there would say the very password arrived.
+      other = await startCalDavStandIn({ password });
+      other.addCalendar("work", { name: "Work" });
+    });
+    afterAll(async () => {
+      await typed?.close();
+      await other?.close();
+    });
+
+    it("a server the connection's row was moved to hears nothing: not the sealed password, and not one typed again", async () => {
+      const mine = await doorOn(w, "own-network");
+      const nobody: HostResolver = { resolve: async () => [] };
+      const providers = makeCalendarProviders({
+        clock: { now: () => Date.now() }, zones: ZONES, resolver: nobody, policy: { kind: "own-network" },
+        enabled: new Set(["caldav"] as const), microsoft: null, writes: true,
+      });
+      // A memory of its own each turn: every turn lists again, as a worker that just started would.
+      const turn = async (id: string): Promise<string> =>
+        (await calendarSyncPass(depsFor(w, providers), { accountId: mine.s.accountId, id, provider: "caldav", status: "active" }, new AbortController().signal)).kind;
+      const id = await mine.connect({ way: "caldav", server: `http://127.0.0.1:${typed.port}${typed.paths.start}`, user: typed.options.user, password });
+      await turn(id);
+      // The control: the typed server took the password, and the other one heard nothing.
+      expect([typed.seen.some((s) => s.signedIn), other.seen.length]).toEqual([true, 0]);
+      const asked = typed.seen.length;
+
+      await w.sql`update cal_connections set server_url = ${`http://127.0.0.1:${other.port}${other.paths.start}`} where id = ${id}`;
+      const afterMove = await turn(id);
+      const again = await faultOf(await mine.call("POST", `/calendar/connections/${id}/sign-in`, { body: { user: typed.options.user, password } }));
+      await live(id);
+      const afterAgain = await turn(id);
+      // Neither turn dialled anybody, and the door sealed nothing for the moved server: it hears no request at all.
+      expect({ afterMove, again, afterAgain, heard: other.seen.map((s) => `${s.method} ${s.path} signedIn=${s.signedIn}`), typedAskedAgain: typed.seen.length - asked })
+        .toEqual({ afterMove: "stopped", again: CONNECT_AGAIN, afterAgain: "stopped", heard: [], typedAskedAgain: 0 });
+    }, 120_000);
+  });
 
   it("who may: signed out, another account's ids and its key, the calendar off, and after the account's erasure", async () => {
     const mine = await doorOn(w);
@@ -204,14 +388,44 @@ describe.skipIf(!AVAILABLE)("who may act at the connect door, on Postgres", () =
     expect([replayText.includes(their), replayText.includes("feeds.example.test")]).toEqual([false, false]);
     expect((await w.sql`select 1 from cal_connections where account_id = ${mine.s.accountId}`).length).toBe(1);
 
-    // 4. My calendar off with my connection standing: every act refused, nothing written, nothing woken.
+    // 4. My calendar off with two connections standing. Every act but the removal is refused, no way is offered, and nothing is written.
+    const kept = await mine.connect({ way: "ics", address: `https://kept.example.test/${marker("mk")}/a.ics` });
     await w.sql`update cal_settings set enabled_at = null where account_id = ${mine.s.accountId}`;
     const before4 = await snapshot();
     const offs: [number, string | null][] = [];
-    for (const [m, p, b] of six.slice(1)) offs.push(await codeOf(await mine.call(m, p, { body: b, key: randomUUID() })));
-    expect(offs).toEqual(Array.from({ length: 5 }, () => [409, "calendar_off"]));
-    expect(await (await mine.call("GET", "/calendar/connect")).json()).toEqual({ ways: [] });
+    for (const [m, p, b] of six.slice(1).filter(([method]) => method !== "DELETE")) offs.push(await codeOf(await mine.call(m, p, { body: b, key: randomUUID() })));
+    expect(offs).toEqual(Array.from({ length: 4 }, () => [409, "calendar_off"]));
+    // The read names what I hold while the feed sends no calendar record, and nothing of theirs.
+    const held = await (await mine.call("GET", "/calendar/connect")).json() as { ways: string[]; connections: { id: string }[] };
+    expect([held.ways, held.connections.map((c) => c.id).sort()]).toEqual([[], [myId, kept].sort()]);
     expect(await snapshot()).toBe(before4);
+    // The removal is let through: my connection, its calendar and its sealed sign-in are gone.
+    /** The rows a removal of `myId` must leave as they stand: my other connection's and their connection's, sealed sign-ins by digest. */
+    const beside = async (): Promise<string> => JSON.stringify(await w.sql`select c.id, c.status, c.error_code, c.next_poll_at, c.updated_at,
+        md5(k.secret_enc) as sealed, k.key_version
+      from cal_connections c left join cal_credentials k on k.connection_id = c.id and k.account_id = c.account_id
+      where c.id in ${w.sql([kept, their])} order by c.id`);
+    const besideBefore = await beside();
+    const removed = await mine.call("DELETE", `/calendar/connections/${myId}`);
+    expect([removed.status, await removed.json()]).toEqual([200, { removed: true }]);
+    const [left] = await w.sql<{ creds: number; conns: number; cals: number }[]>`select
+      (select count(*)::int from cal_credentials where connection_id = ${myId}) as creds,
+      (select count(*)::int from cal_connections where id = ${myId}) as conns,
+      (select count(*)::int from cal_calendars where connection_id = ${myId}) as cals`;
+    expect(left).toEqual({ creds: 0, conns: 0, cals: 0 });
+    // It woke no reading: nothing beside it was made due or touched, and a turn of what I still hold dials nothing while the calendar is off.
+    expect(await beside()).toBe(besideBefore);
+    const looked: string[] = [];
+    const nowhere: HostResolver = { resolve: async (name) => { looked.push(name); return []; } };
+    const providers = makeCalendarProviders({
+      clock: { now: () => Date.now() }, zones: ZONES, resolver: nowhere, policy: { kind: "cloud" },
+      enabled: new Set(["ics", "caldav"] as const), microsoft: null, writes: true,
+    });
+    const offTurns = [];
+    for (const [id, provider] of [[kept, "ics"], [myId, "caldav"]] as const) {
+      offTurns.push((await calendarSyncPass(depsFor(w, providers), { accountId: mine.s.accountId, id, provider, status: "active" }, new AbortController().signal)).kind);
+    }
+    expect([offTurns, looked]).toEqual([["off", "gone"], []]);
 
     // 5. Their account erased. The controls first: their connection is due, and a turn of it does reach the dial's lookup.
     const shardIndex = Number((await w.sql<{ shard: number }[]>`
@@ -219,12 +433,6 @@ describe.skipIf(!AVAILABLE)("who may act at the connect door, on Postgres", () =
     const roster = async (): Promise<string[]> => (await loadDueConnections(
       calendarPool(w.db), new Date(), ROSTER_LIMIT, (column) => accountShardFilter({ shards: SHARDS, shardIndex }, column),
     )).map((d) => d.id);
-    const looked: string[] = [];
-    const nowhere: HostResolver = { resolve: async (name) => { looked.push(name); return []; } };
-    const providers = makeCalendarProviders({
-      clock: { now: () => Date.now() }, zones: ZONES, resolver: nowhere, policy: { kind: "cloud" },
-      enabled: new Set(["ics", "caldav"] as const), microsoft: null, writes: true,
-    });
     const stale = { accountId: theirs.s.accountId, id: their, provider: "ics" as const, status: "active" as const };
     await calendarSyncPass(depsFor(w, providers), stale, new AbortController().signal);
     expect([...new Set(looked)]).toEqual(["feeds.example.test"]);
@@ -241,7 +449,7 @@ describe.skipIf(!AVAILABLE)("who may act at the connect door, on Postgres", () =
     looked.length = 0;
     const after = await calendarSyncPass(depsFor(w, providers), stale, new AbortController().signal);
     expect([after.kind, looked]).toEqual(["gone", []]);
-    // Mine stands as it stood.
-    expect((await w.sql`select 1 from cal_credentials where account_id = ${mine.s.accountId}`).length).toBe(1);
+    // Mine stands as it stood: the one connection I kept, with its sealed sign-in.
+    expect((await w.sql<{ id: string }[]>`select connection_id as id from cal_credentials where account_id = ${mine.s.accountId}`).map((c) => c.id)).toEqual([kept]);
   }, 180_000);
 });

@@ -15,7 +15,7 @@ import { FETCH_BODY_MAX_BYTES, MAX_URL_CHARS, MAX_VALIDATOR_CHARS } from "../src
 import type { ProviderRefusal } from "../src/refusals.js";
 import { guardedRequest, type GuardDeps } from "../src/request/guarded.js";
 import {
-  fixedHostRequest, namedHostRequest, retryAfterMs, sendableTag, textOf, type HttpAnswer, type HttpPort, type HttpRequest, type HttpResponse,
+  fixedHostRequest, namedHostRequest, retryAfterMs, sendableTag, textOf, type Hop, type HttpAnswer, type HttpPort, type HttpRequest, type HttpResponse,
 } from "../src/request/index.js";
 
 // A public address outside every range the gate refuses. It is only ever handed to a stand-in.
@@ -253,7 +253,7 @@ describe("a redirect is a second address nobody has cleared yet", () => {
 describe("a credential travels only where it is admitted", () => {
   const NAMES = { "caldav.example.test": [PUBLIC], "p01-caldav.example.test": [PUBLIC], "evil.example.test": [PUBLIC] };
   const PASSWORD = ["glaze", "kiln", "slip"].join("-");
-  const auth = { credential: { kind: "basic" as const, user: "mila", password: () => PASSWORD }, admits: (host: string) => host === "caldav.example.test" || host.endsWith(".example.test") && host.startsWith("p01-"), tlsOnly: false };
+  const auth = { credential: { kind: "basic" as const, user: "mila", password: () => PASSWORD }, admits: ({ host }: Hop) => host === "caldav.example.test" || host.endsWith(".example.test") && host.startsWith("p01-"), tlsOnly: false };
   function hosts(redirectTo: string | null) {
     const { resolver } = resolverOf(NAMES);
     const calls: { url: string; headers: Record<string, string> }[] = [];
@@ -285,8 +285,37 @@ describe("a credential travels only where it is admitted", () => {
     expect(direct.calls.length).toBe(0);
   });
 
+  it("asks the sign-in's own rule about every hop: the address's scheme, host and port in one spelling, and the origin whose redirect sent the request there", async () => {
+    const hops: Hop[] = [];
+    const seeing = { ...auth, admits: (to: Hop) => (hops.push(to), true) };
+    const { resolver } = resolverOf(NAMES);
+    const targets = ["https://P01-CalDAV.example.test.:8443/a", "https://evil.example.test/b"];
+    const request = async (_url: string, _opts: PinnedRequestOptions): Promise<PinnedResponse> => {
+      const stream = Readable.from([Buffer.from("ok")]) as unknown as IncomingMessage;
+      const location = targets.shift();
+      return location === undefined ? { status: 207, headers: {}, stream } : { status: 302, headers: { location }, stream };
+    };
+    const port = guardedRequest({ writes: false, resolver, request, policy: { kind: "cloud" }, limits: LIMITS, hosts: null });
+    expect(wordOf(await port.request("https://caldav.example.test/dav/", get({ method: "PROPFIND", body: "<propfind/>", auth: seeing })))).toBe("arrived");
+    expect(hops).toEqual([
+      { host: "caldav.example.test", origin: "https://caldav.example.test", from: null },
+      { host: "p01-caldav.example.test", origin: "https://p01-caldav.example.test:8443", from: "https://caldav.example.test" },
+      { host: "evil.example.test", origin: "https://evil.example.test", from: "https://p01-caldav.example.test:8443" },
+    ]);
+    // And it is the rule's word that decides each hop: one it refuses is not looked up and not asked.
+    const calls: string[] = [];
+    const asked = resolverOf(NAMES);
+    const strict = guardedRequest({
+      writes: false, resolver: asked.resolver, policy: { kind: "cloud" }, limits: LIMITS, hosts: null,
+      request: async (url) => (calls.push(url), { status: 302, headers: { location: "https://caldav.example.test:8443/other-port" }, stream: Readable.from([Buffer.from("")]) as unknown as IncomingMessage }),
+    });
+    const ownOriginOnly = { ...auth, admits: (to: Hop) => to.origin === "https://caldav.example.test" };
+    expect(wordOf(await strict.request("https://caldav.example.test/dav/", get({ method: "PROPFIND", body: "<propfind/>", auth: ownOriginOnly })))).toBe("host_changed");
+    expect([calls, asked.asked]).toEqual([["https://caldav.example.test/dav/"], ["caldav.example.test"]]);
+  });
+
   it("carries a short sign-in as a bearer line, and refuses one that is no token before any request", async () => {
-    const bearer = (token: string) => get({ auth: { credential: { kind: "bearer", token }, admits: (host) => host === "caldav.example.test", tlsOnly: true } });
+    const bearer = (token: string) => get({ auth: { credential: { kind: "bearer", token }, admits: ({ host }) => host === "caldav.example.test", tlsOnly: true } });
     const good = hosts(null);
     await good.port.request("https://caldav.example.test/", bearer("short-lived"));
     expect(good.calls[0]!.headers.authorization).toBe("Bearer short-lived");
@@ -335,7 +364,7 @@ describe("a credential travels only where it is admitted", () => {
 describe("a write leaves only as the port allows it", () => {
   const NAMES = { "caldav.example.test": [PUBLIC], "other.example.test": [PUBLIC] };
   const PASSWORD = ["wheel", "trim", "glaze"].join("-");
-  const auth = { credential: { kind: "basic" as const, user: "mila", password: () => PASSWORD }, admits: (host: string) => host === "caldav.example.test", tlsOnly: true };
+  const auth = { credential: { kind: "basic" as const, user: "mila", password: () => PASSWORD }, admits: ({ host }: Hop) => host === "caldav.example.test", tlsOnly: true };
   const MEMBER = "https://caldav.example.test/calendars/mila/studio/one.ics";
   const TAG = '"6e1a-17"';
   const put = (over: Partial<HttpRequest> = {}): HttpRequest =>

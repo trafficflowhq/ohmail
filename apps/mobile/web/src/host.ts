@@ -81,6 +81,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       firstRunDoor: CANNOT.firstRunDoor,
       mailboxes: CANNOT.mailboxes,
       language: "install",
+      searchBy: CANNOT.searchBy,
       products: CANNOT.products,
     },
     features: {
@@ -89,7 +90,9 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       screener: NONE, help: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
-      reader: NONE,
+      overs: has.frame.overs,
+      reader: has.frame.reader,
+      above: has.frame.above,
       calendar: has.frame.calendar,
     },
     device: {

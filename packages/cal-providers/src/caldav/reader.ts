@@ -13,6 +13,10 @@
  * FIRST listing: an object that changes while the pass runs is then told again by the next round,
  * where a later token would have passed it over.
  *
+ * One thing is kept between the calls of ONE TURN, with the `Connection` object the caller made
+ * for it and gone with that object: the hosts the server itself named, which are the only ones
+ * beside its own that the sign-in travels to (`hosts.ts`).
+ *
  * A listing the server itself cut short is read on only while the server lists it as it did: under
  * the token it handed back, or, where it words that token anew at every answer, with every member
  * handed out so far listed exactly as it was handed out. Otherwise that cut begins again.
@@ -22,9 +26,9 @@ import { DEFAULT_LIMITS, readCalendar } from "@ohmail/cal-core";
 import { CURSOR_MAX_CHARS, MAX_PAGES_PER_CALL, MAX_PAGE_LIMIT, TOKEN_MAX_CHARS } from "../limits.js";
 import type { Answer, CalendarInfo, CalendarReader, ChangeItem, ChangePage, ChangeToken, Connection, LeftReason } from "../port.js";
 import type { AdapterDeps } from "../request/index.js";
-import { addressOf, refuse, type Refused, type Session } from "./ask.js";
+import { addressOf, finding, refuse, tlsAlone, type Refused, type Session } from "./ask.js";
 import { findHomes, findPrincipal, typedAddress, type Typed } from "./discover.js";
-import { credentialHostsFor } from "./hosts.js";
+import { turnHostsOf } from "./hosts.js";
 import { calendarsOf, fetchMembers, listBySync, listByTags, tagOf, type FoundMembers, type Listed, type Listing } from "./report.js";
 
 /**
@@ -143,18 +147,42 @@ function take(member: Listed, found: FoundMembers, items: ChangeItem[], left: Le
   }
 }
 
+/** Where a server says the signed-in person's calendars are, and whether the sign-in had to turn to TLS alone on the way there. */
+type Found = { readonly ok: true; readonly tlsOnly: boolean; readonly principal: string; readonly homes: readonly string[]; readonly addresses: readonly string[] } | Refused;
+
 /**
- * What a call asks with: the typed address read, and the sign-in for the typed host and its
- * siblings. The one builder of a CalDAV sign-in: the reader and the writer both make it here.
+ * The discovery, whole (`discover.ts`, steps 1 to 3): asked of the sealed record's own starts with
+ * the session of the discovery, so that the hosts the server names on the way are the turn's.
+ */
+async function find(s: Session, typed: Typed): Promise<Found> {
+  const who = await findPrincipal(finding(s), typed);
+  if (!who.ok) return who;
+  const homes = await findHomes(who.session, who.principal);
+  if (!homes.ok) return homes;
+  return { ok: true, tlsOnly: who.session.auth.tlsOnly, principal: who.principal, homes: homes.homes, addresses: homes.addresses };
+}
+
+/**
+ * What a call asks with: the typed address read, the sign-in, and the hosts it may travel to in
+ * this turn. THE ONE BUILDER OF A CALDAV SIGN-IN: the reader and the writer both make it here, and
+ * the turn is the caller's `Connection` object (`hosts.ts`).
  */
 export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSignal): { readonly ok: true; readonly session: Session; readonly typed: Typed } | Refused {
   if (c.credential.kind !== "basic") return refuse("sign_in_refused");
   const typed = c.start === null ? null : typedAddress(c.start);
   if (typed === null) return refuse("address_invalid");
-  // Typed with TLS (`secured` is the TLS form of an address typed without): the password then never travels without it,
-  // whatever address a server's answer or a caller's stored calendar names.
-  const auth = { credential: c.credential, admits: credentialHostsFor(typed.host), tlsOnly: typed.secured === null };
-  return { ok: true, typed, session: { deps, signal, auth } };
+  const hosts = turnHostsOf(c, typed);
+  const session: Session = {
+    deps, signal, hosts,
+    // Typed with TLS (`secured` is the TLS form of an address typed without): the password then never travels without it,
+    // whatever address a server's answer or a caller's stored calendar names.
+    auth: { credential: c.credential, admits: hosts.admits, tlsOnly: typed.secured === null },
+    locate: () => hosts.once(async () => {
+      const found = await find(session, typed);
+      return found.ok ? null : found.reason;
+    }),
+  };
+  return { ok: true, typed, session };
 }
 
 export function makeReader(deps: AdapterDeps): CalendarReader {
@@ -163,12 +191,10 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
   async function homesOf(c: Connection, signal: AbortSignal) {
     const opened = open(c, signal);
     if (!opened.ok) return opened;
-    const who = await findPrincipal(opened.session, opened.typed);
-    if (!who.ok) return who;
-    // The session the principal was found with: it may have become one for TLS alone on the way.
-    const homes = await findHomes(who.session, who.principal);
-    if (!homes.ok) return homes;
-    return { ok: true as const, session: who.session, principal: who.principal, homes: homes.homes, addresses: homes.addresses };
+    const found = await find(opened.session, opened.typed);
+    if (!found.ok) return found;
+    // Where the discovery had to turn to TLS, the rest of the call keeps to it.
+    return { ...found, session: found.tlsOnly ? tlsAlone(opened.session) : opened.session };
   }
 
   return {

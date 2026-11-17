@@ -501,6 +501,11 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
   // refusal a fact about the database rather than a hope about callers — this classification and
   // that constraint's `SCHEMA_CHECK_MARKERS` entry land in the same commit, 0053's pairing.
   "account_settings.theme_face",
+  // mail 0210 — CHECK `subject_heading in ('head','each')`. `theme_face`'s bucket and argument: two words
+  // this repository enumerated, chosen by the account's owner or taken from the mailbox's settings copy
+  // only as one of the two, so no mail server, sender or message puts a value here, and
+  // `account_settings_subject_heading_closed` makes the refusal a fact about the database.
+  "account_settings.subject_heading",
   // mail 0083 — CHECK `screening_scope IN ('window','all_time')`. `theme_face`'s bucket and
   // `theme_face`'s argument member for member: two literals this repo enumerated, chosen by the
   // account owner on the first-run window screen (and in Settings after it), and
@@ -908,6 +913,12 @@ const UNSEEDED_TABLES: readonly string[] = [
   // `mailbox_storage_stats`, holds no text column and so is no part of this sweep.)
   "account_storage_prefs",
   "storage_mail_sent",
+  // Cloud 0105, a calendar's notice channels, which the worker's notice pass writes. Unseeded: its
+  // text columns are a provider's word the pass writes (`google`, `microsoft`), a channel's id of 36
+  // characters, a SHA-256 the pass computes, and the provider's own opaque name for what a channel
+  // watches. Nothing a person, a sender or a letter wrote reaches any of them. The staff role is
+  // granted nothing on the table, and no staff read selects it.
+  "cal_push_channels",
   // ── Tables nothing writes yet (`packages/db/test/_unwritten-tables.ts`): no account has a row,
   //    so there is nothing a staff surface could show. That list is held to the tree; a table's
   //    first writer takes it off, and it then arrives here unseeded and red.

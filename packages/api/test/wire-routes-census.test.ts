@@ -4,6 +4,7 @@ import { localRoutes } from "../src/local.js";
 import { selfHostRoutes } from "../src/routes/self-host.js";
 import { desktopHostRoutes } from "../src/routes/desktop-host.js";
 import { calendarRoutes } from "../src/calendar/index.js";
+import { calendarNoticeRoutes } from "../src/routes/calendar-notices.js";
 import type { Route } from "../src/router.js";
 import { SERVER_ONLY_ROUTES, UNBOUND_CALLS, WIRE_ROUTES } from "../src/wire-routes.js";
 
@@ -25,6 +26,8 @@ const TABLES: ReadonlyArray<readonly [string, readonly Route[]]> = [
   ["desktopHostRoutes", desktopHostRoutes],
   // Mounted beside either server table by a composition that keeps a calendar.
   ["calendarRoutes", calendarRoutes],
+  // The two routes a calendar's provider rings, mounted with the calendar's by a server.
+  ["calendarNoticeRoutes", calendarNoticeRoutes],
 ];
 const key = (r: { method: string; pattern: string }) => `${r.method.toUpperCase()} ${r.pattern}`;
 const everyRoute = TABLES.flatMap(([, routes]) => routes);
@@ -76,9 +79,9 @@ describe("every mounted route is bound, called unbound, or the server's alone", 
     ]);
   });
 
-  it("gives every server-only route one of the five reasons", () => {
+  it("gives every server-only route one of the six reasons", () => {
     expect(Object.entries(SERVER_ONLY_ROUTES).filter(([, why]) =>
-      !["operator", "platform", "site", "no-caller-found", "client-pending"].includes(why))).toEqual([]);
+      !["operator", "platform", "provider", "site", "no-caller-found", "client-pending"].includes(why))).toEqual([]);
   });
 });
 

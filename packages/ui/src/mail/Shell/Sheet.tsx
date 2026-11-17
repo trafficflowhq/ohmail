@@ -41,6 +41,15 @@ interface ReadingProps {
 export type SheetProps = PaperProps | ReadingProps;
 
 /**
+ * The box a reading column's sheets scroll in, found under `root` (the column itself, or anything around it):
+ * for a part that does not draw the column and still walks into the open letter or reads how far it is scrolled.
+ * Whoever draws the column takes the same box by `scroller`.
+ */
+export function readingScroller(root: ParentNode | null | undefined): HTMLElement | null {
+  return root?.querySelector<HTMLElement>("[data-reading-scroll]") ?? null;
+}
+
+/**
  * What belongs together lies on one sheet. A sheet never lies on a sheet.
  *
  * As a reading column the sheets stand on the ground, at a reading width in a wide window, and the
@@ -83,7 +92,7 @@ export function Sheet(props: SheetProps) {
       ) : null}
       <div className="oh-sheet-body">
         <div className="oh-sheet-gutter">{gutter}</div>
-        <div ref={scroller} className="oh-sheet-scroll" tabIndex={-1}>
+        <div ref={scroller} className="oh-sheet-scroll" data-reading-scroll="" tabIndex={-1}>
           {head}
           <div className="oh-sheet-run">{children}</div>
         </div>

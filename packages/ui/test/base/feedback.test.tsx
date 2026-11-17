@@ -1,10 +1,13 @@
 /** @vitest-environment jsdom */
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { useState } from "react";
+import { createRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Button,
+  CameraSquare,
+  Counters,
   Empty,
+  Mark,
   Notice,
   NoticeSlot,
   Opening,
@@ -195,6 +198,46 @@ describe("Report", () => {
     );
     expect(onGone).toHaveBeenCalledTimes(1);
   });
+
+  it("takes a press on its way back while it fades, and says that it is gone only when the fade's time has run", () => {
+    /* A fade with a length where no sheet is loaded: its time, and an animation that ends by the case's clock. */
+    const fade = document.createElement("style");
+    fade.textContent = ".oh-report{--d-hush:700ms}";
+    document.head.append(fade);
+    const browsers = Element.prototype.animate;
+    Element.prototype.animate = function (_frames, timing) {
+      let end: ReturnType<typeof setTimeout> | undefined;
+      return {
+        cancel: () => clearTimeout(end),
+        addEventListener: (_event: string, done: () => void) => {
+          end = setTimeout(done, (timing as KeyframeAnimationOptions).duration as number);
+        },
+      } as unknown as Animation;
+    };
+    vi.useFakeTimers();
+    try {
+      const [undo, onGone] = [vi.fn(), vi.fn()];
+      const way = { label: "Undo", onPress: undo };
+      const { rerender } = render(<Report undo={way}>Moved</Report>);
+      rerender(
+        <Report leaving onGone={onGone} undo={way}>
+          Moved
+        </Report>,
+      );
+      vi.advanceTimersByTime(100);
+      expect(onGone).not.toHaveBeenCalled();
+      const back = screen.getByRole("button", { name: "Undo" });
+      expect(back.closest("[data-leaving]")).toBe(screen.getByRole("status"));
+      fireEvent.click(back);
+      expect(undo).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(600);
+      expect(onGone).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      Element.prototype.animate = browsers;
+      fade.remove();
+    }
+  });
 });
 
 describe("Empty, WaitRow, RefusalLine", () => {
@@ -230,6 +273,41 @@ describe("Empty, WaitRow, RefusalLine", () => {
   it("the mark is named as the product's name with its full stop", () => {
     render(<Empty mark="oh" label="6 decided" />);
     expect(screen.getByLabelText("oh.")).toBeTruthy();
+  });
+
+  it("an empty place draws the kit's one mark: the same node a page's mark is, hot while something waits", () => {
+    const { container } = render(<Empty mark="oh" hot label="6 waiting" />);
+    const inPlace = screen.getByLabelText("oh.");
+    const dot = inPlace.querySelector("i");
+    const drawn = [inPlace.tagName, inPlace.className, dot?.className, dot?.getAttribute("data-kind")];
+    cleanup();
+    render(<Mark hot>oh</Mark>);
+    const alone = screen.getByLabelText("oh.");
+    const stop = alone.querySelector("i");
+    expect(drawn).toEqual([alone.tagName, alone.className, stop?.className, stop?.getAttribute("data-kind")]);
+    expect(container.isConnected).toBe(false);
+  });
+
+  it("an empty place's one answer carries the key that runs it beside its word, where the place hands one", () => {
+    const go = vi.fn();
+    render(
+      <Empty
+        mark="oh"
+        label="6 decided"
+        act={{ label: "Ohbox", kind: "ink", keyHint: "g o", onPress: go }}
+      />,
+    );
+    const way = screen.getByRole("button");
+    expect(screen.getByRole("button", { name: "Ohbox" })).toBe(way);
+    expect(within(way).getByText("g o").tagName).toBe("KBD");
+    expect(way.textContent).toBe("Ohboxg o");
+    fireEvent.click(way);
+    expect(go).toHaveBeenCalledTimes(1);
+    /* A way on that goes to an address carries its key the same way. */
+    cleanup();
+    render(<Empty label="No mail yet" act={{ label: "Connect", keyHint: "c", href: "/join" }} />);
+    expect(screen.getByRole("link").textContent).toBe("Connectc");
+    expect(screen.getByRole("link", { name: "Connect" })).toBeTruthy();
   });
 
   it("a waiting row is a list item with what, about which letter, why and its own answers", () => {
@@ -306,6 +384,26 @@ describe("Page and Opening", () => {
     expect(within(page).getByRole("button", { name: "Sign in" })).toBeTruthy();
   });
 
+  it("draws a note that stands without a heavy line over it: what explains is never left out unsaid", () => {
+    render(
+      <Page note="Nothing is sent." acts={<Button size="l">Go on</Button>}>
+        <Sentence size="xl" level={1}>
+          Confirm my email address
+        </Sentence>
+      </Page>,
+    );
+    const page = screen.getByRole("main");
+    expect(within(page).getByText("Nothing is sent.")).toBeTruthy();
+    /* It stands between the sentence and the buttons, where the line it would explain stands. */
+    const [said, note, act] = [
+      within(page).getByRole("heading"),
+      within(page).getByText("Nothing is sent."),
+      within(page).getByRole("button", { name: "Go on" }),
+    ];
+    expect(said.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(note.compareDocumentPosition(act) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("a page of two columns whose sentence column is taller than its body says it folded; one that fits says nothing", () => {
     /* jsdom lays nothing out: the body's two columns and its heights are what a browser would answer. */
     let tall = true;
@@ -370,6 +468,75 @@ describe("Page and Opening", () => {
     expect(screen.queryByRole("status")).toBeNull();
     rerender(<Opening kind="phone" status={{ label: "Updating the mail store", count: "3 of 12" }} />);
     expect(screen.getByRole("status").textContent).toBe("Updating the mail store3 of 12");
+  });
+});
+
+describe("Counters", () => {
+  it("is a list of figures, each a numeral said with its words, which end in the dot: hot until it settles", () => {
+    const { container } = render(
+      <Counters
+        size="xl"
+        rows={[
+          { id: "screened", figure: "1,204", words: "screened", end: "hot" },
+          { id: "history", figure: "380", words: "in History", end: "ink" },
+        ]}
+      />,
+    );
+    const figures = [...container.querySelectorAll("dt")].map((dt) => dt.textContent);
+    const words = [...container.querySelectorAll("dd")].map((dd) => dd.textContent);
+    expect(figures).toEqual(["1,204", "380"]);
+    expect(words).toEqual(["screened", "in History"]);
+    /* A figure can be found by the id it was handed. The id is an anchor: a count rises by the figure handed next. */
+    expect(container.querySelector("#screened")?.textContent).toBe("1,204");
+    /* Each line ends in its own dot, and the last word never parts from it. */
+    const dots = [...container.querySelectorAll("dd [aria-hidden='true']")];
+    expect(dots).toHaveLength(2);
+    expect(dots.map((dot) => dot.getAttribute("data-kind"))).toEqual(["hot", "ink"]);
+  });
+
+  it("counts up by the figure it is handed next, in the numeral that stood there", () => {
+    const row = { id: "screened", words: "screened", end: "hot" as const };
+    const { container, rerender } = render(<Counters rows={[{ ...row, figure: "1,204" }]} />);
+    const numeral = container.querySelector("#screened");
+    rerender(<Counters rows={[{ ...row, figure: "1,205" }]} />);
+    expect(container.querySelector("#screened")).toBe(numeral);
+    expect(numeral?.textContent).toBe("1,205");
+  });
+
+  it("holds nothing where there is nothing to count", () => {
+    const { container } = render(<Counters rows={[]} />);
+    expect(container.querySelector("dl")).toBeNull();
+  });
+});
+
+describe("CameraSquare", () => {
+  it("is a picture named by its label, and hands its own box to whoever stands the camera in it", () => {
+    const box = createRef<HTMLDivElement>();
+    render(<CameraSquare state="live" label="Camera" boxRef={box} />);
+    const square = screen.getByRole("img", { name: "Camera" });
+    expect(box.current).toBe(square);
+    /* Its corners and its dot are drawn and never said; it holds no word and nothing the keys could reach. */
+    expect(square.textContent).toBe("");
+    expect([...square.children].every((mark) => mark.getAttribute("aria-hidden") === "true")).toBe(true);
+    expect(square.querySelector("button, a, input, [tabindex]")).toBeNull();
+    expect(square.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("draws four corners in either state, and the hot dot only while the camera looks", () => {
+    const { rerender } = render(<CameraSquare state="live" label="Camera" />);
+    const marks = () => [...screen.getByRole("img").children].map((mark) => mark.getAttribute("data-kind"));
+    expect(marks()).toEqual([null, null, null, null, "hot"]);
+    rerender(<CameraSquare state="off" label="Camera off" />);
+    expect(screen.getByRole("img", { name: "Camera off" })).toBeTruthy();
+    expect(marks()).toEqual([null, null, null, null]);
+  });
+
+  it("keeps its box when its state changes: the camera's place does not move under it", () => {
+    const box = createRef<HTMLDivElement>();
+    const { rerender } = render(<CameraSquare state="off" label="Camera off" boxRef={box} />);
+    const was = box.current;
+    rerender(<CameraSquare state="live" label="Camera" boxRef={box} />);
+    expect(box.current).toBe(was);
   });
 });
 

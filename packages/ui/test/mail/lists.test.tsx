@@ -11,11 +11,18 @@ import {
   ListLine,
   ListTail,
   MonthRail,
+  PullMark,
   ReadSquares,
   SelectionBar,
+  TickList,
+  type TickPerson,
 } from "../../src/mail/index.js";
+import { Seg } from "../../src/base/index.js";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("ListHead", () => {
   it("is the heading of its list, with the list's tools beside it", () => {
@@ -106,6 +113,71 @@ describe("ListHead, a place of one person or one pile", () => {
     expect(screen.getByRole("banner").textContent).toBe("Drafts");
     rerender(<ListHead title="Petra Wyss" meta="petra@makersfest.example" />);
     expect(within(screen.getByRole("banner")).getByText("petra@makersfest.example")).toBeTruthy();
+  });
+});
+
+describe("ListHead, a place with sections", () => {
+  const sections = (onChange?: (value: string) => void) => (
+    <Seg
+      label="Screener sections"
+      value="waiting"
+      onChange={onChange}
+      options={[
+        { value: "waiting", label: "Waiting", count: 6 },
+        { value: "screened", label: "Screened out", count: 2 },
+        { value: "spam", label: "Spam", count: 1 },
+      ]}
+    />
+  );
+
+  it("holds the place's sections as their own group in the head, and a press on one says which", () => {
+    const onChange = vi.fn();
+    render(<ListHead title="Screener" hot sections={sections(onChange)} />);
+    const head = screen.getByRole("banner");
+    expect(within(head).getByRole("heading", { level: 1, name: "Screener" })).toBeTruthy();
+    const group = within(head).getByRole("group", { name: "Screener sections" });
+    expect(
+      within(group)
+        .getByRole("button", { name: /Waiting/ })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    fireEvent.click(within(group).getByRole("button", { name: /Screened out/ }));
+    expect(onChange.mock.calls).toEqual([["screened"]]);
+  });
+
+  it("stands the sections before the list's tools, and draws no room for tools where none are handed", () => {
+    const { container, rerender } = render(<ListHead title="Screener" sections={sections()} />);
+    const head = screen.getByRole("banner");
+    /* The name, then the sections: nothing else stands in the head. */
+    expect([...head.children].map((el) => el.tagName)).toEqual(["H1", "DIV"]);
+    rerender(<ListHead title="Screener" sections={sections()} aside={<button type="button">More</button>} />);
+    const [group, tool] = [screen.getByRole("group"), screen.getByRole("button", { name: "More" })];
+    expect(group.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelectorAll("header").length).toBe(1);
+  });
+});
+
+describe("PullMark", () => {
+  const mark = (c: HTMLElement) => c.firstElementChild as HTMLElement;
+
+  it("is a mark for the eye alone, there as soon as the list is pulled and whole once letting go will pull", () => {
+    const { container, rerender } = render(<PullMark pulled={0} armed={false} />);
+    expect(mark(container).getAttribute("aria-hidden")).toBe("true");
+    expect(mark(container).style.opacity).toBe("0");
+    rerender(<PullMark pulled={10} armed={false} />);
+    expect(mark(container).style.opacity).toBe("0.5");
+    expect(mark(container).hasAttribute("data-armed")).toBe(false);
+    rerender(<PullMark pulled={64} armed />);
+    expect(mark(container).style.opacity).toBe("1");
+    expect(mark(container).hasAttribute("data-armed")).toBe(true);
+  });
+
+  it("stands in the middle of the room the pull has opened, and grows to its size as the pull arms", () => {
+    const { container, rerender } = render(<PullMark pulled={32} armed={false} />);
+    /* The reference: its middle half the room down, at 0.35 of its size growing to 1 at 64. */
+    expect(mark(container).style.transform).toBe("translateY(calc(16px - 50%)) scale(0.675)");
+    rerender(<PullMark pulled={103.4} armed />);
+    expect(mark(container).style.transform).toBe("translateY(calc(51.7px - 50%)) scale(1)");
   });
 });
 
@@ -225,6 +297,43 @@ describe("GroupHeading, with a control of the group's own", () => {
   });
 });
 
+describe("what arrives later takes nobody's place", () => {
+  it("a heading keeps the keys on its own button when a control of the group's own arrives, and when it goes", () => {
+    const { rerender } = render(<GroupHeading expanded>Results</GroupHeading>);
+    const fold = screen.getByRole("button", { name: /Results/ });
+    fold.focus();
+    rerender(
+      <GroupHeading expanded aside={<button type="button">Best match</button>}>
+        Results
+      </GroupHeading>,
+    );
+    expect(screen.getByRole("button", { name: /Results/ })).toBe(fold);
+    expect(document.activeElement).toBe(fold);
+    rerender(<GroupHeading expanded>Results</GroupHeading>);
+    expect(document.activeElement).toBe(fold);
+  });
+
+  it("a list keeps its rows, and the keys on one, when the steps through its time arrive", () => {
+    const rows = <button type="button">A letter</button>;
+    const { rerender } = render(
+      <MonthRail label="Jump to a month" entries={[]}>
+        {rows}
+      </MonthRail>,
+    );
+    const row = screen.getByRole("button", { name: "A letter" });
+    row.focus();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    rerender(
+      <MonthRail label="Jump to a month" entries={[{ id: "2026-11", label: "Nov" }]}>
+        {rows}
+      </MonthRail>,
+    );
+    expect(screen.getByRole("navigation", { name: "Jump to a month" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "A letter" })).toBe(row);
+    expect(document.activeElement).toBe(row);
+  });
+});
+
 describe("ListTail", () => {
   it("is one line with one word that can be pressed", () => {
     const onPress = vi.fn();
@@ -245,11 +354,21 @@ describe("ListLine", () => {
     expect(line.closest("p")!.hasAttribute("role")).toBe(false);
   });
 
-  it("says what the list is reading as a status that is busy", () => {
+  it("says what the list is reading as a status, and never holds it back as busy", () => {
     render(<ListLine busy>Loading more senders…</ListLine>);
     const line = screen.getByRole("status");
     expect(line.textContent).toBe("Loading more senders…");
-    expect(line.getAttribute("aria-busy")).toBe("true");
+    /* A live region that says it is busy asks a screen reader to wait with what it holds. */
+    expect(line.hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("says a verdict when it appears: a status that is neither a refusal nor a reading", () => {
+    render(<ListLine said>Nothing in Junk matches.</ListLine>);
+    const line = screen.getByRole("status");
+    expect(line.textContent).toBe("Nothing in Junk matches.");
+    expect(line.hasAttribute("aria-busy")).toBe(false);
+    /* No warning sign: nothing was refused. */
+    expect(line.querySelector("svg")).toBeNull();
   });
 
   it("says a refusal as a status, with the one press that tries again", () => {
@@ -402,6 +521,76 @@ describe("FolderShelf", () => {
     expect(screen.queryByRole("button", { name: "Gartenlokal Rosa" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Folders" }));
     expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("two folders of one name", () => {
+  it("on the shelf each says which it is, small after its name, for the eye and for a screen reader", () => {
+    const onOpen = vi.fn();
+    render(
+      <FolderShelf
+        label="Folders"
+        expanded
+        onOpen={onOpen}
+        folders={[
+          { id: "k/angebote", name: "Angebote", hint: "Kunden" },
+          {
+            id: "p/angebote",
+            name: "Angebote",
+            hint: "Privat",
+            count: "2",
+            label: "Angebote in Privat, 2 unread",
+          },
+          { id: "team", name: "Team" },
+        ]}
+      />,
+    );
+    const first = screen.getByRole("button", { name: "Angebote, Kunden" });
+    expect(within(first).getByText("Kunden").tagName).toBe("SMALL");
+    /* A name the app hands whole stands as handed. */
+    const second = screen.getByRole("button", { name: "Angebote in Privat, 2 unread" });
+    expect(within(second).getByText("Privat").tagName).toBe("SMALL");
+    fireEvent.click(second);
+    expect(onOpen).toHaveBeenCalledWith("p/angebote");
+    /* A folder that needs no telling apart draws none. */
+    expect(screen.getByRole("button", { name: "Team" }).querySelector("small")).toBeNull();
+  });
+
+  it("keeps the count it shows in the name it makes itself, on the shelf and in the fold", () => {
+    render(
+      <>
+        <FolderShelf
+          label="Folders"
+          expanded
+          folders={[{ id: "k/angebote", name: "Angebote", hint: "Kunden", count: "3" }]}
+        />
+        <FolderFold
+          label="All folders"
+          groups={[{ folders: [{ id: "p/angebote", name: "Angebote", hint: "Privat", count: "2" }] }]}
+        />
+      </>,
+    );
+    expect(within(screen.getByRole("button", { name: "Angebote, Kunden, 3" })).getByText("3")).toBeTruthy();
+    expect(within(screen.getByRole("button", { name: "Angebote, Privat, 2" })).getByText("2")).toBeTruthy();
+  });
+
+  it("in the fold a hit of the find line says its way after its name", () => {
+    render(
+      <FolderFold
+        label="All folders"
+        groups={[
+          {
+            folders: [
+              { id: "k/g/angebote", name: "Angebote", hint: "Kunden › Gastronomie" },
+              { id: "archiv", name: "Archiv" },
+            ],
+          },
+        ]}
+      />,
+    );
+    const hit = screen.getByRole("button", { name: "Angebote, Kunden › Gastronomie" });
+    expect(within(hit).getByText("Kunden › Gastronomie").tagName).toBe("SMALL");
+    expect(screen.getByRole("button", { name: "Archiv" }).querySelector("small")).toBeNull();
   });
 });
 
@@ -571,5 +760,164 @@ describe("AccountRow", () => {
     expect(off.disabled).toBe(true);
     fireEvent.click(off);
     expect([onPress.mock.calls.length, onToggle.mock.calls.length]).toEqual([0, 0]);
+  });
+});
+
+describe("ListLine, a quiet press wider than its line", () => {
+  it("marks its press to take a second line only while its words are wider than its box, and never a press that is no word", () => {
+    /* jsdom lays nothing out: the words need 300 px, and the room is what the case says. */
+    let room = 400;
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(300);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => room);
+    const line = (quiet: boolean) => (
+      <ListLine act={{ label: "Auch den Spam-Ordner deines Mailservers durchsuchen", quiet }}>
+        Nichts passt.
+      </ListLine>
+    );
+    const { rerender } = render(line(true));
+    const folds = () => screen.getByRole("button").dataset.fold !== undefined;
+    expect(folds()).toBe(false);
+    room = 250;
+    rerender(line(true));
+    expect(folds()).toBe(true);
+    room = 400;
+    rerender(line(true));
+    expect(folds()).toBe(false);
+    /* A second button keeps its one line whatever the room. */
+    room = 250;
+    rerender(line(false));
+    expect(folds()).toBe(false);
+  });
+});
+
+/**
+ * PEOPLE TO TICK: a count as the list's own head, a field to find one, all or none, and every person a checkbox
+ * with its tick at the row's end. Once the ticks are taken nothing takes a press any more.
+ */
+describe("TickList", () => {
+  const PEOPLE: TickPerson[] = [
+    {
+      id: "lena",
+      name: "Lena Kaufmann",
+      address: "lena@lichtgrat.example",
+      count: "12×",
+      said: "12 messages",
+      on: true,
+    },
+    {
+      id: "ben",
+      name: "Ben Frei",
+      address: "ben@paperbird.example",
+      count: "3×",
+      said: "3 messages",
+      on: false,
+    },
+    {
+      id: "mila",
+      name: "Mila Brunner",
+      address: "mila@studio.example",
+      count: "1×",
+      said: "1 message",
+      on: true,
+    },
+  ];
+  const list = (more: Partial<Parameters<typeof TickList>[0]> = {}) => (
+    <TickList figure="7" words="people you wrote to" label="People you wrote to" people={PEOPLE} {...more} />
+  );
+  const ticks = () =>
+    within(screen.getByRole("group", { name: "People you wrote to" })).getAllByRole("checkbox");
+
+  it("is a named group of checkboxes: each a person, ticked or not, named by who it is, how many letters in words, and the address", () => {
+    render(list());
+    const group = screen.getByRole("group", { name: "People you wrote to" });
+    /* The address may break after its @: a reader of names hears it whole either way. */
+    expect(
+      [
+        /^Lena Kaufmann 12 messages lena@ ?lichtgrat\.example$/,
+        /^Ben Frei 3 messages ben@ ?paperbird\.example$/,
+        /^Mila Brunner 1 message mila@ ?studio\.example$/,
+      ].map((name) => within(group).getByRole("checkbox", { name }).getAttribute("aria-checked")),
+    ).toEqual(["true", "false", "true"]);
+    /* What a row shows: the name, how many letters as they are printed, the address. */
+    expect(within(ticks()[1]!).getByText("Ben Frei")).toBeTruthy();
+    expect(within(ticks()[1]!).getByText("3×")).toBeTruthy();
+    /* The figure is a picture named by its words: no name is hung on a plain box, and nothing says "3×". */
+    expect(within(ticks()[1]!).getByRole("img", { name: "3 messages" }).textContent).toBe("3×");
+    expect(ticks()[1]!.textContent).toContain("ben@paperbird.example");
+    /* The tick is drawn at the row's end, never said. */
+    expect(ticks().map((tick) => tick.querySelector(":scope > i svg")?.getAttribute("aria-hidden"))).toEqual([
+      "true",
+      "true",
+      "true",
+    ]);
+  });
+
+  it("a press ticks a person, and so do Space and Enter with the keys on the row", () => {
+    const onTick = vi.fn();
+    render(list({ onTick }));
+    fireEvent.click(ticks()[1]!);
+    ticks()[0]!.focus();
+    fireEvent.keyDown(ticks()[0]!, { key: " " });
+    fireEvent.keyDown(ticks()[2]!, { key: "Enter" });
+    expect(onTick.mock.calls).toEqual([["ben"], ["lena"], ["mila"]]);
+    expect(ticks().map((tick) => tick.tabIndex)).toEqual([0, 0, 0]);
+  });
+
+  it("its head is the count with its words, a field that finds one, and one press for all or none", () => {
+    const [onChange, onPress] = [vi.fn(), vi.fn()];
+    render(
+      list({
+        find: { label: "Find someone", placeholder: "Find", value: "", onChange },
+        all: { label: "None", onPress },
+      }),
+    );
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("7 people you wrote to");
+    const find = screen.getByRole("textbox", { name: "Find someone" }) as HTMLInputElement;
+    expect(find.placeholder).toBe("Find");
+    fireEvent.change(find, { target: { value: "le" } });
+    expect(onChange.mock.calls).toEqual([["le"]]);
+    fireEvent.click(screen.getByRole("button", { name: "None" }));
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("the ticks taken, no row takes a press, each says it is off, and the find field and the press for all are gone", () => {
+    const onTick = vi.fn();
+    render(
+      list({
+        onTick,
+        settled: true,
+        find: { label: "Find someone", placeholder: "Find", value: "" },
+        all: { label: "None" },
+      }),
+    );
+    expect(
+      ticks().map((tick) => [tick.getAttribute("aria-checked"), tick.getAttribute("aria-disabled")]),
+    ).toEqual([
+      ["true", "true"],
+      ["false", "true"],
+      ["true", "true"],
+    ]);
+    fireEvent.click(ticks()[0]!);
+    fireEvent.keyDown(ticks()[1]!, { key: " " });
+    expect(onTick).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+    /* A person who was let in ends in the dot; one who was not, in nothing. No tick is left. */
+    const end = (tick: HTMLElement) => tick.querySelector(":scope > i")!;
+    expect(
+      ticks().map((tick) => [end(tick).children.length, end(tick).querySelectorAll("svg").length]),
+    ).toEqual([
+      [1, 0],
+      [0, 0],
+      [1, 0],
+    ]);
+  });
+
+  it("with nobody found it keeps its head and holds no row", () => {
+    render(list({ people: [] }));
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("7 people you wrote to");
+    expect(
+      within(screen.getByRole("group", { name: "People you wrote to" })).queryAllByRole("checkbox"),
+    ).toEqual([]);
   });
 });

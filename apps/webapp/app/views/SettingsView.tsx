@@ -14,7 +14,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { useTranslations } from "next-intl";
 import {
   DEFAULT_CHANNELS,
-  DELIVERABLE_EVENTS,
   channelsAreLive,
   type Folder,
   type NoticePermission,
@@ -59,6 +58,7 @@ import {
   type NotificationHost,
   type PushSyncOutcome,
 } from "../shell/notification-settings";
+import { NONE } from "@ohmail/app/host";
 import { isDemoOwned } from "@ohmail/app-logic/storage/storage-owner";
 import { useTodaysScope } from "../shell/todays-scope";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
@@ -176,7 +176,7 @@ function TagRow({
   t: ReturnType<typeof useTranslations<"settings">>;
 }) {
   const [mode, setMode] = useState<RowMode>({ kind: "rest" });
-  const hue = hueOf(tag);
+  const hue = hueOf(tag, TAG_HUES);
 
   if (mode.kind === "rename") {
     const next = mode.draft.trim();
@@ -190,7 +190,7 @@ function TagRow({
     };
     return (
       <div className="set-row set-tag-edit">
-        <TagDot hue={hueOf(tag)} />
+        <TagDot hue={hueOf(tag, TAG_HUES)} />
         <TextField
           className="set-tag-input"
           autoFocus
@@ -1172,16 +1172,15 @@ export function SettingsView({
                       />
                     }
                   />
-                  {/* The four events, and the identifying-details switch, appear only while the
-                      master is live. Rendering them under a dead master would offer four controls
-                      that cannot change anything — the same shape one row up. */}
+                  {/* The events appear only while the master is live. Rendering them under a dead
+                      master would offer controls that cannot change anything — the same shape one
+                      row up. */}
                   {channelsAreLive(notifyChannels, notifyPermission) ? (
                     <>
-                      {/* ONLY THE EVENTS SOMETHING CAN ACTUALLY DELIVER. The other three are
-                          modelled by the gate and reach no emitter yet, so offering their
-                          switches would put three controls on screen whose every position means
-                          the same thing — which is what this pane replaced. */}
-                      {NOTIFY_ROWS.filter((r) => DELIVERABLE_EVENTS.includes(r.key)).map((r) => (
+                      {/* ONLY THE KINDS THIS SURFACE'S EMITTER DRAWS (its `carries`). A kind it does
+                          not draw would put a control on screen whose every position means the
+                          same thing; a host that hands in no emitter offers none. */}
+                      {NOTIFY_ROWS.filter((r) => notificationHost.emitter !== NONE && notificationHost.emitter.carries.includes(r.key)).map((r) => (
                         <SettingsRow
                           key={r.key}
                           label={t(r.label)}
@@ -1197,21 +1196,6 @@ export function SettingsView({
                           }
                         />
                       ))}
-                      <SettingsRow
-                        label={t("notifyIdentify")}
-                        description={t("notifyIdentifyWhy")}
-                        control={
-                          <Switch
-                            checked={notifyChannels.showSenderAndSubject}
-                            ariaLabel={t("notifyIdentify")}
-                            onChange={(v) =>
-                              setNotify(
-                                { ...notifyChannels, showSenderAndSubject: v }, notifyPermission,
-                              )
-                            }
-                          />
-                        }
-                      />
                     </>
                   ) : null}
                   {/* THE OS STATE, SAID PLAINLY. `denied` names the system settings as the place

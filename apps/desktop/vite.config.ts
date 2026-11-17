@@ -857,6 +857,7 @@ export default defineConfig({
       // The design's sheets and values (the kit's), ABOVE the bare name: `find` matches as a path prefix.
       { find: "@ohmail/tokens/design.css", replacement: r("../../packages/tokens/src/design/tokens.css") },
       { find: "@ohmail/tokens/design/motion.css", replacement: r("../../packages/tokens/src/design/motion.css") },
+      { find: "@ohmail/tokens/design/fonts.css", replacement: r("../../packages/tokens/src/design/fonts.css") },
       { find: "@ohmail/tokens/design", replacement: r("../../packages/tokens/src/design/tokens.ts") },
       { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },
       /* The sample adapter's entry, which the shared shell's demo arm imports. It resolves to
@@ -882,6 +883,8 @@ export default defineConfig({
       { find: "@ohmail/ui/base", replacement: r("../../packages/ui/src/base/index.ts") },
       { find: "@ohmail/ui/mail", replacement: r("../../packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui/squares-window", replacement: r("../../packages/ui/src/squares-window.ts") },
+      // The kit's calendar parts: the reader's return menu picks its day with them.
+      { find: "@ohmail/ui/calendar", replacement: r("../../packages/ui/src/calendar/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
       /* Behaviour without a screen: a folder's door, then a file by its own name. `tsconfig.json`'s
          `paths` carries the same pair, and the host contract's line under it. */
@@ -894,13 +897,21 @@ export default defineConfig({
       { find: /^@ohmail\/letter-body$/, replacement: r("../../packages/letter-body/src/index.ts") },
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
+      { find: "@ohmail/app/mail/ground", replacement: r("../../packages/app/src/mail/ground/index.ts") },
+      { find: "@ohmail/app/mail", replacement: r("../../packages/app/src/mail/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
+      // The reader the seated Ohbox mounts, its letter's body above its door: the web shell's reader parts read both.
+      { find: "@ohmail/app/reader/body", replacement: r("../../packages/app/src/reader/body/index.ts") },
+      { find: "@ohmail/app/reader", replacement: r("../../packages/app/src/reader/index.ts") },
       // The letter editor's schema, marks and commands, each by its own file: the web shell's editor reads them.
       { find: "@ohmail/app/write/editor/schema", replacement: r("../../packages/app/src/write/editor/schema.ts") },
       { find: "@ohmail/app/write/editor/commands", replacement: r("../../packages/app/src/write/editor/commands.ts") },
       { find: "@ohmail/app/write/editor/marks", replacement: r("../../packages/app/src/write/editor/marks.ts") },
+      { find: "@ohmail/app/search", replacement: r("../../packages/app/src/search/index.ts") },
+      { find: "@ohmail/app/palette", replacement: r("../../packages/app/src/palette/index.ts") },
       /* The text reader, and the translator it builds on, from this install: no root install stands beside the package
          when the platform jobs build this window. */
       { find: "@ohmail/app/text/fill", replacement: r("../../packages/app/src/text/fill.ts") },

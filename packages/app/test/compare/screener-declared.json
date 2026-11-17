@@ -1,0 +1,2843 @@
+[
+  {
+    "keys": [
+      "screen=screener&state=partial",
+      "screen=screener&state=partial-old",
+      "screen=screener&state=partial&who=0"
+    ],
+    "class": "not-in-2.0",
+    "notDrawn": "state",
+    "reason": "The degraded Screener (everyone in the Screener folder shown while the screening settings are not read): Z70 leaves it out of 2.0.",
+    "since": "2026-11-16",
+    "removedBy": "never: Z70 (removals takes its logic out)"
+  },
+  {
+    "keys": [
+      "open=spam-0&screen=screener&sec=spam&verb=delete",
+      "screen=screener&sec=spam&told=spamdeleted&verb=delete"
+    ],
+    "class": "not-in-2.0",
+    "notDrawn": "state",
+    "reason": "Delete beside Not spam on a sender in Spam: Z70 leaves it out of 2.0.",
+    "since": "2026-11-16",
+    "removedBy": "never: Z70 (removals takes its logic out)"
+  },
+  {
+    "keys": [
+      "screen=screener&sec=junk&state=nofolder",
+      "screen=screener&sec=junk&state=shelfcut",
+      "screen=screener&sec=junk&state=sweep",
+      "screen=screener&sec=junk&state=sweepask",
+      "screen=screener&sec=junk&state=sweepqueued",
+      "screen=screener&sec=junk&state=sweepdone",
+      "screen=screener&sec=junk&state=sweepfailed",
+      "screen=screener&sec=junk&state=sweepstays"
+    ],
+    "class": "not-in-2.0",
+    "notDrawn": "state",
+    "reason": "The Quarantine shelf under Junk and the one-time offer to move it (its sweep): Z70 leaves both out of 2.0. Junk's own line for a mailbox with no Junk folder is drawn (the window's sentence) and held by the place's tests.",
+    "since": "2026-11-16",
+    "removedBy": "never: Z70 (removals keeps the sweep's routes until ruled)"
+  },
+  {
+    "keys": [
+      "open=scr-lena&screen=screener&words=dotted",
+      "open=scr-lena&panel=icons&screen=screener",
+      "open=scr-jackpot&panel=both&screen=screener"
+    ],
+    "class": "demo-option",
+    "notDrawn": "state",
+    "reason": "The reference's own options for how pressable words and the panel's verbs look; no product setting draws them, and the default (words underlined, verbs as words) is the drawn state.",
+    "since": "2026-11-16",
+    "removedBy": "never: an option of the reference"
+  },
+  {
+    "keys": [
+      "device=duo&open=scr-lena&posture=folded&screen=screener",
+      "device=duo&open=scr-lena&posture=folded&screen=screener&turn=1",
+      "device=duo&open=scr-lena&posture=open&screen=screener",
+      "device=duo&open=scr-lena&posture=land&screen=screener",
+      "device=duo&open=scr-lena&posture=table&screen=screener",
+      "device=book&open=scr-lena&posture=folded&screen=screener",
+      "device=book&open=scr-lena&posture=folded&screen=screener&turn=1",
+      "device=book&open=scr-lena&posture=open&screen=screener",
+      "device=book&open=scr-lena&posture=land&screen=screener",
+      "device=book&open=scr-lena&posture=table&screen=screener"
+    ],
+    "class": "posture",
+    "notDrawn": "state",
+    "reason": "A posture of a folding phone (folded, open, laid flat, on a table, turned): the states page stands the frame in a window of a phone, a foldable or a computer, never a posture.",
+    "since": "2026-11-16",
+    "removedBy": "phone-touch"
+  },
+  {
+    "keys": ["letters=designed&open=mm-kino&screen=screener"],
+    "class": "designed-letter",
+    "notDrawn": "state",
+    "reason": "A held letter drawn as its sender designed it: the body is the reader's part, handed to the Screener as it is handed to the reader.",
+    "since": "2026-11-16",
+    "removedBy": "reader (the body part)"
+  },
+  {
+    "keys": [
+      "said=toolatescr&screen=screener",
+      "open=scr-lena&org=pending&press=decide&screen=screener",
+      "open=scr-lena&org=refused&press=decide&screen=screener&who=mac",
+      "open=scr-lena&org=nobody&press=decide&screen=screener",
+      "screen=screener&sec=junk&state=live&told=junkleft",
+      "screen=screener&sec=junk&state=live&told=junkallowed",
+      "screen=screener&sec=junk&state=live&told=junknotasked",
+      "open=spam-0&screen=screener&sec=junk&state=notmoved&told=junknotcleared"
+    ],
+    "class": "frame-report",
+    "notDrawn": "state",
+    "reason": "What a press reports after it (too late to screen, queued for the organizer, refused, nobody organizes, left in Junk, asked for, not asked for, not saved): the model's and the Junk window's sentence in the frame's report; the place under it is the state without the report, which is compared.",
+    "since": "2026-11-16",
+    "removedBy": "failures (the frame's report, by theme)"
+  },
+  {
+    "keys": ["open=none&screen=screener"],
+    "class": "first-open",
+    "notDrawn": "state",
+    "reason": "The queue with nobody open: the place opens the first sender as 1.0.11 does, and stands with nobody open only after a decision leaves none (drawn as screen=screener&state=clear).",
+    "since": "2026-11-16",
+    "removedBy": "never: 1.0.11's behaviour"
+  },
+  {
+    "keys": ["open=scr-lena&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-toess&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-jackpot&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-marco&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-cinderl0ck&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-lena&screen=screener&show=slot"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-lena&screen=screener&show=menu"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-paperbird&screen=screener&show=card"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-paperbird&screen=screener&show=more"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&show=filter"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&show=suggest"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&show=allspam"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["did=1&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=screened"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "P fashion-deals.example 8 held 12 Oct Mid-season sale: up to 70% off",
+        "as": "fashion-deals.example: Mid-season sale: up to 70% off",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "N old-forum.example 2 held 3 Sep 3 new replies in “Router configuration”",
+        "as": "old-forum.example: 3 new replies in “Router configuration”",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=spam"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Auto-detected Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=junk"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["queue=60&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "S Sandro Keller sandro@schlosserei-keller.example 08:58 Brackets for the kiln shelf I can weld the four brackets by Friday. Raw steel or powder-coated? Ohbox Ch…",
+        "as": "Sandro Keller: Brackets for the kiln shelf",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "E Elif Aydin elif@schulhaus-lindenhof.example 08:21 A class visit in January? I teach art to two classes of sixteen. Could they visit the studio and throw one b…",
+        "as": "Elif Aydin: A class visit in January?",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H Henrik Voss henrik@nordlicht-galerie.example 08:05 Group show in May Six makers, four weeks, 35% commission. Applications are open until January. Choose",
+        "as": "Henrik Voss: Group show in May",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "N Noemi Graf noemi@graf-floristik.example 07:49 Vases for the shop window Ohbox Choose a place",
+        "as": "Noemi Graf: Vases for the shop window",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "D Dealwelle offers@dealwelle.example 07:31 Black week starts now: 60% off Screen out Choose a place",
+        "as": "Dealwelle: Black week starts now: 60% off",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Tonwerk Supply orders@tonwerk-supply.example 07:15 Order 88213: 40 kg stoneware Receipts Choose a place",
+        "as": "Tonwerk Supply: Order 88213: 40 kg stoneware",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "B Bergwetter morgen@bergwetter.example 2 held 07:00 Föhn on Tuesday Warm and dry until Wednesday evening, then rain from the west. News Choose a place",
+        "as": "Bergwetter: Föhn on Tuesday",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["only=news&queue=60&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "B Bergwetter morgen@bergwetter.example 2 held 07:00 Föhn on Tuesday Warm and dry until Wednesday evening, then rain from the west. News Choose a place",
+        "as": "Bergwetter: Föhn on Tuesday",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Tonpost wochenbrief@tonpost.example 3 held 06:40 Issue 212: ash glazes from the garden News Choose a place",
+        "as": "Tonpost: Issue 212: ash glazes from the garden",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "W Werkbank Weekly hello@werkbankweekly.example 06:02 Five jigs worth building A centring jig, a handle jig and three you have not thought of. News Choose a plac…",
+        "as": "Werkbank Weekly: Five jigs worth building",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "S Studio Ledger notes@studioledger.example 05:30 Pricing handmade work in 2027 News Choose a place",
+        "as": "Studio Ledger: Pricing handmade work in 2027",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "F Formfrage brief@formfrage.example yesterday Why handles fail Three joints under a microscope, and the one that held. News Choose a place",
+        "as": "Formfrage: Why handles fail",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "K Kiln Notes letters@kilnnotes.example yesterday Cone 6 in an old kiln A reader fired forty loads in a kiln from 1994. Her schedule is inside. News Choose a pla…",
+        "as": "Kiln Notes: Cone 6 in an old kiln",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marktblatt redaktion@marktblatt.example yesterday Advent markets: the full list News Choose a place",
+        "as": "Marktblatt: Advent markets: the full list",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "S Slow Type letters@slowtype.example yesterday A typeface cut in linoleum Twenty-six letters, one blade, four weekends. News Choose a place",
+        "as": "Slow Type: A typeface cut in linoleum",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&state=reader"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Your address was selected: 3 free spins and a 200% bonus are waiting. Valid…",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Electricity for the studio, 1 to 31 October: CHF 118.40, due 30 November. The bil…",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&state=held"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["device=phone&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo 06:58 You have won 3 free spins Your address was selected: 3 free spins and a 200% bonus are waiting. Valid for 24 hours only. Screen out",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Electricity for the studio, 1 to 31 October: CHF 118.40, due 30 November. The bil…",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Your Cinderlock account was temporarily restricted. To lift the restriction, con…",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 We saw your work in the Makersfest programme and woul…",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["device=fold&open=scr-lena&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. News",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo 06:58 You have won 3 free spins Your address was selected: 3 free spins and a 200% bonus are waiting. Valid for 24 hours only. Screen out",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie 06:15 Your October bill is ready Electricity for the studio, 1 to 31 October: CHF 118.40, due 30 November. The bill is attached as a PDF. Receipt…",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security yesterday Your account has been restricted Your Cinderlock account was temporarily restricted. To lift the restriction, confirm your detai…",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["device=foldl&open=scr-lena&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo 06:58 You have won 3 free spins Your address was selected: 3 free spins and a 200% bonus are waiting. Valid for 24 hours only. Screen out",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie 06:15 Your October bill is ready Electricity for the studio, 1 to 31 October: CHF 118.40, due 30 November. The bill is attached as a PDF. Receipt…",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["face=ohmarchy&open=scr-lena&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo 06:58 You have won 3 free spins Your address was selected: 3 free spins and a 200% bonus are waiting. Valid for 24 hours only. Screen out C…",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Electricity for the studio, 1 to 31 October: CHF 118.40, due 30 November. The bil…",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Your Cinderlock account was temporarily restricted. To lift the restriction, con…",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 We saw your work in the Makersfest programme and would like to invite Lichtgrat to…",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-lena&scheme=dark&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["face=ohmarchy&open=scr-lena&scheme=dark&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo 06:58 You have won 3 free spins Your address was selected: 3 free spins and a 200% bonus are waiting. Valid for 24 hours only. Screen out C…",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Electricity for the studio, 1 to 31 October: CHF 118.40, due 30 November. The bil…",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Your Cinderlock account was temporarily restricted. To lift the restriction, con…",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 We saw your work in the Makersfest programme and would like to invite Lichtgrat to…",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-lena&org=pending&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-lena&org=refused&screen=screener&who=mac"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=scr-lena&org=nobody&screen=screener"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=junk&state=live"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "S konto-check.example Mail server yesterday Confirm your account within 24 hours",
+        "as": "service@konto-check.example: Confirm your account within 24 hours",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "D megarabatt.example Mail server Sun Designer watches, 90% off today",
+        "as": "deals@megarabatt.example: Designer watches, 90% off today",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P lotto-gewinn.example Your verdict Fri You are our winner of the week",
+        "as": "post@lotto-gewinn.example: You are our winner of the week",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H speicher-voll.example Mail server Thu Your mailbox is 99% full",
+        "as": "hinweis@speicher-voll.example: Your mailbox is 99% full",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=junk&state=older"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "S konto-check.example Mail server yesterday Confirm your account within 24 hours",
+        "as": "service@konto-check.example: Confirm your account within 24 hours",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "D megarabatt.example Mail server Sun Designer watches, 90% off today",
+        "as": "deals@megarabatt.example: Designer watches, 90% off today",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P lotto-gewinn.example Your verdict Fri You are our winner of the week",
+        "as": "post@lotto-gewinn.example: You are our winner of the week",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H speicher-voll.example Mail server Thu Your mailbox is 99% full",
+        "as": "hinweis@speicher-voll.example: Your mailbox is 99% full",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=junk&state=away"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "S konto-check.example Mail server yesterday Confirm your account within 24 hours",
+        "as": "service@konto-check.example: Confirm your account within 24 hours",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "D megarabatt.example Mail server Sun Designer watches, 90% off today",
+        "as": "deals@megarabatt.example: Designer watches, 90% off today",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P lotto-gewinn.example Your verdict Fri You are our winner of the week",
+        "as": "post@lotto-gewinn.example: You are our winner of the week",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H speicher-voll.example Mail server Thu Your mailbox is 99% full",
+        "as": "hinweis@speicher-voll.example: Your mailbox is 99% full",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=junk&state=find-more"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=junk&state=find-found"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P sommer-los.example Mail server 18 Sep Claim your prize before Friday",
+        "as": "prize@sommer-los.example: Claim your prize before Friday",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "I reise-gewinn.example Mail server 2 Aug Prize draw: you were selected",
+        "as": "info@reise-gewinn.example: Prize draw: you were selected",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=junk&state=find-cut"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P sommer-los.example Mail server 18 Sep Claim your prize before Friday",
+        "as": "prize@sommer-los.example: Claim your prize before Friday",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "I reise-gewinn.example Mail server 2 Aug Prize draw: you were selected",
+        "as": "info@reise-gewinn.example: Prize draw: you were selected",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&sec=junk&state=find-away"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P sommer-los.example Mail server 18 Sep Claim your prize before Friday",
+        "as": "prize@sommer-los.example: Claim your prize before Friday",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "I reise-gewinn.example Mail server 2 Aug Prize draw: you were selected",
+        "as": "info@reise-gewinn.example: Prize draw: you were selected",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=spam-0&screen=screener&sec=junk&state=letter"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "S konto-check.example Mail server yesterday Confirm your account within 24 hours",
+        "as": "service@konto-check.example: Confirm your account within 24 hours",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "D megarabatt.example Mail server Sun Designer watches, 90% off today",
+        "as": "deals@megarabatt.example: Designer watches, 90% off today",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P lotto-gewinn.example Your verdict Fri You are our winner of the week",
+        "as": "post@lotto-gewinn.example: You are our winner of the week",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H speicher-voll.example Mail server Thu Your mailbox is 99% full",
+        "as": "hinweis@speicher-voll.example: Your mailbox is 99% full",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=spam-0&screen=screener&sec=junk&state=letter-reading"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "S konto-check.example Mail server yesterday Confirm your account within 24 hours",
+        "as": "service@konto-check.example: Confirm your account within 24 hours",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "D megarabatt.example Mail server Sun Designer watches, 90% off today",
+        "as": "deals@megarabatt.example: Designer watches, 90% off today",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P lotto-gewinn.example Your verdict Fri You are our winner of the week",
+        "as": "post@lotto-gewinn.example: You are our winner of the week",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H speicher-voll.example Mail server Thu Your mailbox is 99% full",
+        "as": "hinweis@speicher-voll.example: Your mailbox is 99% full",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=spam-0&screen=screener&sec=junk&state=letter-failed"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "S konto-check.example Mail server yesterday Confirm your account within 24 hours",
+        "as": "service@konto-check.example: Confirm your account within 24 hours",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "D megarabatt.example Mail server Sun Designer watches, 90% off today",
+        "as": "deals@megarabatt.example: Designer watches, 90% off today",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P lotto-gewinn.example Your verdict Fri You are our winner of the week",
+        "as": "post@lotto-gewinn.example: You are our winner of the week",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H speicher-voll.example Mail server Thu Your mailbox is 99% full",
+        "as": "hinweis@speicher-voll.example: Your mailbox is 99% full",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=spam-0&screen=screener&sec=junk&state=moving"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "S konto-check.example To your inbox yesterday Confirm your account within 24 hours",
+        "as": "service@konto-check.example: Confirm your account within 24 hours",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "D megarabatt.example Mail server Sun Designer watches, 90% off today",
+        "as": "deals@megarabatt.example: Designer watches, 90% off today",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P lotto-gewinn.example Your verdict Fri You are our winner of the week",
+        "as": "post@lotto-gewinn.example: You are our winner of the week",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H speicher-voll.example Mail server Thu Your mailbox is 99% full",
+        "as": "hinweis@speicher-voll.example: Your mailbox is 99% full",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=spam-0&screen=screener&sec=junk&state=notmoved"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Junk",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "S konto-check.example Not moved yesterday Confirm your account within 24 hours",
+        "as": "service@konto-check.example: Confirm your account within 24 hours",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "D megarabatt.example Mail server Sun Designer watches, 90% off today",
+        "as": "deals@megarabatt.example: Designer watches, 90% off today",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P lotto-gewinn.example Your verdict Fri You are our winner of the week",
+        "as": "post@lotto-gewinn.example: You are our winner of the week",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H speicher-voll.example Mail server Thu Your mailbox is 99% full",
+        "as": "hinweis@speicher-voll.example: Your mailbox is 99% full",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C win-invest.example Your verdict Tue 3 Nov Your Bitcoin prize is waiting",
+        "as": "crypto-bonus@win-invest.example: Your Bitcoin prize is waiting",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["queue=60&screen=screener&state=more"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "B Bahnbillett tickets@bahnbillett.example Fri Your ticket: Winterthur to Bern, 19 November Receipts Choose a place",
+        "as": "Bahnbillett: Your ticket: Winterthur to Bern, 19 November",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "U Umfragepanel panel@umfragepanel.example Fri Vouchers for your opinion Screen out Choose a place",
+        "as": "Umfragepanel: Vouchers for your opinion",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Tom Aebi tom@lehmbau-aebi.example Fri Leftover clay, free to collect We have 300 kg of red clay from a building site. Yours if you fetch it. Choose",
+        "as": "Tom Aebi: Leftover clay, free to collect",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "L Lesekreis post@lesekreis.example Fri The January book is chosen News Choose a place",
+        "as": "Lesekreis: The January book is chosen",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H Hefe & Zeit brot@hefeundzeit.example Thu Sourdough in a cold kitchen News Choose a place",
+        "as": "Hefe & Zeit: Sourdough in a cold kitchen",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "O Ofenbau Marti buero@ofenbau-marti.example Thu Kiln element: invoice 2026-311 Receipts Choose a place",
+        "as": "Ofenbau Marti: Kiln element: invoice 2026-311",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "R Reiseschnapper deals@reiseschnapper.example Thu Mallorca from CHF 199 Screen out Choose a place",
+        "as": "Reiseschnapper: Mallorca from CHF 199",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "F Farbkreis studio@farbkreis.example Thu Sage, moss, lichen: three greens News Choose a place",
+        "as": "Farbkreis: Sage, moss, lichen: three greens",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Markthalle Lind stand@markthalle-lind.example 5 Nov Stand fee for the Advent market Receipts Choose a place",
+        "as": "Markthalle Lind: Stand fee for the Advent market",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Machergilde news@machergilde.example 5 Nov Members’ evening, 3 December News Choose a place",
+        "as": "Machergilde: Members’ evening, 3 December",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["queue=60&screen=screener&state=more-loading"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "B Bahnbillett tickets@bahnbillett.example Fri Your ticket: Winterthur to Bern, 19 November Receipts Choose a place",
+        "as": "Bahnbillett: Your ticket: Winterthur to Bern, 19 November",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "U Umfragepanel panel@umfragepanel.example Fri Vouchers for your opinion Screen out Choose a place",
+        "as": "Umfragepanel: Vouchers for your opinion",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Tom Aebi tom@lehmbau-aebi.example Fri Leftover clay, free to collect We have 300 kg of red clay from a building site. Yours if you fetch it. Choose",
+        "as": "Tom Aebi: Leftover clay, free to collect",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "L Lesekreis post@lesekreis.example Fri The January book is chosen News Choose a place",
+        "as": "Lesekreis: The January book is chosen",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H Hefe & Zeit brot@hefeundzeit.example Thu Sourdough in a cold kitchen News Choose a place",
+        "as": "Hefe & Zeit: Sourdough in a cold kitchen",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "O Ofenbau Marti buero@ofenbau-marti.example Thu Kiln element: invoice 2026-311 Receipts Choose a place",
+        "as": "Ofenbau Marti: Kiln element: invoice 2026-311",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "R Reiseschnapper deals@reiseschnapper.example Thu Mallorca from CHF 199 Screen out Choose a place",
+        "as": "Reiseschnapper: Mallorca from CHF 199",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "F Farbkreis studio@farbkreis.example Thu Sage, moss, lichen: three greens News Choose a place",
+        "as": "Farbkreis: Sage, moss, lichen: three greens",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Markthalle Lind stand@markthalle-lind.example 5 Nov Stand fee for the Advent market Receipts Choose a place",
+        "as": "Markthalle Lind: Stand fee for the Advent market",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Machergilde news@machergilde.example 5 Nov Members’ evening, 3 December News Choose a place",
+        "as": "Machergilde: Members’ evening, 3 December",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["queue=60&screen=screener&state=more-failed"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "B Bahnbillett tickets@bahnbillett.example Fri Your ticket: Winterthur to Bern, 19 November Receipts Choose a place",
+        "as": "Bahnbillett: Your ticket: Winterthur to Bern, 19 November",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "U Umfragepanel panel@umfragepanel.example Fri Vouchers for your opinion Screen out Choose a place",
+        "as": "Umfragepanel: Vouchers for your opinion",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Tom Aebi tom@lehmbau-aebi.example Fri Leftover clay, free to collect We have 300 kg of red clay from a building site. Yours if you fetch it. Choose",
+        "as": "Tom Aebi: Leftover clay, free to collect",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "L Lesekreis post@lesekreis.example Fri The January book is chosen News Choose a place",
+        "as": "Lesekreis: The January book is chosen",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "H Hefe & Zeit brot@hefeundzeit.example Thu Sourdough in a cold kitchen News Choose a place",
+        "as": "Hefe & Zeit: Sourdough in a cold kitchen",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "O Ofenbau Marti buero@ofenbau-marti.example Thu Kiln element: invoice 2026-311 Receipts Choose a place",
+        "as": "Ofenbau Marti: Kiln element: invoice 2026-311",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "R Reiseschnapper deals@reiseschnapper.example Thu Mallorca from CHF 199 Screen out Choose a place",
+        "as": "Reiseschnapper: Mallorca from CHF 199",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "F Farbkreis studio@farbkreis.example Thu Sage, moss, lichen: three greens News Choose a place",
+        "as": "Farbkreis: Sage, moss, lichen: three greens",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Markthalle Lind stand@markthalle-lind.example 5 Nov Stand fee for the Advent market Receipts Choose a place",
+        "as": "Markthalle Lind: Stand fee for the Advent market",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Machergilde news@machergilde.example 5 Nov Members’ evening, 3 December News Choose a place",
+        "as": "Machergilde: Members’ evening, 3 December",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["oauth=1&screen=screener&state=reader"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Your address was selected: 3 free spins and a 200% bonus are waiting. Valid…",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Electricity for the studio, 1 to 31 October: CHF 118.40, due 30 November. The bil…",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=none&screen=screener&state=failed"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Messages that failed the sender check",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "M Mila Brunner Check failed 08:12 Payment advice: transfer of CHF 1,480 Please find the payment advice attached and confirm the transfer today.",
+        "as": "Mila Brunner: Payment advice: transfer of CHF 1,480",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "G Giulia Ferrari Check failed yesterday New bank details for invoice 2291 Our bank has changed. Please use the account below for the open invoice.",
+        "as": "Giulia Ferrari: New bank details for invoice 2291",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=mmf-own&screen=screener&state=failed"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Messages that failed the sender check",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "M Mila Brunner Check failed 08:12 Payment advice: transfer of CHF 1,480 Please find the payment advice attached and confirm the transfer today.",
+        "as": "Mila Brunner: Payment advice: transfer of CHF 1,480",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "G Giulia Ferrari Check failed yesterday New bank details for invoice 2291 Our bank has changed. Please use the account below for the open invoice.",
+        "as": "Giulia Ferrari: New bank details for invoice 2291",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["open=mmf-giulia&screen=screener&state=failed"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Messages that failed the sender check",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "M Mila Brunner Check failed 08:12 Payment advice: transfer of CHF 1,480 Please find the payment advice attached and confirm the transfer today.",
+        "as": "Mila Brunner: Payment advice: transfer of CHF 1,480",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "G Giulia Ferrari Check failed yesterday New bank details for invoice 2291 Our bank has changed. Please use the account below for the open invoice.",
+        "as": "Giulia Ferrari: New bank details for invoice 2291",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&state=claimed"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&state=claimed-list"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&state=claimed&told=claimedasked"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["screen=screener&state=claimed&told=claimedfailed"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["how=cloud&open=scr-jackpot&screen=screener&show=unsub"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": ["how=computer&open=scr-jackpot&screen=screener&show=unsub"],
+    "class": "kit-rows",
+    "pairs": [
+      {
+        "role": "list",
+        "name": "",
+        "as": "Screener",
+        "asRole": "listbox"
+      },
+      {
+        "role": "button",
+        "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+        "as": "Lena Kaufmann: One more thing",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "P Paperbird team@mail.paperbird.example 07:26 Welcome to Paperbird Your notebook is ready. Here are the three things most new members do in their first week. Ne…",
+        "as": "Paperbird: Welcome to Paperbird",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "J JackpotJodel Promo win@jackpotjodel-alerts.example 06:58 You have won 3 free spins Screen out Choose a place",
+        "as": "JackpotJodel Promo: You have won 3 free spins",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "T Töss Energie rechnung@toess-energie.example 06:15 Your October bill is ready Receipts Choose a place",
+        "as": "Töss Energie: Your October bill is ready",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Security Not Cinderlock yesterday Your account has been restricted Spam Choose a place",
+        "as": "Cinderlock Security: Your account has been restricted",
+        "asRole": "option"
+      },
+      {
+        "role": "button",
+        "name": "M Marco Bianchi marco@fiera-ceramica.example yesterday Exhibit at Fiera della Ceramica, Faenza, March 2027 Choose",
+        "as": "Marco Bianchi: Exhibit at Fiera della Ceramica, Faenza, March 2027",
+        "asRole": "option"
+      }
+    ],
+    "reason": "A row is an option of a named listbox, named \"Sender: Subject\" and walked by the keys (what the shipped rows tell a screen reader; the kit's Row in a listbox), where the reference draws a list of buttons; the Ohbox's rows stand declared the same.",
+    "since": "2026-11-17",
+    "removedBy": "never: the shipped rows' names"
+  },
+  {
+    "keys": [
+      "device=fold&open=scr-lena&screen=screener",
+      "device=foldl&open=scr-lena&screen=screener",
+      "device=phone&screen=screener",
+      "did=1&screen=screener",
+      "face=ohmarchy&open=scr-lena&scheme=dark&screen=screener",
+      "face=ohmarchy&open=scr-lena&screen=screener",
+      "how=cloud&open=scr-jackpot&screen=screener&show=unsub",
+      "how=computer&open=scr-jackpot&screen=screener&show=unsub",
+      "oauth=1&screen=screener&state=reader",
+      "only=news&queue=60&screen=screener",
+      "open=mmf-giulia&screen=screener&state=failed",
+      "open=mmf-own&screen=screener&state=failed",
+      "open=none&screen=screener&state=failed",
+      "open=none&screen=screener&state=importing",
+      "open=none&screen=screener&state=listing",
+      "open=scr-cinderl0ck&screen=screener",
+      "open=scr-jackpot&screen=screener",
+      "open=scr-lena&org=nobody&screen=screener",
+      "open=scr-lena&org=pending&screen=screener",
+      "open=scr-lena&org=refused&screen=screener&who=mac",
+      "open=scr-lena&scheme=dark&screen=screener",
+      "open=scr-lena&screen=screener",
+      "open=scr-lena&screen=screener&show=menu",
+      "open=scr-lena&screen=screener&show=slot",
+      "open=scr-marco&screen=screener",
+      "open=scr-paperbird&screen=screener&show=card",
+      "open=scr-paperbird&screen=screener&show=more",
+      "open=scr-toess&screen=screener",
+      "open=spam-0&screen=screener&sec=junk&state=letter",
+      "open=spam-0&screen=screener&sec=junk&state=letter-failed",
+      "open=spam-0&screen=screener&sec=junk&state=letter-reading",
+      "open=spam-0&screen=screener&sec=junk&state=moving",
+      "open=spam-0&screen=screener&sec=junk&state=notmoved",
+      "queue=60&screen=screener",
+      "queue=60&screen=screener&state=more",
+      "queue=60&screen=screener&state=more-failed",
+      "queue=60&screen=screener&state=more-loading",
+      "screen=screener&sec=junk",
+      "screen=screener&sec=junk&state=away",
+      "screen=screener&sec=junk&state=empty",
+      "screen=screener&sec=junk&state=find-away",
+      "screen=screener&sec=junk&state=find-cut",
+      "screen=screener&sec=junk&state=find-failed",
+      "screen=screener&sec=junk&state=find-found",
+      "screen=screener&sec=junk&state=find-more",
+      "screen=screener&sec=junk&state=find-none",
+      "screen=screener&sec=junk&state=find-nothing",
+      "screen=screener&sec=junk&state=find-server",
+      "screen=screener&sec=junk&state=live",
+      "screen=screener&sec=junk&state=older",
+      "screen=screener&sec=junk&state=reading",
+      "screen=screener&sec=junk&state=unread",
+      "screen=screener&sec=screened",
+      "screen=screener&sec=spam",
+      "screen=screener&show=allspam",
+      "screen=screener&show=filter",
+      "screen=screener&show=suggest",
+      "screen=screener&state=claimed",
+      "screen=screener&state=claimed&told=claimedasked",
+      "screen=screener&state=claimed&told=claimedfailed",
+      "screen=screener&state=claimed-list",
+      "screen=screener&state=clear",
+      "screen=screener&state=held",
+      "screen=screener&state=reader"
+    ],
+    "class": "shipped-name",
+    "pairs": [
+      {
+        "role": "group",
+        "name": "Sections",
+        "as": "Screener sections"
+      }
+    ],
+    "reason": "The three sections keep the group name 1.0.11 gives them (\"Screener sections\", what a screen reader is told and the journeys find), where the reference names the group \"Sections\".",
+    "since": "2026-11-16",
+    "removedBy": "never: the shipped name"
+  }
+]

@@ -449,7 +449,6 @@
     "bootCompacting": "Compacting your local mail store — one-time maintenance…",
     "errorUnknown": "Something went wrong and said nothing about what.",
     "errorRefused": "The request was refused ({status}).",
-    "notifyNewMail": "{count, plural, one {One new message for you.} other {# new messages for you.}}",
     "doorHostName": "Another computer",
     "doorHostSay": "ohmail on another computer of yours organizes; this {machine} works through it. While that computer is off, this one shows its copy and can change nothing.",
     "doorHostUnavailable": "Pairing with another computer isn't available in this version yet.",

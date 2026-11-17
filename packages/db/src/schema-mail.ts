@@ -2787,6 +2787,15 @@ export const accountSettings = pgTable("account_settings", {
    * read reads as off. LAST: `ADD COLUMN` appends and the twins are compared in order.
    */
   impersonationFilingOffAt: timestamp("impersonation_filing_off_at", { withTimezone: true }),
+  /**
+   * Mail 0210 — where a conversation's subject stands in the reader, as the person stated it: `'head'`
+   * or `'each'`, with the instant of the statement; both NULL = nothing stated, which reads as `'head'`.
+   * The pair travels in the mailbox's settings copy and the later instant holds on every install.
+   * Written only through `preferences.ts` (the press and the adoption); the CHECKs live in the
+   * migration. LAST: `ADD COLUMN` appends and the twins are compared in order.
+   */
+  subjectHeading: text("subject_heading"),
+  subjectHeadingAt: timestamp("subject_heading_at", { withTimezone: true }),
 });
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -2870,7 +2879,6 @@ export const calCalendars = pgTable("cal_calendars", {
   color: text("color"),
   access: text("access").notNull().default("reader"),
   shown: boolean("shown").notNull().default(true),
-  isDefault: boolean("is_default").notNull().default(false),
   timeZone: text("time_zone"),
   syncToken: text("sync_token"),
   fetchEtag: text("fetch_etag"),

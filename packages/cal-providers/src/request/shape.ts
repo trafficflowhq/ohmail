@@ -71,3 +71,30 @@ export function shapeRefusal(
     return "address_not_allowed";
   }
 }
+
+/**
+ * An address's origin in one spelling: its scheme, its host in lower case without a root dot, and
+ * its port where that is not the scheme's own. Whether two addresses are one server's is asked of
+ * this text and of no other, by the port and by every rule on where a sign-in may travel.
+ */
+export const originOf = (url: URL): string =>
+  `${url.protocol}//${canonicalHost(url.hostname)}${url.port === "" ? "" : `:${url.port}`}`;
+
+/**
+ * One address a request is about to be sent to, as the port asks whether a sign-in may travel
+ * there: the address the caller asked for, or one a redirect sent the request on to.
+ */
+export interface Hop {
+  /** The host in lower case and without a root dot. */
+  readonly host: string;
+  /** The address's {@link originOf}. */
+  readonly origin: string;
+  /** The origin whose answer sent the request on to this address; `null` for the address the caller asked for. */
+  readonly from: string | null;
+}
+
+export const hopOf = (url: URL, from: string | null): Hop => ({
+  host: canonicalHost(url.hostname),
+  origin: originOf(url),
+  from,
+});

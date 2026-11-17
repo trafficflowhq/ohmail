@@ -1,4 +1,7 @@
-/* What was done, as a pill on the solid ground, with the way back at its right. What holds it places it. */
+/*
+ * What was done, as a pill on the solid ground, with the way back at its right. What holds it places it.
+ * While it leaves it fades for the eye and still takes a press: the way back works until the report is gone.
+ */
 @layer oh {
   .oh-report {
     --oh-report-pad: 0 var(--s2) 0 var(--s5);
@@ -14,9 +17,6 @@
     color: var(--on-solid);
     font-weight: var(--w-bold);
     pointer-events: auto;
-  }
-  .oh-report[data-leaving] {
-    pointer-events: none;
   }
   .oh-report-said {
     min-width: 0;

@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { faultDetail, refuse, sayRefusal, type Refusal } from "../src/refusal";
+import { REFUSAL_KEYS } from "../src/refusal-keys";
 import { EN } from "../src/copy.en";
 import { DE } from "../src/copy.de";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
@@ -25,6 +26,7 @@ import { StoreFault } from "../src/state/servers";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(HERE, "..", "src");
 const APP_DIR = path.join(HERE, "..", "app");
+const WEB_SRC = path.join(HERE, "..", "web", "src");
 
 /**
  * EVERY REFUSAL THE APP CAN PRODUCE, read off the source rather than off a list.
@@ -177,6 +179,13 @@ describe("every refusal the app can produce", () => {
     }
   });
 
+  it("names every key of the phone's list: a key no call names any more leaves the list and the catalogue", () => {
+    /* The list (`refusal-keys.ts`) is what the phone's catalogue answers, sentence by sentence. A `refuse()` call
+       removed later leaves its key and both its sentences behind unless this reads them off the source. */
+    const named = new Set(refusalsIn([SRC, APP_DIR, WEB_SRC]).map((f) => f.key));
+    expect(REFUSAL_KEYS.filter((key) => !named.has(key)), "listed, and named by no refuse() call").toEqual([]);
+  });
+
   it("has no key it could not read — an unreadable key is one nothing checks", () => {
     const unreadable = found.filter((f) => f.key === null).map((f) => f.where);
     expect(unreadable, "a refusal key that cannot be read from the source was silently dropped")
@@ -241,7 +250,7 @@ describe("every refusal the app can produce", () => {
     try {
       for (const { key, args, where } of found) {
         if (key === null) continue;                  // reported by its own case above
-        const r: Refusal = refuse(key as Refusal["say"], ...sample(Math.max(args, 3)));
+        const r: Refusal = refuse(key as Parameters<typeof refuse>[0], ...sample(Math.max(args, 3)));
         for (const locale of ["en", "de"] as const) {
           setActiveLocale(locale);
           const said = sayRefusal(r);

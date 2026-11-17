@@ -7,7 +7,7 @@ import { OhmailEngine } from "@ohmail/client-engine";
 import { createEngineAdapter } from "../../src/bridge-fetch.js";
 import { installOfflineGuard } from "../../src/offline-guard.js";
 import { getDocument } from "../../src/window-pdfjs.js";
-import { enableDesktopAttachments } from "../../../webapp/app/shell/open-attachment.js";
+import { desktopFileShell, enableDesktopAttachments } from "../../../webapp/app/shell/open-attachment.js";
 import { ensurePreview } from "../../../webapp/app/shell/attachments.js";
 
 installOfflineGuard(globalThis as never, "win32");
@@ -43,7 +43,7 @@ function render(b64: string): Promise<Record<string, unknown>> {
 async function open(id: string): Promise<Record<string, unknown>> {
   const engine = new OhmailEngine({ adapter: createEngineAdapter() });
   await engine.loadAttachments("m1");
-  await ensurePreview(engine, "m1", id);
+  await ensurePreview(engine, desktopFileShell(), "m1", id);
   const blob = engine.attachmentBlobOf("m1", id);
   if (!blob) return { error: "no bytes in hand" };
   return { size: blob.size, type: blob.type, ...(await draw(new Uint8Array(await blob.arrayBuffer()))) };

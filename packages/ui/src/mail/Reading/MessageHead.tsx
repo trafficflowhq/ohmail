@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from "react";
 import { Avatar, Button } from "../../base/index.js";
+import { Icon } from "../../icons/Icon.js";
 import "./message-head.css";
 
 /** Somebody the head names: a press opens the contact card at the name. */
@@ -32,9 +33,11 @@ export interface MessageHeadProps {
   details?: { label: string; open: boolean; onToggle?: () => void; lines: readonly HeadLine[] };
   /**
    * What stands under the recipients, a line each: what was kept out, in full, while the details are
-   * open; that the away responder answered, and `when`; where it was forwarded to.
+   * open; that the away responder answered, and `when`; where it was forwarded to. With `lead` the line tells
+   * of something that went wrong with this letter (its copy for the Sent folder was not saved): what it is,
+   * as it is printed with its stop, heavy before the sentence, in the ink under the warning sign.
    */
-  marks?: readonly { text: string; when?: string }[];
+  marks?: readonly { text: string; when?: string; lead?: string }[];
 }
 
 /** Who wrote it, to whom, and when. Every name is a way to the contact card. */
@@ -127,8 +130,22 @@ export function MessageHead({ sender, unread, note, menu, stamp, to, details, ma
         </dl>
       ) : null}
       {marks?.map((mark) => (
-        <p key={mark.text} className="oh-text oh-messagehead-mark" role="note">
-          {mark.text}
+        <p
+          key={mark.text}
+          className="oh-text oh-messagehead-mark"
+          role="note"
+          data-warn={mark.lead ? "" : undefined}
+        >
+          {mark.lead ? (
+            <>
+              <Icon name="warn" size={16} />
+              <span className="oh-messagehead-warns">
+                <b className="oh-messagehead-lead">{mark.lead}</b> {mark.text}
+              </span>
+            </>
+          ) : (
+            mark.text
+          )}
           {mark.when ? <span className="oh-messagehead-markwhen"> · {mark.when}</span> : null}
         </p>
       ))}

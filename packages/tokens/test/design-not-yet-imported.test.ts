@@ -54,10 +54,11 @@ const FRAME_MEETS = [
   "apps/webapp/app/(product)/mailbox/CloudShell.tsx",
   "apps/webapp/app/shell/AppShell.tsx",
   "apps/webapp/app/shell/TodaysOhbox.tsx",
+  "apps/webapp/app/shell/TodaysOhboxAbove.tsx",
+  "apps/webapp/app/shell/reader-parts.tsx",
   "apps/webapp/app/shell/shell-open-state.ts",
   "apps/webapp/app/shell/todays-feeds.tsx",
   "apps/webapp/app/shell/todays-places.ts",
-  "apps/webapp/app/shell/todays-reasons.ts",
   "apps/webapp/app/shell/todays-supplies.ts",
 ];
 
@@ -95,8 +96,8 @@ const DOOR_PAGES = ["account/delete", "approve", "authorize-desktop", "join", "j
 const CEREMONY = /\/use-[a-z-]+-door\.ts$|\/mailbox\/(web-step-up\.ts|StepUp\.tsx)$/;
 /** The parts of today's design a door's route draws, each with the task that rebuilds it. */
 const DRAWN: Record<string, string[]> = {
-  // `account`: the wall's password change is today's Settings pane, drawn in place of the wall with today's button and date.
-  [`${PRODUCT}/mailbox/WallRoute.tsx`]: [`${PRODUCT}/mailbox/PasswordSection.tsx`, "apps/webapp/app/shell/format.ts", "packages/ui/src/index.ts"],
+  // `account`: the wall's password change is today's Settings pane, drawn in place of the wall with today's button.
+  [`${PRODUCT}/mailbox/WallRoute.tsx`]: [`${PRODUCT}/mailbox/PasswordSection.tsx`, "packages/ui/src/index.ts"],
 };
 /**
  * The doors' modules that still reach both designs. Every door's route and page stays in the lists above, which the
@@ -225,9 +226,9 @@ describe("the old stylesheets and the new meet only where listed", () => {
   });
 
   it("a listed module that reaches the new design no longer is found, so the list falls", () => {
-    const files = planted({ "apps/webapp/app/shell/todays-reasons.ts": "export {};\n" });
+    const files = planted({ "apps/webapp/app/shell/todays-places.ts": "export {};\n" });
     const both = reachBoth(files);
-    expect(MAY_MEET.filter((file) => !both.includes(file))).toContain("apps/webapp/app/shell/todays-reasons.ts");
+    expect(MAY_MEET.filter((file) => !both.includes(file))).toContain("apps/webapp/app/shell/todays-places.ts");
   });
 });
 
@@ -322,7 +323,7 @@ describe("what the new folders import", () => {
     ["packages/tokens/omarchy/design-slots.ts", /^\.\//],
     ["packages/ui/src/icons/", /^\.\/|^react(\/jsx-runtime)?$/],
     ["packages/ui/src/motion/", /^\.\/|^\.\.\/ui-zoom\.js$|^react$|^@ohmail\/tokens(\/design)?$/],
-    ["packages/ui/src/base/", /^\.{1,2}\/|^react(\/jsx-runtime)?$|^@ohmail\/tokens\/design(\.css|\/motion\.css)?$/],
+    ["packages/ui/src/base/", /^\.{1,2}\/|^react(\/jsx-runtime)?$|^@ohmail\/tokens\/design(\.css|\/motion\.css|\/fonts\.css)?$/],
     ["packages/ui/src/mail/", /^\.{1,2}\/|^react(\/jsx-runtime)?$/],
     ["packages/ui/src/calendar/", /^\.{1,2}\/|^react(\/jsx-runtime)?$/],
   ];

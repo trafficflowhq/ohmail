@@ -53,7 +53,7 @@ function refusalOf(status: number, body: Uint8Array, wait: number | null, contin
 
 /** The sign-in of one request to Google: a short bearer, for Google's API host alone, with TLS. Reader and writer both make it here. */
 export function googleAuthorization(token: string): Authorization {
-  return { credential: { kind: "bearer", token }, admits: (host) => host === GOOGLE_API_HOST, tlsOnly: true };
+  return { credential: { kind: "bearer", token }, admits: ({ host }) => host === GOOGLE_API_HOST, tlsOnly: true };
 }
 
 export function makeReader(deps: AdapterDeps): CalendarReader {

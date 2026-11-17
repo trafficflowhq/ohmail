@@ -35,7 +35,7 @@ export class PushService implements PushServicePort {
    * `endpointGuard` is the deployment's UnifiedPush endpoint policy (`@trafficflow/core/net`'s
    * `PushEndpointGuard`), OPTIONAL for one reason only: an ABSENT guard REFUSES every
    * `unifiedpush` registration. The safe direction — it lets `pushService` stay a plain singleton
-   * for the webpush/apns callers that predate this instead of a security-relevant argument each
+   * for the webpush callers that predate this instead of a security-relevant argument each
    * would have to pass. A host that wants wake registrations wires the guard through
    * `makePushService`; one that forgets gets 400 at registration, which is visible, rather than
    * an unvalidated endpoint in the table, which is not.
@@ -46,15 +46,21 @@ export class PushService implements PushServicePort {
     ctx: ServiceContext, body: PushSubscribeBody, opts: { idempotency?: PushIdempotency | null } = {},
   ): Promise<PushSubscribeResult> {
     const transport = body.transport;
-    if (transport !== "webpush" && transport !== "apns" && transport !== "unifiedpush") {
-      throw new ServiceError("validation_failed", 400, "transport must be 'webpush', 'apns' or 'unifiedpush'");
+    /**
+     * NO APPLE REGISTRATION IS TAKEN. A wake leaves this server only for an endpoint the device
+     * itself named; nothing here dials an Apple device token, and a row of one would be a token
+     * kept for no use. Refused by name, before anything is read or written. Rows an older build
+     * stored stay where they are, and the sender never selects them.
+     */
+    if (transport === "apns") {
+      throw new ServiceError("validation_failed", 400, "apns registrations are not taken");
+    }
+    if (transport !== "webpush" && transport !== "unifiedpush") {
+      throw new ServiceError("validation_failed", 400, "transport must be 'webpush' or 'unifiedpush'");
     }
     // Validate the transport-appropriate identity is present.
     if (transport === "webpush" && (!body.endpoint || !body.p256dh || !body.auth)) {
       throw new ServiceError("validation_failed", 400, "webpush requires endpoint, p256dh and auth");
-    }
-    if (transport === "apns" && !body.deviceToken) {
-      throw new ServiceError("validation_failed", 400, "apns requires deviceToken");
     }
     /**
      * UNIFIEDPUSH: THE ENDPOINT PASSES THE SSRF GATE HERE AND AT SEND TIME. HERE, because an
@@ -97,8 +103,8 @@ export class PushService implements PushServicePort {
        * browser's row out of every revoke; the family is what every revoke ends, and each one
        * deletes the rows of its families ({@link pruneWakeRows}). The session is read live and
        * FOR SHARE, held to commit: a revoke that claims it waits for this row and then deletes
-       * it, and a registration that waits for a revoke is refused. `apns` keeps the body's device:
-       * its identity is the device token. No session (the worker's own tests) leaves the row unbound.
+       * it, and a registration that waits for a revoke is refused. No session (the worker's own
+       * tests) leaves the row unbound.
        */
       let familyId: string | null = null;
       if (ctx.sessionId) {
@@ -108,7 +114,7 @@ export class PushService implements PushServicePort {
           .limit(1), { mode: "share" });
         if (!s) throw new ServiceError("unauthorized", 401, "no active session");
         familyId = s.familyId;
-        if ((transport === "unifiedpush" || transport === "webpush") && s.deviceId) deviceId = s.deviceId;
+        if (s.deviceId) deviceId = s.deviceId;
       }
 
       const insert = async (): Promise<string | undefined> => (await tx.insert(pushSubscriptions).values({
@@ -172,12 +178,10 @@ export class PushService implements PushServicePort {
    * the connector's latest word on both.
    */
   private async restamp(
-    tx: Tx, accountId: string, transport: PushTransport, body: PushSubscribeBody,
+    tx: Tx, accountId: string, transport: Exclude<PushTransport, "apns">, body: PushSubscribeBody,
     deviceId: string | null, familyId: string | null,
   ): Promise<string | undefined> {
-    const identity = transport === "apns"
-      ? eq(pushSubscriptions.deviceToken, body.deviceToken!)
-      : eq(pushSubscriptions.endpoint, body.endpoint!);   // webpush and unifiedpush both key on the endpoint
+    const identity = eq(pushSubscriptions.endpoint, body.endpoint!);   // webpush and unifiedpush both key on the endpoint
     const [row] = await tx.select({ id: pushSubscriptions.id, familyId: pushSubscriptions.sessionFamilyId })
       .from(pushSubscriptions)
       .where(and(
@@ -229,7 +233,7 @@ export async function pruneWakeRows(db: Tx, familyIds: readonly string[]): Promi
 }
 
 /**
- * The webpush/apns singleton, unchanged — and it refuses `unifiedpush`, by construction rather
+ * The webpush singleton, unchanged — and it refuses `unifiedpush`, by construction rather
  * than by accident (see the constructor). Kept because every existing composition root and test
  * harness names it, and because "the guard was never wired" and "wake registrations are off" are
  * the same fact, so there is nothing to distinguish.

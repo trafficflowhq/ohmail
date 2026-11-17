@@ -52,6 +52,18 @@
       "node": "./dist/keys/index.js",
       "default": "./src/keys/index.ts"
     },
+    "./mail": {
+      "types": "./src/mail/index.ts",
+      "ohmail-source": "./src/mail/index.ts",
+      "node": "./dist/mail/index.js",
+      "default": "./src/mail/index.ts"
+    },
+    "./mail/ground": {
+      "types": "./src/mail/ground/index.ts",
+      "ohmail-source": "./src/mail/ground/index.ts",
+      "node": "./dist/mail/ground/index.js",
+      "default": "./src/mail/ground/index.ts"
+    },
     "./mail-state": {
       "types": "./src/mail-state/index.ts",
       "ohmail-source": "./src/mail-state/index.ts",
@@ -489,6 +501,30 @@
       "ohmail-source": "./src/write/editor/marks.ts",
       "node": "./dist/write/editor/marks.js",
       "default": "./src/write/editor/marks.ts"
+    },
+    "./screener": {
+      "types": "./src/screener/index.ts",
+      "ohmail-source": "./src/screener/index.ts",
+      "node": "./dist/screener/index.js",
+      "default": "./src/screener/index.ts"
+    },
+    "./search": {
+      "types": "./src/search/index.ts",
+      "ohmail-source": "./src/search/index.ts",
+      "node": "./dist/search/index.js",
+      "default": "./src/search/index.ts"
+    },
+    "./palette": {
+      "types": "./src/palette/index.ts",
+      "ohmail-source": "./src/palette/index.ts",
+      "node": "./dist/palette/index.js",
+      "default": "./src/palette/index.ts"
+    },
+    "./keys/sheet": {
+      "types": "./src/keys/sheet/index.ts",
+      "ohmail-source": "./src/keys/sheet/index.ts",
+      "node": "./dist/keys/sheet/index.js",
+      "default": "./src/keys/sheet/index.ts"
     }
   },
   "dependencies": {

@@ -10,14 +10,14 @@
  * may also reach this machine and private addresses, and those alone without encryption.
  */
 import {
-  MAX_PINNED_ADDRESSES, SsrfRefusal, assertPublicHttpUrl, canonicalHost, isBlockedAddress,
+  MAX_PINNED_ADDRESSES, SsrfRefusal, assertPublicHttpUrl, isBlockedAddress,
   isPrivateNetworkAddress, resolvePinUnchecked, type HostResolver, type PinnedRequestOptions, type PinnedResponse,
 } from "@trafficflow/core/net";
 import { FETCH_BODY_MAX_BYTES, MAX_URL_CHARS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { ProviderRefusal } from "../refusals.js";
 import { readCapped } from "./capped-body.js";
 import { sendableTag, type HttpAnswer, type HttpPort, type HttpRequest } from "./index.js";
-import { shapeRefusal, type AddressPolicy } from "./shape.js";
+import { hopOf, originOf, shapeRefusal, type AddressPolicy } from "./shape.js";
 
 export type { AddressPolicy } from "./shape.js";
 
@@ -164,15 +164,16 @@ function headersFor(req: HttpRequest, body: Uint8Array | null, hop: number): Rec
   // A write never follows a redirect, so its precondition is only ever the first hop's.
   if (hop === 0 && req.precondition !== undefined) {
     if (req.precondition.kind === "new") headers["if-none-match"] = "*";
-    else headers["if-match"] = req.precondition.tag;
+    else if (req.precondition.kind === "unchanged") headers["if-match"] = req.precondition.tag;
   }
   return headers;
 }
 
 /**
  * A write as the port takes it, or a fault of the program that asked: the port must be one that
- * writes, the write must carry a sign-in and a precondition that is an entity tag or "new", and no
- * reading's validators; a precondition on any other method is a fault too. Asked before any lookup.
+ * writes, the write must carry a sign-in and a precondition that is an entity tag or "new" (or, for
+ * a DELETE alone, that what goes is a notice channel of this program's own), and no reading's
+ * validators; a precondition on any other method is a fault too. Asked before any lookup.
  */
 function assertWriteShape(deps: GuardDeps, req: HttpRequest): boolean {
   const writing = WRITING.has(req.method);
@@ -185,6 +186,8 @@ function assertWriteShape(deps: GuardDeps, req: HttpRequest): boolean {
   if (req.precondition === undefined) throw new TypeError("a calendar write carries no precondition");
   if (req.validators !== null) throw new TypeError("a calendar write carries a reading's validators");
   if (req.precondition.kind === "unchanged" && !sendableTag(req.precondition.tag)) throw new TypeError("a calendar write's version is no entity tag");
+  // Only a notice channel is removed without a version, and only removed: nothing is ever changed or made without one.
+  if (req.precondition.kind === "own-channel" && req.method !== "DELETE") throw new TypeError("only the removal of a notice channel goes without a version");
   return true;
 }
 
@@ -219,6 +222,8 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
   try {
     let current = first;
     let cameByHttps = false;
+    /** The origin whose redirect sent the request on to `current`; `null` while that is the address the caller asked for. */
+    let sentOnBy: string | null = null;
     for (let hop = 0; ; hop++) {
       // What is wrong with an address has the address's word on every hop; what is wrong with the
       // redirect itself (no address, too long, a step down to http) is the redirect's.
@@ -234,8 +239,9 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
       const head = setTimeout(end, deps.limits.connectMs);
       let res: PinnedResponse;
       try {
-        // Before any lookup: a host the credential may not travel to is not asked about either.
-        if (req.auth !== null && !req.auth.admits(canonicalHost(url.hostname))) return refused("host_changed");
+        // Before any lookup: an address the credential may not travel to is not asked about either. The sign-in's own
+        // rule is asked of every hop, with the scheme, host and port of the address and with who sent the request there.
+        if (req.auth !== null && !req.auth.admits(hopOf(url, sentOnBy))) return refused("host_changed");
         const cleared = await unlessAborted(clear(url, deps), ac.signal);
         if (cleared === "late") return refused("timeout");
         if ("refused" in cleared) return refused(cleared.refused);
@@ -275,6 +281,7 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
         const next = parse(location, url.href);
         if (next === null) return refused("redirect_invalid");
         cameByHttps = url.protocol === "https:";
+        sentOnBy = originOf(url);
         current = next.href;
         continue;
       }

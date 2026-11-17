@@ -259,6 +259,21 @@ export interface RouteOptions {
    * handler's own error handling, when the database is the thing that is broken.
    */
   anonymous?: boolean;
+  /**
+   * A CALENDAR'S PROVIDER CALLS THIS ROUTE, and nobody else is meant to. Its pipeline is the
+   * request id and nothing more: no media-type or origin guard (a provider posts no JSON and
+   * names no origin of ours), no session, no envelope. The handler answers every call alike and
+   * reads no cookie and no `Authorization`. `provider-routes-census.test.ts` holds that exactly
+   * the notice routes carry it, in every route table.
+   */
+  provider?: boolean;
+  /**
+   * The most this route's body may weigh, where that is LESS than the ceiling every JSON route
+   * has: how a route that anyone may call says how little it reads. It only ever lowers
+   * (`bodyCeilingFor` takes the smaller of the two), and 0 reads nothing at all. A body past it is
+   * refused by the host before the route is reached, from its size alone.
+   */
+  bodyMaxBytes?: number;
 }
 
 /**

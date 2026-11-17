@@ -18,7 +18,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { presentsUnread, type EngineMessage, type TagDTO, type TrashRowWire } from "@ohmail/client-engine";
-import { ListPane, ListRows, MessageRow, Reader, Spinner } from "@ohmail/ui";
+import { ListPane, ListRows, MessageRow, Reader, Spinner, TAG_HUES } from "@ohmail/ui";
 import type { TrashWindowItemWire } from "../api-client";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useRowBadgeCopy } from "../shell/row-copy";
@@ -119,7 +119,7 @@ export function TrashView({
      for one place is how a sidebar and the screen it opens come to disagree by a word. */
   const tRail = useTranslations("rail");
   const tReader = useTranslations("reader");
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   const { row: senderCheckRow } = useSenderCheckWords();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** The live section's pick, by its epoch-scoped key. Null means the reader is in the mirror. */
@@ -296,7 +296,7 @@ export function TrashView({
                   {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
                   hasAttachment={m.hasAttachments}
                   protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
-                  tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
+                  tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x, TAG_HUES) }))}
                   onClick={() => openRow(m)}
                 />
               ))}
@@ -432,7 +432,7 @@ function TrashLiveSection({
   onSelect: (key: string) => void;
 }) {
   const t = useTranslations("trash");
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   /* ONE VERDICT FOR THE WHOLE SECTION (`trashLiveState`), so no two branches here can each
      decide what the window's silence means. */
   const verdict = trashLiveState(live).state;

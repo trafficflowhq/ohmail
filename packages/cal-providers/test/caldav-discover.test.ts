@@ -206,6 +206,62 @@ describe("whom the reader tells the password", () => {
     expect(s.seen.map((r) => [r.host, r.path])).toEqual([[`caldav.example.test:${s.port}`, "/.well-known/caldav"], [`caldav.example.test:${s.port}`, "/"]]);
   });
 
+  describe("a calendar a caller hands in names no host the password goes to", () => {
+    const PAGE = { limit: 50, cursor: null, window: null };
+    const typedAt = (s: StandIn): string => `http://caldav.example.test:${s.port}/`;
+    const beside = (s: StandIn): { id: string } => ({ id: `http://p01-caldav.example.test:${s.port}/dav/calendars/mila/work/` });
+    const asked = (s: StandIn, from = 0) => s.seen.slice(from).map((r) => [r.host.split(":")[0], r.method, r.path, r.signedIn]);
+    const DISCOVERY = [
+      ["caldav.example.test", "PROPFIND", "/.well-known/caldav", true],
+      ["caldav.example.test", "PROPFIND", "/dav/", true],
+      ["caldav.example.test", "PROPFIND", "/dav/principals/mila/", true],
+    ];
+
+    it("on a host beside the typed one it is read once the server has named that host in the same turn: the server is asked first, once a turn, and a new turn remembers nothing", async () => {
+      const s = await server({ homeHref: (port) => `http://p01-caldav.example.test:${port}/dav/calendars/mila/` });
+      s.addCalendar("work", { name: "Work" });
+      const reader = ownNetworkByName();
+      const turn = signIn(s, typedAt(s));
+      expect((await reader.readChanges(turn, beside(s), null, PAGE, signal())).ok).toBe(true);
+      const report = ["p01-caldav.example.test", "REPORT", "/dav/calendars/mila/work/", true];
+      expect(asked(s)).toEqual([...DISCOVERY, report]);
+      // The same turn knows the host: the server is not asked a second time.
+      expect((await reader.readChanges(turn, beside(s), null, PAGE, signal())).ok).toBe(true);
+      expect(asked(s, 4)).toEqual([report]);
+      // Another turn begins from the sealed server alone.
+      expect((await reader.readChanges(signIn(s, typedAt(s)), beside(s), null, PAGE, signal())).ok).toBe(true);
+      expect(asked(s, 5)).toEqual([...DISCOVERY, report]);
+    });
+
+    it("on a host the server does not name it is not asked, at a name beside the typed one or at another port of the typed host; the server is asked about it once in the turn", async () => {
+      const s = await server();
+      s.addCalendar("work", { name: "Work" });
+      const reader = ownNetworkByName();
+      const turn = signIn(s, typedAt(s));
+      const refused = { ok: false, reason: "host_changed", retryAfterMs: null };
+      expect(await reader.readChanges(turn, beside(s), null, PAGE, signal())).toEqual(refused);
+      expect(asked(s)).toEqual(DISCOVERY);
+      expect(await reader.readChanges(turn, { id: "http://caldav.example.test:8443/dav/calendars/mila/work/" }, null, PAGE, signal())).toEqual(refused);
+      expect(await reader.readChanges(turn, beside(s), null, PAGE, signal())).toEqual(refused);
+      expect(s.seen.length).toBe(DISCOVERY.length);
+    });
+
+    it("where the server could not be asked, the reading says that word and not that the host changed, and asks no second time in the turn", async () => {
+      const s = await server({ homeHref: (port) => `http://p01-caldav.example.test:${port}/dav/calendars/mila/` });
+      s.addCalendar("work", { name: "Work" });
+      const reader = ownNetworkByName();
+      const turn = signIn(s, typedAt(s));
+      s.answerNext(503);
+      const unavailable = { ok: false, reason: "unavailable", retryAfterMs: null };
+      expect(await reader.readChanges(turn, beside(s), null, PAGE, signal())).toEqual(unavailable);
+      const first = s.seen.length;
+      expect(await reader.readChanges(turn, beside(s), null, PAGE, signal())).toEqual(unavailable);
+      expect([s.seen.length - first, s.seen.filter((r) => r.host.startsWith("p01-"))]).toEqual([0, []]);
+      // The next turn asks again, and reads.
+      expect((await reader.readChanges(signIn(s, typedAt(s)), beside(s), null, PAGE, signal())).ok).toBe(true);
+    });
+  });
+
   describe("a sign-in that travels with TLS is never sent without it", () => {
     // The person's own network: every name is a private address, which is where a plain request may go at all.
     // The address beside them is public and stands for a server that is not on that network. None is dialled.

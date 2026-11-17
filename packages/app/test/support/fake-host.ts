@@ -6,11 +6,13 @@
  */
 import type { OhmailEngine } from "@ohmail/client-engine";
 import {
+  OVER_IDS,
   PLACE_IDS,
   STAGE_IDS,
   type Appearance,
   type CalendarEntry,
   type FrameHost,
+  type FrameOvers,
   type FramePlaces,
   type FrameStages,
   type Recover,
@@ -65,6 +67,7 @@ const WIRES = [
 
 export const NO_PLACES: FramePlaces = Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])) as FramePlaces;
 export const NO_STAGES: FrameStages = Object.fromEntries(STAGE_IDS.map((id) => [id, NONE])) as FrameStages;
+export const NO_OVERS: FrameOvers = Object.fromEntries(OVER_IDS.map((id) => [id, NONE])) as FrameOvers;
 
 export interface FakeHostInput {
   readonly engine: OhmailEngine;
@@ -75,6 +78,7 @@ export interface FakeHostInput {
   readonly recover?: Recover;
   readonly places?: Partial<FramePlaces>;
   readonly stages?: Partial<FrameStages>;
+  readonly overs?: Partial<FrameOvers>;
   /** The calendar's entry; `none` unless given. The switch also needs `capabilities.products`. */
   readonly calendar?: CalendarEntry | None;
   readonly products?: HostCapabilities["products"];
@@ -87,6 +91,8 @@ export interface FakeHostInput {
   readonly features?: Partial<Record<FeatureName, FeatureEntry | None>>;
   /** The reading column; absent, `none`. */
   readonly reader?: ReaderEntry | None;
+  /** What the host stands above every pane; absent, `none`. */
+  readonly above?: FrameHost["features"]["above"];
   /** The account's mailbox facts; absent, `none`. */
   readonly mailboxes?: HostReads["mailboxes"];
 }
@@ -125,7 +131,9 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       ...input.features,
       places: { ...NO_PLACES, ...input.places },
       stages: { ...NO_STAGES, ...input.stages },
+      overs: { ...NO_OVERS, ...input.overs },
       reader: input.reader ?? NONE,
+      above: input.above ?? NONE,
       calendar: input.calendar ?? NONE,
     },
     device: {
@@ -162,10 +170,36 @@ export function fakeHost(input: FakeHostInput): FakeHost {
   return { host, window, address, appearance };
 }
 
-/** An engine the frame never calls: the frame takes nothing of its own from it. */
+/**
+ * What the frame's room reads of an engine when it mounts its press seam with nothing pressed and nothing left in the
+ * journal: it listens for changes, reads the mirror's version and asks whether there is a trash. A test whose engine
+ * is a stand-in of its own spreads these under it where its host hands a ground above the panes or a reader: there the
+ * room's own seam stands for the frame's life. A host that hands neither has no seam, and its engine is read never.
+ */
+export const SEAM_AT_REST: Readonly<Record<string, unknown>> = {
+  subscribe: () => () => undefined,
+  read: () =>
+    new Proxy(
+      {},
+      {
+        get(_, key) {
+          if (key === "version") return () => 0;
+          throw new Error(`the frame read the mirror's ${String(key)}`);
+        },
+      },
+    ),
+  trashAvailable: () => false,
+};
+
+/**
+ * An engine with nothing in it, of which the frame takes nothing of its own: any read throws, but the three the
+ * room's press seam makes at rest. The seam stands for the frame's life wherever a test hands a ground above the panes
+ * or a reader, so it stands over this engine too.
+ */
 export const NO_ENGINE = new Proxy({} as OhmailEngine, {
   get(_, key) {
     if (key === "then") return undefined;
+    if (typeof key === "string" && key in SEAM_AT_REST) return SEAM_AT_REST[key];
     throw new Error(`the frame read the engine's ${String(key)}`);
   },
 });

@@ -89,7 +89,8 @@ export interface ReaderFiles extends EmbeddedPictureSeam {
  */
 export interface ReaderReply {
   readonly Sheet: ComponentType<{ readonly letters: readonly string[] }>;
-  readonly useOpen: () => (messageId: string, how: "reply" | "reply_all" | "forward") => void;
+  /** `from`: the press came from a letter's own menu: "answer THIS letter", which opens and never closes an editor. */
+  readonly useOpen: () => (messageId: string, how: "reply" | "reply_all" | "forward", from?: "menu") => void;
   /** The open reply's verbs, which the reading sheet's one panel shows in place of the letter's; null: none open. */
   readonly useVerbs: () => readonly PanelVerb[] | null;
 }
@@ -100,6 +101,17 @@ export interface ReaderParts {
   readonly pictures: PictureSeam | "none";
   /** The shell's one look at a file's bytes; `none`: a press saves. */
   readonly look: ((messageId: string, attachmentId: string) => void) | "none";
+  /**
+   * What the shell says of the copy in Sent of a letter the account sent, where that copy is missing or still owed:
+   * its sentence in `write`'s words, drawn as a note under the letter's recipients; null where there is nothing to
+   * say. Read while the letter is drawn: a shell whose notes change hands a new one. `none`: nothing is said.
+   */
+  readonly sentCopy: ((messageId: string) => string | null) | "none";
   /** The reply's sheet and open (`write`'s); `none`: the reader hands a linked draft to the place `write`. */
   readonly reply: ReaderReply | "none";
+  /**
+   * What the shell says of a letter's invitation, drawn above the letter's text and outside it: the note where its
+   * event cannot be shown, and the event once. Found by the letter's id alone; `none`: nothing stands there.
+   */
+  readonly invitation: ComponentType<{ readonly messageId: string }> | "none";
 }

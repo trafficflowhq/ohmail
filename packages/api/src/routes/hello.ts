@@ -84,6 +84,8 @@ export const helloRoutes: Route[] = [
           ...(hello.features.placeSuggestions === true ? { placeSuggestions: true as const } : {}),
           // `POST /messages/:id/invitation/answer` is mounted in every table; a fact of this build.
           invitationAnswer: true,
+          // `GET /search` takes `to`, `party`, `unread` and the two dates, and a blank `q` with a filter; a fact of this build.
+          searchPeople: true,
         },
       });
     },

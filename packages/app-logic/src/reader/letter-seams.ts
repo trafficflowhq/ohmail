@@ -35,7 +35,7 @@ export interface LetterOfSeams {
 /**
  * DOES THIS LETTER LOAD ITS PICTURES ON OPEN: the account's `auto`, never for a sender whose name claims a company
  * the address does not belong to (an `unverified` line holds nothing back), never for a sender not let in, held
- * where the letter is shown or where it is filed. Word for word the web shell's `autoLoadsImages`.
+ * where the letter is shown or where it is filed. The one copy: today's reader reads this very function.
  */
 export function autoLoadsImages(
   chrome: Pick<PictureSeam, "auto"> | undefined,

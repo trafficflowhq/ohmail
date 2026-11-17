@@ -2,10 +2,17 @@ import type { CSSProperties, KeyboardEvent } from "react";
 import { Icon } from "../../icons/Icon.js";
 import { RailEntry } from "../Shell/RailEntry.js";
 import "./folder-fold.css";
+import { hintedName } from "./FolderShelf.js";
 
 export interface FoldFolder {
   id: string;
   name: string;
+  /**
+   * What tells it from another folder of the same name, small after the name: the folder above it, else its
+   * mailbox; for a hit of the find line, its way. Without a `label` it is said with the name, and with the count
+   * the entry shows.
+   */
+  hint?: string;
   /** How deep it lies: 0 for a mailbox's own folders. */
   depth?: number;
   /** Its unread mail (a shut branch adds its children's), and its name with that count for a screen reader. */
@@ -98,7 +105,8 @@ export function FolderFold({ label, find, groups, none, onOpen, onBranch, onMenu
                   kind="sub"
                   icon="folder"
                   count={folder.count}
-                  label={folder.label}
+                  hint={folder.hint}
+                  label={folder.label ?? hintedName(folder)}
                   title={folder.name}
                   current={folder.current}
                   drop={folder.drop}

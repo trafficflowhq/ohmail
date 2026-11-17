@@ -46,6 +46,12 @@
       "node": "./dist/match-path.js",
       "default": "./src/match-path.ts"
     },
+    "./calendar-notices": {
+      "types": "./src/routes/calendar-notices.ts",
+      "ohmail-source": "./src/routes/calendar-notices.ts",
+      "node": "./dist/routes/calendar-notices.js",
+      "default": "./src/routes/calendar-notices.ts"
+    },
     "./calendar": {
       "types": "./src/calendar/index.ts",
       "ohmail-source": "./src/calendar/index.ts",

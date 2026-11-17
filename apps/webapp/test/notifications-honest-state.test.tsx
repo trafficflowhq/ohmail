@@ -4,7 +4,8 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import type { NoticePermission } from "@ohmail/client-engine";
+import { MAIL_NOTICE_KINDS, type NoticeKind, type NoticePermission } from "@ohmail/client-engine";
+import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import messages from "../messages/en.json";
 import { SettingsView, type NotificationsMeta } from "../app/views/SettingsView";
 import {
@@ -57,8 +58,13 @@ const DEMO_META: NotificationsMeta = {
 };
 
 /** A host that answers a fixed platform state; `request` reports what the OS would settle on. */
+/** An emitter that draws `carries`, as a surface hands one in. */
+function carrying(carries: readonly NoticeKind[]): HostNoticeEmitter {
+  return { carries, acts: [], ahead: "none", post: () => {}, takeBack: () => {} };
+}
+
 function hostAt(state: NoticePermission, afterAsk: NoticePermission = state): NotificationHost {
-  return { permission: () => state, request: () => Promise.resolve(afterAsk) };
+  return { permission: () => state, request: () => Promise.resolve(afterAsk), emitter: carrying(MAIL_NOTICE_KINDS) };
 }
 
 /** Records what the pane asked the subscription layer for, and answers a fixed outcome. */
@@ -72,6 +78,7 @@ function hostSyncing(
     permission: () => state,
     request: () => Promise.resolve(state),
     syncSubscription: (wanted: boolean) => { asked.push(wanted); return Promise.resolve(outcome); },
+    emitter: carrying(MAIL_NOTICE_KINDS),
   };
 }
 
@@ -127,21 +134,20 @@ function switchFor(label: string): HTMLElement | undefined {
 }
 
 describe("a granted platform — the switches are real", () => {
-  it("renders the master, the events something can DELIVER, and the identifying switch", async () => {
+  it("renders the master and a switch for each kind this surface's emitter draws, and no other", async () => {
     await renderPane(null);
-    // master + ohbox + show-sender-and-subject. The other three events are modelled by the gate
-    // and reach no emitter yet, so their switches are withheld rather than offered dead — the
-    // shape this pane replaced.
-    expect(switches()).toHaveLength(3);
-    for (const k of ["notifyMaster", "notifyOhbox", "notifyIdentify"]) {
-      expect(switchFor(settingsCopy[k]!), `no switch for ${k}`).toBeDefined();
-    }
-    for (const k of ["notifyScreener", "notifyScheduled", "notifyPairing"]) {
-      expect(
-        switchFor(settingsCopy[k]!),
-        `${k} is offered as a switch and nothing can deliver it`,
-      ).toBeUndefined();
-    }
+    // master + the four mail kinds the emitter carries. No switch says who a notice is from or
+    // what its subject is: no notice has a place for either.
+    expect(switches().map((s) => s.getAttribute("aria-label"))).toEqual(
+      ["notifyMaster", "notifyOhbox", "notifyScreener", "notifyScheduled", "notifyPairing"].map((k) => settingsCopy[k]),
+    );
+  });
+
+  it("offers no switch for a kind the emitter does not draw, and none at all where there is no emitter", async () => {
+    await renderPane(null, { ...hostAt("granted"), emitter: carrying(["ohbox", "cal_alert"]) });
+    expect(switches().map((s) => s.getAttribute("aria-label"))).toEqual([settingsCopy.notifyMaster, settingsCopy.notifyOhbox]);
+    await renderPane(null, { ...hostAt("granted"), emitter: "none" });
+    expect(switches().map((s) => s.getAttribute("aria-label")), "a switch that could change nothing").toEqual([settingsCopy.notifyMaster]);
   });
 
   it("says the privacy sentence, which is now TRUE of the code beneath it", async () => {
@@ -152,11 +158,6 @@ describe("a granted platform — the switches are real", () => {
   it("says how far the choice reaches — these are this device's", async () => {
     await renderPane(null);
     expect(host.textContent).toContain(settingsCopy.notifyReach!);
-  });
-
-  it("identifying details are OFF by default — a notice is read by whoever is looking", async () => {
-    await renderPane(null);
-    expect(switchFor(settingsCopy.notifyIdentify!)!.getAttribute("aria-checked")).toBe("false");
   });
 
   it("the master press is written to storage and rendered back", async () => {
@@ -253,6 +254,7 @@ describe("A HOST THAT CANNOT READ THE OS ANSWER — the desktop window", () => {
     permission: () => "granted",
     request: () => Promise.resolve("granted"),
     osHoldsPermission: true,
+    emitter: carrying(MAIL_NOTICE_KINDS),
   };
 
   it("SAYS WHO HAS THE LAST WORD — the switch asks, the computer decides", async () => {

@@ -6,6 +6,10 @@
  * refused before anything is asked. What a write answers is the member as the reader's own
  * multiget reads it back, so the store meets the server's object through the reading's mapper.
  *
+ * A stored address names a path, never a host: every request here leaves the reader's one way
+ * (`leave`, in `ask.ts`), and a collection on a host the server did not name in this turn gets no
+ * request and no sign-in (`host_changed`).
+ *
  * Invitees are written only where the server says it sends invitations itself
  * (`calendar-auto-schedule`): this program sends none.
  */
@@ -33,7 +37,7 @@ import {
   type Precondition,
 } from "../request/index.js";
 import { alreadyHolds } from "../write-compare.js";
-import { addressOf, isUnder, propfindOf, scopeOf, type Session } from "./ask.js";
+import { addressOf, isUnder, leave, propfindOf, scopeOf, type Session } from "./ask.js";
 import {
   answerHolds,
   answeredObjectText,
@@ -105,14 +109,11 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     text: string | null,
     precondition: Precondition,
   ): Promise<HttpResponse | Refusal> {
-    const answer = await deps.http.request(url, {
+    const answer = await leave(s, url, {
       method,
       headers: text === null ? {} : { "content-type": "text/calendar; charset=utf-8" },
       body: text,
-      auth: s.auth,
-      validators: null,
       precondition,
-      signal: s.signal,
     });
     return answer.arrived ? answer : refused(answer.reason);
   }
@@ -177,7 +178,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
 
   /** Does the server send invitations itself? Read off the `DAV` line of its answer about the collection. */
   async function sendsInvitations(s: Session, collection: string): Promise<boolean | Refusal> {
-    const answer = await deps.http.request(collection, {
+    const answer = await leave(s, collection, {
       method: "PROPFIND",
       headers: {
         accept: "application/xml, text/xml",
@@ -185,9 +186,6 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         depth: "0",
       },
       body: propfindOf("<D:resourcetype/>"),
-      auth: s.auth,
-      validators: null,
-      signal: s.signal,
     });
     if (!answer.arrived) return refused(answer.reason);
     if (answer.status !== 207) return refusalOf(answer, "not_found");

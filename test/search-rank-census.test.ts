@@ -47,8 +47,8 @@ describe("the search ranking rule is shared, not copied", () => {
   });
 
   it("the VIEW that merges the two doors calls the rule", () => {
-    const src = read("apps/webapp/app/views/SearchView.tsx");
-    expect(importsRule(src), "apps/webapp/app/views/SearchView.tsx must import the shared rule").toBe(true);
+    const src = read("packages/app-logic/src/search/local-pass.ts");
+    expect(importsRule(src), "packages/app-logic/src/search/local-pass.ts must import the shared rule").toBe(true);
     // The merged list is where the composition happens, and it is the only place that can:
     // neither door can see the other's tier.
     expect(src).toContain("showSimilar(");
@@ -76,7 +76,7 @@ describe("the search ranking rule is shared, not copied", () => {
     // web and the phone say that arm's reach through the same function.
     expect(service).toContain("substringOpen(");
     expect(service).not.toMatch(/function (substringOpen|exactAsked)\(/);
-    expect(read("apps/webapp/app/views/SearchView.tsx")).toContain("substringOpen(");
+    expect(read("packages/app-logic/src/search/search-list.ts")).toContain("substringOpen(");
     expect(read("apps/mobile/src/state/search-count.ts")).toContain("substringOpen(");
   });
 
@@ -112,7 +112,7 @@ describe("the search ranking rule is shared, not copied", () => {
       }
     };
     for (const root of ["apps", "packages", "scripts"]) walk(root);
-    expect(callers.sort()).toEqual(["apps/mobile/src/state/live.ts", "apps/webapp/app/views/SearchView.tsx"]);
+    expect(callers.sort()).toEqual(["apps/mobile/src/state/live.ts", "packages/app-logic/src/search/local-pass.ts"]);
     /* AND NEITHER RE-ORDERS WHAT IT WAS GIVEN. The engine's answer is already ranked; a caller
        that sorted it would be the third ordering this file exists to prevent, and it would be
        invisible to the arm above. Asked over the call's own function body, not the whole file:

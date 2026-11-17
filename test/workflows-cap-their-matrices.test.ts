@@ -162,6 +162,12 @@ describe("the hosted jobs each event starts", () => {
   const FULL = ["android.yml: changes @ubuntu-24.04", APK, "build.yml: changes @ubuntu-24.04", ...DESKTOP,
     "selfhost-smoke.yml: changes @ubuntu-24.04", SMOKE, ...QUICK];
   const BATCH = { "github.head_ref": "pr/batch-0307" };
+  const FORK = { "github.event.pull_request.head.repo.full_name": "someone/ohmail", "github.event.pull_request.author_association": "CONTRIBUTOR",
+    "github.actor": "someone", "github.triggering_actor": "someone", "github.head_ref": "fix-x" };
+  /** A pull request marked ready: its pull_request run and its pull_request_target run, both on ready_for_review. */
+  const markedReady = (extra: IfContext = {}, wfs = WORKFLOWS) => [
+    ...hosted("pull_request", "refs/pull/7/merge", { action: "ready_for_review" }, { ...extra, "github.event.pull_request.draft": false }, wfs),
+    ...hosted("pull_request_target", "refs/heads/main", { action: "ready_for_review" }, { ...extra, "github.event.pull_request.draft": false }, wfs)];
 
   it("an ordinary maintainer pull request: 2 hosted jobs, dco and guard", () => {
     expect(push()).toEqual(QUICK);
@@ -181,10 +187,19 @@ describe("the hosted jobs each event starts", () => {
     expect(FULL.filter((j) => j.endsWith("@macos-15"))).toHaveLength(2);
   });
 
+  it("the batch as a draft: 2, dco and guard; its engine pair on our runners is the landing's evidence", () => {
+    expect(push({ ...BATCH, "github.event.pull_request.draft": true })).toEqual(QUICK);
+    expect(push({ "github.head_ref": "pr/release-0307-bump", "github.event.pull_request.draft": true }), "the release bump as a draft").toEqual(FULL);
+  });
+
+  it("a pull request marked ready: what its ready push starts; an ordinary one 2, the batch 14, a fork's 25", () => {
+    expect(markedReady()).toEqual(QUICK);
+    expect(markedReady(BATCH)).toEqual(FULL);
+    expect(markedReady(FORK)).toEqual(push(FORK));
+  });
+
   it("a fork's pull request: 25, every job on GitHub's runners", () => {
-    const fork = { "github.event.pull_request.head.repo.full_name": "someone/ohmail", "github.event.pull_request.author_association": "CONTRIBUTOR",
-      "github.actor": "someone", "github.triggering_actor": "someone", "github.head_ref": "fix-x" };
-    expect(push(fork)).toEqual([...FULL.slice(0, 10), ...ENGINE, ...CI, ...FULL.slice(10)]);
+    expect(push(FORK)).toEqual([...FULL.slice(0, 10), ...ENGINE, ...CI, ...FULL.slice(10)]);
   });
 
   it("an ordinary pull request while the switch reads hosted: 13, the routed jobs, dco and guard, no platform", () => {
@@ -255,7 +270,10 @@ describe("the hosted jobs each event starts", () => {
       expect(JSON.stringify(wfs), `the planting changed nothing: ${from}`).not.toBe(JSON.stringify(WORKFLOWS));
       return wfs;
     };
-    expect(push(BATCH, planted(" && !startsWith(github.head_ref, 'pr/batch-')", "")), "the batch clause dropped").toEqual(QUICK);
+    expect(push(BATCH, planted(" && !(startsWith(github.head_ref, 'pr/batch-') && github.event.pull_request.draft != true)", "")), "the batch clause dropped").toEqual(QUICK);
+    expect(push({ ...BATCH, "github.event.pull_request.draft": true }, planted(" && github.event.pull_request.draft != true)", ")")), "the draft flag dropped").toEqual(FULL);
+    expect(markedReady(BATCH, planted("    types: [opened, synchronize, reopened, ready_for_review]\n", "", "build.yml")), "build.yml's ready_for_review dropped")
+      .toEqual([...FULL.slice(0, 2), ...FULL.slice(10)]);
     expect(push({}, planted("needs.changes.result != 'skipped' && ", "")), "a skipped `changes` read as unread").toEqual([APK, ...DESKTOP, SMOKE, ...QUICK]);
     expect(nightly(planted('  schedule:\n    - cron: "41 0 * * *"\n', "", "build.yml")), "build.yml's schedule dropped").toEqual([APK, BUDGET, PG17, SMOKE]);
     expect(nightly(planted('  schedule:\n    - cron: "23 2 * * *"\n', "", "search-budget.yml")), "the budget's schedule dropped")

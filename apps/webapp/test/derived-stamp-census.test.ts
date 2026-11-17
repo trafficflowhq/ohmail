@@ -57,6 +57,10 @@ const DERIVATION_SOURCES = [
   /* The shell's whole-mirror memos left `AppShell.tsx` for this frame (ARCH-022). Both are asked:
      the file that computes the derivations, and the file that still reads the mirror inline. */
   "../app/shell/shell-derivations.ts",
+  /* And two reads cut out of the shell for the mail ground: the settings stamp the consent row re-asks on, and
+     the count of mirrored letters the mail state's mount samples. Both are keyed on the derived stamp. */
+  "../../../packages/app-logic/src/consent/consent-row.ts",
+  "../../../packages/app/src/mail/ground/MailStateMount.tsx",
 ];
 
 describe("the derived stamp ignores only what nothing derives from", () => {
@@ -92,15 +96,16 @@ describe("the derived stamp ignores only what nothing derives from", () => {
     expect(search, "search.ts lists types — the census must have a subject").not.toHaveLength(0);
     expect(search, "search.ts reads bodies again — the instant index is back on the whole mail")
       .not.toContain("message_body");
-    const shell = code(read("../app/shell/AppShell.tsx"));
-    expect(shell, "the search view took the global version back — every body publish is a rebuild")
-      .not.toContain("useEngineVersion()");
-    expect(shell, "the search view is not on the derived stamp")
-      .toContain("useDerivedVersion()");
-    expect(shell, "the search view lost the index revision — a settled build will not reach it")
-      .toContain("useSearchIndexRevision()");
-    expect(shell, "the search mount stopped going through the wrapper that supplies it")
-      .toContain("<SearchViewLive");
+    /* The list's own pass keys on the stamps of the engine it is handed (`local-pass.ts`), the shell's formula. */
+    const pass = code(read("../../../packages/app-logic/src/search/local-pass.ts"));
+    expect(pass, "the search view took the global version back — every body publish is a rebuild")
+      .not.toMatch(/useEngineVersion\(\)|\.read\(\)\.version\(\)/);
+    expect(pass, "the search view is not on the derived stamp")
+      .toContain("stampExcept(NOT_DERIVED_FROM)");
+    expect(pass, "the search view lost the index revision — a settled build will not reach it")
+      .toContain("searchIndexRevision()");
+    expect(pass, "the local pass stopped keying on the stamps that supply it")
+      .toMatch(/useMemo\([\s\S]*engine\.search\(trimmed\)[\s\S]*\[engine, trimmed, key\]\)/);
   });
 });
 

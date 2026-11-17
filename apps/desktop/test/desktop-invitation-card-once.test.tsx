@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { OhmailEngine, type EngineAdapter, type EngineMessage } from "@ohmail/client-engine";
 import messages from "../../webapp/messages/en.json";
-import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
+import { desktopFileShell, enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
 import { useMessageAttachments } from "../../webapp/app/shell/attachments.js";
 import { MessageChromeProvider } from "../../webapp/app/shell/message-chrome.js";
 import { MessagePane } from "../../webapp/app/shell/MessagePane.js";
@@ -74,7 +74,7 @@ function engineServing(shape: InviteShape): OhmailEngine {
 }
 
 function Desktop({ engine }: { engine: OhmailEngine }) {
-  const attachments = useMessageAttachments(engine, ID, { conversationOf: () => [], onDownloadAllFailed: () => {} });
+  const attachments = useMessageAttachments(engine, ID, { shell: desktopFileShell(), conversationOf: () => [], onDownloadAllFailed: () => {} });
   return h(MessageChromeProvider as never, {
     value: {
       ownAddresses: ["mila@example.test"], absoluteTime: false, onToggleAbsoluteTime: () => {},

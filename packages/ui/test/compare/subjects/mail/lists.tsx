@@ -9,13 +9,16 @@ import {
   ListTail,
   MonthRail,
   MovePicker,
+  PullMark,
   ReadSquares,
   Row,
   Rows,
   SelectionBar,
   Sheet,
+  TickList,
   type PanelVerb,
   type RowProps,
+  type TickPerson,
 } from "../../../../src/mail/index.js";
 import { force, moving, type KitSubject, type Look } from "../../harness.js";
 import * as W from "./world.js";
@@ -35,6 +38,59 @@ const inList = (key: string, node: ReactNode, more: Partial<KitSubject> = {}, wi
       </div>
     ),
   ...more,
+});
+/** A list's head as the reference cuts it from a whole screen: alone, as wide as its list, on what the list stands on. */
+const headAlone = (key: string, node: ReactNode): KitSubject => ({
+  key,
+  place: "block",
+  target: ".oh-listhead",
+  /* In its list's sheet, whose corners and ring the reference's picture shows around the head; bare on a phone.
+     The list goes on under the head, as the reference's does: the sheet's foot stands outside the picture. */
+  render: (look) =>
+    look.device === "phone" ? (
+      <>{node}</>
+    ) : (
+      <Sheet kind="list">
+        {node}
+        <div style={{ height: "var(--row)" }} />
+      </Sheet>
+    ),
+});
+/** The seven people of the first read, as its sheet shows them: who, how many letters, the address; all ticked. */
+const WROTE_TO: TickPerson[] = (
+  [
+    [W.GIULIA, 2],
+    [W.PETRA, 1],
+    [W.BEN, 2],
+    [W.NADJA, 1],
+    [W.person("Anna Odermatt", "anna@gartenlokal-rosa.example"), 1],
+    [W.JONAS, 8],
+    [W.RAHEL, 1],
+  ] as const
+).map(([who, letters]) => ({
+  id: who.address,
+  name: who.name,
+  address: who.address,
+  count: `${letters}×`,
+  said: letters === 1 ? "1 message" : `${letters} messages`,
+  on: true,
+}));
+/** The people to tick on a sheet of their own, as the reference's page holds them beside its sentence. */
+const ticks = (state: string, more: Partial<Parameters<typeof TickList>[0]>): KitSubject => ({
+  key: `TickList/${state}`,
+  place: "block",
+  target: ".oh-sheet",
+  render: () => (
+    <Sheet kind="plain">
+      <TickList
+        figure="7"
+        words="people you wrote to"
+        label="People you wrote to"
+        people={WROTE_TO}
+        {...more}
+      />
+    </Sheet>
+  ),
 });
 /* The sheet draws these specimens on a phone with no sheet behind them: the list stands on the ground. */
 const BARE_ON_PHONE = new Set(["Row/unread", "ListHead/hot"]);
@@ -350,11 +406,13 @@ export const lists: KitSubject[] = [
     />,
   ),
   inList("ListHead/ink", <ListHead title="History" aside={listMenu} />),
-  /* A person's own place: the address under the name, then the direction, each segment's number part of its words. */
-  inList(
+  /* A person's own place: the address under the name, then the direction, each segment's number part of its words.
+     The reference is the head alone, cut from its list: on the list's sheet, on a phone on the ground. */
+  headAlone(
     "ListHead/meta",
     <ListHead
       title={W.PETRA.name}
+      hot
       meta={W.PETRA.address}
       aside={<Button kind="quiet" icon="x" label="Close" />}
       below={
@@ -370,7 +428,46 @@ export const lists: KitSubject[] = [
       }
     />,
   ),
-  inList("ListHead/count", <ListHead title="Drafts" count="1 draft" aside={listMenu} />),
+  /* A place with sections: the Screener's three beside its name. On a phone the reference's head also holds the
+     frame's switcher, which is the frame's own. */
+  headAlone(
+    "ListHead/sections",
+    <ListHead
+      title="Screener"
+      hot
+      sections={
+        <Seg
+          label="Sections"
+          value="waiting"
+          options={[
+            { value: "waiting", label: "Waiting", count: 6 },
+            { value: "screened", label: "Screened out", count: 2 },
+            { value: "spam", label: "Spam", count: 1 },
+          ]}
+        />
+      }
+    />,
+  ),
+  /* The list pulled down at its top far enough to pull: the mark whole, in the middle of the room that is open. */
+  {
+    key: "PullMark/armed",
+    place: "block",
+    target: ".oh-pullmark",
+    render: () => (
+      <div style={{ height: 75.9 }}>
+        <PullMark pulled={75.9} armed />
+      </div>
+    ),
+  },
+  headAlone("ListHead/count", <ListHead title="Drafts" count="1 draft" aside={listMenu} />),
+
+  /* The first read's people to let in: seven the person wrote to, all ticked, a field to find one, and None. */
+  ticks("rest", {
+    find: { label: "Find someone", placeholder: "Find", value: "", onChange: () => {} },
+    all: { label: "None" },
+  }),
+  /* The ticks taken: each person let in ends in the dot, and the field and the press for all are gone. */
+  ticks("settled", { settled: true }),
 
   { key: "Doorbell/rest", render: () => bell },
   { key: "Doorbell/pressed", render: () => bell, ...moving(force("> *", "active")) },
@@ -382,9 +479,10 @@ export const lists: KitSubject[] = [
     place: "block",
     width: 420,
     on: "sheet",
-    target: ".oh-groupheading",
+    /* The heading with its control: the reference's heading holds both. */
+    target: ".oh-groupheading-line",
     render: () => (
-      <GroupHeading count="8" aside={<Slot>Best match</Slot>}>
+      <GroupHeading count="8" hot aside={<Slot>Best match</Slot>}>
         Results
       </GroupHeading>
     ),

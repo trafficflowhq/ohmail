@@ -212,6 +212,49 @@ describe("useDevicePairing — the runtime gate, asked on the MANAGED build too"
     ).toEqual([]);
   });
 
+  // Search's word rides the same hello: `searchBy` is "people" only where it reads true, and
+  // sending `to` or `party` to a server that never said so shows unfiltered letters under a name.
+  async function mountSearchProbe(demo = false): Promise<HTMLElement> {
+    const { useServerWords } = await import("../app/server-words.js");
+    function Probe() {
+      return h("output", null, useServerWords(demo).searchPeople ? "people:on" : "people:off");
+    }
+    return mountNode(h(Probe));
+  }
+  const HELLO_SEARCH = (searchPeople: boolean): Answer => {
+    const base = HELLO(true).body as { features: Record<string, boolean> };
+    return { status: 200, body: { ...base, features: { ...base.features, searchPeople } } };
+  };
+
+  it("an older server, whose hello names no searchPeople, answers false", async () => {
+    answers["GET /api/hello"] = HELLO(true);
+    const c = await mountSearchProbe();
+    expect(calls.some((r) => r.url.includes("/api/hello"))).toBe(true);
+    expect(c.textContent).toContain("people:off");
+  });
+
+  it("a server announcing searchPeople:true answers true", async () => {
+    answers["GET /api/hello"] = HELLO_SEARCH(true);
+    const c = await mountSearchProbe();
+    expect(c.textContent).toContain("people:on");
+  });
+
+  it("a failed hello and an answer that is no hello both answer false", async () => {
+    answers["GET /api/hello"] = { status: 500, body: { error: "down" } };
+    expect((await mountSearchProbe()).textContent).toContain("people:off");
+    await act(async () => root!.unmount());
+    host?.remove();
+    answers["GET /api/hello"] = { status: 200, body: null };
+    expect((await mountSearchProbe()).textContent).toContain("people:off");
+  });
+
+  it("the demo answers false and asks nothing", async () => {
+    answers["GET /api/hello"] = HELLO_SEARCH(true);
+    const c = await mountSearchProbe(true);
+    expect(c.textContent).toContain("people:off");
+    expect(calls.filter((r) => r.url.includes("/api/hello"))).toEqual([]);
+  });
+
 });
 
 describe("the Settings nav — a wired devicesSection is an entry, an absent one is none", () => {

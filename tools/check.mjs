@@ -25,6 +25,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { shellAdaptersAdded } from "./eslint-plugin-ohmail/index.mjs";
 import {
   compareWithBase,
   compareWithTree,
@@ -267,6 +268,20 @@ function baseBaseline(root, base) {
   }
 }
 
+/** The old shell's side of the frame only shrinks: what tools/shell-adapters.json names that the base's did not. */
+function shellAdaptersGrew(root, base) {
+  const filesOf = (text) => JSON.parse(text).files;
+  let before;
+  try {
+    before = filesOf(git(root, "show", `${base}:tools/shell-adapters.json`));
+  } catch {
+    return []; // the base is older than the list: there is nothing yet to grow against
+  }
+  return shellAdaptersAdded(filesOf(read(root, "tools/shell-adapters.json")), before).map(
+    (name) => `shell adapters: ${name} was added to tools/shell-adapters.json; the list only shrinks`,
+  );
+}
+
 async function everything(root, flags) {
   const base = flags.get("base")?.[0];
   if (process.env.CI === "true" && !base)
@@ -307,6 +322,7 @@ async function everything(root, flags) {
       refusals.push(...compareWithBase(baseline.rows, before));
       for (const line of rulingLines(baseline.rows, before)) say(`baseline: ${line}`);
     } else say(`baseline: ${base} has no tools/baseline.tsv; nothing to grow against`);
+    refusals.push(...shellAdaptersGrew(root, base));
   }
 
   say(`rules active: ${covered.active.length} (${covered.active.join(", ")})`);

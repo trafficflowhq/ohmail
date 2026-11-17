@@ -64,6 +64,30 @@ describe.skipIf(!AVAILABLE)("the calendar's sealed sign-in", () => {
     expect(storedWhenSent.map((text) => JSON.parse(text ?? "{}").refreshToken)).toEqual([0, 1].map(() => ["lasting", "rotated", "fixture"].join("-")));
   }, 60_000);
 
+  it("Microsoft: a lasting sign-in found on another connection's row is traded with nobody; one a turn sealed again is still its own row's", async () => {
+    const rotated = ["lasting", "rotated", "fixture"].join("-");
+    const traded: (string | null)[] = [];
+    const holder = await msWorld(async (form) => {
+      traded.push(form.get("refresh_token"));
+      return { status: 200, body: { access_token: "short", expires_in: 3600, refresh_token: rotated } };
+    }, "holder");
+    const other = await msWorld(async () => ({ status: 200, body: { access_token: "short", expires_in: 3600 } }), "other");
+    // The first connection's sealed row written over the other's, by whoever can write rows and holds no key.
+    const moved = await w.sql`update cal_credentials t set secret_enc = s.secret_enc, key_version = s.key_version
+      from cal_credentials s where s.connection_id = ${holder.connectionId} and t.connection_id = ${other.connectionId} returning t.connection_id`;
+    expect(moved.length).toBe(1);
+    expect(await calendarSyncPass(other.deps, other.due, never)).toEqual({ kind: "stopped", word: "sign_in_incomplete" });
+    expect([other.http.forms.length, other.seen]).toEqual([0, []]);
+    expect(await connectionOf(w, other.accountId, other.connectionId)).toMatchObject({ status: "reconnect", errorCode: "sign_in_incomplete" });
+    // On its own row it is traded, the new one sealed there, and the next turn opens and trades that one.
+    expect(await calendarSyncPass(holder.deps, holder.due, never)).toMatchObject({ kind: "synced" });
+    await w.sql`update cal_calendars set next_poll_at = null where connection_id = ${holder.connectionId}`;
+    expect(await calendarSyncPass(depsFor(w, providersOf({ microsoft: { reader: holder.reader, http: holder.http } }), {
+      oauth: { google: null, microsoft: async () => MS_REGISTRATION },
+    }), holder.due, never)).toMatchObject({ kind: "synced" });
+    expect(traded).toEqual([lasting("holder").reveal(), rotated]);
+  }, 60_000);
+
   it("Microsoft: a turn cut between the trade and its seal leaves the stored sign-in, which the next turn trades; a spent one stops for the person and asks nothing more", async () => {
     let n = 0;
     const t = await msWorld(async (form) => {
@@ -174,9 +198,31 @@ describe.skipIf(!AVAILABLE)("the calendar's sealed sign-in", () => {
     expect({ reads: reader.calls.length, lists: reader.lists }).toEqual({ reads: 0, lists: 0 });
   }, 60_000);
 
+  it("a server's sign-in sealed for another server than its connection's row names is no sign-in: it waits for the person and nobody is asked; a turn is handed the sealed text's server", async () => {
+    const SEALED_FOR = "https://dav.example.test/dav/";
+    const typed = { kind: "basic" as const, server: SEALED_FOR, user: "mila", password: new Secret(["kiln", "wheel"].join("-")) };
+    const reader = scriptedReader("caldav", { readings: ONE_PAGE });
+    /** The server every request of a turn was handed, as the reader got it. */
+    const handed: (string | null)[] = [];
+    const list = reader.listCalendars.bind(reader);
+    reader.listCalendars = async (c, signal) => { handed.push(c.start); return list(c, signal); };
+    const deps = depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } }));
+    // The row's server written by somebody who holds no key: to another host, to another path of the same host, to none.
+    for (const serverUrl of ["https://dav.elsewhere.example.net/dav/", `${SEALED_FOR}other/`, null]) {
+      const moved = await seedConnection(w, { provider: "caldav", credential: typed, serverUrl });
+      expect(await calendarSyncPass(deps, moved.due, never), String(serverUrl)).toEqual({ kind: "stopped", word: "sign_in_incomplete" });
+      expect(await connectionOf(w, moved.accountId, moved.connectionId)).toMatchObject({ status: "reconnect", errorCode: "sign_in_incomplete" });
+    }
+    expect({ reads: reader.calls.length, lists: reader.lists, handed }).toEqual({ reads: 0, lists: 0, handed: [] });
+    // The control: on the row it was sealed for it opens, and the reader is handed the server the text names.
+    const own = await seedConnection(w, { provider: "caldav", credential: typed, serverUrl: SEALED_FOR });
+    expect((await calendarSyncPass(deps, own.due, never)).kind).toBe("synced");
+    expect({ lists: reader.lists, handed }).toEqual({ lists: 1, handed: [SEALED_FOR] });
+  }, 60_000);
+
   it("a sealed sign-in this host's keys cannot open is the host's fault: nothing is written and nobody is asked", async () => {
     const seeded = await seedConnection(w, { provider: "caldav", credential: null, serverUrl: "https://dav.example.test/dav/" });
-    await sealCredential(w, seeded.accountId, seeded.connectionId, { kind: "basic", user: "mila", password: new Secret(["other", "ring"].join("-")) }, null,
+    await sealCredential(w, seeded.accountId, seeded.connectionId, { kind: "basic", server: "https://dav.example.test/dav/", user: "mila", password: new Secret(["other", "ring"].join("-")) }, null,
       new StaticKeyProvider({ 1: Buffer.alloc(32, 99) }));
     const reader = scriptedReader("caldav", { readings: ONE_PAGE });
     const deps = depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } }));

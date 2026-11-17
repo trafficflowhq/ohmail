@@ -14,14 +14,15 @@
      be able to open on top of it. `--z-pal` is what `sender-sheet.css` uses for that reason. */
   z-index: var(--z-pal);
   display: flex;
-  align-items: center;
-  justify-content: center;
   padding: 24px;
   overflow: auto;
   background: var(--scrim);
 }
+/* Centred by its own margins, never by the stage's alignment: a card taller than the window (a
+   phone, a large Text size) then starts at the stage's top and scrolls down to its foot. */
 .ob-card {
   width: min(640px, 100%);
+  margin: auto;
   padding: 28px 32px 24px;
 }
 .ob-card h1 {
@@ -57,8 +58,10 @@
 
 /* The foot: Cancel and Start over on the left, Back and the primary on the right. `.join-alt`
    is a link elsewhere and a BUTTON here — the verbs act rather than navigate — so the button
-   chrome is stripped back to the link's own face rather than the link being made a button. */
-.ob-foot {
+   chrome is stripped back to the link's own face rather than the link being made a button.
+   A name of its own: the kit's Ohbox floats its selection bar by `.ob-foot`, and under that
+   name this foot left the card for the window's bottom edge. */
+.ob-card-foot {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 18px;
@@ -67,7 +70,7 @@
   padding-top: 12px;
   border-top: 1px solid var(--hair-soft);
 }
-.ob-foot .join-alt {
+.ob-card-foot .join-alt {
   background: none;
   border: 0;
   padding: 0;
@@ -80,14 +83,14 @@
   gap: 6px;
   align-items: center;
 }
-.ob-foot .join-alt:hover {
+.ob-card-foot .join-alt:hover {
   color: var(--ink);
 }
-.ob-foot .join-alt[disabled] {
+.ob-card-foot .join-alt[disabled] {
   cursor: default;
   opacity: 0.5;
 }
-.ob-foot .ob-spacer {
+.ob-card-foot .ob-spacer {
   flex: 1 1 auto;
 }
 
@@ -275,9 +278,11 @@
 @media (max-width: 480px) {
   .ob-stage {
     padding: 0;
-    align-items: stretch;
   }
+  /* The whole window at least, and as tall as its steps: stretched to the window, the card ended
+     there and its foot ran on below it. */
   .ob-card {
+    min-height: 100%;
     padding: 20px 18px 18px;
   }
   .ob-counter b {

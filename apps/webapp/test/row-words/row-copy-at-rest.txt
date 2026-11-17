@@ -1,0 +1,45 @@
+protected | protected
+held | «0» messages / «1» messages / «2» messages / «1234» messages
+thread | «0» messages in this conversation / «1» message in this conversation / «2» messages in this conversation / «1,234» messages in this conversation
+marks | «1» messages, oldest first: all read / «2» messages, oldest first: «1» unread / «5» messages, oldest first: «5» unread / «1234» messages, oldest first: «1» unread
+spoken | Unread / Read / Has an attachment
+giulia | -
+petra | -
+techcheck | -
+glazecall | -
+cinderlock | -
+ben | -
+anna | -
+reto | -
+flurina | -
+tim | -
+carla | -
+nadja | -
+jonas | -
+f1 | -
+f2 | -
+f3 | -
+f4 | -
+f5 | -
+f6 | -
+f7 | -
+f8 | -
+f9 | -
+f10 | -
+f11 | -
+f12 | -
+f13 | -
+f14 | -
+f15 | -
+brandung | -
+kino | -
+erdton | -
+roestsonntag | -
+speichenhof | -
+alpenbahn | -
+pigment | -
+x-sent | Me → Nora Lindt +1 | N hue 25
+x-sent-one | Me → ben@lichtgrat.example | B hue 250
+x-undated | -
+x-junk | -
+x-far | -

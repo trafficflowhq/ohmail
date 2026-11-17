@@ -127,7 +127,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "if(l===\"zero\")try{document.documentElement.dataset.layout=\"zero\"}catch(e){}})()", why: "the same script, the layout stamp and its close" },
   ],
   "apps/webapp/app/views/SearchView.tsx": [
-    { text: ".view-search .search-box input", why: "a CSS selector — how the view reaches its own query box to select the kept text and to put the caret back after Escape" },
+    { text: ".search-box input", why: "a CSS selector — how the view reaches its own query box inside its root, where the list selects the kept text and puts the caret back after Escape" },
   ],
   "apps/webapp/app/shell/todays-feeds.tsx": [
     { text: "rail open", why: "machine text — the class names the frame's rail zone carries, which today's keys (`zone-nav`) find it by; no person reads it" },

@@ -10,14 +10,19 @@
  *      each perhaps on another host.
  *
  * Only the first step differs between servers. Every address an answer names is read against the
- * address that answered and asked through the same request port, which sends the sign-in to the
- * typed host and its sibling hosts and to no other.
+ * address that answered and asked through the same request port.
+ *
+ * THESE THREE STEPS ARE HOW A SERVER NAMES A HOST for the turn's sign-in (`hosts.ts`): a redirect
+ * one of their requests is answered with, the principal a start names, the homes the principal
+ * names. They are asked with the session of the discovery (`finding`, in `ask.ts`), whose requests
+ * begin at the sealed record's own starts and go on only by the server's own answers; no address
+ * of a caller's is ever asked here.
  */
 import { mailAddressOf } from "@ohmail/cal-core";
 import type { Typed } from "../address.js";
 import { MAX_PAGES_PER_CALL } from "../limits.js";
 import type { ProviderRefusal } from "../refusals.js";
-import { addressOf, ask, propfindOf, refuse, type Refused, type Session } from "./ask.js";
+import { addressOf, ask, propfindOf, refuse, tlsAlone, type Refused, type Session } from "./ask.js";
 import { CALDAV, DAV, childOf, childrenOf, propOf, type Multistatus } from "./multistatus.js";
 
 /* What a person typed, read, is the package's one reading of a typed address (`../address.ts`): the door that takes it asks the same. */
@@ -64,7 +69,10 @@ async function searchFrom(s: Session, starts: readonly string[]): Promise<Princi
     if (asked.ok) {
       const who = principalIn(asked.answer, asked.url);
       if (who === NOBODY) return refuse("sign_in_refused");
-      if (who !== null) return { ok: true, principal: who };
+      if (who !== null) {
+        s.hosts.names(who, asked.url);
+        return { ok: true, principal: who };
+      }
     } else if (ENDS_THE_SEARCH.has(asked.reason)) return refuse(asked.reason, asked.retryAfterMs);
     else if (asked.reason === "host_changed") none = "host_changed";
     else if (asked.reason === "unavailable" && none === "no_service") none = "unavailable";
@@ -73,8 +81,8 @@ async function searchFrom(s: Session, starts: readonly string[]): Promise<Princi
 }
 
 /**
- * Steps 1 and 2: the signed-in principal's address, and the session the rest of the call asks with.
- * That is the one handed in, unless the search had to turn to TLS.
+ * Steps 1 and 2: the signed-in principal's address, and the session the rest of the discovery asks
+ * with. That is the one handed in, unless the search had to turn to TLS.
  */
 export async function findPrincipal(s: Session, typed: Typed): Promise<(Extract<Principal, { ok: true }> & { readonly session: Session }) | Refused> {
   const found = await searchFrom(s, typed.starts);
@@ -82,7 +90,7 @@ export async function findPrincipal(s: Session, typed: Typed): Promise<(Extract<
   if (found.reason !== "address_not_allowed" || typed.secured === null) return found;
   // Typed without TLS, and not an address that may be asked so: the same starts over TLS. Never the other way
   // round, and from here on the sign-in is not sent without TLS either, whatever address an answer names.
-  const secure: Session = { ...s, auth: { ...s.auth, tlsOnly: true } };
+  const secure = tlsAlone(s);
   const again = await searchFrom(secure, typed.secured);
   return again.ok ? { ...again, session: secure } : again;
 }
@@ -108,5 +116,6 @@ export async function findHomes(s: Session, principal: string): Promise<{ readon
   // A principal that names no home is signed in to something that keeps no calendars.
   if (homes.size === 0) return refuse("no_service");
   if (homes.size > MAX_HOMES) return refuse("too_large");
+  for (const home of homes) s.hosts.names(home, asked.url);
   return { ok: true, homes: [...homes], addresses: [...addresses] };
 }

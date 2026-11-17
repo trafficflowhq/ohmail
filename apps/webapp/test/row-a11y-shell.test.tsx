@@ -22,7 +22,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import en from "../messages/en.json";
 
@@ -161,7 +161,7 @@ describe("the words the row takes are one object, not a fresh one per render", (
     const { useRowBadgeCopy } = await import("../app/shell/row-copy.js");
     const seen: unknown[] = [];
     function Probe({ tick }: { tick: number }) {
-      const copy = useRowBadgeCopy();
+      const copy = useRowBadgeCopy(useTranslations("message"));
       seen.push(copy.spoken);
       return h("i", null, String(tick));
     }

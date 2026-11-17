@@ -2,6 +2,7 @@ import type { Tx } from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb } from "@trafficflow/db/cloud";
 import { sendConnections, type ApiDeps, type ApiServices, type ChangeWakeHub } from "@trafficflow/api";
 import { calendarRoutes } from "@trafficflow/api/calendar";
+import { calendarNoticeRoutes } from "@trafficflow/api/calendar-notices";
 import type { MailService } from "@trafficflow/services";
 import { startClocks, type ClockHandle, type ClockRow } from "./clocks.js";
 import {
@@ -97,7 +98,8 @@ export function buildProgram(settings: Settings, door: DoorInput): Program {
 
   const dispatch = makeDispatch({
     // The calendar's routes only beside the calendar's port: one member says both (`buildServices`).
-    routes: services.calendar !== undefined ? [...cfg.chosen.routes, ...calendarRoutes] : cfg.chosen.routes,
+    // With them the two routes a calendar's provider rings, whose door is in the same bag.
+    routes: services.calendar !== undefined ? [...cfg.chosen.routes, ...calendarRoutes, ...calendarNoticeRoutes] : cfg.chosen.routes,
     bodyMaxBytes: door.bodyMaxBytes,
     closeUndrained: door.closeUndrained,
     logger,

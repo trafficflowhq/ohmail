@@ -29,6 +29,16 @@ export function closeTopmost(): void {
   opened.at(-1)?.close();
 }
 
+/**
+ * The system's Back: closes the newest open overlay and answers whether one was open. Where it answers yes,
+ * Back is spent on it and the host goes nowhere.
+ */
+export function closeTopOverlay(): boolean {
+  if (!opened.length) return false;
+  closeTopmost();
+  return true;
+}
+
 /** Counts `box` among the open overlays while `open` is true; Escape from outside every box closes the newest. */
 export function useOverlayEscape(
   open: boolean,

@@ -14,7 +14,7 @@ import { ruleOfRecurrence } from "../src/microsoft/convert.js";
 import { makeReader, MS_GRAPH_BASE } from "../src/microsoft/index.js";
 import type { ChangeItem, Connection } from "../src/port.js";
 import type { ProviderRefusal } from "../src/refusals.js";
-import type { HttpPort } from "../src/request/index.js";
+import { hopOf, type HttpPort } from "../src/request/index.js";
 
 const BASE = MS_GRAPH_BASE;
 const VIEW = `${BASE}/me/calendars/cal-1/calendarView/delta`;
@@ -38,7 +38,7 @@ function serving(routes: Routes) {
   const http: HttpPort = {
     async request(url, o) {
       const token = o.auth !== null && o.auth.credential.kind === "bearer" ? o.auth.credential.token : null;
-      sent.push({ url, method: o.method, token, prefer: o.headers.prefer, tokenGoesTo: Object.fromEntries(["graph.microsoft.com", "login.microsoftonline.com", "graph.evil.example"].map((h) => [h, o.auth?.admits(h) ?? false])) });
+      sent.push({ url, method: o.method, token, prefer: o.headers.prefer, tokenGoesTo: Object.fromEntries(["graph.microsoft.com", "login.microsoftonline.com", "graph.evil.example"].map((h) => [h, o.auth?.admits(hopOf(new URL(`https://${h}/`), null)) ?? false])) });
       const route = routes[url];
       if (route === undefined) throw new Error(`the test serves nothing at ${url}`);
       const reply = Array.isArray(route) ? route.shift() : route;

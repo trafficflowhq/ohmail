@@ -68,23 +68,38 @@ describe("Notifications", () => {
     expect(pressMaster).toHaveBeenCalledWith(true);
   });
 
-  it("offers only the events something delivers, and only while the master is live", () => {
-    mount(state({ deliverable: ["ohbox"] }));
+  it("offers a switch for exactly the kinds the emitter draws, and only while the master is live", () => {
+    mount(state({ carries: ["ohbox", "pairing"] }));
     expect(line(S.notifyOhbox)).not.toBeNull();
+    expect(line(S.notifyPairing)).not.toBeNull();
     expect(line(S.notifyScreener)).toBeNull();
-    expect(line(S.notifyPairing)).toBeNull();
-    expect(line(S.notifyIdentify)).not.toBeNull();
+    expect(line(S.notifyScheduled)).toBeNull();
     cleanup();
     mount(state({ live: false }));
     expect(line(S.notifyOhbox)).toBeNull();
-    expect(line(S.notifyIdentify)).toBeNull();
   });
 
-  it("writes an event's switch as the whole set of choices", () => {
+  it("has no switch where the host's emitter does not draw the kind, and no kind switch at all without an emitter", () => {
+    mount(state({ carries: ["cal_alert"] }));
+    expect(screen.getAllByRole("switch")).toHaveLength(1);
+    cleanup();
+    mount(state({ carries: [] }));
+    expect(screen.getAllByRole("switch"), "only the master stands").toHaveLength(1);
+    expect(line(S.notifyMaster)).not.toBeNull();
+  });
+
+  it("offers no switch to show who a notice is from or its subject", () => {
+    mount(state());
+    // The master and the four kinds the emitter draws, and nothing beside them.
+    expect(screen.getAllByRole("switch")).toHaveLength(5);
+    expect(screen.queryAllByRole("group", { name: /subject|who it is from/i })).toEqual([]);
+  });
+
+  it("writes a kind's switch as the whole set of choices", () => {
     const set = vi.fn();
     mount(state({ set }));
-    fireEvent.click(sw(S.notifyIdentify));
-    expect(set).toHaveBeenCalledWith({ ...notificationsState().channels, showSenderAndSubject: true });
+    fireEvent.click(sw(S.notifyScreener));
+    expect(set).toHaveBeenCalledWith({ ...notificationsState().channels, screener: false });
   });
 
   it("says what the last reconcile answered, and nothing once it clears", () => {

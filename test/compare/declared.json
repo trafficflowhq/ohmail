@@ -1735,6 +1735,17 @@
     "since": "2026-11-17"
   },
   {
+    "key": "screen=settings&sec=notifications",
+    "reason": "The reference still draws the switch \"Show who it is from and the subject\". It is not built: a notice says no sender and no subject on any surface, so a switch for them could change nothing.",
+    "since": "2026-11-17",
+    "nodes": [
+      {
+        "role": "switch",
+        "name": "Show who it is from and the subject"
+      }
+    ]
+  },
+  {
     "key": "screen=settings&sec=security",
     "reason": "Security says whether unused recovery codes exist, not how many, where the picture counts them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
     "since": "2026-11-17"

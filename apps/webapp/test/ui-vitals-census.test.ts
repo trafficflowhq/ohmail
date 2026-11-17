@@ -123,7 +123,7 @@ describe("the marks that end", () => {
   });
 
   it("the search view ends the search mark when its first results exist", () => {
-    const view = read("apps/webapp/app/views/SearchView.tsx");
+    const view = read("packages/app-logic/src/search/local-pass.ts");
     expect(callsIn(view, "endSearch")).toBe(1);
   });
 });

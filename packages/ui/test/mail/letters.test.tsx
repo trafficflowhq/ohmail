@@ -129,6 +129,26 @@ describe("MessageHead", () => {
     const marks = screen.getAllByRole("note").map((mark) => mark.textContent);
     expect(marks).toEqual(["Answered by the away responder · Wed 21 Oct 11:02", "Forwarded to Ben Arnold"]);
   });
+
+  it("a mark that tells of something that went wrong leads with what it is, heavy, under the warning sign; a quiet mark has neither", () => {
+    render(
+      <MessageHead
+        sender={{ name: "Lena Kaufmann", address: "lena@studio.example", printed: "You" }}
+        stamp={{ when: "09:12", full: false, title: "Full dates" }}
+        to={[{ word: "to", people: [{ name: "Giulia Rossi" }] }]}
+        marks={[
+          { lead: "No copy in Sent.", text: "The message went out; nothing to send again." },
+          { text: "Forwarded to Ben Arnold" },
+        ]}
+      />,
+    );
+    const [warns, quiet] = screen.getAllByRole("note");
+    expect(warns!.textContent).toBe("No copy in Sent. The message went out; nothing to send again.");
+    expect(within(warns!).getByText("No copy in Sent.").tagName).toBe("B");
+    /* The sign is a picture beside the words: drawn, and said by nobody. */
+    expect(warns!.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect([quiet!.querySelector("svg"), quiet!.querySelector("b")]).toEqual([null, null]);
+  });
 });
 
 describe("TextNotKept", () => {
@@ -164,7 +184,12 @@ describe("TextNotKept", () => {
       />,
     );
     const act = screen.getByRole("button", { name: "Loading from your mail server…" }) as HTMLButtonElement;
-    expect(act.disabled).toBe(true);
+    /* Off to a press and said so, by the kit's one rule for a press under way: the browser's own switch stays on, so the keys stay. */
+    expect([act.getAttribute("aria-disabled"), act.getAttribute("aria-busy"), act.disabled]).toEqual([
+      "true",
+      "true",
+      false,
+    ]);
     expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
     fireEvent.click(act);
     expect(onLoad).not.toHaveBeenCalled();
@@ -252,7 +277,9 @@ describe("FileNotArrived", () => {
       />,
     );
     expect(screen.getByRole("alert").textContent).toBe("This message's files could not be loaded.");
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const way = screen.getByRole("button", { name: "Try again" });
+    way.focus();
+    fireEvent.click(way);
     expect(onPress).toHaveBeenCalledTimes(1);
     rerender(
       <FileNotArrived
@@ -262,7 +289,10 @@ describe("FileNotArrived", () => {
       />,
     );
     const again = screen.getByRole("button", { name: "Looking again…" }) as HTMLButtonElement;
-    expect(again.disabled).toBe(true);
+    /* The pressed way stays where it is with the keys on it, off to a second press. */
+    expect(again).toBe(way);
+    expect(document.activeElement).toBe(again);
+    expect([again.getAttribute("aria-disabled"), again.disabled]).toEqual(["true", false]);
     fireEvent.click(again);
     expect(onPress).toHaveBeenCalledTimes(1);
   });

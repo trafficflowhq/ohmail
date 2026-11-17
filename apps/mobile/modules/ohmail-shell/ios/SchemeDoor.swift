@@ -4,6 +4,8 @@ import WebKit
 let shellScheme = "ohmail-shell"
 let shellHost = "app"
 let shellStart = URL(string: "\(shellScheme)://\(shellHost)/index.html")!
+/** The door's page: the second start page, shown while no scope is live. */
+let shellDoor = URL(string: "\(shellScheme)://\(shellHost)/door.html")!
 
 /**
  * THE ONLY THING THE SHELL'S WEB VIEW MAY LOAD (iOS). The files the build copied into the bundle's
@@ -21,6 +23,9 @@ final class SchemeDoor: NSObject, WKURLSchemeHandler {
   }()
 
   var csp: String? { (manifest?["csp"] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+
+  /** Whether the build's page lists this file. */
+  func lists(_ name: String) -> Bool { (manifest?["files"] as? [String: Any])?[name] != nil }
 
   func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
     guard let url = task.request.url, let name = fileName(task.request.httpMethod ?? "GET", url),

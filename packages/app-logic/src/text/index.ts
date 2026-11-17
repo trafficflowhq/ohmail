@@ -2,4 +2,11 @@
 export type { TranslationValue, Translator } from "./translator.js";
 export * from "./idn.js";
 export { liveCopyOver } from "./live-copy.js";
+export {
+  activeFormatLocale,
+  activeFormatZone,
+  liveCopy,
+  setFormatWords,
+  type FormatWords,
+} from "./format-words.js";
 export * from "./locale.js";

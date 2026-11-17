@@ -279,6 +279,27 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
     expect(document.activeElement, `the question lost focus to ${focusWord()}`).toBe(close);
   });
 
+  it("Escape asks whether to cancel with focus on Close setup: ↵ there closes setup, and the step's ↵ never runs", async () => {
+    const s = await mount({ facts: FIRST_RUN });
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush();
+    expect(focusWord(), "the question opened with focus left in the step").toBe(`BUTTON "${t.cancelConfirm}"`);
+    await enter();
+    expect(s.counts, "↵ in the question did not close setup").toMatchObject({ completed: 1, left: 1, organized: 0 });
+    expect(s.heading(), "↵ in the question moved the step behind it").toBe(t.consentTitle);
+  });
+
+  it("Start over asks with focus on its first verb, and taking the question back puts focus in the step's form", async () => {
+    const s = await mount({ facts: FIRST_RUN });
+    await act(async () => { s.button(t.restart).click(); });
+    await flush();
+    expect(focusWord(), "the question opened with focus left in the step").toBe(`BUTTON "${t.restartKeep}"`);
+    const backs = [...s.card().querySelectorAll("button")].filter((b) => (b.textContent ?? "").trim() === t.back);
+    await act(async () => { backs[backs.length - 1]!.click(); });
+    await flush();
+    expect(inStepForm(s), `the question closed and left focus on ${focusWord()}`).toBe(true);
+  });
+
   it("Run setup again opens with focus on its first step's ↵ control, not the card", async () => {
     const s = await mount({
       facts: { ...SETTLED, account: { onboardingCompletedAt: "2026-10-12T00:23:10.000Z" } }, rerun: true,

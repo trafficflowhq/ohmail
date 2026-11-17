@@ -1075,6 +1075,12 @@ export const STORED_KEYS = [
     words: false, erased: "never", mark: "kept",
   },
   {
+    key: "ohcal-snapshot.json", store: "file", owner: "phone",
+    at: ["packages/client-engine/src/notices/snapshot.ts"],
+    holds: "the calendar's coming days, read by the phone's own alerts and widgets: for each event its time, its id and its label (a title only where the person's title switch shows titles, `Busy` for a private one, `Event` otherwise), never a letter's words, never an address, never an attendee. Written by the phone's native side, atomically, in the phone app's own files folder (the shared group's folder once one exists), kept outside backups, and also removed when the calendar is switched off on the device. No build writes it yet: the writer comes with those alerts and widgets",
+    words: true, erased: "sign-out", mark: "kept",
+  },
+  {
     key: "ohmail-shell", store: "identifier", owner: "phone",
     at: ["apps/mobile/modules/ohmail-shell/ios/SchemeDoor.swift", "apps/mobile/src/shell/admit.ts"],
     holds: "the scheme the iPhone's shell page is served under: its origin, by which the system keeps the page's storage",

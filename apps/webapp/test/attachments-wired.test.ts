@@ -464,7 +464,7 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     const app = code(read("../app/shell/AppShell.tsx"));
     expect(app, "AppShell does not close a preview when the last pane lets its message go")
       .toMatch(/onUnshown: \(id\) => setPreviewFor\(\(p\) => \(p\?\.messageId === id \? null : p\)\)/);
-    const seam = code(read("../app/shell/attachments.ts"));
+    const seam = code(read("../../../packages/app-logic/src/reader/attachments.ts"));
     expect(seam, "the seam no longer reports the last release")
       .toMatch(/holds\.current\.delete\(id\);[\s\S]{0,120}onUnshown\.current\?\.\(id\);/);
   });
@@ -476,7 +476,7 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     // completion release state the committed tree still renders (review finding). The refs
     // may be assigned in exactly one place: the publication effect. Source-level because no
     // jsdom test can schedule an abandoned concurrent render deterministically.
-    const seam = code(read("../app/shell/attachments.ts"));
+    const seam = code(read("../../../packages/app-logic/src/reader/attachments.ts"));
     // LAYOUT-scope (`useCommitEffect` — older-mail.ts's SSR-safe alias), not a passive
     // `useEffect`: passive effects flush after paint, and an already-queued completion running
     // in the commit-to-paint gap read the OLD refs — the round-six finding on the round-five

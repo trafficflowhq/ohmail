@@ -45,6 +45,7 @@ import {
 import type { MailboxAllowancePolicy } from "@trafficflow/services/mail";
 import { calendarFeed } from "@trafficflow/services/calendar";
 import { makePlaceSuggester } from "@trafficflow/api/calendar";
+import { makeCalendarNoticeDoor } from "@trafficflow/api/calendar-notices";
 import type { PairingTokenMinted } from "@trafficflow/services";
 import {
   makeProbeHostGuard, ALLOW_ANY_PROBE_HOST, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS,
@@ -407,6 +408,11 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
       // The connect door beside it: what a typed address may name here, and the ways' switches. It
       // is handed no resolver and no way out: the door dials nothing.
       calendarConnect: { policy: cfg.calendar.policy, ceremonies: cfg.calendar.connect },
+      // The door a provider's notices ring, mounted with the calendar's routes: one for the program,
+      // which holds what is in flight and says its counts on the program's own logger.
+      calendarNotices: makeCalendarNoticeDoor({
+        microsoftValidation: cfg.calendar.notices.microsoftValidation, log: parts.logger, now: () => Date.now(),
+      }),
     } : {}),
     // PLACE SUGGESTIONS, beside the calendar and only where a geocoder is set (`PLACES_SUGGEST_URL`):
     // one suggester for the program, whose limits, answers and holds live as long as it does.

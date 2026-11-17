@@ -89,6 +89,7 @@ import {
   mailboxOauthDeviceCeremonies,
   oauthAuthCodes,
   pushSubscriptions,
+  calPushChannels,
   recoveryCodes,
   screenerSuggestOwed,
   totpSecrets,
@@ -457,6 +458,7 @@ export async function deleteAccount(
     await drop("cal_links", tx.delete(calLinks).where(eq(calLinks.accountId, accountId)));
     await drop("cal_events", tx.delete(calEvents).where(eq(calEvents.accountId, accountId)));
     await drop("cal_calendars", tx.delete(calCalendars).where(eq(calCalendars.accountId, accountId)));
+    await drop("cal_push_channels", tx.delete(calPushChannels).where(eq(calPushChannels.accountId, accountId)));
     await drop("cal_credentials", tx.delete(calCredentials).where(eq(calCredentials.accountId, accountId)));
     await drop("cal_connections", tx.delete(calConnections).where(eq(calConnections.accountId, accountId)));
 

@@ -75,7 +75,7 @@ export function useOhboxList(input: OhboxListInput): OhboxListModel {
   const { enter, readByRule } = useEnter(navRows, rowIndexOf, held);
   const visit = useVisit(input, held, pickSet.picked, selected, enter, undo.suspended);
   const { selectByUser, open } = visit;
-  useUndoAnswer(input, held, undo, landing.verbAdvance);
+  useUndoAnswer(input, held, undo, landing.verbAdvance, landing.verbRested);
   const marks = useMarks(input, held, selected, returnToNew);
   useDepartures(input, held.leaveRead, undo.suspended);
   useSlide(placement);

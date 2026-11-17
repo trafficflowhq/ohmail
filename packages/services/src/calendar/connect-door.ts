@@ -6,7 +6,7 @@
  * address reader behind it, are in no program that has no door.
  */
 export {
-  calendarWays, connectCalendar, offeredWays, parseConnectAsk, parseSignInAsk,
+  calendarConnectState, connectCalendar, offeredWays, parseConnectAsk, parseSignInAsk,
   CalendarConnectionTaken, CalendarSealFault, CALENDAR_CEREMONIES_BUILT, CALENDAR_CONNECTION_CEILING,
   type CalendarConnectAsk, type CalendarConnectDoor, type CalendarSignInAsk,
 } from "./connect.js";

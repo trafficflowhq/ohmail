@@ -5,7 +5,7 @@ import {
   senderDomainOf, type CheckedSuggestion, type EmailAddress,
 } from "@trafficflow/core/mail";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
-import { readProfileApplied } from "@trafficflow/core/adapters/organizer-profile";
+import { readProfileApplied, subjectHeadingOf } from "@trafficflow/core/adapters/organizer-profile";
 import { reasonDetail, suggestionAdvice } from "../screener-advice.js";
 import {
   accountSettings, autoReplyByUsWhere, awayReplies, mailboxes, mailboxProfileMirror, isOrganizerKind,
@@ -1034,6 +1034,7 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
   for (const b of boxes) {
     if (b.at !== null) off[b.id] = b.at.toISOString();
   }
+  const subjectHeading = subjectHeadingOf(row?.subjectHeading, row?.subjectHeadingAt);
   // THE PER-MAILBOX SIGNATURES (mail 0075) ARE DELIBERATELY NOT ON THIS ENTITY, and the
   // absence is a bound, not an omission. Every signature write appends its
   // own settings change row, and this materializer runs once PER ROW with no compaction — so
@@ -1053,6 +1054,9 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
     foldersEnabledAt: iso(row?.foldersEnabledAt),
     folderMailboxesOff: off,
     locale: row?.locale ?? null,
+    // The subject's place, present only while stated: an account that stated nothing sends the record
+    // it sent before the key.
+    ...(subjectHeading === null ? {} : { subjectHeading }),
     // A missing row still needs a stamp the client can compare; the epoch is honest for "nothing
     // was ever written", and the first real write replaces it with the row's own.
     updatedAt: row?.updatedAt ? row.updatedAt.toISOString() : new Date(0).toISOString(),

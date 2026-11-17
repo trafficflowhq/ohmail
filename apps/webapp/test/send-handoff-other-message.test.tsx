@@ -56,9 +56,9 @@ async function writeToKim(s: DraftShell): Promise<void> {
   const click = async (node: Element | undefined): Promise<void> => {
     await act(async () => { node?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   };
-  await navigate("#/ohbox");
-  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row m1");
-  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row m1");
+  await navigate("#/history");
+  await waitFor(() => s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row m1");
+  await press(s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "the row m1");
   const kim = (): Element | undefined => [...s.el.querySelectorAll(".rcpt-chip")].find((c) => (c.textContent ?? "").includes("Kim"));
   await waitFor(() => kim() !== undefined, "Kim's chip");
   await click(kim());
@@ -245,7 +245,7 @@ describe("Compose while a letter's send waits", () => {
     Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424, retryableFirst: 500, saveFirst });
   };
   async function composeBy(s: DraftShell, door: string): Promise<void> {
-    await navigate("#/ohbox");
+    await navigate("#/history");
     await rounds(6);
     await doors[door]!();
     await waitFor(() => window.location.hash === "#/compose", "the composer");
@@ -263,7 +263,7 @@ describe("Compose while a letter's send waits", () => {
     await unmountAll();
     resetComposerForTest();
     stubDom();
-    const now = await mountShell("#/ohbox", messages, drafts, { store: s.store, handOff: true, ...(signatures ? { signatures } : {}) });
+    const now = await mountShell("#/history", messages, drafts, { store: s.store, handOff: true, ...(signatures ? { signatures } : {}) });
     keepWaiting(now, true);
     await rounds(30);
     return now;
@@ -300,7 +300,7 @@ describe("Compose while a letter's send waits", () => {
     await pressTypedA(s);
     await composeBy(s, "the rail's Compose");
     expect(shown(s), "Compose kept the letter its send's save holds").toEqual(BLANK);
-    await navigate("#/ohbox");
+    await navigate("#/history");
     await rounds(6);
     await waitFor(() => footButton("Open") !== null, "A waiting on the foot line");
     await press(footButton("Open"), "Open on A");
@@ -371,7 +371,7 @@ describe("Compose while a letter's send waits", () => {
      ending drops, so the letter stays until its send has ended. */
   for (const [door, ending] of [["Compose", "delivered"], ["Compose", "unverified"], ["Write to", "delivered"], ["Write to", "unverified"]] as const) {
     it(`${door} while a letter pressed inside its first save's round trip waits, then ${ending}: no copy is left to send again`, async () => {
-      const s = await mountShell("#/ohbox", [M1_KIM], [], { handOff: true });
+      const s = await mountShell("#/history", [M1_KIM], [], { handOff: true });
       await writeToKim(s);
       await writeLunch(s);
       let releaseSave!: () => void;
@@ -409,7 +409,7 @@ describe("Compose while a letter's send waits", () => {
 
   it("a held row opened over a letter its press saved but named only by its session neither speaks for nor withdraws that send", async () => {
     const held = { ...letter("d-x", "Old letter", "Older words"), status: "unverified" } as unknown as EngineDraft;
-    const s = await mountShell("#/ohbox", [M1_KIM], [held], { handOff: true });
+    const s = await mountShell("#/history", [M1_KIM], [held], { handOff: true });
     s.withdrawAnswer.outcome = "withdrawn";
     await writeToKim(s);
     keepWaiting(s, true);
@@ -519,7 +519,7 @@ describe("a door over a letter whose send came back unverified, with a signature
     await unmountAll();
     resetComposerForTest();
     stubDom();
-    const now = await mountShell("#/ohbox", [M1_KIM], drafts, { store: s.store, signatures: SIG });
+    const now = await mountShell("#/history", [M1_KIM], drafts, { store: s.store, signatures: SIG });
     await rounds(30);
     await navigate("#/compose");
     await waitFor(() => composeSubject(now.el) === AT_ONE, "A back in the composer");

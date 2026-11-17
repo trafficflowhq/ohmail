@@ -7,6 +7,7 @@ import { FOLDER_OF_VIEW, type EngineMutation } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { cursorRow, ohboxRows, openRow, reportSays } from "./ohbox/_finders.js";
 
 /**
  * TWO CLAIMS THE SHELL MAKES, DRIVEN THROUGH THE SHELL.
@@ -93,19 +94,39 @@ async function mountShell(): Promise<void> {
    * explicitly here. It lands the cursor exactly where the old fallback did, so nothing else in
    * this file changes.
    */
+  heardHash = window.location.hash;
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
   });
+  await hearAddress();
 }
 
-/** The toasts SAYING something — the host keeps its Undo and notice slots mounted at rest. */
+/**
+ * The toasts SAYING something — the host keeps its Undo and notice slots mounted at rest. At the seated Ohbox a verb's
+ * answer is said in the frame's report.
+ */
 const saying = (): string[] =>
-  [...host!.querySelectorAll(".toast")].map((t) => (t.textContent ?? "").trim()).filter((t) => t.length > 0);
+  [reportSays(), ...[...host!.querySelectorAll(".toast")].map((t) => (t.textContent ?? "").trim())].filter((t) => t.length > 0);
+/** What the answer says: the frame's report at the seated Ohbox, else the capsule. */
+const said = (): string => reportSays() || (host!.querySelector(".toast")?.textContent ?? "");
+
+/**
+ * THE ADDRESS AS A BROWSER ANNOUNCES IT. At the seated Ohbox the selection is the address, and the frame hears a move
+ * of it by its `hashchange`; jsdom queues that event on a task this file's fake clock never runs. A press that moved
+ * the address announces it here, as the browser does a frame later.
+ */
+let heardHash = "";
+const hearAddress = async (): Promise<void> => {
+  if (window.location.hash === heardHash) return;
+  heardHash = window.location.hash;
+  await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
+};
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
 const click = async (el: Element | null | undefined, init: MouseEventInit = {}): Promise<void> => {
@@ -113,9 +134,10 @@ const click = async (el: Element | null | undefined, init: MouseEventInit = {}):
   await act(async () => {
     el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
-const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")];
+const rows = (): HTMLElement[] => ohboxRows(host!);
 /** The rows the selection holds: a picked option says so (`data-picked`, the kit's row). */
 const pickedRows = (): HTMLElement[] => rows().filter((r) => r.hasAttribute("data-picked"));
 /** The address a row draws after its sender's name. A row that draws squares or a tag leaves it out (as the design
@@ -224,14 +246,14 @@ describe("a sender's screening, from a list row", () => {
     // `stopPropagation` this would both open the popover and select (or open) the row.
     await mountShell();
     const target = rows()[1]!;
-    const before = host!.querySelector(".view-ohbox :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? null;
+    const before = cursorRow(host!)?.getAttribute("data-id") ?? null;
 
     await click(target.querySelector(":is(.av, .oh-row-face)"));
 
     const menu = host!.querySelector(".senderm");
     expect(menu, "no screening popover opened").toBeTruthy();
-    expect(host!.querySelector(".view-ohbox :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? null).toBe(before);
-    expect(host!.querySelector(".reader")).toBeNull();
+    expect(cursorRow(host!)?.getAttribute("data-id") ?? null).toBe(before);
+    expect(openRow(host!)?.dataset.id ?? null, "the pressed row was not opened").not.toBe(target.dataset.id);
   });
 
   it("clicking the ADDRESS does the same — the literal request", async () => {
@@ -276,7 +298,7 @@ describe("a sender's screening, from a list row", () => {
     expect(kinds("rule_create")).toEqual([
       expect.objectContaining({ ruleKind: "sender", destination: "ohmail/News", applyRetro: true }),
     ]);
-    expect(host!.querySelector(".toast")?.textContent ?? "").toContain("Future mail from them files there too");
+    expect(said()).toContain("Future mail from them files there too");
     expect(host!.querySelector(".senderm")).toBeNull();
   });
 
@@ -298,7 +320,7 @@ describe("a sender's screening, from a list row", () => {
     expect(kinds("rule_create")).toEqual([]);
     expect(kinds("rule_update")).toEqual([]);
     expect(kinds("move").length).toBeGreaterThan(0);
-    expect(host!.querySelector(".toast")?.textContent ?? "").toContain("No rule was made");
+    expect(said()).toContain("No rule was made");
   });
 
   /**
@@ -314,7 +336,7 @@ describe("a sender's screening, from a list row", () => {
   it("clicking the same destination twice makes ONE rule, not one per click", async () => {
     await mountShell();
     const id = rows()[0]!.getAttribute("data-id")!;
-    const avatar = () => host!.querySelector<HTMLElement>(`.view-ohbox :is(.row, [role=option])[data-id="${id}"] :is(.av, .oh-row-face)`);
+    const avatar = () => rows().find((r) => r.dataset.id === id)?.querySelector<HTMLElement>(":is(.av, .oh-row-face)") ?? null;
     const ohbox = () => [...host!.querySelectorAll<HTMLElement>(".senderm li")]
       .find((li) => li.textContent?.startsWith("Ohbox"));
 
@@ -325,7 +347,7 @@ describe("a sender's screening, from a list row", () => {
     // A rule with NOTHING to move is the ordinary case for the destination the mail is
     // already in, and "0 messages moved" reads like a bug. The `=0` arm is asserted here
     // because a malformed nested plural renders raw rather than throwing.
-    expect(host!.querySelector(".toast")?.textContent ?? "")
+    expect(said())
       .toBe("Ohbox — their mail is already there. Future mail from them files there too.");
 
     await click(avatar());
@@ -336,27 +358,33 @@ describe("a sender's screening, from a list row", () => {
     // and with the past-mail option on the press re-arms it for the mail already filed — so the
     // sentence names what just happened instead of saying nothing did.
     expect(kinds("rule_update"), "the standing rule is asked for the backlog").toHaveLength(1);
-    expect(host!.querySelector(".toast")?.textContent ?? "")
+    expect(said())
       .toContain("a rule was already sending their future mail there");
-    expect(host!.querySelector(".toast")?.textContent ?? "")
+    expect(said())
       .toContain("applying it to the mail it has already filed");
   });
 
   it("the open message offers it too — the UX suite looks for exactly this control", async () => {
+    /* Today's reader's own control: History still draws it (kind (b)); the seated reader's panel has no Screening
+       (declared). */
+    window.location.hash = "#/history";
     await mountShell();
     // The label carries its keycap ("Screening" + `s`), which is why this is a prefix
     // match — and why the live check's /screen/i regex finds it on the live site.
-    const labels = [...host!.querySelectorAll(".read-col .msg-actions button")]
+    const labels = [...host!.querySelectorAll(".view-history .read-col .msg-actions button")]
       .map((b) => (b.textContent ?? "").trim());
     expect(labels.some((l) => l.startsWith("Screening")), labels.join(" · ")).toBe(true);
-    await click([...host!.querySelectorAll(".read-col .msg-actions button")]
+    await click([...host!.querySelectorAll(".view-history .read-col .msg-actions button")]
       .find((b) => (b.textContent ?? "").trim().startsWith("Screening")));
     expect(host!.querySelector(".senderm")).toBeTruthy();
   });
 
   it("the from-line address is a real control, not a span with a handler", async () => {
+    /* Today's reader's own from-line: History still draws it (kind (b)); the seated reader's sender line opens the
+       contact card. */
+    window.location.hash = "#/history";
     await mountShell();
-    const sender = host!.querySelector<HTMLButtonElement>(".read-col .msg-sender");
+    const sender = host!.querySelector<HTMLButtonElement>(".view-history .read-col .msg-sender");
     expect(sender?.tagName).toBe("BUTTON");
     await click(sender);
     expect(host!.querySelector(".senderm")).toBeTruthy();
@@ -400,7 +428,7 @@ describe("marking a selection read is ONE request", () => {
     await mountShell();
     await key("x");                                     // anchor at the cursor
     const order = rows().map((r) => r.dataset.id!);
-    const anchor = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")!.dataset.id!;
+    const anchor = cursorRow(host!)!.dataset.id!;
     const target = order[order.indexOf(anchor) + 3]!;
 
     await click(rows().find((r) => r.dataset.id === target), { shiftKey: true });
@@ -419,7 +447,7 @@ describe("marking a selection read is ONE request", () => {
     await key("x");
     await click(barButton("Read")); // the read PAIR's first direction — "Read | Unread"
     expect(saying(), "one sentence, not N").toHaveLength(1);
-    expect(host!.querySelector(".toast")?.textContent ?? "").toContain("2 messages");
+    expect(said()).toContain("2 messages");
   });
 
   it("u marks a message unread and the 2 s dwell does NOT undo it", async () => {
@@ -430,10 +458,10 @@ describe("marking a selection read is ONE request", () => {
     await mountShell();
     // Walk to a row that is ALREADY read, so `u` means "make this unread" — the direction
     // the dwell can undo.
-    let cursor = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")!;
+    let cursor = cursorRow(host!)!;
     for (let i = 0; i < 12 && cursor.getAttribute("data-unseen"); i++) {
       await key("j");
-      cursor = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")!;
+      cursor = cursorRow(host!)!;
     }
     expect(cursor.getAttribute("data-unseen"), "never reached a read row").toBeNull();
     const id = cursor.dataset.id!;
@@ -551,7 +579,7 @@ describe("a selection offers the verbs a single message does", () => {
     expect(new Set(moves.map((m) => m.messageId)).size, "one message was moved twice").toBe(3);
 
     // One sentence for the whole press, counting both.
-    expect(host!.querySelector(".toast")?.textContent ?? "")
+    expect(said())
       .toMatch(/Mail from [1-9]\d* senders? now goes to News — [1-9]\d* messages? moved\./);
   });
 
@@ -644,7 +672,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     expect(new Set(moved.map((m) => m.messageId)).size).toBe(moved.length);
     expect(moved.every((m) => m.folder === "ohmail/News")).toBe(true);
     expect(kinds("screener_decide"), "no fixture sender is waiting").toEqual([]);
-    expect(host!.querySelector(".toast")?.textContent ?? "").toContain("No rule was made");
+    expect(said()).toContain("No rule was made");
   });
 
   it("screening a selection that is ALREADY where it is going dispatches nothing", async () => {

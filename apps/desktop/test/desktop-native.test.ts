@@ -150,7 +150,7 @@ describe("the menu's navigation", () => {
   /** Outside the app there is no menu — and no failure either. */
   it("is silent when there is no shell to listen to", async () => {
     await expect(onMenuNavigate(() => undefined)).resolves.toBeUndefined();
-    await expect(postOsNotice("t", "b")).resolves.toBeUndefined();
+    await expect(postOsNotice({ kind: "ohbox", count: 1 })).resolves.toBeUndefined();
     await expect(setBadge(3)).resolves.toBeUndefined();
   });
 });
@@ -170,11 +170,11 @@ describe("the badge and the notification", () => {
     expect(shell.asked).toEqual([{ command: "set_badge", payload: { count: 0 } }]);
   });
 
-  it("hands the notification's words over whole", async () => {
+  it("hands the shell the notice itself, a kind and its count, and no words", async () => {
     const shell = shellAnswering();
-    await postOsNotice("ohmail", "One new message for you.");
+    await postOsNotice({ kind: "ohbox", count: 3 });
     expect(shell.asked).toEqual([
-      { command: "notify", payload: { title: "ohmail", body: "One new message for you." } },
+      { command: "notify", payload: { notice: { kind: "ohbox", count: 3 } } },
     ]);
   });
 });

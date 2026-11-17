@@ -165,6 +165,13 @@ export function calendarCatalogSuite(
       assertClassesCover([...columns.keys()]);
     });
 
+    it("keeps which calendar new events go to in one place: the account's settings, and no column of a calendar's own", async () => {
+      const named = await exec(`select table_name::text as t, column_name::text as c from information_schema.columns
+        where table_schema = 'public' and table_name like 'cal\\_%' and (column_name like '%default%' or column_name like 'new\\_events%')
+        order by 1, 2`);
+      expect(named.map((r) => `${String(r.t)}.${String(r.c)}`)).toEqual(["cal_settings.new_events_calendar_id"]);
+    });
+
     it("enforces every key the family declares, composite, and none into the mail tables", async () => {
       const keys = (await calendarKeys(exec)).filter((k) => k.table in CALENDAR_TABLES);
       expect(keys.map(keyLine).sort()).toEqual(declaredKeys());

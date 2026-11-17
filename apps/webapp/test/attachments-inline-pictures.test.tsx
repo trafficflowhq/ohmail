@@ -50,11 +50,11 @@ function Harness({ engine, messageId, text, html }: {
   text: string;
   html: string | null;
 }): React.ReactElement {
-  const attachments = useMessageAttachments(engine, messageId, { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const attachments = useMessageAttachments(engine, messageId, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return h(
     React.Fragment,
     null,
-    h(MessageBody, { messageId, text, html }),
+    h(MessageBody, { owner: null, messageId, text, html }),
     attachments
       ? h(AttachmentStrip, {
           items: attachments.itemsOf(messageId, { includeInlineParts: true }),

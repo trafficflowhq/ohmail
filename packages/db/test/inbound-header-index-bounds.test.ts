@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { withoutComments, bracketSpan } from "../../../scripts/lib/source-scan.mjs";
 import { UNWRITTEN_TABLES } from "./_unwritten-tables.js";
 
-/* @reads: packages/db/src/schema-mail.ts packages/db/src/schema-cloud.ts packages/core/src/adapters/drizzle-repo.ts packages/core/src/stored-values.ts packages/core/src/threading.ts packages/core/src/message-search.ts packages/services/src/unsubscribe-service.ts packages/core/src/adapters/imap-bounds.ts */
+/* @reads: packages/db/src/schema-mail.ts packages/db/src/schema-cloud.ts packages/core/src/adapters/drizzle-repo.ts packages/core/src/stored-values.ts packages/core/src/threading.ts packages/core/src/message-search.ts packages/services/src/unsubscribe-service.ts packages/core/src/adapters/imap-bounds.ts apps/worker/src/calendar/notice-channels.ts */
 
 /**
  * EVERY BTREE INDEX ON A TEXT COLUMN IS NAMED, AND THE ONES A SENDER WRITES ARE BOUNDED AT INGEST.
@@ -121,6 +121,8 @@ const BOUND = {
   },
   // A calendar write's key, minted by the device for one press: printable ASCII, so its characters are its bytes.
   calendarWriteKey: { file: "packages/db/src/calendar/write-act.ts", code: /v\.length <= CALENDAR_WRITE_LIMITS\.keyChars && PRINTABLE_KEY\.test\(v\)/ },
+  // A notice channel's id where the provider names it (Microsoft): held to the 36 characters of an id before its row is written.
+  noticeChannelId: { file: "apps/worker/src/calendar/notice-channels.ts", code: /if \(!isNoticeChannelId\(opened\.id\)\) \{/ },
 } as const;
 type Bound = keyof typeof BOUND;
 
@@ -258,10 +260,10 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   "cal_links.recurrence_id": { unwritten: "the instance's id, bounded with the UID" },
   "cal_credentials.kind": { not: "a closed set of kinds the product writes: the connect door's `basic` and `address`, a provider's `oauth`" },
   "cal_writes.idempotency_key": { inbound: "calendarWriteKey" },
-  // cloud 0105, a calendar's notice channels. The channel's id is minted by the service or handed
-  // back by the provider; either way it is bounded where the channel is opened.
-  "cal_push_channels.provider": { unwritten: "a provider name the product writes; classed `not` by its writer" },
-  "cal_push_channels.channel_id": { unwritten: "a channel's id, bounded where the channel is opened" },
+  // cloud 0105, a calendar's notice channels. The channel's id is minted by the service (an id of
+  // its own making) or handed back by the provider; the provider's is bounded where the channel is opened.
+  "cal_push_channels.provider": { not: "a provider's word the product writes: the notice pass's own `google` or `microsoft`" },
+  "cal_push_channels.channel_id": { inbound: "noticeChannelId" },
   "alert_pass_runs.driver": { not: "a driver name the product writes" },
   "alert_driver_gaps.driver": { not: "a driver name the product writes" },
   "alert_drills.kind": { not: "an alert kind the product writes, held to a shape by a CHECK" },

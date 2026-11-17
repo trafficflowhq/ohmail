@@ -7,6 +7,7 @@ import type { ZoneSource } from "@ohmail/cal-core";
 import { MAX_RETRY_AFTER_MS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { Clock } from "../port.js";
 import type { ProviderRefusal } from "../refusals.js";
+import type { Hop } from "./shape.js";
 
 /**
  * The methods reading needs, and the three a writer adds. No other: a calendar is never made or
@@ -18,20 +19,30 @@ export type HttpMethod = "GET" | "POST" | "PROPFIND" | "REPORT" | "PUT" | "PATCH
  * What a write is made against, written by the port itself as it writes the sign-in's line: the
  * version the change was made on (`If-Match`), or that the object must be new (`If-None-Match: *`).
  * A version must be an entity tag ({@link sendableTag}); "any version" cannot be said.
+ *
+ * `own-channel` is the removal of a notice channel this program opened: a channel has no version
+ * to be removed under, and nothing a person wrote is in it. DELETE only, and no line is written for it.
  */
-export type Precondition = { readonly kind: "unchanged"; readonly tag: string } | { readonly kind: "new" };
+export type Precondition =
+  | { readonly kind: "unchanged"; readonly tag: string }
+  | { readonly kind: "new" }
+  | { readonly kind: "own-channel" };
 
 /** The headers an adapter may name. Every other line of a request is the port's own. */
 export type AdapterHeader = "accept" | "content-type" | "depth" | "prefer";
 
 /**
  * A sign-in for one request. The Authorization line is built inside the port, for each hop anew, and
- * only for a host `admits` says yes to; a hop to any other host is not made (`host_changed`).
+ * only for an address `admits` says yes to; a hop to any other is not made (`host_changed`).
  */
 export interface Authorization {
   readonly credential: { readonly kind: "basic"; readonly user: string; password(): string } | { readonly kind: "bearer"; readonly token: string };
-  /** May the credential travel to this host? Asked with the host in lower case and without a root dot. */
-  admits(host: string): boolean;
+  /**
+   * May the credential travel to this address? Asked before every hop and before any lookup: of the
+   * address the caller asked for, and of each address a redirect sends the request on to, with the
+   * origin whose answer sent it there.
+   */
+  admits(to: Hop): boolean;
   /**
    * The sign-in travels with TLS and never without: a plain address is not asked with it
    * (`address_not_allowed`), whoever named it: a person, a server's answer, a caller's stored address.
@@ -84,6 +95,7 @@ export interface AdapterDeps {
 
 export { namedHostRequest, type AddressPolicy, type RequestDeps } from "./named-host.js";
 export { fixedHostRequest } from "./fixed-host.js";
+export { hopOf, originOf, type Hop } from "./shape.js";
 
 /**
  * How long the answer asks to be left alone (Retry-After, in seconds or as a date), in milliseconds:

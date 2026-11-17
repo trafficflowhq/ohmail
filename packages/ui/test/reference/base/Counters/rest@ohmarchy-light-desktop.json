@@ -1,0 +1,70 @@
+{
+  "component": "Counters",
+  "state": "rest",
+  "look": "ohmarchy-light-desktop",
+  "place": "block",
+  "target": [192, 170.25, 412, 92],
+  "clip": [192, 170, 412, 93],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "28px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "28px",
+      "letterSpacing": "-0.28px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "16.9px",
+      "letterSpacing": "-0.13px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "backgroundColor": "rgb(32, 94, 166)" }],
+  "nodes": [],
+  "loose": {
+    "text": [
+      { "said": "647", "type": 0 },
+      { "said": "screened", "type": 1 },
+      { "said": "4,092", "type": 0 },
+      { "said": "in History", "type": 1 },
+      { "said": "4,667", "type": 0 },
+      { "said": "to read", "type": 1 }
+    ],
+    "surfaces": [
+      { "box": [161, 17.6, 5.5, 5.5], "paint": 0 },
+      { "box": [176.4, 49.6, 5.5, 5.5], "paint": 0 },
+      { "box": [153.3, 81.6, 5.5, 5.5], "paint": 0 }
+    ]
+  }
+}

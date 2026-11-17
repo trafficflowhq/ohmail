@@ -98,7 +98,7 @@ async function show(engine: OhmailEngine | null, props: BodyProps): Promise<{ do
 
 const base = (over: Partial<BodyProps> = {}): BodyProps => ({
   messageId: "m1", text: "The letter's copy.", html: DESIGNED(), remoteLoaded: false,
-  imageProxy: proxyFor("m1"), loadTrackingPixels: false, ...over,
+  imageProxy: proxyFor("m1"), loadTrackingPixels: false, owner: null, ...over,
 });
 
 describe("a body shown again is read back, not sanitized again", () => {

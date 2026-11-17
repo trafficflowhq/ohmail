@@ -91,15 +91,15 @@ async function mountShell(): Promise<void> {
     );
   });
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-  // The Ohbox rests until somebody picks a row; `j` is the product's own way of doing that.
+  // History shows a letter in its column; `j` is the product's own way of stepping to one.
   await key("j");
   /* WAITED FOR, not assumed. `j` only opens a message once the fixtures engine has drained,
      and how many microtasks that takes depends on what else the runner has in flight — this
      suite failed once, in a nine-file parallel run, and passed alone and in fifteen repeats
      afterwards. A fixed flush count is a race with an unstated bound; the wait has an explicit
-     one and says so when it expires, so "the Ohbox never opened a message" stays a loud
+     one and says so when it expires, so "History never opened a message" stays a loud
      failure instead of becoming a confusing assertion further down. */
-  await waitFor(() => openSubject() !== "", "the Ohbox never opened a message");
+  await waitFor(() => openSubject() !== "", "History never opened a message");
 }
 
 /** Poll until `ready()`, draining React between attempts; bounded by real time, never a tick count. */
@@ -172,7 +172,7 @@ const replyCancel = (): HTMLButtonElement | undefined =>
 
 beforeEach(() => {
   setViewport(false);
-  window.location.hash = "#/ohbox";
+  window.location.hash = "#/history";
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
   (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
   const el = Element.prototype as unknown as Record<string, () => void>;
@@ -207,7 +207,7 @@ describe("Cancel returns to the message and strands nothing", () => {
   it("closes the editor AND takes the dock with it", async () => {
     await mountShell();
     const subject = openSubject();
-    expect(subject, "the demo Ohbox rendered no message").not.toBe("");
+    expect(subject, "the demo's History rendered no message").not.toBe("");
     expect(q(".reply-dock"), "a reply dock exists before a reply was opened").toBeNull();
 
     await openReply();
@@ -226,7 +226,7 @@ describe("Cancel returns to the message and strands nothing", () => {
     // …and it is a RETURN, not a navigation: the message is still the one being read.
     expect(openSubject(), "cancelling the reply took the message off the screen").toBe(subject);
     // The view is unchanged; the open message rides the hash by design (`message-url.test.tsx`).
-    expect(window.location.hash, "cancelling the reply changed the route").toMatch(/^#\/ohbox(\/m\/|$)/);
+    expect(window.location.hash, "cancelling the reply changed the route").toMatch(/^#\/history(\/m\/|$)/);
     expect(q(".view-compose"), "cancelling the reply landed in Compose").toBeNull();
   });
 

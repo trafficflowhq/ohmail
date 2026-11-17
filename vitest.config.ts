@@ -152,6 +152,8 @@ export default defineConfig({
       // An invitation's answer by mail: an entry of its own, in no barrel, for its one route.
       { find: "@trafficflow/services/invitation-answer", replacement: r("./packages/services/src/invitation-answer-service.ts") },
       { find: "@trafficflow/services", replacement: r("./packages/services/src/index.ts") },
+      // The door a calendar's provider rings: an entry of its own, which only a server mounts.
+      { find: "@trafficflow/api/calendar-notices", replacement: r("./packages/api/src/routes/calendar-notices.ts") },
       { find: "@trafficflow/api/calendar", replacement: r("./packages/api/src/calendar/index.ts") },
       { find: "@trafficflow/api/local", replacement: r("./packages/api/src/local.ts") },
       { find: "@trafficflow/api/relay-allowlist", replacement: r("./packages/api/src/relay-allowlist.ts") },
@@ -173,6 +175,7 @@ export default defineConfig({
       { find: "@ohmail/tokens/ohmarchy.css", replacement: r("./packages/tokens/src/ohmarchy.css") },
       // The next design's values. The bare subpath is anchored: as a prefix it would also take its two stylesheets.
       { find: "@ohmail/tokens/design/motion.css", replacement: r("./packages/tokens/src/design/motion.css") },
+      { find: "@ohmail/tokens/design/fonts.css", replacement: r("./packages/tokens/src/design/fonts.css") },
       { find: "@ohmail/tokens/design.css", replacement: r("./packages/tokens/src/design/tokens.css") },
       { find: /^@ohmail\/tokens\/design$/, replacement: r("./packages/tokens/src/design/tokens.ts") },
       { find: "@ohmail/tokens", replacement: r("./packages/tokens/src/index.ts") },
@@ -212,10 +215,18 @@ export default defineConfig({
       { find: "@ohmail/app/host/browser", replacement: r("./packages/app/src/host/browser/index.ts") },
       // The host contract's types and its two small values.
       { find: "@ohmail/app/host", replacement: r("./packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/keys/sheet", replacement: r("./packages/app/src/keys/sheet/index.ts") },
       { find: "@ohmail/app/calendar", replacement: r("./packages/app/src/calendar/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("./packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("./packages/app/src/mail-state/index.ts") },
+      // The mail ground's mounts one by one, ABOVE the mail entry (the prefix-match reason above).
+      { find: "@ohmail/app/mail/ground", replacement: r("./packages/app/src/mail/ground/index.ts") },
+      // The mail product's entry, BELOW `mail-state`: its name begins that one's.
+      { find: "@ohmail/app/mail", replacement: r("./packages/app/src/mail/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("./packages/app/src/ohbox/index.ts") },
+      { find: "@ohmail/app/screener", replacement: r("./packages/app/src/screener/index.ts") },
+      { find: "@ohmail/app/search", replacement: r("./packages/app/src/search/index.ts") },
+      { find: "@ohmail/app/palette", replacement: r("./packages/app/src/palette/index.ts") },
       { find: "@ohmail/app/text/fill", replacement: r("./packages/app/src/text/fill.ts") },
       { find: "@ohmail/app/frame/boot", replacement: r("./packages/app/src/frame/boot-stamp.ts") },
       { find: "@ohmail/app/text", replacement: r("./packages/app/src/text/index.ts") },

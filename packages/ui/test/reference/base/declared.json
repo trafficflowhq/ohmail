@@ -238,6 +238,12 @@
     "alike": [{ "role": "button", "unstated": ["collapsed"] }]
   },
   {
+    "key": "FieldStack/rest@paper-light-phone",
+    "question": "picture",
+    "reason": "A label's line is 18.19 high, so a row of the stack is 84.19 and every row after the first starts on a fraction of a pixel. The reference's page draws the three fields 24, 108 and 192 under the stack's top (the stack stands under a sentence that ends on a fraction there); a stack that starts on a whole pixel draws them at 24, 108 and 193: the third field and the switch under it one pixel lower, and a hair in the arcs of the two short fields. The same stack with a pointer, with the same fractions, is equal in its picture; names, boxes and drawn values are the reference's here too. No rule of the part makes both pages equal.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "Field/refused",
     "reason": "The kit marks a refused field invalid (aria-invalid), so a screen reader says it with the field; the reference's field carries only the line under it.",
     "since": "2026-11-15",
@@ -362,6 +368,30 @@
     "question": "boxes",
     "since": "2026-11-16",
     "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Empty/decided@ohmarchy-light-desktop",
+    "question": "picture",
+    "reason": "One letter of the answer's word (the x of Ohbox) differs by a hair (41 pixels that touch; two ten-thousandths of the picture). The answer's name, box and drawn values are the reference's, its key stands where the reference's does, and the same place in paper is equal in its picture.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "CameraSquare/live",
+    "reason": "The design's live square is a button because its page has no camera: a press on it stands for a code that was read. The kit's square is the camera's own place and takes no press: a picture, named the same, in both of its states. Its box, its drawn values and its picture bind.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "img", "as": "button" }]
+  },
+  {
+    "key": "Counters/rest",
+    "question": "names",
+    "reason": "The design's first read counts while it is drawn: its figures differ from one taking of the reference to the next (610, 647 and 4,938, 4,667 in three looks of one address). The specimen holds one count. The figures' face, size and column, the words and their dots still bind.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Counters/rest",
+    "question": "picture",
+    "reason": "The same moving count: the numerals in the picture are another moment's. Boxes and drawn values are equal in all three looks.",
+    "since": "2026-11-17"
   },
   {
     "key": "Button/mark-set@ohmarchy-light-phone",

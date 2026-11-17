@@ -29,7 +29,7 @@ export const CALENDAR_EXPORT: Readonly<Record<CalendarTableName, ExportAnswer>> 
     rest: "ids of ours, a refusal word, the provider's list token and the poll's stamps: none is a choice the person made",
   },
   cal_calendars: {
-    carries: ["name", "color", "access", "shown", "is_default", "time_zone"],
+    carries: ["name", "color", "access", "shown", "time_zone"],
     rest: "the provider's id of the calendar (a shared one's is its owner's address, a CalDAV one a path with a user "
       + "name), its sync token and fetch tag, the window read and the poll's stamps",
   },
@@ -59,7 +59,8 @@ export interface CalendarExport {
     principal: string | null;
     mailbox: string | null;
     calendars: Array<{
-      name: string; color: string | null; access: string; shown: boolean; isDefault: boolean; timeZone: string | null;
+      name: string; color: string | null; access: string; shown: boolean; timeZone: string | null;
+      /** New events go to this calendar: the settings' one word for it (`cal_settings.new_events_calendar_id`). */
       newEvents: boolean; defaultAlerts: Array<{ minutesBefore: number; method: string }>;
     }>;
   }>;
@@ -83,7 +84,7 @@ export async function calendarExport(db: Db, accountId: string): Promise<Calenda
 
   const calendars = connections.length === 0 ? [] : await db.select({
     id: calCalendars.id, connectionId: calCalendars.connectionId, name: calCalendars.name, color: calCalendars.color,
-    access: calCalendars.access, shown: calCalendars.shown, isDefault: calCalendars.isDefault, timeZone: calCalendars.timeZone,
+    access: calCalendars.access, shown: calCalendars.shown, timeZone: calCalendars.timeZone,
   }).from(calCalendars).where(eq(calCalendars.accountId, accountId)).orderBy(asc(calCalendars.name), asc(calCalendars.id));
   const alerts = calendars.length === 0 ? [] : await db.select({
     calendarId: calAlarms.calendarId, minutesBefore: calAlarms.minutesBefore, method: calAlarms.method,
@@ -113,7 +114,7 @@ export async function calendarExport(db: Db, accountId: string): Promise<Calenda
       principal: c.provider === "ics" ? null : c.principal,
       mailbox: c.mailboxId === null ? null : addresses.get(c.mailboxId) ?? null,
       calendars: calendars.filter((k) => k.connectionId === c.id).map((k) => ({
-        name: k.name, color: k.color, access: k.access, shown: k.shown, isDefault: k.isDefault, timeZone: k.timeZone,
+        name: k.name, color: k.color, access: k.access, shown: k.shown, timeZone: k.timeZone,
         newEvents: s?.newEventsCalendarId === k.id,
         defaultAlerts: alerts.filter((a) => a.calendarId === k.id).map((a) => ({ minutesBefore: a.minutesBefore, method: a.method })),
       })),

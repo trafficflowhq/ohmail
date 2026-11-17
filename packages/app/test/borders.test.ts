@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { readBorders, readPlanted, type Borders } from "../../../test/support/borders-census.js";
+import {
+  readBorders,
+  readFolder,
+  readPlanted,
+  sourceFolders,
+  type Borders,
+} from "../../../test/support/borders-census.js";
 
 /**
  * What this package may reach, held on its bundle: the kit, the tokens and the behaviour. Of the
@@ -95,6 +101,45 @@ describe("the reader's two entries", () => {
   });
 });
 
+/**
+ * THE MAIL PRODUCT'S ENTRY (`src/mail`) is a shell's alone: it composes what the mail places read, so nothing it
+ * composes may reach back into it, and it reads its host through the frame, never through a file of an app.
+ */
+describe("the mail entry", () => {
+  const ofMail = (inputs: readonly string[]) =>
+    inputs.filter((input) => input.startsWith("packages/app/src/mail/"));
+
+  it("the frame reaches no file of it", async () => {
+    expect(ofMail((await readPlanted(BORDERS, 'export * from "./frame/index.js";\n')).inputs)).toEqual([]);
+    expect(ofMail((await readFolder(BORDERS, "frame")).inputs)).toEqual([]);
+    const beside = await readPlanted(
+      BORDERS,
+      'export * from "./frame/index.js";\nexport * from "./mail/index.js";\n',
+    );
+    expect(ofMail(beside.inputs)).toContain("packages/app/src/mail/MailGround.tsx");
+  });
+
+  it("no place's folder, and no other folder of the package, reaches it", async () => {
+    const others = sourceFolders(BORDERS).filter((folder) => folder !== "mail");
+    expect(others).toEqual(expect.arrayContaining(["frame", "host", "ohbox", "reader"]));
+    for (const folder of others) {
+      const reached = ofMail((await readFolder(BORDERS, folder)).inputs);
+      expect(reached, `src/${folder} reaches the mail entry`).toEqual([]);
+    }
+  });
+
+  it("it reaches no file of an app", async () => {
+    const door = await readPlanted(BORDERS, 'export * from "./mail/index.js";\n');
+    expect(door.inputs).toContain("packages/app/src/mail/MailGround.tsx");
+    expect(door.inputs).toContain("packages/app/src/mail/places.ts");
+    const whole = await readFolder(BORDERS, "mail");
+    for (const { inputs, refused } of [door, whole]) {
+      expect(inputs.filter((input) => input.startsWith("apps/"))).toEqual([]);
+      expect(refused).toEqual([]);
+    }
+  });
+});
+
 describe("write's three entries", () => {
   const editorEngine = (input: string) => input.includes("node_modules/@tiptap/") || input.includes("node_modules/prosemirror-");
   it("the door loads no editor engine and nothing of the letter's body; neither does the plain entry", async () => {
@@ -122,6 +167,24 @@ describe("write's three entries", () => {
     expect(inputs.filter((input) => input.startsWith("packages/app/src/write/"))).toEqual([]);
     const planted = await readPlanted(BORDERS, 'export * from "./frame/index.js";\nexport * from "./write/index.js";\n');
     expect(planted.inputs.filter((input) => input.startsWith("packages/app/src/write/"))).not.toEqual([]);
+  });
+});
+
+describe("search and the two overs", () => {
+  const OWN = ["packages/app/src/search/", "packages/app/src/palette/", "packages/app/src/keys/sheet/"];
+
+  it("the frame reaches no file of Search, the palette or the key sheet", async () => {
+    const { inputs } = await readPlanted(BORDERS, 'export * from "./frame/index.js";\n');
+    expect(inputs.filter((input) => OWN.some((own) => input.startsWith(own)))).toEqual([]);
+  });
+
+  it("the palette and the key sheet reach no place's folder and no reader", async () => {
+    const reach = async (planted: string) =>
+      (await readPlanted(WHOLE, planted)).inputs.filter((input) =>
+        ["packages/app/src/search/", "packages/app/src/ohbox/", "packages/app/src/reader/"].some((own) => input.startsWith(own)),
+      );
+    expect(await reach('export * from "./palette/index.js";\nexport * from "./keys/sheet/index.js";\n')).toEqual([]);
+    expect(await reach('export * from "./palette/index.js";\nexport * from "./search/index.js";\n')).not.toEqual([]);
   });
 });
 

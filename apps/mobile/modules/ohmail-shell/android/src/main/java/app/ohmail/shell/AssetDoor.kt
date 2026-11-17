@@ -11,6 +11,8 @@ const val APP_HOST = "appassets.androidplatform.net"
 const val APP_ORIGIN = "https://$APP_HOST"
 const val SHELL_PREFIX = "/shell/"
 const val START_PATH = "${SHELL_PREFIX}index.html"
+/** The door's page: the second start page, shown while no scope is live. */
+const val DOOR_PATH = "${SHELL_PREFIX}door.html"
 
 /**
  * THE ONLY THING THE SHELL'S WEB VIEW MAY LOAD: the files the build wrote into the app's assets
@@ -30,6 +32,9 @@ class AssetDoor(private val context: Context) {
 
   /** The page's policy as the build wrote it, or null when the build carries no shell. */
   val csp: String? get() = manifest?.optString("csp")?.takeIf { it.isNotEmpty() }
+
+  /** Whether the build's page lists this file. */
+  fun lists(name: String): Boolean = manifest?.optJSONObject("files")?.has(name) == true
 
   fun answer(request: WebResourceRequest): WebResourceResponse = answer(request.method, request.url)
 

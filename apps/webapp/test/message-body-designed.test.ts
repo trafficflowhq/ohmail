@@ -134,7 +134,7 @@ describe("designed html mail keeps its frame (item: the reading pane renders htm
 
   it("renders the acceptance shape in a frame with ZERO reader-drawn table styling", async () => {
     const { MessageBody } = await mod();
-    await mount(h(MessageBody, { text: TEXT_PART, html: NESTED_LAYOUT_HTML }));
+    await mount(h(MessageBody, { owner: null, text: TEXT_PART, html: NESTED_LAYOUT_HTML }));
     // The frame is the isolation mechanism: reader CSS cannot cascade into an iframe's own
     // document, so "zero reader-drawn borders" is structural the moment the frame exists.
     const frame = host!.querySelector("iframe.mb-frame");
@@ -153,7 +153,7 @@ describe("designed html mail keeps its frame (item: the reading pane renders htm
     // reader's typography), and dropping the declaration-boundary anchor from
     // declaresResponsiveCanvas turns it red too (the media query's 620px would classify it).
     expect(out.prose).toBe(true);
-    await mount(h(MessageBody, { text: TEXT_PART, html: LETTER_HTML }));
+    await mount(h(MessageBody, { owner: null, text: TEXT_PART, html: LETTER_HTML }));
     expect(host!.querySelector("iframe")).toBeNull();
     expect(host!.querySelector(".msg-p")).not.toBeNull();      // the app's paragraph type
     expect(host!.querySelector(".msg-table")).not.toBeNull();  // the data table, app-styled

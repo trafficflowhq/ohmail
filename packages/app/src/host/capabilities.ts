@@ -37,6 +37,12 @@ export interface HostCapabilities {
   /** How far a choice of language reaches. */
   readonly language: "account" | "install" | None;
   /**
+   * What the store's search takes here: `people` where the server said so in its hello (a person on either side,
+   * unread, the days, a question with no words); `words` everywhere else, and on a host that holds no hello where it
+   * builds this. A server that never said it ignores those filters, and its rows would stand under a person's name.
+   */
+  readonly searchBy: "people" | "words";
+  /**
    * Whether this shell offers the calendar beside mail: the switch between the two is drawn exactly where this is
    * `both` and the calendar's entry is handed in. A shell answers it from its server's word at seating.
    */
@@ -61,5 +67,6 @@ export const CANNOT = {
   firstRunDoor: "none",
   mailboxes: "none",
   language: "none",
+  searchBy: "words",
   products: "none",
 } as const satisfies Omit<HostCapabilities, "service">;

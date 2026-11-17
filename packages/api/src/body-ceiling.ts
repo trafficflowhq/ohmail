@@ -4,7 +4,8 @@ import { matchRoute, type Route } from "./router.js";
  * What may this request's body weigh — decided from the route, before a byte is read. Both hosts
  * used to buffer the whole body before route matching against the largest ceiling any route could
  * need, so an anonymous client naming no served path could cost 50 MiB of heap per connection.
- * The path decides: no route ⇒ 0 bytes (the 404/405 is unchanged); GET/HEAD ⇒ 0; a route in
+ * The path decides: no route ⇒ 0 bytes (the 404/405 is unchanged); GET/HEAD ⇒ 0; a route that
+ * names a ceiling of its own under the JSON one (`RouteOptions.bodyMaxBytes`) ⇒ that; a route in
  * LARGE_BODY_ROUTES ⇒ the host's large ceiling; else JSON_BODY_MAX_BYTES. A list, not a route
  * flag: an undeclared route gets the small ceiling and fails loudly with a 413, and
  * `input-bounds-census.test.ts` derives the byte-carrying set from handler source both ways.
@@ -61,6 +62,9 @@ export function bodyCeilingFor(
   if (m === "GET" || m === "HEAD") return 0;
   const match = matchRoute(routes, m, pathname);
   if (!match.matched) return 0;
+  // A route's own ceiling only ever lowers: it is how a route anyone may call says how little it reads.
+  const own = match.route.options?.bodyMaxBytes;
+  if (own !== undefined) return Math.max(0, Math.min(own, JSON_BODY_MAX_BYTES));
   return LARGE_BODY_ROUTES.has(`${match.route.method.toUpperCase()} ${match.route.pattern}`)
     ? largeBodyMaxBytes
     : JSON_BODY_MAX_BYTES;

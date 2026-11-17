@@ -37,22 +37,21 @@ describe("push subscriptions", () => {
     expect(conflict.status).toBe(409);
   });
 
-  it("apns subscribe with deviceToken → 201; an identical apns sub is deduped by the unique index", async () => {
+  it("an Apple registration is refused at the door: 400, and no row is written", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const apns = JSON.stringify({ transport: "apns", deviceToken: "dtok-123", bundleId: "ch.trafficflow", environment: "sandbox" });
 
     const first = await H(req("POST", "/push/subscriptions", { bearer: s.token, body: apns }), deps);
-    expect(first.status).toBe(201);
-    const id1 = (await first.json()).id;
-
-    // Second identical (same account+transport+deviceToken), no idempotency key → deduped by index, same id.
-    const second = await H(req("POST", "/push/subscriptions", { bearer: s.token, body: apns }), deps);
-    expect(second.status).toBe(201);
-    expect((await second.json()).id).toBe(id1);
+    expect(first.status).toBe(400);
+    // Under an idempotency key too: the refusal writes nothing, and a second try is refused again.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const keyed = await H(req("POST", "/push/subscriptions", { bearer: s.token, headers: { "idempotency-key": "pk-apple" }, body: apns }), deps);
+      expect(keyed.status).toBe(400);
+    }
 
     const rows = await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.accountId, s.accountId));
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(0);
   });
 
   it("a registration names its session's family; the same endpoint from a second session moves to it, and Devices revokes follow", async () => {

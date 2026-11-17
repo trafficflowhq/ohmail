@@ -177,8 +177,6 @@
     "notifyScheduledWhy": "And when one could not be sent — the half that silence reports wrongly.",
     "notifyPairing": "A device paired or was signed out",
     "notifyPairingWhy": "A device reached your mailbox, or stopped being able to.",
-    "notifyIdentify": "Show who it is from and the subject",
-    "notifyIdentifyWhy": "Off by default. A notification is read by whoever is looking at the screen.",
     "notifyAskFirst": "Your device will ask the first time you turn this on.",
     "notifyDenied": "This device is set to refuse notifications from ohmail. That is changed in the system settings, not here.",
     "notifyUnsupported": "This device has no notification centre, so there is nothing to send here.",

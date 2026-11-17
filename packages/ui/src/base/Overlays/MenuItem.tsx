@@ -53,7 +53,7 @@ export function MenuItem({
       {hue === undefined ? null : <TagDot hue={hue} />}
       <span className="oh-menu-word">{children}</span>
       {note ? <small className="oh-menu-item-note">{note}</small> : null}
-      {keyHint ? <KeyHint>{keyHint}</KeyHint> : null}
+      {keyHint ? <KeyHint unsaid>{keyHint}</KeyHint> : null}
     </button>
   );
 }

@@ -52,9 +52,9 @@ async function mount(): Promise<void> {
   root = createRoot(host);
 }
 
-async function open(props: Parameters<Mod["MessageBody"]>[0]): Promise<HTMLIFrameElement | null> {
+async function open(props: Omit<Parameters<Mod["MessageBody"]>[0], "owner">): Promise<HTMLIFrameElement | null> {
   const { MessageBody } = await mod();
-  await act(async () => { root!.render(h(MessageBody, props)); });
+  await act(async () => { root!.render(h(MessageBody, { ...props, owner: null })); });
   return host!.querySelector("iframe");
 }
 

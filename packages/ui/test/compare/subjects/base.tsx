@@ -4,6 +4,8 @@ import {
   Button,
   ChoiceTiles,
   Count,
+  CameraSquare,
+  Counters,
   Dialog,
   Dot,
   Empty,
@@ -15,6 +17,7 @@ import {
   HintLine,
   Icon,
   InfoMark,
+  Mark,
   JumpBack,
   KeyHelp,
   KeyHint,
@@ -1074,6 +1077,20 @@ const feedback: KitSubject[] = [
     render: () => <Empty label="No drafts" act={{ label: "Write", icon: "write", onPress: shut }} />,
   },
   { key: "Empty/mark", target: ".oh-empty", render: () => <Empty mark="oh" label="6 decided" /> },
+  /* Everyone is decided: the place is the reading column's whole content, and its one way on is the ink capsule. */
+  {
+    key: "Empty/decided",
+    place: "block",
+    on: onPage,
+    target: ".oh-empty",
+    render: () => (
+      <Empty
+        mark="oh"
+        label="6 decided"
+        act={{ label: "Ohbox", kind: "ink", keyHint: "g o", onPress: shut }}
+      />
+    ),
+  },
   {
     key: "WaitRow/refused",
     place: "block",
@@ -1113,6 +1130,50 @@ const feedback: KitSubject[] = [
 ];
 
 const pages: KitSubject[] = [
+  /* The first read as it counts: three figures with their words, each still open. */
+  {
+    key: "Counters/rest",
+    place: "block",
+    on: onPage,
+    target: ".oh-counters",
+    render: () => (
+      <Counters
+        size="xl"
+        rows={[
+          { figure: "610", words: "screened", end: "hot" },
+          { figure: "3,858", words: "in History", end: "hot" },
+          { figure: "4,938", words: "to read", end: "hot" },
+        ]}
+      />
+    ),
+  },
+  /* The page that reads a code by the camera, under a finger: the camera looking, and not let in yet. */
+  {
+    key: "CameraSquare/live",
+    place: "block",
+    on: onPage,
+    target: ".oh-camera",
+    render: () => <CameraSquare state="live" label="Camera" />,
+  },
+  {
+    key: "CameraSquare/off",
+    place: "block",
+    on: onPage,
+    target: ".oh-camera",
+    render: () => <CameraSquare state="off" label="Camera off" />,
+  },
+  /* The first screen under a finger: the mark over the sentence, its stop the doorbell, a moment after it rang. */
+  {
+    key: "Mark/bell",
+    place: "block",
+    on: onPage,
+    target: ".oh-mark",
+    render: () => (
+      <Mark hot ringing bell={{ label: "Ring the doorbell" }}>
+        oh
+      </Mark>
+    ),
+  },
   /* The setup at its provider step: the second of five phases on a desktop, the first of four on a phone. */
   {
     key: "StepDots/rest",

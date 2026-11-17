@@ -83,7 +83,7 @@ import { nativeShellStores } from "../shell/shell-stores-native";
 import { keeperRemembers, purgingShellToo } from "../shell/take-back";
 
 /** The surface this app shows mail in, chosen once by the build and the app it is (`mail-surface.ts`). */
-const MAIL_SURFACE = mailSurfaceOf(process.env.EXPO_PUBLIC_OHMAIL_MAIL_SURFACE, APP);
+export const MAIL_SURFACE = mailSurfaceOf(process.env.EXPO_PUBLIC_OHMAIL_MAIL_SURFACE, APP);
 
 export type ConnectionState =
   /** The launch instant, before the keystore has answered whether a pairing exists. */

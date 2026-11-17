@@ -46,3 +46,20 @@ function whole(written: string, end: "hot" | "ink"): ReactNode {
   const words = written.endsWith(".") && !written.endsWith("..") ? written.slice(0, -1) : written;
   return ENDS_ON_A_WORD.test(words) ? <EndDot kind={end}>{words}</EndDot> : written;
 }
+
+export interface SentencePartProps {
+  /** The part's words: who, or where their mail goes. */
+  children: ReactNode;
+  /** What the part ends in and never parts from at a line's end: the slot, with the sentence's dot. */
+  end?: ReactNode;
+}
+
+/** One part of a sentence: it breaks between its parts on a narrow column, never inside one that fits a line. */
+export function SentencePart({ children, end }: SentencePartProps) {
+  return (
+    <span className="oh-sentence-part">
+      {children}
+      {end ? <span className="oh-nowrap">{end}</span> : null}
+    </span>
+  );
+}

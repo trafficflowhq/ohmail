@@ -80,8 +80,8 @@ export function PasswordForm({ model, factor, onCancel }: PasswordFormProps) {
   const said = refusal === null ? null : refusalSaid(refusal, t, steps);
   const at = (which: "current" | "next" | "again"): string | undefined =>
     blank === which && said !== null ? said : undefined;
-  // While the change is on its way the blanks take nothing.
-  const typing = (set: (value: string) => void) => (model.sending ? undefined : set);
+  // While the change is on its way the blanks are off. A password blank of the kit takes keys unless it is disabled.
+  const off = model.sending;
   const over = blank === undefined && said !== null ? said : model.nothingChanged ? t("cancelled") : null;
   return (
     <>
@@ -93,7 +93,8 @@ export function PasswordForm({ model, factor, onCancel }: PasswordFormProps) {
             autoComplete="current-password"
             label={t("currentLabel")}
             value={current}
-            onChange={typing(setCurrent)}
+            onChange={setCurrent}
+            disabled={off}
             refusal={at("current")}
           />
           <Field
@@ -102,7 +103,8 @@ export function PasswordForm({ model, factor, onCancel }: PasswordFormProps) {
             autoComplete="new-password"
             label={t("nextLabel")}
             value={next}
-            onChange={typing(setNext)}
+            onChange={setNext}
+            disabled={off}
             hint={t("nextHint")}
             refusal={at("next")}
           />
@@ -112,7 +114,8 @@ export function PasswordForm({ model, factor, onCancel }: PasswordFormProps) {
             autoComplete="new-password"
             label={t("repeatLabel")}
             value={again}
-            onChange={typing(setAgain)}
+            onChange={setAgain}
+            disabled={off}
             refusal={at("again")}
           />
         </div>

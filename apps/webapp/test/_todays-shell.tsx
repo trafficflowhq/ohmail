@@ -11,12 +11,16 @@
  * page has one, and with it the review of who you write to, as the web's own host answers. It is for the tests that
  * mount the web's views and name no wire; a test that hands `NONE` has none. No shell does this: each hands its own
  * wire or says `none`.
+ *
+ * THE SAME FOR THE PICTURE WIRE: the web's own, through this origin's proxy, where the page has a client and the test
+ * names none; a test that hands `NONE` has no picture door.
  */
 import { createElement as h, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { useLocale, useMessages, useTimeZone } from "next-intl";
 import {
   CANNOT, FEATURE_NAMES, NONE,
-  type FeatureEntry, type FeatureName, type FrameSupplies, type HostContract, type HostSession, type LinkedDraft, type LinkIn, type None, type Signal,
+  type FeatureEntry, type FeatureName, type FrameSupplies, type HostContract, type HostSession, type LinkedDraft, type LinkIn, type None,
+  type ReaderEntry, type Signal,
 } from "@ohmail/app/host";
 import { TextProvider } from "@ohmail/app/text";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
@@ -27,6 +31,7 @@ import type { AwayTransport } from "../app/shell/AwayResponderRow";
 import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
 import { apiConfigured } from "../app/api-client";
 import { CLOUD_CONSENT, CLOUD_SEED_REVIEW } from "../app/(product)/mailbox/consent-over-api";
+import { WEB_IMAGES } from "../app/(product)/mailbox/image-wire";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { DraftReplyWire } from "../app/shell/draft-reply";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
@@ -93,7 +98,8 @@ export interface TodaysShellProps {
   profileImportTransport?: ProfileImportTransport;
   /** The consent wire the test's host hands; `NONE` says it has none; absent: the web's own where the page has a client. */
   consentTransport?: ConsentTransport | None;
-  imageWire?: ImageDoor;
+  /** The picture wire the test's host hands; `NONE` says it has none; absent: the web's own where the page has a client. */
+  imageWire?: ImageDoor | None;
   imagesFromComputer?: boolean;
   olderBodyWire?: OlderBodyWire;
   junkWire?: JunkWire;
@@ -107,6 +113,12 @@ export interface TodaysShellProps {
   managedService?: boolean;
   /** The host's way back to a live session (Sign in, Reload); none where the case hands none. Hand a stable one. */
   recover?: HostSession["recover"];
+  /**
+   * The reader a case's host hands in place of the shell's own, for a case that stands a reading column of its own
+   * parts; absent: the shell's (`todaysReader`) where the composition stands, none where it does not. Hand one made
+   * once (at module scope), as a shell does.
+   */
+  reader?: ReaderEntry;
 }
 
 const orNone = <T,>(value: T | undefined | null): T | None => (value === undefined || value === null ? NONE : value);
@@ -147,6 +159,9 @@ export function hostFromTodaysInputs(
   });
   const support = props.support;
   const consent = props.consentTransport ?? (apiConfigured() ? CLOUD_CONSENT : NONE);
+  /* What the old shell stands above the panes is handed on with today's own places, the ones the frame keeps, and never
+     beside others: a test that draws panes of its own in the frame mounts no old shell over them. */
+  const todays = Object.values(frame.places).some((place) => place !== NONE && place.panes.kind === "wide" && place.panes.kept === true);
   return {
     engine,
     session: {
@@ -164,7 +179,7 @@ export function hostFromTodaysInputs(
       away: orNone(props.awayTransport),
       profileImport: orNone(props.profileImportTransport),
       consent,
-      images: orNone(props.imageWire),
+      images: props.imageWire ?? (apiConfigured() ? WEB_IMAGES : NONE),
       olderBody: orNone(props.olderBodyWire),
       junk: orNone(props.junkWire),
       trash: orNone(props.trashWire),
@@ -184,7 +199,9 @@ export function hostFromTodaysInputs(
       foldersStorable: consent === NONE ? CANNOT.foldersStorable : consent.foldersStorable,
       firstRunDoor: props.firstRun?.door ?? CANNOT.firstRunDoor,
     },
-    features: { ...features, places: frame.places, stages: frame.stages, reader: NONE } as HostContract["features"],
+    features: {
+      ...features, places: frame.places, stages: frame.stages, overs: frame.overs, reader: props.reader ?? (todays ? frame.reader : NONE), above: todays ? frame.above : NONE,
+    } as HostContract["features"],
     device: {
       build: support
         ? { surface: support.surface, version: support.version ?? null, commit: support.commit ?? null, mailtoLeaves: support.mailtoLeaves !== false }

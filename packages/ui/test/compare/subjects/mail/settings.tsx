@@ -198,8 +198,9 @@ export const settings: KitSubject[] = [
       <FigureTable
         columns={["Mailbox", "Messages", "Kept now", "Expected"]}
         rows={[
-          { id: "a", name: "mila@lichtgrat.example", hue: 28, figures: ["7,912", "198 MB", "198 MB"] },
-          { id: "b", name: "hello@milabrunner.example", hue: 210, figures: ["1,494", "37 MB", "37 MB"] },
+          /* The mailboxes' own hues, as the reference's world holds them. */
+          { id: "a", name: "mila@lichtgrat.example", hue: 25, figures: ["7,912", "198 MB", "198 MB"] },
+          { id: "b", name: "hello@milabrunner.example", hue: 150, figures: ["1,494", "37 MB", "37 MB"] },
         ]}
         sum={{ name: "Total", figures: ["9,406", "235 MB", "235 MB"] }}
       />
@@ -210,15 +211,19 @@ export const settings: KitSubject[] = [
     place: "block",
     on: "sheet",
     target: ".oh-settingacts",
+    /* The reference's row stands in a block of a sheet that wants the person: on that sheet's tint. */
     render: () => (
-      <SettingActs>
-        <Button kind="quiet" size="s" icon="copy">
-          Copy the link
-        </Button>
-        <Button kind="two" size="s">
-          Revoke
-        </Button>
-      </SettingActs>
+      <div style={{ background: "var(--sheet-new)" }}>
+        <SettingActs>
+          <Button kind="quiet" size="s" icon="copy">
+            Copy the link
+          </Button>
+          {/* The reference's second act is a word that acts. */}
+          <Button kind="quiet" size="s">
+            Revoke
+          </Button>
+        </SettingActs>
+      </div>
     ),
   },
   head("SettingsHead/rest", <SettingsHead title="Notifications" />),
@@ -343,6 +348,7 @@ export const settings: KitSubject[] = [
       }
     >
       <RadioLines
+        kind="sheet"
         label="Plans"
         value="plus"
         options={[

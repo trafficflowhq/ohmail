@@ -867,10 +867,6 @@ const EN = {
   bootCompacting: "Compacting your local mail store — one-time maintenance…",
   errorUnknown: "Something went wrong and said nothing about what.",
   errorRefused: (status: string) => `The request was refused (${status}).`,
-  /* The OS notification's body. ICU plural, because German's plural rule is English's here and
-     the one-vs-many split is the whole of the sentence. */
-  notifyNewMail: (count: number) =>
-    count === 1 ? "One new message for you." : `${count} new messages for you.`,
 };
 
 /**
@@ -971,7 +967,6 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   installSignOutConfirmWhy: ["machine"],
   installSignOutWhy: ["machine"],
   errorRefused: ["status"],
-  notifyNewMail: ["count"],
   /* TWO VALUES, in the ARGUMENT order of the formatter above — the same rule as `connStaleWhy`
      and the takeover lines: a translation may put the total first and this list is what keeps
      each number attached to its own hole. */

@@ -1,6 +1,8 @@
 /** The door of `reader`: the reading column's behaviour, behind the views of `@ohmail/app/reader`. */
 export * from "./blank-model.js";
 export * from "./body-words.js";
+export * from "./doors.js";
+export * from "./file-retry.js";
 export * from "./files-model.js";
 export * from "./head-model.js";
 export * from "./letter-seams.js";

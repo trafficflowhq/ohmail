@@ -1,0 +1,47 @@
+/* What is being counted, as a page's own sentence: numerals in the display face, each with its words. */
+@layer oh {
+  .oh-counters {
+    --oh-counters-lh: 1.3;
+
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: baseline;
+    gap: var(--s2) var(--s4);
+    margin: 0;
+  }
+
+  .oh-counters[data-size="xl"] {
+    row-gap: var(--s1);
+  }
+
+  /* A row's two halves stand in the list's own columns. */
+  .oh-counters-row {
+    display: contents;
+  }
+
+  .oh-counters-figure {
+    margin: 0;
+    font-family: var(--f-display);
+    font-size: var(--t-head);
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz-l);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--oh-lh-tight);
+    letter-spacing: var(--track);
+    text-align: right;
+  }
+
+  .oh-counters[data-size="xl"] .oh-counters-figure {
+    font-size: var(--t-display);
+  }
+
+  .oh-counters-words {
+    margin: 0;
+    font-family: var(--f-display);
+    font-size: var(--t-ui);
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz);
+    line-height: var(--oh-counters-lh);
+    letter-spacing: var(--track);
+  }
+}

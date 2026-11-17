@@ -84,6 +84,7 @@ function hostAnswering(outcome: PushSyncOutcome | null): NotificationHost & {
       asked.push({ wanted, forced: opts?.forceAnnounce === true });
       return Promise.resolve(outcome);
     },
+    emitter: "none",
   };
 }
 
