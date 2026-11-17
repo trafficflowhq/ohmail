@@ -62,6 +62,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   growth: importingTo(FLOOR),
   now: NOW,
   demo: false,
+  scope: null,
   ...over,
   pulled: over.pulled ?? over.mirrored ?? FLOOR,
 });

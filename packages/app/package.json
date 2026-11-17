@@ -22,6 +22,12 @@
       "node": "./dist/keys/index.js",
       "default": "./src/keys/index.ts"
     },
+    "./mail-state": {
+      "types": "./src/mail-state/index.ts",
+      "ohmail-source": "./src/mail-state/index.ts",
+      "node": "./dist/mail-state/index.js",
+      "default": "./src/mail-state/index.ts"
+    },
     "./frame": {
       "types": "./src/frame/index.ts",
       "ohmail-source": "./src/frame/index.ts",

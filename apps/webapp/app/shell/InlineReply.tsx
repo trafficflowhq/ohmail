@@ -39,7 +39,7 @@ import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
 import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { SendStatus, sendLineValues } from "./SendStatus";
-import { useMailboxFacts } from "./MailStateProvider";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import {
   formatRecipientChips,
   optionsFromFacts,

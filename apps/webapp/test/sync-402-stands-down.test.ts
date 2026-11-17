@@ -71,7 +71,7 @@ const ladder = (sync: SyncStatus): string => deriveMailState({
   sync, failureStreak: SYNC_FAILURE_STREAK,
   mailboxes: [], mirrored: 0, pulled: 0, growth: seedGrowth(0),
   freshness: { state: "unknown", asOf: null }, engineFreshness: { state: "unknown", asOf: null },
-  now: NOW, demo: false,
+  now: NOW, demo: false, scope: null,
 } satisfies MailStateInputs).key;
 
 function run(adapter: Scripted) {
@@ -173,7 +173,7 @@ describe("a stand-down asks the roster at once", () => {
 
   async function probesWithin(answer: () => SyncResponse | Error, ms: number): Promise<number> {
     const { EngineProvider } = await import("../app/shell/engine.js");
-    const { MailStateProvider } = await import("../app/shell/MailStateProvider.js");
+    const { MailStateProvider } = await import("@ohmail/app/mail-state");
     const engine = new OhmailEngine({ adapter: new Scripted(answer), store: new MemoryMirrorStore() });
     let probes = 0;
     const probe = async (): Promise<unknown[]> => { probes += 1; return []; };
@@ -185,7 +185,7 @@ describe("a stand-down asks the roster at once", () => {
         locale: "en", messages: messages as never, timeZone: "UTC",
         children: h(EngineProvider as never, {
           demo: false, engine,
-          children: h(MailStateProvider as never, { probe, mirrored: 0, children: h("i", null, "x") } as never),
+          children: h(MailStateProvider as never, { scope: null, probe, mirrored: 0, children: h("i", null, "x") } as never),
         } as never),
       } as never));
     });

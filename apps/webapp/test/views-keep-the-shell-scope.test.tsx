@@ -13,6 +13,7 @@ import {
   MemoryMirrorStore, OhmailEngine, mutationEffects, type EngineMutation, type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import type { FolderEntity } from "@ohmail/client-engine";
+import { forgetOpenVerdict, markOpenVerdict } from "@ohmail/app-logic/session/access-window";
 import { namesOwner, resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import messages from "../messages/en.json";
 import { act, consentTransport, msg, NOW, S, setup, teardown, waitFor } from "./_view-shell.js";
@@ -89,8 +90,11 @@ async function engineWithLetter(): Promise<OhmailEngine> {
   } as never);
 }
 
-/** Today's views through the harness in a dark face; `scope` is what the host hands (absent: the storage owner). */
-async function shellIn(scope?: string): Promise<HTMLElement> {
+/**
+ * Today's views through the harness in a dark face; `scope` is what the host hands (absent: the storage owner),
+ * `reads` what else its host answers.
+ */
+async function shellIn(scope?: string, reads: Record<string, unknown> = {}): Promise<HTMLElement> {
   const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = await engineWithLetter();
@@ -108,7 +112,7 @@ async function shellIn(scope?: string): Promise<HTMLElement> {
         children: React.createElement(ToastHost, {
           children: React.createElement(AppShell as never, {
             ...(scope === undefined ? {} : { scope }), demo: false, engine, consentTransport,
-            mailboxFacts: async () => [],
+            mailboxFacts: async () => [], ...reads,
           } as never),
         }),
       }),
@@ -174,6 +178,40 @@ describe("today's views keep their looks under the shell's scope", () => {
     expect(await chooseTheLooks(el)).toEqual({
       order: UNDER_A, afterVerb: UNDER_A, pictureQuality: UNDER_A, originalLook: UNDER_A,
     });
+  }, 30_000);
+});
+
+describe("the mail state asks the access window for the scope its host handed", () => {
+  const behind = (messages as unknown as { frame: { connection: { behind: { title: string; asOf: string } } } })
+    .frame.connection.behind;
+  /* The catalogue's own words around the time of the dated sentence. */
+  const [before, after] = behind.asOf.split(/\{[^}]*\}/) as [string, string];
+  /* The copy on screen last finished a sync three days ago, as the host's copy-age read says it. */
+  const asOf = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  const staleCopy = { mirrorFreshness: async () => ({ state: "stale" as const, asOf }) };
+  /** What the frame's notices say of a copy that is catching up: with its date, or without. */
+  const catchingUp = (el: HTMLElement): string[] =>
+    [...el.querySelectorAll<HTMLElement>('[role="status"]')].map((n) => (n.textContent ?? "").trim())
+      .filter((said) => said.includes(behind.title) || (said.includes(before) && said.includes(after)));
+
+  /* The service said open for B over a stored refusal a moment ago, and the storage owner has come to name B. */
+  beforeEach(() => {
+    setStorageOwner(B);
+    markOpenVerdict(B, Date.now() - 20_000, true);
+  });
+  afterEach(() => { forgetOpenVerdict(); });
+
+  it("another account's reopening withholds no date of the copy this shell shows", async () => {
+    const el = await shellIn(A, staleCopy);
+    await waitFor(() => catchingUp(el).length > 0, "the catching-up notice", 5000);
+    expect(catchingUp(el).join(" | "), "B's reopening withheld the date of A's copy").toContain(before);
+  }, 30_000);
+
+  it("CONTROL: the reopening of the account its host named withholds the date from before it", async () => {
+    const el = await shellIn(B, staleCopy);
+    await waitFor(() => catchingUp(el).length > 0, "the catching-up notice", 5000);
+    expect(catchingUp(el).join(" | ")).not.toContain(before);
+    expect(catchingUp(el).join(" | ")).toContain(behind.title);
   }, 30_000);
 });
 

@@ -76,6 +76,7 @@ const inputs = (mailboxes: MailStateInputs["mailboxes"], mirrored: number): Mail
   engineFreshness: { state: "current" as const, asOf: new Date(NOW - 30_000).toISOString() },
   now: NOW,
   demo: false,
+  scope: null,
 });
 
 describe("the hosted count reaches the sentence it is quoted in, or the seam is broken", () => {

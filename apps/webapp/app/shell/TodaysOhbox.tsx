@@ -22,7 +22,7 @@ import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
 import { DEFAULT_AFTER_VERB, readAfterVerb } from "@ohmail/app-logic/press/after-verb";
 import { useTodaysScope } from "./todays-scope";
-import { useMailState } from "./MailStateProvider";
+import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { MessageGone, MessagePane, type MessageGoneProps } from "./MessagePane";
 import { useSentLabel } from "./row-copy";
 import { displayAddress } from "@ohmail/app-logic/text/idn";

@@ -241,7 +241,8 @@ async function mountShell(engine: OhmailEngine): Promise<{
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-  const { useConsentState } = await import("../app/shell/consent-state.js");
+  const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
+  const { CLOUD_CONSENT } = await import("../app/(product)/mailbox/consent-over-api.js");
   const { AutoSuggestRow } = await import("../app/shell/AutoSuggestRow.js");
 
   let live: { unsuggestedSenders: string[] } | null = null;
@@ -252,7 +253,7 @@ async function mountShell(engine: OhmailEngine): Promise<{
     const [onScreener, setScreener] = React.useState(false);
     setOnScreener = setScreener;
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const consent = useConsentState(true);
+    const consent = useConsentState(true, null, CLOUD_CONSENT);
     const suggestions = useScreenerSuggestions({
       active: onScreener,
       autoSuggest: consent.autoSuggest,

@@ -19,14 +19,15 @@ New code imports a folder's door. A door is the folder's `index.ts` and names wh
 | `@ohmail/app-logic/lists` | the list, stream and held windows, columns, older mail, folders |
 | `@ohmail/app-logic/reading` | what turns a letter read, the reader's holder, the conversation on screen |
 | `@ohmail/app-logic/press` | the one seam a press leaves the interface through, and Undo |
-| `@ohmail/app-logic/mail-state` | the mailbox state ladder and its keys |
+| `@ohmail/app-logic/mail-state` | the mailbox state ladder and its keys, and the binding every view reads it through |
+| `@ohmail/app-logic/consent` | the consent row: what the account allows and when it was set, the read it takes, where a change travelled |
 | `@ohmail/app-logic/doors` | the first run, pairing, an update, the wall |
 | `@ohmail/app-logic/ohbox` | the Ohbox's behaviour: placement by arrival, the picks, the read hold, Undo's place, its keys; and the door its model stands behind |
 | `@ohmail/app-logic/keys` | the keyboard registry and its bindings, the zones the arrows walk, focus that follows the list |
 | `@ohmail/app-logic/layout` | what the window's width says about the layout |
 | `@ohmail/app-logic/screener` | the Screener's state, its decision journal, and the types a decision shares with the views |
 | `@ohmail/app-logic/writing` | sending once, the send lock, the composer's and the reply's drafts, the rich text |
-| `@ohmail/app-logic/text` | the catalogue's reader as behaviour takes it, and how an address is shown |
+| `@ohmail/app-logic/text` | the catalogue's reader as behaviour takes it, how an address is shown, and the interface's languages |
 | `@ohmail/app-logic/geometry` | geometry under the text size |
 
 Behaviour is handed its words: a hook that speaks takes a `Translator` (or a small record of them) from its mount,

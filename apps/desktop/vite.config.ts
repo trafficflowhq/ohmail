@@ -882,6 +882,7 @@ export default defineConfig({
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
+      { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
       /* The text reader, and the translator it builds on, from this install: no root install stands beside the package
          when the platform jobs build this window. */

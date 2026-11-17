@@ -22,7 +22,7 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 let current: MailState | null = null;
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
@@ -47,7 +47,7 @@ const inputs = (reason: string): MailStateInputs => ({
   failureStreak: 3, mailboxes: [blocked(reason)], mirrored: 495, growth: seedGrowth(495),
   freshness: { state: "current" as const, asOf: ago(30_000) },
   engineFreshness: { state: "current" as const, asOf: ago(30_000) },
-  now: NOW, demo: false,
+  now: NOW, demo: false, scope: null,
 } as MailStateInputs);
 
 async function strip(reason: string, locale: "en" | "de"): Promise<string> {

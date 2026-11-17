@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection, Switch } from "@ohmail/ui";
-import { useMailboxFacts } from "./MailStateProvider";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import type { StorageChange } from "./StorageNotice";
 import {
   estimatedEmails, formatStorageBytes, formatStoragePrice, storageDayName, storageFitExtraBytes, storageFitIsChange,

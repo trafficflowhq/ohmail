@@ -92,14 +92,14 @@ describe("the desktop's away row", () => {
 
 describe.each(["hosted", "standalone"] as const)("the %s door's dial and signature editors", (door) => {
   it("say the refusals the consent read carries", async () => {
-    const { useConsentState } = await import("../../webapp/app/shell/consent-state");
+    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
     const { DormancyRow } = await import("../../webapp/app/shell/DormancyRow");
     const { SignaturesRow } = await import("../../webapp/app/shell/SignaturesRow");
     const wires = await import("../src/local-consent.js");
     const wire = door === "hosted" ? wires.consentOverBridge : wires.consentOverBridgeStandalone;
     /* `AppShell`'s own composition of the two rows, and nothing else of it. */
     function Harness() {
-      const c = useConsentState(true, wire);
+      const c = useConsentState(true, null, wire);
       if (!c.known) return null;
       return h("div", null,
         h(DormancyRow, { days: c.dormancyDays, scope: c.screeningScope, change: c.dormancyChange, setDormancyDays: c.setDormancyDays }),

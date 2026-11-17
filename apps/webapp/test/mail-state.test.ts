@@ -8,7 +8,7 @@
  * What this file cannot prove, and `sync-progress.test.ts` exists for: that anything is WIRED.
  * A perfect ladder nobody renders is exactly the defect this guards.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -33,8 +33,10 @@ import {
   type MailStateInputs,
   type MailboxFacts,
 } from "@ohmail/app-logic/mail-state/mail-state";
-import { forgetOpenVerdict, markOpenVerdict } from "@ohmail/app-logic/session/access-window";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import {
+  forgetOpenVerdict, liftedAt, markOpenVerdict, markWallLifted, refusalIsStale,
+} from "@ohmail/app-logic/session/access-window";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import messages from "../messages/en.json";
 import deMessages from "../messages/de.json";
 
@@ -97,6 +99,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   engineFreshness: { state: "current" as const, asOf: new Date(NOW - 30_000).toISOString() },
   now: NOW,
   demo: false,
+  scope: null,
   ...over,
   /* `pulled` follows `mirrored` unless a case names it: that is the shape wherever no producer
      answered a count, which is every test here but the import numerator's own. */
@@ -491,6 +494,74 @@ describe("the precedence ladder", () => {
     } finally {
       forgetOpenVerdict();
     }
+  });
+
+  describe("the access window is asked for the ladder's own scope, never for the window's storage owner", () => {
+    const A = "acct_window_a";
+    const B = "acct_window_b";
+    const DAYS_AGO = new Date(NOW - 3 * 86_400_000).toISOString();
+    const staleFor = (scope: string | null) => inputs({ scope, freshness: { state: "stale", asOf: DAYS_AGO } });
+    const closedFor = (scope: string | null) => inputs({ scope, mailboxes: [blockedMailbox("account_closed")] });
+    /* The service said open for B twenty seconds ago, over a stored refusal, and this window's storage owner
+       has come to name B. */
+    beforeEach(() => {
+      setStorageOwner(B);
+      markOpenVerdict(B, NOW - 20_000, true);
+    });
+    afterEach(() => {
+      forgetOpenVerdict();
+      resetStorageOwnerForTest();
+    });
+
+    it("another account's reopening withholds no date of this account's copy", () => {
+      const mine = deriveMailState(staleFor(A));
+      expect(mine.key, "B's reopening withheld the date of A's copy").toBe("stale");
+      expect(mine.asOf).toBe(DAYS_AGO);
+      // CONTROL: asked for B, the date from before B's reopening is withheld as before.
+      expect(deriveMailState(staleFor(B)).key).toBe("catchingUp");
+    });
+
+    it("another account's open word silences no block of this account's mailbox", () => {
+      expect(deriveMailState(closedFor(A)).key, "B's open word silenced A's block").toBe("blocked");
+      // CONTROL: asked for B, the wall's own block is not said inside B's minute.
+      expect(deriveMailState(closedFor(B)).key).not.toBe("blocked");
+    });
+
+    it("the three readers answer for the account handed in", () => {
+      expect(refusalIsStale(B, NOW)).toBe(true);
+      expect(refusalIsStale(A, NOW), "B's open word made A's refusal a stale one").toBe(false);
+      expect(liftedAt(B)).toBe(NOW - 20_000);
+      expect(liftedAt(A), "B's reopening was read as A's").toBeNull();
+      // The wall's own lift is recorded for the account its host names, not for the window's storage owner.
+      markWallLifted(A, NOW - 5_000);
+      expect(liftedAt(A)).toBe(NOW - 5_000);
+      expect(liftedAt(B), "A's lift was recorded for the storage owner").toBeNull();
+    });
+
+    it("a window with no account is an owner of its own, as it was", () => {
+      forgetOpenVerdict();
+      markOpenVerdict(null, NOW - 20_000, true);
+      expect(refusalIsStale(null, NOW)).toBe(true);
+      expect(liftedAt(null)).toBe(NOW - 20_000);
+      expect(refusalIsStale(B, NOW)).toBe(false);
+      expect(liftedAt(B)).toBeNull();
+      expect(deriveMailState(staleFor(null)).key).toBe("catchingUp");
+    });
+
+    it("an owner nobody handed in is answered not stale and not lifted, and its lift is recorded for nobody", () => {
+      for (const missing of [undefined, ""] as unknown as Array<string | null>) {
+        forgetOpenVerdict();
+        markOpenVerdict(missing, NOW - 20_000, true);
+        expect(refusalIsStale(missing, NOW)).toBe(false);
+        expect(liftedAt(missing)).toBeNull();
+        markWallLifted(missing, NOW - 5_000);
+        expect(liftedAt(missing)).toBeNull();
+      }
+      // …and it takes no recorded lift away.
+      markOpenVerdict(B, NOW - 20_000, true);
+      markWallLifted(undefined as unknown as string | null, NOW - 5_000);
+      expect(liftedAt(B)).toBe(NOW - 20_000);
+    });
   });
 
   it("A BLOCKED MAILBOX IS `connected` WITH NO errorCode — mail 0029's whole point", () => {

@@ -68,12 +68,12 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 let FACTS: MailboxFacts[] | null = null;
 let refreshed = 0;
 
-vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
   /* THE WHOLE MODULE, then the overrides: a factory that NAMES its exports leaves the
      others `undefined`, and the day a pane under test reads one the rig fails as a
      TypeError rather than as the assertion. */
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
-    "../../webapp/app/shell/MailStateProvider",
+  const real = await vi.importActual<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>(
+    "@ohmail/app-logic/mail-state/mail-state-binding",
   );
   return {
     ...real,

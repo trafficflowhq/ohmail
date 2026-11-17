@@ -7,7 +7,11 @@ import { ThemeProvider } from "@ohmail/ui";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
-import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
+/* One declaration from the session's door: the links' two functions, and the access window's reading of a lift. */
+import { enableExternalLinks, interceptLinkClicks, liftedAt } from "@ohmail/app-logic/session";
+/* The lock as this file's own module graph builds it (the ordinary app), for the case that reads the lift it
+   records: the other cases build theirs anew per distribution. */
+import { DesktopAccessLock as LockAsLoaded } from "../src/DesktopAccessLock.js";
 
 /**
  * ═══ THE WINDOW'S LOCK, IN ITS TWO DISTRIBUTIONS ═══ out of the shared `accessLock` catalogue, so
@@ -68,7 +72,7 @@ async function paint(
       locale,
       messages: locale === "en" ? en : de,
       children: h(ThemeProvider, {
-        children: h(DesktopAccessLock, { facts: facts as never, onSignedOut: () => {} }),
+        children: h(DesktopAccessLock, { facts: facts as never, scope: null, onSignedOut: () => {} }),
       }),
     }));
   });
@@ -350,7 +354,7 @@ describe("the window's lift and first paint", () => {
       root.render(h(NextIntlClientProvider, {
         locale: "en", messages: en,
         children: h(ThemeProvider, {
-          children: h(DesktopAccessLock, { facts: CLOSED as never, onSignedOut: () => {}, onLifted }),
+          children: h(DesktopAccessLock, { facts: CLOSED as never, scope: null, onSignedOut: () => {}, onLifted }),
         }),
       }));
     });
@@ -377,6 +381,30 @@ describe("the window's lift and first paint", () => {
     await settle();
     expect(accessReads).toBe(3);
     expect(lifted).toBe(1);
+  });
+
+  it("the lift is recorded for the mounted mailbox the gate handed in, and for no other owner", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    accessBody = OPEN;
+    let lifted = 0;
+    // The gate names the mailbox; this window's storage owner names nobody here, so the two differ.
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en,
+        children: h(ThemeProvider, {
+          children: h(LockAsLoaded, {
+            facts: CLOSED as never, scope: "mbx_walled", onSignedOut: () => {}, onLifted: () => { lifted += 1; },
+          }),
+        }),
+      }));
+    });
+    expect(liftedAt("mbx_walled")).toBeNull();
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await settle();
+    expect(lifted).toBe(1);
+    expect(liftedAt("mbx_walled"), "the lift was not recorded for the mailbox the gate named").toBe(Date.now());
+    expect(liftedAt(null), "the lift was recorded for the window's storage owner").toBeNull();
+    expect(liftedAt("mbx_other")).toBeNull();
   });
 
   it("the first paint waits for a mailbox with no stored open, and a refused answer is the lock's facts", async () => {

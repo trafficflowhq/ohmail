@@ -1205,7 +1205,7 @@ export function onAccessRefused(sink: AccessRefusedSink): () => void {
  *  remedy is a link the customer can act on, rather than one that reads as our fault. */
 function notifyAccessRefused(details: unknown): void {
   // The drain loop reads the same decision (`shell/access-window.ts`).
-  if (refusalIsStale()) return;
+  if (refusalIsStale(readOwner())) return;
   const owner = readOwner();
   storeVerdict(owner, "closed");
   const sink = accessRefusedSink;

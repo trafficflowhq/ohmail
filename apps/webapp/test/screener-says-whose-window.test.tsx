@@ -185,7 +185,7 @@ describe("the shell partitions with each mailbox's window, and never whose it is
 describe("a held letter is dated by its arrival, as the gate dated it", () => {
   it("an old Date received now waits, read or unread; one received before the window does not; a remount says the same", async () => {
     const { writeBootCache, readBootCache } = await import("@ohmail/app-logic/session/boot-cache");
-    const { CONSENT_BOOT_SCOPE } = await import("../app/shell/consent-state.js");
+    const { CONSENT_BOOT_SCOPE } = await import("@ohmail/app-logic/consent/consent-state");
     const JUNE = "2026-06-02T09:00:00.000Z";
     const letter = (id: string, from: string, unread: boolean, sortAt: string): EngineMessage =>
       ({ ...held(id, from), date: JUNE, unread, sortAt });

@@ -6,7 +6,7 @@ import {
 } from "./fixtures/live-walk-shell";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { IMPORT_END_IDLE_MS } from "@ohmail/app-logic/mail-state/mail-state";
-import { FACTS_POLL_MS } from "../app/shell/MailStateProvider";
+import { FACTS_POLL_MS } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import messages from "../messages/en.json";
 
 /** The rail's importing sentence, as the frame's notice says the same state. */

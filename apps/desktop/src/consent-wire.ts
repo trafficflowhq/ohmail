@@ -1,7 +1,7 @@
 /**
  * THE CONSENT ROW'S REQUESTS — over an injected transport, and with no door in this module.
  *
- * The controls are the shared shell's (`shell/consent-state.ts`); the routes, the one-axis
+ * The controls are the consent row's (`@ohmail/app-logic/consent`); the routes, the one-axis
  * PATCH rule and the refusal contract are here, once, for every door that carries them: the
  * desktop window over its bridge (`local-consent.ts`) and the served host client over its bearer
  * socket (`apps/paired-page/src/transports.ts`), which had no consent wire at all. This module imports no
@@ -9,7 +9,7 @@
  * command's name into the bundle a phone is handed, which `scan:host` refuses.
  */
 
-import type { ConsentTransport } from "../../webapp/app/shell/consent-state";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { ConsentStateWire } from "../../webapp/app/api-client";
 
 /**

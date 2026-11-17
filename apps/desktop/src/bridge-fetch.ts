@@ -198,7 +198,7 @@ function noticeAccessRefusal(status: number, body: Uint8Array): void {
   }
   if (env?.code !== ACCESS_REFUSED_CODE) return;
   // The one staleness decision, shared with the drain loop (`shell/access-window.ts`).
-  if (refusalIsStale()) return;
+  if (refusalIsStale(storageOwner())) return;
   storeVerdict(storageOwner(), "closed");
   const d = (env.details ?? {}) as { reason?: unknown; manageUrl?: unknown; lifecycle?: unknown };
   const url = typeof d.manageUrl === "string" && d.manageUrl.length > 0 ? d.manageUrl : undefined;

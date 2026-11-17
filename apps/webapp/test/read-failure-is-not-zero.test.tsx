@@ -154,7 +154,7 @@ vi.mock("@ohmail/client-engine", async () => {
   return { ...actual, clearAllMirrors: async () => undefined };
 });
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: QUIET, refresh: () => {} }),
 }));
 

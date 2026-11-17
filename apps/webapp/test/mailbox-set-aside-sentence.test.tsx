@@ -43,7 +43,7 @@ vi.mock("../app/api-client", () => ({
   },
   mailboxes: { list: async () => ({ items: listed }), create: async () => listed[0]!, resync: async () => undefined },
 }));
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
 
 const dto = (over: Partial<MailboxDTO>): MailboxDTO => ({
   id: "mb1", provider: "icloud", address: "person@example.test",

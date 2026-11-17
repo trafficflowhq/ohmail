@@ -84,7 +84,7 @@ describe("a consent read outliving the hook's active era applies nothing", () =>
    * applies neither state nor cache.
    */
   it("a read resolving after active flips false leaves the hook at rest", async () => {
-    const { useConsentState } = await import("../app/shell/consent-state");
+    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
     const React = (await import("react")) as typeof import("react");
     const { createRoot } = await import("react-dom/client");
     const ract = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -103,7 +103,7 @@ describe("a consent read outliving the hook's active era applies nothing", () =>
 
     let seen: { known: boolean } | null = null;
     function Probe({ active }: { active: boolean }): null {
-      seen = useConsentState(active, transport);
+      seen = useConsentState(active, null, transport);
       return null;
     }
     const host = document.createElement("div");

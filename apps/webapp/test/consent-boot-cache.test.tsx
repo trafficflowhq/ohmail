@@ -3,11 +3,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import * as entry from "./fixtures/cloud-confirm-shell";
 import * as React from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
+import { NextIntlClientProvider } from "next-intl";
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
-import { CONSENT_BOOT_SCOPE, useConsentState, type ConsentTransport } from "../app/shell/consent-state";
-import { resetStorageOwnerForTest, setDemoStorage, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
+import { useShellDerivations, type ShellDerivationsInput } from "../app/shell/shell-derivations";
+import { CLOUD_CONSENT } from "../app/(product)/mailbox/consent-over-api";
+import { CONSENT_BOOT_SCOPE, useConsentState, type ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
+import { DEMO_STORAGE_OWNER, resetStorageOwnerForTest, setDemoStorage, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * BOOT PRESENTS THE CURRENT STATE, NOT THE RAW PILES — the reload-resurrection guard.
@@ -230,7 +239,7 @@ describe("boot presents the partitioned piles from the account's cached answer",
 
     const captured: { current: ReturnType<typeof useConsentState> | null } = { current: null };
     function Probe(): null {
-      captured.current = useConsentState(true);
+      captured.current = useConsentState(true, OWNER, CLOUD_CONSENT);
       return null;
     }
     const container = document.createElement("div");
@@ -343,7 +352,7 @@ describe("boot presents the partitioned piles from the account's cached answer",
  * THE PAIRED DESKTOP HAS NO COOKIE, AND ITS HOST NAMES THE WINDOW (PAIRED-DESKTOP-SCREENER-WAITS-FOR-
  * THE-CONSENT-READ). Keyed by the cookie alone, its consent cache was never read or written, so a
  * failing read left the cutline unknown and unruled INBOX mail presenting in the Ohbox. The key is
- * `consentCacheOwner`: the cookie, else the host's identity, never the demo's.
+ * the scope the mount is handed: the host's identity here, never the demo's.
  */
 describe("the host's identity keys the consent cache where there is no cookie", () => {
   const HOST = "mb_desktop_1";
@@ -356,9 +365,9 @@ describe("the host's identity keys the consent cache where there is no cookie", 
     state: async () => ({ seedConfirmedAt: ISO, dormancyDays: 45, screeningBaselineAt: null, autoSuggestAt: null }),
   } as unknown as ConsentTransport);
 
-  async function hook(transport: ConsentTransport) {
+  async function hook(transport: ConsentTransport, scope: string = HOST) {
     const captured: { current: ReturnType<typeof useConsentState> | null } = { current: null };
-    function Probe(): null { captured.current = useConsentState(true, transport); return null; }
+    function Probe(): null { captured.current = useConsentState(true, scope, transport); return null; }
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -391,8 +400,169 @@ describe("the host's identity keys the consent cache where there is no cookie", 
     setStorageOwner(HOST);
     setDemoStorage(true);
     seedConsentCache(HOST);
-    const h = await hook(failing());
+    const h = await hook(failing(), DEMO_STORAGE_OWNER);
     expect(h.captured.current!.known).toBe(false);
     await h.unmount();
+  });
+});
+
+/**
+ * THE OWN ADDRESSES ARE REMEMBERED FOR THE ACCOUNT THE MOUNT'S MIRROR IS NAMED FOR, read off the engine itself and
+ * never off the jar. The list was kept under whoever the session's marker named when the shell mounted: with the
+ * marker moved to another account before the frame stood over this one's mail, that account's remembered
+ * addresses became this one's own, and a stranger's letter was never asked about.
+ */
+describe("the remembered own addresses are the mount's mirror's account's", () => {
+  const OTHER = "acct_other_2";
+  const THEIRS = "walker@example.invalid";
+  const letter = (id: string, from: string, seq: number) => ({
+    type: "message", op: "create", id, seq, updatedAt: entry.ISO,
+    entity: {
+      id, accountId: entry.ACCOUNT, mailboxId: "mb_1", threadId: null, messageIdHeader: null,
+      subject: `subject of ${id}`, from: { name: `Sender ${id}`, address: from },
+      to: [], cc: [], date: entry.ISO, folder: "INBOX", snippet: `snippet of ${id}`, unread: true,
+      hasAttachments: false, attachmentCount: 0, sensitivity: {},
+      triage: null, labels: [], remoteContent: "none", updatedAt: entry.ISO,
+    },
+  });
+  const json = (body: unknown): Response =>
+    new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  let root: Root | null = null;
+
+  afterEach(async () => {
+    if (root) await entry.act(async () => { root!.unmount(); });
+    root = null;
+    document.body.innerHTML = "";
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    resetStorageOwnerForTest();
+    window.localStorage.clear();
+  });
+
+  it("another account's list on this device does not make its address this account's own", async () => {
+    entry.installConfirmEnv();
+    /* A mirror that outlives a mount, as the browser's does: this account's mail is on the device before the page loads. */
+    const fake = createRequire(resolve("packages/client-engine/package.json"))("fake-indexeddb") as {
+      IDBFactory: new () => IDBFactory; IDBKeyRange: unknown;
+    };
+    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();
+    (globalThis as { IDBKeyRange?: unknown }).IDBKeyRange = fake.IDBKeyRange;
+    try {
+      resetStorageOwnerForTest();
+      window.localStorage.clear();
+      /* A letter from one address, and one from a stranger, both unread and undecided. */
+      entry.scriptSync(() => json({
+        changes: {
+          creates: [letter("from-their-address", THEIRS, 1), letter("from-a-stranger", "loud@example.invalid", 2)],
+          updates: [], moves: [], deletes: [],
+        },
+        cursor: "c1", hasMore: false, serverTime: entry.ISO,
+      }));
+      /* `GET /mailboxes` is a round trip that never answers: this account has no list of its own on this device. */
+      const inner = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) =>
+        (String(input).includes("/mailboxes") ? new Promise<Response>(() => {}) : inner(input as RequestInfo, init))) as typeof globalThis.fetch;
+      const { CloudShell } = await import("../app/(product)/mailbox/CloudShell.js");
+      const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+      const mountEntry = async (): Promise<HTMLElement> => {
+        const container = document.createElement("div");
+        document.body.appendChild(container);
+        root = createRoot(container);
+        await entry.act(async () => {
+          root!.render(React.createElement(NextIntlClientProvider, {
+            locale: "en", messages: entry.messages, timeZone: "UTC", now: new Date(entry.ISO),
+            children: React.createElement(ThemeProvider as never, { storageKey: null } as never,
+              React.createElement(ToastHost as never, null, React.createElement(CloudShell as never, { demo: false, drawMail: "wait" } as never))),
+          } as never));
+        });
+        return container;
+      };
+
+      /* An earlier visit: the account's mail reaches its mirror, and both senders are asked about. */
+      entry.scriptSession(() => entry.sessionFull());
+      entry.scriptRefresh(entry.refresh204);
+      entry.rememberOwner();
+      window.location.hash = "#/screener";
+      const earlier = await mountEntry();
+      await entry.tick(4000);
+      expect(rowIds(earlier).sort(), "the walk shows nothing: the mirror never took the two letters")
+        .toEqual(["from-a-stranger", "from-their-address"]);
+      await entry.act(async () => { root!.unmount(); });
+      root = null;
+      earlier.remove();
+
+      /* Another account used this browser since, and left its own addresses remembered here. */
+      window.localStorage.setItem(bootCacheKey("own-addresses", OTHER), JSON.stringify([THEIRS]));
+
+      /* The page's word `wait`: the mirror opens for this account, the session's answer is on its way, and another
+         tab's sign-in moves the marker before the answer names this account and the frame mounts. */
+      let answer: (r: Response) => void = () => undefined;
+      entry.scriptSession(() => new Promise<Response>((resolve) => { answer = resolve; }));
+      const container = await mountEntry();
+      await entry.tick(500);
+      document.cookie = `tf_owner=${OTHER}; Path=/`;
+      await entry.act(async () => { answer(entry.sessionFull()); });
+      await entry.tick(3000);
+
+      const asked = rowIds(container);
+      expect(asked, "the walk shows nothing: the stranger's letter is not in the queue").toContain("from-a-stranger");
+      expect(asked, "another account's remembered address was taken for this account's own").toContain("from-their-address");
+    } finally {
+      await entry.teardownConfirmEnv();
+      delete (globalThis as { indexedDB?: unknown }).indexedDB;
+      delete (globalThis as { IDBKeyRange?: unknown }).IDBKeyRange;
+    }
+  });
+
+  it("a mount over an engine no mirror is named for remembers no list, whoever the jar names", async () => {
+    installShellEnv();
+    try {
+      window.localStorage.clear();
+      document.cookie = `tf_owner=${OWNER}`;
+      const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "/api", fetch: ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init)) as never }) });
+      await mountShell([mailbox({ lastSyncAt: ISO })], { engine });
+      await tick(2_000);
+      const kept = Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)!);
+      expect(kept.filter((key) => key.startsWith("ohmail.boot.own-addresses."))).toEqual([]);
+    } finally {
+      await teardownShellEnv();
+      document.cookie = "tf_owner=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    }
+  });
+
+  it("the derivations handed another engine read the list of that engine's account, not the first one's", async () => {
+    const FIRST = "acct_first_3";
+    const SECOND = "acct_second_3";
+    window.localStorage.setItem(bootCacheKey("own-addresses", FIRST), JSON.stringify(["first@example.invalid"]));
+    window.localStorage.setItem(bootCacheKey("own-addresses", SECOND), JSON.stringify(["second@example.invalid"]));
+    const namedFor = async (account: string): Promise<OhmailEngine> => {
+      const engine = new OhmailEngine({ adapter: new FixturesAdapter(), store: new MemoryMirrorStore() });
+      await engine.start();
+      return registerSyncGate(engine, createSyncGate(account));
+    };
+    const first = await namedFor(FIRST);
+    const second = await namedFor(SECOND);
+    const input = (engine: OhmailEngine): ShellDerivationsInput => ({
+      engine, reader: engine.read(), derived: 1, demo: false, resolvedDemo: false,
+      now: new Date(ISO), facts: null, seedOwed: false,
+      consent: {
+        known: true, standalone: false, dormancyDays: 60, screeningBaselineAt: null, screeningScope: "all_time",
+        foldersEnabled: false, folderMailboxesOff: {},
+      },
+      route: { view: "screener" as ShellDerivationsInput["route"]["view"], folderId: null },
+      trashWire: undefined, deleting: { held: new Set() }, restoring: { held: new Set() }, routing: { places: new Map() },
+    });
+    let own: string[] = [];
+    function Probe({ engine }: { engine: OhmailEngine }): null {
+      own = useShellDerivations(input(engine)).ownAddresses;
+      return null;
+    }
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await entry.act(async () => { root!.render(React.createElement(Probe, { engine: first })); });
+    expect(own, "the first engine's account's list was not read: the case shows nothing").toEqual(["first@example.invalid"]);
+    /* `GET /mailboxes` has answered for neither: `facts` stays null across the change of engine. */
+    await entry.act(async () => { root!.render(React.createElement(Probe, { engine: second })); });
+    expect(own, "the first engine's account's addresses were kept as the second's own").toEqual(["second@example.invalid"]);
   });
 });

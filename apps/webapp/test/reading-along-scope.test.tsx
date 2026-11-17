@@ -32,8 +32,8 @@ const HELD_ELSEWHERE = {
 
 /* The shell's own binding, with the filing state this file is about put in its place. */
 let held: MailState | null = null;
-vi.mock("../app/shell/MailStateProvider", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../app/shell/MailStateProvider")>();
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>();
   return {
     ...real,
     useMailState: () => {

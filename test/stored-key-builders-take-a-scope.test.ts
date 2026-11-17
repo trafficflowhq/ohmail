@@ -22,6 +22,8 @@ import { deleteIntentsKey } from "@ohmail/app-logic/press/delete-intents";
 import { intentWindowsChannel } from "@ohmail/app-logic/press/intent-windows";
 import { readAfterVerb, writeAfterVerb } from "@ohmail/app-logic/press/after-verb";
 import { readingAlongKey } from "@ohmail/app-logic/reading/reading-along";
+import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
+import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
 import { foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 import { imageQualityKeyFor } from "../apps/webapp/app/components/image-quality.js";
 import { seedNotNowKey } from "../apps/webapp/app/shell/seed-offer.js";
@@ -58,6 +60,12 @@ const BUILDERS: Record<string, (scope: Scope) => string> = {
   pictureQuality: (s) => imageQualityKeyFor(s),
 };
 
+/** The families kept for an account and under no scope at all: the two remembered answers (the boot caches). */
+const KEPT_FOR_SOMEBODY: Record<string, (scope: string) => string> = {
+  consentCache: (s) => bootCacheKey(CONSENT_BOOT_SCOPE, s),
+  ownAddresses: (s) => bootCacheKey("own-addresses", s),
+};
+
 /** The hosts' own families: each named by the session's account or a page's, never by a view's scope. */
 const HOSTS_OWN: Record<string, string> = {
   "ohmail.lifecycle.": "the web host marks an account's catch-up notice shown, under the session's account",
@@ -67,7 +75,6 @@ const HOSTS_OWN: Record<string, string> = {
   "ohmail.session.lateWatch.": "the session client watches for a late renewal answer, per session",
   "ohmail.oauth.owner.": "a provider's sign-in remembers which session's account started it",
   "ohmail.notifications.subscription": "the push registration names the session's account it was made for",
-  "ohmail.boot.": "the lift's last part",
 };
 
 const BROWSER: readonly string[] = ["localStorage", "sessionStorage", "indexedDB", "cache", "channel", "cookie"];
@@ -80,7 +87,10 @@ afterEach(() => window.localStorage.clear());
 describe("every family the web keeps in a browser's storage takes the scope its mount hands in", () => {
   it("is built in the table for an account and for none, or is a host's own with its reason", () => {
     expect(families.length, "the registry names no family the web keeps: the census reads nothing").toBeGreaterThan(0);
-    const keys = Object.values(BUILDERS).flatMap((build) => [build("acc-1"), build(null)]);
+    const keys = [
+      ...Object.values(BUILDERS).flatMap((build) => [build("acc-1"), build(null)]),
+      ...Object.values(KEPT_FOR_SOMEBODY).map((build) => build("acc-1")),
+    ];
     expect(families.filter((row) => !(row.key in HOSTS_OWN) && !keys.some((k) => k.startsWith(row.key))).map((row) => row.key))
       .toEqual([]);
     expect(Object.keys(HOSTS_OWN).filter((key) => !families.some((row) => row.key === key)), "a host's family the registry no longer names")
@@ -91,6 +101,10 @@ describe("every family the web keeps in a browser's storage takes the scope its 
     for (const [family, build] of Object.entries(BUILDERS)) {
       expect(build("acc-1"), family).toContain("acc-1");
       expect(build(null), family).not.toContain("acc-1");
+    }
+    for (const [family, build] of Object.entries(KEPT_FOR_SOMEBODY)) {
+      expect(build("acc-1"), family).toContain("acc-1");
+      expect(() => build(null as unknown as string), `${family}: kept under no scope`).toThrow(/no owner/);
     }
   });
 
@@ -109,5 +123,8 @@ describe("every family the web keeps in a browser's storage takes the scope its 
       expect(read, String(missing)).toEqual(["routingIntents"]);
     }
     expect(() => readAfterVerb(undefined as unknown as Scope)).toThrow(/storage scope/);
+    for (const [family, build] of Object.entries(KEPT_FOR_SOMEBODY)) {
+      for (const missing of [undefined, ""] as unknown as string[]) expect(() => build(missing), `${family}: ${String(missing)}`).toThrow(/no owner/);
+    }
   });
 });

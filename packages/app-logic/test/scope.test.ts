@@ -11,6 +11,7 @@ import {
   usePinnedScope,
   type StorageScope,
 } from "@ohmail/app-logic/storage";
+import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,6 +40,20 @@ describe("a stored key's scope is handed in, never looked up", () => {
   it("refuses a scope nobody handed in, and an empty one, rather than reading either as local", () => {
     expect(() => scopeSuffix(undefined as unknown as StorageScope)).toThrow(/no storage scope/);
     expect(() => scopeSuffix("")).toThrow(/empty storage scope/);
+  });
+});
+
+describe("a boot cache is kept for somebody or not at all", () => {
+  it("names its key for the scope it is handed", () => {
+    expect(bootCacheKey("consent", "acc-1")).toBe("ohmail.boot.consent.acc-1");
+  });
+
+  it("refuses a scope nobody handed in, an empty one and no scope, rather than spelling a shared word", () => {
+    for (const missing of ["", undefined, null]) {
+      expect(() => bootCacheKey("consent", missing as never), JSON.stringify(missing)).toThrow(
+        /a boot cache was asked for/,
+      );
+    }
   });
 });
 

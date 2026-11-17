@@ -45,7 +45,7 @@ vi.mock("../app/api-client", async () => {
     mailboxes: { list: async () => ({ items: mockListed }), resync: async () => undefined },
   };
 });
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: current, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: current, refresh: () => {} }) }));
 
 const EXACT: StoreRefusals = { count: 612, retrying: 612, exact: true };
 const CAPPED: StoreRefusals = { count: 612, retrying: 500, exact: true };
@@ -117,7 +117,7 @@ describe("the chooser picks the local server's own key beside auth and timeout o
     const state = deriveMailState({
       sync: { phase: "idle" } as never, failureStreak: 0, mailboxes: [m], mirrored: 10, pulled: 10,
       growth: seedGrowth(10), freshness: { state: "current", asOf: new Date(now).toISOString() },
-      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false,
+      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false, scope: null,
     });
     expect(state).toMatchObject({ key: "mailboxError", errorCode: "timeout", errorLocalServer: true, unreachable: true });
   });

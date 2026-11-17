@@ -6,7 +6,7 @@ import { MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { LOCALE_STORAGE_KEY, readStoredLocale, type AppLocale } from "../../webapp/app/shell/locale";
-import type { ConsentTransport } from "../../webapp/app/shell/consent-state";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { CONSENT_PATH, CONSENT_SETTINGS_PATH, consentVia } from "../src/consent-wire.js";
 
 /**

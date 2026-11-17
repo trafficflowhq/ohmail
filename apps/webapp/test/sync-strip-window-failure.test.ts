@@ -61,7 +61,7 @@ const inputs = (sync: SyncStatus, mailboxes: MailboxFacts[] | null): MailStateIn
   growth: seedGrowth(10_000),
   freshness: { state: "current", asOf: new Date(NOW - 30_000).toISOString() },
   engineFreshness: { state: "current", asOf: new Date(NOW - 30_000).toISOString() },
-  now: NOW, demo: false,
+  now: NOW, demo: false, scope: null,
 });
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); reports.length = 0; });

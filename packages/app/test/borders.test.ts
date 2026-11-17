@@ -18,6 +18,7 @@ describe("app's borders, read off its bundle", () => {
     const { inputs, refused } = await readBorders(BORDERS);
     expect(inputs).toContain("packages/app/src/host/panes.ts");
     expect(inputs).toContain("packages/app/src/keys/KeymapProvider.tsx");
+    expect(inputs).toContain("packages/app/src/mail-state/MailStateProvider.tsx");
     expect(refused).toEqual([]);
   });
 

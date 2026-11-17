@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { useConsentState } from "../../webapp/app/shell/consent-state";
+import { useConsentState } from "@ohmail/app-logic/consent/consent-state";
 import { CONSENT_PATH, CONSENT_SETTINGS_PATH, consentOverBridge } from "../src/local-consent.js";
 
 /**
@@ -118,7 +118,7 @@ const wire = (): string[] => asked.map((a) => `${a.method.toUpperCase()} ${a.url
  * would take an engine, a mirror and a router to observe one wire.
  */
 function FaceHarness({ transport }: { transport: boolean }) {
-  const consent = useConsentState(true, transport ? consentOverBridge : undefined);
+  const consent = useConsentState(true, null, transport ? consentOverBridge : "none");
   const gate = consent.themeFaceKnown && consent.setThemeFace !== null;
   return h(
     "div",

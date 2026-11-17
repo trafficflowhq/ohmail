@@ -31,7 +31,7 @@ const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, ro
 const GUARD = "documentHidden()";
 
 /** Where the standing polls live. Every `setInterval` in these files is censused. */
-const POLL_FILES = ["app/shell/MailStateProvider.tsx", "../../packages/app-logic/src/doors/build-watch.ts"];
+const POLL_FILES = ["../../packages/app-logic/src/mail-state/mail-state-binding.ts", "../../packages/app-logic/src/doors/build-watch.ts"];
 
 /**
  * The intervals that issue no request, by a token in their own callback. A beat that moves a

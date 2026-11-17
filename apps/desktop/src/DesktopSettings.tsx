@@ -25,7 +25,7 @@ import type { LocalAiStatus } from "./local-ai.js";
    panes and one confirmation bullet; see `install-role.ts` for the measured defect and
    why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
    so a pane mounted without the provider keeps the sentence it always had. */
-import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { isRemovedMailbox, readerHolder, screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 

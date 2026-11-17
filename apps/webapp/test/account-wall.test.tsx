@@ -676,7 +676,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     await shell.mountCloudShell();
     await shell.tick(1_000);
     expect(document.body.querySelector(".today")).not.toBeNull();
-    expect(liftedAt(), "the first open answer after the wall was not read as the reopening").not.toBeNull();
+    expect(liftedAt(OWNER), "the first open answer after the wall was not read as the reopening").not.toBeNull();
   });
 
   it("THE LIFT RE-ANNOUNCES THIS BROWSER'S PUSH REGISTRATION, ONCE (mail 0135)", async () => {
@@ -730,7 +730,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.mountCloudShell();
     await shell.tick(1_000);
-    expect(liftedAt()).toBeNull();
+    expect(liftedAt(OWNER)).toBeNull();
   });
 
   it("the wall's own lift is the reopening even when another tab already stored `open`", async () => {
@@ -746,7 +746,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(1_000);
     expect(wallStands()).toBe(false);
-    expect(liftedAt(), "this window's lift left no reopening").not.toBeNull();
+    expect(liftedAt(OWNER), "this window's lift left no reopening").not.toBeNull();
   });
 
   it("an older API that names no verdict decides nothing: the mirror paints and nothing is stored", async () => {
