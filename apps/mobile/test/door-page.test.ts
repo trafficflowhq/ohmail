@@ -264,4 +264,24 @@ describe("the door page's side of its bridge", () => {
     await tick();
     expect(door.seen.at(-1)).toMatchObject({ kind: "answer", ask: { askId: 5, took: true } });
   });
+
+  it("gives back an offer the camera told after its step stopped listening: one dismiss, none for a step that hears it", async () => {
+    const door = native("e4", (kind) => (kind === "config" ? { ok: true, answer: CONFIG } : { ok: true, answer: {} }));
+    const bridge = createDoorBridge(door.port, "e4");
+    const handle = doorHandle(bridge, await bridge.request("config", {}));
+    const offer = (ticket: string) => JSON.stringify({
+      type: "scan", epoch: "e4", scan: { k: "offers", ticket, facts: { what: "server", address: "https://mail.example.test", key: null } },
+    });
+    const dismissed = () => door.seen.filter((m) => m.kind === "dismiss").map((m) => m.ask);
+    door.send(offer("a".repeat(32)));
+    door.send(JSON.stringify({ type: "scan", epoch: "e4", scan: { k: "notACode" } }));
+    await tick();
+    expect(dismissed()).toEqual([{ ticket: "a".repeat(32) }]);
+    const heard: unknown[] = [];
+    handle.onScan((scan) => heard.push(scan));
+    door.send(offer("b".repeat(32)));
+    await tick();
+    expect(heard).toHaveLength(1);
+    expect(dismissed()).toEqual([{ ticket: "a".repeat(32) }]);
+  });
 });

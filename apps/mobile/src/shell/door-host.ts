@@ -280,11 +280,23 @@ export class DoorHost {
   }
 
   /**
-   * A pasted link wins over the fields and names its own address and key; a typed code carries no key. A code the
-   * page stopped waiting for is offered to nobody: its key goes back as the probe answers.
+   * A pasted link wins over the fields and names its own address and key; a typed code carries no key and goes to the
+   * typed address as the server step reads one, else to the address that step reached. A code the page stopped
+   * waiting for is offered to nobody: its key goes back as the probe answers.
    */
   private async hand(address: string | null, token: string, signal: AbortSignal): Promise<Offer> {
-    const link = parsePairLink(token) ?? { origin: address ?? pendingPairOrigin(), token, pin: null };
+    const pasted = parsePairLink(token);
+    // A link the grammar refuses (a newer code's, one with a query) is no code: taken as one, the whole link would be
+    // sent to the typed or reached server.
+    if (pasted === null && /#|:\/\//.test(token)) return { k: "refused", said: said(refuse("pairCodeRejected")) };
+    let origin = pendingPairOrigin();
+    if (pasted === null && address !== null) {
+      // Taken as typed, a part before an "@" or a path would be shown whole and dialled elsewhere.
+      const typed = parseServerAddress(address);
+      if (typed === null) return { k: "refused", said: said(addressProblem(address) ?? refuse("pairBadAddress")) };
+      origin = typed;
+    }
+    const link = pasted ?? { origin, token, pin: null };
     if (link.token.trim() === "") return { k: "refused", said: said(refuse("pairEmptyToken")) };
     return (await this.measure(link, () => !signal.aborted)) ?? { k: "refused", said: said(refuse("connectSuperseded")) };
   }
@@ -311,10 +323,11 @@ export class DoorHost {
    * OPEN A MAILBOX ON THIS PHONE, in the order the engine and the connection need: the launch slot, the consent's
    * licence, the engine's open, the door held, the organizer's session for this launch, the adoption, the notice
    * permission; and the slot given back on every exit, a throw included, or the way is gone until the app is killed.
+   * A refusal crosses as its code and its field: its arguments are native's words (a fault's, a server's), which no
+   * reader of the page takes.
    */
   private async open(typed: Omit<OpenInput, "pass">, password: string): Promise<Answered<"open">> {
-    const refused = (r: Refusal): Answered<"open"> =>
-      ({ ok: false, code: r.say, field: refusalField(r), args: said(r, [password]).args });
+    const refused = (r: Refusal): Answered<"open"> => ({ ok: false, code: r.say, field: refusalField(r), args: [] });
     if (!this.deps.standalone.offered()) return refused(refuse("standaloneNoEngine"));
     if (takeStandaloneLaunch() === "standing") return refused(refuse("standaloneAlreadyOpen"));
     this.entering += 1;

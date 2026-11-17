@@ -57,19 +57,20 @@ export function pairLink(origin: string, token: string, pin: string | null): str
  * token in the path would ride access logs); ANY query string — `?token=` is the regression the
  * fragment rule exists to prevent; an empty fragment; a `k<n>` this build cannot read, and a `k1`
  * whose fingerprint is the wrong shape or whose token half is empty. Refusing a malformed pinned
- * link is the point: the alternative is redeeming with NO pin. AND NO ADDRESS: userinfo in the
- * host parsed as part of the origin while the engine's `normalizeOrigin` refuses credentials, so
- * the door accepted a link no dial could use.
+ * link is the point: the alternative is redeeming with NO pin. AND A HOST AS IT IS DIALLED: ASCII
+ * letters, digits, dots and hyphens, or a bracketed IPv6 literal, then a port. A name in other
+ * letters is drawn in them and dialled in its `xn--` form, and a full-width stop or an escaped one
+ * is dialled as a dot, so the confirmation would show one host while the phone dials another. No
+ * address fits either: userinfo has no place in that grammar, so a link that named one, written
+ * by something other than the Devices pane, is refused rather than stripped.
  */
 export function parsePairLink(text: string): PairLink | null {
-  const m = /^(https?):\/\/([^/?#\s]+)(\/[^?#\s]*)?(\?[^#\s]*)?(?:#(\S+))?$/i.exec(text.trim());
+  // No `u` flag: under it, `i` would fold a long s into `[a-z]`, and a URL dials it as an s.
+  const m = /^(https?):\/\/((?:[a-z0-9.-]+|\[[0-9a-f:.]+\])(?::\d{1,5})?)(\/[^?#\s]*)?(\?[^#\s]*)?(?:#(\S+))?$/i
+    .exec(text.trim());
   if (!m) return null;
   const [, scheme, host, path, query, fragment] = m;
   if (query !== undefined) return null;
-  // Userinfo is the one address-shaped thing this grammar could carry, and it is refused before
-  // the origin is composed rather than stripped: a link that named one was written by something
-  // other than the Devices pane, and quietly dropping the half we do not want would admit it.
-  if (host!.includes("@")) return null;
   // The scheme match is case-insensitive (a QR encoder may upcase) and `normalize` lower-cases
   // the result, so one server stays one profile. The PATH comparison stays exact — /pair is a
   // route, and routes are case-sensitive.

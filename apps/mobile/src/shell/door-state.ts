@@ -7,7 +7,7 @@ import { organizesHere } from "../engine/standalone-door";
 import type { Connection } from "../net/connection";
 import { isNotTls, isPinFailure } from "../net/host-pinning";
 import {
-  parsePairLink, shortPin, unreachableSaid, type Negotiation, type PairAdmission, type PickerStep,
+  MANAGED_ORIGIN, parsePairLink, shortPin, unreachableSaid, type Negotiation, type PairAdmission, type PickerStep,
 } from "../net/pairing";
 import { refuse, type Refusal, type RefusalArg, type RefusalKey } from "../refusal";
 import { gateFor } from "../state/gate";
@@ -54,9 +54,12 @@ export function negotiationSaid(n: Negotiation, step?: PickerStep): Refusal {
   return step?.kind === "managed-signin-later" ? refuse("managedDeferred") : refuse("noPairing");
 }
 
+/** Hosted is said of the hosted address alone: any server's first word can say "managed". */
+const hosted = (flavor: string, origin: string): boolean => flavor === "managed" && origin === MANAGED_ORIGIN;
+
 /** What a probe measured, as the confirmation draws it: never a field of the link. */
 export function factsOf(admission: PairAdmission): PairFacts {
-  const what = admission.flavor === "desktop-host" ? "computer" : admission.flavor === "managed" ? "hosted"
+  const what = admission.flavor === "desktop-host" ? "computer" : hosted(admission.flavor, admission.origin) ? "hosted"
     : admission.flavor === "local" ? "local" : "server";
   return { what, address: admission.origin, key: admission.pin === null ? null : shortPin(admission.pin) };
 }
@@ -66,7 +69,8 @@ function rowOf(p: ServerProfile, activeId: string | null): PairedRow {
   const needsPair = !own && p.refreshToken === null;
   return {
     id: p.id,
-    kind: own ? "own" : p.flavor === "managed" ? "hosted" : p.flavor === "desktop-host" || p.flavor === "local" ? "computer" : "server",
+    kind: own ? "own" : hosted(p.flavor, p.origin) ? "hosted"
+      : p.flavor === "desktop-host" || p.flavor === "local" ? "computer" : "server",
     address: own ? "" : p.origin,
     account: own || needsPair ? null : p.accountId,
     open: p.id === activeId,
