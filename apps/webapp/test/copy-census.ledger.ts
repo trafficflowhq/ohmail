@@ -173,6 +173,9 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "--oh-today-ink-ol", why: "the same, ohmarchy light" },
     { text: "--oh-today-ink-od", why: "the same, ohmarchy dark" },
   ],
+  "packages/ui/src/mail/Shell/Sheet.tsx": [
+    { text: "[data-reading-scroll]", why: "a CSS selector — `querySelector` finds the box a reading column's sheets scroll in, for a part that does not draw the column" },
+  ],
   "packages/ui/src/mail/Lists/row-swipe.tsx": [
     { text: "translateX({}px)", why: "a CSS transform the browser parses — the row's travel under a swipe" },
   ],

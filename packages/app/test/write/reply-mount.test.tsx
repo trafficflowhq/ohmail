@@ -75,7 +75,7 @@ describe("write's reply in the reader", () => {
     const { reply, opened } = replyDouble();
     const { mail, address } = mountReader({ letters: [letter("m1")], open: "m1", parts: { reply } });
     act(() => {
-      fireEvent.keyDown(window, { key: "r" });
+      fireEvent.keyDown(document.body, { key: "r" });
     });
     expect(opened).toEqual(["reply m1"]);
     expect(address.read()).toBe("#/ohbox/m/m1");
@@ -93,7 +93,11 @@ describe("write's reply in the reader", () => {
 
   it("a letter's own menu opens the reply's Reply all and Forward on that letter; nothing goes to the place write", () => {
     const { reply, opened } = replyDouble();
-    const { mail, address } = mountReader({ letters: [letter("m1")], open: "m1", parts: { reply } });
+    const { mail, address } = mountReader({
+      letters: [letter("m1", { cc: [{ name: "Ada", address: "ada@kiln.example" }] })],
+      open: "m1",
+      parts: { reply },
+    });
     for (const how of ["Reply all", "Forward"]) {
       act(() => {
         fireEvent.click(screen.getByRole("button", { name: "Message" }));
