@@ -930,6 +930,8 @@ packages/app/src/host/panes.ts	prettier	1	lift-a
 packages/app/src/host/session.ts	prettier	1	lift-a
 packages/app/src/host/wires.ts	prettier	1	lift-a
 packages/app/src/keys/touch-keys.css	stylelint:selector-max-type	5	ruling:lift-b-search
+packages/app/src/write/editor/commands.ts	prettier	1	ruling:write-lift
+packages/app/src/write/editor/marks.ts	prettier	1	ruling:write-lift
 packages/app/test/borders.test.ts	prettier	1	lift-a
 packages/app/test/host-contract.test.ts	prettier	1	lift-a
 packages/app/tsconfig.json	prettier	1	lift-a

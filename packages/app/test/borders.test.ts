@@ -95,6 +95,36 @@ describe("the reader's two entries", () => {
   });
 });
 
+describe("write's three entries", () => {
+  const editorEngine = (input: string) => input.includes("node_modules/@tiptap/") || input.includes("node_modules/prosemirror-");
+  it("the door loads no editor engine and nothing of the letter's body; neither does the plain entry", async () => {
+    for (const entry of ["./write/index.js", "./write/plain/index.js"]) {
+      const { inputs, refused } = await readPlanted(BORDERS, `export * from "${entry}";\n`);
+      expect(refused, entry).toEqual([]);
+      expect(inputs.filter(editorEngine), entry).toEqual([]);
+      expect(inputs.filter((input) => input.startsWith("packages/letter-body/")), entry).toEqual([]);
+    }
+    expect((await readPlanted(BORDERS, 'export * from "./write/index.js";\n')).inputs).toContain(
+      "packages/app/src/write/entry.tsx",
+    );
+  });
+
+  it("the editor's entry is the one that loads the editor engine, and it too reaches nothing of the body", async () => {
+    const { inputs, refused } = await readPlanted(BORDERS, 'export * from "./write/editor/index.js";\n');
+    expect(refused).toEqual([]);
+    expect(inputs.filter(editorEngine)).not.toEqual([]);
+    expect(inputs).toContain("packages/app/src/write/editor/schema.ts");
+    expect(inputs.filter((input) => input.startsWith("packages/letter-body/"))).toEqual([]);
+  });
+
+  it("the frame reaches no file of write", async () => {
+    const { inputs } = await readPlanted(BORDERS, 'export * from "./frame/index.js";\n');
+    expect(inputs.filter((input) => input.startsWith("packages/app/src/write/"))).toEqual([]);
+    const planted = await readPlanted(BORDERS, 'export * from "./frame/index.js";\nexport * from "./write/index.js";\n');
+    expect(planted.inputs.filter((input) => input.startsWith("packages/app/src/write/"))).not.toEqual([]);
+  });
+});
+
 /** What the frame may reach of the product: its own folder, the host contract (not a shell's browser door) and the text reader. */
 function outsideTheFrame(input: string): boolean {
   if (input.includes("node_modules/") || input === "<stdin>") return false;

@@ -93,6 +93,11 @@ export type PlacePanes =
       readonly Reading: ComponentType<PaneProps> | "reader";
       /** An own `Reading` whose verbs go through the frame's one press seam asks for the room (where a reader is). */
       readonly room?: true;
+      /**
+       * `always`: the reading column stands and has the keys whatever is open, and on a phone it stands over the list
+       * with no dock at the foot (a letter being written is the place's whole point). Left out: by the open letter.
+       */
+      readonly holds?: "always";
     }
   | { readonly kind: "wide"; readonly Wide: ComponentType<PaneProps> };
 /** A place's registration. Places with one `body` share one mounted instance (today's views: "today"). */

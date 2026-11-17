@@ -210,7 +210,13 @@ describe("the reader in the frame", () => {
 
   it("the panel drawn in place on a place whose room is off: a list's visit runs it, and with none nothing is drawn", () => {
     const mail = fakeMail([letter("m1"), letter("m2")]);
-    const entry = readerEntry({ body: bodyDouble().body, files: "none", pictures: "none", look: "none" });
+    const entry = readerEntry({
+      body: bodyDouble().body,
+      files: "none",
+      pictures: "none",
+      look: "none",
+      reply: "none",
+    });
     const acted: string[] = [];
     const meeting: ListMeeting = {
       blank: null,

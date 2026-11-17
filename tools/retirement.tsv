@@ -1045,6 +1045,7 @@ packages/api/test/step-up-doors-census.test.ts	source-text	reads source as text 
 packages/app-logic/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/catalogue-aggregate.test.ts	data	reads data files (json): the place catalogues and the two assembled ones	none	frame	
+packages/app/test/compare/write-declared.test.ts	data	reads data files (json): the comparison's registry and write's declared rows	none	write	
 packages/app/test/doors/own-classes.test.tsx	source-text	reads source as text (css): the classes today's sheets style, against every class the doors draw	layer 2	removals	
 packages/app/test/doors/under-todays-sheets.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium against the doors' own	layer 2	removals	
 packages/app/test/frame/notice-bar-in-a-browser.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium	layer 2	frame	

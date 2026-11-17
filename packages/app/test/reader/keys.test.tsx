@@ -77,7 +77,13 @@ describe("the column's keys", () => {
   });
 
   it("a column that does not have the keys binds none", () => {
-    const parts = { body: bodyDouble().body, files: "none", pictures: "none", look: "none" } as const;
+    const parts = {
+      body: bodyDouble().body,
+      files: "none",
+      pictures: "none",
+      look: "none",
+      reply: "none",
+    } as const;
     const entry = readerEntry(parts);
     /* The list beside it draws a second column, without the keys, on the letter it holds. */
     function List(pane: PaneProps) {

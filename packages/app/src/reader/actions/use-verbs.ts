@@ -1,7 +1,8 @@
 /**
  * WHO RUNS A VERB ON THE OPEN LETTER. Where the list that opened it handed its visit, every verb takes the list's own
  * path (`visit.act`): the list lands its cursor and answers Undo as it does for its own rows. Otherwise the reader's
- * own runners, through the one press seam. Reply and Forward hand a draft to `write`; nothing is sent from here.
+ * own runners, through the one press seam. Reply and Forward open `write`'s reply where the shell handed one, before
+ * anything else; otherwise they hand a draft to the place `write`. Nothing is sent from here.
  */
 import { useMemo } from "react";
 import { isOwnVerb, markSeenOver, moveTargetsOf, runOwnVerb, type VerbWords } from "@ohmail/app-logic/reader";
@@ -12,6 +13,17 @@ import { useFrame } from "../../frame/commands.js";
 import { usePressWhereOn } from "../../frame/room.js";
 import type { LinkedDraft } from "../../host/index.js";
 import { useLocale, useText } from "../../text/index.js";
+import { useParts } from "../parts.js";
+
+type Answer = (messageId: string, how: "reply" | "reply_all" | "forward") => void;
+const noAnswer = (): Answer | null => null;
+
+/** `write`'s open for an answer, or null where the shell handed none (the same hook on every render of an entry). */
+export function useAnswer(): Answer | null {
+  const { reply } = useParts();
+  const useOpen: () => Answer | null = reply === "none" ? noAnswer : reply.useOpen;
+  return useOpen();
+}
 
 const prefixed = (prefix: string, subject: string): string =>
   subject.toLowerCase().startsWith(prefix.toLowerCase()) ? subject : `${prefix} ${subject}`;
@@ -55,6 +67,7 @@ export function useVerbs(
   /* The seam is taken only where an own verb may run: a list's visit runs every verb on the list's path. */
   const press = usePressWhereOn();
   const { commands } = useFrame();
+  const answer = useAnswer();
   const t = useText("reader");
   const locale = useLocale();
   const words: VerbWords = useMemo(
@@ -87,6 +100,10 @@ export function useVerbs(
       : "markUnread";
   const act = (action: MessageAction): void => {
     if (message === null) return;
+    if (answer !== null && (action === "reply" || action === "reply_all" || action === "forward")) {
+      answer(message.id, action);
+      return;
+    }
     if (visit !== null) {
       visit.act(action);
       return;

@@ -165,6 +165,11 @@ function ConnectionHost({
   return null;
 }
 
+/** The reading column stands over the list while a letter is open, or always where the place holds it. */
+function holdsItsReading(entry: PlaceEntry | null): boolean {
+  return entry !== null && entry.panes.kind === "columns" && entry.panes.holds === "always";
+}
+
 /** A place's panes, or the shared body they name: one mounted instance per body. */
 function panesOf(
   entry: PlaceEntry | null,
@@ -177,13 +182,16 @@ function panesOf(
   if (panes.kind === "wide")
     return { list: null, reading: null, wide: <panes.Wide key={entry.body} {...pane} keysHere /> };
   const Reading = panes.Reading;
+  /* A place that holds its reading column gives it the keys whatever is open. */
+  const holds = panes.holds === "always";
+  const readingKeys = holds || pane.route.open !== null;
   return {
-    list: <panes.List key={entry.body} {...pane} keysHere={pane.route.open === null} />,
+    list: <panes.List key={entry.body} {...pane} keysHere={!holds && pane.route.open === null} />,
     /* A place that names the reader gets the shell's reading column; with none handed, the column stays empty. */
     reading: !reading ? null : Reading !== "reader" ? (
-      <Reading {...pane} keysHere={pane.route.open !== null} />
+      <Reading {...pane} keysHere={readingKeys} />
     ) : reader === NONE ? null : (
-      <reader.Reading {...pane} keysHere={pane.route.open !== null} />
+      <reader.Reading {...pane} keysHere={readingKeys} />
     ),
     wide: null,
   };
@@ -262,13 +270,13 @@ function FrameBody({ host }: { host: FrameHost }) {
       : host.features.stages[route.stage.id];
   const staged = stageEntry !== NONE;
   const pane: PaneProps = { route, plan, keysHere: !staged };
-  const readingShown = plan.columns === 2 || route.open !== null;
+  const readingShown = plan.columns === 2 || route.open !== null || holdsItsReading(entry);
   const { list, reading, wide } = panesOf(entry, pane, readingShown, host.features.reader);
   const room = drawsTheReader(entry, host.features.reader);
   /* The rail reads its feed itself: a new feed (a fold opened in it) draws the rail again, never the panes. */
   const rails = { feed: inner.rail, places, route, commands };
   /* On a phone's width a letter stands open over the list or the wide pane: no dock stands at the foot then. */
-  const letterUp = plan.rail === "dock" && route.open !== null;
+  const letterUp = plan.rail === "dock" && (route.open !== null || holdsItsReading(entry));
   /* Where no rail stands at the side, More opens the whole rail over the app: a modal sheet. */
   const sheet = railOpen && plan.rail !== "words";
   const slotNotice = <NoticeHost store={inner.notices} place={plan.rail === "words" ? "rail" : "bar"} />;
@@ -305,7 +313,7 @@ function FrameBody({ host }: { host: FrameHost }) {
               plan={plan}
               rail={sideRail}
               list={[inColumn(plan.device !== "phone"), list]}
-              listKeys={!staged && route.open === null}
+              listKeys={!staged && route.open === null && !holdsItsReading(entry)}
               reading={reading}
               wide={wide !== null ? [inColumn(false), wide] : null}
               labels={{

@@ -128,7 +128,14 @@ export interface MountReader {
 export function mountReader(o: MountReader) {
   const mail = fakeMail(o.letters, o.gone, o.bodies, o.rows);
   const double = bodyDouble();
-  const parts: ReaderParts = { body: double.body, files: "none", pictures: "none", look: "none", ...o.parts };
+  const parts: ReaderParts = {
+    body: double.body,
+    files: "none",
+    pictures: "none",
+    look: "none",
+    reply: "none",
+    ...o.parts,
+  };
   const address = fakeAddress(o.open === null ? "#/ohbox" : `#/ohbox/m/${o.open}`);
   const made = fakeHost({
     engine: mail.engine,

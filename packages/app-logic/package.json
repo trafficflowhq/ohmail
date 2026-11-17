@@ -1210,6 +1210,18 @@
       "node": "./dist/touch/row-swipe.js",
       "default": "./src/touch/row-swipe.ts"
     },
+    "./write/files": {
+      "types": "./src/write/files.ts",
+      "ohmail-source": "./src/write/files.ts",
+      "node": "./dist/write/files.js",
+      "default": "./src/write/files.ts"
+    },
+    "./write/later": {
+      "types": "./src/write/later.ts",
+      "ohmail-source": "./src/write/later.ts",
+      "node": "./dist/write/later.js",
+      "default": "./src/write/later.ts"
+    },
     "./writing": {
       "types": "./src/writing/index.ts",
       "ohmail-source": "./src/writing/index.ts",

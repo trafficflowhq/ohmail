@@ -9,8 +9,8 @@ import type { Mark, MarkType } from "@tiptap/pm/model";
 
 /**
  * THE MARK-BOUNDARY RULES — Slack's, stated once. Each row is a claim the editor-feel rig
- * (`test/editor-feel/rules.pw.ts`, a real keyboard on chromium and webkit) drives, and the jsdom
- * suite (`test/rich-editor-marks.test.tsx`) pins at the mechanism; `test/rich-editor-rules-census`
+ * (`apps/webapp/test/editor-feel/rules.pw.ts`, a real keyboard on chromium and webkit) drives, and the jsdom
+ * suite (`apps/webapp/test/rich-editor-marks.test.tsx`) pins at the mechanism; `test/rich-editor-rules-census`
  * refuses a row without a test naming its id. The mechanism behind the rows: the link mark is
  * NON-INCLUSIVE in the schema (a space at its end is plain by ProseMirror's own rule) and re-enters
  * only for a non-space character typed at its end (`nextMarks`); code EXITS on a space typed at its
@@ -225,3 +225,46 @@ export const CodeMark = Code.extend({
   keepOnSplit: false,
   exitable: false,
 });
+
+/**
+ * People type what they mean, not a scheme: a scheme-less `a.example/docs` would survive BOTH ends
+ * as a relative href (TipTap admits relative URLs, so does the sanitiser) and dangle unresolvable
+ * in the recipient's client — so normalisation happens here, which the link popover asks, at the one point
+ * where "what did the author mean" is still answerable: bare domains become https, a bare address becomes mailto,
+ * anything with a scheme is judged against the allow-list, and `new URL` must parse the result. The
+ * input is uncontrolled, read on Apply via a ref — nothing reacts per keystroke, so controlling it
+ * buys a render per keystroke and nothing else; the error clears on the next keystroke because
+ * stale refusals read as "still wrong".
+ */
+
+/** The schemes a composed link may carry — the sanitiser's list, worn as UX. */
+const ALLOWED_LINK_SCHEMES = new Set(["http", "https", "mailto"]);
+
+/**
+ * What the author typed, made into a destination a mail client can open — or `null` when it
+ * cannot be one. `""` in means `""` out: the caller reads an empty answer as "remove the
+ * link", the same semantics the prompt had.
+ */
+export function normalizeHref(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return "";
+  // Protocol-relative slips past scheme checks by having no scheme; the sanitiser refuses it
+  // (`allowProtocolRelative: false`) and so does this, before the https-prefix below could
+  // turn it into something else.
+  if (trimmed.startsWith("//")) return null;
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(trimmed);
+  const candidate = scheme
+    ? trimmed
+    : /^[^\s/@]+@[^\s/@]+\.[^\s/@]+$/.test(trimmed)
+      ? `mailto:${trimmed}`
+      : `https://${trimmed}`;
+  const parsed = (() => {
+    try { return new URL(candidate); } catch { return null; }
+  })();
+  if (!parsed) return null;
+  // `URL.protocol` is the parser's answer, colon included — not a re-derivation by regex.
+  if (!ALLOWED_LINK_SCHEMES.has(parsed.protocol.slice(0, -1).toLowerCase())) return null;
+  // A web address with a name or a password before its host shows one host and may open another.
+  if (parsed.protocol !== "mailto:" && (parsed.username !== "" || parsed.password !== "")) return null;
+  return candidate;
+}

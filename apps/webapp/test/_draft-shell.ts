@@ -155,7 +155,7 @@ export const replyDraft = (id: string, parent: string, body: string): EngineDraf
   createdAt: "2026-09-27T08:40:00.000Z", updatedAt: "2026-09-27T08:40:00.000Z",
 } as unknown as EngineDraft);
 
-async function storeWith(messagesIn: EngineMessage[], drafts: EngineDraft[], s: MirrorStore = new MemoryMirrorStore()): Promise<MirrorStore> {
+export async function storeWith(messagesIn: EngineMessage[], drafts: EngineDraft[], s: MirrorStore = new MemoryMirrorStore()): Promise<MirrorStore> {
   await s.load();
   const changes: SyncChange[] = [];
   for (const m of messagesIn) {
@@ -285,7 +285,7 @@ export class DraftServer {
   }
 }
 
-function engineOver(
+export function engineOver(
   s: MirrorStore, sent: EngineMutation[], refuseSend: DraftShell["refuseSend"], saveGate: DraftShell["saveGate"],
   remote: SyncChange[] = [],
   offline: DraftShell["offline"] = { on: false },
@@ -540,7 +540,7 @@ const consentTransportWith = (signatures?: Record<string, string>) => ({
   setMailboxSignature: async () => ({ signatures: signatures ?? {} }),
 });
 
-const ROSTER: MailboxFacts[] = [{
+export const ROSTER: MailboxFacts[] = [{
   id: "mb1", address: "me@example.invalid", status: "connected", errorCode: null,
   disabledReason: null, syncBlockedReason: null, syncBlockedSince: null,
   lastSyncAt: "2026-09-27T08:59:00.000Z", createdAt: "2026-09-01T00:00:00.000Z",

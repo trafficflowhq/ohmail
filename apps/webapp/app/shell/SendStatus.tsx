@@ -32,6 +32,11 @@ export function lineSeen(el: Element | null): boolean {
 export type SendTone = "pending" | "warn" | "error";
 
 /** The ceiling as the sentences name it, `{size}` in every line that takes one. */
+/** A file's size in the person's language, as every line of the letter names one (the new screen's `size`). */
+export function fileSize(bytes: number): string {
+  return formatFileSize(bytes, activeFormatLocale());
+}
+
 export function sendLineValues(): { size: string } {
   return { size: formatFileSize(DRAFT_BODY_MAX_BYTES, activeFormatLocale()) };
 }

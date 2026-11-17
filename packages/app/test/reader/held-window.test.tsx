@@ -63,7 +63,7 @@ function mount() {
     drawn.push(props.messageId);
     return <p>{props.text}</p>;
   }
-  const parts: ReaderParts = { body: Body, files: "none", pictures: seam(), look: "none" };
+  const parts: ReaderParts = { body: Body, files: "none", pictures: seam(), look: "none", reply: "none" };
   const mail = fakeMail(THREAD);
   let holds: RoomHolds = { held: new Set(), places: new Map() };
   const listeners = new Set<() => void>();
