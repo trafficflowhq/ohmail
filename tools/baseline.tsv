@@ -352,7 +352,7 @@ apps/desktop/test/host-contract-doors.test.ts	ohmail/package-borders:apps/paired
 apps/desktop/test/journeys-doors.test.tsx	ohmail/declared-dependency	2	desktop-layer
 apps/desktop/test/journeys-doors.test.tsx	ohmail/package-borders:apps/sidecar	2	desktop-layer
 apps/desktop/test/journeys-doors.test.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
-apps/desktop/test/journeys-host.test.ts	ohmail/declared-dependency	2	desktop-layer
+apps/desktop/test/journeys-host.test.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/journeys-host.test.ts	ohmail/package-borders:apps/sidecar	2	desktop-layer
 apps/desktop/test/mailto.test.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/opencode-go-form.test.tsx	ohmail/declared-dependency	1	desktop-layer
@@ -1805,9 +1805,7 @@ scripts/perf/speed-check-entry.tsx	ohmail/declared-dependency	2	unassigned
 scripts/perf/view-switch-entry.tsx	ohmail/declared-dependency	2	unassigned
 test/desktop-unsubscribe-note.test.tsx	ohmail/declared-dependency	4	unassigned
 test/journeys/bench/web.ts	eslint:unused-directive	1	journeys
-test/journeys/bench/web.ts	ohmail/declared-dependency	2	journeys
-test/journeys/guards.test.ts	ohmail/declared-dependency	1	journeys
-test/journeys/vocabulary/acts.ts	ohmail/declared-dependency	1	journeys
+test/journeys/bench/web.ts	ohmail/declared-dependency	1	journeys
 test/journeys/vocabulary/world.ts	ohmail/declared-dependency	1	journeys
 test/lane-db-role-deadlines.pg.test.ts	ohmail/declared-dependency	1	unassigned
 test/organizer-environment-reads.test.ts	ohmail/platform-name	2	server-wiring

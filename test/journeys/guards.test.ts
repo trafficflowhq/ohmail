@@ -1,18 +1,28 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { chromium, type Browser } from "playwright";
-import { PANE_IDS, TRIAGE_PILES, VIEWS } from "../../apps/webapp/app/shell/routing.js";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { chromium, type Browser } from "@playwright/test";
+import { PLACE_IDS, type PlaceId as FramePlaceId } from "@ohmail/app/frame/contract";
+import { fragmentOf, PANES, routeOf } from "@ohmail/app/frame/route";
 import { OWN_PATHS } from "../../apps/webapp/routes.mjs";
 import { menuOf, wholeMenu } from "./bench/panes.js";
-import { fenced, fingerprint, oneAtATime, type Guard } from "./bench/web.js";
+import { layoutPlan } from "../../packages/app/src/frame/layout-plan.js";
+import { fenced, VIEWPORTS } from "./bench/dom-playwright.js";
+import { benchOf, sizeOf, SIZES, WORDS, type Setting } from "./bench/seam.js";
+import { runsOn, STANDING } from "./bench/standing/index.js";
+import { AT_SIZE } from "./bench/standing/sizes.js";
+import { fingerprint, oneAtATime, type Guard } from "./bench/web.js";
 import { ACTS } from "./vocabulary/acts.js";
 import { format, LANGUAGES, raw, say } from "./vocabulary/catalogue.js";
-import { CONTROLS } from "./vocabulary/controls.js";
+import { ALL_CONTROLS, twice } from "./vocabulary/index.js";
+import { MIRRORS } from "./vocabulary/surfaces.js";
 import { PANES_SEEN } from "./vocabulary/panes.js";
-import { PLACES } from "./vocabulary/places.js";
+import { PANE_PLACES, paneIdOf, PLACES } from "./vocabulary/places.js";
 import { fixturesPlanter } from "./vocabulary/world.js";
 
 /**
@@ -37,6 +47,60 @@ const REFUSED: Array<[string, RegExp]> = [
   ["a class or id selector", /["'`](?:\.[A-Za-z][\w-]*|#[A-Za-z][\w-]*)["'`]/],
 ];
 
+/** The frame's places no journey reaches yet, each with its reason. A place leaves this list when its first journey arrives. */
+const NOT_YET_A_PLACE: Partial<Record<FramePlaceId, string>> = {
+  tags: "a tag's list is reached through the rail by the tag's own name; its journey comes with the tags' seat",
+  folder: "a folder's list is reached by the folder's id; its journey comes with the folders' seat",
+  address: "a correspondent's letters are reached from a letter; its journey comes with the reader's seat",
+  parked: "the set-aside pile is reached through the rail; its journey comes with the later piles' seat",
+  resurface: "the resurfacing pile is reached through the rail; its journey comes with the later piles' seat",
+};
+
+/**
+ * What a journey may never reach for: the window behind the seam, which only some benches have, the driver that
+ * holds it, or what `see` found. A journey names only the modules that speak the seam's words: anything else it
+ * imports could hand it a browser's page by another name.
+ */
+const A_JOURNEY_IMPORTS = [/^bench\/(?:seam|journey|web|panes|totp)$/, /^vocabulary\/[\w-]+$/, /^vitest$/, /^node:/];
+const REACHED_BY_BRACKETS = new Set(["page", "context", "find", "located"]);
+
+/** The file's code with its comments gone and each string literal replaced by its index in `strings`. */
+function codeOf(text: string): { code: string; strings: string[] } {
+  const strings: string[] = [];
+  const code = text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, (m) => {
+    if (m.startsWith("/")) return " ";
+    strings.push(m.slice(1, -1));
+    return `"${strings.length - 1}"`;
+  });
+  return { code, strings };
+}
+
+/** Where a journey file at `file` reaches past the seam, each with what it reached for. */
+function pastTheSeam(file: string, text: string): string[] {
+  const { code, strings } = codeOf(text);
+  const found: string[] = [];
+  const moduleOf = (spec: string): string => spec.startsWith(".")
+    ? relative(HERE, resolve(dirname(file), spec)).split("\\").join("/").replace(/\.(?:js|ts)$/, "")
+    : spec;
+  for (const m of code.matchAll(/\b(?:from|import|require)\s*\(?\s*"(\d+)"/g)) {
+    const name = moduleOf(strings[Number(m[1])]!);
+    if (!A_JOURNEY_IMPORTS.some((re) => re.test(name))) found.push(`a module that is not the seam's: ${name}`);
+  }
+  if (/\b(?:import|require)\s*\(\s*(?!"\d+")/.test(code)) found.push("a module named by a computed value");
+  for (const m of code.matchAll(/\b(?:import|export)\s+(?:type\s+)?\*\s*(?:as\s+[\w$]+\s+)?from\s*"(\d+)"/g)) {
+    const name = moduleOf(strings[Number(m[1])]!);
+    if (name.startsWith("bench/")) found.push(`every name of a bench module at once: ${name}`);
+  }
+  for (const m of code.matchAll(/\[\s*"(\d+)"\s*\]/g)) {
+    const name = strings[Number(m[1])]!;
+    if (REACHED_BY_BRACKETS.has(name)) found.push(`a driver's member by brackets: ${name}`);
+  }
+  // As a name in code: a member, a binding, a field taken apart in any braces, a parameter's included.
+  for (const m of code.matchAll(/\b(?:page|context|located)\b/g)) found.push(`a window's page or context, or the driver's finder: ${m[0]}`);
+  if (/(?:[(=,]|return)\s*await\s+[\w$.!]+\.see\(|\.see\([^;]*?\)\s*\.then\(/.test(code)) found.push("what `see` found");
+  return [...new Set(found)];
+}
+
 describe("the journeys' own rules", () => {
   it("no file under test/journeys finds a control by anything but its role and name, or waits for time", () => {
     const found: string[] = [];
@@ -47,9 +111,36 @@ describe("the journeys' own rules", () => {
     expect(found).toEqual([]);
   });
 
+  it("no journey reaches past the seam: to a browser's page or context, to the driver, or to what `see` found", () => {
+    const found = files(join(HERE, "journeys")).flatMap((file) =>
+      pastTheSeam(file, readFileSync(file, "utf8")).map((what) => `${file.slice(HERE.length)}: ${what}`));
+    expect(found).toEqual([]);
+  });
+
+  it("the seam's rule reads a reach however it is spelled, and passes a journey that keeps to the seam", () => {
+    const at = join(HERE, "journeys", "x.journeys.test.ts");
+    const kept = `import { describe } from "vitest";\nimport { readFileSync } from "node:fs";\nimport { journeysOf, type Guard } from "../bench/web.js";\nimport type { Person } from "../bench/seam.js";\nimport { say } from "../vocabulary/catalogue.js";\nconst t = "the sign-in page, in context";\nconst row = world.find({ pile: "ohbox" });\nawait person.see("reply");`;
+    expect(pastTheSeam(at, kept)).toEqual([]);
+    const reaches: Array<[string, string]> = [
+      [`import * as web from "../bench/web.js";`, "every name of a bench module at once: bench/web"],
+      [`type D = import("../bench/dom-playwright.js").PlaywrightPerson;`, "a module that is not the seam's: bench/dom-playwright"],
+      [`export { fenced } from "../bench/dom-playwright.js";`, "a module that is not the seam's: bench/dom-playwright"],
+      [`import { chromium } from "@playwright/test";`, "a module that is not the seam's: @playwright/test"],
+      [`const m = await import(name);`, "a module named by a computed value"],
+      [`await (person as any)["page"].goto("/");`, "a driver's member by brackets: page"],
+      [`await driver['located']("list-history");`, "a driver's member by brackets: located"],
+      ["await driver[`find`](\"reply\");", "a driver's member by brackets: find"],
+      [`const tab = async ({ context }: Driver) => 1;`, "a window's page or context, or the driver's finder: context"],
+      [`function f({ a, page }: X) {}`, "a window's page or context, or the driver's finder: page"],
+      [`await person?.page.reload();`, "a window's page or context, or the driver's finder: page"],
+      [`const seen = await person.see("reply");`, "what `see` found"],
+    ];
+    for (const [line, what] of reaches) expect(pastTheSeam(at, line), line).toContain(what);
+  });
+
   it("every key of the vocabulary is in both catalogues", () => {
     const keys = [
-      ...Object.values(CONTROLS).flatMap((c) => (c.key === null ? [] : [c.key])),
+      ...Object.values(ALL_CONTROLS).flatMap((c) => (c.key === null ? [] : [c.key])),
       ...Object.values(PLACES).map((p) => p.landmark.key),
     ];
     const missing = LANGUAGES.flatMap((lang) => keys.filter((k) => raw(k, lang) === null).map((k) => `${lang}: ${k}`));
@@ -57,44 +148,56 @@ describe("the journeys' own rules", () => {
   });
 
   it("every control inside another names a control or a place the vocabulary has", () => {
-    const lost = Object.values(CONTROLS).filter((c) => c.within !== undefined && !(c.within in CONTROLS) && !(c.within in PLACES));
+    const lost = Object.values(ALL_CONTROLS).filter((c) => c.within !== undefined && !(c.within in ALL_CONTROLS) && !(c.within in PLACES));
     expect(lost.map((c) => `${c.id} within ${c.within}`)).toEqual([]);
-    expect(Object.values(CONTROLS).filter((c) => (c.key === null) !== (c.nameFrom === "none" || c.nameFrom === "visible")).map((c) => c.id)).toEqual([]);
+    expect(Object.values(ALL_CONTROLS).filter((c) => (c.key === null) !== (c.nameFrom === "none" || c.nameFrom === "visible")).map((c) => c.id)).toEqual([]);
   });
 
-  it("every route of the vocabulary is one the router or the route table knows", () => {
+  it("every place of the vocabulary is an address the frame reads back as it is written, or a door of the route table", () => {
     const unknown: string[] = [];
     for (const place of Object.values(PLACES)) {
-      if (!place.route.startsWith("#/")) {
-        if (!(OWN_PATHS as readonly string[]).includes(place.route)) unknown.push(place.route);
-        continue;
+      if (place.route.startsWith("#/")) {
+        if (fragmentOf(routeOf(place.route)) !== place.route) unknown.push(`${place.id}: ${place.route} reads back as ${fragmentOf(routeOf(place.route))}`);
+      } else if (!(OWN_PATHS as readonly string[]).includes(place.route)) {
+        unknown.push(`${place.id}: ${place.route} is no door of the route table`);
       }
-      const [view, sub, more] = place.route.slice(2).split("/");
-      const known = more === undefined && (VIEWS as readonly string[]).includes(view!) && (
-        sub === undefined
-        || (view === "settings" && (PANE_IDS as readonly string[]).includes(sub))
-        || (view === "triage" && (TRIAGE_PILES as readonly string[]).includes(sub)));
-      if (!known) unknown.push(place.route);
     }
     expect(unknown).toEqual([]);
   });
 
-  it("every Settings section of the router has a place, and the table per setting names no other", () => {
-    const places = Object.values(PLACES).filter((p) => p.id.startsWith("settings-")).map((p) => p.route.slice("#/settings/".length));
-    expect([...places].sort()).toEqual([...PANE_IDS].sort());
-    for (const listed of Object.values(PANES_SEEN)) expect(listed.filter((id) => !(PANE_IDS as readonly string[]).includes(id))).toEqual([]);
+  it("a Settings place is the frame's Settings at that section", () => {
+    const wrong = PANE_PLACES.flatMap((id) => {
+      const route = routeOf(PLACES[id].route);
+      return route.place === "settings" && route.sub === paneIdOf(id) ? [] : [`${id}: ${route.place}/${route.sub ?? "-"}`];
+    });
+    expect(wrong).toEqual([]);
+  });
+
+  it("the vocabulary's Settings sections are the frame's, and the table per setting names no other", () => {
+    expect(PANE_PLACES.map(paneIdOf).sort()).toEqual([...PANES].sort());
+    for (const listed of Object.values(PANES_SEEN)) expect(listed.filter((id) => !PANES.has(id))).toEqual([]);
+  });
+
+  it("every place of the frame is reached by a place of the vocabulary, or says why not yet", () => {
+    const reached = new Set(Object.values(PLACES).filter((p) => p.route.startsWith("#/")).map((p) => routeOf(p.route).place));
+    expect(PLACE_IDS.filter((id) => !reached.has(id) && !(id in NOT_YET_A_PLACE))).toEqual([]);
+    // The list only shrinks: a place the vocabulary reaches leaves it.
+    expect(Object.keys(NOT_YET_A_PLACE).filter((id) => reached.has(id as FramePlaceId) || !(PLACE_IDS as readonly string[]).includes(id))).toEqual([]);
   });
 
   it("every journeys file names what it guards: a title once, and plain keys for the faults", async () => {
     (globalThis as { __journeysNamesOnly?: boolean }).__journeysNamesOnly = true;
     const titles: string[] = [];
+    const all: Guard[] = [];
     const bad: string[] = [];
     const dir = join(HERE, "journeys");
     const names = readdirSync(dir).filter((n) => n.endsWith(".journeys.test.ts"));
     expect(names.length).toBeGreaterThan(0);
     for (const name of names) {
-      const place = name.replace(".journeys.test.ts", "");
+      // `<place>.journeys.test.ts`, or `<place>.<set>.journeys.test.ts` for a set of the place's journeys.
+      const [place = "", set, ...more] = name.replace(".journeys.test.ts", "").split(".");
       if (!(place in PLACES)) bad.push(`${name}: no place called ${place}`);
+      if (more.length > 0 || (set !== undefined && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(set))) bad.push(`${name}: not <place>[.<set>].journeys.test.ts`);
       const mod = await import(pathToFileURL(join(dir, name)).href) as { GUARDS?: Guard[] };
       if (!Array.isArray(mod.GUARDS) || mod.GUARDS.length === 0) {
         bad.push(`${name}: exports no GUARDS`);
@@ -102,6 +205,7 @@ describe("the journeys' own rules", () => {
       }
       for (const g of mod.GUARDS) {
         titles.push(g.title);
+        all.push(g);
         if (g.title.trim() === "" || g.surfaces.length === 0) bad.push(`${name}: ${g.title || "(no title)"} runs nowhere`);
         if (new Set(g.rows).size !== g.rows.length) bad.push(`${name}: ${g.title} names a fault twice`);
         for (const row of g.rows) if (!/^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(row)) bad.push(`${name}: ${JSON.stringify(row)} is not a fault's plain key`);
@@ -109,6 +213,18 @@ describe("the journeys' own rules", () => {
     }
     expect(bad).toEqual([]);
     expect(titles.filter((t, i) => titles.indexOf(t) !== i)).toEqual([]);
+    // A standing or size list names journeys that exist, and a standing one only journeys of the setting its bench mirrors.
+    const guards = new Map(all.map((g) => [g.title, g]));
+    for (const { id, setting } of Object.values(WORDS)) {
+      if (id === "web") continue;
+      for (const title of STANDING[id]) {
+        const g = guards.get(title);
+        if (!g) bad.push(`standing/${id}: no journey called ${JSON.stringify(title)}`);
+        else if (!g.surfaces.includes(MIRRORS[setting]!)) bad.push(`standing/${id}: ${JSON.stringify(title)} is not a journey of ${MIRRORS[setting]}`);
+      }
+    }
+    for (const [size, listed] of Object.entries(AT_SIZE)) for (const title of listed) if (!guards.has(title)) bad.push(`sizes/${size}: no journey called ${JSON.stringify(title)}`);
+    expect(bad).toEqual([]);
     expect(Object.keys(PLACES).filter((p) => !names.includes(`${p}.journeys.test.ts`))).toEqual([]);
   });
 
@@ -154,6 +270,45 @@ describe("the journeys' own rules", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("TF_JOURNEYS names a bench or nothing, and a size is named or expanded: any other word is refused", () => {
+    expect(benchOf({})).toBeNull();
+    expect(benchOf({ TF_JOURNEYS: "host" })).toBeNull();
+    expect(benchOf({ TF_JOURNEYS: "selfhost" })).toEqual({ id: "web", setting: "W-s", word: "selfhost" });
+    expect(benchOf({ TF_JOURNEYS: "stack" })).toEqual({ id: "stack", setting: "W-i", word: "stack" });
+    expect(benchOf({ TF_JOURNEYS: "android" })).toEqual({ id: "android", setting: "P-p", word: "android" });
+    expect(() => benchOf({ TF_JOURNEYS: "phone" })).toThrow(/must be one of/);
+    expect(() => benchOf({ TF_JOURNEYS: "toString" })).toThrow(/must be one of/);
+    expect(sizeOf({})).toBe("expanded");
+    expect(sizeOf({ TF_JOURNEYS_SIZE: "compact" })).toBe("compact");
+    expect(() => sizeOf({ TF_JOURNEYS_SIZE: "tiny" })).toThrow(/must be one of/);
+  });
+
+  it("every bench but the web's names a setting that mirrors another, or its standing list could never run", () => {
+    expect(Object.values(WORDS).filter((w) => w.id !== "web" && MIRRORS[w.setting] === undefined).map((w) => `${w.id}: ${w.setting}`)).toEqual([]);
+  });
+
+  it("a journey runs where its guard says, or where its bench mirrors that setting and stands it, and below expanded only when listed", () => {
+    const own = { title: "own", surfaces: ["W-i"] as Setting[] };
+    const theirs = { title: STANDING.stack[0]!, surfaces: ["W-s"] as Setting[] };
+    const unlisted = { title: "not on the stack's list", surfaces: ["W-s"] as Setting[] };
+    const at = { id: "stack", setting: "W-i", size: "expanded" } as const;
+    expect([own, theirs, unlisted].map((g) => runsOn(g, at))).toEqual([true, true, false]);
+    expect(runsOn(unlisted, { id: "web", setting: "W-s", size: "expanded" })).toBe(true);
+    expect(runsOn(unlisted, { id: "web", setting: "W-s", size: "compact" })).toBe(false);
+    expect(runsOn(theirs, { id: "web", setting: "W-m", size: "expanded" })).toBe(false);
+  });
+
+  it("each size's window falls in the frame's own size class, and medium still stands two columns", () => {
+    const plan = (size: (typeof SIZES)[number]) => layoutPlan({ ...VIEWPORTS[size], pointer: size === "expanded" ? "fine" : "coarse", posture: "flat", reducedMotion: false });
+    expect(SIZES.map((size) => plan(size).size)).toEqual(SIZES);
+    expect(SIZES.map((size) => plan(size).columns)).toEqual([2, 2, 1]);
+  });
+
+  it("the vocabulary refuses a control named in two files", () => {
+    expect(twice({ reply: 1, forward: 1 }, { "login-code": 1 })).toEqual([]);
+    expect(twice({ reply: 1, forward: 1 }, { reply: 1 })).toEqual(["reply"]);
   });
 
   it("the demo's world is read-only: a plant is refused, and a conversation it does not hold is refused", async () => {
@@ -206,10 +361,40 @@ describe("the bench holds its promises", () => {
     await person.page.setContent(`<input aria-label="New tag">
       <script>let first = true; document.querySelector("input").addEventListener("input", (e) => { if (first) { first = false; e.target.value = ""; } });</script>`);
     const box = person.page.getByRole("textbox", { name: "New tag", exact: true });
-    await expect(ACTS.type.web(box, person.page, "Kiln notes")).rejects.toThrow(/did not keep "Kiln notes"/);
+    await expect(ACTS.type.web(box, person.page, "Kiln notes")).rejects.toThrow(/did not keep what was typed: it holds 0 of the 10 characters/);
     await ACTS.type.web(box, person.page, "Kiln notes");
     expect(await box.inputValue()).toBe("Kiln notes");
     await person.context.close();
+  });
+
+  it("a failing act names no credential: not a hash past the app's routes, not the words typed", async () => {
+    // An invite's link carries its token after the hash, 43 characters; a journey types a password it minted.
+    const handed = randomBytes(32).toString("base64url");
+    const typed = "kiln-glaze-ember-47";
+    const server: Server = createServer((_ask, answer) => {
+      answer.writeHead(200, { "content-type": "text/html" });
+      answer.end(`<!doctype html><title>join</title><main><input aria-label="${say("join.passwordLabel", {}, "en")}" maxlength="4"></main>`);
+    });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const person = await fenced(browser, { origin, base: "/", lang: "en" });
+    try {
+      const told = (p: Promise<unknown>): Promise<string> => p.then(() => "no error", (e: unknown) => String(e));
+      await person.page.goto(`${origin}/join/invite#${handed}`);
+      const unseen = await told(person.see("join-email", {}, 300));
+      expect(unseen).toContain("never saw join-email on /join/invite#…");
+      expect(unseen).not.toContain(handed);
+      const dropped = await told(person.act("type", "join-password", { value: typed }));
+      expect(dropped).toContain("it holds 4 of the 19 characters");
+      expect(dropped).not.toContain(typed);
+      expect(dropped).not.toContain(typed.slice(0, 4));
+      // A route of the app's own stays readable: it says where the journey stood.
+      await person.page.goto(`${origin}/app#/settings/general`);
+      expect(await told(person.see("join-email", {}, 300))).toContain("never saw join-email on /app#/settings/general");
+    } finally {
+      await person.context.close();
+      server.close();
+    }
   });
 
   it("the Settings menu is whole whatever order its sections stand in", { timeout: 5_000 }, async () => {
@@ -217,6 +402,13 @@ describe("the bench holds its promises", () => {
     const names = [...menuOf("W-d", "en")].reverse();
     await person.page.setContent(`<main><nav aria-label="${say("settings.navAria", {}, "en")}">${names.map((n) => `<button>${n}</button>`).join("")}</nav></main>`);
     expect(await wholeMenu("W-d", person)).toEqual(menuOf("W-d", "en"));
+    await person.context.close();
+  });
+
+  it("seeing a control hands a journey nothing to reach past the seam with", async () => {
+    const person = await fenced(browser, { origin: "http://localhost", base: "/", lang: "en" });
+    await person.page.setContent(`<button>${say("login.totpVerify", {}, "en")}</button>`);
+    expect(await person.see("login-code-verify")).toBeUndefined();
     await person.context.close();
   });
 

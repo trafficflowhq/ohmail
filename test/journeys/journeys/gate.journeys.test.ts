@@ -18,7 +18,7 @@ journeysOf("gate", () => {
   });
   journey(GUARDS[1]!, async (b) => {
     const person = await b.person();
-    await person.page.goto(`${b.origin}/`, { waitUntil: "commit" });
+    await person.front();
     await person.here("gate");
   });
 });
