@@ -486,8 +486,8 @@ describe("remote content is blocked, and blocked means not named", () => {
   it("a proxy that answers nothing, or the origin's root, gives the frame no picture source", async () => {
     // A window that may not read for its account answers "" at the probe, and "" resolves to the
     // origin's root: a source naming every path of the origin. Read on the frame a consented letter
-    // gets; each refusal is a soft arm, so each fails alone. Mutation: drop the empty and root
-    // refusals in `proxyImgSource`. Real failure text, the first of three arms:
+    // gets; each refusal is a soft arm, so each fails alone. Mutation: drop the empty and slash
+    // refusals in `proxyImgSource`. Real failure text, the first of four arms:
     //   AssertionError: an empty answer named the origin
     //   Received: "default-src 'none'; img-src data: blob: http://localhost:3000/; style-src …"
     const { frameCsp } = await mod();
@@ -509,6 +509,9 @@ describe("remote content is blocked, and blocked means not named", () => {
     expect.soft(await policyFor(() => ""), "an empty answer named the origin").toBe(frameCsp(null));
     expect.soft(await policyFor(() => `${origin}/`), "the origin's root named every path of it").toBe(frameCsp(null));
     expect.soft(await policyFor((u) => `/?u=${encodeURIComponent(u)}`), "a root path with a query named every path")
+      .toBe(frameCsp(null));
+    // A path that ends in a slash is a directory source: every path under it.
+    expect.soft(await policyFor((u) => `${origin}/api/?u=${encodeURIComponent(u)}`), "a directory named every path under it")
       .toBe(frameCsp(null));
     // The picture door's own path is still the one source.
     expect(await policyFor((u) => `${origin}/api/img?mid=m1&u=${encodeURIComponent(u)}`))

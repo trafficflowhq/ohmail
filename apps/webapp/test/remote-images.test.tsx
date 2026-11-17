@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { COPY, MessageBody, sanitizeMailHtml } from "../../../packages/letter-body/src/MessageBody";
+import { COPY, MessageBody, frameCsp, sanitizeMailHtml } from "../../../packages/letter-body/src/MessageBody";
 import { AppShell } from "./_todays-shell.js";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
@@ -1058,16 +1058,94 @@ describe("a picture the desktop fetched is never fetched again", () => {
     expect(c.proxyFor("m1"), "a new proxy function per call re-sanitizes per render")
       .toBe(c.proxyFor("m1"));
     expect(c.proxyFor("m2")).not.toBe(c.proxyFor("m1"));
-    expect(c.proxyFor("m1")(ICONS[0]!)).toContain("/api/img?");
+    const kept = c.proxyFor("m1");
+    expect(kept(ICONS[0]!)).toContain("/api/img?");
     allowed = false;
-    // The answer is taken once per task (the next test); the next task asks again.
+    // The answer is taken once per task (the next test); the next task asks again. The function a
+    // body already holds is asked: `proxyFor` hands a new one once the answer has moved.
     await Promise.resolve();
-    expect(c.proxyFor("m1")(ICONS[0]!), "a cached proxy stopped asking mayRead").toBe("");
+    expect(kept(ICONS[0]!), "a cached proxy stopped asking mayRead").toBe("");
     allowed = true;
     await Promise.resolve();
     for (let i = 0; i < 300; i += 1) c.proxyFor(`other-${i}`);
     expect(c.proxyFor("m1")(ICONS[0]!), "the bounded cache lost a working proxy")
       .toContain("/api/img?");
+  });
+
+  /**
+   * A LETTER FIRST DRAWN WHILE THE WINDOW MAY NOT READ for its account: the probe answers nothing, so
+   * its frame names no picture source, and Show images still stands (every web view hands the
+   * pictures' pair). The gate holds again and the person presses: the press's own render must hand
+   * the body a function minted under the gate's new answer. Nothing else draws the letter again.
+   * Mutation: key the kept function on the id alone. Real failure text, the first of three arms:
+   *   AssertionError: the press drew no source: the body kept the first draw's function
+   *   Received: "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; …"
+   */
+  const ONE_PICTURE =
+    `<table width="600"><tr><td><p>hello</p><img src="${PICTURE}" width="600" height="200"></td></tr></table>`;
+  function GatedLetter({ mayRead }: { mayRead: () => boolean }) {
+    const remoteImages = useRemoteImages({ onFailed: () => {}, mode: "manual", loadPixels: false, wire: wireOver(), mayRead });
+    // `MessagePane`'s lines, its pair included: a no-op where nothing fetches the pictures.
+    const onRemoteImages = React.useCallback(
+      (urls: string[]) => remoteImages?.needRemote("m1", urls),
+      [remoteImages],
+    );
+    return h(MessageBody, {
+      owner: null,
+      messageId: "m1",
+      text: "plain",
+      html: ONE_PICTURE,
+      remoteLoaded: remoteImages?.consented("m1") ?? false,
+      imageProxy: remoteImages ? remoteImages.proxyFor("m1") : null,
+      onLoadRemote: remoteImages ? () => remoteImages.consent("m1") : undefined,
+      loadTrackingPixels: false,
+      resolvedRemoteImages: remoteImages?.resolvedFor("m1"),
+      onRemoteImages,
+    });
+  }
+  const policyOf = (el: HTMLDivElement): string | null | undefined =>
+    frameDoc(el).querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content");
+  const blocked = (el: HTMLDivElement): boolean => {
+    const img = frameDoc(el).querySelector("img");
+    expect(img, "the frame holds no picture").toBeTruthy();
+    return img!.hasAttribute("data-ohmail-blocked");
+  };
+  const throughTheDoor = (el: HTMLDivElement): boolean =>
+    fetchedOnOpen(el).some((u) => {
+      const p = new URL(u);
+      return p.origin === window.location.origin && p.pathname === "/api/img" &&
+        p.searchParams.get("mid") === "m1" && p.searchParams.get("u") === PICTURE;
+    });
+
+  it("a letter first drawn while the window may not read shows its pictures on a press once the gate holds", async () => {
+    let may = false;
+    await render(h(GatedLetter, { mayRead: () => may }));
+    await settle();
+    expect(policyOf(host!), "premise: the first draw named a picture source").toBe(frameCsp(null));
+    expect(blocked(host!), "premise: the first draw did not block the picture").toBe(true);
+    expect(showButton(host!), "premise: no Show images to press").toBeTruthy();
+
+    may = true;
+    await click(showButton(host!)!);
+    expect(mockLoadRemoteCalls, "the press never reached the consent write").toEqual(["m1"]);
+    expect.soft(policyOf(host!), "the press drew no source: the body kept the first draw's function")
+      .toBe(frameCsp(`${window.location.origin}/api/img`));
+    expect.soft(throughTheDoor(host!), "the picture is not addressed through the picture door").toBe(true);
+    expect.soft(blocked(host!), "the picture is still blocked").toBe(false);
+    expect.soft(showButton(host!), "Show images still stands after the press").toBeNull();
+  });
+
+  it("while the gate does not hold, the same press names no picture source and addresses no picture", async () => {
+    await render(h(GatedLetter, { mayRead: () => false }));
+    await settle();
+    expect(policyOf(host!), "premise: the first draw named a picture source").toBe(frameCsp(null));
+    expect(showButton(host!), "premise: no Show images to press").toBeTruthy();
+
+    await click(showButton(host!)!);
+    expect(mockLoadRemoteCalls, "the press wrote other than its own letter's consent, once").toEqual(["m1"]);
+    expect(policyOf(host!), "a window that may not read named a picture source").toBe(frameCsp(null));
+    expect(fetchedOnOpen(host!), "a window that may not read addressed a picture").toEqual([]);
+    expect(blocked(host!), "a window that may not read unblocked the picture").toBe(true);
   });
 
   /**
