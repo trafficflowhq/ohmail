@@ -19,7 +19,13 @@ const entries: Array<[string, DoorControl]> = [
   d("login-code", "textbox", "login.totpLabel"),
   d("login-code-verify", "button", "login.totpVerify"),
 
-  // The join page, from an invite.
+  // The invite's own page: the account it makes.
+  d("invite-email", "textbox", "joinInvite.emailLabel"),
+  d("invite-name", "textbox", "joinInvite.nameLabel"),
+  d("invite-password", "textbox", "joinInvite.passwordLabel"),
+  d("invite-create", "button", "joinInvite.createAccount"),
+
+  // The join page, the setup's steps.
   d("join-invite", "textbox", "join.inviteLabel"),
   d("join-email", "textbox", "join.emailLabel"),
   d("join-name", "textbox", "join.nameLabel"),

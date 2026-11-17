@@ -4,14 +4,13 @@ import { say, type Language } from "../vocabulary/catalogue.js";
 import type { ControlId } from "../vocabulary/controls.js";
 import { control } from "../vocabulary/index.js";
 import { PLACES, type AriaRole, type PlaceId } from "../vocabulary/places.js";
-import type { Found, NativeActId, Person, Size, Spoken } from "./seam.js";
+import { LOOPBACK, type Found, type NativeActId, type Person, type Size, type Spoken } from "./seam.js";
 
 /**
  * THE SEAM OVER A PLAYWRIGHT PAGE. Every window that has one is driven here: the web bench's Chromium, the
  * stack's, and the phone's web view reached over its debugging socket. A control is found by its role and its
  * whole name, inside what the vocabulary says it is inside.
  */
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /** The window at each size class: the frame's own lines fall between them (`guards.test.ts` holds them). */
 export const VIEWPORTS: Readonly<Record<Size, { width: number; height: number }>> = {
@@ -176,6 +175,15 @@ export class PlaywrightPerson implements Person {
   /** The install's front door, as a person who types its name reaches it. */
   async front(): Promise<void> {
     await this.page.goto(`${this.origin}/`, { waitUntil: "commit" });
+  }
+
+  /** A link handed to this person, opened as they open it. */
+  async follow(link: string): Promise<{ status: number | null }> {
+    // The browser's own error names the address whole; a link's hash can be its credential (an invite's token).
+    const answer = await this.page.goto(link, { waitUntil: "commit" }).catch((e: unknown) => {
+      throw new Error(`following ${shown(link)} failed: ${String(e).split("\n")[0]!.replace(/#\S*/g, "#…")}`);
+    });
+    return { status: answer?.status() ?? null };
   }
 
   /** Wait for a place's landmark without going anywhere. */

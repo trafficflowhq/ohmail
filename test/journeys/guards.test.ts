@@ -16,6 +16,9 @@ import { fenced, VIEWPORTS } from "./bench/dom-playwright.js";
 import { benchOf, sizeOf, SIZES, WORDS, type Setting } from "./bench/seam.js";
 import { runsOn, STANDING } from "./bench/standing/index.js";
 import { AT_SIZE } from "./bench/standing/sizes.js";
+import { DEFAULT_AUTH_CONFIG } from "@trafficflow/services";
+import { baked, readHandover } from "./bench/far-end.js";
+import { Authenticator, codeAt, STEP_MS } from "./bench/totp.js";
 import { fingerprint, oneAtATime, type Guard } from "./bench/web.js";
 import { ACTS } from "./vocabulary/acts.js";
 import { format, LANGUAGES, raw, say } from "./vocabulary/catalogue.js";
@@ -223,6 +226,9 @@ describe("the journeys' own rules", () => {
         else if (!g.surfaces.includes(MIRRORS[setting]!)) bad.push(`standing/${id}: ${JSON.stringify(title)} is not a journey of ${MIRRORS[setting]}`);
       }
     }
+    // Every journey the stack runs makes an account, and the stack's door allows a bounded number from one address in a window.
+    const onStack = all.filter((g) => runsOn(g, { id: "stack", setting: "W-i", size: "expanded" }));
+    if (onStack.length > DEFAULT_AUTH_CONFIG.maxRegistrationsPerWindow - 4) bad.push(`the stack runs ${onStack.length} journeys, more than the registration window leaves it`);
     for (const [size, listed] of Object.entries(AT_SIZE)) for (const title of listed) if (!guards.has(title)) bad.push(`sizes/${size}: no journey called ${JSON.stringify(title)}`);
     expect(bad).toEqual([]);
     expect(Object.keys(PLACES).filter((p) => !names.includes(`${p}.journeys.test.ts`))).toEqual([]);
@@ -306,6 +312,39 @@ describe("the journeys' own rules", () => {
     expect(SIZES.map((size) => plan(size).columns)).toEqual([2, 2, 1]);
   });
 
+  it("an authenticator gives RFC 6238's codes, and never one for a time step it already gave", async () => {
+    const key = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"; // RFC 6238's SHA-1 key, "12345678901234567890"
+    expect(codeAt(key, 1)).toBe("287082");
+    expect(codeAt(key, 37037036)).toBe("081804");
+    let now = 59_000;
+    const waited: number[] = [];
+    const app = new Authenticator(key, () => now, async (ms) => { waited.push(ms); now += ms; });
+    const steps = [await app.code(), await app.code(), await app.code()];
+    expect(steps).toEqual([codeAt(key, 1), codeAt(key, 2), codeAt(key, 3)]);
+    expect(waited.length).toBe(1);
+    expect(Math.floor(now / STEP_MS)).toBe(2);
+  });
+
+  it("the stack's handover is refused off this machine's loopback, and the server's cookies are read as it set them", () => {
+    const dir = mkdtempSync(join(tmpdir(), "journeys-handover-"));
+    const write = (origin: string): string => {
+      const file = join(dir, `${origin.length}.json`);
+      writeFileSync(file, JSON.stringify({ origin, invites: ["x"], compose: ["docker", "compose"], commit: "c".repeat(40), mail: {}, envFile: "" }));
+      return file;
+    };
+    try {
+      expect(readHandover(write("http://localhost:3080")).origin).toBe("http://localhost:3080");
+      expect(() => readHandover(write("https://mail.example.com"))).toThrow(/loopback/);
+      expect(() => readHandover(undefined)).toThrow(/TF_JOURNEYS_STACK/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(baked(["tf_refresh=r1; Path=/auth/refresh; HttpOnly; Secure; SameSite=Strict; Max-Age=60", "tf_resume=1; Path=/; HttpOnly; SameSite=Lax"])).toEqual([
+      { name: "tf_refresh", value: "r1", path: "/auth/refresh", httpOnly: true, secure: true, sameSite: "Strict" },
+      { name: "tf_resume", value: "1", path: "/", httpOnly: true, secure: false, sameSite: "Lax" },
+    ]);
+  });
+
   it("the vocabulary refuses a control named in two files", () => {
     expect(twice({ reply: 1, forward: 1 }, { "login-code": 1 })).toEqual([]);
     expect(twice({ reply: 1, forward: 1 }, { reply: 1 })).toEqual(["reply"]);
@@ -334,6 +373,15 @@ describe("the bench holds its promises", () => {
     await person.page.setContent('<img src="https://elsewhere.example/pixel.png" alt="">');
     await person.until(async () => person.problems().length > 0, "the fence to report the request");
     expect(person.problems()).toContain("request left the machine: https://elsewhere.example/pixel.png");
+    await person.context.close();
+  });
+
+  it("lets through the one foreign name a bench resolves to this machine, and still refuses every other", async () => {
+    const person = await fenced(browser, { origin: "http://localhost", base: "/", lang: "en", allow: ["ohmail-elsewhere.test"] });
+    await person.page.setContent('<img src="http://ohmail-elsewhere.test/pixel.png" alt=""><img src="https://elsewhere.example/pixel.png" alt="">');
+    await person.until(async () => person.requests().length > 1, "both requests to be asked");
+    expect(person.problems()).toContain("request left the machine: https://elsewhere.example/pixel.png");
+    expect(person.problems()).not.toContain("request left the machine: http://ohmail-elsewhere.test/pixel.png");
     await person.context.close();
   });
 
@@ -391,6 +439,14 @@ describe("the bench holds its promises", () => {
       // A route of the app's own stays readable: it says where the journey stood.
       await person.page.goto(`${origin}/app#/settings/general`);
       expect(await told(person.see("join-email", {}, 300))).toContain("never saw join-email on /app#/settings/general");
+      // A link that cannot be opened: the browser's own error names the address, and the token is cut off.
+      const shut = createServer();
+      await new Promise<void>((ok) => shut.listen(0, "127.0.0.1", ok));
+      const closed = (shut.address() as AddressInfo).port;
+      await new Promise((ok) => shut.close(ok));
+      const lost = await told(person.follow(`http://127.0.0.1:${closed}/join/invite#${handed}`));
+      expect(lost).toContain("following /join/invite#… failed");
+      expect(lost).not.toContain(handed);
     } finally {
       await person.context.close();
       server.close();

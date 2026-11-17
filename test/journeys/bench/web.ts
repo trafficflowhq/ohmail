@@ -336,6 +336,7 @@ export async function startBench(f: Flavour, recordAs = "bench", features = { pa
       return { status: res.status, body: await res.json().catch(() => null) };
     },
     async person(o = {}) {
+      if (o.host !== undefined) throw new Error("the web bench serves one name: a foreign host is the stack's");
       const base = f === "demo" ? o.door ?? "/demo" : "/";
       // Everybody starts in English; a person who can reach Settings then chooses the run's language.
       const person = await fenced(browser, { origin, base, lang: "en", size });

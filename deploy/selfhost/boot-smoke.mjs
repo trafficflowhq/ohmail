@@ -95,6 +95,11 @@ const MAIL_HOST = process.env.SMOKE_MAIL_HOST ?? "greenmail";
 const MAIL_PORT = Number(process.env.SMOKE_MAIL_PORT ?? 143);
 const MAIL_DOMAIN = process.env.SMOKE_MAIL_DOMAIN ?? "greenmail.test";
 const MAIL_PASS = process.env.SMOKE_MAIL_PASS ?? "smoke";
+/* THE JOURNEYS' HANDOVER (selfhost-smoke.sh --journeys): SMOKE_INVITES invites the first account makes, written with the
+ * origin and the mail server's knobs to SMOKE_HANDOVER, a NEW file only this user reads. Refused unless the stack
+ * is this machine's own: invites written to a file are the keys to a server, and only a throwaway stack's may be. */
+const HANDOVER = process.env.SMOKE_HANDOVER ? path.resolve(process.env.SMOKE_HANDOVER) : null;
+const INVITES = Number(process.env.SMOKE_INVITES ?? "0");
 const MAILBOX_ONE = `smoke-owner@${MAIL_DOMAIN}`;
 const MAILBOX_TWO = `smoke-archive@${MAIL_DOMAIN}`;
 
@@ -219,7 +224,20 @@ function envFileValues() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
+/** The handover is asked for against this machine's own stack, with a count it can hand over, or refused. */
+function handoverRefusal() {
+  if (HANDOVER === null) return null;
+  let host = "";
+  try { host = new URL(BASE).hostname; } catch { return `SMOKE_BASE is not an address: ${BASE}`; }
+  if (!["localhost", "127.0.0.1", "[::1]"].includes(host)) return `SMOKE_HANDOVER is refused against ${host}: only a stack on this machine's loopback hands over invites`;
+  if (!Number.isInteger(INVITES) || INVITES < 1 || INVITES > 20) return `SMOKE_INVITES must be a whole number from 1 to 20, not ${process.env.SMOKE_INVITES ?? "(unset)"}`;
+  return null;
+}
+
 async function main() {
+  const refused = handoverRefusal();
+  if (refused !== null) fail(refused);
+
   // [1] The stack answers through the PROXY origin — /hello parsed, never log-matched.
   step(`waiting for the stack at ${BASE} (up to ${READY_TIMEOUT_MS / 1000}s)`);
   const deadline = Date.now() + READY_TIMEOUT_MS;
@@ -366,6 +384,23 @@ async function main() {
     ok(redacted);
   }
   assert(/Path=\/auth\/refresh/.test(byName.get("tf_refresh")), "tf_refresh must stay scoped to Path=/auth/refresh through the proxy");
+
+  // [7b] The journeys' handover, only when asked. Here, while the sign-in's second factor is fresh: an invite's
+  // mint is step-up gated, and the steps below can outlast the window.
+  if (HANDOVER !== null) {
+    step(`the journeys' handover: ${INVITES} invites, into a new file only this user reads`);
+    const invites = [];
+    for (let i = 0; i < INVITES; i++) {
+      const minted = await post("/pair", { grant: "invite", label: `journeys ${i + 1}` }, jar);
+      await expectStatus(minted, 200, "an invite for the journeys");
+      const made = await minted.json();
+      assert(typeof made.token === "string" && made.token.length > 0, "the invite's mint must answer its token");
+      invites.push(made.token);
+    }
+    const mail = { smtp: SMTP_HOSTPORT, domain: MAIL_DOMAIN, imapHost: MAIL_HOST, imapPort: MAIL_PORT };
+    writeFileSync(HANDOVER, `${JSON.stringify({ origin: BASE, invites, mail })}\n`, { mode: 0o600, flag: "wx" });
+    ok(`${invites.length} invites handed over`);
+  }
 
   // [8] CSRF double-submit is live on a mutation.
   // Product routes are called under /api from here on — the spelling the browser client

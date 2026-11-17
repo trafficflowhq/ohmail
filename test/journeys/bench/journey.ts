@@ -19,7 +19,9 @@ export const BENCHES: Record<BenchId, Start> = {
     if (!f) throw new Error(`the web bench has no setting ${setting}`);
     return (await import("./web.js")).startBench(f, place, undefined, size);
   },
-  stack: missing("stack"),
+  async stack(_setting, place, size) {
+    return (await import("./stack.js")).startStack(place, size);
+  },
   desktop: missing("desktop"),
   android: missing("android"),
 };
@@ -30,6 +32,8 @@ function missing(id: BenchId): Start {
 }
 
 let bench: Bench | null = null;
+/** How many journeys have been registered to run on this bench, so a file with none starts nothing. */
+let runnable = 0;
 
 /** One place's journeys: skipped unless `TF_JOURNEYS` names a bench; with it, a missing build, browser or rig fails. */
 export function journeysOf(place: PlaceId, body: () => void): void {
@@ -38,12 +42,15 @@ export function journeysOf(place: PlaceId, body: () => void): void {
   const named = benchOf();
   const size = sizeOf();
   describe.skipIf(named === null)(`journeys · ${place}${named ? ` · ${named.setting}${size === "expanded" ? "" : ` · ${size}`}` : ""}`, () => {
-    beforeAll(async () => { bench = await BENCHES[named!.id](named!.setting, place, size); }, 900_000);
+    const before = runnable;
+    body();
+    // A file whose journeys all stand outside this setting starts no bench: on the stack most files are such.
+    const mine = runnable - before;
+    beforeAll(async () => { if (mine > 0) bench = await BENCHES[named!.id](named!.setting, place, size); }, 900_000);
     afterAll(async () => {
       await bench?.stop();
       bench = null;
     });
-    body();
   });
 }
 
@@ -58,6 +65,7 @@ export function journey(guard: Guard, walk: (b: Bench) => Promise<void>): void {
     it.skip(`${guard.title} (not in ${named.setting}${size === "expanded" ? "" : ` at ${size}`})`, () => {});
     return;
   }
+  runnable += 1;
   (guard.open ? it.fails : it)(guard.title, { timeout: 180_000, retry: 0 }, async () => {
     const b = bench;
     if (!b) throw new Error("the bench did not start");
