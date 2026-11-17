@@ -279,3 +279,16 @@ system's keystore, is never written down in the clear, is never read back, and
 is sent to no host but its own vendor's. Mail carrying a one-time code or other
 authentication material is refused before any request is built and is never
 sent to any model, under any provider.
+
+## Place suggestions in the calendar
+
+The place field of an event can suggest addresses and places as you type, from
+a geocoder you run yourself or one you trust: a [Photon](https://github.com/komoot/photon)
+server, named by `PLACES_SUGGEST_URL` in `.env`, with `PLACES_SUGGEST_TOKEN` if it
+asks for a bearer. The apps ask your server and your server asks the geocoder, so
+the geocoder sees your server and the words typed into the field, never who typed
+them; where, only as a region of about ten kilometres when the app sends one.
+Nothing of a question is stored. The address is `https`, or plain `http` to a name
+on this stack's own network. Without the two settings the place field is a plain
+field, and everything else works as before. They are checked at every start and
+used only where the calendar is on.

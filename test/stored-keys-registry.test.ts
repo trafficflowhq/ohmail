@@ -125,6 +125,7 @@ const NOT_STORED: Readonly<Record<string, string>> = {
   "secret-service": "the name of a platform's keystore in a log line",
   "ohmail-ImageProxy/1.0": "a user-agent word",
   "ohmail-Unsubscribe/1.0": "a user-agent word",
+  "ohmail-Places/1.0": "a user-agent word",
   "ohmail/scheduled-file/1\\n": "the label a scheduled file's seal is taken under",
   "ohmail_admin": "a database role's name and the brand word of its handle",
   "ohmail_worker": "a database role's name and the brand word of its handle",

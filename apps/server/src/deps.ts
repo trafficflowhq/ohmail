@@ -44,6 +44,7 @@ import {
 // above is still loaded by this app — which is exactly why the explicit allowance below exists.
 import type { MailboxAllowancePolicy } from "@trafficflow/services/mail";
 import { calendarFeed } from "@trafficflow/services/calendar";
+import { makePlaceSuggester } from "@trafficflow/api/calendar";
 import type { PairingTokenMinted } from "@trafficflow/services";
 import {
   makeProbeHostGuard, ALLOW_ANY_PROBE_HOST, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS,
@@ -402,6 +403,11 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
     // and `/hello` all read THIS member, so the three cannot disagree; absent, nothing calendar
     // leaves this program and every answer is the one it gave before there was a calendar.
     ...(cfg.calendar.enabled ? { calendar: calendarFeed } : {}),
+    // PLACE SUGGESTIONS, beside the calendar and only where a geocoder is set (`PLACES_SUGGEST_URL`):
+    // one suggester for the program, whose limits, answers and holds live as long as it does.
+    ...(cfg.calendar.enabled && cfg.places !== null
+      ? { places: makePlaceSuggester(cfg.places, { resolver: nodeHostResolver }) }
+      : {}),
     // UnifiedPush wake registrations, with this program's endpoint policy: https-only and public
     // addresses only. A self-hosted server may relax it for a distributor on its own LAN
     // (`TF_PUSH_ALLOW_PRIVATE=1`); the managed service never does, whatever its environment holds.
@@ -1064,6 +1070,7 @@ export function depsFor(req: Request, rt: Runtime): ApiDeps {
         scheduleFiles: false,
         // Reads the BAG: the routes are mounted and the feed is handed the port from the same member.
         ...(rt.services.calendar !== undefined ? { calendar: true } : {}),
+        ...(rt.services.places !== undefined ? { placeSuggestions: true } : {}),
       },
     },
     logger: rt.logger,

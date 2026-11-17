@@ -14,6 +14,7 @@
 import type { AuthVerdict, ISODateTime, Page, UnsubscribeHeaderState } from "./base.js";
 import type { HelloAnswer } from "./client.js";
 import type { CalendarEventAct, CalendarSettingsBody, CalendarSettingsWire, CalendarWriteAnswer } from "./calendar.js";
+import type { PlaceSuggestAnswer, PlaceSuggestBody } from "./places.js";
 import type { FetchingDTO } from "./mailboxes.js";
 import type { SnapshotResponse, SyncResponse } from "./records.js";
 import type { MessageDTO, MessageStateDTO, TrashRowDTO } from "./mail.js";
@@ -152,6 +153,8 @@ export interface Routes {
   "POST /calendar/writes/:id/retry": { params: Id; body: never; answer: CalendarWriteAnswer };
   /** A refused write, or one not tried yet, let go; a new event's takes the event with it. */
   "DELETE /calendar/writes/:id": { params: Id; body: never; answer: CalendarWriteAnswer };
+  /** Places for an event's place field. 200 for every well-formed question, its state in the answer. */
+  "POST /calendar/places/suggest": { params: None; body: PlaceSuggestBody; answer: PlaceSuggestAnswer };
   /** Ring the worker's doorbell. `mailboxIds` narrows the ring; absent, every connected mailbox. */
   "POST /sync/pull": {
     params: None;

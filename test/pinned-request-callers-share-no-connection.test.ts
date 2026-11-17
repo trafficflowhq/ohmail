@@ -4,15 +4,16 @@ import type { HostResolver } from "@trafficflow/core/net";
 import type { Tx } from "@trafficflow/db";
 import { makeNodeOneClickPost, makeNodeRemoteFetch } from "@trafficflow/services";
 import { namedHostRequest } from "@ohmail/cal-providers";
+import { makePlaceSuggester, readPlaceQuestion } from "@trafficflow/api/calendar";
 import { privateNetworkFetch } from "../apps/server/src/settings/private-network-fetch.js";
 import { startPushWake, type WakeSource } from "../apps/worker/src/push-wake.js";
 import { onOnePort } from "../packages/core/test/far-side.js";
 
 /**
  * EVERY CALLER OF THE PINNED REQUEST CLEARS AN ADDRESS BY ITS OWN RULE, AND NO CONNECTION CARRIES ONE CALLER'S ADDRESS
- * TO ANOTHER. The self-host's settings fetch reaches private addresses only; a calendar on a person's own network
- * reaches private and public ones; the picture proxy, the one-click unsubscribe and the new-mail wake reach public ones
- * only. In each pair below the first caller reaches 127.0.0.1, standing for an address its rule admits and the second
+ * TO ANOTHER. The self-host's settings fetch, and the place suggestions' geocoder named over plain http, reach private
+ * addresses only; a calendar on a person's own network reaches private and public ones; the picture proxy, the one-click
+ * unsubscribe and the new-mail wake reach public ones only. In each pair below the first caller reaches 127.0.0.1, standing for an address its rule admits and the second
  * caller's refuses; the second then asks the same name and port, pinned to the address its own check passed (this
  * machine's second address), and must be answered there and never at the first's.
  */
@@ -56,6 +57,12 @@ const CALLERS: Record<string, Caller> = {
   "the picture proxy": { admits: ["public"], ask: (url, address) => makeNodeRemoteFetch().fetch(url, [address]) },
   "the one-click unsubscribe": { admits: ["public"], ask: (url, address) => makeNodeOneClickPost().post(url, [address]) },
   "the new-mail wake": { admits: ["public"], ask: wake },
+  "the place suggestions' geocoder over plain http": {
+    admits: ["private"],
+    ask: (url, address) => makePlaceSuggester(
+      { address: { origin: new URL(url).origin, transport: "http-private" }, token: null }, { resolver: only(address) },
+    ).suggest("account", readPlaceQuestion({ text: "bahnhofstrasse" })),
+  },
 };
 
 /** Every ordered pair whose first caller admits an address the second refuses. */

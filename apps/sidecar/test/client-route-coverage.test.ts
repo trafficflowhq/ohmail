@@ -227,6 +227,9 @@ const FORWARDED_IN_CLOUD_MODE = [
   "POST /calendar/writes",
   "POST /calendar/writes/x/retry",
   "DELETE /calendar/writes/x",
+  /* THE PLACE FIELD'S QUESTION. The geocoder is the account's server's, set by its operator; this
+     copy holds none and answers none, so the question is relayed whole and its answer returned. */
+  "POST /calendar/places/suggest",
 ];
 
 /**
@@ -419,7 +422,7 @@ function stagingIsHostedOnly(): { exempt: Set<string>; holds: Record<string, boo
 }
 
 /**
- * THE CALENDAR'S WRITES ARE THE HOSTED DOOR'S ONLY — required entries in
+ * THE CALENDAR'S WRITES, AND THE PLACE FIELD'S QUESTION, ARE THE HOSTED DOOR'S ONLY — required entries in
  * {@link FORWARDED_IN_CLOUD_MODE}, exempt from the LOCAL-serving census alone.
  *
  * The standalone engine holds no calendar: its route table composes no calendar route, its own
@@ -433,6 +436,7 @@ const CALENDAR_HOSTED_DOOR_ONLY = [
   "POST /calendar/writes",
   "POST /calendar/writes/x/retry",
   "DELETE /calendar/writes/x",
+  "POST /calendar/places/suggest",
 ] as const;
 
 function calendarIsHostedOnly(): { exempt: Set<string>; holds: Record<string, boolean> } {

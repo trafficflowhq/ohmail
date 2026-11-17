@@ -106,6 +106,8 @@ export interface HelloAnswer {
      * and an account may switch it on. Absent or false: no calendar here.
      */
     calendar?: boolean;
+    /** `POST /calendar/places/suggest` answers from a geocoder here. Absent: not offered, never asked. */
+    placeSuggestions?: true;
     /**
      * `POST /messages/:id/invitation/answer` is mounted: an invitation is answered by mail here. A
      * fact of the build; absent on an older server, which is the negotiation.

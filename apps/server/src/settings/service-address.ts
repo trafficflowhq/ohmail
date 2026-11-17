@@ -1,5 +1,6 @@
 /**
- * The address of a service this program calls with a bearer (the entitlements program).
+ * The address of a service this program calls with a bearer (the entitlements program, the place
+ * suggestions' geocoder).
  *
  * The rule: the bearer must not cross a public network unencrypted. `https:` is always admitted.
  * Plain `http:` is admitted only for a name that is private by its SHAPE ({@link isPrivateServiceName}),
@@ -56,7 +57,7 @@ export function parseServiceAddress(varName: string, raw: string): ServiceAddres
   if (url.search || url.hash) throw new Error(`${varName} must not carry a query string or fragment`);
   if (url.pathname !== "/" && url.pathname !== "") {
     throw new Error(
-      `${varName} must be a bare origin with no path — the client appends /v1/…, ` +
+      `${varName} must be a bare origin with no path — the client appends its own path, ` +
         "so a path would be silently doubled",
     );
   }

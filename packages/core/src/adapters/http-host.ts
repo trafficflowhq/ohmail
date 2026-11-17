@@ -191,10 +191,13 @@ function forwardFor(headers: Headers, peer: string, trust: ForwardingTrust): str
   return client;
 }
 
-/** Build the fetch Request for one inbound message. Exported for the adapter's own tests. */
+/**
+ * Build the fetch Request for one inbound message. Exported for the adapter's own tests. `signal`:
+ * the client's leave ({@link serve} aborts it when the socket closes before the answer is written).
+ */
 export function toWebRequest(
   req: IncomingMessage,
-  opts: { bodyMaxBytes: number; onTooLarge: () => void; trust?: ForwardingTrust; proxyPeerHeader?: string },
+  opts: { bodyMaxBytes: number; onTooLarge: () => void; trust?: ForwardingTrust; proxyPeerHeader?: string; signal?: AbortSignal },
 ): Request {
   // The scheme is nominal — this process sits behind the operator's proxy and nothing downstream
   // reads it; the HOST half is real and feeds the cookie-auth decision (every asserted host must
@@ -249,7 +252,7 @@ export function toWebRequest(
   // `serve()` has already answered 400 + destroyed the connection for the body-carrying form,
   // so this branch only decides the Request shape for a caller that bypassed serve (a test).
   if (method === "GET" || method === "HEAD" || !hasBody(req)) {
-    return new Request(url, { method, headers });
+    return new Request(url, { method, headers, ...(opts.signal ? { signal: opts.signal } : {}) });
   }
 
   // Point 4's second half: the counting transform behind the declared-length check. It errors
@@ -271,7 +274,7 @@ export function toWebRequest(
 
   // Point 1: the socket's own stream, as a web stream, with the half-duplex marker.
   const body = Readable.toWeb(req.pipe(cap)) as unknown as ReadableStream;
-  return new Request(url, { method, headers, body, duplex: "half" } as RequestInit);
+  return new Request(url, { method, headers, body, duplex: "half", ...(opts.signal ? { signal: opts.signal } : {}) } as RequestInit);
 }
 
 /** Write one fetch Response onto the node response. Exported for the adapter's own tests. */
@@ -411,6 +414,12 @@ async function serve(
     return;
   }
 
+  // THE CLIENT'S LEAVE: a socket that closes before the answer is written aborts the request's
+  // signal, so a route still working for nobody stops (a question to a geocoder, a held stream).
+  // Armed before the one wait below, so a leave during the peer's lookup is not missed either.
+  const left = new AbortController();
+  res.once("close", () => { if (!res.writableFinished) left.abort(); });
+
   // The peer's verdict is the one async step (a configured name may need resolving), taken here
   // so `toWebRequest` stays synchronous for its tests.
   let trust: ForwardingTrust | undefined;
@@ -425,6 +434,7 @@ async function serve(
   const webReq = toWebRequest(req, {
     ...(trust ? { trust } : {}),
     ...(opts.proxyPeerHeader !== undefined ? { proxyPeerHeader: opts.proxyPeerHeader } : {}),
+    signal: left.signal,
     bodyMaxBytes: opts.bodyMaxBytes,
     onTooLarge: () => {
       tooLarge = true;

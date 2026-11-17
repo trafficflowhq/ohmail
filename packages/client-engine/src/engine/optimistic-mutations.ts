@@ -6,6 +6,7 @@ import {
 } from "../adapters/refusal-shape.js";
 import { outrankCoveringDomains } from "../address-rank.js";
 import { bytesBlob } from "../bytes-blob.js";
+import { knownOffline } from "../known-offline.js";
 import { narrowRead } from "../mark-seen-chunk.js";
 import {
   messageIdKey, type MutationEffect, mutationEffects, replySubject, sentOverlayMessage,
@@ -2677,7 +2678,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
       return "unclaimed";
     }
     // THE WIRE FACT rides the claim, unless the browser says it is offline: that claim sends nothing.
-    const wire = !OhmailEngine.knownOffline();
+    const wire = !knownOffline();
     let verdict: OutboxRowVerdict;
     try {
       verdict = await this.store.decideOutboxRow(p.id, { kind: "claim", me, wire });
@@ -2762,11 +2763,6 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     const out = new Set<string>();
     for (const r of this.lateResults.values()) out.add(r.key);
     return out;
-  }
-
-  /** The browser says it has no network, so a request made now cannot leave this device. */
-  protected static knownOffline(): boolean {
-    return (globalThis as { navigator?: { onLine?: unknown } }).navigator?.onLine === false;
   }
 
   /** Ask the server about one Cancel. A throw is an answer nobody could read: `unreachable`. */

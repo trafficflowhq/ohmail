@@ -133,6 +133,11 @@ export interface Settings {
    * as a server that has never heard of a calendar.
    */
   calendar: { enabled: boolean };
+  /**
+   * The geocoder the calendar's place field is suggested from (`PLACES_SUGGEST_URL`), and its bearer
+   * (`PLACES_SUGGEST_TOKEN`) or null for one that takes none. Null: no suggestions are offered.
+   */
+  places: { address: ServiceAddress; token: string | null } | null;
   /** Who this deployment is to a mailbox it organizes (`resolveCloudInstallId`). */
   installId: string;
 }
@@ -409,6 +414,28 @@ const atLeast24 = (env: NodeJS.ProcessEnv, key: string): string | null => {
   return raw.length >= 24 ? raw : null;
 };
 
+/** A bearer that can stand in one header line: printable, no space, bounded. */
+const HEADER_TOKEN = /^[\x21-\x7e]{1,4096}$/;
+
+/**
+ * The place suggestions' geocoder, or null. The address alone is a geocoder that takes no bearer;
+ * the bearer alone refuses, as every half block does. The address follows the rule of every service
+ * this program calls: https, or plain http to a private service name only, since what a person typed
+ * rides each request. A refusal names the variables, never a value.
+ */
+function loadPlaces(env: NodeJS.ProcessEnv): Settings["places"] {
+  const raw = trimmed(env, "PLACES_SUGGEST_URL");
+  const token = trimmed(env, "PLACES_SUGGEST_TOKEN");
+  if (raw === "") {
+    if (token === "") return null;
+    throw new Error("PLACES_SUGGEST_TOKEN is set without PLACES_SUGGEST_URL — set the address, or unset the token");
+  }
+  if (token !== "" && !HEADER_TOKEN.test(token)) {
+    throw new Error("PLACES_SUGGEST_TOKEN must be printable characters without spaces, at most 4096");
+  }
+  return { address: parseServiceAddress("PLACES_SUGGEST_URL", raw), token: token === "" ? null : token };
+}
+
 /** `TF_API_CLOCKS=1`, and what it needs: the routes it drives are armed, and one copy can lead. */
 function loadClocks(
   env: NodeJS.ProcessEnv, door: SettingsDoorInput, alerts: Settings["alerts"], database: DatabaseSettings,
@@ -522,6 +549,7 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
     clocks: loadClocks(env, door, alerts, database),
     // On the exact word, as the other switches: a mistyped value keeps the calendar off.
     calendar: { enabled: trimmed(env, "OHMAIL_CALENDAR") === "1" },
+    places: loadPlaces(env),
     installId: resolveCloudInstallId(env),
   };
 }
