@@ -1,8 +1,8 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { ENGINE_DOOR, readEngineAsOneText } from "./support/engine-unit.js";
+import { ENGINE_DOOR, engineUnitFiles, readEngineAsOneText } from "./support/engine-unit.js";
 
 /**
  * THE ENGINE'S ONE TEXT PLACES EVERY UNIT ONCE, OR REFUSES. The tests that read the desktop's engine as text
@@ -117,6 +117,46 @@ function unit(edit: { door?: (door: string) => string; section?: (section: strin
 const times = (text: string, line: string): number => text.split("\n").filter((l) => l === line).length;
 const CALL = "      drainSection(scope, box, config, mb);";
 
+const RECORDS = new Set(["engine-scope", "engine-mailbox-scope"]);
+
+/**
+ * The lines of a unit file the one text carries: a section's body; a prelude's lines after its last import; the
+ * door's lines but its import and re-export statements.
+ */
+function carried(text: string, isDoor: boolean): string[] {
+  const lines = text.split("\n");
+  const sig = lines.findIndex((l) => /^export (?:async )?function \w+Section\(/.test(l));
+  if (sig >= 0) {
+    let open = sig;
+    while (open < lines.length && !/\{\s*$/.test(lines[open]!)) open += 1;
+    return lines.slice(open + 1, lines.findIndex((l, i) => i > open && /^\}\s*$/.test(l)));
+  }
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^(?:import\b|export (?:type )?\{)/.test(lines[i]!)) {
+      while (i < lines.length && !/;\s*$/.test(lines[i]!)) i += 1;
+      if (!isDoor) out.length = 0;
+      continue;
+    }
+    out.push(lines[i]!);
+  }
+  return out;
+}
+
+/**
+ * A line of one unit file that no other unit file holds and that the one text carries as written: no record
+ * spelling, no name of a record's field, no shorthand, no maker call, not the prelude's first line.
+ */
+function ownLine(text: string, isDoor: boolean, everyLine: string[], fields: ReadonlySet<string>): string | undefined {
+  return carried(text, isDoor).find((line) =>
+    line.trim().length >= 24 &&
+    !line.startsWith("// The desktop's engine:") &&
+    !/Section\(/.test(line) &&
+    !/\b([A-Za-z_$][\w$]*): \1\b/.test(line) &&
+    !(line.match(/[A-Za-z_$][\w$]*/g) ?? []).some((word) => word === "scope" || word === "box" || fields.has(word)) &&
+    everyLine.filter((l) => l === line).length === 1);
+}
+
 /** A door the helper cannot place every unit of: its shape, the unit it must name, the edit. */
 const DOOR_PLANTS: [string, string, (door: string) => string][] = [
   ["the prelude's re-export removed, its import kept", "engine-routes", (d) => d.replace(/\nexport \{\n[^}]*\} from "\.\/engine-routes\.js";\n/, "\n")],
@@ -132,11 +172,55 @@ const SECTION_PLANTS: [string, (section: string) => string][] = [
 ];
 
 describe("the engine read as one text", () => {
-  it("is engine.ts byte for byte while engine.ts stands alone", () => {
+  // The engine stands cut: its door with the prelude, the records and the sections beside it.
+  it("reads the cut engine without a throw, every unit file once", () => {
+    const files = engineUnitFiles();
+    expect(files[0]).toBe(ENGINE_DOOR);
+    expect(files.length, "the engine stands in one file").toBeGreaterThan(1);
     const one = readEngineAsOneText();
-    const door = readFileSync(ENGINE_DOOR, "utf8");
-    expect(one.length).toBe(door.length);
-    expect(one === door, "the one text differs from engine.ts").toBe(true);
+    const units = new Map(files.map((f) => [basename(f, ".ts"), readFileSync(f, "utf8")]));
+    const fields = new Set(
+      [...RECORDS].flatMap((name) => [...(units.get(name) ?? "").matchAll(/^ {2}(?:readonly )?([A-Za-z_$][\w$]*)\??:/gm)].map((m) => m[1]!)),
+    );
+    expect(fields.size, "the records name no field").toBeGreaterThan(0);
+    expect(one).not.toMatch(/from "\.\/engine-[\w-]+\.js"/);
+    expect(one).not.toMatch(/\w+Section\(/);
+    expect(one).not.toMatch(/interface (?:EngineScope|MailboxScope)\b/);
+    const everyLine = [...units.values()].flatMap((text) => text.split("\n"));
+    for (const [name, text] of units) {
+      if (RECORDS.has(name)) continue;
+      const line = ownLine(text, name === "engine", everyLine, fields);
+      expect(line, `${name} carries no line of its own`).toBeDefined();
+      expect(times(one, line!), `${name}: ${line}`).toBe(1);
+    }
+  });
+
+  // A section's body ends with its hand-over lines, `box.x = x;`; a statement before them is kept.
+  it("carries every line of every section's body, as often as the sections hold it", () => {
+    const units = new Map(engineUnitFiles().map((f) => [basename(f, ".ts"), readFileSync(f, "utf8")]));
+    const fields = new Set(
+      [...RECORDS].flatMap((name) => [...(units.get(name) ?? "").matchAll(/^ {2}(?:readonly )?([A-Za-z_$][\w$]*)\??:/gm)].map((m) => m[1]!)),
+    );
+    const unspelled = (line: string): string => line
+      .replace(/\b(?:scope|box)\.([A-Za-z_$][\w$]*)/g, (whole, name: string) => (fields.has(name) ? name : whole))
+      .replace(/\b([A-Za-z_$][\w$]*): \1(?=,|\s*\}|\s*$)/g, "$1");
+    const count = (lines: string[]): Map<string, number> => {
+      const counts = new Map<string, number>();
+      for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
+      return counts;
+    };
+    const body: string[] = [];
+    for (const [name, text] of units) {
+      if (RECORDS.has(name) || !/^export (?:async )?function \w+Section\(/m.test(text)) continue;
+      const lines = carried(text, false);
+      while (lines.length > 0 && (/^\s*(?:scope|box)\.([\w$]+) = \1;\s*$/.test(lines.at(-1)!) || lines.at(-1)!.trim() === "")) lines.pop();
+      body.push(...lines.filter((l) => l.trim() !== "").map(unspelled));
+    }
+    expect(body.length, "no section was read").toBeGreaterThan(0);
+    const one = count(readEngineAsOneText().split("\n"));
+    const short = [...count(body)].filter(([line, n]) => (one.get(line) ?? 0) < n)
+      .map(([line, n]) => `${line.trim()}: ${one.get(line) ?? 0} of ${n}`);
+    expect(short).toEqual([]);
   });
 
   it("gives the door, its prelude and its section each once, the records' spelling taken out", () => {
@@ -163,5 +247,13 @@ describe("the engine read as one text", () => {
   it.each(SECTION_PLANTS)("refuses a section file that holds a statement %s", (_where, section) => {
     const dir = unit({ section });
     expect(() => readEngineAsOneText(dir)).toThrow(/engine-mailbox-drain .*statement outside its imports and its maker/);
+  });
+
+  // A file named off the unit's pattern is never read: the door's statement naming it would drop it unseen.
+  it("refuses a door that names an engine file the unit does not hold", () => {
+    const dir = unit({
+      door: (d) => d.replace('} from "./engine-routes.js";\n\nexport async', '} from "./engine-routes.js";\nexport { summarizeDrain } from "./engine-Routes.js";\n\nexport async'),
+    });
+    expect(() => readEngineAsOneText(dir)).toThrow("the engine's one text cannot place ./engine-Routes.js: no unit file of that name");
   });
 });

@@ -121,7 +121,7 @@ function sectionBody(name: string, text: string): string[] {
     throw new Error(`the engine's section ${name} holds a statement outside its imports and its maker: ${outside[0]}`);
   }
   const body = lines.slice(open + 1, close);
-  while (body.length > 0 && (/^\s*(?:scope|box)\.[\w$]+ = [\w$]+;\s*$/.test(body.at(-1)!) || body.at(-1)!.trim() === "")) body.pop();
+  while (body.length > 0 && (/^\s*(?:scope|box)\.([\w$]+) = \1;\s*$/.test(body.at(-1)!) || body.at(-1)!.trim() === "")) body.pop();
   return body;
 }
 
@@ -162,6 +162,7 @@ export function readEngineAsOneText(dir: string = ENGINE_SRC): string {
       const text = lines.slice(i, unitStatement + 1).join("\n");
       const from = /from "\.\/(engine-[\w-]+)\.js";/.exec(text)?.[1];
       if (from !== undefined) {
+        if (!units.has(from)) throw new Error(`the engine's one text cannot place ./${from}.js: no unit file of that name`);
         if (preludes.has(from) && /^export\b/.test(line) && !placed.has(from)) {
           placed.add(from);
           out.push(...preludes.get(from)!);

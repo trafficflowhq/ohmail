@@ -316,6 +316,34 @@ describe("one install, two mailboxes", () => {
     return { s };
   }
 
+  /** {@link boot} with no password in the launch: the seed has only what the store holds for it. */
+  async function bootBare(worlds: World[], reuseDataDir?: string): Promise<{ s: Sidecar; dataDir: string }> {
+    const dataDir = reuseDataDir ?? await freshDataDir("ohmail-multi-bare-");
+    const seed = worlds[0]!;
+    const s = await createSidecar({
+      dataDir,
+      imap: {
+        host: seed.host, port: 993, secure: true,
+        auth: { user: seed.user },
+        smtp: { host: "smtp-a.invalid", port: 587, secure: false },
+      },
+      address: seed.user,
+      machineName: "this machine",
+      pollIntervalMs: 60 * HOUR,
+      leaseStaleAfterMs: 60_000,
+      keks: { 1: Buffer.alloc(32, 7) },
+      adapterFactory: dispatcher(worlds),
+      log: () => {},
+      dkimKeys: null,
+    });
+    cleanups.push(async () => {
+      await s.stop().catch(() => undefined);
+      if (!reuseDataDir) rmSync(dataDir, { recursive: true, force: true });
+    });
+    await s.start();
+    return { s, dataDir };
+  }
+
   const auth = (s: Sidecar): HeadersInit => ({
     authorization: `Bearer ${s.sessionToken}`,
     "content-type": "application/json",
@@ -334,6 +362,27 @@ describe("one install, two mailboxes", () => {
     s.handle(new Request(`http://local/local/mailboxes/${id}/organize`, {
       method: "POST", headers: auth(s), body: JSON.stringify({ screening: { dormancyDays: 365 } }),
     }));
+
+  /** The Settings press on a mailbox that asks for one: its password alone. */
+  const press = async (s: Sidecar, id: string, pass: string): Promise<Response> =>
+    s.handle(new Request(`http://local/local/mailboxes/${id}`, {
+      method: "PATCH", headers: auth(s), body: JSON.stringify({ imap: { pass } }),
+    }));
+
+  /** Signing out of this install: every mailbox's stored password goes. */
+  const signOut = async (s: Sidecar): Promise<Response> =>
+    s.handle(new Request("http://local/local/stored-login", { method: "DELETE", headers: auth(s) }));
+
+  /** One mailbox's row of the connections the Settings pane reads. */
+  const connection = async (s: Sidecar, id: string): Promise<Record<string, unknown>> => {
+    const res = await s.handle(new Request("http://local/local/mailboxes/connections", {
+      method: "GET", headers: auth(s),
+    }));
+    return ((await res.json()) as { items: Array<Record<string, unknown>> }).items.find((i) => i.mailboxId === id) ?? {};
+  };
+
+  const credentialsOf = async (s: Sidecar, id: string) =>
+    s.db.select().from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, id));
 
   const liveRows = async (s: Sidecar) =>
     (await s.db.select().from(mailboxes)).filter((r) => r.status !== "disabled");
@@ -856,6 +905,66 @@ describe("one install, two mailboxes", () => {
     expect((seedCreds.find((c) => c.transport === "imap")!.meta as { host?: string }).host)
       .toBe(HOST_A);
   });
+
+  /**
+   * EACH MAILBOX'S PASSWORD STATE IS ITS OWN, WHICHEVER ATTACHES FIRST. A launch attaches every
+   * mailbox, each resolving its own login, before it starts any of them, and the roster attaches
+   * the seed first. A login kept where the next attach overwrites it hands the last one's answer
+   * to every start: the mailbox with a password, attached first, then never dials; attached
+   * second, it sends the one with none to dial with an empty password, which some servers count
+   * towards a lockout.
+   */
+  it("a mailbox with a stored password beside one with none, in both attach orders: the one with a "
+    + "password organizes, the other reads needs a password, and the press that stores the second's "
+    + "password changes nothing of the first", async () => {
+    for (const passwordFirst of [true, false]) {
+      const order = passwordFirst ? "the password attached first" : "the password attached second";
+      const a = makeWorld(SEED_USER, HOST_A, [11]);
+      const b = makeWorld(SECOND_USER, HOST_B, [21]);
+      /* First: the seed launched with its password, every password gone with a sign-out, and the
+         next launch hands the seed's back. Second: the seed was never given one, and #2's is the
+         one its add stored. */
+      const launch = passwordFirst ? boot : bootBare;
+      const { s, dataDir } = await launch([a, b]);
+      const secondId = ((await (await add(s, secondBody())).json()) as { id: string }).id;
+      await agree(s, s.world.mailboxId);
+      await agree(s, secondId);
+      if (passwordFirst) expect((await signOut(s)).status).toBe(200);
+      await s.stop();
+
+      const a2 = makeWorld(SEED_USER, HOST_A, []);
+      const b2 = makeWorld(SECOND_USER, HOST_B, []);
+      a2.meta = a.meta;
+      b2.meta = b.meta;
+      const { s: s2 } = await launch([a2, b2], dataDir);
+      const seedId = s2.world.mailboxId;
+      const withOne = passwordFirst ? { id: seedId, world: a2 } : { id: secondId, world: b2 };
+      const none = passwordFirst
+        ? { id: secondId, world: b2, pass: "second-password" }
+        : { id: seedId, world: a2, pass: "mailbox-unreached-password" };
+
+      expect(s2.organizerStates()[withOne.id]?.organizing, `${order}: the mailbox with a password does not organize`)
+        .toBe(true);
+      expect((await connection(s2, none.id)).needsCredential, `${order}: the mailbox with none does not ask for one`)
+        .toBe(true);
+      expect(none.world.wire, `${order}: the mailbox with no password was dialled`).toEqual([]);
+
+      const first = async () => ({
+        state: s2.organizerStates()[withOne.id],
+        row: await connection(s2, withOne.id),
+        credentials: await credentialsOf(s2, withOne.id),
+        wire: [...withOne.world.wire],
+      });
+      const before = await first();
+      const res = await press(s2, none.id, none.pass);
+      expect(res.status, `${order}: ${JSON.stringify(await res.clone().json())}`).toBe(200);
+      await vi.waitFor(async () => {
+        expect((await connection(s2, none.id)).needsCredential, `${order}: the press stored nothing`).toBe(false);
+      }, { timeout: 5_000, interval: 25 });
+      expect(await first(), `${order}: storing one mailbox's password changed the other`).toEqual(before);
+      await s2.stop();
+    }
+  }, PGLITE_STANDUP_BUDGET_MS * 2);
 
   /* ── THE FIRST LAUNCH, WHICH IS THE ONE THE REPAIRS HAVE TO REACH ──────────────────────── */
 
