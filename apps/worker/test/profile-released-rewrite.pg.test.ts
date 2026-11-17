@@ -98,13 +98,13 @@ describe.skipIf(!PG_UP)("a released organizer rewrites the settings copy this tr
     // Each side's handle carries its own code's mark: the released code reads the released one.
     oldDb = released.brandDialect(drizzle(oldSql), "pg");
     newDb = brandDialect(drizzle(newSql, { schema }), "pg") as unknown as Tx;
-  }, 2 * MIGRATED_DB_SETUP_BUDGET_MS);
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
   afterAll(async () => {
     await oldSql?.end({ timeout: 5 });
     await newSql?.end({ timeout: 5 });
     await atOldHeads.drop();
     await atThisTree.drop();
-  }, 2 * MIGRATED_DB_TEARDOWN_BUDGET_MS);
+  }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
 
   /**
    * One walk of one mailbox between the two installs; `states` is whether the person states anything,
