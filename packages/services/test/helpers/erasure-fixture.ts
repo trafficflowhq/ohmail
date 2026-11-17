@@ -98,6 +98,7 @@ import {
   authEvents,
   authThrottle,
   accountCounters,
+  calPushChannels,
   creditRefundObligations,
   credentials,
   invites,
@@ -675,6 +676,13 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
     accountId, connectionId: conn!.id, providerId: `/cal/mila/${u}/`, name: "Clinic appointments",
   }).returning();
   await db.insert(calAlarms).values({ accountId, calendarId: cal!.id, minutesBefore: 30 });
+  // A provider's notice channel on that calendar, as the worker's notice pass keeps one (cloud 0105):
+  // its id, the digest of its word, the provider's name for what it watches. It hangs on the
+  // connection and goes with it.
+  await db.insert(calPushChannels).values({
+    accountId, connectionId: conn!.id, calendarId: cal!.id, provider: "google", channelId: randomUUID(),
+    tokenHash: `${u}`.padEnd(64, "0"), resourceId: `res-${u}`, expiresAt: LATER,
+  });
   const [ev] = await db.insert(calEvents).values({
     accountId, calendarId: cal!.id, providerId: `/cal/mila/${u}/1.ics`, uid: `appt-${u}@lichtgrat.example`,
     title: "Oncologist", notes: "bring the scans", startKind: "instant", startLocal: "20260801T080000Z",

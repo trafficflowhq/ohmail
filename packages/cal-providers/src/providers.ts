@@ -14,10 +14,10 @@
 import type { ZoneSource } from "@ohmail/cal-core";
 import { SsrfRefusal, assertPublicHttpUrlShape, type HostResolver } from "@trafficflow/core/net";
 import { makeReader as caldavReader, makeWriter as caldavWriter } from "./caldav/index.js";
-import { GOOGLE_HOSTS, makeReader as googleReader, makeWriter as googleWriter } from "./google/index.js";
+import { GOOGLE_HOSTS, makeNotices as googleNotices, makeReader as googleReader, makeWriter as googleWriter } from "./google/index.js";
 import { makeReader as icsReader } from "./ics/index.js";
-import { makeReader as microsoftReader, makeWriter as microsoftWriter, microsoftHosts } from "./microsoft/index.js";
-import type { CalendarReader, CalendarWriter, Clock, ProviderWord } from "./port.js";
+import { makeNotices as microsoftNotices, makeReader as microsoftReader, makeWriter as microsoftWriter, microsoftHosts } from "./microsoft/index.js";
+import type { CalendarNotices, CalendarReader, CalendarWriter, Clock, ProviderWord } from "./port.js";
 import { fixedHostRequest, namedHostRequest, type AdapterDeps, type AddressPolicy, type HttpPort } from "./request/index.js";
 
 export interface ProviderDeps {
@@ -38,7 +38,8 @@ export interface ProviderDeps {
   readonly microsoft: { readonly graphBase: string } | null;
   /**
    * Whether the program writes to providers: the worker's composition says yes, and only there is a
-   * provider's `writer` made. No default: an absent word must not open the writing branch.
+   * provider's `writer` made, and its `notices`: a channel is made at the provider as a write is.
+   * No default: an absent word must not open the writing branch.
    */
   readonly writes: boolean;
 }
@@ -50,6 +51,11 @@ export interface CalendarProvider {
    * not built yet, and for every provider of a program that does not write (`writes: false`).
    */
   readonly writer: CalendarWriter | null;
+  /**
+   * The notice half: `null` for CalDAV and a subscription, which have none here, and for every
+   * provider of a program that does not write.
+   */
+  readonly notices: CalendarNotices | null;
   /** The request port the provider is reached through. Its sign-in's trades leave through it too. */
   readonly http: HttpPort;
 }
@@ -85,12 +91,15 @@ export function makeCalendarProviders(deps: ProviderDeps): CalendarProviders {
         const http = namedHostRequest(way);
         // A subscription takes no writes, ever.
         const writer = word === "caldav" && deps.writes ? caldavWriter(adapter(http)) : null;
-        made.set(word, { reader: word === "ics" ? icsReader(adapter(http)) : caldavReader(adapter(http)), writer, http });
+        made.set(word, { reader: word === "ics" ? icsReader(adapter(http)) : caldavReader(adapter(http)), writer, notices: null, http });
         break;
       }
       case "google": {
         const http = fixedHostRequest(GOOGLE_HOSTS, way);
-        made.set(word, { reader: googleReader(adapter(http)), writer: deps.writes ? googleWriter(adapter(http)) : null, http });
+        made.set(word, {
+          reader: googleReader(adapter(http)), writer: deps.writes ? googleWriter(adapter(http)) : null,
+          notices: deps.writes ? googleNotices(adapter(http)) : null, http,
+        });
         break;
       }
       case "microsoft": {
@@ -100,7 +109,8 @@ export function makeCalendarProviders(deps: ProviderDeps): CalendarProviders {
         if (deps.policy.kind === "cloud") hostedBase(graphBase);
         const http = fixedHostRequest(microsoftHosts(graphBase), way);
         made.set(word, {
-          reader: microsoftReader({ ...adapter(http), graphBase }), writer: deps.writes ? microsoftWriter({ ...adapter(http), graphBase }) : null, http,
+          reader: microsoftReader({ ...adapter(http), graphBase }), writer: deps.writes ? microsoftWriter({ ...adapter(http), graphBase }) : null,
+          notices: deps.writes ? microsoftNotices({ ...adapter(http), graphBase }) : null, http,
         });
         break;
       }

@@ -130,12 +130,14 @@ export function depsFor(w: World, providers: CalendarProviders, more: Partial<Ca
   } as CalendarSyncDeps & { memory: CalendarSyncMemory };
 }
 
-/** Providers that serve exactly these; one named without a writer takes no writes. */
-export function providersOf(served: Partial<Record<ProviderWord, Omit<CalendarProvider, "writer"> & { readonly writer?: CalendarProvider["writer"] }>>): CalendarProviders {
+/** Providers that serve exactly these; one named without a writer takes no writes, and one without notices has none. */
+export function providersOf(served: Partial<Record<ProviderWord, Omit<CalendarProvider, "writer" | "notices"> & {
+  readonly writer?: CalendarProvider["writer"]; readonly notices?: CalendarProvider["notices"];
+}>>): CalendarProviders {
   return {
     get: (word) => {
       const p = served[word];
-      return p === undefined ? null : { ...p, writer: p.writer ?? null };
+      return p === undefined ? null : { ...p, writer: p.writer ?? null, notices: p.notices ?? null };
     },
   };
 }

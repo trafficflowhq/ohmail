@@ -18,3 +18,6 @@ export {
   type EnqueuedCalendarWrite,
 } from "./writes.js";
 export { writeMarksOf } from "./write-marks.js";
+export {
+  pullCalendarsDue, pullConnectionDue, pullForNotice, NOTICE_LOCK_TIMEOUT_MS, NOTICE_SPACING_SECONDS, type ConnectionScope,
+} from "./wake.js";

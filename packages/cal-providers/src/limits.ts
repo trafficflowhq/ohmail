@@ -86,3 +86,18 @@ export const MAX_FEED_ZONE_DEFINITIONS = 256;
 export const SUBSCRIPTION_INTERVAL_MS = 6 * 3_600_000;
 export const SUBSCRIPTION_INTERVAL_FLOOR_MS = 3_600_000;
 export const SUBSCRIPTION_INTERVAL_CEILING_MS = 7 * 24 * 3_600_000;
+
+/**
+ * How long a notice channel may live. Google ends a channel on a calendar's events a week after it
+ * was made unless a shorter life is asked. Microsoft's own table gives a subscription to a mailbox's
+ * events 4,230 minutes in its older reading and a week in its newer one: the shorter is asked, which
+ * both admit.
+ */
+export const GOOGLE_NOTICE_MAX_MS = 7 * 24 * 3_600_000;
+export const MICROSOFT_NOTICE_MAX_MS = 4_230 * 60_000;
+
+/** A channel that would end sooner than this is not opened: it would be due for its successor at once. */
+export const NOTICE_MIN_LIFE_MS = 3_600_000;
+
+/** A channel's id, and Google's name for what a channel watches, as an answer may carry them. Google's are under 64 characters, Microsoft's an id of 36. */
+export const MAX_NOTICE_ID_CHARS = 128;

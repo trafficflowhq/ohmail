@@ -66,7 +66,7 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     ({ kind: "calendar_event_update", eventId: a.eventId, base, ...(after === undefined ? {} : { after }), scope: { kind: "record" }, change: { title } });
 
   const provider = (writer: CalendarProvider["writer"], word: "google" | "caldav" = "google"): CalendarProvider =>
-    ({ reader: scriptedReader(word, { readings: new Map() }), writer, http: { request: async () => ({ arrived: false, reason: "unknown" }) } });
+    ({ reader: scriptedReader(word, { readings: new Map() }), writer, notices: null, http: { request: async () => ({ arrived: false, reason: "unknown" }) } });
 
   const run = (a: Account, writer: CalendarProvider["writer"], o: { tag?: string; clock?: () => number; turnMs?: number; signal?: AbortSignal; word?: "google" | "caldav"; proven?: ProvenRepeats } = {}) =>
     calendarWriteDrain({

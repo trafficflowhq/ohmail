@@ -18,8 +18,14 @@ export type HttpMethod = "GET" | "POST" | "PROPFIND" | "REPORT" | "PUT" | "PATCH
  * What a write is made against, written by the port itself as it writes the sign-in's line: the
  * version the change was made on (`If-Match`), or that the object must be new (`If-None-Match: *`).
  * A version must be an entity tag ({@link sendableTag}); "any version" cannot be said.
+ *
+ * `own-channel` is the removal of a notice channel this program opened: a channel has no version
+ * to be removed under, and nothing a person wrote is in it. DELETE only, and no line is written for it.
  */
-export type Precondition = { readonly kind: "unchanged"; readonly tag: string } | { readonly kind: "new" };
+export type Precondition =
+  | { readonly kind: "unchanged"; readonly tag: string }
+  | { readonly kind: "new" }
+  | { readonly kind: "own-channel" };
 
 /** The headers an adapter may name. Every other line of a request is the port's own. */
 export type AdapterHeader = "accept" | "content-type" | "depth" | "prefer";

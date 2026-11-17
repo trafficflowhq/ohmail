@@ -84,13 +84,14 @@ type _UnboundCallsComplete = Assert<Complete<UnboundCall, typeof UNBOUND_CALLS>>
  * Why no client of this tree calls a route.
  *  · `operator`: the operator's console and tools ask it; they are not in this repository.
  *  · `platform`: a clock, the worker or an alert drill asks it, with a shared secret.
+ *  · `provider`: a calendar's provider calls it, with its channel's own id and word.
  *  · `site`: the public site's form asks it.
  *  · `no-caller-found`: no client's source spells its path. A candidate for removal, once a log
  *    of what running clients ask for agrees.
  *  · `client-pending`: served ahead of its client, whose change binds it in `Routes`; never a
  *    candidate for removal.
  */
-export type ServerOnlyReason = "operator" | "platform" | "site" | "no-caller-found" | "client-pending";
+export type ServerOnlyReason = "operator" | "platform" | "provider" | "site" | "no-caller-found" | "client-pending";
 
 /** The routes no client of this tree calls, each with its reason. */
 export const SERVER_ONLY_ROUTES: Readonly<Record<string, ServerOnlyReason>> = Object.freeze({
@@ -98,6 +99,8 @@ export const SERVER_ONLY_ROUTES: Readonly<Record<string, ServerOnlyReason>> = Ob
   "POST /approvals/:id": "no-caller-found",
   "GET /attachments/:id/meta": "no-caller-found",
   "GET /auth/audit": "no-caller-found",
+  "POST /calendar/notices/google": "provider",
+  "POST /calendar/notices/microsoft": "provider",
   "GET /contacts": "no-caller-found",
   "GET /contacts/:id": "no-caller-found",
   "PATCH /contacts/:id": "no-caller-found",

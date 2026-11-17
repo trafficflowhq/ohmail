@@ -35,6 +35,7 @@ import { derivedRange } from "./event-range.js";
 import { CALENDAR_BUILDERS } from "./feed.js";
 import { requireCalendarOn } from "./settings-service.js";
 import { eventTimeOf, momentOrUtc, storedTimeOf } from "./time.js";
+import { pullConnectionDue } from "./wake.js";
 
 const L = CALENDAR_WRITE_LIMITS;
 const ZONES = intlZones();
@@ -242,10 +243,7 @@ async function assertRoom(tx: Tx, accountId: string, eventId: string | null): Pr
  */
 export async function wakeCalendarConnection(ctx: ServiceContext, connectionId: string): Promise<void> {
   await withAccountTx(ctx, async (tx) => {
-    await bridgeTx(tx).update(calConnections).set({ nextPollAt: sql`now()` }).where(and(
-      eq(calConnections.id, connectionId), eq(calConnections.accountId, ctx.accountId),
-      eq(calConnections.status, "active"), sql`${calConnections.errorCode} is null`,
-    ));
+    await pullConnectionDue(bridgeTx(tx), { accountId: ctx.accountId, connectionId }, null);
   });
 }
 
