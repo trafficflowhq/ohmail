@@ -208,8 +208,7 @@
     "@trafficflow/core": "*",
     "@trafficflow/db": "*",
     "@ohmail/cal-core": "*",
-    "@ohmail/cal-providers": "*",
-    "@ohmail/wire": "*"
+    "@ohmail/cal-providers": "*"
   },
   "devDependencies": {
     "postgres": "3.4.9",
