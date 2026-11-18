@@ -8,7 +8,7 @@ import {
 } from "../src/notifications.js";
 import { noticeChoicesOf, type NoticeChoices } from "../src/notices/choices.js";
 import { NOTICE_COUNT_MAX, NOTICE_KINDS, type Notice } from "../src/notices/kinds.js";
-import type { NoticeSample, SendStanding } from "../src/notices/gate.js";
+import type { NoticeDevices, NoticeSample, SendStanding } from "../src/notices/gate.js";
 
 /**
  * THE GATE — the behavioural half of "fully off means no code path fires".
@@ -20,8 +20,10 @@ import type { NoticeSample, SendStanding } from "../src/notices/gate.js";
  * skips it.
  */
 
+/** The account's named devices: how many were ever made, how many were taken back, how many are signed in now. */
+const named = (made: number, revoked = 0, live = made - revoked): NoticeDevices => ({ made, revoked, live });
 const sample = (over: Partial<NoticeSample> = {}): NoticeSample =>
-  ({ ohboxUnread: 0, screenerWaiting: 0, sends: new Map(), devices: 1, ...over });
+  ({ ohboxUnread: 0, screenerWaiting: 0, sends: new Map(), devices: named(1), ...over });
 const sends = (...rows: [string, SendStanding][]): ReadonlyMap<string, SendStanding> => new Map(rows);
 const base = sample();
 /** A device's stored record with `over` on top, as the gate is handed it. */
@@ -32,7 +34,7 @@ const EVERY = NOTICE_KINDS;
 
 /** Everything happened at once: mail, a waiting sender, a send that went, one that did not, a new device. */
 const busy = sample({
-  ohboxUnread: 3, screenerWaiting: 2, devices: 2,
+  ohboxUnread: 3, screenerWaiting: 2, devices: named(2),
   sends: sends(["failed-one", "failed"]),
 });
 const before = sample({ sends: sends(["sent-one", "waiting"], ["failed-one", "waiting"]) });
@@ -94,7 +96,7 @@ describe("a rise is an event; a fall is somebody reading their mail", () => {
 describe("the content rule", () => {
   /** A sample that carries a letter's words under every name one has ever been handed by. */
   const wordy = {
-    ...sample({ ohboxUnread: 1, screenerWaiting: 1, devices: 2, sends: sends(["failed-one", "failed"]) }),
+    ...sample({ ohboxUnread: 1, screenerWaiting: 1, devices: named(2), sends: sends(["failed-one", "failed"]) }),
     latestSender: "Petra Muhr", latestSubject: "Thursday", sender: "stranger@example.com", subject: "Re: hi",
     scheduledOutcomes: [{ id: "failed-one", outcome: "failed", reason: "no connection", subject: "Re: hi" }],
     pairingEvents: [{ id: "p", kind: "paired", device: "old laptop" }],
@@ -150,15 +152,72 @@ describe("scheduled sends — both outcomes, because silence reports one of them
 });
 
 describe("pairing — a security event that names no device's own label", () => {
-  it("says a device joined, and that one left", () => {
-    expect(decideNotices(base, sample({ devices: 2 }), all(), "granted", EVERY)).toEqual([{ kind: "pairing", change: "paired", device: null }]);
-    expect(decideNotices(sample({ devices: 2 }), base, all(), "granted", EVERY)).toEqual([{ kind: "pairing", change: "revoked", device: null }]);
+  const paired: Notice = { kind: "pairing", change: "paired", device: null };
+  const revoked: Notice = { kind: "pairing", change: "revoked", device: null };
+  const told = (before: NoticeDevices | null, after: NoticeDevices | null): Notice[] =>
+    decideNotices(sample({ devices: before }), sample({ devices: after }), all(), "granted", EVERY);
+
+  it("says a device was paired when the number of devices ever made rose", () => {
+    expect(told(named(1), named(2))).toEqual([paired]);
   });
 
-  it("says nothing where a sample does not know the number", () => {
-    expect(decideNotices(sample({ devices: null }), sample({ devices: 2 }), all(), "granted", EVERY)).toEqual([]);
-    expect(decideNotices(base, sample({ devices: null }), all(), "granted", EVERY)).toEqual([]);
-    expect(decideNotices(base, sample({ devices: Number.NaN }), all(), "granted", EVERY)).toEqual([]);
+  it("says one was signed out when the number taken back in Devices rose", () => {
+    expect(told(named(2), named(2, 1))).toEqual([revoked]);
+  });
+
+  it("a device signed itself out and another was paired: as many are signed in as before, and the pairing is told", () => {
+    // Two made and both signed in; one signs itself out (nothing rings, no sample is taken); a
+    // third is paired. Two are signed in before and after: the count alone reads as no change.
+    const before = named(2, 0, 2);
+    const after = named(3, 0, 2);
+    expect(after.live).toBe(before.live);
+    expect(told(before, after)).toEqual([paired]);
+  });
+
+  it("is never decided from how many are signed in now", () => {
+    // A device signed itself out, a newer sign-in replaced an install's previous one, a sweep or a
+    // change of a second factor ended sessions: fewer are signed in, and neither rising number moved.
+    expect(told(named(3, 0, 3), named(3, 0, 1))).toEqual([]);
+    expect(told(named(3, 1, 2), named(3, 1, 0))).toEqual([]);
+    // And a count that reads higher with neither number risen is no new device.
+    expect(told(named(3, 0, 1), named(3, 0, 3))).toEqual([]);
+  });
+
+  it("two pairings between two samples are one notice, and so are two take-backs", () => {
+    expect(told(named(1), named(3))).toEqual([paired]);
+    expect(told(named(3), named(3, 2))).toEqual([revoked]);
+  });
+
+  it("a take-back and a pairing between two samples are both told, the pairing last", () => {
+    // A surface with one place for the kind keeps the last notice it is handed.
+    expect(told(named(2), named(3, 1))).toEqual([revoked, paired]);
+  });
+
+  it("says nothing where a sample does not know the numbers", () => {
+    expect(told(null, named(2))).toEqual([]);
+    expect(told(named(1), null)).toEqual([]);
+    expect(told(null, null)).toEqual([]);
+  });
+
+  it("says nothing for a number that is no whole number, or that fell", () => {
+    const odd = (made: unknown, taken: unknown = 0): NoticeDevices => ({ made, revoked: taken, live: 0 }) as NoticeDevices;
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, 2.5, -1, "2", null, undefined, {}]) {
+      expect(told(named(1), odd(value)), `made: ${String(value)}`).toEqual([]);
+      expect(told(odd(value), named(5)), `made before: ${String(value)}`).toEqual([]);
+      expect(told(named(1), odd(1, value)), `revoked: ${String(value)}`).toEqual([]);
+    }
+    // A store that lost rows reads lower: no event, and the next rise is one again.
+    expect(told(named(3, 2), named(2, 1))).toEqual([]);
+    // A sample of the shape an older build handed in (one number) knows nothing.
+    expect(told(1 as unknown as NoticeDevices, 2 as unknown as NoticeDevices)).toEqual([]);
+  });
+
+  it("the kind's switch off, or the master off, tells neither", () => {
+    const before = sample({ devices: named(2) });
+    const after = sample({ devices: named(3, 1) });
+    expect(decideNotices(before, after, all({ pairing: false }), "granted", EVERY)).toEqual([]);
+    expect(decideNotices(before, after, all({ master: false }), "granted", EVERY)).toEqual([]);
+    expect(decideNotices(before, after, all(), "granted", ["ohbox"])).toEqual([]);
   });
 });
 

@@ -1134,7 +1134,7 @@ export const DE: Deck = {
   /* --------------------------------------------- organizing in the background */
 
   stateOrganizing: "Organisiert",
-  notifBody: (address: string): string => `Organisiert ${address}.`,
+  notifBody: "Organisiert deine Mail auf diesem Handy.",
   notifStop: "Nicht mehr organisieren",
   notifStopFailed: "Stopp nicht abgeschlossen — wird erneut versucht.",
   organizerRestricted:
@@ -1209,8 +1209,12 @@ export const DE: Deck = {
   wakeOff: (reason: string): string => reason === "endpoint_refused"
     ? "Der Server hat die Adresse deines Verteilers abgelehnt, Weckrufe sind deshalb aus. Mails "
       + "kommen weiterhin an, wenn du die App öffnest oder zum Aktualisieren ziehst."
-    : "Weckrufe konnten nicht eingerichtet werden. Mails kommen weiterhin an, wenn du die App "
-      + "öffnest oder zum Aktualisieren ziehst.",
+    : reason === "switched_off"
+      ? "Benachrichtigungen für neue Mail sind auf diesem Handy ausgeschaltet, deshalb weckt nichts "
+        + "ohmail, solange die App geschlossen ist. Mails kommen weiterhin an, wenn du die App öffnest "
+        + "oder zum Aktualisieren ziehst."
+      : "Weckrufe konnten nicht eingerichtet werden. Mails kommen weiterhin an, wenn du die App "
+        + "öffnest oder zum Aktualisieren ziehst.",
 
   /* ------------------------------------------------- world (phone-specific) */
 
@@ -2462,9 +2466,9 @@ export const DE: Deck = {
     "Schau nochmal auf die Leute, denen du geschrieben hast, und entscheide, wer durchkommt. Wen du schon entschieden hast, bleibt wie er ist; das hier nimmt nur Leute dazu, für die du noch nicht geantwortet hast — und genau die bringt ein neu verbundenes Postfach mit.",
   seedReopenAction: "Ansehen",
   toastMoveQueuedWithRule: (place: string, holder: string) =>
-    `Für ${holder} vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
+    `Für ${holder} vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: ${place}.`,
   toastMoveQueuedWithRuleUnknown: (place: string) =>
-    `Für den Organizer vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
+    `Für den Organizer vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: ${place}.`,
   toastQueuedRuleUndone: (holder: string) => `Keine Regel angelegt. Die Nachricht wartet weiter auf ${holder}.`,
   toastQueuedRuleUndoneUnknown: "Keine Regel angelegt. Die Nachricht wartet weiter auf den Organizer.",
   waitingStrip: (count: number, holder: string) =>

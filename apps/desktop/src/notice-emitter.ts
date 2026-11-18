@@ -11,7 +11,7 @@
  * centre gives no way to withdraw a notice this process already posted. A notice already listed
  * stays where the system put it (a declared limit); the shell's sign-out takes the badge off.
  */
-import { type MailNotice, type Notice, type NoticeKind } from "@ohmail/client-engine";
+import { type MailNotice, type Notice, type NoticeKind, type NoticeTaken } from "@ohmail/client-engine";
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import { postOsNotice } from "./native.js";
 
@@ -55,17 +55,17 @@ export function desktopNoticeEmitter(shell: NoticeShell): HostNoticeEmitter {
     carries: CARRIES,
     acts: [],
     ahead: "none",
-    post(notice: Notice): void {
+    post(notice: Notice): NoticeTaken {
       try {
-        if (!CARRIES.includes(notice.kind)) return;
-        if (shell.focused()) return;
+        if (!CARRIES.includes(notice.kind)) return false;
+        if (shell.focused()) return false;
         const handed = crossing(notice);
-        if (handed === null) return;
-        void shell.post(handed).catch(() => {
-          /* Notifications are off for ohmail, or this platform has none. Not a reason to fail. */
-        });
+        if (handed === null) return false;
+        /* A refusal: notifications are off for ohmail, or this platform has none. Not a reason to fail. */
+        return shell.post(handed).then(() => true, () => false);
       } catch {
         /* A notice that could not be handed over takes nothing down. */
+        return false;
       }
     },
     takeBack(): void {

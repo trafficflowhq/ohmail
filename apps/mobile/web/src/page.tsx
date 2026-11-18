@@ -10,6 +10,8 @@ import { SYNC_BOOTSTRAPPING, type SyncStatus } from "@ohmail/app-logic/session/s
 import { Frame } from "@ohmail/app/frame";
 import type { HostContract } from "@ohmail/app/host";
 import { fillOver, TextProvider, type Locale, type Messages } from "@ohmail/app/text";
+import type { NoticeChoices } from "./engine-package";
+import { PhoneNotices } from "./notices";
 
 export interface PhonePageProps {
   readonly host: HostContract;
@@ -21,9 +23,11 @@ export interface PhonePageProps {
   readonly sync: (status: (s: SyncStatus) => void) => () => void;
   /** Told once, when the first frame has been drawn. */
   readonly drawn: () => void;
+  /** This device's notice choices, read at each settle of the copy. */
+  readonly noticeChoices: () => NoticeChoices;
 }
 
-export function PhonePage({ host, locale, catalogue, timeZone, sync, drawn }: PhonePageProps) {
+export function PhonePage({ host, locale, catalogue, timeZone, sync, drawn, noticeChoices }: PhonePageProps) {
   const [status, setStatus] = useState<SyncStatus>(SYNC_BOOTSTRAPPING);
   useEffect(() => sync(setStatus), [sync]);
   useEffect(() => {
@@ -39,6 +43,7 @@ export function PhonePage({ host, locale, catalogue, timeZone, sync, drawn }: Ph
   return (
     <TextProvider locale={locale} messages={messages} timeZone={timeZone}>
       <EngineContext.Provider value={binding}>
+        <PhoneNotices host={host} choices={noticeChoices} />
         <Frame host={host} />
       </EngineContext.Provider>
     </TextProvider>

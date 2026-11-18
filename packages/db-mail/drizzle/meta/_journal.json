@@ -1352,6 +1352,13 @@
       "when": 1794922400000,
       "tag": "0211_cal_calendars_default_leaves",
       "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "7",
+      "when": 1794942700000,
+      "tag": "0212_devices_revoked_at",
+      "breakpoints": true
     }
   ]
 }

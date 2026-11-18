@@ -20,6 +20,7 @@ import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-int
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
+import { TOLD_DEVICES_PREFIX } from "@ohmail/app-logic/notices/use-notices";
 import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "@ohmail/app-logic/doors/wall-lift";
 import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import {
@@ -226,6 +227,11 @@ export async function forgetThisBrowser(
     // once the local unsubscribe kills the endpoint. The SWITCHES are not
     // here: a per-install preference, like `ohmail.theme`.
     NOTIFICATION_SUBSCRIPTION_PREFIX,
+    // `ohmail.notices.devices.told.<owner>`: the two numbers of the account's devices this browser
+    // has told (`told-devices.ts`). They go with the account: kept, its next sign-in here would be
+    // told of the device that sign-in itself made, and the key's name would hold an account's id
+    // for the next person at this browser.
+    TOLD_DEVICES_PREFIX,
     // `ohmail.ui.readingAlong.<owner>` — which mailboxes this install was told it is reading
     // along on purpose. Its `ohmail.ui.` siblings all survive a sign-out, and this one does not:
     // the VALUE carries the holder's own machine name, which is the account's (it is on the admin
@@ -348,7 +354,7 @@ export function forgetThisTab(): { survivors: string[]; deviceCeremonySwept: boo
 const OWNER_KEYED: readonly string[] = [
   SEND_LOCKS_PREFIX, SENT_COPY_NOTES_PREFIX, SCREENER_INTENTS_PREFIX, DELETE_INTENTS_PREFIX, ROUTING_INTENTS_PREFIX,
   COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, READING_ALONG_PREFIX,
-  ACCESS_VERDICT_PREFIX, OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX,
+  ACCESS_VERDICT_PREFIX, OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, TOLD_DEVICES_PREFIX,
 ];
 
 /**

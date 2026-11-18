@@ -237,7 +237,7 @@ async function reopenWithBackground(
      and a session raised over it afterwards would refuse the next connect its own. */
   const launch = standaloneLaunchGeneration();
   void import("../engine/organizer-session-native")
-    .then((m) => { m.startOrganizerSessionNative(door, door.address, launch); })
+    .then((m) => { m.startOrganizerSessionNative(door, launch); })
     .catch(() => { sayOrganizerRestricted(); });
   return opened;
 }

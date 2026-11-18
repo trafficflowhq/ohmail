@@ -22,6 +22,7 @@ import { deleteIntentsKey } from "@ohmail/app-logic/press/delete-intents";
 import { intentWindowsChannel } from "@ohmail/app-logic/press/intent-windows";
 import { readAfterVerb, writeAfterVerb } from "@ohmail/app-logic/press/after-verb";
 import { readingAlongKey } from "@ohmail/app-logic/reading/reading-along";
+import { toldDevicesKey } from "@ohmail/app-logic/notices/use-notices";
 import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
 import { foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
@@ -52,6 +53,7 @@ const BUILDERS: Record<string, (scope: Scope) => string> = {
   routingIntents: (s) => routingIntentsKey(s),
   undoWindows: (s) => intentWindowsChannel(s),
   readingAlong: (s) => readingAlongKey(s),
+  toldDevices: (s) => toldDevicesKey(s),
   searchOrder: (s) => searchSortKey(s),
   foldersOpened: (s) => foldersOpenedKey(s),
   originalLook: (s) => mailOriginalKey(s),

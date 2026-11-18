@@ -6965,6 +6965,7 @@ apps/webapp/test/sign-in-reconciles-wake.test.ts#reconcileWakeRegistration > a r
 apps/webapp/test/sign-in-reconciles-wake.test.ts#reconcileWakeRegistration > does not throw when there is no push machinery at all — a boot must not depend on it	behaviour	switch-feeders	01	WAITS:ground
 apps/webapp/test/sign-in-reconciles-wake.test.ts#reconcileWakeRegistration > reconciles to what the switches SAY — a reader who turned it off stays off	behaviour	switch-feeders	01	WAITS:ground
 apps/webapp/test/sign-in-reconciles-wake.test.ts#reconcileWakeRegistration > the LOCALE relabel changes the words and NEVER the `enabled` byte	behaviour	switch-feeders	01	WAITS:ground
+apps/webapp/test/sign-in-reconciles-wake.test.ts#reconcileWakeRegistration > the registration stands only while the master and new mail are both on: either off takes it down at the server and in the browser, both on makes it again	behaviour	switch-feeders	01	WAITS:ground
 apps/webapp/test/sign-in-reconciles-wake.test.ts#reconcileWakeRegistration > the same-user re-announce dedupes to the SAME row — no supersede, no churn	behaviour	switch-feeders	01	WAITS:ground
 apps/webapp/test/sign-in-reconciles-wake.test.ts#reconcileWakeRegistration > …and DOES enable once B's own announce lands	behaviour	switch-feeders	01	WAITS:ground
 apps/webapp/test/sign-in-reconciles-wake.test.ts#reconcileWakeRegistration > …and relabels an ENABLED entry without disarming it	behaviour	switch-feeders	01	WAITS:ground

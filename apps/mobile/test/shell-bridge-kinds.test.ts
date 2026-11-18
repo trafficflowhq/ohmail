@@ -3,7 +3,7 @@
  * known kind whose fields have their types, or a refusal. A path is root-relative or refused.
  */
 import { describe, expect, it } from "vitest";
-import { PATH_MAX, PIECE_BYTES, readRequest } from "../src/shell/bridge-kinds";
+import { NOTICE_COUNT_MAX, PATH_MAX, PIECE_BYTES, readNotice, readRequest } from "../src/shell/bridge-kinds";
 import { decodePlace, encodePlace, isSwitchPlace, type SwitchPlace } from "../src/switch/place";
 
 const head = { id: 7, epoch: "e1" };
@@ -48,6 +48,142 @@ describe("the bridge's guard", () => {
   it("never sees a piece: the native module joins them before the guard reads the whole", () => {
     expect(readRequest({ ...head, kind: "piece", seq: 0, chunk: "x".repeat(PIECE_BYTES) })).toEqual({ refused: "unknownKind" });
     expect(readRequest({ ...head, kind: "joined", count: 2 })).toEqual({ refused: "unknownKind" });
+  });
+});
+
+/**
+ * WHETHER THE WAKE IS WANTED CROSSES AS ONE BOOLEAN. Native keeps or takes down a pairing's wake registration by
+ * it, so the act is as closed as the one that draws: exactly its own key, and one of the two booleans.
+ */
+describe("the page's word on its wake registration", () => {
+  const want = (more: object) => readRequest({ ...head, kind: "act", act: "wake.want", ...more });
+  const MALFORMED = { refused: "malformed" };
+
+  it("admits each of the two booleans", () => {
+    expect(want({ wanted: true })).toMatchObject({ kind: "act", act: "wake.want", wanted: true });
+    expect(want({ wanted: false })).toMatchObject({ kind: "act", act: "wake.want", wanted: false });
+  });
+
+  it("refuses a word for a boolean, a number, nothing at all, and a value only inherited", () => {
+    for (const wanted of ["true", "false", "off", 0, 1, null, undefined, [], {}]) {
+      expect(want({ wanted }), String(wanted)).toEqual(MALFORMED);
+    }
+    expect(want({})).toEqual(MALFORMED);
+    const inherited = Object.assign(Object.create({ wanted: true }) as object, { ...head, kind: "act", act: "wake.want" });
+    expect(readRequest(inherited)).toEqual(MALFORMED);
+  });
+
+  it("refuses a key beside its own: an endpoint, an instance, a pairing, a distributor", () => {
+    for (const spare of ["endpoint", "instance", "pairing", "profile", "distributor", "account", "url", "id2", "notice"]) {
+      expect(want({ wanted: false, [spare]: "x" }), spare).toEqual(MALFORMED);
+    }
+    expect(want({ wanted: true, [Symbol("spare")]: 1 })).toEqual(MALFORMED);
+  });
+});
+
+/**
+ * A MAIL NOTICE CROSSES AS CLOSED RECORDS. What the page hands native for a notice is a kind with
+ * exactly its own members: a whole number, or words of a list. Each arm below changes one thing of a
+ * notice the guard admits, so each fails for its own reason.
+ */
+describe("the notice a page may ask native to draw", () => {
+  const post = (notice: unknown, more: object = {}) =>
+    readRequest({ ...head, kind: "act", act: "notices.post", notice, ...more });
+  const MALFORMED = { refused: "malformed" };
+  const ADMITTED: object[] = [
+    { kind: "ohbox", count: 1 },
+    { kind: "ohbox", count: NOTICE_COUNT_MAX },
+    { kind: "screener", count: 3 },
+    { kind: "pairing", change: "paired", device: "phone" },
+    { kind: "pairing", change: "revoked", device: "desktop" },
+    { kind: "pairing", change: "paired", device: "browser" },
+    { kind: "pairing", change: "revoked", device: null },
+  ];
+
+  it("admits each kind this phone draws, with exactly its own members", () => {
+    for (const notice of ADMITTED) {
+      expect(post(notice), JSON.stringify(notice)).toMatchObject({ kind: "act", act: "notices.post" });
+      expect(readNotice(notice), JSON.stringify(notice)).toEqual(notice);
+    }
+  });
+
+  it("hands native a copy that holds the kind's members and nothing the page's object held beside them", () => {
+    const fromPage = { kind: "ohbox", count: 2 };
+    const copy = readNotice(fromPage);
+    expect(copy).toEqual({ kind: "ohbox", count: 2 });
+    expect(copy).not.toBe(fromPage);
+    // A member read once: what was judged is what is handed on, whatever the page's object answers a second time.
+    let reads = 0;
+    const shifting = { kind: "ohbox", get count() { reads += 1; return reads === 1 ? 4 : "a letter's subject"; } };
+    expect(readNotice(shifting)).toEqual({ kind: "ohbox", count: 4 });
+  });
+
+  it("refuses a string where a word belongs", () => {
+    for (const notice of [
+      { kind: "pairing", change: "paired", device: "Dana's phone" },
+      { kind: "pairing", change: "a device paired with your account", device: "phone" },
+      { kind: "pairing", change: "paired", device: "" },
+      { kind: "pairing", change: "", device: null },
+    ]) {
+      expect(post(notice), JSON.stringify(notice)).toEqual(MALFORMED);
+      expect(readNotice(notice), JSON.stringify(notice)).toBeNull();
+    }
+  });
+
+  it("refuses a string, a fraction or a number out of range where a count belongs", () => {
+    for (const count of ["3", "three new letters", 0, -1, 1.5, NOTICE_COUNT_MAX + 1, 1e21, null, true, [3], { n: 3 }, undefined]) {
+      expect(post({ kind: "ohbox", count }), String(count)).toEqual(MALFORMED);
+      expect(post({ kind: "screener", count }), String(count)).toEqual(MALFORMED);
+    }
+  });
+
+  it("refuses a spare field, on the notice and on the act", () => {
+    for (const spare of ["subject", "sender", "from", "title", "body", "text", "label", "tag", "url", "outcome", "id"]) {
+      for (const notice of ADMITTED) {
+        expect(post({ ...notice, [spare]: "Invoice 4471 is overdue" }), spare).toEqual(MALFORMED);
+        expect(readNotice({ ...notice, [spare]: 1 }), spare).toBeNull();
+      }
+      expect(post({ kind: "ohbox", count: 1 }, { [spare]: "Invoice 4471 is overdue" }), `act.${spare}`).toEqual(MALFORMED);
+    }
+    // A member another kind owns is a spare field here.
+    expect(post({ kind: "ohbox", count: 1, change: "paired" })).toEqual(MALFORMED);
+    expect(post({ kind: "pairing", change: "paired", device: null, count: 1 })).toEqual(MALFORMED);
+    // As the page's own text would carry one: a key that names the object's prototype is a key like any other.
+    expect(readNotice(JSON.parse('{"kind":"ohbox","count":1,"__proto__":{"subject":"x"}}'))).toBeNull();
+    expect(readNotice(Object.assign({ kind: "ohbox", count: 1 }, { [Symbol("subject")]: "x" }))).toBeNull();
+  });
+
+  it("refuses a word that is not on its list", () => {
+    for (const notice of [
+      // A send that waited for its time is not carried on the phone.
+      { kind: "scheduled", outcome: "sent", count: 1 },
+      { kind: "cal_alert", count: 1 },
+      { kind: "newMail", count: 1 },
+      { kind: "toString", count: 1 },
+      { kind: "__proto__", count: 1 },
+      { kind: "pairing", change: "renamed", device: "phone" },
+      { kind: "pairing", change: "signed_out", device: "phone" },
+      { kind: "pairing", change: "paired", device: "tablet" },
+      { kind: "pairing", change: "paired", device: "constructor" },
+    ]) {
+      expect(post(notice), JSON.stringify(notice)).toEqual(MALFORMED);
+      expect(readNotice(notice), JSON.stringify(notice)).toBeNull();
+    }
+  });
+
+  it("refuses a notice with a member missing, and anything that is not a record", () => {
+    for (const notice of [
+      { kind: "ohbox" }, { kind: "pairing", change: "paired" }, { kind: "pairing", device: "phone" }, { count: 1 }, {},
+      null, undefined, "ohbox", 3, [{ kind: "ohbox", count: 1 }], ["ohbox", 1],
+    ]) {
+      expect(post(notice), JSON.stringify(notice)).toEqual(MALFORMED);
+      expect(readNotice(notice), JSON.stringify(notice)).toBeNull();
+    }
+    // A member the object only inherits is not its own.
+    expect(readNotice(Object.create({ kind: "ohbox", count: 1 }))).toBeNull();
+    expect(readNotice(Object.assign(Object.create({ count: 1 }), { kind: "ohbox" }))).toBeNull();
+    // Also where a spare key of its own makes up the number: the count it only inherits is still not its own.
+    expect(readNotice(Object.assign(Object.create({ count: 1 }), { kind: "ohbox", subject: "x" }))).toBeNull();
   });
 });
 

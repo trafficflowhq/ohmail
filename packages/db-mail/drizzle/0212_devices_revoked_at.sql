@@ -1,0 +1,23 @@
+-- 0212_devices_revoked_at — when a named device was taken back in Devices.
+--
+-- `devices.revoked_at`: the instant a person took this device back from the Devices list, NULL for every other
+-- device. Stamped once, after that take-back has committed, and never cleared. A device that signed itself out,
+-- one whose sign-in a newer sign-in replaced, one a sweep or a change of a second factor ended: NULL.
+--
+-- What it is for: the settings record every signed-in client of the account reads carries two numbers that only
+-- rise, the account's named devices ever made (the rows of this table: a row is deleted only with its account) and
+-- how many of them a person took back (the rows that carry this stamp). A client tells a person that a device was
+-- paired when the first rose, and that one was signed out when the second rose. A count of the devices signed in
+-- now also falls when a device signs itself out, so a sign-out followed by a pairing read as no change.
+--
+-- Read by the settings record alone (a count; never the instant, never beside a label or an address). No index: the
+-- count goes through `devices_user_idx`, and `devices` is not a table that grows with mail.
+--
+-- Tables altered: devices (one nullable column). No DML: no device that exists was taken back as far as this
+-- column knows, so both numbers start where a client first samples them.
+-- LOCK: a brief ACCESS EXCLUSIVE on devices; no rewrite, no default, no constraint.
+-- DEPLOY ORDER: migration, then the API (every read of the settings record counts this column).
+-- Idempotent (IF NOT EXISTS): a desktop engine replays this journal at launch.
+-- ROLLBACK: drop the column, once no process of this build runs.
+
+ALTER TABLE "devices" ADD COLUMN IF NOT EXISTS "revoked_at" timestamp with time zone;

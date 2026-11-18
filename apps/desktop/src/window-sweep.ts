@@ -8,7 +8,7 @@
  * erasure takes the send lanes, and the mailbox's preferences and tab notes, as well.
  */
 
-import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
+import { ROUTING_INTENTS_PREFIX, TOLD_DEVICES_PREFIX } from "@ohmail/client-engine";
 import { clearBootCaches, dropLocalStorageKeysWhere, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY,
@@ -30,10 +30,13 @@ import { windowSentFoldersKey } from "./window-outbox-store.js";
  * The keys built as `<prefix><mailbox>`, the compose three also as `<prefix><mailbox>.<composer>`. Not the
  * send lanes: Sign out and a revoke keep them, as the engine keeps the queued sends for the account's next
  * sign-in, where the record still guards against a second send ({@link forgetErasedWindowScopes} takes them).
+ * The last is the two numbers of the account's devices this window has told (`told-devices.ts`): kept past a
+ * sign-out, the next sign-in here would be told of the device that sign-in itself made.
  */
 export const WINDOW_SCOPED_PREFIXES: readonly string[] = [
   SCREENER_INTENTS_PREFIX, DELETE_INTENTS_PREFIX, ROUTING_INTENTS_PREFIX,
   COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, READING_ALONG_PREFIX, ACCESS_VERDICT_PREFIX,
+  TOLD_DEVICES_PREFIX,
 ];
 
 /**

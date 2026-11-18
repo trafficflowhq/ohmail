@@ -1652,20 +1652,20 @@ const TABLE = {
    * being organized — dismissing it is how a person ends that. The fourth door promises
    * exactly this: "It organizes while its notification is shown. Dismiss the notification to
    * stop." All three strings are read from this deck when the service starts; Android string
-   * resources would be a second copy in two languages and could not hold the address.
+   * resources would be a second copy in two languages.
    */
 
   /** The channel's name in system notification settings, and nothing else. */
   stateOrganizing: "Organizing",
   /**
-   * The notification's body. The address comes from the mailbox row, and it is the whole point:
-   * a person with two phones needs to know WHICH mailbox this one is holding.
+   * The notification's body. It names no mailbox: a notice is read on a locked screen by whoever
+   * stands there, and the address is the person's own. It says what the phone is doing, and where.
    *
    * It does NOT say "tap to stop". A tap opens the app — the platform's convention for every
    * notification anybody has ever touched — and a body promising otherwise would fire the stop
    * from the open-the-app reflex. The stop is the action button beside it.
    */
-  notifBody: (address: string): string => `Organizing ${address}.`,
+  notifBody: "Organizing your mail on this phone.",
   /** The one action. The words of the desktop's own stop verb, so the two cannot drift. */
   notifStop: "Stop organizing",
   /* THE BODY A STOP THAT COULD NOT COMPLETE LEAVES. The notification stays up because the engine
@@ -1806,12 +1806,19 @@ const TABLE = {
     "Wake notifications are off on this phone. Your server would not remove the registration, so "
     + "it may keep trying the old address for a while — try again, or revoke this device from the "
     + "server's Devices list.",
-  /** The distributor exists and the registration did not land. One sentence per real cause. */
+  /**
+   * The distributor exists and no registration stands. One sentence per real cause. `switched_off` is the
+   * person's own doing and no failure: with notifications or new mail switched off on this phone there is
+   * nothing to start a closed app for, so the registration is taken down until both are on again.
+   */
   wakeOff: (reason: string): string => reason === "endpoint_refused"
     ? "Your distributor's address was refused by the server, so wake notifications are off. Mail "
       + "still arrives when you open the app or pull to refresh."
-    : "Wake notifications could not be set up. Mail still arrives when you open the app or pull to "
-      + "refresh.",
+    : reason === "switched_off"
+      ? "Notifications for new mail are switched off on this phone, so nothing wakes ohmail while it is "
+        + "closed. Mail still arrives when you open the app or pull to refresh."
+      : "Wake notifications could not be set up. Mail still arrives when you open the app or pull to "
+        + "refresh.",
 
   /* ------------------------------------------------- world (phone-specific) */
 

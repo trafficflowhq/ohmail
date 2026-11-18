@@ -9,6 +9,7 @@ import {
   type SearchFilters, type SearchOptions, type ServiceContext,
 } from "@trafficflow/services/mail";
 import { calendarFeed } from "@trafficflow/services/calendar";
+import { hostedDevices } from "./cloud-mirror-devices.js";
 import { isCalendarRecordKind } from "@trafficflow/db";
 import type { AnswerOf, OnlyNamesOf, RouteName } from "@ohmail/wire";
 
@@ -163,6 +164,8 @@ export const READ_ROUTES: ReadRoute[] = [
           ...(phase ? { phase } : {}),
           ...(types.length > 0 ? { types } : {}),
           calendar: calendarFeed,
+          // The hosted account's devices, as the mirror last read them (`cloud-mirror-devices.ts`).
+          devices: hostedDevices,
           ...(span ? { span } : {}),
         }),
       );

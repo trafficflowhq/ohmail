@@ -8,6 +8,7 @@ import { mailboxes, recordMailboxRemoved, type LedgerTx, type Tx } from "@traffi
 import { deleteMailboxRows } from "./local-mirror.js";
 import { wipeCalendarCopy } from "./cloud-mirror-calendar.js";
 import { calendarFeed } from "@trafficflow/services/calendar";
+import { hostedDevices } from "./cloud-mirror-devices.js";
 import {
   resolveSession, syncService, ServiceError, dbFor, isUuid,
   type EntityType, type ServiceContext, type SyncResponse,
@@ -2367,6 +2368,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               ...(types && types.length > 0 ? { types } : {}),
               // This copy's calendar, served to the window by the hosted switch it copied.
               calendar: calendarFeed,
+              // The hosted account's devices, as the mirror last read them (`cloud-mirror-devices.ts`).
+              devices: hostedDevices,
             });
           };
           let result = await ask();

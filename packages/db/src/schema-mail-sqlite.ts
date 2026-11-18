@@ -1333,6 +1333,8 @@ export const devices = sqliteTable("devices", {
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
   // mail 0209 — the device whose session handed this one its sign-in; see the Postgres twin.
   handedOffFrom: text("handed_off_from"),
+  // mail 0212 — when a person took this device back in Devices; see the Postgres twin.
+  revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixUser: index("devices_user_idx").on(t.userId) }));
 

@@ -202,7 +202,7 @@ describe("the door's confirm starts the organizer session", () => {
     const p = phases();
     expect(startOrganizerSession(standaloneLaunchGeneration(), {
       platform: "android", engine: e.engine, service: s.service,
-      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
       appPhases: p.appPhases,
     }), "the first start did not take").toBe(true);
     expect(organizerSessionLive()).toBe(true);
@@ -216,7 +216,7 @@ describe("the door's confirm starts the organizer session", () => {
     await Promise.resolve();
     expect(s.log.started, "the foreground service was never started").toBe(1);
     expect(s.log.notice?.body, "the notification does not name the mailbox")
-      .toBe(EN.notifBody("a@b.test"));
+      .toBe(EN.notifBody);
     expect(organizerBackgrounded()).toBe(true);
   });
 
@@ -231,7 +231,7 @@ describe("the door's confirm starts the organizer session", () => {
     const p = phases();
     startOrganizerSession(standaloneLaunchGeneration(), {
       platform: "ios", engine: e.engine, service: null,
-      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
       appPhases: p.appPhases,
     });
     p.log.push!("background");
@@ -264,7 +264,7 @@ describe("the door's confirm starts the organizer session", () => {
     holdStandaloneDoor(fakeDoor());
     startOrganizerSession(standaloneLaunchGeneration(), {
       platform: "ios", engine: e.engine, service: null,
-      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
       appPhases: p.appPhases,
     });
     /* THE PREMISE — before the transition the row is the free one, and the chip says so. Without
@@ -307,7 +307,7 @@ describe("the door's confirm starts the organizer session", () => {
       holdStandaloneDoor(fakeDoor());
       startOrganizerSession(standaloneLaunchGeneration(), {
         platform, engine: { ...e.engine, resume }, service: platform === "ios" ? null : service({ showing: false }).service,
-        notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+        notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
         appPhases: p.appPhases,
       });
       const flush = async (): Promise<void> => { for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0)); };
@@ -347,7 +347,7 @@ describe("the door's confirm starts the organizer session", () => {
   it("keeps the first session and refuses a second", () => {
     const first = phases();
     const second = phases();
-    const notice = () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed });
+    const notice = () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed });
     expect(startOrganizerSession(standaloneLaunchGeneration(), {
       platform: "ios", engine: engine().engine, service: null, notice, appPhases: first.appPhases,
     })).toBe(true);
@@ -365,7 +365,7 @@ describe("the door's confirm starts the organizer session", () => {
     const p = phases();
     startOrganizerSession(standaloneLaunchGeneration(), {
       platform: "android", engine: engine().engine, service: s.service,
-      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
       appPhases: p.appPhases,
     });
     p.log.push!("background");
@@ -398,7 +398,7 @@ describe('"Stop organizing here" ends it', () => {
     const p = phases();
     startOrganizerSession(standaloneLaunchGeneration(), {
       platform: "android", engine: e.engine, service: s.service,
-      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
       appPhases: p.appPhases,
     });
     p.log.push!("background");
@@ -434,7 +434,7 @@ describe('"Stop organizing here" ends it', () => {
     const p = phases();
     startOrganizerSession(standaloneLaunchGeneration(), {
       platform: "ios", engine: e.engine, service: null,
-      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
       appPhases: p.appPhases,
     });
     expect(e.log.handBacks, "the start handed the mailbox back on its own").toBe(0);
@@ -450,7 +450,7 @@ describe('"Stop organizing here" ends it', () => {
     const p = phases();
     startOrganizerSession(standaloneLaunchGeneration(), {
       platform: "android", engine: engine().engine, service: s.service,
-      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
       appPhases: p.appPhases,
     });
     await stopOrganizerSession();
@@ -465,7 +465,7 @@ describe('"Stop organizing here" ends it', () => {
     const throwing: BackgroundService = { ...s.service, stop: async () => { throw new Error("gone"); } };
     startOrganizerSession(standaloneLaunchGeneration(), {
       platform: "android", engine: engine().engine, service: throwing,
-      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+      notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody, stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
       appPhases: p.appPhases,
     });
     await expect(stopOrganizerSession()).resolves.toBeUndefined();
@@ -624,10 +624,10 @@ describe("the wiring is actually on the presses", () => {
        freeze the language this door happened to be opened in. */
     expect(NATIVE).toContain("notice: () => ({");
     /* The body follows the gate (`organizer-notice.ts`, which says `Copy.notifBody` where it is open). */
-    for (const key of ["Copy.stateOrganizing", "organizerNoticeBody(address, engine.runtimes().organizer)", "Copy.notifStop"]) {
+    for (const key of ["Copy.stateOrganizing", "organizerNoticeBody(engine.runtimes().organizer)", "Copy.notifStop"]) {
       expect(NATIVE, `the notice does not carry ${key}`).toContain(key);
     }
-    /* AND THE ADDRESS IS NEVER LOGGED. The notification's body carries it; nothing else may. */
+    /* AND THE ADDRESS IS NEVER LOGGED, and the notification's body does not carry it either. */
     expect(NATIVE, "the platform half logs").not.toMatch(/\bconsole\./);
   });
 

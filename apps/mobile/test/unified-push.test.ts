@@ -248,7 +248,12 @@ describe("the wake listener's lifetime is the APP's, not a screen's", () => {
     expect(supersededAt, "the superseded arm must exist").toBeGreaterThan(-1);
     const idWrite = src.indexOf("subscriptionId.current = next.k ===");
     expect(idWrite).toBeGreaterThan(supersededAt);
-    const arm = src.slice(supersededAt, idWrite);
+    // The superseded arm ends at its own return; the fresh path's checks (the page's no, then the id) come after it.
+    const armEnd = src.indexOf("\n        return;\n      }", supersededAt) + "\n        return;\n      }".length;
+    expect(armEnd).toBeLessThan(idWrite);
+    const arm = src.slice(supersededAt, armEnd);
+    // The page's no landing while this was in the air writes only while the session it was made for is current.
+    expect(src).toMatch(/await forgetWake\(session, unifiedPushDistributor\(\), next\.id, nativeServerProfiles\(\)\);\s*\n\s*if \(fresh\(\)\) \{/);
     expect(arm, "a superseded result may not write the id").not.toMatch(/subscriptionId\.current\s*=/);
     expect(arm, "a superseded result may not write the pane's state").not.toMatch(/setState\(/);
     expect(arm, "and it must leave before the fresh path's writes").toMatch(/\n        return;\n      \}/);
@@ -481,7 +486,7 @@ describe("the wake renderer draws ONE fixed notice, and never server content", (
     expect(kotlin).toMatch(/if \(WakeAppState\.interactive\) return null/);
     // The suppress path returns BEFORE anything is posted.
     const guard = kotlin.indexOf("if (WakeAppState.interactive) return null");
-    const post = kotlin.indexOf("postWakeNotification(context)");
+    const post = kotlin.indexOf("postWakeNotification(context, instance)");
     expect(guard).toBeGreaterThan(-1);
     expect(post).toBeGreaterThan(guard);
   });

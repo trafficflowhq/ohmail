@@ -54,6 +54,11 @@ function mayDraw(
   return permission === "granted" && choices.master === true && choices[kind] === true && carries.includes(kind);
 }
 
+/** Did a number that only rises rise? Both whole numbers, the later one greater; anything else is no event. */
+function rose(was: number, now: number): boolean {
+  return Number.isSafeInteger(was) && Number.isSafeInteger(now) && was >= 0 && now > was;
+}
+
 /**
  * The gate. Everything that draws a notice comes through here, each kind past {@link mayDraw}. The
  * seeding sample answers nothing: nothing is an event until there is something to compare against.
@@ -95,11 +100,18 @@ export const decideNotices: NoticeGate = (before, after, choices, permission, ca
     if (stayed !== null) out.push({ kind: "scheduled", outcome: "failed", count: stayed });
   }
 
-  // A device joined or left the account. Drawn only where both samples know the number.
+  // A named device was made, or one was taken back in Devices. Decided from the two numbers that
+  // ONLY RISE, where both samples know them, and never from how many devices are signed in now:
+  // that count also falls when a device signs itself out, so a sign-out followed by a pairing left
+  // it where it stood and the pairing was told to nobody. Several of one kind between two samples
+  // are one notice: the record has a word for what happened and no place for how often.
+  // The take-back first and the new device last. A surface with one place for the kind keeps the
+  // last notice it was handed, and the new device is the one a person must not miss.
   const had = before.devices;
   const has = after.devices;
-  if (may("pairing") && Number.isInteger(had) && Number.isInteger(has) && has !== had) {
-    out.push({ kind: "pairing", change: has! > had! ? "paired" : "revoked", device: null });
+  if (may("pairing") && had != null && has != null) {
+    if (rose(had.revoked, has.revoked)) out.push({ kind: "pairing", change: "revoked", device: null });
+    if (rose(had.made, has.made)) out.push({ kind: "pairing", change: "paired", device: null });
   }
 
   return out;

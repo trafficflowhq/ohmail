@@ -173,6 +173,7 @@ apps/mobile/test/layout-sizes-r3.test.ts	source-text	reads source as text (gradl
 apps/mobile/test/list-address-sentence-on-the-phone.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/list-detail-continuity.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/list-insets-shared.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/live-instance.test.ts	source-text	reads source as text (kt): the notices' module's copy of the gate, held equal to the text the wake plugin writes	layer 2	notices	
 apps/mobile/test/locale.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/locked-composer-takes-no-edit.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/mail-frame-pictures-bounded.test.tsx	data	through packages/client-engine/test/fixtures/letter-paper-corpus.ts: reads recorded newsletters	none	phone-shell	
@@ -192,7 +193,9 @@ apps/mobile/test/network-readers-shape.test.ts	source-text	reads source as text 
 apps/mobile/test/no-global-crypto.test.ts	source-text	reads source as text (mjs, ts)	layer 2	phone-screens	
 apps/mobile/test/no-host-census.test.ts	source-text	the phone app's imports reach no host module	ohmail/package-borders	tools	
 apps/mobile/test/no-node-builtins.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	phone-screens	
+apps/mobile/test/notice-emitter.test.ts	source-text	reads source as text (tsx): the phone page's mount, which counts no Devices list as read	layer 2	notices	
 apps/mobile/test/notice-logged.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/notices-module.test.ts	source-text	reads source as text (json, kt, xml): the notices' native module, its words held to the catalogue's	layer 2	notices	
 apps/mobile/test/notification-permission.test.ts	source-text	reads source as text (kt, ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/offline-is-said.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/offline-send-waits.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
@@ -400,6 +403,7 @@ apps/sidecar/test/datadir-template.test.ts	data	reads data files (json, sql)	non
 apps/sidecar/test/deleted-while-closed.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/desktop-ai-bridge.e2e.test.ts	source-text	reads source as text (rs)	layer 1	desktop-engine	
 apps/sidecar/test/desktop-store-fault-is-the-devices.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/device-notices.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	notices	
 apps/sidecar/test/dial-stored-folders.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/dial-timeouts.test.ts	source-text	walks source files	layer 1	desktop-engine	
 apps/sidecar/test/drain-checkpoint.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
@@ -727,6 +731,7 @@ apps/webapp/test/more-menu-fit.test.ts	source-text	reads source as text (css)	st
 apps/webapp/test/narrow-title-names-trash.test.tsx	behaviour	the narrow top bar's title and back chip name Trash	none	frame	gone:apps/webapp/app/shell/AppShell.tsx#className="topbar
 apps/webapp/test/newsletter-corpus.test.tsx	data	reads data files (html)	none	removals	
 apps/webapp/test/nothing-organizes-head-and-sheets.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/notice-emitter.test.ts	source-text	reads source as text (tsx): the shell's mount, which counts the Devices list as read only in its pane, in a window looked at	layer 2	notices	
 apps/webapp/test/notifications-gate-census.test.ts	source-text	reads source as text (js, ts, tsx)	layer 2	doors	
 apps/webapp/test/ohbox-header-counts.test.ts	source-text	the Ohbox's head names what it counts: unread mail, and first-time senders waiting at the Screener, withheld until the mailbox is read through	layer 2: red with the doorbell's name a bare count, the noun left out	ohbox	held:packages/app/test/ohbox/doorbell.test.tsx#says how many wait and leads to the Screener
 apps/webapp/test/ohbox-older-bulk-verbs.test.tsx	behaviour	a row of the Ohbox's Older tail, fetched past what this device keeps: the selection bar's verbs act on it; the tail left the Ohbox, older mail is History's	none	ohbox	gone:packages/app-logic/src/ohbox/groups.ts#const olderRows: OhboxRowGroup[] = folded.older;

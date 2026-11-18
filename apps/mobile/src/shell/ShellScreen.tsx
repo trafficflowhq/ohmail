@@ -24,6 +24,9 @@ import { askNoticePermission, measureShellBackup, noticePermission, onShellWake 
 import { launchVerdict } from "./old-copy";
 import { activeLocale } from "../i18n/locale";
 import { networkNow, onNetworkChange } from "../net/network-door";
+import { noticeDoor, noticeKindsHere } from "../notices/notice-door";
+import { noticesNative } from "../notices/notices-native";
+import { useWake } from "../state/wake";
 import { Txt } from "../ui/base";
 import { usePosture } from "../ui/posture";
 import { nativePosture } from "../ui/posture/posture-native";
@@ -59,6 +62,17 @@ const otherOf = (native: SwitchNative | null) => (native === null ? "absent" : n
 export function ShellScreen({ session }: { session: ShellSession }) {
   const native = shellNative();
   const switcher = useMemo(() => switchNative(), []);
+  const notices = useMemo(() => noticesNative(), []);
+  /* The session this screen stands for, while it stands: a notice is drawn only for the one that still does. */
+  const standing = useRef<ShellSession | null>(null);
+  useEffect(() => {
+    standing.current = session;
+    return () => { standing.current = null; };
+  }, [session]);
+  /* The wake's own door for what the page says of its switches, read at each act: it is the provider's newest. */
+  const wake = useWake();
+  const wantWake = useRef(wake.want);
+  wantWake.current = wake.want;
   const drawnRef = useRef(false);
   const [scope, setScope] = useState<string | null>(null);
   const [drawn, setDrawn] = useState(false);
@@ -119,6 +133,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       place: lastPlace.current,
       oldCopy: oldCopy.current,
       notifications: permission.current,
+      notices: noticeKindsHere({ platform: Platform.OS, app: APP.app, native: notices }),
       facts: {
         posture: foldReading(),
         insets: pageInsets(insets),
@@ -135,6 +150,14 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       mint: handoffMinter(session, siblingOf(APP).app),
     });
     const page = siblingOf(APP).links.host;
+    /* A MAIL NOTICE THE PAGE ASKS FOR: drawn natively, for this session's pairing only while it is the one that
+       stands, never on the iPhone, never while the app is in front (`notices/notice-door.ts`). */
+    const door = noticeDoor({
+      platform: Platform.OS, app: APP.app, native: notices, instance: session.profile.id,
+      live: () => standing.current === session,
+      permission: () => permission.current,
+      inFront: () => AppState.currentState === "active",
+    });
     const bridge: BridgeHost = new BridgeHost({
       post: (epoch, text) => void view.current?.post(epoch, text),
       config,
@@ -169,6 +192,13 @@ export function ShellScreen({ session }: { session: ShellSession }) {
           // The diagnostic file's sections are a closed set the shell has none in yet: refused, never an empty file.
           case "diagnostics.share":
             return { refused: "notReady" };
+          case "notices.post":
+            return door.post(a.notice);
+          // What the page's two switches say of the wake, for this session's pairing while it is the one
+          // that stands: the registration is kept or taken down by it (`state/wake.tsx`).
+          case "wake.want":
+            if (standing.current === session) wantWake.current(session.profile.id, a.wanted);
+            return {};
         }
       },
       openHeld: async (token) => (await view.current?.openHeld(token)) ?? false,
@@ -203,7 +233,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     });
     return bridge;
     // The host is one per session and scope: a new scope is a new page.
-  }, [session, scope]);
+  }, [session, scope, notices]);
 
   /* The facts, as they change: each one an event to the page that is open now. */
   useEffect(() => {

@@ -211,6 +211,8 @@ export default defineConfig({
          `jsonb_strip_nulls(jsonb_build_object(…))` — neither function exists here, so the
          scan branches and this run is what proves the device arm answers the same question. */
       "packages/services/test/consent-seed-headers-dialect.test.ts",
+      // The account's named devices on the settings record: the count, the stamp and the ring on the device store.
+      "packages/services/test/device-numbers-dialect.test.ts",
       // The first files OUTSIDE this package to run on the second store. Each one exercises a
       // module whose statements now go through the seam, and each was watched fail here with the
       // server's spelling restored — `no such function: now` on this store while the same

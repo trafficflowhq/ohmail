@@ -15,6 +15,20 @@ export type NoticePermission = "granted" | "denied" | "default" | "unsupported";
 export type SendStanding = "waiting" | "failed" | "draft";
 
 /**
+ * The account's named devices as its settings record says them: three whole numbers, and nothing
+ * else of a device. A named device is one the Devices list shows by name: a paired phone or browser,
+ * a desktop app.
+ */
+export interface NoticeDevices {
+  /** How many were ever made. Only rises: a rise is a new device, whatever else happened. */
+  readonly made: number;
+  /** How many of them a person took back in Devices. Only rises. */
+  readonly revoked: number;
+  /** How many are signed in now: what a person is shown. Nothing is decided from it. */
+  readonly live: number;
+}
+
+/**
  * What a device knows at one instant. Two of these, compared, are an event. Numbers and ids on
  * purpose: a sample that held the letters themselves would put mail text in the one place that
  * has no business holding any.
@@ -24,8 +38,8 @@ export interface NoticeSample {
   readonly screenerWaiting: number;
   /** Every draft that has not been sent, by its id. One that was waiting and is listed no more was sent. */
   readonly sends: ReadonlyMap<string, SendStanding>;
-  /** How many devices are paired with the account; `null` where this surface is not told. */
-  readonly devices: number | null;
+  /** The account's named devices; `null` where this surface is not told. */
+  readonly devices: NoticeDevices | null;
 }
 
 /**
