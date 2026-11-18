@@ -140,6 +140,7 @@ function removeEach(dataDir: string, names: readonly string[]): { bytes: number;
     try {
       removeOne(dataDir, name, tally);
     } catch {
+      /* Counted, not swallowed: every caller says `left` in its own line and keeps the removal owed. */
       left += 1;
     }
   }

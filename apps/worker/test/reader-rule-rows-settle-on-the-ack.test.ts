@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, organizerRequests, rules, settleReaderRuleRows, type Tx } from "@trafficflow/db";
-import { RulesService, type ServiceContext } from "@trafficflow/services";
+import { RulesService, dbFor, type ServiceContext } from "@trafficflow/services";
 import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -65,14 +65,14 @@ async function world(readerStamp: Date = t0) {
   const log: Array<{ event: string; detail: Record<string, unknown> }> = [];
   /** Send, apply on the organizer, read the ack — a reader cycle, an organizer cycle, a reader cycle. */
   const round = async (t: number) => {
-    await driveOutstandingRequests(reader, { mailboxId, accountId: ACCT, installId: READER.installId, adapter: readerIo, requestKey: KEY }, READER, at(t), () => undefined);
-    await applyMetaRequests(organizer, { mailboxId, accountId: ACCT, installId: "organizer-install", adapter: { requestOrganizerIo: () => m.organizer } as unknown as MailboxAdapter, requestKey: KEY }, at(t + 1), () => undefined);
-    await driveOutstandingRequests(reader, { mailboxId, accountId: ACCT, installId: READER.installId, adapter: readerIo, requestKey: KEY }, READER, at(t + 2), (event, detail) => { log.push({ event, detail }); });
+    await driveOutstandingRequests(dbFor(reader, ACCT), { mailboxId, accountId: ACCT, installId: READER.installId, adapter: readerIo, requestKey: KEY }, READER, at(t), () => undefined);
+    await applyMetaRequests(dbFor(organizer, ACCT), { mailboxId, accountId: ACCT, installId: "organizer-install", adapter: { requestOrganizerIo: () => m.organizer } as unknown as MailboxAdapter, requestKey: KEY }, at(t + 1), () => undefined);
+    await driveOutstandingRequests(dbFor(reader, ACCT), { mailboxId, accountId: ACCT, installId: READER.installId, adapter: readerIo, requestKey: KEY }, READER, at(t + 2), (event, detail) => { log.push({ event, detail }); });
   };
   const rowsOf = async (db: TestDb) => db.select({ match: rules.match, destination: rules.destination }).from(rules).where(eq(rules.accountId, ACCT));
   const stateOf = async (id: string) => (await reader.select().from(organizerRequests).where(eq(organizerRequests.id, id)))[0]!.state;
   /** The reader's own door, pressed at `now`. */
-  const door = (now: Date) => ({ db: reader, accountId: ACCT, userId: null, requestId: "r", now: () => now }) as ServiceContext;
+  const door = (now: Date) => ({ db: dbFor(reader, ACCT), accountId: ACCT, userId: null, requestId: "r", now: () => now }) as ServiceContext;
   return { reader, organizer, queue, round, rowsOf, stateOf, door, log };
 }
 const KEYED = { kind: "sender", match: "ann@shop.example", subjectContains: null, bodyContains: null };

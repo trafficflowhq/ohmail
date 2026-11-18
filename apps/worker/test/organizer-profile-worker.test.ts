@@ -8,6 +8,7 @@ import {
   recordProfileImportResolution, ruleRemovals, rules, tags,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
+import { bindDb } from "@trafficflow/db";
 import { StaticKeyProvider, createLogger } from "@trafficflow/core";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import {
@@ -79,19 +80,40 @@ async function seedMailbox(db: Db, accountId = randomUUID(), createdAt?: Date): 
  * transaction it opens. The marker is written inside `fencedAccountWrite`, so a proxy over the
  * outer handle alone never meets it and the retry cases would pass for the wrong reason.
  */
-function failingInserts(db: Db, fail: () => boolean): Db {
+function failingInserts(db: Db, fail: () => boolean): void {
   const wrap = <T extends object>(handle: T): T => new Proxy(handle, {
     get(target, prop, receiver) {
       if (prop === "insert" && fail()) return () => { throw new Error("transient database blip"); };
-      if (prop === "transaction") {
-        const open = Reflect.get(target, prop, receiver) as (cb: (t: object) => unknown, ...rest: unknown[]) => unknown;
-        return (cb: (t: object) => unknown, ...rest: unknown[]) => open.call(target, (t: object) => cb(wrap(t)), ...rest);
-      }
       return Reflect.get(target, prop, receiver);
     },
   });
-  return wrap(db);
+  hookOwn(db, "insert", (real) => (...a) => {
+    if (fail()) throw new Error("transient database blip");
+    return real(...a);
+  });
+  hookOwn(db, "transaction", (real) => (cb, ...rest) => real((t: object) => (cb as (t: object) => unknown)(wrap(t)), ...rest));
 }
+
+/**
+ * HOOK ONE METHOD OF A POOL'S OWN HANDLE, the one the binder knows: a handle bound over the pool (a
+ * view of it) reaches its statements through the hook, and `real` runs the pool's own method on the
+ * caller (the view), so the binding the view carries is the one its statement runs under. A hook
+ * over a proxy that is then bound would be bound in type and plain on the wire. A pool this makes
+ * hooks is the instrument's own (`makeDb(DB)` a second time), never the one the test reads through.
+ */
+function hookOwn(
+  pool: Db, prop: "select" | "insert" | "transaction",
+  make: (real: (...a: unknown[]) => unknown) => (...a: unknown[]) => unknown,
+): void {
+  const own = Reflect.get(pool, prop) as (...a: unknown[]) => unknown;
+  Object.defineProperty(pool, prop, {
+    configurable: true, writable: true,
+    value: function (this: object, ...a: unknown[]) { return make((...b: unknown[]) => own.apply(this, b))(...a); },
+  });
+}
+
+/** The handle an organizer's pass holds for its account, as the worker binds it (`scope.forAccount`). */
+const accountDb = (db: Db, accountId: string): Db => bindDb(db, { account: accountId });
 
 async function waitFor(pred: () => Promise<boolean>, ms = 20_000, step = 100): Promise<boolean> {
   const start = Date.now();
@@ -434,7 +456,7 @@ describe("the worker's portable profile write-behind", () => {
     // The user answers (a decline keeps local state — the ROUTING hold releases either way).
     // Routing reads the answer at every cycle edge (`importHoldNow`); a decline releases no
     // write hold, so it logs no `resolved` line to wait on.
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "declined", fingerprint: profileFingerprint(foreignDoc),
     });
@@ -843,7 +865,10 @@ describe("the worker's portable profile write-behind", () => {
     await db.insert(tags).values({ accountId: mb.accountId, name: "local-state", hue: "moss" });
 
     let failInserts = 1;
-    const flakyDb = failingInserts(db, () => failInserts > 0 && failInserts-- > 0);
+    // A second pool of the factory's, its inserts failing while told: the instrument's own.
+    const flaky = makeDb(DB);
+    failingInserts(flaky, () => failInserts > 0 && failInserts-- > 0);
+    const flakyDb = accountDb(flaky, mb.accountId);
 
     const adapter = fleet.factory(
       { host: "fake.invalid", port: 1143, secure: false, auth: { user: "u", pass: "p" }, sentDomain: "t" } as never,
@@ -1035,7 +1060,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       { accountId: mb.accountId, mailboxId: mb.mailboxId, onConnectionError: () => undefined },
     );
     return new OrganizerProfileSync({
-      db, accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
+      db: accountDb(db, mb.accountId), accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
       self: { installId: INSTALL, kind: "cloud" }, producerVersion: "dev", flushIntervalMs,
       ...(now === undefined ? {} : { now }),
       log: (event, detail) => { events.push(`${event} ${JSON.stringify(detail)}`); },
@@ -1088,7 +1113,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(sync.importDecisionOpen(), "unanswered ⇒ still open").toBe(true);
 
     // "Not now" settles ROUTING at once and keeps the WRITE hold: the declined document stays.
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", fingerprint,
     });
     expect(await holdOf(sync), "a decline closes the routing question").toBe("closed");
@@ -1097,7 +1122,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     // Not even one that re-arms onto the same document: `resolved` is the release, and it waits.
     expect(events.some((e) => e.includes("\"state\":\"resolved\"")), "a decline released the hold").toBe(false);
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "replaced", fingerprint,
     });
     // One pass well inside the debounce.
@@ -1205,7 +1230,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     const db = makeDb(DB);
     const mb = await seedMailbox(db);
     const fingerprint = await seedForeignDoc(fleet, mb.mailboxId);
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", fingerprint,
     });
     const events: string[] = [];
@@ -1252,7 +1277,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     // A STALE answer — a tab answering the REPLACED document A after the folder moved on to B —
     // must not release B's hold (review round 6: the old mailbox-wide since-valve did exactly
     // that). Only the exact subject releases.
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: await seedForeignDocFingerprint(),
     });
@@ -1260,7 +1285,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(sync.importDecisionOpen(), "an answer to the superseded document is not an answer to this one").toBe(true);
 
     // …and the answer for the REPLACEMENT (what the surface actually offers) releases it.
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
@@ -1294,7 +1319,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(sync.importDecisionOpen()).toBe(true);
 
     // The user dismisses ("organize with what you have") — the surface's newerV resolution.
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", newerV: PROFILE_VERSION + 1,
     });
     expect(await holdOf(sync), "the dismiss settles the ROUTING question at once").toBe("closed");
@@ -1363,7 +1388,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await sync.onOrganize(); // seed: hold + durable marker
     expect(await durableOpen(db, mb.accountId, mb.mailboxId),
       "a held marker with no answer is an open question, in any process").toBe(true);
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", fingerprint,
     });
     expect(await durableOpen(db, mb.accountId, mb.mailboxId),
@@ -1379,14 +1404,13 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     const mb = await seedMailbox(db);
     await seedForeignDoc(fleet, mb.mailboxId);
     let failSelects = 1;
-    const flakyDb = new Proxy(db, {
-      get(target, prop, receiver) {
-        if (prop === "select" && failSelects > 0) {
-          return () => { failSelects--; throw new Error("transient database blip"); };
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-    }) as typeof db;
+    // A second pool of the factory's, its first select failing: the instrument's own.
+    const flaky = makeDb(DB);
+    hookOwn(flaky, "select", (real) => (...a) => {
+      if (failSelects > 0) { failSelects--; throw new Error("transient database blip"); }
+      return real(...a);
+    });
+    const flakyDb = accountDb(flaky, mb.accountId);
     const adapter = fleet.factory(
       { host: "fake.invalid", port: 1143, secure: false, auth: { user: "u", pass: "p" }, sentDomain: "t" } as never,
       { accountId: mb.accountId, mailboxId: mb.mailboxId, onConnectionError: () => undefined },
@@ -1509,30 +1533,26 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     // indices.) Serialization reads other tables and is untouched.
     let auditReads = 0;
     let failFrom = Number.POSITIVE_INFINITY;
-    const flakyDb = new Proxy(db, {
-      get(target, prop, receiver) {
-        if (prop === "select") {
-          return (...args: unknown[]) => {
-            const builder = (target as unknown as { select: (...a: unknown[]) => unknown }).select(...args);
-            return new Proxy(builder as object, {
-              get(bt, bprop, br) {
-                if (bprop === "from") {
-                  return (tbl: unknown) => {
-                    if (tbl === auditLog) {
-                      auditReads++;
-                      if (auditReads >= failFrom) throw new Error("transient database blip");
-                    }
-                    return (bt as unknown as { from: (t: unknown) => unknown }).from(tbl);
-                  };
+    // A second pool of the factory's, its audit reads failing from `failFrom` on: the instrument's own.
+    const flaky = makeDb(DB);
+    hookOwn(flaky, "select", (real) => (...args: unknown[]) => {
+      const builder = real(...args);
+        return new Proxy(builder as object, {
+          get(bt, bprop, br) {
+            if (bprop === "from") {
+              return (tbl: unknown) => {
+                if (tbl === auditLog) {
+                  auditReads++;
+                  if (auditReads >= failFrom) throw new Error("transient database blip");
                 }
-                return Reflect.get(bt, bprop, br);
-              },
-            });
-          };
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-    }) as typeof db;
+                return (bt as unknown as { from: (t: unknown) => unknown }).from(tbl);
+              };
+            }
+            return Reflect.get(bt, bprop, br);
+          },
+        });
+    });
+    const flakyDb = accountDb(flaky, mb.accountId);
     const adapter = fleet.factory(
       { host: "fake.invalid", port: 1143, secure: false, auth: { user: "u", pass: "p" }, sentDomain: "t" } as never,
       { accountId: mb.accountId, mailboxId: mb.mailboxId, onConnectionError: () => undefined },
@@ -1641,7 +1661,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     ));
 
     // …and the STALE answer to A lands (the in-memory hold still keys A — no tick ran between).
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: seedForeignDocFingerprint(),
     });
@@ -1649,7 +1669,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await sync.onOrganize();
     expect(sync.importDecisionOpen(), "the release must arm the question the folder now asks").toBe(true);
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
@@ -1683,11 +1703,11 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       }),
       { installId: "someone-elses-mac" },
     ));
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "declined", fingerprint: profileFingerprint(replacement),
     });
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "replaced", fingerprint: fpA,
     });
 
@@ -1712,30 +1732,26 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     const meta = fleet.metaFor(mb.mailboxId);
     let auditReads = 0;
     let failFrom = Number.POSITIVE_INFINITY;
-    const flakyDb = new Proxy(db, {
-      get(target, prop, receiver) {
-        if (prop === "select") {
-          return (...args: unknown[]) => {
-            const builder = (target as unknown as { select: (...a: unknown[]) => unknown }).select(...args);
-            return new Proxy(builder as object, {
-              get(bt, bprop, br) {
-                if (bprop === "from") {
-                  return (tbl: unknown) => {
-                    if (tbl === auditLog) {
-                      auditReads++;
-                      if (auditReads >= failFrom) throw new Error("transient database blip");
-                    }
-                    return (bt as unknown as { from: (t: unknown) => unknown }).from(tbl);
-                  };
+    // A second pool of the factory's, its audit reads failing from `failFrom` on: the instrument's own.
+    const flaky = makeDb(DB);
+    hookOwn(flaky, "select", (real) => (...args: unknown[]) => {
+      const builder = real(...args);
+        return new Proxy(builder as object, {
+          get(bt, bprop, br) {
+            if (bprop === "from") {
+              return (tbl: unknown) => {
+                if (tbl === auditLog) {
+                  auditReads++;
+                  if (auditReads >= failFrom) throw new Error("transient database blip");
                 }
-                return Reflect.get(bt, bprop, br);
-              },
-            });
-          };
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-    }) as typeof db;
+                return (bt as unknown as { from: (t: unknown) => unknown }).from(tbl);
+              };
+            }
+            return Reflect.get(bt, bprop, br);
+          },
+        });
+    });
+    const flakyDb = accountDb(flaky, mb.accountId);
     const adapter = fleet.factory(
       { host: "fake.invalid", port: 1143, secure: false, auth: { user: "u", pass: "p" }, sentDomain: "t" } as never,
       { accountId: mb.accountId, mailboxId: mb.mailboxId, onConnectionError: () => undefined },
@@ -1761,7 +1777,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       }),
       { installId: "someone-elses-mac" },
     ));
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: seedForeignDocFingerprint(),
     });
@@ -1776,7 +1792,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     failFrom = Number.POSITIVE_INFINITY;
     await sync.onOrganize();
     expect(sync.importDecisionOpen(), "the retry completes the swap onto B").toBe(true);
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
@@ -1810,7 +1826,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await sync.onOrganize(); // the write meets the newer document
     expect(sync.importDecisionOpen(), "the newer question holds routing from the moment it is seen").toBe(true);
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", newerV: PROFILE_VERSION + 1,
     });
     await sync.onOrganize();
@@ -1851,7 +1867,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
 
     await sync.onOrganize(); // the debounced tick: convergence arm, folder re-read
     expect(sync.importDecisionOpen(), "the hold must swap to the replacement, not slip out").toBe(true);
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
@@ -1870,7 +1886,10 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await seedForeignDoc(fleet, mb.mailboxId);
     const meta = fleet.metaFor(mb.mailboxId);
     let failInserts = 0;
-    const flakyDb = failingInserts(db, () => failInserts > 0 && failInserts-- > 0);
+    // A second pool of the factory's, its inserts failing while told: the instrument's own.
+    const flaky = makeDb(DB);
+    failingInserts(flaky, () => failInserts > 0 && failInserts-- > 0);
+    const flakyDb = accountDb(flaky, mb.accountId);
     const adapter = fleet.factory(
       { host: "fake.invalid", port: 1143, secure: false, auth: { user: "u", pass: "p" }, sentDomain: "t" } as never,
       { accountId: mb.accountId, mailboxId: mb.mailboxId, onConnectionError: () => undefined },
@@ -1898,7 +1917,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       updatedAt: new Date("2026-08-02T00:00:00Z"), producer: { kind: "local", version: "0.9.3" },
     });
     await meta.appendProfile(formatProfileMessage(replacementDoc, { installId: "someone-elses-mac" }));
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: seedForeignDocFingerprint(),
     });
@@ -1987,7 +2006,10 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await seedForeignDoc(fleet, mb.mailboxId);
     const meta = fleet.metaFor(mb.mailboxId);
     let failInserts = 0;
-    const flakyDb = failingInserts(db, () => failInserts > 0 && failInserts-- > 0);
+    // A second pool of the factory's, its inserts failing while told: the instrument's own.
+    const flaky = makeDb(DB);
+    failingInserts(flaky, () => failInserts > 0 && failInserts-- > 0);
+    const flakyDb = accountDb(flaky, mb.accountId);
     const adapter = fleet.factory(
       { host: "fake.invalid", port: 1143, secure: false, auth: { user: "u", pass: "p" }, sentDomain: "t" } as never,
       { accountId: mb.accountId, mailboxId: mb.mailboxId, onConnectionError: () => undefined },
@@ -2020,7 +2042,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(sync.importDecisionOpen()).toBe(true);
 
     // The user answers B; the pass files the owed found(B), then the release's lapsed(B).
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
@@ -2047,7 +2069,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     const fingerprint = await seedForeignDoc(fleet, mb.mailboxId);
     expect(await holdOf(sync), "found, foreign, different, unanswered ⇒ open").toBe("document");
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", fingerprint,
     });
     expect(await holdOf(sync), "answered ⇒ closed, no tick needed").toBe("closed");
@@ -2151,7 +2173,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       "an armed hold is stronger evidence than a fallback that never evaluated").toBe("unreadable");
     io2.profileIo = realProfileIo;
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", newerV: PROFILE_VERSION + 1,
     });
     expect(await holdOf(sync), "dismissed ⇒ closed").toBe("closed");
@@ -2245,7 +2267,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await db.insert(tags).values({ accountId: mb.accountId, name: "local-cfg", hue: "moss" });
 
     await sync.onOrganize(); // seed: newer ⇒ wall + hold
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", newerV: PROFILE_VERSION + 1,
     });
     expect(await holdOf(sync)).toBe("closed"); // dismissed
@@ -2270,7 +2292,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(await durableOpen(db, mb.accountId, mb.mailboxId),
       "the question must be answerable — a held marker the surface can offer").toBe(true);
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "declined", fingerprint: profileFingerprint(replacement),
     });
@@ -2300,7 +2322,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(await durableOpen(db, mb.accountId, mb.mailboxId),
       "an open question must be answerable through the marker the surface reads").toBe(true);
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", fingerprint: fp,
     });
     expect(await holdOf(sync)).toBe("closed");
@@ -2324,7 +2346,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await sync.onOrganize(); // seed: hold + marker, and this install's settings written beside
     expect(meta.profileAppends).toBe(2); // the seeded foreign doc's, then ours
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", fingerprint,
     });
     for (let tick = 0; tick < 4; tick++) await sync.onOrganize();
@@ -2338,7 +2360,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
 
     // "Save this ohmail's settings to the mailbox": the explicit release. Two ticks: the release
     // writes nothing of its own (the stale-write window), the next one's tidy removes theirs.
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "replaced", fingerprint,
     });
     await sync.onOrganize();
@@ -2377,14 +2399,14 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(docs.map((d) => d.installId).sort(), "nobody was asked, so theirs stays beside ours")
       .toEqual([INSTALL, "someone-elses-mac"].sort());
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", fingerprint: fp,
     });
     for (let tick = 0; tick < 3; tick++) await sync.onOrganize();
     docs = profileDocs(fleet, mb.mailboxId);
     expect(docs.map((d) => d.installId), "a decline keeps it").toContain("someone-elses-mac");
 
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "replaced", fingerprint: fp,
     });
     await sync.onOrganize();
@@ -2454,7 +2476,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       updatedAt: new Date("2026-08-02T00:00:00Z"), producer: { kind: "local", version: "0.9.3" },
     });
     await meta.appendProfile(formatProfileMessage(docB, { installId: "someone-elses-mac" }));
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "replaced",
       fingerprint: profileFingerprint(payloadB),
     });
@@ -2493,7 +2515,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     const sync = directSync(db, fleet, mb, []);
     const meta = fleet.metaFor(mb.mailboxId);
     await sync.onOrganize(); // hold
-    await recordProfileImportResolution(db, {
+    await recordProfileImportResolution(accountDb(db, mb.accountId), {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "replaced", fingerprint,
     });
 
@@ -2599,10 +2621,13 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     // The database refuses audit inserts until told otherwise — the transient blip, held open — from
     // after the first write: a write whose record is refused appends nothing.
     let failing = false;
-    const flakyDb = failingInserts(db, () => failing);
+    // A second pool of the factory's, its inserts failing while told: the instrument's own.
+    const flaky = makeDb(DB);
+    failingInserts(flaky, () => failing);
+    const flakyDb = accountDb(flaky, mb.accountId);
 
     const events: string[] = [];
-    const sync = directSync(flakyDb, fleet, mb, events);
+    const sync = directSync(flaky, fleet, mb, events);
     const meta = fleet.metaFor(mb.mailboxId);
 
     await sync.onOrganize(); // seed (none found) + first flush: our own document
@@ -2910,7 +2935,7 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
       { accountId: mb.accountId, mailboxId: mb.mailboxId, onConnectionError: () => undefined },
     );
     return new OrganizerProfileSync({
-      db, accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
+      db: accountDb(db, mb.accountId), accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
       self: { installId: INSTALL, kind: "cloud" }, producerVersion: "dev", flushIntervalMs: 0, now,
       ...(tidyMode === undefined ? {} : { tidyMode }),
       log: (event, detail) => { events.push(`${event} ${JSON.stringify(detail)}`); },

@@ -5,11 +5,11 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, sql } from "drizzle-orm";
 import { accounts, drafts, mailboxes, outboundSends, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
-import { SendService } from "../src/index.js";
+import { SendService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { deleteAccount } from "../src/account-deletion-service.js";
 import { accountScopedTables, EXPIRED_NOT_DELETED, RETAINED, rowsOf, type Db } from "./helpers/erasure-fixture.js";
@@ -58,19 +58,26 @@ type Settled<T> = { ok: true; v: T } | { ok: false; e: unknown };
 const settled = <T>(p: Promise<T>): Promise<Settled<T>> =>
   p.then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, e }));
 
-/** One party of a race: its own pool under its own application name, and every error a transaction of it ended on. */
+/**
+ * One party of a race: a pool of the factory's under its own application name (a parameter of the
+ * address is one of the connection), and every error a transaction of it ended on. The recorder
+ * sits on the pool's own handle, the one the binder knows, so the account's handle bound over it
+ * opens its transactions through it.
+ */
 function party(name: string) {
   const app = `${name}-${randomUUID().slice(0, 8)}`;
-  const client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, connection: { application_name: app } });
-  const db = brandDialect(drizzle(client, { schema }), "pg");
+  const address = new URL(PG_TEST_URL);
+  address.searchParams.set("application_name", app);
+  const owned = makeOwnedDb(address.toString());
   const ended: string[] = [];
-  const h = db as unknown as { transaction: (fn: unknown, ...rest: unknown[]) => Promise<unknown> };
-  const inner = h.transaction.bind(h);
-  Object.defineProperty(h, "transaction", {
+  const transaction = owned.db.transaction;
+  Object.defineProperty(owned.db, "transaction", {
     configurable: true, writable: true,
-    value: (fn: unknown, ...rest: unknown[]) => inner(fn, ...rest).catch((e: unknown) => { ended.push(codeOf(e)); throw e; }),
+    value: function (this: unknown, fn: Parameters<typeof transaction>[0], config?: Parameters<typeof transaction>[1]) {
+      return transaction.call(this as typeof owned.db, fn, config).catch((e: unknown) => { ended.push(codeOf(e)); throw e; });
+    },
   });
-  return { app, client, db, ended };
+  return { app, owned, ended };
 }
 type Party = ReturnType<typeof party>;
 
@@ -157,7 +164,7 @@ async function world() {
     to: [{ name: null, address: `you-${accountId.slice(0, 8)}@erasure.test` }], status: "draft", createdAt: NOW, updatedAt: NOW,
   }).returning();
   const ctx = (p: Party): ServiceContext =>
-    ({ db: p.db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: p.app });
+    ({ db: dbFor(p.owned.db, accountId), accountId, userId: null, now: () => NOW, requestId: p.app });
   return { accountId, draftId: d!.id, ctx };
 }
 type World = Awaited<ReturnType<typeof world>>;
@@ -235,8 +242,8 @@ describe.skipIf(!PG_UP)("a late delivery's settle against the account's erasure"
         endedOn: [], press: "sent", swept: { sends: 1, drafts: 1, contacts: 0 }, standing: [], stamped: true,
       });
     } finally {
-      await sender.client.end({ timeout: 5 });
-      await eraser.client.end({ timeout: 5 });
+      await sender.owned.close();
+      await eraser.owned.close();
     }
   }, 60_000);
 
@@ -265,8 +272,8 @@ describe.skipIf(!PG_UP)("a late delivery's settle against the account's erasure"
       });
     } finally {
       await third.end();
-      await sender.client.end({ timeout: 5 });
-      await eraser.client.end({ timeout: 5 });
+      await sender.owned.close();
+      await eraser.owned.close();
     }
   }, 60_000);
 
@@ -297,8 +304,8 @@ describe.skipIf(!PG_UP)("a late delivery's settle against the account's erasure"
       });
     } finally {
       await third.end();
-      await sender.client.end({ timeout: 5 });
-      await eraser.client.end({ timeout: 5 });
+      await sender.owned.close();
+      await eraser.owned.close();
     }
   }, 60_000);
 });

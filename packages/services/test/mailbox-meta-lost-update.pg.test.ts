@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { accounts, mailboxCredentials, UNMETERED_ACCESS, type AccessVerdict } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core";
@@ -53,10 +52,10 @@ import { makeMailboxService, ServiceError, type ServiceContext } from "@trafficf
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 const sleep = (ms: number): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
@@ -87,7 +86,7 @@ const slowSvc = makeMailboxService({
 });
 
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
-  ({ db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 const HOST_A = "imap.a.test";
 const HOST_B = "imap.b.test";
@@ -107,7 +106,7 @@ const PROBE_OK = {
 };
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await ownedA.close(); await ownedB.close(); });
 
 describe.skipIf(!PG_UP)("a concurrent credential PATCH never restores a superseded transport config", () => {
   async function seeded(): Promise<{ accountId: string; mailboxId: string }> {

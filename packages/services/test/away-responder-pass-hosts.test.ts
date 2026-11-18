@@ -155,6 +155,8 @@ describe("the away responder's pass runs on exactly the three hosts that can dia
     const callers = [
       ...sources("apps"), ...sources("packages"),
     ].filter((p) => !p.includes("node_modules") && !p.includes("/dist/") && !/\.test\.tsx?$/.test(p))
+      // A test folder holds no host: a fixture that runs the pass is a test of it, not a door.
+      .filter((p) => !/[\\/]test[\\/]/.test(p))
       .filter((p) => !isEnginePart(p))
       .filter((p) => !p.endsWith("away-responder-pass.ts"))      // the definition itself
       .filter((p) => !p.endsWith("packages/services/src/index.ts"))   // the two barrels

@@ -13,7 +13,7 @@ import type { OrganizerRole } from "@trafficflow/db";
 import { runSyncCycle } from "@ohmail/organizer/sync";
 import { screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
 import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
-import { materializeMessages, releaseHeld } from "@trafficflow/services/mail";
+import { dbFor, materializeMessages, releaseHeld, type Db as ServicesDb } from "@trafficflow/services/mail";
 import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
@@ -385,7 +385,7 @@ describe("only a person's press consents a brand under a list address", () => {
       await w.db.update(folderState).set({ desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us" })
         .where(eq(folderState.messageId, id));
     }
-    const ctx = { db: w.db as never, accountId: w.accountId, userId: null, now: () => new Date(), requestId: `l026-${randomUUID().slice(0, 8)}` };
+    const ctx = { db: dbFor(w.db as unknown as ServicesDb, w.accountId), accountId: w.accountId, userId: null, now: () => new Date(), requestId: `l026-${randomUUID().slice(0, 8)}` };
     const r = await releaseHeld(ctx, { senders: [LIST] });
     expect([r.total, await w.desiredOf(post.id)]).toEqual([1, "INBOX"]);
     expect(await w.desiredOf(claim.id), "the offer never counted the claim").toBe("ohmail/Screener");

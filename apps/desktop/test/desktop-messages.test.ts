@@ -263,10 +263,24 @@ const ACCOUNT_ONLY: Record<string, string> = {
   security: "the Security pane: the window's Security is the card",
 };
 
+/**
+ * ── THE PHONE'S DOOR PAGE IS SCANNED, AND THE DESKTOP MOUNTS NONE OF IT ─────────────────────────────────────────────
+ *
+ * The phone's ways in (`packages/app/src/phone-door`) are drawn on the phone's own door page alone
+ * (`apps/mobile/web`, by `@ohmail/app/phone-door`); neither of the desktop's entries imports them. As the doors'
+ * exception, it covers that folder alone.
+ */
+const PHONE_DOOR = "packages/app/src/phone-door/";
+const PHONE_DOOR_ONLY: Record<string, string> = {
+  phoneDoor: "the phone's ways in and its form's words: drawn on the phone's door page, never in the window",
+  phoneRefusal: "what the phone's native side refused, said by its code: the phone's door page alone",
+};
+
 /** Each folder whose namespaces are read and not shipped, with its exceptions. */
 const ONLY_IN: readonly (readonly [string, Record<string, string>])[] = [
   [DOORS, DOOR_ONLY],
   [ACCOUNT, ACCOUNT_ONLY],
+  [PHONE_DOOR, PHONE_DOOR_ONLY],
 ];
 
 /**
@@ -462,8 +476,8 @@ describe("desktop message filter", () => {
        list or by the subset one, and a namespace on NEITHER is the omission this guard exists
        for — a raw key in front of a user. Concatenated rather than made optional: a subset entry
        for a namespace nobody reads is dead payload and this still catches it. The doors' own
-       namespaces and the account panes' are read and not shipped ({@link DOOR_ONLY},
-       {@link ACCOUNT_ONLY}); an exception nobody reads is red here as well, and one read outside
+       namespaces, the account panes' and the phone door's are read and not shipped ({@link DOOR_ONLY},
+       {@link ACCOUNT_ONLY}, {@link PHONE_DOOR_ONLY}); an exception nobody reads is red here as well, and one read outside
        its folder is red by `unexplained`. */
     expect(unexplained(reads)).toEqual([]);
     expect(used).toEqual(
@@ -472,6 +486,7 @@ describe("desktop message filter", () => {
         ...Object.keys(SHELL_MESSAGE_KEYS),
         ...Object.keys(DOOR_ONLY),
         ...Object.keys(ACCOUNT_ONLY),
+        ...Object.keys(PHONE_DOOR_ONLY),
       ].sort(),
     );
   });

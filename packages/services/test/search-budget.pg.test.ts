@@ -5,7 +5,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql, type SQL } from "drizzle-orm";
 import { brandDialect, pgDialect } from "@trafficflow/db/dialect";
-import { schema } from "@trafficflow/db/cloud";
+import { closePooledDbs, makePooledDb, schema } from "@trafficflow/db/cloud";
 import {
   NOTHING_OPENS, ensureHotPathIndexes, ensureSearchExtensions, ensureWordIndex, migrateToOldHeads, retireOldSearch, runMigrations,
 } from "@trafficflow/db/admin";
@@ -45,7 +45,6 @@ import {
 pgTestUrl(import.meta.url);
 /** The file's store, and its connection, closed while a cold copy of it is made and opened again ({@link connect}). */
 const store = throwawayDb("search_budget");
-let client: ReturnType<typeof postgres> | undefined;
 let base: BudgetHandle;
 const BUDGET_MS = 100;
 const N = 74_000;
@@ -57,18 +56,27 @@ const A_SALT = "budget-a";
 let dialled = store.url;
 /** Every statement the service sends, as `search-budget-fixture`'s recorder sees it. */
 const seen: SQL[] = [];
-let db: BudgetHandle;
+/**
+ * `url` with parallel workers off on every connection its pool dials (a pooled connection idle for a
+ * second is closed, and a session's `set` with it), under the name `as`: the factory keeps one pool
+ * an address, so the file's one-connection pool and production's four-connection one are two.
+ */
+function addressOf(url: string, as: string): string {
+  const u = new URL(url);
+  u.searchParams.set("max_parallel_workers_per_gather", "0");
+  u.searchParams.set("application_name", as);
+  return u.toString();
+}
 /**
  * A new connection to the store, and a handle no search has asked yet, as an API's is at its start:
- * the service reads once a handle what the store carries.
+ * the service reads once a handle what the store carries. The factory's pool narrowed to one
+ * connection: a session's settings and the account's handle bound over it share it.
  */
 async function connect(url?: string): Promise<void> {
   if (url !== undefined) dialled = url;
-  await client?.end({ timeout: 5 });
-  client = postgres(dialled, { max: 1, onnotice: () => { /* quiet */ } });
-  base = brandDialect(drizzle(client, { schema }), "pg");
-  db = recording(base, seen);
-  await base.execute(sql`set max_parallel_workers_per_gather = 0`);
+  await closePooledDbs();
+  bound.clear();
+  base = makePooledDb(addressOf(dialled, "search-budget"), { max: 1 });
 }
 
 // A skewed vocabulary — word k = floor(5000 · u⁴) — so `w1` is in almost every body and `w3000`
@@ -202,7 +210,7 @@ async function plantStore(): Promise<void> {
  */
 async function backfillA(): Promise<void> {
   await base.execute(sql`set statement_timeout = '600s'`);
-  expect((await searchIndexBackfillPass({ db: base as never, accountId: A, batch: 2_000, rounds: 1_000 })).marked).toBe(true);
+  expect((await searchIndexBackfillPass({ db: dbFor(base, A) as never, accountId: A, batch: 2_000, rounds: 1_000 })).marked).toBe(true);
   expect(await retireOldSearch(base, { concurrently: false }))
     .toEqual({ columns: "gone", trigger: "absent", gin: "dropped", owedAccounts: 0, owedLetters: 0 });
   await settle();
@@ -275,8 +283,16 @@ const KEY_FUNCTION_CALL = "messages_recipient_keys(";
  */
 interface PersonCase { name: string; q: string; filters: SearchFilters; account?: string; buffers?: number; rows?: number }
 
+/**
+ * Each account's handle, bound over the file's pool, its statements recorded into {@link seen}: one
+ * a pool, as the recorder over the pool was. The service keeps what it read of the store by its
+ * handle's pool, and a recorder around a bound view is a handle of its own.
+ */
+const bound = new Map<string, ServiceContext["db"]>();
 function ctx(accountId: string = A): ServiceContext {
-  return { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-09-23T12:00:00Z"), requestId: "search-budget" };
+  let db = bound.get(accountId);
+  if (db === undefined) bound.set(accountId, db = recording(dbFor(base, accountId), seen));
+  return { db, accountId, userId: null, now: () => new Date("2026-09-23T12:00:00Z"), requestId: "search-budget" };
 }
 
 /** The shared buffers (hit and read) a statement touched as it ran, under the session settings. */
@@ -373,6 +389,12 @@ const MATRIX = matrixCells(N).map((c) => ({ ...c, q: "" }));
 
 /** The round trip `latent` waits before each statement in production's shape. */
 const RTT_MS = 8;
+/**
+ * Production's pool over the file's store: the factory's pooled handle, four connections. Closed with
+ * the file's own whenever that is dialled again ({@link connect}), so a far case after the backfill
+ * reads the store through a handle no search has asked yet.
+ */
+const farPool = (): BudgetHandle => makePooledDb(addressOf(store.url, "search-budget-far"), { max: 4 });
 const p95Of = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b); return s[Math.ceil(s.length * 0.95) - 1]!; };
 
 /**
@@ -490,7 +512,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   }, 900_000);
 
   afterAll(async () => {
-    await client?.end({ timeout: 5 });
+    await closePooledDbs();
     await store.drop();
   }, 900_000);
 
@@ -513,7 +535,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       const count = { n: 0 };
       const over: string[] = [];
       for (const c of cases) {
-        const at = { ...ctx(c.account), db: latent(base as object, 0, count) as never };
+        const at = { ...ctx(c.account), db: latent(dbFor(base, c.account ?? A), 0, count) };
         await svc.search(at, { q: c.q, filters: c.filters, parts: "page" });
         count.n = 0;
         const r = await svc.search(at, { q: c.q, filters: c.filters, parts: "page" });
@@ -714,9 +736,8 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       const svc = new SearchService();
       const count = { n: 0 };
       // Production's client over the same database: the pooler's `prepare: false`, four connections.
-      const pooled = postgres(store.url, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
-      const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, RTT_MS, count);
-      const at = { ...ctx(), db: far as never };
+      const far = latent(dbFor(farPool(), A), RTT_MS, count);
+      const at = { ...ctx(), db: far };
       for (const q of WORDS) await found(svc, at, q);
       // The fewest statements any read of a query paid: the round trip every one of them waited.
       const fewest: Record<string, number> = {};
@@ -735,7 +756,6 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
         return p95;
       }, (q) => RTT_MS * fewest[q]!);
       console.log(`search-budget ${before}far: ${count.n} statements a page`);
-      await pooled.end({ timeout: 5 });
       for (const q of WORDS) judge(best[q]!, `${before}far ${q}`);
     }, 600_000);
 
@@ -769,9 +789,8 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   it(`the query harness in production's shape: every class's page and count inside ${BUDGET_MS} ms at p95, 8 ms a statement`, async () => {
     const svc = new SearchService();
     const count = { n: 0 };
-    const pooled = postgres(store.url, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
-    const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, RTT_MS, count);
-    const at = { ...ctx(D), db: far as never };
+    const far = latent(dbFor(farPool(), D), RTT_MS, count);
+    const at = { ...ctx(D), db: far };
     for (const h of HARNESS) await svc.search(at, { q: h.q!, parts: "page" });
     // The same pages with no round trip: the database's and the service's own share of the budget.
     const near = HARNESS.map(() => [] as number[]);
@@ -808,7 +827,6 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       const [cls, part] = figure.split(" ");
       return RTT_MS * Math.min(...seenOf.filter((_, i) => HARNESS[i]!.cls === cls).flatMap((r) => (part === "page" ? r.statements : r.counts)));
     });
-    await pooled.end({ timeout: 5 });
     for (const cls of CLASSES) {
       const of = seenOf.filter((_, i) => HARNESS[i]!.cls === cls);
       const statements = of.flatMap((r) => r.statements);
@@ -1090,7 +1108,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const pages: Array<{ label: string; page: SQL; session: SQL[] }> = [];
     for (const c of MATRIX.filter((x) => MATRIX_COLD[x.label] !== undefined)) pages.push({ label: c.label, ...(await pageOf(c.q, c.filters)) });
     // Nothing may be connected to the database while it is copied.
-    await client!.end({ timeout: 5 });
+    await closePooledDbs();
     const read: string[] = [];
     const over: string[] = [];
     try {
@@ -1124,8 +1142,8 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   it(`the address arm, every direction, answers inside ${BUDGET_MS} ms at p95 and scans no table`, async () => {
     const svc = new SearchService();
     const count = { n: 0 };
-    const counting = latent(base as object, 0, count);
-    const at = { ...ctx(), db: counting as never };
+    const counting = latent(dbFor(base, A), 0, count);
+    const at = { ...ctx(), db: counting };
     const statements: Record<string, number> = {};
     for (const c of ADDRESS_CLASSES) {
       count.n = 0;
@@ -1172,7 +1190,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const living = N - MATRIX_DELETED.length;
     for (const [acct, done, total, most] of [[A, 0, N, 0], [D, living, living, N]] as const) {
       seen.length = 0;
-      expect(await searchIndexProgress(db as never, acct)).toEqual({ done, total });
+      expect(await searchIndexProgress(ctx(acct).db as never, acct)).toEqual({ done, total });
       expect(seen).toHaveLength(1);
       const nodes = await planNodes(seen[0]!, [pgDialect().search.searchSession({ preferIndexes: true })!], base);
       const read = nodes.filter((p) => p["Relation Name"] === "message_search")
@@ -1242,8 +1260,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       await seedPeople(Q, Q_N);
     }, 900_000);
     afterAll(async () => {
-      await client?.end({ timeout: 5 });
-      client = undefined;
+      await closePooledDbs();
       await qStore.drop();
     }, 900_000);
     personCases("Q, ", LARGE_ALONE);

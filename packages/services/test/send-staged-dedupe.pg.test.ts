@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { accounts, mailboxes, drafts, outboundSends } from "@trafficflow/db";
-import { schema, type AttachmentStagingStorage } from "@trafficflow/db/cloud";
+import { type AttachmentStagingStorage, makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
@@ -66,7 +65,8 @@ import type { ServiceContext } from "../src/index.js";
 const PG_UP = await realPgAvailable();
 
 const sql = postgres(PG_TEST_URL, { max: 5, onnotice: () => {} });
-const db = brandDialect(drizzle(sql, { schema }), "pg");
+const owned = makeOwnedDb(PG_TEST_URL);
+const db = owned.db;
 
 const NOW = new Date("2026-08-14T12:00:00.000Z");
 const svc = new SendService();
@@ -156,6 +156,7 @@ afterAll(async () => {
     await sql`delete from accounts where id = any(${created}::uuid[])`;
   }
   await sql.end({ timeout: 5 });
+  await owned.close();
 });
 
 describe.skipIf(!PG_UP)("SEC3-NEW-3 — a repeated staged ticket, against real Postgres", () => {
@@ -179,7 +180,7 @@ describe.skipIf(!PG_UP)("SEC3-NEW-3 — a repeated staged ticket, against real P
       smtpMaxSizeBytes,
     }).returning();
     const ctx: ServiceContext = {
-      db: db as unknown as ServiceContext["db"],
+      db: dbFor(db, accountId),
       accountId, userId: null, now: () => NOW, requestId: "r",
     };
     const bucket = countingStorage();

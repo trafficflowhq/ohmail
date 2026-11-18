@@ -9,7 +9,7 @@ import {
 import { applyScreenerDecision, changeLog, contacts, learningSignals, listAddresses } from "@trafficflow/db";
 import { CAP_CONFIDENCE, createLogger } from "@trafficflow/core/mail";
 import type { ClassifierPort, ClassifierResult } from "@trafficflow/core";
-import { autoFiledSummary, undoAutoFiled, type ServiceContext } from "@trafficflow/services";
+import { autoFiledSummary, undoAutoFiled, type ServiceContext, dbFor, type Db as ServicesDb } from "@trafficflow/services";
 import {
   plannedDecision, screenerActConsentFrom, screenerAutoActPass, SCREENER_ACT_DENY_BAR, type ScreenerActConsent,
 } from "@ohmail/organizer/screener-auto-act";
@@ -461,7 +461,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
   const act = (w: World) => screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
   /** The person's own request, for Put back. */
   const ctxOf = (w: World): ServiceContext =>
-    ({ db: db as never, accountId: w.accountId, userId: null, now: () => new Date(), requestId: "act-put-back" });
+    ({ db: dbFor(db as unknown as ServicesDb, w.accountId), accountId: w.accountId, userId: null, now: () => new Date(), requestId: "act-put-back" });
 
   it("MUTATION-WATCH (j): a Spam deny bought on a forged letter files that letter alone and writes no rule", async () => {
     const w = await newWorld();

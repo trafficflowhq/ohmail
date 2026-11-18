@@ -6,7 +6,7 @@ import { carryDialect } from "@trafficflow/db/dialect";
 import { accountLifecycleNotices, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import type { ServiceContext } from "@trafficflow/services";
+import { dbFor, type ServiceContext } from "@trafficflow/services";
 import { reopenedCatchUp, resumeAfterReopen } from "../src/account-reopen.js";
 import type { ApiDeps } from "../src/deps.js";
 
@@ -50,8 +50,10 @@ describe.skipIf(!AVAILABLE)("the reopening door on real Postgres", () => {
       organizerRole: "reader", organizeConsentedAt: new Date("2026-08-01T00:00:00.000Z"),
       syncBlockedReason: "account_closed", syncBlockedSince: PARKED, ...extra,
     }).returning({ id: mailboxes.id }))[0]!.id;
-    const deps = { db, now: () => NOW } as unknown as ApiDeps;
-    const ctx = { accountId, db, now: () => NOW } as unknown as ServiceContext;
+    // The route's request, signed in: its container's handle and its context's, bound to the account.
+    const bound = dbFor(db, accountId);
+    const deps = { db: bound, now: () => NOW } as unknown as ApiDeps;
+    const ctx = { accountId, db: bound, now: () => NOW } as unknown as ServiceContext;
     return {
       accountId, deps, ctx,
       walled: await row({ organizerParkedAt: PARKED, organizerReleasedAt: PARKED }),
@@ -144,8 +146,9 @@ describe.skipIf(!AVAILABLE)("the reopening door on real Postgres", () => {
       });
       await holding;
       const doorDb = open(`reopen-door-${tag}`, { enable_indexscan: "off", enable_bitmapscan: "off" });
-      const reopened = resumeAfterReopen({ db: doorDb, now: () => NOW } as unknown as ApiDeps,
-        { accountId, db: doorDb, now: () => NOW } as unknown as ServiceContext);
+      const doorBound = dbFor(doorDb, accountId);
+      const reopened = resumeAfterReopen({ db: doorBound, now: () => NOW } as unknown as ApiDeps,
+        { accountId, db: doorBound, now: () => NOW } as unknown as ServiceContext);
       await untilWaiting(`reopen-door-${tag}`);
       const decideDb = open(`reopen-decide-${tag}`);
       const decided = decideDb.transaction(async (raw) => lockAccountMailboxes(carryDialect(decideDb, raw as object) as unknown as Tx, accountId))

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -32,7 +33,7 @@ async function seed() {
   }).returning();
   let tick = 0;
   const ctx: ServiceContext = {
-    db: db as never, accountId, userId: null, now: () => new Date(T + ++tick), requestId: `cs-${randomUUID().slice(0, 8)}`,
+    db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(T + ++tick), requestId: `cs-${randomUUID().slice(0, 8)}`,
   };
   let n = 0;
   const changed = (entityType: "message" | "rule", entityId: string, op: "create" | "move" | "update") =>

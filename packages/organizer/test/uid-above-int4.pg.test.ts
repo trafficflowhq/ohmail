@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import {
-  accounts, contacts, mailboxes, mailboxProfileMirror, messageFailures, messageInstances,
+  accounts, bindDb, contacts, mailboxes, mailboxProfileMirror, messageFailures, messageInstances,
 } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
@@ -113,7 +113,8 @@ describe.skipIf(!PG_UP)("a uid above 2^31 on every worker writer", () => {
       screener: [], rules: [], notifyRules: [], tagNames: [], awayResponder: null, signature: "",
     };
     const out = await applyProfileRead(
-      { db: owned.db as never, accountId: w.accountId, mailboxId: w.mailboxId, now: NOW, log: () => {} },
+      // The account's mirror, written on the account's handle.
+      { db: bindDb(owned.db, { account: w.accountId }) as never, accountId: w.accountId, mailboxId: w.mailboxId, now: NOW, log: () => {} },
       { state: "found", doc: doc as never, installId: "cloud-u32", ref: BIG_UID, generation: 1757000000, residue: 0 },
     );
     expect(out).toMatchObject({ state: "written", uid: BIG_UID });

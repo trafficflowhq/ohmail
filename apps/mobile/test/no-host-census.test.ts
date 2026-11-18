@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -299,6 +299,23 @@ const FORBIDDEN_FILE = (file: string): boolean => {
 };
 
 /**
+ * A workspace package's own `exports` subpath that no alias line names (`@ohmail/app-logic/mailboxes/connect/…`,
+ * three segments deep): the run resolves it by the package's manifest, so the census reads that manifest too and
+ * walks the source file its `ohmail-source` condition names. `null` for anything the manifest does not export.
+ */
+function exportedSource(spec: string): string | null {
+  const m = /^(@[a-z-]+\/[a-z-]+)\/(.+)$/.exec(spec);
+  if (m === null || !(spec.startsWith(`${SCOPE}/`) || spec.startsWith("@ohmail/"))) return null;
+  const dir = join(REPO, "node_modules", m[1]!);
+  if (!existsSync(join(dir, "package.json"))) return null;
+  const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { exports?: Record<string, unknown> };
+  const entry = manifest.exports?.[`./${m[2]}`];
+  const source = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>)["ohmail-source"] : null;
+  if (typeof source !== "string" || !existsSync(join(dir, source))) return null;
+  return realpathSync(join(dir, source));
+}
+
+/**
  * Resolve to a source file, `"external"` (npm/node) or `null` (a workspace edge nobody mapped). A
  * relative `.json` import of a file that exists resolves to that data file, which `crawl` walks as a
  * leaf; of a file that does not exist, it is an unresolved edge like any other.
@@ -334,6 +351,8 @@ function resolveSpec(
     if (!existsSync(file)) unresolved.add(`${rel(fromFile)} → ${spec}`);
     return existsSync(file) ? file : null;
   }
+  const exported = exportedSource(spec);
+  if (exported !== null) return exported;
   if (spec.startsWith(`${SCOPE}/`) || spec.startsWith("@ohmail/")) {
     unresolved.add(`${rel(fromFile)} → ${spec}`);
     return null;
@@ -694,11 +713,24 @@ const CONDITION_IN_SIBLING: Record<string, readonly string[]> = {
   doorPhoneSay: ["doorPhoneNeedIos", "doorPhoneNeedAndroid"],
 };
 
+/**
+ * ═══ THE CLAUSE WHOSE CONDITION IS THE SURFACE IT IS DRAWN ON ═══════════════════════════════════
+ *
+ * `notifBody` is the body of the notification the organizing service posts (`organizerNoticeBody`, posted by the
+ * native organizer session). Android shows it only while that service runs, which is only while this phone organizes
+ * its own mailbox, and the stop stands beside it. The surface is the condition. The licence names the ONE file that
+ * draws the key, and its case below holds that no other file of the app reads it: moved to a screen, the sentence
+ * would be a promise, and §4 would read it red again.
+ */
+const CONDITION_IN_PLACE: Record<string, string> = {
+  notifBody: "src/engine/organizer-notice.ts",
+};
+
 /** Every promise clause the licensed keys produce, in both decks — the exact licensed text. */
 function licensedClauses(): Set<string> {
   const out = new Set<string>();
   for (const deck of Object.values(DECKS)) {
-    for (const key of Object.keys(CONDITION_IN_SIBLING)) {
+    for (const key of [...Object.keys(CONDITION_IN_SIBLING), ...Object.keys(CONDITION_IN_PLACE)]) {
       const value = (deck as unknown as Record<string, unknown>)[key];
       if (typeof value !== "string") continue;
       for (const clause of organizingPromises(value)) out.add(clause);
@@ -708,6 +740,17 @@ function licensedClauses(): Set<string> {
 }
 
 describe("§4 the sentence — no copy promises that this phone organizes", () => {
+  it("a key licensed by its surface is drawn by that one file and by no other", () => {
+    const readers = (key: string): string[] =>
+      [...walk(join(APP, "src")), ...walk(join(APP, "app"))]
+        .filter((f) => !/[\\/]copy\.(en|de)\.ts$/.test(f))
+        .filter((f) => new RegExp(`\\.${key}\\b`).test(stripComments(readFileSync(f, "utf8"))))
+        .map((f) => relative(APP, f));
+    for (const [key, drawnBy] of Object.entries(CONDITION_IN_PLACE)) {
+      expect(readers(key), `${key} is drawn somewhere its surface is not the condition`).toEqual([drawnBy]);
+    }
+  });
+
   for (const [locale, file] of Object.entries(DECK_FILES)) {
     const strings = deckStrings(file);
 

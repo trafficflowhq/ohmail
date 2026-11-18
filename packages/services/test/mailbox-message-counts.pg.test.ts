@@ -10,6 +10,7 @@ import { accounts, mailboxes, messages } from "@trafficflow/db";
 import { makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { MailboxService } from "../src/mailbox-service.js";
 import { dbFor, type ServiceContext } from "../src/context.js";
+import { statementSeam } from "./helpers/statement-seam.js";
 
 /**
  * HOW MANY MESSAGES ARE IN EACH MAILBOX, and the two things that number may not cost.
@@ -79,8 +80,12 @@ describe.skipIf(!AVAILABLE)("per-mailbox message counts", () => {
 
   beforeEach(() => { sent.length = 0; });
 
-  const ctxFor = (accountId: string): ServiceContext =>
-    ({ db: dbFor(owned!.db, accountId), accountId, userId: null, now: () => new Date(), requestId: "r" });
+  /* The census rides the context's own handle: a seam at the drizzle builder of the account's
+     handle sees each statement the service sends, by its text, as `logQuery` saw it on the raw one. */
+  const ctxFor = (accountId: string): ServiceContext => ({
+    db: statementSeam(dbFor(owned!.db, accountId), (text) => { sent.push(text); return null; }),
+    accountId, userId: null, now: () => new Date(), requestId: "r",
+  });
 
   /** An account with `n` mailboxes; returns its id and its mailbox ids in `list` order. */
   async function seedAccount(label: string, addresses: string[]): Promise<{ id: string; mailboxIds: string[] }> {

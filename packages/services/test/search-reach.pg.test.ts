@@ -1,11 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, sql } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { closePooledDbs, makePooledDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { pgTestUrl } from "@trafficflow/db/testing";
@@ -24,13 +21,13 @@ const URL = pgTestUrl(import.meta.url);
  * shared database diluted the word's frequency and the control read 49 to 140 for 300 matches. The
  * four tables the estimate plans over are shadowed by session TEMP copies (same columns, defaults,
  * indexes and triggers), so this run's rows are all the statistics see. ONE connection: temp tables
- * belong to the session that made them. The copies leave out the tables' extended statistics objects:
+ * belong to the session that made them: the factory's pool, narrowed to that one connection, so the
+ * context's handle bound over it reads the same copies. The copies leave out the tables' extended statistics objects:
  * Postgres 17.6 copies one by the column numbers of the table it copies from, and where that table
  * dropped a column before them (`folder_state`, mail 0201) it fails (`cache lookup failed for attribute`).
  */
-const client = postgres(URL, { max: 1 });
 const OWN_TABLES = ["messages", "message_search", "message_bodies", "folder_state"] as const;
-const db = brandDialect(drizzle(client, { schema }), "pg");
+const db = makePooledDb(URL, { max: 1 });
 const NOW = new Date("2026-08-20T12:00:00.000Z");
 const A = randomUUID();
 /** The neighbour: another account on the same tables, which gains the word in many letters. */
@@ -45,16 +42,16 @@ describe("what a search says about its reach (real Postgres)", () => {
     await runMigrations(URL);
     await ensureSearchExtensions(db, { concurrently: false });
     for (const t of OWN_TABLES) {
-      await client.unsafe(`create temp table ${t} (like public.${t} including all excluding statistics)`);
-      const triggers = await client.unsafe(
-        `select pg_get_triggerdef(oid) as d from pg_trigger where tgrelid = 'public.${t}'::regclass and not tgisinternal`);
+      await db.execute(sql.raw(`create temp table ${t} (like public.${t} including all excluding statistics)`));
+      const triggers = await db.execute(sql.raw(
+        `select pg_get_triggerdef(oid) as d from pg_trigger where tgrelid = 'public.${t}'::regclass and not tgisinternal`));
       for (const { d } of triggers as unknown as Array<{ d: string }>) {
         const own = d.replace(` ON public.${t} `, ` ON pg_temp.${t} `);
         expect(own, `the trigger moved onto the run's own ${t}`).not.toBe(d);
-        await client.unsafe(own);
+        await db.execute(sql.raw(own));
       }
-      const [where] = await client.unsafe(
-        `select n.nspname as s from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.oid = '${t}'::regclass`);
+      const [where] = await db.execute(sql.raw(
+        `select n.nspname as s from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.oid = '${t}'::regclass`));
       expect(String(where!.s), `${t} resolves to this run's own copy`).toMatch(/^pg_temp/);
     }
     const [mb] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: "reach@tf.example" }).returning();
@@ -88,7 +85,7 @@ describe("what a search says about its reach (real Postgres)", () => {
     await db.execute(sql`delete from messages where account_id = ${A}`);
     await db.execute(sql`delete from account_settings where account_id = ${A}`);
     await db.execute(sql`delete from mailboxes where account_id = ${A}`);
-    await client.end();
+    await closePooledDbs();
   });
 
   it("a cut typo arm gives no estimate: the page's count is a lower bound, and the summary is exact", async () => {

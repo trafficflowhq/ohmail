@@ -1,18 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq, sql } from "drizzle-orm";
 import {
   accounts, changeLog, folderState, graduations, learningSignals, mailboxes, messages, rules,
   routeOverrideActionId,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import {
   MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, realPgAvailable, throwawayDb,
 } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { MessageService, type ServiceContext } from "../src/index.js";
 
 /**
@@ -40,7 +39,8 @@ const PG_UP = await realPgAvailable();
 const privateDb = throwawayDb("trafficflow_inappmove");
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 const ACCOUNT = randomUUID();
 const SENDER = "digest@anchor.example";
@@ -51,7 +51,7 @@ const NOW = new Date("2026-09-22T12:00:00.000Z");
 
 function ctx(): ServiceContext {
   return {
-    db: db as never, accountId: ACCOUNT, userId: null, now: () => NOW,
+    db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW,
     requestId: `inappmove-${randomUUID().slice(0, 8)}`,
   };
 }
@@ -106,7 +106,8 @@ describe.skipIf(!PG_UP)("the in-app move feeds the route that filed it", () => {
   beforeAll(async () => {
     await privateDb.createFromTemplate();
     client = postgres(privateDb.url, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(privateDb.url);
+    db = owned.db;
     await db.insert(accounts).values({ id: ACCOUNT, name: `inappmove-${ACCOUNT.slice(0, 8)}` });
     const [box] = await db.insert(mailboxes).values({
       id: randomUUID(), accountId: ACCOUNT, provider: "imap",
@@ -128,7 +129,7 @@ describe.skipIf(!PG_UP)("the in-app move feeds the route that filed it", () => {
   });
 
   afterAll(async () => {
-    await client?.end({ timeout: 5 });
+    await owned?.close(); await client?.end({ timeout: 5 });
     await privateDb.drop();
   }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
 

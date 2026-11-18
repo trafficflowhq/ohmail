@@ -9,7 +9,7 @@
  * twin's (expo-image-manipulator), stood in here by a fake that answers what a manipulator does.
  * The sheet is read to prove the pick shrinks before it admits.
  */
-/* @reads: apps/mobile/src/ui/MessageActions.tsx apps/mobile/src/compose/attach-native.ts apps/webapp/app/components/image-quality.ts */
+/* @reads: apps/mobile/src/ui/MessageActions.tsx apps/mobile/src/compose/attach-native.ts apps/webapp/app/components/image-quality.ts packages/app-logic/src/write/image-quality.ts */
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -127,11 +127,14 @@ describe("the native module is the version this SDK was built with", () => {
 });
 
 describe("one table, and the sheet shrinks before it admits", () => {
-  it("the webapp re-exports the shared table and keeps no second copy of the numbers", () => {
+  it("the letter's shared logic re-exports the shared table, and neither it nor the webapp keeps a second copy of the numbers", () => {
+    const shared = readFileSync(resolve(APP, "../../packages/app-logic/src/write/image-quality.ts"), "utf8");
+    expect(shared).toMatch(/IMAGE_QUALITY_RULES,[\s\S]*?\} from "@ohmail\/client-engine";/);
     const web = readFileSync(resolve(APP, "../webapp/app/components/image-quality.ts"), "utf8");
-    expect(web).toMatch(/IMAGE_QUALITY_RULES,[\s\S]*?\} from "@ohmail\/client-engine";/);
-    expect(web).not.toMatch(/export const IMAGE_QUALITY_RULES/);
-    expect(web).not.toMatch(/maxEdge: 2048/);
+    for (const copy of [shared, web]) {
+      expect(copy).not.toMatch(/export const IMAGE_QUALITY_RULES/);
+      expect(copy).not.toMatch(/maxEdge: 2048/);
+    }
   });
 
   it("the pick shrinks at the chosen level and only then admits", () => {

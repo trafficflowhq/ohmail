@@ -293,7 +293,7 @@ export class DoorHost {
     if (pasted === null && address !== null) {
       // Taken as typed, a part before an "@" or a path would be shown whole and dialled elsewhere.
       const typed = parseServerAddress(address);
-      if (typed === null) return { k: "refused", said: said(addressProblem(address) ?? refuse("pairBadAddress")) };
+      if (typed === null) return { k: "refused", said: said(addressProblem(address) ?? refuse("pairBadAddress", address)) };
       origin = typed;
     }
     const link = pasted ?? { origin, token, pin: null };

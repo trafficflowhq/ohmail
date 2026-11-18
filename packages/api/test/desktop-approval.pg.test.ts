@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -27,11 +28,15 @@ const app = createApp(apiRoutes);
 /** Only the auth service is reached; the rest of `ApiDeps.services` is never read here. */
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
-    db, now: () => FIXED_NOW, requestId: `pg-${randomUUID()}`, session: null,
-    authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
-    services: { auth: makeAuthService(authDeps) },
-  } as unknown as ApiDeps;
+  // A request's container on `db`'s pool, its handle as a host mints a request's.
+  return perRequest({
+    ...({
+      now: () => FIXED_NOW, requestId: `pg-${randomUUID()}`, session: null,
+      authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
+      services: { auth: makeAuthService(authDeps) },
+    } as unknown as Omit<ApiDeps, "db">),
+    db,
+  });
 }
 
 const pkce = (): { verifier: string; challenge: string } => {

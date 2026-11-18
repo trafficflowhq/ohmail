@@ -22,6 +22,9 @@ css :root[data-ev="plain"] .cc	*	sheet-only	An event chip's own properties, unde
 css :root[data-face="ohmarchy"][data-ev="plain"] .cc	*	sheet-only	An event chip's own properties, under a way of drawing events that does not ship.
 css :root	mini-row	differs	The sheet's stylesheet writes a day of the mini month with room for a mark under the numeral. Its data resolves the day without one, which is what ships: the marks are an option the sheet leaves off.
 css :root[data-face="ohmarchy"]	mini-row	differs	The sheet's stylesheet writes a day of the mini month with room for a mark under the numeral. Its data resolves the day without one, which is what ships: the marks are an option the sheet leaves off.
+icons	house	product-only	On the sheet since the studio's head of 16 November: an icon of the place suggestions. The row goes when the tag moves.
+icons	road	product-only	On the sheet since the studio's head of 16 November: an icon of the place suggestions. The row goes when the tag moves.
+icons	town	product-only	On the sheet since the studio's head of 16 November: an icon of the place suggestions. The row goes when the tag moves.
 faces.*	readw	product-only	On the sheet since the tag this source names: the reading width of a wide window. The row goes when the tag moves.
 css :root	readw	product-only	On the sheet since the tag this source names: the reading width of a wide window. The row goes when the tag moves.
 css :root[data-face="ohmarchy"]	readw	product-only	On the sheet since the tag this source names: the reading width of a wide window. The row goes when the tag moves.

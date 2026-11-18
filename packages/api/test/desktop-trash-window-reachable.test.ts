@@ -1,3 +1,5 @@
+import { bindRequest } from "../src/context.js";
+import { perRequest } from "./helpers.js";
 import { accountOfMailbox } from "@trafficflow/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -81,15 +83,20 @@ async function seed(opts: { trashFolder?: string | null } = {}): Promise<Seeded>
     mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
   });
-  const deps = {
+  // A request's container on the store, its handle as a host mints a request's, bound to the
+  // session's account as the middleware binds it before a route runs.
+  const deps = perRequest({
+    ...({
+      keyProvider: { decrypt: async () => "not-printed" },
+      services: { imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot } },
+      now: () => NOW,
+      // The local door's caller: `serviceContext` reads the account off the session, and the
+      // standalone engine mints one at boot. No cookie, no bearer — that is the whole desktop tier.
+      session: { accountId, userId: randomUUID(), sessionId: randomUUID() },
+    } as unknown as Omit<ApiDeps, "db">),
     db,
-    keyProvider: { decrypt: async () => "not-printed" },
-    services: { imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot } },
-    now: () => NOW,
-    // The local door's caller: `serviceContext` reads the account off the session, and the
-    // standalone engine mints one at boot. No cookie, no bearer — that is the whole desktop tier.
-    session: { accountId, userId: randomUUID(), sessionId: randomUUID() },
-  } as unknown as ApiDeps;
+  });
+  bindRequest(deps);
   return { deps, accountId, mailboxId: mb!.id, db };
 }
 

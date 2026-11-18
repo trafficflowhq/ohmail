@@ -105,18 +105,21 @@ describe("SSE concurrency caps", () => {
 });
 
 /**
- * A MINIMAL `Db` for the poll loop: `/events` only ever runs
+ * A MINIMAL `select` for the poll loop: `/events` only ever runs
  * `select({max, live}).from(change_log).where(...)`, so a stub with that one shape is enough — and
  * it keeps the instrumentation off the session path, which is a different query entirely. A row
  * answers `live: true` as production does for a live session; without it the stream ends.
  *
- * The session is preset on `deps` instead of being resolved from a token, so nothing but the poll
+ * The stub sits on the pool's own handle, the one the binder knows, so the handle the host mints
+ * for the request (a view of it, bound to the session's account) asks its poll through it. The
+ * session is preset on `deps` instead of being resolved from a token, so nothing but the poll
  * touches this fake.
  */
-function pollDb(onPoll: () => Promise<Array<{ max: string | null; live?: boolean }>>): ApiDeps["db"] {
-  return {
-    select: () => ({ from: () => ({ where: () => onPoll() }) }),
-  } as unknown as ApiDeps["db"];
+function pollOn(db: object, onPoll: () => Promise<Array<{ max: string | null; live?: boolean }>>): void {
+  Object.defineProperty(db, "select", {
+    configurable: true, writable: true,
+    value: () => ({ from: () => ({ where: () => onPoll() }) }),
+  });
 }
 
 const PRESET_SESSION: ApiDeps["session"] = {
@@ -145,11 +148,11 @@ describe("the poll is one serialized, caught loop", () => {
     // `setInterval` fires on schedule regardless of whether the previous poll finished, so a
     // pooler slower than `pollMs` multiplied one account's query rate exactly when the database
     // was already struggling. This measures the invariant directly: never two in flight.
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     let inFlight = 0;
     let maxInFlight = 0;
     let polls = 0;
-    const db = pollDb(async () => {
+    pollOn(db, async () => {
       polls++;
       inFlight++;
       maxInFlight = Math.max(maxInFlight, inFlight);
@@ -161,22 +164,22 @@ describe("the poll is one serialized, caught loop", () => {
       }
     });
 
-    const res = await HS({ ...deps, db }, { heartbeatMs: 1000, pollMs: 15, lifetimeMs: 400 });
+    const res = await HS(deps, { heartbeatMs: 1000, pollMs: 15, lifetimeMs: 400 });
     await drain(res);
     expect(polls).toBeGreaterThan(1);            // it really did poll repeatedly
     expect(maxInFlight).toBe(1);                 // and never twice at once
   }, 20_000);
 
   it("a FAILING poll closes the stream with sync_failed instead of becoming an unhandled rejection", async () => {
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     let calls = 0;
-    const db = pollDb(async () => {
+    pollOn(db, async () => {
       calls++;
       if (calls > 1) throw new Error("connection terminated unexpectedly");
       return [{ max: null, live: true }];
     });
 
-    const res = await HS({ ...deps, db }, { heartbeatMs: 1000, pollMs: 10, lifetimeMs: 5_000 });
+    const res = await HS(deps, { heartbeatMs: 1000, pollMs: 10, lifetimeMs: 5_000 });
     const text = await drain(res);               // returns EARLY: the failure closed the stream
     expect(text).toContain("event: sync_failed");
     expect(sseLiveCounts().total).toBe(0);       // and released its slot
@@ -184,18 +187,18 @@ describe("the poll is one serialized, caught loop", () => {
 
   it("the server ends a stream within its lifetime of opening, even when its first read is slow", async () => {
     // A first read held by a busy pool must not push the end past the platform's maxDuration.
-    const { deps } = await makeDeps();
-    const db = pollDb(() => new Promise((r) => setTimeout(() => r([{ max: null, live: true }]), 400)));
+    const { db, deps } = await makeDeps();
+    pollOn(db, () => new Promise((r) => setTimeout(() => r([{ max: null, live: true }]), 400)));
     const t0 = Date.now();
-    await drain(await HS({ ...deps, db }, { heartbeatMs: 60_000, pollMs: 60_000, lifetimeMs: 200 }));
+    await drain(await HS(deps, { heartbeatMs: 60_000, pollMs: 60_000, lifetimeMs: 200 }));
     expect(Date.now() - t0).toBeLessThan(400);
     expect(sseLiveCounts().total).toBe(0);
   }, 20_000);
 
   it("a stream whose FIRST read fails still closes cleanly and releases its slot", async () => {
-    const { deps } = await makeDeps();
-    const db = pollDb(async () => { throw new Error("no connection"); });
-    const res = await HS({ ...deps, db }, TINY);
+    const { db, deps } = await makeDeps();
+    pollOn(db, async () => { throw new Error("no connection"); });
+    const res = await HS(deps, TINY);
     expect(res.status).toBe(200);                // the stream opened before the DB was touched
     expect(await drain(res)).toContain("event: sync_failed");
     expect(sseLiveCounts().total).toBe(0);

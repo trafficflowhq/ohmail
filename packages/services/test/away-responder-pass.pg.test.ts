@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
+import { bindDb } from "@trafficflow/db";
+import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
   accounts, awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies,
@@ -59,23 +59,27 @@ const NOW = new Date("2026-09-02T12:00:00.000Z");
 const ENABLED_AT = new Date("2026-09-02T11:00:00.000Z");
 
 /** TWO clients, so the two passes below are genuinely two connections. */
+/** The catalog's and the constraints' own reads and writes, in SQL as the schema states them. */
 let clientA: ReturnType<typeof postgres>;
-let clientB: ReturnType<typeof postgres>;
-let dbA: ReturnType<typeof drizzle>;
-let dbB: ReturnType<typeof drizzle>;
+let ownedA: OwnedDb;
+let ownedB: OwnedDb;
+let dbA: OwnedDb["db"];
+let dbB: OwnedDb["db"];
 
 beforeAll(async () => {
   if (!PG_UP) return;
   await runMigrations(PG_TEST_URL);
   clientA = postgres(PG_TEST_URL, { max: 4 });
-  clientB = postgres(PG_TEST_URL, { max: 4 });
-  dbA = brandDialect(drizzle(clientA), "pg");
-  dbB = brandDialect(drizzle(clientB), "pg");
+  ownedA = makeOwnedDb(PG_TEST_URL);
+  ownedB = makeOwnedDb(PG_TEST_URL);
+  dbA = ownedA.db;
+  dbB = ownedB.db;
 });
 
 afterAll(async () => {
   await clientA?.end({ timeout: 5 });
-  await clientB?.end({ timeout: 5 });
+  await ownedA?.close();
+  await ownedB?.close();
 });
 
 /**
@@ -176,10 +180,10 @@ describe.skipIf(!PG_UP)("the reservation, under two real connections", () => {
     const spyB = logSpy();
 
     const [ra, rb] = await Promise.all([
-      runAwayResponderPass(dbA as never, {
+      runAwayResponderPass(bindDb(dbA, { account: null }), {
         openSendAdapter: a.factory, now: () => NOW, mailboxIds: [s.mailboxId], log: spyA.log,
       }),
-      runAwayResponderPass(dbB as never, {
+      runAwayResponderPass(bindDb(dbB, { account: null }), {
         openSendAdapter: b.factory, now: () => NOW, mailboxIds: [s.mailboxId], log: spyB.log,
       }),
     ]);
@@ -206,10 +210,10 @@ describe.skipIf(!PG_UP)("the reservation, under two real connections", () => {
     const b = recorder();
 
     await Promise.all([
-      runAwayResponderPass(dbA as never, {
+      runAwayResponderPass(bindDb(dbA, { account: null }), {
         openSendAdapter: a.factory, now: () => NOW, mailboxIds: [s.mailboxId],
       }),
-      runAwayResponderPass(dbB as never, {
+      runAwayResponderPass(bindDb(dbB, { account: null }), {
         openSendAdapter: b.factory, now: () => NOW, mailboxIds: [s.mailboxId],
       }),
     ]);
@@ -240,10 +244,10 @@ describe.skipIf(!PG_UP)("the throttle, under two real connections", () => {
     const b = recorder();
 
     const [ra, rb] = await Promise.all([
-      runAwayResponderPass(dbA as never, {
+      runAwayResponderPass(bindDb(dbA, { account: null }), {
         openSendAdapter: a.factory, now: () => NOW, mailboxIds: [s.mailboxId],
       }),
-      runAwayResponderPass(dbB as never, {
+      runAwayResponderPass(bindDb(dbB, { account: null }), {
         openSendAdapter: b.factory, now: () => NOW, mailboxIds: [s.mailboxId],
       }),
     ]);
@@ -266,10 +270,10 @@ describe.skipIf(!PG_UP)("the throttle, under two real connections", () => {
     const b = recorder();
 
     await Promise.all([
-      runAwayResponderPass(dbA as never, {
+      runAwayResponderPass(bindDb(dbA, { account: null }), {
         openSendAdapter: a.factory, now: () => NOW, mailboxIds: [s.mailboxId],
       }),
-      runAwayResponderPass(dbB as never, {
+      runAwayResponderPass(bindDb(dbB, { account: null }), {
         openSendAdapter: b.factory, now: () => NOW, mailboxIds: [s.mailboxId],
       }),
     ]);
@@ -293,10 +297,10 @@ describe.skipIf(!PG_UP)("the throttle, under two real connections", () => {
     const b = recorder();
 
     await Promise.all([
-      runAwayResponderPass(dbA as never, {
+      runAwayResponderPass(bindDb(dbA, { account: null }), {
         openSendAdapter: a.factory, now: () => NOW, mailboxIds: [s.mailboxId],
       }),
-      runAwayResponderPass(dbB as never, {
+      runAwayResponderPass(bindDb(dbB, { account: null }), {
         openSendAdapter: b.factory, now: () => NOW, mailboxIds: [s.mailboxId],
       }),
     ]);
@@ -308,7 +312,7 @@ describe.skipIf(!PG_UP)("the throttle, under two real connections", () => {
       .where(eq(awayResponders.accountId, s.accountId));
     await arrive(s, "colleague@them.test", "three");
     const c = recorder();
-    await runAwayResponderPass(dbA as never, {
+    await runAwayResponderPass(bindDb(dbA, { account: null }), {
       openSendAdapter: c.factory, now: () => new Date(NOW.getTime() + 1000),
       mailboxIds: [s.mailboxId],
     });
@@ -326,7 +330,7 @@ describe.skipIf(!PG_UP)("the finalize is a compare-and-swap", () => {
     const s = await seed("always");
     const id = await arrive(s, "colleague@them.test", "the roof");
     const a = recorder();
-    await runAwayResponderPass(dbA as never, {
+    await runAwayResponderPass(bindDb(dbA, { account: null }), {
       openSendAdapter: a.factory, now: () => NOW, mailboxIds: [s.mailboxId],
     });
 

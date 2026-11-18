@@ -1,7 +1,8 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { accounts, refreshTokens, sessions, users } from "@trafficflow/db";
+import { accounts, bindDb, refreshTokens, sessions, users } from "@trafficflow/db";
 import { accountLifecycleNotices, makeOwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { AccessLifecycle } from "@trafficflow/db";
@@ -32,13 +33,17 @@ afterAll(async () => {
   await owned.close();
 });
 
+/** A request's container on `db`'s pool, its handle as a host mints a request's. */
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
-    db, now: () => NOW, requestId: `pg-${randomUUID()}`, session: null,
-    authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
-    services: { auth: makeAuthService(authDeps) },
-  } as unknown as ApiDeps;
+  return perRequest({
+    ...({
+      now: () => NOW, requestId: `pg-${randomUUID()}`, session: null,
+      authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
+      services: { auth: makeAuthService(authDeps) },
+    } as unknown as Omit<ApiDeps, "db">),
+    db,
+  });
 }
 
 const DECLARED = { [ERASED_ANSWER_HEADER]: "account_erased" };
@@ -98,9 +103,9 @@ describe.skipIf(!PG_UP)("an account erased by the lifecycle pass, read from its 
       now: () => NOW,
     };
     // The sweep names the account due; the erase door, one account per call, erases it.
-    const result = await runAccountLifecyclePass(db as never, deps as never);
+    const result = await runAccountLifecyclePass(bindDb(db, { account: null }), deps as never);
     expect(result.erasureDue, "the pass did not find the account due").toContain(device.accountId);
-    expect(await eraseOneDueAccount(db as never, deps as never, device.accountId)).toBe("erased");
+    expect(await eraseOneDueAccount(bindDb(db, { account: null }), deps as never, device.accountId)).toBe("erased");
     const [row] = await db.select().from(accounts).where(eq(accounts.id, device.accountId));
     expect(row!.erasedAt).not.toBeNull();
 

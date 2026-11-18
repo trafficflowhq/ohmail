@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { inArray } from "drizzle-orm";
@@ -39,11 +40,15 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
-    db, now: () => new Date(), requestId: `pg-${randomUUID()}`, session: null, idempotency: null,
-    authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
-    services: { auth: makeAuthService(authDeps) },
-  } as unknown as ApiDeps;
+  // A request's container on `db`'s pool, its handle as a host mints a request's.
+  return perRequest({
+    ...({
+      now: () => new Date(), requestId: `pg-${randomUUID()}`, session: null, idempotency: null,
+      authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
+      services: { auth: makeAuthService(authDeps) },
+    } as unknown as Omit<ApiDeps, "db">),
+    db,
+  });
 }
 
 /** One verified user with two live sessions; returns their bearer tokens. */

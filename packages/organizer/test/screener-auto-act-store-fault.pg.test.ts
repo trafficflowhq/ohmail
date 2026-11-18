@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import {
-  accountSettings, accounts, folderState, mailboxes, messageInstances, messages, routingDecisions, rules,
+  accountSettings, accounts, bindDb, folderState, mailboxes, messageInstances, messages, routingDecisions, rules,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
@@ -78,7 +78,8 @@ describe.skipIf(!AVAILABLE)("the auto-act pass on real Postgres: a store that ra
       return new; end $$`));
     await db.execute(sql.raw(`create trigger ${fn} before insert or update on rules for each row execute function ${fn}()`));
     try {
-      const r = await screenerAutoActPass(db, { accountId, consent: GIVEN });
+      // The account's pass, on the account's handle as the worker's cycle binds it (`scope.forAccount`).
+      const r = await screenerAutoActPass(bindDb(own.db, { account: accountId }) as unknown as Tx, { accountId, consent: GIVEN });
       expect(r).toMatchObject({ ran: true, filed: 0, failed: 2 });
     } finally {
       await db.execute(sql.raw(`drop trigger ${fn} on rules`));

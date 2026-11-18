@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { accounts, auditAction, auditLog, mailboxCredentials, mailboxes, type Tx } from "@trafficflow/db";
@@ -31,7 +32,7 @@ async function reader() {
   });
   const svc = makeMailboxService({ allowance: async () => { /* permitted */ } });
   const ctxAt = (now: Date): ServiceContext => ({
-    db: pglite as unknown as ServiceContext["db"], accountId, userId: null, now: () => now, requestId: "r",
+    db: dbFor(pglite, accountId), accountId, userId: null, now: () => now, requestId: "r",
   });
   const records = async () => tx.select({ at: auditLog.createdAt, payload: auditLog.payload }).from(auditLog)
     .where(and(eq(auditLog.accountId, accountId), eq(auditLog.action, auditAction("organizer.agree_screens_backlog"))));

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { perRequest } from "./helpers.js";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
@@ -55,15 +56,16 @@ const app = createApp(apiRoutes);
  */
 function depsOn(db: Db, now: Date): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
-    db,
+  const narrow = {
     now: () => now,
     requestId: `pg-${randomUUID()}`,
     session: null,
     authConfig: authDeps.config,
     keyProvider: authDeps.keyProvider,
     admin: ADMIN,
-  } as unknown as ApiDeps;
+  } as unknown as Omit<ApiDeps, "db">;
+  // The handle as a host mints a request's, over this connection's pool.
+  return perRequest({ ...narrow, db });
 }
 
 /**

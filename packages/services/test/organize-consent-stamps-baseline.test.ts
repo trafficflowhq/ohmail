@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { accountSettings, accounts, changeLog, mailboxCredentials, mailboxes, type Tx } from "@trafficflow/db";
@@ -60,7 +61,7 @@ async function readerMailbox() {
   });
   const svc = makeMailboxService({ allowance: async () => { /* permitted */ } });
   const ctxAt = (now: Date): ServiceContext => ({
-    db: pglite as unknown as ServiceContext["db"],
+    db: dbFor(pglite, accountId),
     accountId, userId: null, now: () => now, requestId: "r",
   });
   const settings = async () =>

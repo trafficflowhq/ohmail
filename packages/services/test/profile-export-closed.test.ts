@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, auditLog, contacts, mailboxCredentials, mailboxes, notifyRules, rules, tags, PROFILE_FOUND_AUDIT_ACTION } from "@trafficflow/db";
@@ -43,7 +44,7 @@ async function machine(): Promise<Machine> {
   }).returning();
   // Reachable: the card's question offers nothing for a mailbox this install holds no credential for.
   await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
-  return { db, ctx: { db, accountId, now: () => NOW } as unknown as ServiceContext, accountId, mailboxId: mb!.id };
+  return { db, ctx: { db: dbFor(db, accountId), accountId, now: () => NOW } as unknown as ServiceContext, accountId, mailboxId: mb!.id };
 }
 
 /** Row `i` is `i` ms newer than row 0, so "the newest N" has one answer. */

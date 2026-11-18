@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { accounts, devices, refreshTokens, sessions, users } from "@trafficflow/db";
+import { accounts, bindDb, devices, refreshTokens, sessions, users } from "@trafficflow/db";
 import { authEvents, loginTokens, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -36,8 +36,9 @@ describe.skipIf(!PG_UP)("a Cloud desktop's sign-out at the server", () => {
 
   const depsOn = (): ApiDeps => {
     const authDeps = makeTestAuthDeps({});
+    // One container a request, its handle minted as the host mints a request's: bound to nothing.
     return {
-      db, now: () => apiNow, requestId: `pg-${randomUUID()}`, session: null,
+      db: bindDb(db, { account: null }), now: () => apiNow, requestId: `pg-${randomUUID()}`, session: null,
       authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
       services: { auth: makeAuthService(authDeps) },
     } as unknown as ApiDeps;

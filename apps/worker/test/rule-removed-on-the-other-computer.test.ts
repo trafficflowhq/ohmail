@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, organizerRequests, rules } from "@trafficflow/db";
-import { RulesService, type ServiceContext } from "@trafficflow/services";
+import { RulesService, type ServiceContext, dbFor } from "@trafficflow/services";
 import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -58,7 +58,7 @@ async function twoInstalls() {
   await laptop.insert(mailboxes).values({ id: held, accountId: ACCT, provider: "imap", address: HELD });
   await laptop.insert(mailboxes).values({ id: own, accountId: ACCT, provider: "imap", address: OWN, ...reader("cloud", "cloud") });
   let clock = at(1);
-  const ctxOf = (db: typeof here) => ({ db, accountId: ACCT, userId: null, requestId: "r", now: () => clock }) as ServiceContext;
+  const ctxOf = (db: typeof here) => ({ db: dbFor(db, ACCT), accountId: ACCT, userId: null, requestId: "r", now: () => clock }) as ServiceContext;
   const mHeld = meta();
   const mOwn = meta();
   const io = (m: ReturnType<typeof meta>) => ({

@@ -7,6 +7,7 @@ import { mailboxes } from "@trafficflow/db";
 import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { dbFor, messageService, syncService } from "@trafficflow/services";
+import { statementSeam } from "./helpers/statement-seam.js";
 import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, realPgAvailable } from "@trafficflow/db/testing";
 
@@ -34,7 +35,12 @@ const owned = makeOwnedDb(URL);
 const ACCOUNT = randomUUID();
 const GROWN = 20_000;
 const NOW = new Date("2026-09-29T08:00:00.000Z");
-const ctx = (): ServiceContext => ({ db: dbFor(owned.db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "arrival-plan" });
+/* The census rides the context's own handle: a seam at the drizzle builder of the account's handle
+   sees each statement the service sends, text and parameters, as the logger saw them on the raw one. */
+const ctx = (): ServiceContext => ({
+  db: statementSeam(dbFor(owned.db, ACCOUNT), (query, params) => { logged.push({ query, params }); return null; }),
+  accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "arrival-plan",
+});
 
 /** The one statement a read issued that walks the arrival order — the page's own keyset select. */
 function pageStatement(from: number): { query: string; params: unknown[] } {
