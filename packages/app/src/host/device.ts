@@ -21,6 +21,8 @@ export type PushSyncOutcome =
 
 /** The permission, the ask, and the wake registration. The shell's `NotificationHost`. */
 export interface DeviceNotifications {
+  /** The scope the host serves at the moment a scheduled notification wakes. */
+  liveNoticeScope?: () => string | null;
   permission: () => NoticePermission;
   request: () => Promise<NoticePermission>;
   syncSubscription?: (

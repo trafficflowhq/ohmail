@@ -65,6 +65,7 @@ export const MAILTO_EVENT = "link:mailto";
 
 /** The commands the shell registers for this file. Named once so a typo is one place. */
 const NOTIFY_COMMAND = "notify";
+const ALERTS_COMMAND = "alerts_set";
 const BADGE_COMMAND = "set_badge";
 const OPEN_COMMAND = "open_link";
 const MAILTO_CLAIM_COMMAND = "mailto_claim";
@@ -429,6 +430,28 @@ export async function postOsNotice(notice: OsNotice): Promise<void> {
   const shell = internals();
   if (!shell) return;
   await shell.invoke(NOTIFY_COMMAND, { notice });
+}
+
+/** The shell's current document and sign-in, captured when the frame mounts. */
+export interface NoticeWriter { document: number; session: number }
+let noticeRevision = 0;
+
+/**
+ * Hand the shell the calendar's alerts for the mailbox it serves, whole: the set replaces the one before and an
+ * empty set takes every alert back. The SHELL rings them at their minute with this window minimized or hidden
+ * (`src-tauri/src/alerts.rs`), in its own words; it refuses anything but one closed set made under the mailbox it is
+ * serving, and answers the ids it now holds. A refusal comes back as a rejection, the caller's to swallow.
+ */
+export async function setOsAlerts(set: { readonly scope: string; readonly alerts: readonly unknown[] }, writer: NoticeWriter | null): Promise<string[]> {
+  const shell = internals();
+  if (!shell || writer === null) return [];
+  // Different IPC fetches and their postMessage retries can reach the shell in any order.
+  const held = await shell.invoke(ALERTS_COMMAND, { set }, { headers: {
+    "x-ohmail-notice-document": String(writer.document),
+    "x-ohmail-notice-session": String(writer.session),
+    "x-ohmail-notice-revision": String(++noticeRevision),
+  } });
+  return Array.isArray(held) ? held.filter((id): id is string => typeof id === "string") : [];
 }
 
 /**

@@ -470,8 +470,8 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.notices.calendar", store: "localStorage", owner: "web",
-    at: ["apps/mobile/web/src/notices.tsx"],
-    holds: "which of the calendar's notices are switched on and whether a notice or a widget shows an event's title, on this device: switches alone, never an event. Read by the phone's page beside the mail's record; nothing writes it until a Notifications pane offers the calendar's switches, and until then the start values hold",
+    at: ["apps/webapp/app/shell/notification-settings.ts", "apps/mobile/web/src/notices.tsx"],
+    holds: "which of the calendar's notices are switched on on this device, whether a notice or a widget shows an event's title, and when the day's summary rings: switches and a minute of the day, never an event. Read by the web's shell and by the phone's page beside the mail's record, through the one reader of a device's choices; nothing writes it until a Notifications pane offers the calendar's switches, and until then the start values hold",
     words: false, erased: "never", mark: "kept",
   },
   {

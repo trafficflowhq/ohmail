@@ -66,6 +66,7 @@ local-engine = [
     "dep:getrandom",
     "dep:tauri-plugin-autostart",
     "dep:tauri-plugin-notification",
+    "dep:notify-rust",
     "dep:tauri-plugin-deep-link",
     "dep:tauri-plugin-single-instance",
     "dep:zbus",
@@ -264,6 +265,7 @@ getrandom = { version = "0.3", optional = true }
 # nothing may be, since this binary is conveyed under AGPL-3.0 and its own
 # licence is meant to be the only copyleft in it.
 tauri-plugin-notification = { version = "2", optional = true }
+notify-rust = { version = "4.18", optional = true }
 
 # START-AT-LOGIN, for the one mode that is a commitment rather than a session.
 #

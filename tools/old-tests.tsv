@@ -4122,6 +4122,7 @@ apps/webapp/test/nothing-organizes-head-and-sheets.test.tsx#the sender sheet ove
 apps/webapp/test/nothing-organizes-head-and-sheets.test.tsx#the subject-rule sheet over a mailbox nothing organizes > CONTROL: an organized mailbox keeps the confirm's own sentence	gap	the sender's sheet and the subject-rule sheet over an Ohbox letter (a duty of the old shell that has no new part yet): the line that nothing organizes the mailbox, in place of what a press files	10	GAP:switch-ohbox
 apps/webapp/test/nothing-organizes-head-and-sheets.test.tsx#the subject-rule sheet over a mailbox nothing organizes > says so beside the destinations and in the confirm, never what the rule would file	gap	the sender's sheet and the subject-rule sheet over an Ohbox letter (a duty of the old shell that has no new part yet): the line that nothing organizes the mailbox, in place of what a press files	10	GAP:switch-ohbox
 apps/webapp/test/nothing-organizes-head-and-sheets.test.tsx#the subject-rule sheet over a mailbox nothing organizes > the shell hands it the same answer the sender sheet reads	census	switch-ohbox	10	WAITS:ohbox
+apps/webapp/test/notice-choices-reach-the-caller.test.tsx	behaviour	apps/webapp/test/notice-choices-reach-the-caller.test.tsx	40	KEPT
 apps/webapp/test/notice-emitter.test.ts	behaviour	apps/webapp/test/notice-emitter.test.ts	40	KEPT
 apps/webapp/test/notifications-gate-census.test.ts	census	apps/webapp/test/notifications-gate-census.test.ts	40	KEPT
 apps/webapp/test/notifications-honest-state.test.tsx#A HOST THAT CANNOT READ THE OS ANSWER — the desktop window > AND TURNING IT OFF IS WRITTEN — the press the released build swallowed	behaviour	mount-settings	32	WAITS:pane:notifications
@@ -8381,6 +8382,7 @@ test/search-rank-census.test.ts#the search ranking rule is shared, not copied > 
 test/stored-key-builders-take-a-scope.test.ts#every family the web keeps in a browser's storage takes the scope its mount hands in > is built in the table for an account and for none, or is a host's own with its reason	behaviour	switch-deletions	03	WAITS:ground
 test/stored-key-builders-take-a-scope.test.ts#every family the web keeps in a browser's storage takes the scope its mount hands in > names the account for a scope, and nobody's words for none	behaviour	switch-deletions	03	WAITS:ground
 test/stored-key-builders-take-a-scope.test.ts#every family the web keeps in a browser's storage takes the scope its mount hands in > refuses a scope nobody handed in, and an empty one, before it names anything	behaviour	switch-deletions	03	WAITS:ground
+test/stored-keys-registry.test.ts	census	test/stored-keys-registry.test.ts	03	KEPT
 test/tools/baseline.test.ts	census	test/tools/baseline.test.ts	03	KEPT
 test/tools/retirement.test.ts	census	test/tools/retirement.test.ts	03	KEPT
 test/tools/rules.test.ts#the import borders > gives a test its package's row plus the test package, and no more	census	test/tools/rules.test.ts#the import borders > gives a test its package's row plus the test package, and no more	33	KEPT

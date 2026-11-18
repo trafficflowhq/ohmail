@@ -4,7 +4,8 @@
  * every choice and rule (which alerts this device rings, what a private or a hidden title says);
  * the native side holds no setting and no rule, writes the words for the numbers, and draws
  * nothing once `scope` is no longer the signed-in one. Kept in the app's own files, outside
- * backups, and deleted at sign-out.
+ * backups, and deleted at sign-out. Whatever writes the file reads the record closed first
+ * (`readCalendarSnapshot`, `closed.ts`): the file never holds a member that is not listed here.
  */
 import type { Clock, EventLabel, NoticeDate } from "./kinds.js";
 import type { NoticeAhead } from "./emitter.js";
@@ -61,7 +62,7 @@ export interface CalendarSnapshot {
   readonly writtenAt: number;
   /** The zone the days and the month were laid out in, by its name. */
   readonly zone: string;
-  /** Only the alerts this device rings, ascending by `atMs`, within the emitter's bounds. */
+  /** Only the alerts this device rings, under `scope`: the set a surface is handed (`aheadSet`), by its alerts. */
   readonly alerts: readonly NoticeAhead[];
   /** Today first. */
   readonly days: readonly SnapshotDay[];

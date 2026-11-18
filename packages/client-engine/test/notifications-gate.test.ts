@@ -7,8 +7,8 @@ import {
   type NotificationChannels,
 } from "../src/notifications.js";
 import { noticeChoicesOf, type NoticeChoices } from "../src/notices/choices.js";
-import { NOTICE_COUNT_MAX, NOTICE_KINDS, type Notice } from "../src/notices/kinds.js";
-import type { NoticeDevices, NoticeSample, SendStanding } from "../src/notices/gate.js";
+import { NOTICE_COUNT_MAX, NOTICE_KINDS, type Clock, type Notice, type NoticeKind } from "../src/notices/kinds.js";
+import type { CalendarLook, CalendarSample, NoticeDevices, NoticeSample, SendStanding } from "../src/notices/gate.js";
 
 /**
  * THE GATE — the behavioural half of "fully off means no code path fires".
@@ -23,14 +23,14 @@ import type { NoticeDevices, NoticeSample, SendStanding } from "../src/notices/g
 /** The account's named devices: how many were ever made, how many were taken back, how many are signed in now. */
 const named = (made: number, revoked = 0, live = made - revoked): NoticeDevices => ({ made, revoked, live });
 const sample = (over: Partial<NoticeSample> = {}): NoticeSample =>
-  ({ ohboxUnread: 0, screenerWaiting: 0, sends: new Map(), devices: named(1), ...over });
+  ({ ohboxUnread: 0, screenerWaiting: 0, sends: new Map(), devices: named(1), calendar: null, ...over });
 const sends = (...rows: [string, SendStanding][]): ReadonlyMap<string, SendStanding> => new Map(rows);
 const base = sample();
 /** A device's stored record with `over` on top, as the gate is handed it. */
 const all = (over: Partial<NoticeChoices> = {}): NoticeChoices =>
   ({ ...noticeChoicesOf(DEFAULT_CHANNELS, null, { ohcalPhone: false }), ...over });
 const channels = (over: Partial<NotificationChannels> = {}): NotificationChannels => ({ ...DEFAULT_CHANNELS, ...over });
-const EVERY = NOTICE_KINDS;
+const EVERY: readonly NoticeKind[] = NOTICE_KINDS;
 
 /** Everything happened at once: mail, a waiting sender, a send that went, one that did not, a new device. */
 const busy = sample({
@@ -245,5 +245,111 @@ describe("channelsAreLive — what the pane renders", () => {
   });
   it("is true only when both agree", () => {
     expect(channelsAreLive(channels(), "granted")).toBe(true);
+  });
+});
+
+describe("the calendar: what a sync turn brought, each kind once and never twice", () => {
+  const H = 3_600_000;
+  const cal = (over: Partial<CalendarSample> = {}): CalendarSample =>
+    ({ invitations: new Set(), standing: new Map(), answers: new Map(), found: new Set(), ...over });
+  const stands = (startHour: number, status: "confirmed" | "tentative" | "cancelled" = "confirmed") =>
+    ({ startMs: startHour * H, status });
+  /** A clock that says the hour an instant names, today: enough to tell two starts apart. */
+  const clock = (ms: number): Clock => ({ hour: Math.floor(ms / H) % 24, minute: 0, day: "today" });
+  const EVENTS: Readonly<Record<string, { title: string; private: boolean }>> = {
+    inv: { title: "Kickoff", private: false }, mv: { title: "Review", private: false }, cx: { title: "Shoot", private: false },
+    own: { title: "Studio day", private: false }, doc: { title: "Doctor", private: true },
+  };
+  const FOUND: Readonly<Record<string, number>> = { f1: 19 * H, f2: 18 * H };
+  const look: CalendarLook = {
+    event: (id) => (id in EVENTS
+      ? { noticed: { id, title: EVENTS[id]!.title, private: EVENTS[id]!.private, heldBack: false }, allDay: false }
+      : null),
+    found: (id) => FOUND[id] ?? null,
+    clock,
+  };
+  const ON = all({ cal_invitation: true, cal_change: true, cal_answer: true, cal_found: true });
+  const turn = (was: CalendarSample | null, now: CalendarSample | null, choices = ON, carries = EVERY, seen: CalendarLook | null = look) =>
+    decideNotices(sample({ calendar: was }), sample({ calendar: now }), choices, "granted", carries, seen);
+  const label = (text: string) => ({ as: "title", text });
+
+  const before = cal({
+    standing: new Map([["mv", stands(9)], ["cx", stands(10)]]),
+    answers: new Map([["own", [1, 0, 0] as const]]),
+    found: new Set(["f0"]),
+  });
+  const after = cal({
+    invitations: new Set(["inv"]),
+    standing: new Map([["inv", stands(14)], ["mv", stands(11)], ["cx", stands(10, "cancelled")]]),
+    answers: new Map([["own", [3, 0, 0] as const]]),
+    found: new Set(["f0", "f1", "f2"]),
+  });
+
+  it("an invitation, a move, a cancellation, answers and found events: one notice each, made by the makers", () => {
+    expect(turn(before, after)).toEqual([
+      { kind: "cal_invitation", eventId: "inv", label: label("Kickoff"), at: clock(14 * H), allDay: false },
+      { kind: "cal_change", change: "moved", eventId: "mv", label: label("Review"), at: clock(11 * H), was: clock(9 * H), allDay: false },
+      { kind: "cal_change", change: "cancelled", eventId: "cx", label: label("Shoot"), at: clock(10 * H), allDay: false },
+      { kind: "cal_answer", eventId: "own", label: label("Studio day"), answer: "yes", count: 2 },
+      { kind: "cal_found", count: 2, at: clock(18 * H) },
+    ]);
+  });
+
+  it("the first sample of a calendar, and a sample with none, say nothing; nor does a second settle with no change", () => {
+    expect(decideNotices(null, sample({ calendar: after }), ON, "granted", EVERY, look)).toEqual([]);
+    expect(turn(null, after)).toEqual([]);
+    expect(turn(before, null)).toEqual([]);
+    expect(turn(after, after)).toEqual([]);
+  });
+
+  it("a moved event that is private says Busy; with titles hidden an event says Event", () => {
+    const moved = (choices = ON) => turn(cal({ standing: new Map([["doc", stands(9)], ["mv", stands(9)]]) }),
+      cal({ standing: new Map([["doc", stands(10)], ["mv", stands(10)]]) }), choices).map((n) => (n as { label?: unknown }).label);
+    expect(moved()).toEqual([{ as: "busy" }, label("Review")]);
+    expect(moved({ ...ON, showTitles: false })).toEqual([{ as: "busy" }, { as: "event" }]);
+  });
+
+  it("each kind's own switch, the master and what the surface carries", () => {
+    const kinds = (choices = ON, carries = EVERY) => turn(before, after, choices, carries).map((n) => n.kind);
+    expect(kinds({ ...ON, cal_invitation: false })).toEqual(["cal_change", "cal_change", "cal_answer", "cal_found"]);
+    expect(kinds({ ...ON, cal_change: false, cal_found: false })).toEqual(["cal_invitation", "cal_answer"]);
+    expect(kinds({ ...ON, cal_answer: false })).not.toContain("cal_answer");
+    expect(kinds({ ...ON, master: false })).toEqual([]);
+    expect(kinds(ON, ["ohbox", "cal_alert"])).toEqual([]);
+    expect(kinds(all())).toEqual(["cal_invitation", "cal_change", "cal_change"]);
+  });
+
+  it("a cancelled event that is then deleted: one notice, at the cancel", () => {
+    const one = cal({ standing: new Map([["cx", stands(10)]]) });
+    const off = cal({ standing: new Map([["cx", stands(10, "cancelled")]]) });
+    expect(turn(one, off).map((n) => n.kind)).toEqual(["cal_change"]);
+    expect(turn(off, cal())).toEqual([]);
+    expect(turn(one, cal()), "a record that only vanished names nothing").toEqual([]);
+  });
+
+  it("twelve events found at once: one notice that says twelve, at the first start; none found with no start", () => {
+    const twelve = new Set(Array.from({ length: 12 }, (_, i) => `n${i}`));
+    expect(turn(cal(), cal({ found: twelve }))).toEqual([{ kind: "cal_found", count: 12, at: null }]);
+    expect(turn(cal(), cal({ found: new Set(["f1", "n0"]) }))).toEqual([{ kind: "cal_found", count: 2, at: clock(19 * H) }]);
+  });
+
+  it("an answer that rose says how many more; one that fell, a new record and a status that only changed say nothing", () => {
+    const own = (counts: readonly [number, number, number]) => cal({ answers: new Map([["own", counts]]) });
+    expect(turn(own([2, 1, 0]), own([1, 2, 1])).map((n) => n.kind === "cal_answer" && [n.answer, n.count])).toEqual([
+      ["maybe", 1], ["no", 1],
+    ]);
+    expect(turn(cal(), own([3, 0, 0]))).toEqual([]);
+    const tentative = cal({ standing: new Map([["mv", stands(9, "tentative")]]) });
+    expect(turn(cal({ standing: new Map([["mv", stands(9)]]) }), tentative)).toEqual([]);
+    expect(turn(cal({ standing: new Map([["mv", stands(9, "cancelled")]]) }), cal({ standing: new Map([["mv", stands(11)]]) }))).toEqual([]);
+  });
+
+  it("without a look, or with one that fails, no calendar notice is made and mail's still are", () => {
+    const thrown: CalendarLook = { ...look, event: () => { throw new Error("the copy is gone"); } };
+    const was = sample({ calendar: before, ohboxUnread: 1 });
+    const now = sample({ calendar: after, ohboxUnread: 2 });
+    expect(decideNotices(was, now, ON, "granted", EVERY)).toEqual([{ kind: "ohbox", count: 1 }]);
+    expect(decideNotices(was, now, ON, "granted", EVERY, thrown)).toEqual([{ kind: "ohbox", count: 1 }]);
+    expect(turn(before, after, ON, EVERY, { ...look, event: () => null }).map((n) => n.kind)).toEqual(["cal_found"]);
   });
 });

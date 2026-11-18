@@ -95,7 +95,11 @@ export interface Clock {
 export const NOTICE_ACTS = ["join", "again"] as const;
 export type NoticeAct = (typeof NOTICE_ACTS)[number];
 
-/** The longest lead an alert says, in minutes: four weeks. */
+/**
+ * The longest lead an alert says, in minutes: four weeks. A lead is any whole number of minutes
+ * from 0 to this: the product's own steps are such numbers, and so is an alarm an event already
+ * has at its provider. It stays a number in every record; `leadWords` (`lead.ts`) has the words.
+ */
 export const NOTICE_LEAD_MAX_MIN = 40_320;
 
 export type CalendarNotice =
@@ -122,3 +126,15 @@ export type CalendarNotice =
 
 /** What an emitter is handed. */
 export type Notice = MailNotice | CalendarNotice;
+
+/**
+ * Which kinds name an event: only these have a label, and so only these can show an event's title.
+ * No mail kind does; what a letter only seems to propose and the day's summary do not either. Total,
+ * and held against the notices' own types: a kind whose notice gains a label does not pass its test
+ * until it says so here, and a maker gives a label to no kind that says no.
+ */
+export const NOTICE_NAMES_EVENT = {
+  ohbox: false, screener: false, scheduled: false, pairing: false,
+  cal_alert: true, cal_invitation: true, cal_change: true, cal_answer: true,
+  cal_found: false, cal_summary: false,
+} as const satisfies Readonly<Record<NoticeKind, boolean>>;

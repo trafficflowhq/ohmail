@@ -1030,6 +1030,9 @@ struct Shared {
     /// Per RUN, like `ready`: cleared when a new child starts, because a signal belongs to the
     /// launch that produced it. `None` on every disarmed launch, and until an armed one speaks.
     host_signal: Option<crate::host::HostSignal>,
+    /// None until this run reports. Zero is signed out, positive identifies one signed-in session.
+    hosted_session: Option<u64>,
+    local_session: u64,
     /// The LAN door's own slot — `host_lan_*` lines. A SEPARATE slot, not a widened vocabulary:
     /// one launch can hold both listeners, and the LAN door's later line must not overwrite
     /// what the loopback listener said (the tailnet publication gates on THAT). Same per-run
@@ -1085,6 +1088,11 @@ struct Inner {
     timer_wakes: AtomicU64,
 }
 
+fn next_notice_session() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 fn new_shared(state: EngineState, finished: bool) -> Shared {
     Shared {
         state,
@@ -1098,6 +1106,8 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         first_error: None,
         latest_error: None,
         host_signal: None,
+        hosted_session: None,
+        local_session: next_notice_session(),
         lan_signal: None,
         witness: None,
         stop: false,
@@ -2776,6 +2786,32 @@ impl Shell {
         Ok(self.status())
     }
 
+    /// A calendar alert belongs to the serving mailbox and, on a cloud door, to the current
+    /// signed-in session behind its mirror. A new sign-in gets its own schedule.
+    pub fn live_mailbox(&self) -> crate::alerts::Live {
+        self.with_live_mailbox(|live| live)
+    }
+
+    /// Keep the engine and its hosted session current through the OS submission. A withdrawal
+    /// takes the alert book, an engine replacement takes its slot, and sign-out takes its state.
+    fn with_live_mailbox<T>(&self, submit: impl FnOnce(crate::alerts::Live) -> T) -> T {
+        use crate::alerts::Live;
+        let engine = self.engine.lock().expect("shell engine");
+        let state = engine.inner.shared.lock().expect("engine state");
+        let live = match (self.paths.config(), &state.state) {
+            (None, _) => Live::Nobody,
+            (Some(_), _) if state.stop => Live::Unknown,
+            (Some(Config::Cloud(_)), EngineState::Serving { mailbox_id }) => match state.hosted_session {
+                Some(0) => Live::Nobody,
+                Some(session) if !mailbox_id.is_empty() => Live::Mailbox(mailbox_id.clone(), session),
+                _ => Live::Unknown,
+            },
+            (Some(_), EngineState::Serving { mailbox_id }) if !mailbox_id.is_empty() => Live::Mailbox(mailbox_id.clone(), state.local_session),
+            _ => Live::Unknown,
+        };
+        submit(live)
+    }
+
     /// What the window renders. See [`status_json`]; this adds the facts only the shell holds.
     pub fn status(&self) -> serde_json::Value {
         let mut out = status_json(&self.engine());
@@ -3196,6 +3232,7 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             s.stdin = Some(to_engine);
             s.pid = Some(child.id());
             s.ready = None;
+            s.hosted_session = None;
             s.boot_phase = None;
             s.boot_progress = None;
             s.fault = None;
@@ -3678,6 +3715,20 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
     // list lands, and the engine then names it once. Only an EMPTY id is filled, and only while the
     // run is serving: a launch serves one mailbox, so a frame that would move it is refused. Held
     // to an id's grammar before it is stored, like a phase.
+    if kind == Some("hosted-session") {
+        let mut s = inner.shared.lock().expect("engine state");
+        if matches!(s.state, EngineState::Serving { .. }) {
+            match parsed.get("signedIn").and_then(|value| value.as_bool()) {
+                Some(true) if s.hosted_session.unwrap_or(0) == 0 => {
+                    s.hosted_session = Some(next_notice_session());
+                }
+                Some(true) => {}
+                Some(false) => s.hosted_session = Some(0),
+                None => s.hosted_session = None,
+            }
+        }
+        return Ok(Answer::None);
+    }
     if kind == Some("mailbox") {
         if let Some(id) = parsed.get("mailboxId").and_then(serde_json::Value::as_str) {
             if !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
@@ -5019,8 +5070,16 @@ fn status_json(engine: &Engine) -> serde_json::Value {
 
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn engine_status(shell: tauri::State<'_, Arc<Shell>>) -> serde_json::Value {
-    shell.status()
+fn engine_status(shell: tauri::State<'_, Arc<Shell>>, alerts: tauri::State<'_, Arc<crate::alerts::Alerts>>) -> serde_json::Value {
+    let document = alerts.document();
+    let mut status = shell.status();
+    if let crate::alerts::Live::Mailbox(scope, session) = shell.live_mailbox() {
+        if status["mailboxId"].as_str() == Some(&scope) {
+            status["noticeDocument"] = document.into();
+            status["noticeSession"] = session.into();
+        }
+    }
+    status
 }
 
 /// Choose a door, or change the one already chosen.
@@ -5194,6 +5253,15 @@ fn engine_logout<R: tauri::Runtime>(
         // window that never ran its own sign-out path cannot leave it behind.
         if let Err(reason) = set_badge(app.clone(), 0) {
             log_line(format_args!("signing out could not take the badge off ({reason})"));
+        }
+        // AND SO DO THE CALENDAR'S ALERTS. Whatever was set to ring for the account left is dropped
+        // here, not left to wait: the ringing thread would refuse it at its minute anyway, and this
+        // makes the sign-out itself the moment it is gone.
+        {
+            use tauri::Manager;
+            if let Some(alerts) = app.try_state::<Arc<crate::alerts::Alerts>>() {
+                alerts.clear();
+            }
         }
         crate::host::stand_down_on_shell_transition(
             &app,
@@ -5789,6 +5857,92 @@ fn notify<R: tauri::Runtime>(app: tauri::AppHandle<R>, notice: serde_json::Value
         .body(body)
         .show()
         .map_err(|err| format!("the notification could not be shown ({err})"))
+}
+
+/// Milliseconds since the epoch, by this computer's clock.
+#[cfg(feature = "local-engine")]
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// The calendar's alerts for the mailbox this shell serves, set ahead: the whole set each time.
+///
+/// ── WHY THE SHELL RINGS, AND WHAT IT IS HANDED ──────────────────────────────────────────────
+///
+/// A window that is hidden or minimized has its timers slowed by the system, so an alert that
+/// must ring at its minute is rung by this process ([`ring_alerts`]). The window hands over
+/// numbers, ids and each event's label; [`crate::alerts::read`] refuses anything else whole, and
+/// refuses a set made under any scope but the mailbox this shell is serving right now, so a page
+/// cannot set alerts for an account this install is not signed in as. The set replaces the one
+/// before; an empty set clears. The answer lists the ids now held, and nothing of an event.
+///
+/// Like `notify`, this is the shell's own command and none of the notification plugin's
+/// permissions: the window may hand over one closed set, and that is the whole of it. No
+/// permission is asked for here. The window hands over an empty set until the person has switched
+/// alerts on and the system has granted notices, and an alert whose minute comes while the system
+/// refuses is not shown.
+// IPC fetches can arrive out of order. Their document, sign-in and revision travel as transport
+// metadata; the application payload remains one closed schedule.
+#[cfg(feature = "local-engine")]
+#[tauri::command]
+fn alerts_set(
+    shell: tauri::State<'_, Arc<Shell>>,
+    alerts: tauri::State<'_, Arc<crate::alerts::Alerts>>,
+    set: serde_json::Value,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Vec<String>, String> {
+    let number = |header: &str| request.headers().get(header).and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok()).filter(|n| *n <= 9_007_199_254_740_991)
+        .ok_or_else(|| crate::alerts::Refused::Superseded.to_string());
+    alerts.receive_ordered(&set, || shell.live_mailbox(), unix_ms(),
+        number("x-ohmail-notice-document")?, number("x-ohmail-notice-session")?, number("x-ohmail-notice-revision")?)
+        .map_err(|refused| refused.to_string())
+}
+
+/// Show one alert whose minute has come, in the shell's own words. Nothing of it is logged.
+#[cfg(feature = "local-engine")]
+fn show_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, alert: &crate::alerts::Alert) {
+    let (title, body) = crate::alerts::compose(alert, crate::shell_language::spoken());
+    // The plugin queues a task before calling this backend. Submit here, on the existing
+    // timer thread, while withdrawal and redaction are still serialized with delivery.
+    let mut notification = notify_rust::Notification::new();
+    notification.summary(&title).body(&body).auto_icon();
+    #[cfg(windows)]
+    {
+        let Ok(executable) = tauri::utils::platform::current_exe() else { return };
+        let Some(directory) = executable.parent() else { return };
+        if !directory.ends_with("target/debug") && !directory.ends_with("target/release") {
+            notification.app_id(&app.config().identifier);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    let _ = notify_rust::set_application(if tauri::is_dev() { "com.apple.Terminal" } else { &app.config().identifier });
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let _ = app;
+    if notification.show().is_err() {
+        log_line(format_args!("a calendar alert could not be shown"));
+    }
+}
+
+/// The thread that rings the calendar's alerts. Each pass asks the book what is due under the
+/// mailbox this shell serves at that moment, shows it, and sleeps until the next alert's minute, a
+/// new set or a sign-out, never longer than [`crate::alerts::POLL`] while an alert waits.
+#[cfg(feature = "local-engine")]
+fn ring_alerts<R: tauri::Runtime>(app: tauri::AppHandle<R>, shell: Arc<Shell>, alerts: Arc<crate::alerts::Alerts>) {
+    let spawned = std::thread::Builder::new().name("calendar-alerts".into()).spawn(move || loop {
+        use tauri_plugin_notification::{NotificationExt, PermissionState};
+        let (sleep, turn) = alerts.dispatch(
+            || shell.live_mailbox(), unix_ms,
+            || matches!(app.notification().permission_state(), Ok(PermissionState::Granted)),
+            |alert, expected| shell.with_live_mailbox(|current| {
+                if current == *expected { show_alert(&app, alert); }
+            }),
+        );
+        alerts.sleep(turn, sleep);
+    });
+    if let Err(err) = spawned {
+        log_line(format_args!("the calendar's alerts will not ring: their thread did not start ({err})"));
+    }
 }
 
 /// THE WINDOW'S OWN VITALS, into the log the sidecar already writes to.
@@ -7633,9 +7787,9 @@ fn deliver_popup<R: tauri::Runtime>(app: &tauri::AppHandle<R>, route: PopupRoute
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), press its Try again (the shell starts an engine it has given up on again and removes nothing, refused unless it has given up), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), hand the shell one notice as one of four kinds of mail notice with its count or closed word, which the shell refuses whole if it holds anything else and words itself in its own language (the window names no title and no text), set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, read the platform's name and the newest lines of the log (no argument), hand back one diagnostic file of the app's own JSON shape for the shell to write beside that log under a name the shell chooses (the shell refuses any other text, and nothing is sent), open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), report the http/https links a surface it draws shows (a message's links, a draft's or a signature's, the account page an answer named), which the shell keeps in a bounded list and opens nothing for (no command takes an address to open: a link reaches that same browser only as the webview's own new-window request on the person's own click, and only when it is one of those links or one of the shell's own constant links), confirm a held press of a link whose label names another site by the token the shell handed it with that link's ask (the window names no address: the shell opens the link it holds, once, and only within two minutes of the press), name one attachment by its id for the shell to have the engine stream into this computer's Downloads folder (the shell picks the folder and the staging file and composes every part of the name; a name already taken is numbered, never overwritten), name one attachment by its id and declared type for the shell to stage for the in-app preview (an image is answered as a token on the shell's own preview scheme, which serves only files the shell staged in its own folder; text comes back inline only under a 2 MiB cap; the window names no path) and release that token when the preview closes, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, ask for the check the app makes at launch, turn Settings' install-automatically switch on or off, and say that a send waits — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever), one bool choosing between installing a verified release at the next quit or launch and waiting for a press, and one bool holding every install for at most two minutes while a send waits; it may not name a feed, a version or a path, see a payload or cause an install, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. It may say, with no argument, that it has written its open editors after a quit or a close asked it to, which lets that quit go before its bound and can never start or delay one. It may REPORT that its first frame is composed, with that frame's background colour as one #rrggbb string the shell parses strictly: the shell paints the still-hidden window that colour, keeps it for the next launch in one file it names itself, and shows the window. It may set its own TEXT SIZE as one of five percentages, which the shell makes the main window's zoom and keeps for the next launch in one more file it names itself; any other number is refused. It may name the language the shell draws its menu, tray and dialogs in as one of two tags, which the shell keeps in one more file it names itself for the words it draws from the next launch, any other text refused, the answer one bool. It may TAKE, once and within ten seconds, the files a person dropped on it from another program, which the shell saw dropped itself and opened at the take: a command with no argument answers each file's name (never its path), size and type, and a second reads one taken file's next chunk of at most 1 MiB by the token the take answered and the file's place in that answer; a drag the page started is never held, and no file stays open past two minutes. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), press its Try again (the shell starts an engine it has given up on again and removes nothing, refused unless it has given up), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), hand the shell one notice as one of four kinds of mail notice with its count or closed word, which the shell refuses whole if it holds anything else and words itself in its own language (the window names no title and no text), hand the shell the calendar's alerts for the mailbox it is serving as one set of numbers, ids and labels that replaces the set before and clears when empty (the shell refuses a set of any other scope and any member it does not know, asks again at each alert's minute whether that mailbox is still the one it serves, writes the words itself, and answers only the ids it holds), set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, read the platform's name and the newest lines of the log (no argument), hand back one diagnostic file of the app's own JSON shape for the shell to write beside that log under a name the shell chooses (the shell refuses any other text, and nothing is sent), open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), report the http/https links a surface it draws shows (a message's links, a draft's or a signature's, the account page an answer named), which the shell keeps in a bounded list and opens nothing for (no command takes an address to open: a link reaches that same browser only as the webview's own new-window request on the person's own click, and only when it is one of those links or one of the shell's own constant links), confirm a held press of a link whose label names another site by the token the shell handed it with that link's ask (the window names no address: the shell opens the link it holds, once, and only within two minutes of the press), name one attachment by its id for the shell to have the engine stream into this computer's Downloads folder (the shell picks the folder and the staging file and composes every part of the name; a name already taken is numbered, never overwritten), name one attachment by its id and declared type for the shell to stage for the in-app preview (an image is answered as a token on the shell's own preview scheme, which serves only files the shell staged in its own folder; text comes back inline only under a 2 MiB cap; the window names no path) and release that token when the preview closes, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, ask for the check the app makes at launch, turn Settings' install-automatically switch on or off, and say that a send waits — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever), one bool choosing between installing a verified release at the next quit or launch and waiting for a press, and one bool holding every install for at most two minutes while a send waits; it may not name a feed, a version or a path, see a payload or cause an install, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. It may say, with no argument, that it has written its open editors after a quit or a close asked it to, which lets that quit go before its bound and can never start or delay one. It may REPORT that its first frame is composed, with that frame's background colour as one #rrggbb string the shell parses strictly: the shell paints the still-hidden window that colour, keeps it for the next launch in one file it names itself, and shows the window. It may set its own TEXT SIZE as one of five percentages, which the shell makes the main window's zoom and keeps for the next launch in one more file it names itself; any other number is refused. It may name the language the shell draws its menu, tray and dialogs in as one of two tags, which the shell keeps in one more file it names itself for the words it draws from the next launch, any other text refused, the answer one bool. It may TAKE, once and within ten seconds, the files a person dropped on it from another program, which the shell saw dropped itself and opened at the take: a command with no argument answers each file's name (never its path), size and type, and a second reads one taken file's next chunk of at most 1 MiB by the token the take answered and the file's place in that answer; a drag the page started is never held, and no file stays open past two minutes. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-engine-start-over", "allow-engine-retry", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-diagnostic-facts", "allow-diagnostic-save", "allow-open-link", "allow-rendered-links-batch", "allow-link-ask-open", "allow-save-attachment", "allow-stage-attachment-preview", "allow-release-attachment-preview", "allow-dropped-files-take", "allow-dropped-file-chunk", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-omarchy-theme-refused", "allow-update-state", "allow-update-press", "allow-update-poll", "allow-update-set-auto", "allow-update-hold", "allow-leave-saved", "allow-window-ready", "allow-set-text-size", "allow-set-shell-language", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-engine-start-over", "allow-engine-retry", "allow-host-candidate-probe", "allow-notify", "allow-alerts-set", "allow-set-badge", "allow-ui-vitals", "allow-diagnostic-facts", "allow-diagnostic-save", "allow-open-link", "allow-rendered-links-batch", "allow-link-ask-open", "allow-save-attachment", "allow-stage-attachment-preview", "allow-release-attachment-preview", "allow-dropped-files-take", "allow-dropped-file-chunk", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-omarchy-theme-refused", "allow-update-state", "allow-update-press", "allow-update-poll", "allow-update-set-auto", "allow-update-hold", "allow-leave-saved", "allow-window-ready", "allow-set-text-size", "allow-set-shell-language", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -7744,6 +7898,14 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         // has no mail and therefore nothing to announce. The webview is granted the `notify`
         // command above and none of this plugin's own permissions.
         .plugin(tauri_plugin_notification::init())
+        .on_page_load(|webview, payload| {
+            use tauri::Manager;
+            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                if let Some(alerts) = webview.app_handle().try_state::<Arc<crate::alerts::Alerts>>() {
+                    alerts.start_document();
+                }
+            }
+        })
         // Start-at-login, for host mode's always-on role. The same grant shape as the
         // notification centre: the window gets this shell's own `autostart_get`/`autostart_set`
         // commands (and arming/disarming host mode drives it), never the plugin's permissions.
@@ -7772,6 +7934,8 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             // The paired door's first step, on an install with no engine to ask — see the command.
             host_candidate_probe,
             notify,
+            // The calendar's alerts, set ahead: one closed set, taken under the mailbox served.
+            alerts_set,
             set_badge,
             // The window's own performance numbers, into the engine's log. The shell composes the
             // line from a fixed list of NUMBERS, so this command cannot carry text out of the page.
@@ -7903,6 +8067,11 @@ pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     }
 
     // Staged files a crash, a kill or an update install left behind; nothing is staged yet.
+    // The calendar's alerts: the book the window's one command fills, before the grant that lets it
+    // ask, and the thread that rings from it under the mailbox this shell serves.
+    let alerts = Arc::new(crate::alerts::Alerts::default());
+    app.manage(Arc::clone(&alerts));
+    ring_alerts(app.handle().clone(), Arc::clone(&shell), alerts);
     crate::attachment_preview::sweep_at_launch(&shell);
     app.manage(shell);
     app.manage(crate::attachment_preview::Previews::default());

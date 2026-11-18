@@ -111,6 +111,13 @@ describe("Request → frame → Request", () => {
 });
 
 describe("the served mailbox named after ready", () => {
+  it("hosted sign-in changes keep the stream open for its next request", async () => {
+    const w = wire(async () => Response.json({ ready: true }));
+    await w.host.hostedSession(true);
+    await w.host.hostedSession(false);
+    expect(await (await w.client.fetch("/health")).json()).toEqual({ ready: true });
+  });
+
   it("a mailbox frame is written before the answer that follows it, and the client reads past it", async () => {
     let w: Wired | null = null;
     w = wire(async () => {

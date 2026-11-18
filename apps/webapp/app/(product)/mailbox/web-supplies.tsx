@@ -225,6 +225,7 @@ function useWebNotifications(): NotificationHost {
   say.current = t;
   return useMemo(() => ({
     ...browserNotificationHost,
+    liveNoticeScope: readOwner,
     emitter: webNoticeEmitter(browserNoticePage, () => noticeWordingOf((key, values) => say.current(key, values))),
   }), []);
 }

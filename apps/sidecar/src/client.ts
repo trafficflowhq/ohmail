@@ -103,7 +103,7 @@ export function connectOverStdio(opts: StdioClientOptions): StdioClient {
       if (header.t === "phase") continue;
       // The served mailbox named after `ready` (`MailboxHeader`): uncorrelated, and this client's
       // consumers read the mailbox off their own requests, so it is skipped like a phase.
-      if (header.t === "mailbox") continue;
+      if (header.t === "mailbox" || header.t === "hosted-session") continue;
       if (typeof header.id !== "number") {
         close(new Error(`frame with no correlation id: ${JSON.stringify(f.header).slice(0, 200)}`));
         return;

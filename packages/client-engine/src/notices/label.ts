@@ -3,7 +3,7 @@
  * on a shared calendar or in an invitation by somebody else, and a notice shows it on a locked
  * screen: so it passes here, as one clean line, or not at all.
  */
-import type { EventLabel } from "./kinds.js";
+import { NOTICE_KIND_FACTS, NOTICE_NAMES_EVENT, type EventLabel, type NoticeKind, type NoticeSurface } from "./kinds.js";
 
 /** The longest title a notice shows, in code points. */
 export const NOTICE_TEXT_MAX = 80;
@@ -65,3 +65,28 @@ export function eventLabel(
   const text = cleanNoticeText(event.title);
   return text === null ? { as: "event" } : { as: "title", text };
 }
+
+/** What a notice's title field holds: nothing drawn at all, the app's own words, or an event's label. */
+export type NoticeTitle = "none" | "words" | "label";
+
+/**
+ * WHAT THE TITLE FIELD OF `kind` MAY HOLD ON `surface`. Nothing where the surface draws no such
+ * notice (no mail kind on the iPhone, and of the calendar's only what is set ahead). An event's
+ * label for the kinds that name an event: its cleaned title under the person's switch, `Busy` for a
+ * private event whatever the switch, `Event` where titles are hidden (see {@link eventLabel}). The
+ * app's own words for every other kind: no mail notice, nothing found in a letter and no summary
+ * ever shows a title. Nothing of an event but its label is ever in a notice: no name, address,
+ * note, place, link, calendar or account.
+ */
+export function noticeTitleOf(kind: NoticeKind, surface: NoticeSurface): NoticeTitle {
+  const facts = Object.prototype.hasOwnProperty.call(NOTICE_KIND_FACTS, kind) ? NOTICE_KIND_FACTS[kind] : undefined;
+  if (facts === undefined || !facts.surfaces.includes(surface)) return "none";
+  return NOTICE_NAMES_EVENT[kind] === true ? "label" : "words";
+}
+
+/**
+ * What a locked screen's public version of a notice says in place of the event's label: `Event`.
+ * Never the title, and not that the event is private either. A platform that draws a notice in two
+ * versions (Android's private visibility with a public version) is handed this for the public one.
+ */
+export const LOCKED_LABEL: EventLabel = Object.freeze({ as: "event" });

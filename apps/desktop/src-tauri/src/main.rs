@@ -176,6 +176,11 @@ mod shell_language;
 #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
 mod notice;
 
+// The calendar's alerts set ahead: read closed, rung under the mailbox served, worded by the shell.
+// Tauri-free; only the engine build has the command that fills its book and the thread that rings.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+mod alerts;
+
 // A run that vanished (a GTK or WebKit crash) is logged on the next start. Always compiled.
 mod unclean_exit;
 
