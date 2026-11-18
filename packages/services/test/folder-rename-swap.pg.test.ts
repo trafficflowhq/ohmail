@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   accounts, accountSyncState, changeLog, folderOps, folderState,
@@ -10,7 +9,7 @@ import {
   resolveFolderDestination, type Tx,
 } from "@trafficflow/db";
 import { userFolderExclusion } from "@trafficflow/core/adapters/imap-types";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -34,7 +33,8 @@ import { setFoldersEnabled } from "../src/consent-seed.js";
 const PG_UP = await realPgAvailable();
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 const ACCOUNT = randomUUID();
 
@@ -70,7 +70,8 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
 
   beforeAll(async () => {
     client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
     await runMigrations(PG_TEST_URL);
     await db.insert(accounts).values({ id: ACCOUNT, name: `frs-${ACCOUNT.slice(0, 8)}` });
     const [box] = await db.insert(mailboxes)
@@ -544,7 +545,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
     // the winner had reshaped.
     const svc = new FolderOpsService();
     const ctx = (): ServiceContext => ({
-      db: db as unknown as ServiceContext["db"], accountId: ACCOUNT, userId: null,
+      db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null,
       now: () => new Date(), requestId: `race-${randomUUID()}`,
     } as ServiceContext);
     await setFoldersEnabled(ctx(), true);
@@ -589,7 +590,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
     // `assertOrganizerRole`'s share lock, which a folder command's enqueue holds FOR UPDATE. Held by
     // hand here while a delete of the folder is inserted; the move parks, then reads it and refuses.
     const ctx = (): ServiceContext => ({
-      db: db as unknown as ServiceContext["db"], accountId: ACCOUNT, userId: null,
+      db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null,
       now: () => new Date(), requestId: `race-${randomUUID()}`,
     } as ServiceContext);
     await db.update(mailboxes).set({ status: "connected", organizerRole: "organizer" }).where(eq(mailboxes.id, mb));

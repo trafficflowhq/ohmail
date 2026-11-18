@@ -1,20 +1,17 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accounts, auditLog, folderState, mailboxes, messageBodies, messages, recordChange, rules, threads,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import {
   dismissHeldRelease, heldReleaseFingerprint, heldReleaseGroups, heldReleaseSummary, releaseHeld,
   HELD_RELEASE_AUDIT_ACTION,
 } from "@trafficflow/services/mail";
-import type { Db, ServiceContext } from "@trafficflow/services";
+import { dbFor, type Db, type ServiceContext } from "@trafficflow/services";
 import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
@@ -40,16 +37,16 @@ interface World { accountId: string; mailboxId: string }
 
 describe.skipIf(!AVAILABLE)("held mail released by a press", () => {
   let db: Db;
-  let sql: ReturnType<typeof postgres>;
+  let owned: OwnedDb;
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    sql = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(sql, { schema }), "pg") as unknown as Db;
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db as unknown as Db;
   }, 120_000);
 
   const ctxOf = (w: World): ServiceContext => ({
-    db: db as never, accountId: w.accountId, userId: null,
+    db: dbFor(db, w.accountId), accountId: w.accountId, userId: null,
     now: () => new Date("2026-09-12T12:00:00Z"), requestId: `hr-${randomUUID()}`,
   });
 

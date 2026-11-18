@@ -3,9 +3,9 @@ import { request as httpRequest, type ClientRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLogger } from "@trafficflow/core";
-import { createApp, type ApiDeps } from "@trafficflow/api";
+import { createApp } from "@trafficflow/api";
 import { calendarRoutes } from "@trafficflow/api/calendar";
-import { accounts, sessions, users } from "@trafficflow/db";
+import { accounts, bindDb, sessions, users } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { generateToken, hashToken } from "@trafficflow/services";
 import { makeDispatch } from "../src/handler.js";
@@ -72,7 +72,8 @@ async function rig(opts: { url?: string } = {}) {
       body: JSON.stringify(body),
     });
     const deps = program.buildDeps(request);
-    deps.db = db as unknown as ApiDeps["db"];
+    // The test's store, minted for the request as the host mints its own: bound to nothing.
+    deps.db = bindDb(db, { account: null });
     // The recorder's every record, caught as it is handed over.
     deps.faultLog = { record: async (fault) => { records.push(JSON.stringify(fault)); } };
     const res = await app.handle(request, deps);
@@ -204,7 +205,7 @@ describe("a person who leaves, at the server's own door", () => {
       logger: r.logger,
       buildDeps: (req) => {
         const d = r.program.buildDeps(req);
-        d.db = r.db as unknown as ApiDeps["db"];
+        d.db = bindDb(r.db, { account: null });
         return d;
       },
     });

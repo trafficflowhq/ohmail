@@ -9,7 +9,7 @@ import { serviceUp } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { LEGACY_NEWS_FOLDER, NEWS_FOLDER } from "@trafficflow/core/folder-name";
-import { MessageService, SearchService, readMailboxFilings, type ServiceContext } from "@trafficflow/services";
+import { MessageService, SearchService, readMailboxFilings, type ServiceContext, dbFor } from "@trafficflow/services";
 import { runSyncCycle } from "@ohmail/organizer/sync";
 import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
@@ -68,7 +68,7 @@ async function rig() {
     if (role === "organizer") await a.ensureFolders(FIXTURE_DOOR);
     return a;
   };
-  const ctx: ServiceContext = { db: w.db as never, accountId: w.accountId, userId: null, now: () => new Date(), requestId: "tail" };
+  const ctx: ServiceContext = { db: dbFor(w.db, w.accountId), accountId: w.accountId, userId: null, now: () => new Date(), requestId: "tail" };
   const live = async () => (await w.db.select({ s: messages.subject, d: messages.deletedAt }).from(messages)
     .where(eq(messages.mailboxId, w.mailboxId))).filter((r) => r.d === null).map((r) => r.s).sort();
   const listed = async () => (await new MessageService().list(ctx, { view: "all", limit: 50 })).items.length;

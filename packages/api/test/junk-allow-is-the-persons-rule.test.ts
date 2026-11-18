@@ -24,9 +24,11 @@ async function seed() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `allow-${randomUUID().slice(0, 8)}@example.invalid`, junkFolder: "Junk",
   }).returning({ id: mailboxes.id });
-  const deps = { db, now: () => NOW } as unknown as ApiDeps;
-  const ctx = { accountId, db: dbFor(db, accountId), now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
-  const svcCtx = { db, accountId, userId: null, now: () => NOW, requestId: "allow" } as unknown as ServiceContext;
+  // The person's request, signed in: the container's handle and both contexts' bound to the account.
+  const bound = dbFor(db, accountId);
+  const deps = { db: bound, now: () => NOW } as unknown as ApiDeps;
+  const ctx = { accountId, db: bound, now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
+  const svcCtx = { db: bound, accountId, userId: null, now: () => NOW, requestId: "allow" } as unknown as ServiceContext;
   return { db, deps, ctx, svcCtx, accountId, mailboxId: mb!.id };
 }
 type World = Awaited<ReturnType<typeof seed>>;

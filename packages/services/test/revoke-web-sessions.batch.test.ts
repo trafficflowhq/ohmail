@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { and, eq, getTableName, isNull, type Table } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, users, devices, sessions, refreshTokens, type Tx } from "@trafficflow/db";
+import { accounts, bindDb, users, devices, sessions, refreshTokens, type Tx } from "@trafficflow/db";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
 import { makeAuthService, makeSessionLifecycle, makeTestAuthDeps, type ServiceContext } from "../src/index.js";
 
@@ -78,7 +78,7 @@ describe("revokeWebSessions — set-based, complete, bounded", () => {
     // Counts UPDATE statements per table through the transaction boundary too: the verb runs its
     // claim, sweeps and voids inside one tx, so the counter follows the tx handle it hands out.
     const updates: Record<string, number> = {};
-    const counting = countWrap(db as object, "update", updates) as unknown as Tx;
+    const counting = countWrap(bindDb(db, { account: me.accountId }), "update", updates) as unknown as Tx;
 
     const svc = makeSessionLifecycle({ config: makeTestAuthDeps().config });
     const ctx: ServiceContext = {
@@ -130,7 +130,7 @@ describe("revokeWebSessions — set-based, complete, bounded", () => {
 
     const deletes: Record<string, number> = {};
     const { revoked } = await makeAuthService(makeTestAuthDeps()).revokeWebSessions({
-      db: countWrap(db as object, "delete", deletes) as unknown as ServiceContext["db"],
+      db: countWrap(bindDb(db, { account: me.accountId }), "delete", deletes) as unknown as ServiceContext["db"],
       accountId: me.accountId, userId: me.userId, sessionId: caller.id,
       now: () => NOW, requestId: "batch-wake", ip: "1.2.3.4",
     });
@@ -206,12 +206,12 @@ describe("revokeWebSessions — set-based, complete, bounded", () => {
     });
 
     // Attempt 1 dies mid-sweep…
-    await expect(svc.revokeWebSessions(ctx(failingWrap(db as object, { updates: 0 }))))
+    await expect(svc.revokeWebSessions(ctx(failingWrap(bindDb(db, { account: me.accountId }), { updates: 0 }))))
       .rejects.toThrow("chunk killed mid-sweep");
     // …and left nothing half-done: either everything rolled back (the fix) or — the pre-fix
     // red — sessions revoked with tokens alive, which the retry below can then never finish.
     // Attempt 2, clean handle: the verb converges to fully-revoked.
-    const retry = await svc.revokeWebSessions(ctx(db as object));
+    const retry = await svc.revokeWebSessions(ctx(bindDb(db, { account: me.accountId })));
     expect(retry.revoked).toBe(3);
 
     const liveSessions = await db.select({ id: sessions.id }).from(sessions)

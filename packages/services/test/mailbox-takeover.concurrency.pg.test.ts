@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { accountSettings, accounts, mailboxes, mailboxCredentials, UNMETERED_ACCESS, type AccessVerdict } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { StaticKeyProvider } from "@trafficflow/core";
@@ -47,12 +46,12 @@ import { makeMailboxService, ServiceError, type ServiceContext } from "@trafficf
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
 /** A third session, for the one case that needs a lock HELD while the other two race — see it. */
 const sqlC = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-08-05T12:00:00.000Z");
 const sleep = (ms: number): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
@@ -81,7 +80,7 @@ const svc = makeMailboxService({
 });
 
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
-  ({ db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: fixturePassword("mailbox-takeover") };
 /** Always "ok": every case here is about the row, and a probe that could refuse would decide it first. */
@@ -106,7 +105,7 @@ const RACING_BUDGET_MS = RACING_PAIRS * PAIR_BUDGET_MS;
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
 afterAll(async () => {
-  await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); await sqlC.end({ timeout: 5 });
+  await ownedA.close(); await ownedB.close(); await sqlC.end({ timeout: 5 });
 });
 
 /**

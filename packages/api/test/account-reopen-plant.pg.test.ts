@@ -1,15 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { AccountErasedError, accounts, mailboxes, type AccessVerdict } from "@trafficflow/db";
+import { AccountErasedError, accounts, mailboxes, type AccessVerdict, type Tx } from "@trafficflow/db";
 import {
   accountLifecycleNotices, makeOwnedDb, plantReopenedCatchUp, type OwnedDb,
 } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import type { ServiceContext } from "@trafficflow/services";
+import { dbFor, type ServiceContext } from "@trafficflow/services";
 import { reopenedCatchUp } from "../src/account-reopen.js";
 import type { ApiDeps } from "../src/deps.js";
+import { bindRequest } from "../src/context.js";
+import { perRequest } from "./helpers.js";
 
 /**
  * THE CATCH-UP THE WORKER PLANTS AND THE DOOR TELLS, on real Postgres: the fence's share lock against
@@ -62,13 +64,17 @@ describe.skipIf(!AVAILABLE)("the catch-up across the worker's plant and the door
       syncBlockedReason: "account_closed", syncBlockedSince: BLOCKED,
       ...(kind === "organizer" ? { organizerParkedAt: PARKED, organizerReleasedAt: PARKED } : {}),
     }).returning({ id: mailboxes.id });
-    const deps = { db: handle, now: () => NOW } as unknown as ApiDeps;
-    const ctx = { accountId, db: handle, now: () => NOW } as unknown as ServiceContext;
+    // The door's request, signed in: its container's handle and its context's, bound to the account.
+    const bound = dbFor(handle, accountId);
+    const deps = { db: bound, now: () => NOW } as unknown as ApiDeps;
+    const ctx = { accountId, db: bound, now: () => NOW } as unknown as ServiceContext;
     return { accountId, mailboxId: row!.id, deps, ctx };
   }
   const reopened = async (accountId: string) => (await db.select().from(accountLifecycleNotices)
     .where(and(eq(accountLifecycleNotices.accountId, accountId), eq(accountLifecycleNotices.kind, "reopened"))))
     .map((n) => ({ anchor: n.anchor.toISOString(), told: n.sentAt.getTime() !== n.anchor.getTime() }));
+  /** The worker's plant, on the account's handle as its roster pass binds it (`scope.forAccount`). */
+  const plantFor = (accountId: string) => plantReopenedCatchUp(dbFor(db, accountId) as unknown as Tx, accountId);
   /** The pass's two spends, as the worker makes them: the promotion's, then the pass end's. */
   const promote = (mailboxId: string) =>
     db.update(mailboxes).set({ organizerParkedAt: null }).where(eq(mailboxes.id, mailboxId));
@@ -77,7 +83,7 @@ describe.skipIf(!AVAILABLE)("the catch-up across the worker's plant and the door
 
   it("worker first: the plant is untold at the park, the first read tells it, the second says nothing", async () => {
     const w = await world("organizer");
-    expect((await plantReopenedCatchUp(db, w.accountId))?.toISOString()).toBe(PARKED.toISOString());
+    expect((await plantFor(w.accountId))?.toISOString()).toBe(PARKED.toISOString());
     await promote(w.mailboxId);
     await clearBlock(w.mailboxId);
     expect(await reopened(w.accountId)).toEqual([{ anchor: PARKED.toISOString(), told: false }]);
@@ -89,13 +95,13 @@ describe.skipIf(!AVAILABLE)("the catch-up across the worker's plant and the door
   it("door first: the door tells a fresh row, the plant after it does nothing", async () => {
     const w = await world("organizer");
     expect(await reopenedCatchUp(w.deps, w.ctx)).toEqual({ since: PARKED.toISOString() });
-    expect(await plantReopenedCatchUp(db, w.accountId), "DO NOTHING").toBeNull();
+    expect(await plantFor(w.accountId), "DO NOTHING").toBeNull();
     expect(await reopened(w.accountId)).toEqual([{ anchor: PARKED.toISOString(), told: true }]);
   });
 
   it("two reads at once over one planted row: exactly one tells it", async () => {
     const w = await world("reader");
-    await plantReopenedCatchUp(db, w.accountId);
+    await plantFor(w.accountId);
     await clearBlock(w.mailboxId);
     // Both reads held at the fence until each has read the row as untold, then let go together.
     let both: Promise<Array<{ since: string } | null | "fault">> | null = null;
@@ -114,14 +120,14 @@ describe.skipIf(!AVAILABLE)("the catch-up across the worker's plant and the door
     await db.insert(accountLifecycleNotices).values({
       accountId: w.accountId, kind: "closed", anchor: new Date("2026-08-25T18:55:08.000Z"),
     });
-    await plantReopenedCatchUp(db, w.accountId);
+    await plantFor(w.accountId);
     await clearBlock(w.mailboxId);
     expect(await reopenedCatchUp(w.deps, w.ctx)).toEqual({ since: BLOCKED.toISOString() });
   });
 
   it("a read mid-pass (park spent, block standing) tells the planted row and mints none", async () => {
     const w = await world("organizer");
-    await plantReopenedCatchUp(db, w.accountId);
+    await plantFor(w.accountId);
     await promote(w.mailboxId);
     expect(await reopenedCatchUp(w.deps, w.ctx)).toEqual({ since: PARKED.toISOString() });
     await clearBlock(w.mailboxId);
@@ -145,8 +151,8 @@ describe.skipIf(!AVAILABLE)("the catch-up across the worker's plant and the door
     const a = await world("organizer");
     const b = await world("reader");
     await db.update(mailboxes).set({ syncBlockedSince: NOW }).where(eq(mailboxes.id, b.mailboxId));
-    expect((await plantReopenedCatchUp(db, a.accountId))?.toISOString()).toBe(PARKED.toISOString());
-    expect((await plantReopenedCatchUp(db, b.accountId))?.toISOString()).toBe(NOW.toISOString());
+    expect((await plantFor(a.accountId))?.toISOString()).toBe(PARKED.toISOString());
+    expect((await plantFor(b.accountId))?.toISOString()).toBe(NOW.toISOString());
     expect(await reopened(a.accountId)).toEqual([{ anchor: PARKED.toISOString(), told: false }]);
     expect(await reopened(b.accountId)).toEqual([{ anchor: NOW.toISOString(), told: false }]);
   });
@@ -157,7 +163,7 @@ describe.skipIf(!AVAILABLE)("the catch-up across the worker's plant and the door
     await db.transaction(async (tx) => {
       // The sweep's own order: the account row locked, then stamped.
       await tx.execute(sql`select 1 from accounts where id = ${w.accountId} for update`);
-      plant = plantReopenedCatchUp(db, w.accountId).then(
+      plant = plantFor(w.accountId).then(
         () => "planted", (err: unknown) => (err instanceof AccountErasedError ? "erased" : "other"));
       await new Promise((r) => setTimeout(r, 300));
       await tx.update(accounts).set({ erasedAt: NOW }).where(eq(accounts.id, w.accountId));
@@ -169,16 +175,22 @@ describe.skipIf(!AVAILABLE)("the catch-up across the worker's plant and the door
   it("a tell that faults holds the door's resume back: the block and the park stand", async () => {
     const { accountRoutes } = await import("../src/routes/account.js");
     const route = accountRoutes.find((r) => r.method === "GET" && r.pattern === "/account/access")!;
+    // A request's container on `handle`'s pool, its handle as a host mints a request's, bound to the
+    // signed-in session's account as the middleware binds it before a route runs.
     const call = async (handle: OwnedDb["db"], accountId: string) => {
-      const deps = {
-        db: handle, now: () => NOW,
-        session: { accountId, userId: null, sessionId: null },
-        services: { entitlementsPort: {
-          access: async () => OPEN_AGAIN, accessOrFault: async () => OPEN_AGAIN,
-          spend: async () => ({ verdict: "fault" }), release: async () => "settled",
-          manageLink: async () => null, releaseAccount: async () => "none",
-        } },
-      } as unknown as ApiDeps;
+      const deps = perRequest({
+        ...({
+          now: () => NOW,
+          session: { accountId, userId: null, sessionId: null },
+          services: { entitlementsPort: {
+            access: async () => OPEN_AGAIN, accessOrFault: async () => OPEN_AGAIN,
+            spend: async () => ({ verdict: "fault" }), release: async () => "settled",
+            manageLink: async () => null, releaseAccount: async () => "none",
+          } },
+        } as unknown as Omit<ApiDeps, "db">),
+        db: handle,
+      });
+      bindRequest(deps);
       return (await route.handler(new Request("http://api.test/account/access"), deps, {})).json();
     };
     // CONTROL: a healthy tell answers the catch-up and the resume clears the block.
@@ -189,25 +201,31 @@ describe.skipIf(!AVAILABLE)("the catch-up across the worker's plant and the door
     expect(cleared.syncBlockedReason).toBeNull();
 
     // The tell's insert refused inside the door's own transaction, the handle it is given included.
-    const refusing = faultyNoticesWrites(db);
-    const w = await world("organizer");
-    const body = await call(refusing.db, w.accountId) as { access?: unknown; caughtUp?: unknown };
-    expect(body.access).toBe("open");
-    expect(body.caughtUp).toBeUndefined();
-    expect(refusing.refused(), "the fault is the tell's").toBeGreaterThan(0);
-    expect(refusing.mailboxWrites(), "no resume statement ran in that request").toBe(0);
-    const row = (await db.select().from(mailboxes).where(eq(mailboxes.id, w.mailboxId)))[0]!;
-    expect([row.syncBlockedReason, row.organizerParkedAt?.toISOString(), row.takeoverAuthorizedAt])
-      .toEqual(["account_closed", PARKED.toISOString(), null]);
+    const refusing = faultyNoticesWrites();
+    try {
+      const w = await world("organizer");
+      const body = await call(refusing.db, w.accountId) as { access?: unknown; caughtUp?: unknown };
+      expect(body.access).toBe("open");
+      expect(body.caughtUp).toBeUndefined();
+      expect(refusing.refused(), "the fault is the tell's").toBeGreaterThan(0);
+      expect(refusing.mailboxWrites(), "no resume statement ran in that request").toBe(0);
+      const row = (await db.select().from(mailboxes).where(eq(mailboxes.id, w.mailboxId)))[0]!;
+      expect([row.syncBlockedReason, row.organizerParkedAt?.toISOString(), row.takeoverAuthorizedAt])
+        .toEqual(["account_closed", PARKED.toISOString(), null]);
+    } finally {
+      await refusing.close();
+    }
   });
 });
 
 /**
- * A handle whose every transaction refuses a write to the notices table and counts its writes to
- * `mailboxes`. It wraps the TRANSACTION the handle gives its callback too, which is where the door
- * writes: a proxy of the outer handle alone would never see the write.
+ * A pool of the factory's whose every transaction refuses a write to the notices table, and which
+ * counts its writes to `mailboxes`. The hooks sit on the pool's own handle, the one the binder
+ * knows, so the account's handle the request binds over it opens its transactions and its writes
+ * through them. It wraps the TRANSACTION the handle gives its callback too, which is where the door
+ * writes: a hook on the outer handle alone would never see the write.
  */
-function faultyNoticesWrites(db: OwnedDb["db"]) {
+function faultyNoticesWrites() {
   let refused = 0;
   let mailboxWrites = 0;
   const wrapTx = (tx: object): object => new Proxy(tx, {
@@ -228,21 +246,22 @@ function faultyNoticesWrites(db: OwnedDb["db"]) {
       return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
     },
   });
-  const handle = new Proxy(db, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver) as unknown;
-      if (prop === "transaction") {
-        return (fn: (tx: object) => Promise<unknown>, ...rest: unknown[]) =>
-          (value as (...a: unknown[]) => Promise<unknown>).call(target, (tx: object) => fn(wrapTx(tx)), ...rest);
-      }
-      if (prop === "update") {
-        return (table: unknown) => {
-          if (table === mailboxes) mailboxWrites += 1;
-          return (value as (t: unknown) => unknown).call(target, table);
-        };
-      }
-      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+  const owned = makeOwnedDb(PG_TEST_URL);
+  const handle = owned.db;
+  const transaction = handle.transaction;
+  const update = handle.update;
+  Object.defineProperty(handle, "transaction", {
+    configurable: true, writable: true,
+    value: function (this: unknown, fn: (tx: object) => Promise<unknown>, config?: Parameters<typeof transaction>[1]) {
+      return transaction.call(this as typeof handle, (tx) => fn(wrapTx(tx)) as never, config);
     },
   });
-  return { db: handle as OwnedDb["db"], refused: () => refused, mailboxWrites: () => mailboxWrites };
+  Object.defineProperty(handle, "update", {
+    configurable: true, writable: true,
+    value: function (this: unknown, table: Parameters<typeof update>[0]) {
+      if (table === mailboxes) mailboxWrites += 1;
+      return update.call(this as typeof handle, table);
+    },
+  });
+  return { db: handle, refused: () => refused, mailboxWrites: () => mailboxWrites, close: () => owned.close() };
 }

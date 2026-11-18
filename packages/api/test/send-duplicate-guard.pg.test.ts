@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { perRequest } from "./helpers.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
@@ -78,47 +79,52 @@ function fakeAdapter(opts: { inSent?: boolean; failFirst?: boolean } = {}) {
   return { factory, state };
 }
 
-/** A real-Postgres `ApiDeps` on its OWN connection — two of these is what makes the race real. */
+/**
+ * A real-Postgres `ApiDeps` on its OWN connection — two of these is what makes the race real. Its
+ * handle is minted over that connection's pool as a host mints a request's (`perRequest`).
+ */
 function depsOn(db: Db, sendAdapter: OpenSendAdapter, now: () => Date = () => FIXED_NOW): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
-    now,
-    requestId: `dup-${randomUUID()}`,
-    session: null,
-    authConfig: authDeps.config,
-    keyProvider: authDeps.keyProvider,
-    services: {
-      auth: makeAuthService(authDeps),
-      sync: syncService,
-      push: pushService,
-      mailbox: makeMailboxService({ keyProvider: authDeps.keyProvider }),
-      rules: rulesService,
-      message: messageService,
-      thread: threadService,
-      screener: makeScreenerService({}),
-      approval: makeApprovalService({}),
-      triage: triageService,
-      search: searchService,
-      privacy: makePrivacyService({
-        remote: { async fetch() { return { status: 200, contentType: "image/gif", body: new Uint8Array() }; } },
-        resolver: { async resolve() { return ["93.184.216.34"]; } },
-      }),
-      contacts: contactsService,
-      snippets: snippetsService,
-      notify: notifyRulesService,
-      away: awayResponderService,
-      attachments: attachmentsService,
-      kb: kbService,
-      tags: tagsService,
-      drafts: draftsService,
-      drafting: draftingService,
-      sends: sendService,
-      workflows: workflowsService,
-      proposals: proposalsService,
-      sendAdapter,
-    },
-  } as unknown as ApiDeps;
+    ...({
+      now,
+      requestId: `dup-${randomUUID()}`,
+      session: null,
+      authConfig: authDeps.config,
+      keyProvider: authDeps.keyProvider,
+      services: {
+        auth: makeAuthService(authDeps),
+        sync: syncService,
+        push: pushService,
+        mailbox: makeMailboxService({ keyProvider: authDeps.keyProvider }),
+        rules: rulesService,
+        message: messageService,
+        thread: threadService,
+        screener: makeScreenerService({}),
+        approval: makeApprovalService({}),
+        triage: triageService,
+        search: searchService,
+        privacy: makePrivacyService({
+          remote: { async fetch() { return { status: 200, contentType: "image/gif", body: new Uint8Array() }; } },
+          resolver: { async resolve() { return ["93.184.216.34"]; } },
+        }),
+        contacts: contactsService,
+        snippets: snippetsService,
+        notify: notifyRulesService,
+        away: awayResponderService,
+        attachments: attachmentsService,
+        kb: kbService,
+        tags: tagsService,
+        drafts: draftsService,
+        drafting: draftingService,
+        sends: sendService,
+        workflows: workflowsService,
+        proposals: proposalsService,
+        sendAdapter,
+      },
+    } as unknown as Omit<ApiDeps, "db">),
+  });
 }
 
 const app = createApp(apiRoutes);

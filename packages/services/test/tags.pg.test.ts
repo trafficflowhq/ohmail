@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { accounts, mailboxes, messages, tags, messageTags } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -41,11 +40,12 @@ import {
 const PG_UP = await realPgAvailable();
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 const svc = new TagsService();
 
 const ctx = (accountId: string): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"],
+  db: dbFor(db, accountId),
   accountId,
   userId: null,
   now: () => new Date(),
@@ -78,9 +78,10 @@ describe.skipIf(!PG_UP)("tags — the concurrency PGlite cannot see", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 8, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 120_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); await client?.end({ timeout: 5 }); });
 
   it("two concurrent toggles of DIFFERENT tags on one message both survive", async () => {
     const w = await newWorld();

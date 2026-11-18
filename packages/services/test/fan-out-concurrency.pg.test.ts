@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
 import { accounts, mailboxes, organizerRequests, rules } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { schema, makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { RulesService, type ServiceContext } from "@trafficflow/services";
-import { brandDialect } from "@trafficflow/db/dialect";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -32,16 +30,16 @@ import { brandDialect } from "@trafficflow/db/dialect";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-09-07T09:00:00.000Z");
 const svc = new RulesService();
 
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"],
+  db: dbFor(db, accountId),
   accountId, userId: null, now: () => NOW, requestId: `fc-${randomUUID().slice(0, 8)}`,
 });
 
@@ -66,7 +64,7 @@ async function world(readers: number): Promise<{ accountId: string; organized: s
 }
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await ownedA.close(); await ownedB.close(); });
 
 describe.skipIf(!PG_UP)("two rule edits fanning out at once", () => {
   it("writes exactly one request per (edit, mailbox) — no duplicate, none skipped", async () => {
@@ -118,7 +116,8 @@ describe.skipIf(!PG_UP)("two rule edits fanning out at once", () => {
      * throw anywhere after the requests discards them, not which throw it is. */
     const w = await world(2);
 
-    await expect(dbA.transaction(async (tx) => {
+    // The transaction is the account's: opened on its bound handle, so the binding rides it.
+    await expect(dbFor(dbA, w.accountId).transaction(async (tx) => {
       const ctx = { ...ctxOn(dbA, w.accountId), db: tx as unknown as ServiceContext["db"] };
       await svc.create(ctx, { kind: "sender", match: "c@corp.example", destination: "ohmail/News" });
       // Rows exist at this point, inside the transaction…

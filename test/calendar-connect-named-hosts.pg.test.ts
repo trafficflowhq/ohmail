@@ -21,7 +21,7 @@ import { calendarRoutes } from "@trafficflow/api/calendar";
 import { ANSWER_TIMEOUT_MS, CONNECT_TIMEOUT_MS, FETCH_BODY_MAX_BYTES, MAX_REDIRECTS } from "@ohmail/cal-providers";
 import { createLogger } from "@trafficflow/core";
 import { pinnedHttpRequest, type HostResolver } from "@trafficflow/core/net";
-import { calSettings } from "@trafficflow/db";
+import { bindDb, calSettings } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL } from "@trafficflow/db/testing";
 import { calendarFeed } from "@trafficflow/services/calendar";
@@ -107,7 +107,8 @@ describe.skipIf(!AVAILABLE)("where a CalDAV password goes, turn after turn, on P
    */
   async function connected(start: string) {
     const { deps } = await makeDeps(new Date());
-    deps.db = served.db as never;
+    // The api role's pool, minted for the request as the host mints its own: bound to nothing.
+    deps.db = bindDb(served.db, { account: null });
     deps.now = () => new Date();
     deps.keyProvider = w.keys;
     deps.logger = createLogger({ service: "api", level: "debug", sink: () => {} });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -101,7 +102,7 @@ async function world() {
     return m!.id;
   };
   const ctx: ServiceContext = {
-    db: db as never, accountId, userId: null, now: () => NOW, requestId: `lst-${randomUUID().slice(0, 8)}`,
+    db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `lst-${randomUUID().slice(0, 8)}`,
   };
   const brandsOf = async (address: string) => {
     const [r] = await db.select({ b: listAddresses.consentedBrands }).from(listAddresses)
@@ -205,7 +206,7 @@ async function pressWorld(contactSource: "person" | "inferred" | null, list = LI
   };
   if (contactSource !== null) await db.insert(contacts).values({ accountId, address: list, source: contactSource });
   await db.insert(listAddresses).values({ accountId, address: list, consentedBrands: [] });
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `lpr-${randomUUID().slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `lpr-${randomUUID().slice(0, 8)}` };
   const desired = async (id: string) =>
     (await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
   const brands = async () => listBrandsOf((await db.select({ b: listAddresses.consentedBrands }).from(listAddresses)

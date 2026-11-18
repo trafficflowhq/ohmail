@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -24,10 +25,14 @@ const app = createApp(apiRoutes);
 const NOW = new Date("2026-09-28T12:00:00.000Z");
 const authDeps = makeTestAuthDeps({});
 
-const depsOn = (db: Db): ApiDeps => ({
-  db, now: () => NOW, requestId: randomUUID(), session: null,
-  authConfig: authDeps.config, keyProvider: authDeps.keyProvider, admin: ADMIN,
-}) as unknown as ApiDeps;
+/** A request's container on `db`'s pool, its handle as a host mints a request's. */
+const depsOn = (db: Db): ApiDeps => perRequest({
+  ...({
+    now: () => NOW, requestId: randomUUID(), session: null,
+    authConfig: authDeps.config, keyProvider: authDeps.keyProvider, admin: ADMIN,
+  } as unknown as Omit<ApiDeps, "db">),
+  db,
+});
 
 describe.skipIf(!PG_UP)("two owners revoking each other", () => {
   let ownedA: OwnedDb;

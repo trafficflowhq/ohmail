@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { IncomingMessage, Server } from "node:http";
 import { serviceContext, type ApiDeps } from "@trafficflow/api";
 import { canonicalIp } from "@trafficflow/core/adapters/http-host";
+import { bindDb } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   makeHttpServer, makeTrustedProxies, toWebRequest,
@@ -22,8 +23,11 @@ const PROXY = "172.18.0.10";
 const A = "198.51.100.9";
 const B = "192.0.2.44";
 
-/** A real handle: a request's context binds it to nothing, and the binder refuses no handle at all. */
-const db = await makeTestDb();
+/**
+ * A real handle, as the host mints a request's: bound to nothing, which a request with no session
+ * keeps (the binder refuses no handle at all, and a plain one).
+ */
+const db = bindDb(await makeTestDb(), { account: null });
 
 /** The client address the route table reads. */
 const clientOf = (r: Request): string => serviceContext({ session: null, db } as unknown as ApiDeps, r).ip ?? "";

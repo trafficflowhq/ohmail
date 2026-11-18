@@ -1,14 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
-import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { SearchService, dbFor } from "@trafficflow/services";
+import { statementSeam } from "./helpers/statement-seam.js";
 import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 
@@ -232,10 +231,12 @@ describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
    */
   it("(7) a first page's typo arms run only when the exact tier is empty", async () => {
     const logged: Array<{ q: string; p: unknown[] }> = [];
-    const traced = brandDialect(drizzle(client, { schema, logger: { logQuery: (q, p) => { logged.push({ q, p }); } } }), "pg");
+    // The census rides the context's own handle: a seam at the drizzle builder of the account's handle
+    // sees the page statement, text and parameters, as a logger on a raw handle saw it.
+    const traced = statementSeam(dbFor(owned.db, A), (q, p) => { logged.push({ q, p }); return null; });
     const trigramLoops = async (q: string): Promise<number[]> => {
       logged.length = 0;
-      await svc.search({ ...ctx(), db: dbFor(traced, A) }, { q, parts: "page" });
+      await svc.search({ ...ctx(), db: traced }, { q, parts: "page" });
       const page = logged.find((l) => l.q.includes("fused_s"));
       expect(page, `${q}: the page's statement was not logged`).toBeDefined();
       const plan = await client.begin(async (tx) => {

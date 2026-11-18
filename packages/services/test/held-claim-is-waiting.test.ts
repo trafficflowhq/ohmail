@@ -1,4 +1,5 @@
 import { accountOfMessage } from "@trafficflow/db";
+import { dbFor } from "../src/context.js";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -54,7 +55,7 @@ async function world(o: { claim: boolean; rule: boolean }) {
     });
   }
   await db.insert(contacts).values({ accountId, address: SENDER, source: "inferred" });
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `hc-${randomUUID().slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `hc-${randomUUID().slice(0, 8)}` };
   return { db: db as unknown as Tx, accountId, ctx };
 }
 
@@ -129,7 +130,7 @@ async function consented(cs: readonly Consent[], o: { date?: Date; auth?: string
       enabled: c.rule.enabled ?? true, priority: 0, provenance: c.rule.provenance,
     });
   }
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `pc-${randomUUID().slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `pc-${randomUUID().slice(0, 8)}` };
   return { db: db as unknown as Tx, accountId, ctx, claimId: m!.id, mailboxId: mb!.id };
 }
 

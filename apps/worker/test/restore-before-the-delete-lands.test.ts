@@ -5,7 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { MessageGoneError, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
-import { MailboxService, MessageService, type ServiceContext } from "@trafficflow/services";
+import { MailboxService, MessageService, type ServiceContext, dbFor } from "@trafficflow/services";
 import { reconcileMailbox, type SyncDeps } from "@ohmail/organizer/sync";
 import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
@@ -48,7 +48,7 @@ async function world(opts: { instance?: boolean; folders?: string[] } = {}) {
     reconcileStatus: "reconciled", conflict: false,
   });
   const repo = makeDrizzleRepo(db as never);
-  const ctx = { db, accountId, userId: null, now: () => new Date(), requestId: "rud" } as unknown as ServiceContext;
+  const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: "rud" } as unknown as ServiceContext;
   const moves: string[] = [];
   // Where the server holds the letter: its one copy, moved by `move`.
   const server = { folder: "INBOX", uid: 11 };

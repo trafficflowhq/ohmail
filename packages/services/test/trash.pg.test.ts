@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -6,12 +7,11 @@ import { eq, sql } from "drizzle-orm";
 import {
   folderState, mailboxFolders, mailboxes, messages, messageInstances, accounts, changeLog, OrganizedElsewhereError,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import {
   MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, realPgAvailable, throwawayDb,
 } from "@trafficflow/db/testing";
 import { MessageService, type ServiceContext } from "../src/index.js";
-import { brandDialect } from "@trafficflow/db/dialect";
 
 /**
  * TRASH — WHERE A DELETED MESSAGE CAME FROM, THE LIST, AND RESTORE (mail 0099).
@@ -37,7 +37,8 @@ const PG_UP = await realPgAvailable();
 const privateDb = throwawayDb("trafficflow_trash");
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 const ACCOUNT = randomUUID();
 const TRASH = "Trash";
@@ -49,7 +50,7 @@ const t2 = new Date("2026-09-09T12:00:00.000Z");
 
 function ctxAt(at: Date): ServiceContext {
   return {
-    db: db as never,
+    db: dbFor(db, ACCOUNT),
     accountId: ACCOUNT,
     userId: null,
     now: () => at,
@@ -128,7 +129,8 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
   beforeAll(async () => {
     await privateDb.createFromTemplate();
     client = postgres(privateDb.url, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(privateDb.url);
+    db = owned.db;
 
     await db.insert(accounts).values({ id: ACCOUNT, name: `trash-${ACCOUNT.slice(0, 8)}` });
     const [box] = await db.insert(mailboxes).values({
@@ -165,7 +167,7 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
   });
 
   afterAll(async () => {
-    await client?.end({ timeout: 5 });
+    await owned?.close(); await client?.end({ timeout: 5 });
     await privateDb.drop();
   }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
 

@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import {
   accounts, accountSettings, drafts, folderState, mailboxes, mailboxCredentials, messages,
   OrganizedElsewhereError, UNMETERED_ACCESS, type AccessVerdict,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { StaticKeyProvider } from "@trafficflow/core";
@@ -43,10 +41,10 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-09-02T09:00:00.000Z");
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 7), 1);
@@ -58,7 +56,7 @@ const UNMETERED_READER = { accessOf: async (): Promise<AccessVerdict> => UNMETER
 const mailboxSvc = makeMailboxService({ keyProvider: KP, ...UNMETERED_READER });
 
 const ctxOn = (db: typeof dbA, accountId: string, now: Date = NOW): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"],
+  db: dbFor(db, accountId),
   accountId, userId: null, now: () => now, requestId: `rr-${randomUUID().slice(0, 8)}`,
 });
 
@@ -193,7 +191,7 @@ async function decideBesideConsent(order: "race" | "decide-first" | "consent-fir
 }
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await ownedA.close(); await ownedB.close(); });
 
 describe.skipIf(!PG_UP)("a reader is refused at every write door", () => {
   it("SCHEDULING A SEND is 409 organized_elsewhere, and it names who holds the mailbox", async () => {

@@ -2,15 +2,16 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
+import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
-import { brandDialect, carryDialect } from "@trafficflow/db/dialect";
-import { schema } from "@trafficflow/db/cloud";
+import { carryDialect } from "@trafficflow/db/dialect";
+import { schema, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   ACCOUNT_RULE_KEY_LOCK_CLASS, accounts, applyScreenerDecision, mailboxes, rules, type Tx,
 } from "@trafficflow/db";
-import { RulesService, type RuleCreation, type RuleMutation, type ServiceContext } from "@trafficflow/services";
+import { RulesService, type RuleCreation, type RuleMutation, type ServiceContext, dbFor } from "@trafficflow/services";
 
 /**
  * EVERY DOOR THAT CONVERGES A KEY WAITS ON ONE LOCK, ON A REAL SERVER (PGlite runs one connection
@@ -23,11 +24,11 @@ const PG_UP = await realPgAvailable();
 const ADDR = "lena@atelier.example";
 const svc = new RulesService();
 
-let a: ReturnType<typeof postgres>;
-let b: ReturnType<typeof postgres>;
+let ownedA: OwnedDb;
+let ownedB: OwnedDb;
 let c: ReturnType<typeof postgres>;
-let dbA: ReturnType<typeof drizzle<typeof schema>>;
-let dbB: ReturnType<typeof drizzle<typeof schema>>;
+let dbA: OwnedDb["db"];
+let dbB: OwnedDb["db"];
 let dbC: ReturnType<typeof drizzle<typeof schema>>;
 
 async function account(): Promise<string> {
@@ -46,7 +47,7 @@ async function twins(accountId: string): Promise<{ allow: string; deny: string }
   return { allow: allow!.id, deny: deny!.id };
 }
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, requestId: "r", now: () => new Date() }) as unknown as ServiceContext;
+  ({ db: dbFor(db, accountId), accountId, userId: null, requestId: "r", now: () => new Date() }) as unknown as ServiceContext;
 const rowsOf = async (accountId: string) => dbC.select().from(rules).where(eq(rules.accountId, accountId));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -84,15 +85,15 @@ async function behindTheLock<A, B>(accountId: string, first: () => Promise<A>, s
 describe.skipIf(!PG_UP)("every converging door on a real server", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    a = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
-    b = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
+    ownedA = makeOwnedDb(PG_TEST_URL);
+    ownedB = makeOwnedDb(PG_TEST_URL);
     c = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
-    dbA = brandDialect(drizzle(a, { schema }), "pg");
-    dbB = brandDialect(drizzle(b, { schema }), "pg");
+    dbA = ownedA.db;
+    dbB = ownedB.db;
     dbC = brandDialect(drizzle(c, { schema }), "pg");
   }, 120_000);
   afterAll(async () => {
-    await a?.end({ timeout: 5 }); await b?.end({ timeout: 5 }); await c?.end({ timeout: 5 });
+    await ownedA?.close(); await ownedB?.close(); await c?.end({ timeout: 5 });
   });
 
   it("a PATCH and a create under one key wait on the lock and leave one rule, neither failing", async () => {

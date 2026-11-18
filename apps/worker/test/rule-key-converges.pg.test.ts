@@ -2,15 +2,15 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { and, eq } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { schema } from "@trafficflow/db/cloud";
+import { and, eq } from "drizzle-orm";
+import { schema, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   ACCOUNT_RULE_KEY_LOCK_CLASS, accounts, mailboxes, organizerRequests, rules, settleReaderRuleRows, type Tx,
 } from "@trafficflow/db";
-import { RulesService, type RuleCreation, type ServiceContext } from "@trafficflow/services";
+import { RulesService, type RuleCreation, type ServiceContext, dbFor } from "@trafficflow/services";
 
 /**
  * ONE RULE PER KEY UNDER CONCURRENCY, AND ONE PRESS'S LEGS ON A REAL SERVER (PGlite runs one
@@ -25,11 +25,11 @@ const at = (m: number): Date => new Date(t0.getTime() + m * 60_000);
 const ACME = { kind: "domain", match: "acme.example", destination: "ohmail/News" };
 const svc = new RulesService();
 
-let a: ReturnType<typeof postgres>;
-let b: ReturnType<typeof postgres>;
+let ownedA: OwnedDb;
+let ownedB: OwnedDb;
 let c: ReturnType<typeof postgres>;
-let dbA: ReturnType<typeof drizzle<typeof schema>>;
-let dbB: ReturnType<typeof drizzle<typeof schema>>;
+let dbA: OwnedDb["db"];
+let dbB: OwnedDb["db"];
 let dbC: ReturnType<typeof drizzle<typeof schema>>;
 
 async function account(): Promise<string> {
@@ -39,7 +39,7 @@ async function account(): Promise<string> {
   return accountId;
 }
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, requestId: "r", now: () => new Date() }) as unknown as ServiceContext;
+  ({ db: dbFor(db, accountId), accountId, userId: null, requestId: "r", now: () => new Date() }) as unknown as ServiceContext;
 const rowsOf = async (accountId: string) => dbC.select().from(rules).where(eq(rules.accountId, accountId));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -60,15 +60,15 @@ function holdLock(accountId: string) {
 describe.skipIf(!PG_UP)("the rule key on a real server", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    a = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
-    b = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
+    ownedA = makeOwnedDb(PG_TEST_URL);
+    ownedB = makeOwnedDb(PG_TEST_URL);
     c = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
-    dbA = brandDialect(drizzle(a, { schema }), "pg");
-    dbB = brandDialect(drizzle(b, { schema }), "pg");
+    dbA = ownedA.db;
+    dbB = ownedB.db;
     dbC = brandDialect(drizzle(c, { schema }), "pg");
   }, 120_000);
   afterAll(async () => {
-    await a?.end({ timeout: 5 }); await b?.end({ timeout: 5 }); await c?.end({ timeout: 5 });
+    await ownedA?.close(); await ownedB?.close(); await c?.end({ timeout: 5 });
   });
 
   it("two creates under two idempotency keys wait on the account's lock and make one rule", async () => {

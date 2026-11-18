@@ -26,10 +26,10 @@ import { calendarRoutes } from "@trafficflow/api/calendar";
 import { makeCalendarProviders } from "@ohmail/cal-providers";
 import { createLogger } from "@trafficflow/core";
 import type { HostResolver } from "@trafficflow/core/net";
-import { calSettings } from "@trafficflow/db";
+import { bindDb, calSettings } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL } from "@trafficflow/db/testing";
-import { deleteAccount } from "@trafficflow/services";
+import { dbFor, type Db as ServicesDb, deleteAccount } from "@trafficflow/services";
 import { calendarFeed } from "@trafficflow/services/calendar";
 import type { CalendarConnectionRecord } from "@ohmail/wire";
 import { ROSTER_LIMIT, calendarPool, loadDueConnections } from "../packages/organizer/src/calendar/index.js";
@@ -51,7 +51,8 @@ let served: OwnedDb | null = null;
 async function doorOn(w: World, policy: "cloud" | "own-network" = "cloud") {
   const { deps } = await makeDeps(new Date());
   served ??= makeOwnedDb(PG_TEST_URL, { role: "api" });
-  deps.db = served.db as never;
+  // The api role's pool, minted for the request as the host mints its own: bound to nothing.
+  deps.db = bindDb(served.db, { account: null });
   deps.now = () => new Date();
   deps.keyProvider = w.keys;
   deps.logger = createLogger({ service: "api", level: "debug", sink: () => {} });
@@ -439,7 +440,7 @@ describe.skipIf(!AVAILABLE)("who may act at the connect door, on Postgres", () =
     await w.sql`update cal_connections set next_poll_at = null, status = 'active' where id = ${their}`;
     expect(await roster()).toContain(their);
 
-    await deleteAccount({ db: w.db, accountId: theirs.s.accountId, userId: theirs.s.userId, now: () => new Date(), requestId: "who-may" } as never);
+    await deleteAccount({ db: dbFor(w.db as unknown as ServicesDb, theirs.s.accountId), accountId: theirs.s.accountId, userId: theirs.s.userId, now: () => new Date(), requestId: "who-may" } as never);
     const [gone] = await w.sql<{ creds: number; conns: number; cals: number }[]>`select
       (select count(*)::int from cal_credentials where account_id = ${theirs.s.accountId}) as creds,
       (select count(*)::int from cal_connections where account_id = ${theirs.s.accountId}) as conns,

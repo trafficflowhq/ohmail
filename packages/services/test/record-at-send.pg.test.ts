@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect, carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { changeLog, drafts, mailboxes, messageBodies, messageInstances, messages, threads } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -59,17 +58,17 @@ import type { ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sql = postgres(PG_TEST_URL, { max: 8, onnotice: () => {} });
+const owned = makeOwnedDb(PG_TEST_URL);
 // BRANDED, like every production factory. A handle with no dialect brand refuses at the first
 // statement the seam composes for it, and the send path composes one.
-const db = brandDialect(drizzle(sql, { schema }), "pg");
+const db = owned.db;
 const svc = new SendService();
 const NOW = new Date("2026-08-13T09:00:00.000Z");
 const OWNER_DOMAIN = "trafficflow.test";
 const SENT = "Sent";
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sql.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); });
 
 /**
  * The bytes `MailComposer` would have handed to `client.append` — CRLF, a `Date:` the composer
@@ -167,7 +166,7 @@ async function seeded(opts: { to?: string; subject?: string; body?: string; inRe
     status: "draft",
   }).returning();
   const ctx: ServiceContext = {
-    db: db as unknown as ServiceContext["db"],
+    db: dbFor(db, accountId),
     accountId, userId: null, now: () => NOW, requestId: "r",
   };
   return { accountId, mailboxId: mb!.id, draftId: d!.id, ctx };
@@ -350,28 +349,27 @@ describe.skipIf(!PG_UP)("record-at-send — the sent message is a row before any
      * finalize's own transaction stayed committed while this one unwound.
      */
     let txCount = 0;
-    const failingDb = new Proxy(db as unknown as Record<string, unknown>, {
-      get(target, prop, recv) {
-        if (prop === "transaction") {
-          return async (fn: unknown) => {
-            txCount += 1;
-            if (txCount === 3) throw new Error("record-at-send persist failed");
-            return (db as unknown as { transaction(f: unknown): Promise<unknown> }).transaction(fn);
-          };
-        }
-        const v = Reflect.get(target, prop, recv);
-        return typeof v === "function" ? v.bind(target) : v;
+    // On the pool's own handle, the one the binder knows: the account's handle bound over it opens
+    // its transactions through it. Taken off again when the send has answered.
+    const transaction = db.transaction;
+    Object.defineProperty(db, "transaction", {
+      configurable: true,
+      value: async function (this: unknown, fn: Parameters<typeof transaction>[0], config?: Parameters<typeof transaction>[1]) {
+        txCount += 1;
+        if (txCount === 3) throw new Error("record-at-send persist failed");
+        return transaction.call(this as typeof db, fn, config);
       },
     });
     const ctx: ServiceContext = {
-      db: failingDb as unknown as ServiceContext["db"],
+      db: dbFor(db, accountId),
       accountId, userId: null, now: () => NOW, requestId: "r",
     };
     const { factory, state } = appendingAdapter({
       to: "anna@example.com", subject: "Re: the north elevation", body: "Thursday works.", uid: 41,
     });
 
-    const res = await svc.send(ctx, draftId, `ras-${randomUUID()}`, { openSendAdapter: factory, log, resolveStorageCap: async () => UNMETERED_STORAGE_CAP });
+    const res = await svc.send(ctx, draftId, `ras-${randomUUID()}`, { openSendAdapter: factory, log, resolveStorageCap: async () => UNMETERED_STORAGE_CAP })
+      .finally(() => { Object.defineProperty(db, "transaction", { value: transaction, configurable: true, writable: true }); });
 
     // THE SEND SUCCEEDED. The mail is gone; a thrown error here would answer "your message failed"
     // for a message sitting in the recipient's inbox.

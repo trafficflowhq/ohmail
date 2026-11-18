@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
@@ -54,13 +55,17 @@ async function blockedBy(waiter: string, holder: string, ms = 10_000): Promise<b
   return false;
 }
 
-function routeDeps(handle: unknown): ApiDeps {
+/** A request's container on `handle`'s pool, its handle as a host mints a request's. */
+function routeDeps(handle: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
-    db: handle, now: () => new Date(), requestId: `race-${randomUUID()}`, session: null, idempotency: null,
-    authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
-    services: { auth: makeAuthService(authDeps) },
-  } as unknown as ApiDeps;
+  return perRequest({
+    ...({
+      now: () => new Date(), requestId: `race-${randomUUID()}`, session: null, idempotency: null,
+      authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
+      services: { auth: makeAuthService(authDeps) },
+    } as unknown as Omit<ApiDeps, "db">),
+    db: handle,
+  });
 }
 
 interface Family { accountId: string; sessionId: string; familyId: string; refresh: string }

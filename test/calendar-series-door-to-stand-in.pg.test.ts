@@ -19,7 +19,7 @@ import {
 import type { HostResolver } from "@trafficflow/core/net";
 import { calCalendars, calConnections, calEvents, calWrites, changeLog, mailboxes } from "@trafficflow/db";
 import { CALENDAR_WRITE_FAULTS, type CalendarWritePayload } from "@trafficflow/db/calendar";
-import { ServiceError, type ServiceContext } from "@trafficflow/services";
+import { ServiceError, dbFor, type Db as ServicesDb, type ServiceContext } from "@trafficflow/services";
 import { dismissCalendarWrite, recordCalendarWrite, retryCalendarWrite } from "@trafficflow/services/calendar";
 import { calendarSyncPass } from "../packages/organizer/src/calendar/sync-pass.js";
 import { CalendarTurnOverdue, WORD_PLAN } from "../packages/organizer/src/calendar/words.js";
@@ -213,7 +213,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     };
     expect((await calendarSyncPass(readingOnly, t.due, never)).kind).toBe("synced");
     const memberUrl = (name: string) => `http://127.0.0.1:${dav.port}${dav.paths.member("studio", name)}`;
-    const ctx = (): ServiceContext => ({ db: w.db as unknown as ServiceContext["db"], accountId: t.accountId, userId: null, now: () => new Date(), requestId: `sd-${randomUUID().slice(0, 8)}` });
+    const ctx = (): ServiceContext => ({ db: dbFor(w.db as unknown as ServicesDb, t.accountId), accountId: t.accountId, userId: null, now: () => new Date(), requestId: `sd-${randomUUID().slice(0, 8)}` });
     return {
       dav, t,
       /** One whole turn: the drain, then the reading. */

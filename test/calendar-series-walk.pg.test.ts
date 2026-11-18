@@ -129,7 +129,7 @@ import {
 import { BENCH_CALDAV_PLACE, PROVEN_REPEATS, makeCalendarProviders, proofPlaceOf, type CalendarProvider, type CalendarWriter } from "@ohmail/cal-providers";
 import type { HostResolver } from "@trafficflow/core/net";
 import { calCalendars, calConnections, calEvents, calWrites } from "@trafficflow/db";
-import { ServiceError, type ServiceContext } from "@trafficflow/services";
+import { ServiceError, dbFor, type Db as ServicesDb, type ServiceContext } from "@trafficflow/services";
 import { dismissCalendarWrite, recordCalendarWrite, retryCalendarWrite } from "@trafficflow/services/calendar";
 import { calendarSyncPass } from "../packages/organizer/src/calendar/sync-pass.js";
 import { CalendarTurnOverdue, WORD_PLAN } from "../packages/organizer/src/calendar/words.js";
@@ -380,7 +380,7 @@ async function benchOf(w: World, world: WorldName) {
   };
   const first = await calendarSyncPass(withDrain, t.due, new AbortController().signal);
   if (first.kind !== "synced") throw new Error(`the first reading ended ${first.kind}`);
-  const ctx = (): ServiceContext => ({ db: w.db as unknown as ServiceContext["db"], accountId: t.accountId, userId: null, now: () => new Date(), requestId: `walk-${randomUUID().slice(0, 8)}` });
+  const ctx = (): ServiceContext => ({ db: dbFor(w.db as unknown as ServicesDb, t.accountId), accountId: t.accountId, userId: null, now: () => new Date(), requestId: `walk-${randomUUID().slice(0, 8)}` });
   const refusalOf = (err: unknown): string => {
     if (err instanceof ServiceError) return `${err.httpStatus} ${err.code}`;
     throw err;

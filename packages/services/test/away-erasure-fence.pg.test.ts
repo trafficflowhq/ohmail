@@ -1,20 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import {
   accounts, awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies,
   messages,
+  bindDb,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OutboundMessage, SendAdapter } from "@trafficflow/core";
 import { runAwayResponderPass } from "../src/away-responder-pass.js";
 import { deleteAccount } from "../src/account-deletion-service.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -60,25 +58,25 @@ const PG_UP = await realPgAvailable();
 const NOW = new Date("2026-09-14T12:00:00.000Z");
 const ENABLED_AT = new Date("2026-09-14T11:00:00.000Z");
 
-let client: ReturnType<typeof postgres>;
-let sweepClient: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
-let sweepDb: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let sweepOwned: OwnedDb;
+let db: OwnedDb["db"];
+let sweepDb: OwnedDb["db"];
 
 beforeAll(async () => {
   if (!PG_UP) return;
   await runMigrations(PG_TEST_URL);
-  client = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
+  owned = makeOwnedDb(PG_TEST_URL);
   // The sweep runs on its OWN connection, as it does in production: erasure is a request on
   // another host, not a statement this pass makes.
-  sweepClient = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-  db = brandDialect(drizzle(client, { schema }), "pg");
-  sweepDb = brandDialect(drizzle(sweepClient, { schema }), "pg");
+  sweepOwned = makeOwnedDb(PG_TEST_URL);
+  db = owned.db;
+  sweepDb = sweepOwned.db;
 });
 
 afterAll(async () => {
-  await client?.end({ timeout: 5 });
-  await sweepClient?.end({ timeout: 5 });
+  await owned?.close();
+  await sweepOwned?.close();
 });
 
 interface Seeded { accountId: string; mailboxId: string }
@@ -117,7 +115,7 @@ async function arrive(
 }
 
 const ctxFor = (accountId: string): ServiceContext => ({
-  db: sweepDb as unknown as ServiceContext["db"],
+  db: dbFor(sweepDb, accountId),
   accountId,
   userId: null,
   now: () => NOW,
@@ -162,7 +160,7 @@ describe.skipIf(!PG_UP)("the away pass and the erasure fence", () => {
       return r.factory(mailboxId);
     };
 
-    const out = await runAwayResponderPass(db as never, {
+    const out = await runAwayResponderPass(bindDb(db, { account: null }), {
       openSendAdapter: factory as never, now: () => NOW, mailboxIds: [s.mailboxId],
     });
 
@@ -187,22 +185,26 @@ describe.skipIf(!PG_UP)("the away pass and the erasure fence", () => {
        `transaction` puts the sweep exactly there rather than at a sleep's mercy; the handle is
        the real one and every statement still goes to Postgres. */
     let reserved = false;
-    const handle = db as unknown as { transaction: (f: unknown) => Promise<unknown> };
-    const original = handle.transaction.bind(handle);
-    const wrapped = new Proxy(db as object, {
-      get(target, prop, recv) {
-        if (prop !== "transaction") return Reflect.get(target, prop, recv);
-        return async (f: unknown) => {
-          const out = await original(f);
-          if (!reserved) { reserved = true; await deleteAccount(ctxFor(s.accountId)); }
-          return out;
-        };
+    // On the pool's own handle, the one the binder knows: the account's handle the pass binds over
+    // it opens its transactions through it. Taken off again when the pass has run.
+    const transaction = db.transaction;
+    Object.defineProperty(db, "transaction", {
+      configurable: true,
+      value: async function (this: unknown, fn: Parameters<typeof transaction>[0], config?: Parameters<typeof transaction>[1]) {
+        const out = await transaction.call(this as typeof db, fn, config);
+        if (!reserved) { reserved = true; await deleteAccount(ctxFor(s.accountId)); }
+        return out;
       },
     });
 
-    const out = await runAwayResponderPass(wrapped as never, {
-      openSendAdapter: r.factory as never, now: () => NOW, mailboxIds: [s.mailboxId],
-    });
+    let out: Awaited<ReturnType<typeof runAwayResponderPass>>;
+    try {
+      out = await runAwayResponderPass(bindDb(db, { account: null }), {
+        openSendAdapter: r.factory as never, now: () => NOW, mailboxIds: [s.mailboxId],
+      });
+    } finally {
+      Object.defineProperty(db, "transaction", { value: transaction, configurable: true, writable: true });
+    }
 
     expect(reserved, "no reservation committed — the window was never opened").toBe(true);
     expect(r.delivered, "MAIL WAS SENT AFTER THE ACCOUNT WAS ERASED").toHaveLength(0);
@@ -227,26 +229,29 @@ describe.skipIf(!PG_UP)("the away pass and the erasure fence", () => {
     const r = recorder();
 
     let reserved = false;
-    const handle = db as unknown as { transaction: (f: unknown) => Promise<unknown> };
-    const original = handle.transaction.bind(handle);
-    const wrapped = new Proxy(db as object, {
-      get(target, prop, recv) {
-        if (prop !== "transaction") return Reflect.get(target, prop, recv);
-        return async (f: unknown) => {
-          const out = await original(f);
-          if (!reserved) {
-            reserved = true;
-            await sweepDb.update(mailboxes).set({ erasedAt: NOW })
-              .where(eq(mailboxes.id, s.mailboxId));
-          }
-          return out;
-        };
+    // On the pool's own handle, as the case above.
+    const transaction = db.transaction;
+    Object.defineProperty(db, "transaction", {
+      configurable: true,
+      value: async function (this: unknown, fn: Parameters<typeof transaction>[0], config?: Parameters<typeof transaction>[1]) {
+        const out = await transaction.call(this as typeof db, fn, config);
+        if (!reserved) {
+          reserved = true;
+          await sweepDb.update(mailboxes).set({ erasedAt: NOW })
+            .where(eq(mailboxes.id, s.mailboxId));
+        }
+        return out;
       },
     });
 
-    const out = await runAwayResponderPass(wrapped as never, {
-      openSendAdapter: r.factory as never, now: () => NOW, mailboxIds: [s.mailboxId],
-    });
+    let out: Awaited<ReturnType<typeof runAwayResponderPass>>;
+    try {
+      out = await runAwayResponderPass(bindDb(db, { account: null }), {
+        openSendAdapter: r.factory as never, now: () => NOW, mailboxIds: [s.mailboxId],
+      });
+    } finally {
+      Object.defineProperty(db, "transaction", { value: transaction, configurable: true, writable: true });
+    }
 
     expect(reserved, "no reservation committed — the window was never opened").toBe(true);
     expect(r.delivered, "MAIL WAS SENT FOR A MAILBOX ERASED AFTER THE RESERVATION").toHaveLength(0);
@@ -285,7 +290,7 @@ describe.skipIf(!PG_UP)("the away pass and the erasure fence", () => {
       return r.factory(mailboxId);
     };
 
-    const out = await runAwayResponderPass(db as never, {
+    const out = await runAwayResponderPass(bindDb(db, { account: null }), {
       openSendAdapter: factory as never, now: () => NOW, mailboxIds: [s.mailboxId],
     });
 
@@ -323,7 +328,7 @@ describe.skipIf(!PG_UP)("the away pass and the erasure fence", () => {
       return r.factory(mailboxId);
     };
 
-    const out = await runAwayResponderPass(db as never, {
+    const out = await runAwayResponderPass(bindDb(db, { account: null }), {
       openSendAdapter: factory as never, now: () => NOW, mailboxIds: [s.mailboxId],
     });
 
@@ -347,7 +352,7 @@ describe.skipIf(!PG_UP)("the away pass and the erasure fence", () => {
     await arrive(s, "colleague@them.test");
     const r = recorder();
 
-    const out = await runAwayResponderPass(db as never, {
+    const out = await runAwayResponderPass(bindDb(db, { account: null }), {
       openSendAdapter: r.factory as never, now: () => NOW, mailboxIds: [s.mailboxId],
     });
 

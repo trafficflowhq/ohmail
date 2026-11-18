@@ -8,6 +8,7 @@ import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { SearchService, dbFor } from "@trafficflow/services";
+import { statementSeam } from "./helpers/statement-seam.js";
 import type { ServiceContext } from "@trafficflow/services";
 import { seedTypoMailbox, typoOracle, TYPO_CASES, typoPages, typoPaths, type TypoFilters } from "./_typo-read-fixture.js";
 
@@ -29,7 +30,12 @@ const db = brandDialect(drizzle(client, { schema, logger: { logQuery: (q, p) => 
 const owned = makeOwnedDb(URL);
 const svc = new SearchService();
 const A = randomUUID();
-const ctx = (): ServiceContext => ({ db: dbFor(owned.db, A), accountId: A, userId: null, now: () => new Date("2026-08-20T12:00:00Z"), requestId: "typo-read" });
+/* The census rides the context's own handle: a seam at the drizzle builder of the account's handle
+   sees each statement the service sends, text and parameters, as the logger saw them on the raw one. */
+const ctx = (): ServiceContext => ({
+  db: statementSeam(dbFor(owned.db, A), (q, p) => { logged.push({ q, p }); return null; }),
+  accountId: A, userId: null, now: () => new Date("2026-08-20T12:00:00Z"), requestId: "typo-read",
+});
 
 /** The page statement's plan, run under the search session's settings. */
 async function planOf(q: string, filters?: TypoFilters): Promise<Record<string, unknown>> {

@@ -12,7 +12,7 @@ import { claimedIdentity } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   MessageService, autoFiledSummary, makeUnsubscribeService, undoAutoFiled,
-  type HostResolver, type OneClickPost, type ServiceContext,
+  type HostResolver, type OneClickPost, type ServiceContext, dbFor, type Db as ServicesDb
 } from "@trafficflow/services";
 import {
   screenerImpersonationPass, type ScreenerImpersonationDeps, type ScreenerImpersonationResult,
@@ -117,7 +117,7 @@ describe("the organizer files a held impersonation to Spam on its own", () => {
   const pass = (w: World, o: Partial<ScreenerImpersonationDeps> = {}) =>
     screenerImpersonationPass(db, { accountId: w.accountId, mailboxIds: [w.mailboxId], ...o });
   const ctxOf = (w: World): ServiceContext =>
-    ({ db: db as never, accountId: w.accountId, userId: null, now: () => new Date(), requestId: "imp-put-back" });
+    ({ db: dbFor(db as unknown as ServicesDb, w.accountId), accountId: w.accountId, userId: null, now: () => new Date(), requestId: "imp-put-back" });
 
   it("files a no_ai lure to Spam alone: one tagged audit row and a move, nothing standing, no unsubscribe", async () => {
     const w = await newWorld();

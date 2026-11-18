@@ -1,4 +1,5 @@
 import { accountOfMessage } from "@trafficflow/db";
+import { bindDb } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -2506,7 +2507,7 @@ describe("the press instant travels in the payload, the record keeps its own", (
     }).where(eq(mailboxes.id, mailboxId));
     const id = await seedHeldMessage(db, mailboxId, "person@example.com");
     const floor = new Date(NOW.getTime() - 25 * HOUR);
-    const ctx = { db, accountId: ACCT, userId: null, now: () => NOW, requestId: "r", pressFloor: floor, pressAged: true };
+    const ctx = { db: bindDb(db, { account: ACCT }), accountId: ACCT, userId: null, now: () => NOW, requestId: "r", pressFloor: floor, pressAged: true };
     const res = await messageService.move(ctx as never, id, { folder: "ohmail/Receipts" });
     expect((res as { pending?: boolean }).pending).toBe(true);
     const [row] = await db.select().from(organizerRequests).where(eq(organizerRequests.accountId, ACCT));

@@ -1,8 +1,5 @@
 import { afterAll, beforeAll, describe, it } from "vitest";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -15,16 +12,16 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
+let owned: OwnedDb;
 let db: Db;
 
 describe.skipIf(!PG_UP)("a sheet press's seed move is not an override of the route it rewrites, on Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg") as unknown as Db;
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db as unknown as Db;
   }, 120_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   it("the PATCH after a marked seed move leaves the rule on, at the place pressed", async () => { await patchArm(await world(db)); });
   it("Undo inside the window leaves the learned rule as it was", async () => { await undoArm(await world(db)); });

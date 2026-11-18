@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
@@ -69,11 +70,15 @@ describe.skipIf(!PG_UP)("the billing-link cap against real Postgres", () => {
     const authDeps = makeTestAuthDeps({});
     // Each press its own instant, as a real clock gives them: a shared one would collide on the
     // (account, kind, anchor) key and hide a broken count behind a primary-key refusal.
-    const depsOn = (db: Db, at: Date): ApiDeps => ({
-      db, now: () => at, requestId: `pg-${randomUUID()}`, session: null, idempotency: null,
-      authConfig: authDeps.config, keyProvider: authDeps.keyProvider, admin: ADMIN,
-      services: { customerMail: mail, entitlementsPort: port },
-    }) as unknown as ApiDeps;
+    // A request's container on `db`'s pool, its handle as a host mints a request's.
+    const depsOn = (db: Db, at: Date): ApiDeps => perRequest({
+      ...({
+        now: () => at, requestId: `pg-${randomUUID()}`, session: null, idempotency: null,
+        authConfig: authDeps.config, keyProvider: authDeps.keyProvider, admin: ADMIN,
+        services: { customerMail: mail, entitlementsPort: port },
+      } as unknown as Omit<ApiDeps, "db">),
+      db,
+    });
     const press = (db: Db, i: number): Promise<Response> => app.handle(new Request(`http://localhost/admin/accounts/${accountId}/billing-link`, {
       method: "POST",
       headers: { authorization: `Bearer ${SECRET}`, "content-type": "application/json" },

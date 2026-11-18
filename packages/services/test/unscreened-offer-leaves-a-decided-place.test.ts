@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dbFor } from "../src/context.js";
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { accounts, accountSettings, changeLog, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
@@ -48,7 +49,7 @@ async function world() {
     return m!.id;
   };
   const ctx: ServiceContext = {
-    db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: `uod-${randomUUID().slice(0, 8)}`,
+    db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `uod-${randomUUID().slice(0, 8)}`,
   };
   const desired = async (id: string) =>
     (await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
