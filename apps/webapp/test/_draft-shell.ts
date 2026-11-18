@@ -6,6 +6,7 @@
  * `refuseSend` answers a `mail_send` the way the route answers a send refused for good — the row
  * the send used or made named in `entityId`. jsdom gaps are stubbed at their narrowest.
  */
+import type { EngineDraft, EngineMessage, EngineMutation, MutationOutcome } from "@ohmail/wire";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -17,12 +18,8 @@ import {
   MutationRejectedError,
   OhmailEngine,
   mutationEffects,
-  type EngineDraft,
   type EngineLocks,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
-  type MutationOutcome,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";

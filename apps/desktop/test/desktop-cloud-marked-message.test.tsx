@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +10,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { MessageRow, ThemeProvider } from "@ohmail/ui";
 import { materializeMessages } from "@trafficflow/services/mail";
-import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncResponse } from "@trafficflow/services/mail";
 import en from "../../webapp/messages/en.json";
 import { autoLoadsImages } from "../../webapp/app/shell/remote-images.js";
 import { senderCheckFact, senderCheckSentence } from "../../webapp/app/shell/sender-check.js";

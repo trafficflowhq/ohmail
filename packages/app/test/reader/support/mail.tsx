@@ -3,9 +3,10 @@
  * seam and records every mutation and body ask, the frame with one place whose reading column is the reader, and the
  * shell's three parts as doubles that record what they were handed. Every address is invented.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { render, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import type { EngineMessage, EntityReader } from "@ohmail/client-engine";
+import type { EntityReader } from "@ohmail/client-engine";
 import {
   ListMeetingContext,
   PresentedMirrorContext,

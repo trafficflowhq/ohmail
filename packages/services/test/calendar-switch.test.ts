@@ -1,3 +1,4 @@
+import type { SettingsDTO } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
@@ -7,7 +8,7 @@ import { calCalendars, calConnections, calSettings } from "@trafficflow/db/mail"
 import {
   calendarFeed, calendarSettings, requireCalendarOn, setCalendarSettings,
 } from "@trafficflow/services/calendar";
-import { SyncService, ServiceError, dbFor, type ServiceContext, type SettingsDTO } from "../src/index.js";
+import { SyncService, ServiceError, dbFor, type ServiceContext } from "../src/index.js";
 
 /**
  * THE ACCOUNT'S CALENDAR SWITCH: one row, written in the order every settings writer keeps, with

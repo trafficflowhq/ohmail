@@ -1,3 +1,4 @@
+import type { EngineDraft, EngineMessage } from "@ohmail/wire";
 import { describe, expect, it, vi } from "vitest";
 import { attachments, drafts, messages, outboundSends } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
@@ -14,8 +15,6 @@ import {
   OhmailEngine,
   replySubject,
   threadOf,
-  type EngineDraft,
-  type EngineMessage,
   type FetchLike,
 } from "@ohmail/client-engine";
 

@@ -4,6 +4,7 @@
  * own runners, through the one press seam. Reply and Forward open `write`'s reply where the shell handed one, before
  * anything else; otherwise they hand a draft to the place `write`. Nothing is sent from here.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useMemo } from "react";
 import {
   isOwnVerb,
@@ -17,7 +18,6 @@ import {
 } from "@ohmail/app-logic/reader";
 import type { ListVisit, ThreadReadWiring } from "@ohmail/app-logic/reading";
 import type { MessageAction, MoveTarget } from "@ohmail/app-logic/press/actions";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { useFrame } from "../../frame/commands.js";
 import { useOwnAddresses, usePressWhereOn, useResurfaceTime } from "../../frame/room.js";
 import type { LinkedDraft } from "../../host/index.js";

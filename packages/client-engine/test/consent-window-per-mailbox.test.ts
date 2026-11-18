@@ -1,7 +1,8 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, consentPartition, presentationReader, screenerSegments, screeningDegrade, widestWindowOf,
-  type ConsentOptions, type EngineMessage, type Folder, type MailboxScreening, type ScreeningSource, type SyncChange,
+  type ConsentOptions, type MailboxScreening, type ScreeningSource, type SyncChange,
 } from "@ohmail/client-engine";
 
 /**

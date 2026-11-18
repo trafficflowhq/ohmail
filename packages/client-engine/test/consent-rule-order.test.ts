@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { effectForDestination, standingRule, type Rule } from "@trafficflow/core/mail";
 import {
@@ -6,9 +7,6 @@ import {
   consentPartition,
   decidedDestination,
   rulesList,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 

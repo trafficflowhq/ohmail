@@ -32,11 +32,12 @@
  * scratch draft simply outlives the send's record. Closing that means binding the scratch to the
  * lane's durable claim and clearing on the row's `sent` transition — ledgered, not smuggled in here.
  */
+import type { EmailAddress, EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE, joinableStandingSend, pileRowIdsOf, pressVerdict } from "@ohmail/client-engine";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type {
-  EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
+  EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
 import type { ToastFn } from "../press/report.js";
 import {

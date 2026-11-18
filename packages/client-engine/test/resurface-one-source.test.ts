@@ -1,3 +1,4 @@
+import type { EngineMessage, MessageStateDTO, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -7,10 +8,7 @@ import {
   triagePiles,
   winningStates,
   type EngineAdapter,
-  type EngineMessage,
   type EntityReader,
-  type MessageStateDTO,
-  type MutationOutcome,
   type StorePolicy,
   type SyncChange,
   type SyncResponse,

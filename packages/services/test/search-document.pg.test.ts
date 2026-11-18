@@ -1,3 +1,4 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -8,7 +9,7 @@ import { accountSettings, attachments, folderState, mailboxes, messageBodies, me
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS } from "@trafficflow/db/testing";
-import { searchBodyOf, upsertMessageSearch, upsertMessageSearchRows, type EmailAddress } from "@trafficflow/core/mail";
+import { searchBodyOf, upsertMessageSearch, upsertMessageSearchRows } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { FRAGMENT_FILES, FRAGMENTS } from "./helpers/file-name-fragments.js";

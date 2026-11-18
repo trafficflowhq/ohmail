@@ -1,5 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, OhmailEngine, type EngineAdapter, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type EngineAdapter, type SyncChange } from "@ohmail/client-engine";
 import { liveActions, liveFiles, liveMessage, openOffMirror, screeningAnswered, type WorldView } from "../src/state/live";
 
 /**

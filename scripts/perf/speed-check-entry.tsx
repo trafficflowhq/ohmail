@@ -12,6 +12,7 @@
  * `designed` (a 50 KB newsletter of nested tables, fetched). Every fifteenth subject carries a rare
  * word and every letter a common one, so a search has both a short and a long answer.
  */
+import type { MessageBodyWire } from "@ohmail/wire";
 import "../../apps/webapp/app/app.css";
 import "../../apps/webapp/app/zero-layout.css";
 import { createRoot } from "react-dom/client";
@@ -25,7 +26,6 @@ import { ThemeProvider, ToastHost } from "../../packages/ui/src/index";
 import { localStorageDoor } from "../../packages/client-engine/src/durable";
 import { OhmailEngine } from "../../packages/client-engine/src/index";
 import { FixturesAdapter } from "../../packages/testing/src/adapters/fixtures-adapter";
-import type { MessageBodyWire } from "../../packages/client-engine/src/index";
 import { getFixtures } from "../../packages/testing/src/index";
 import type { Address, Fixtures, Folder, MessageFixture } from "../../packages/testing/src/types";
 

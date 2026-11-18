@@ -9,14 +9,12 @@
  * floor), the scroll-spy keeps list and stream in step, and the pending-AI chip carries
  * the classification approval flow.
  */
+import type { EngineMessage, MessageBody, TagEntity as TagDTO } from "@ohmail/wire";
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { countWhen, isOwnOutbound, presentsUnread } from "@ohmail/client-engine";
 import type {
-  EngineMessage,
   FeedPartition,
-  MessageBody,
-  TagDTO,
 } from "@ohmail/client-engine";
 import {
   Chip,

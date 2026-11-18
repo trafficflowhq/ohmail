@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { EngineMutation } from "@ohmail/client-engine";
 import {
   allSendLocks, claimSendLock, holdOf, SEND_LOCK_FORMAT, sendLocksKey, type Hold, type SendLock,
 } from "@ohmail/app-logic/writing/send-lock";

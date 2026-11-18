@@ -13,10 +13,10 @@
  * rows. Scroll-past feeds per-message `\Seen` through `mark_seen` (the `justSeen` set is dedup, not state), and
  * LEAVING the view commits the waterline in one anchored `feed_mark_seen` via `onLeaveSeen`.
  */
+import type { EngineMessage, MessageBody, TagEntity as TagDTO, WaterlineMeta } from "@ohmail/wire";
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { countWhen, isOwnOutbound, presentsUnread } from "@ohmail/client-engine";
-import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/client-engine";
 import { ListPane, ListRows, MessageRow, TAG_HUES, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";

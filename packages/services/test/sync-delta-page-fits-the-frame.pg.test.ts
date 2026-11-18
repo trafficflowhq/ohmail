@@ -1,3 +1,4 @@
+import type { DraftDTO } from "@ohmail/wire";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
@@ -7,7 +8,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { SYNC_PAGE_MAX_BYTES } from "@trafficflow/core/transport-frame";
 import { syncService } from "@trafficflow/services";
-import type { DraftDTO, ServiceContext } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 import { flatten } from "./_apply-harness.js";
 
 const PG_UP = await realPgAvailable();

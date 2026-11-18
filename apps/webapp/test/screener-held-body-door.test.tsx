@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, MessageBodyWire } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -9,9 +10,6 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   bodyOf,
-  type EngineMessage,
-  type Folder,
-  type MessageBodyWire,
   type SyncChange,
 } from "@ohmail/client-engine";
 import DOMPurify from "dompurify";

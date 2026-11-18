@@ -12,11 +12,11 @@ import {
   accounts, calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calSuggestions, calWrites, changeLog,
   mailboxes,
 } from "@trafficflow/db/mail";
-import { SyncService, dbFor, type SyncChange, type SyncResponse } from "@trafficflow/services/mail";
+import { SyncService, dbFor } from "@trafficflow/services/mail";
 import { calendarFeed, setCalendarSettings } from "@trafficflow/services/calendar";
 import { calendarRoutes } from "@trafficflow/api/calendar";
 import { HttpAdapter, MemoryMirrorStore, NAMED_FEED_KINDS, OhmailEngine, SYNC_ENTITY_TYPES } from "@ohmail/client-engine";
-import type { CalendarEventRecord, CalendarRecordKind } from "@ohmail/wire";
+import type { CalendarEventRecord, CalendarRecordKind, SyncChange, SyncResponse } from "@ohmail/wire";
 import { syncRoutes } from "../../../packages/api/src/routes/sync.js";
 import { makeDeps, seedMailbox, seedSession, FIXED_NOW } from "../../../packages/api/test/helpers.js";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";

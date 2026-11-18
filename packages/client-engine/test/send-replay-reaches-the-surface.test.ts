@@ -1,5 +1,6 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { HttpAdapter, type EngineMutation, type FetchLike } from "../src/index.js";
+import { HttpAdapter, type FetchLike } from "../src/index.js";
 
 /**
  * ═══ THE SERIALIZER'S HALF OF `firstSend` ═══════════════════════════════════════════════════

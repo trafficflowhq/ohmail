@@ -1,5 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { ConsentPartition, EngineMessage, EntityReader } from "@ohmail/client-engine";
+import type { ConsentPartition, EntityReader } from "@ohmail/client-engine";
 import { GATE_FOLDER } from "@trafficflow/core/destinations";
 import { presentedOver } from "../../src/reading/presented-mirror.js";
 

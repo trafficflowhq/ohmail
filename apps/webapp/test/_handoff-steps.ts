@@ -3,8 +3,9 @@
  * the sidebar's foot line and the toasts read as text, the doors back to a message, and what a
  * press put on the wire.
  */
+import type { ComposeAttachment, EmailAddress, EngineDraft, EngineMutation } from "@ohmail/wire";
 import { expect } from "vitest";
-import type { ComposeAttachment, EmailAddress, EngineDraft, EngineMutation, SyncChange } from "@ohmail/client-engine";
+import type { SyncChange } from "@ohmail/client-engine";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { act, press, replySurface, waitFor, type DraftShell } from "./_draft-shell.js";

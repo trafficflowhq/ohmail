@@ -1,3 +1,4 @@
+import type { EngineMessage, SyncSnapshotPage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
@@ -10,7 +11,7 @@ import {
 } from "@trafficflow/db";
 import {
   OhmailEngine, consentPartition, presentationReader, screenerSegments,
-  type EngineAdapter, type EngineMessage, type StorePolicy, type SyncSnapshotPage,
+  type EngineAdapter, type StorePolicy,
 } from "@ohmail/client-engine";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { dbFor, makeMailboxService, SyncService, type ServiceContext } from "@trafficflow/services";

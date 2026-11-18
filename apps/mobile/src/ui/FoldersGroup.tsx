@@ -8,6 +8,7 @@
  * pending rows render dimmed, never pretended-done; names are validated with the server's own `folderNameError`
  * before the wire. {@link soleMailboxId} restores the zero-folder create invite where the account is unambiguous.
  */
+import type { FolderEntity } from "@ohmail/wire";
 import { useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 import { Copy } from "../copy";
@@ -25,7 +26,6 @@ import {
   type FolderTreeRow,
 } from "../state/folders";
 import { folderNameError } from "../state/live";
-import type { FolderEntity } from "../state/world";
 import { Rule, Section, Tap, TapRow, Txt } from "./base";
 import { Icon } from "./Icon";
 import { Sheet, SheetRow } from "./Sheet";

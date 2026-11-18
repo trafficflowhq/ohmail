@@ -1,8 +1,9 @@
+import type { SnapshotResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { folderState, mailboxes, messages, messageTags, tags } from "@trafficflow/db";
-import { dbFor, type ServiceContext, type SnapshotResponse } from "@trafficflow/services/mail";
+import { dbFor, type ServiceContext } from "@trafficflow/services/mail";
 import { matchReadRoute } from "../src/cloud-read.js";
 
 /**

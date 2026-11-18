@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CursorExpiredError,
@@ -6,8 +7,6 @@ import {
   MutationRejectedError,
   OhmailEngine,
   type EngineAdapter,
-  type MessageBodyWire,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";

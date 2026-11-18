@@ -1,12 +1,10 @@
+import type { EngineMessage, EngineMutation, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   intentOf,
   sendAndDone,
   sendAndDonePlanFor,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type MessageStateDTO,
 } from "@ohmail/client-engine";
 
 /** The fixture's ids, built from their numbers. */

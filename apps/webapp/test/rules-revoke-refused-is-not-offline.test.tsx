@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -6,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine,
-  type EngineAdapter, type QueuedRuleWrite, type RuleDTO, type SyncChange,
+  type EngineAdapter, type QueuedRuleWrite, type SyncChange,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";

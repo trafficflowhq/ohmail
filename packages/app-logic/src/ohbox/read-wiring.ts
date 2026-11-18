@@ -1,6 +1,6 @@
 /** The visit's wiring for the open message: what the reading column's pane and the shell's sheet are handed. */
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { LANDING_REST_MS, type ThreadReadWiring, type UnreadHold } from "../reading/reader-seen.js";
 import { createThreadWalkChannel } from "../reading/thread-walk-channel.js";
 import { recordIn, recordOf, type Hold } from "./hold.js";

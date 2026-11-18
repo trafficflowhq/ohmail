@@ -1,9 +1,10 @@
 /* STEP 1 measurement (L15) row 118, harness copied from move-from-a-pile.test.ts. */
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, OhmailEngine,
-  type EngineMessage, type Folder, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import {
   ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,

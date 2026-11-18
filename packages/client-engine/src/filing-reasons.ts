@@ -14,7 +14,6 @@ export const FILING_REFUSAL_REASONS = [
 ] as const satisfies readonly FilingRefusalReason[];
 type _FilingRefusalReasonsComplete = Assert<Complete<FilingRefusalReason, typeof FILING_REFUSAL_REASONS>>;
 
-export type { FilingRefusalReason };
 
 /** A wire class narrowed to the set: `null` stays `null` (nothing refused), anything unknown is `unknown`. */
 export function filingRefusalReason(v: string | null): FilingRefusalReason | null {

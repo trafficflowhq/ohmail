@@ -1,6 +1,7 @@
+import type { AuthVerdict, EmailAddress } from "@ohmail/wire";
 import type { MailboxMustBeLive, SearchSource, SpendOutcome, SpendPort } from "@trafficflow/db";
-import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress, MimeStructure } from "./types.js";
-import type { AuthVerdict, KnownSenders, Rule } from "./rules.js";
+import type { NormalizedMessage, Destination, AttachmentMeta, MimeStructure } from "./types.js";
+import type { KnownSenders, Rule } from "./rules.js";
 import type { IdentityFact } from "./sender-check.js";
 import type { ClassifierPort } from "./classifier-port.js";
 import type { CorrespondentEvidence } from "./correspondent.js";

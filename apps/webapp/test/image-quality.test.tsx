@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { ComposeAttachment } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -21,7 +22,6 @@ import {
   compressImage,
   writeImageQualityLevel,
 } from "../app/components/image-quality";
-import type { ComposeAttachment } from "@ohmail/client-engine";
 
 /**
  * SHRINKING A PICTURE ON THE WAY INTO A MESSAGE.

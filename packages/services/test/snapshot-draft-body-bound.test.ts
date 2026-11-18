@@ -1,3 +1,4 @@
+import type { DraftDTO } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -6,7 +7,6 @@ import { drafts, mailboxes } from "@trafficflow/db";
 import { DRAFT_BODY_MAX_BYTES, utf8ByteLength } from "@trafficflow/core/outbound-text";
 import { DraftsService, SyncService, dbFor, type ServiceContext } from "../src/index.js";
 import { draftRowToDTO, draftRowToSnapshotDTO } from "../src/dto/materialize.js";
-import type { DraftDTO } from "../src/dto/types.js";
 
 /**
  * THE PLAIN DRAFT BODY HAS A CEILING, AND THE TWO DOORS IT IS ENFORCED AT ANSWER DIFFERENTLY.

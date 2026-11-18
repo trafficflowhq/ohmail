@@ -1,10 +1,11 @@
+import type { SnapshotResponse } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { folderState, mailboxes, messages, tags } from "@trafficflow/db";
 import {
   SNAPSHOT_FIRST_PAGE_MESSAGES, SyncService, dbFor,
-  type ServiceContext, type SnapshotResponse,
+  type ServiceContext,
 } from "../src/index.js";
 
 /**

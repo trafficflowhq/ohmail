@@ -3,9 +3,10 @@
  * models fed what a shell would hand them, every write the place makes counted. A test moves the address and reads
  * by role and name.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { act, render } from "@testing-library/react";
 import { useSyncExternalStore, type ReactNode } from "react";
-import type { EngineMessage, TriagePiles } from "@ohmail/client-engine";
+import type { TriagePiles } from "@ohmail/client-engine";
 import type { PilesInput } from "@ohmail/app-logic/piles";
 import type { StreamInput, StreamLeaveCommit } from "@ohmail/app-logic/streams";
 import { Frame } from "../../src/frame/Frame.js";

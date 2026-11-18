@@ -30,10 +30,10 @@
  * the race, not the path.
  */
 
+import type { FolderEntity } from "@ohmail/wire";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { folderNameError } from "@trafficflow/core/folder-name";
-import type { FolderEntity } from "@ohmail/client-engine";
 import { Icon, TextField } from "@ohmail/ui";
 import {
   FOLDER_FILTER_AT,

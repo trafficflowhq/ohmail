@@ -1,13 +1,11 @@
+import type { EngineMessage, Folder, WaterlineMeta } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   FEED_SINCE_ID,
   MemoryMirrorStore,
   feedPartition,
   waterlineIdOf,
-  type EngineMessage,
-  type Folder,
   type SyncChange,
-  type WaterlineMeta,
 } from "@ohmail/client-engine";
 
 /**

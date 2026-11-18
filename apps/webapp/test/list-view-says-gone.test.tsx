@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, SyncChange } from "@ohmail/client-engine";
+import type { SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { FolderView } from "../app/views/FolderView";
 import { TrashView } from "../app/views/TrashView";

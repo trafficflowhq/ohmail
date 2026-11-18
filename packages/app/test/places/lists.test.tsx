@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, FolderEntity, TagEntity as TagDTO } from "@ohmail/wire";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { useContext, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineMessage, FolderEntity, TagDTO } from "@ohmail/client-engine";
 import { useAddressList } from "@ohmail/app-logic/address";
 import { useFolderList } from "@ohmail/app-logic/folder";
 import { useHistoryList } from "@ohmail/app-logic/history";

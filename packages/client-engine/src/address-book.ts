@@ -8,10 +8,10 @@
  * hard tier — a wrong drafted name cannot re-elect itself; within a tier
  * most recent, then longer; empty never. Recomputed per render.
  */
+import type { EmailAddress, EngineDraft, EngineMessage } from "@ohmail/wire";
 import { counterpartyEvidence, type CounterpartyEvidence } from "@trafficflow/core/sender-headers";
 import { isOwnSent } from "./selectors.js";
 import type { EntityReader } from "./store.js";
-import type { EmailAddress, EngineDraft, EngineMessage } from "./types.js";
 
 export interface AddressBookEntry {
   /** Lower-cased — the identity. Two spellings of one address are one entry. */

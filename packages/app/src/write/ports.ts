@@ -6,14 +6,9 @@
  * never sends by itself. `WriteBeside` is the shell's pure helpers beside it (the screen takes types alone of the
  * client engine). `none` is a real answer everywhere: a control for a wire that is `none` is not drawn.
  */
+import type { ComposeAttachment, EngineDraft, EngineMessage } from "@ohmail/wire";
 import type { ComponentType } from "react";
-import type {
-  ComposeAttachment,
-  EngineDraft,
-  EngineMessage,
-  FromOption,
-  SignatureState,
-} from "@ohmail/client-engine";
+import type { FromOption, SignatureState } from "@ohmail/client-engine";
 import type { ComposeFields, ComposePlan } from "@ohmail/app-logic/writing/compose";
 import type { SendState } from "@ohmail/app-logic/writing/mail-send";
 import type { ComposeElsewhere } from "@ohmail/app-logic/writing/compose-autosave";

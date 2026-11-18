@@ -1,3 +1,11 @@
+import type {
+  MailboxDTO,
+  MessageDTO,
+  ScreenerSuggestionDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -7,8 +15,7 @@ import { routingDecisions } from "@trafficflow/db/mail";
 import { SCREENER_SUGGESTION_PROVENANCE } from "@trafficflow/db";
 import { dbFor, syncService } from "@trafficflow/services/mail";
 import type {
-  MailboxDTO, MessageDTO, ScreenerSuggestionDTO, ServiceContext, SnapshotResponse, SyncChange,
-  SyncResponse,
+  ServiceContext,
 } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";

@@ -1,5 +1,5 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { BROWSER_WINDOW, createEngine } from "../app/shell/engine-config.js";
 
 /**

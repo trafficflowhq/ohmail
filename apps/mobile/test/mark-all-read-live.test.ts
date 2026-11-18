@@ -6,11 +6,12 @@
  * deliberate read spent — and the streams' press commits the waterline in the same act.
  * The header sets are pinned too: `unreadIds` IS the number the control shows.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { waterlineIdOf, type EngineMessage } from "@ohmail/client-engine";
+import { waterlineIdOf } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

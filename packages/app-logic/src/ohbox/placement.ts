@@ -2,6 +2,7 @@
  * The Ohbox's session placement: the order of its two upper groups for this visit, reconciled at render against
  * what the selector files, and the explicit way back into New for a row marked unread.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import {
   useCallback,
   useMemo,
@@ -11,7 +12,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type { EngineMessage, ResurfacedThreadRow } from "@ohmail/client-engine";
+import type { ResurfacedThreadRow } from "@ohmail/client-engine";
 import { createUnreadHold, type UnreadHold } from "../reading/reader-seen.js";
 import type { OhboxListInput } from "./types.js";
 

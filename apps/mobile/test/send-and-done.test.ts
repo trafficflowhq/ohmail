@@ -14,12 +14,13 @@
  *  · the door is the ACTIONS layer, which the paired and the standalone doors share: nothing
  *    here reads `standalone`, unlike Send later, whose own predicate does.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
-import { resurfacedThreads, type EngineMessage, type EntityReader, type MutationResult, type SendAndDonePlan } from "@ohmail/client-engine";
+import { resurfacedThreads, type EntityReader, type MutationResult, type SendAndDonePlan } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { flushQueued, liveActions, setTimeLabel, type LiveWorldActions } from "../src/state/live";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";

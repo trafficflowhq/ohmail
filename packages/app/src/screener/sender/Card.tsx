@@ -3,8 +3,8 @@
  * decision itself, through the view's `decide`, with the reach the card shows; it moves no mail before that press.
  * An install that may not decide shows who it is and nothing to choose.
  */
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import type { RefObject } from "react";
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
 import {
   DECISION_ORDER,
   isSharedDomain,

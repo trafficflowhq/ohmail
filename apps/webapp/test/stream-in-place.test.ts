@@ -1,5 +1,5 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { keepInPlace, streamHostOf } from "../app/shell/stream-in-place";
 
 /**

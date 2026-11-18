@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +13,6 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, consentPartition, presentationReader, screenerSegments,
-  type EngineMessage,
 } from "@ohmail/client-engine";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";

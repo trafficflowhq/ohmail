@@ -1,8 +1,9 @@
+import type { ScreenDecisionResult } from "@ohmail/wire";
 import { accountOfMailbox } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { accounts, folderState, mailboxCredentials, mailboxes, organizerRequests, rules } from "@trafficflow/db";
-import { ScreenerService, type ScreenDecisionResult } from "../src/index.js";
+import { ScreenerService } from "../src/index.js";
 import { makeMailboxService } from "../src/mailbox-service.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 

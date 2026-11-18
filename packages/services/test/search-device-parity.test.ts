@@ -1,10 +1,11 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { attachments, eraseOwedMailbox, mailboxes, messageBodies, messages, stampMailboxErasure } from "@trafficflow/db";
 import { dialect, ENGLISH_STOPWORDS, queryOperandsOf } from "@trafficflow/db/dialect";
 import { reindexMessageSearch, searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { positiveText, SEARCH_STOPWORDS } from "@trafficflow/core/search-rank";
-import { SearchIndex, type EngineMessage } from "@ohmail/client-engine";
+import { SearchIndex } from "@ohmail/client-engine";
 import { SearchService, type SearchParts, type SearchSort } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 import { FRAGMENT_FILES, FRAGMENTS } from "./helpers/file-name-fragments.js";

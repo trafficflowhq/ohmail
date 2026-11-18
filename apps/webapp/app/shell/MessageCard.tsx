@@ -10,10 +10,11 @@
  * sibling alike; and {@link MessageCard} — a sibling's panel, the header and the body through the
  * same {@link MessageBody} the focused message uses. One `<article class="pm">` per message.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AddressText, Avatar, Badge, Button, Icon } from "@ohmail/ui";
-import { forwardOffered, isForwardedByUs, isOwnOutbound, isProtectedMessage, shownDateOf, type EngineMessage } from "@ohmail/client-engine";
+import { forwardOffered, isForwardedByUs, isOwnOutbound, isProtectedMessage, shownDateOf } from "@ohmail/client-engine";
 import { AwayMark } from "./AwayMark";
 import { MessageBody } from "../letter-body/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "@ohmail/letter-body";

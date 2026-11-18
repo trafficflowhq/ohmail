@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { OhmailEngine, type EngineAdapter, type EngineMessage } from "@ohmail/client-engine";
+import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
 import messages from "../../webapp/messages/en.json";
 import { desktopFileShell, enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
 import { useMessageAttachments } from "../../webapp/app/shell/attachments.js";

@@ -5,11 +5,11 @@
  * event already on a shown calendar offers no Add and leads to it, and with no shown calendar that can be written
  * nothing offers Add. One found event is made once, whichever Add is pressed, and only into a shown calendar.
  */
+import type { CalendarAct } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type {
-  CalendarAct,
   CalendarConnectionRecord,
   CalendarEventRecord,
   CalendarPort,

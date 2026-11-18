@@ -1,6 +1,7 @@
 /** After a verb: when my verb takes the open row out of the list, the cursor lands where the after-verb choice says. */
+import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useRef, type MutableRefObject } from "react";
-import type { EngineMessage, OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
+import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import { ACTED_FRESH_MS, nextRowAfter } from "../press/after-verb.js";
 import type { OhboxListInput } from "./types.js";
 

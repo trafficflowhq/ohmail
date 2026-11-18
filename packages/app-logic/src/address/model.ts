@@ -2,8 +2,8 @@
  * AN ADDRESS'S MODEL: every letter from and to one address, newest first, as All, From them or To them, each with its
  * count. The address is the route's; what it is called and where each letter is are the seat's words.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createContext, useContext, useMemo, useState } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { newestFirst, usePlaceList, type PlaceList, type PlaceListInput } from "../place-list/place-list.js";
 
 export type AddressSide = "all" | "from" | "to";

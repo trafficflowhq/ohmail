@@ -4,9 +4,9 @@
  * Reply all stands only where its audience differs from Reply's, as on the panel; Mark unread only on a letter that
  * is read and is not the account's own.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { Menu, MenuItem } from "@ohmail/ui/base";
 import { markSeenOver, mayMarkUnread } from "@ohmail/app-logic/reader";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { useFrame } from "../../frame/commands.js";
 import { useOwnAddresses, usePressWhereOn } from "../../frame/room.js";
 import { useText } from "../../text/index.js";

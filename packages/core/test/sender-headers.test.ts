@@ -1,3 +1,4 @@
+import type { AuthVerdict } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { managedDomain } from "../../../test/support/fixture-credentials.js";
 import {
@@ -5,7 +6,6 @@ import {
   mayGroupByMessageId, mergeCounterpartyEvidence,
   type CounterpartyEvidence, type CounterpartyMessage,
 } from "../src/sender-headers.js";
-import type { AuthVerdict } from "../src/rules.js";
 
 /**
  * THE ONE RULE for reading a sender's own words as identity or as rank.

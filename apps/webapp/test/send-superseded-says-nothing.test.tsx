@@ -5,11 +5,11 @@
  * the key's one sentence. `absorb` read anything it did not know as `failed`, so a flush carrying
  * that answer would have said "not sent" and released the lane over a reply that is still going.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;

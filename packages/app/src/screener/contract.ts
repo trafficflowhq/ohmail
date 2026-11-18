@@ -3,8 +3,8 @@
  * the Screener stands in, and the two contexts its panes read. Nothing here draws; it compiles with no pane present,
  * so the calendar's link and the failure states build on it first.
  */
+import type { UnsubscribeResult } from "@ohmail/wire";
 import { createContext, useContext, useSyncExternalStore, type ComponentType } from "react";
-import type { UnsubscribeResult } from "@ohmail/client-engine";
 import type { NotOrganizingYet } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ScreenerFacts, ScreenerState, ScreenerView } from "@ohmail/app-logic/screener";
 import type { None } from "../host/index.js";

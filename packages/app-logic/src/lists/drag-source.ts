@@ -1,5 +1,5 @@
 /** What a dragged row stands for, and where it may land. */
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 import type { MoveTarget } from "../press/actions.js";
 
 /**

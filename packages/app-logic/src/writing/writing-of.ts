@@ -6,13 +6,8 @@
  * composer's one mount hands it over (`WritingMount.tsx` of the mail ground), and a case calls them over a
  * composition of its own.
  */
-import type {
-  EngineDraft,
-  FromOption,
-  ImageQualityLevel,
-  OhmailEngine,
-  SignatureState,
-} from "@ohmail/client-engine";
+import type { EngineDraft } from "@ohmail/wire";
+import type { FromOption, ImageQualityLevel, OhmailEngine, SignatureState } from "@ohmail/client-engine";
 import {
   addressBook,
   effectiveSignature,

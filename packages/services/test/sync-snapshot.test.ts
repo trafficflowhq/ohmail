@@ -1,3 +1,4 @@
+import type { SnapshotResponse, SyncChange } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -8,7 +9,7 @@ import {
 } from "@trafficflow/db";
 import {
   assertSnapshotWindow, SNAPSHOT_DRAFT_PAGE, SNAPSHOT_WINDOW, SyncService, dbFor,
-  type ServiceContext, type SnapshotResponse, type SyncChange,
+  type ServiceContext,
 } from "../src/index.js";
 import { SNAPSHOT_CURSOR_MAX_CHARS, SNAPSHOT_CURSOR_VERSION } from "../src/sync-service.js";
 import { ClientMirror } from "./_apply-harness.js";

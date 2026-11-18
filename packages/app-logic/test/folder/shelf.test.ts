@@ -1,5 +1,5 @@
+import type { FolderEntity } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { FolderEntity } from "@ohmail/client-engine";
 import { RECENT_SIZE, SHELF_SIZE, shelfKeyOf, shelfOf, treeOrder, usedNow } from "../../src/folder/shelf.js";
 
 /** THE RAIL'S FOLDER SHELF: pinned, the open one, the ones used last, then the tree's first; seven at most. */

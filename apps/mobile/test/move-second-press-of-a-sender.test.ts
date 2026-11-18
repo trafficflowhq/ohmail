@@ -3,8 +3,8 @@
  * a second Move replaces the first; the first toast's Undo took the SUBJECT back and cancelled the
  * second press's rule. Undo is keyed by press id now: on a replaced press it says it is too late.
  */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { type EngineMessage, type RuleDTO } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

@@ -5,14 +5,14 @@
  * owner says while the views stand; the folder rail's opened branches and the sent-mail review put off are kept under
  * the scope the shell hands them. Drawn in no shell, a view keeps nothing: no key names nobody for want of a scope.
  */
+import type { EngineMutation, FolderEntity } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  MemoryMirrorStore, OhmailEngine, mutationEffects, type EngineMutation, type MirrorStore, type SyncChange,
+  MemoryMirrorStore, OhmailEngine, mutationEffects, type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
-import type { FolderEntity } from "@ohmail/client-engine";
 import { forgetOpenVerdict, markOpenVerdict } from "@ohmail/app-logic/session/access-window";
 import { namesOwner, resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import messages from "../messages/en.json";

@@ -4,7 +4,7 @@
  * in the rail under them, never a place. A folder is named `mailboxId|path`, as the device keeps it; the device's own
  * record of the pins and the recent ones is the seat's to keep (one row each in the stored keys), handed in here.
  */
-import type { FolderEntity } from "@ohmail/client-engine";
+import type { FolderEntity } from "@ohmail/wire";
 import {
   FOLDER_FILTER_AT,
   folderLeafOf,

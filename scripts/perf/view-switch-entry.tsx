@@ -8,6 +8,7 @@
  * latency &demo=0 &store=full|windowed &ns=screened-out senders &nsh=letters each &np=spam senders
  * &nph=letters each (without ns/np the demo world's few)
  */
+import type { MessageBodyWire } from "@ohmail/wire";
 import "../../apps/webapp/app/app.css";
 import "../../apps/webapp/app/zero-layout.css";
 import { createRoot } from "react-dom/client";
@@ -21,7 +22,6 @@ import { ThemeProvider, ToastHost } from "../../packages/ui/src/index";
 import { localStorageDoor } from "../../packages/client-engine/src/durable";
 import { OhmailEngine } from "../../packages/client-engine/src/index";
 import { FixturesAdapter } from "../../packages/testing/src/adapters/fixtures-adapter";
-import type { MessageBodyWire } from "../../packages/client-engine/src/index";
 import { getFixtures } from "../../packages/testing/src/index";
 import type { Address, Fixtures, HeldMailFixture, MessageFixture, Folder } from "../../packages/testing/src/types";
 

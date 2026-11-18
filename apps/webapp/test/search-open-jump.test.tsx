@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MessageBody, TagEntity as TagDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, FeedPartition, MessageBody, TagDTO } from "@ohmail/client-engine";
+import type { FeedPartition } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { openTargetFor, readerMessageFor } from "../app/shell/AppShell";
 import { StreamShell, type StreamHandle, type StreamLeaveState } from "../app/shell/StreamShell";

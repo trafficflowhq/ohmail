@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
-import type { EngineMutation, OhmailEngine } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 
 /**

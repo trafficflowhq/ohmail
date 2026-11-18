@@ -3,7 +3,7 @@
  * decided alone with its own two answers; then one row per sender, an option of one listbox, the open one selected; under the
  * queue, the senders decided here that the organizer has not carried out yet. Opening a row reads nothing and marks nothing read.
  */
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import {
   acceptDestOf,
   PILE_VERB_KEY,

@@ -7,6 +7,7 @@
  * no row cell, filled or placeholder, meets the viewport. What this cannot see is the native layer:
  * Android's detach of clipped rows is a device read (`MailList.tsx`).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   HISTORY_PAGE_CACHE_ROWS, HISTORY_PAGE_ROWS, MemoryMirrorStore, OhmailEngine, StoreTimelineWalker,
-  type EngineAdapter, type EngineMessage, type ListOlderFn, type StoreTimeline, type SyncResponse,
+  type EngineAdapter, type ListOlderFn, type StoreTimeline, type SyncResponse,
 } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { HistoryAsks } from "../src/ui/history-asks";

@@ -1,3 +1,4 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { createHash } from "node:crypto";
 import type { AddressObject, Attachment, ParsedMail } from "mailparser";
 import { canonicalId } from "./identity.js";
@@ -5,7 +6,7 @@ import { htmlWords } from "./html-text.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
 import { mailDate } from "./mail-date.js";
 import { ParseDeadlineExceeded, parseBounded, startParseBudget } from "./mime-parse.js";
-import type { NormalizedMessage, EmailAddress, AttachmentMeta } from "./types.js";
+import type { NormalizedMessage, AttachmentMeta } from "./types.js";
 import type { Logger } from "./log.js";
 import { CALENDAR_MESSAGE_CONTENT_CLASS, calendarPartRank, icsMethodOfContentType, isCalendarMime } from "./ics.js";
 import { INVITATION_PART_MAX_BYTES, INVITATION_PARTS_MAX, readLetterInvitation, type LetterCalendar } from "./invitation-mail.js";

@@ -1,10 +1,11 @@
+import type { HeldReleaseGroupWire, HeldReleaseWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { OhmailEngine } from "../src/engine.js";
 import {
   heldReleaseDismissedOf, heldReleaseFingerprintOf, heldReleaseGroups, heldReleaseTotalOf,
   screenerSegments,
 } from "../src/selectors.js";
-import type { EngineAdapter, HeldReleaseGroupWire, HeldReleaseWire } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 import type { SyncChange } from "../src/types.js";
 
 /** Mirror sequence for the seeded rows below — one counter for the file. */

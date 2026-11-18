@@ -23,12 +23,13 @@
  *  · a server refusal ROLLS BACK and answers `false` with the failure sentence — measured
  *    with an armed 422, not a stubbed adapter.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
-import { FOLDER_OF_VIEW, type EngineMessage } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import {
   liveActions,

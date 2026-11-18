@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, FolderEntity } from "@ohmail/wire";
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EngineMessage, FolderEntity } from "@ohmail/client-engine";
 import { FolderRail, type FolderRailProps } from "../../src/folder/index.js";
 import { draw, msg } from "../places/lists-world.js";
 

@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryMirrorStore, OhmailEngine, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type SyncChange } from "@ohmail/client-engine";
 import { EngineContext } from "@ohmail/app-logic/engine";
 import { COMMIT_MS, useScreenerLive, type ScreenerLiveInput, type ScreenerText } from "@ohmail/app-logic/screener";
 import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";

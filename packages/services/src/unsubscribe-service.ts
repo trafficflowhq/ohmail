@@ -1,3 +1,4 @@
+import type { AuthVerdict, UnsubscribeHeaderState } from "@ohmail/wire";
 import { and, asc, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -9,7 +10,7 @@ import {
 import {
   authVerdictFromHeaders, createLogger, httpsUnsubscribeUri, oneClickUnsubscribeUri, unsubscribeHeaderState,
   UNSUB_DRAIN_CLOSE_RESERVE_MS, UNSUB_DRAIN_RUN_BUDGET_MS,
-  type AuthVerdict, type Destination, type Logger, type UnsubscribeHeaderState,
+  type Destination, type Logger,
 } from "@trafficflow/core/mail";
 import { bridgeTx, passContext, type Db, type ServiceContext, type UnboundDb } from "./context.js";
 import { ServiceError } from "./errors.js";

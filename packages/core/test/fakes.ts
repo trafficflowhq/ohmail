@@ -1,10 +1,11 @@
+import type { EmailAddress } from "@ohmail/wire";
 import type {
   AdapterPort, RepoPort, RoutingPort, StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput,
   FolderStateRow, NativeLocator, MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput,
   RoutingDecisionInput, ApprovalInput, AttachmentMeta,
   ThreadParent, ThreadUpsertInput, ThreadUpsertResult, ThreadMergeInput,
 } from "../src/ports.js";
-import type { Destination, EmailAddress } from "../src/types.js";
+import type { Destination } from "../src/types.js";
 import type { FolderCompletion } from "../src/adapters/drizzle-repo.js";
 import type { MessageSearchInput } from "../src/message-search.js";
 import type { KnownSenders, Rule } from "../src/rules.js";

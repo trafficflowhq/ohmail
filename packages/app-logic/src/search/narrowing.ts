@@ -3,7 +3,8 @@
  * the narrowed question by itself; this keeps the device's rows from showing what the question leaves out while the
  * store's page is on its way.
  */
-import type { EngineMessage, SearchHit } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
+import type { SearchHit } from "@ohmail/client-engine";
 import { dayBounds, type SearchNarrowing } from "./question.js";
 
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();

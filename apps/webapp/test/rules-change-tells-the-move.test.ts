@@ -8,12 +8,12 @@
  * pane saying "Mail already filed stays where it is". Driven through `SettingsView`, the surface the
  * web and the desktop both render.
  */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import type { EngineMessage, Folder, RuleDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";
 import { rulePastMail } from "../app/shell/rule-past-mail";

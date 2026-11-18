@@ -1,3 +1,10 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  MutationOutcome,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter,
@@ -7,11 +14,6 @@ import {
   rulesList,
   storedRuleDestination,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type MutationOutcome,
-  type RuleDTO,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";

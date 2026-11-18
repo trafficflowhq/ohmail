@@ -82,7 +82,7 @@ const {
   MemoryMirrorStore, OhmailEngine,
 } = await import("@ohmail/client-engine");
 const { FACTS_POLL_MS } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
-type EngineMessage = import("@ohmail/client-engine").EngineMessage;
+type EngineMessage = import("@ohmail/wire").EngineMessage;
 type SyncChange = import("@ohmail/client-engine").SyncChange;
 
 let seq = 0;

@@ -3,8 +3,8 @@
  * new for the person and what came before; an empty folder is an answer (it exists and holds nothing), and a folder
  * that left the mail server while it was open is said by name, never shown as an empty list.
  */
+import type { EngineMessage, FolderEntity } from "@ohmail/wire";
 import { createContext, useContext, useMemo, useRef } from "react";
-import type { EngineMessage, FolderEntity } from "@ohmail/client-engine";
 import { folderLeafOf } from "../lists/folders.js";
 import { newestFirst, usePlaceList, type PlaceList, type PlaceListInput } from "../place-list/place-list.js";
 

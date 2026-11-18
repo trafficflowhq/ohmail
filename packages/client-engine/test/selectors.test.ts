@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { getFixtures } from "@ohmail/testing";
 import {
@@ -15,7 +16,6 @@ import {
   threadParticipants,
   threadParticipantsIndex,
   triagePiles,
-  type EngineMessage,
   type EntityReader,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";

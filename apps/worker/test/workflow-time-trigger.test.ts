@@ -1,9 +1,9 @@
+import type { WorkflowTrigger } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { workflows, workflowRuns, type Tx } from "@trafficflow/db";
-import type { WorkflowTrigger } from "@trafficflow/core";
 import { workflowTimeScanPass } from "../src/workflow-cron.js";
 
 const NOW = new Date("2026-07-28T12:00:00Z");

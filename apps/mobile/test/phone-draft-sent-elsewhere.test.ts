@@ -6,11 +6,11 @@
  * `bootEngine`'s real HttpAdapter against the fake; the sheet's wiring is READ (no React Native
  * renderer in this workspace).
  */
+import type { EngineDraft } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EngineDraft } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { keptRecipients, liveActions, parseRecipients, type LiveWorldActions } from "../src/state/live";

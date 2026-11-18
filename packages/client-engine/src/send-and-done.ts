@@ -1,7 +1,7 @@
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { isOwnSent, ohboxView, resurfacedThreads } from "./selectors.js";
 import { inverseMutations } from "./undo.js";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage, EngineMutation } from "./types.js";
 
 /**
  * SEND + DONE — one rule, read by every surface.

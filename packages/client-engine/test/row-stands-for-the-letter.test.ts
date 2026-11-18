@@ -1,8 +1,9 @@
+import type { EngineMessage, EngineMutation, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   FOLDER_OF_VIEW, MemoryMirrorStore, OhmailEngine, doneSubjectIds, inverseMutations, pileSubjectIds, pinsSpentBy, ohboxRows, ownFaceOfRow,
   resurfacedFocus, resurfacedThreads, rowOpenTarget, triageSubjectIds,
-  type EngineAdapter, type EngineMessage, type EngineMutation, type EntityReader, type MessageStateDTO, type OhboxRow,
+  type EngineAdapter, type EntityReader, type OhboxRow,
   type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 

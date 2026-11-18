@@ -6,10 +6,10 @@
  * walker fetches pages from the nearest seen keyset, reaches far slots by uncached steps, and the
  * mirror paints first until page one replaces it in place.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   StoreTimelineWalker,
-  type EngineMessage,
   type OhmailEngine,
   type StoreTimelineState,
   type TimelineSegment,

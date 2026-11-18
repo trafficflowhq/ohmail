@@ -25,8 +25,9 @@
  * unconditionally; stated here because this hook is what makes the bug reachable.
  */
 
+import type { EngineMessage } from "@ohmail/wire";
 import { useTranslations } from "next-intl";
-import { forwardOffered, type EngineMessage } from "@ohmail/client-engine";
+import { forwardOffered } from "@ohmail/client-engine";
 import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
 /* The one cursor placer, claimed at `view` scope so this seam answers instead of the shell,
    which holds no cursor for the views that mount it. See `cursor-placer.ts`. */

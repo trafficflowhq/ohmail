@@ -19,6 +19,7 @@
  * path itself: client-engine's calendar-texts suite, whose items the message screen renders
  * verbatim.)
  */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   FOLDER_OF_VIEW,
@@ -26,9 +27,7 @@ import {
   encodeSeqCursor,
   mirrorDbName,
   waterlineIdOf,
-  type EngineMessage,
   type EntityReader,
-  type RuleDTO,
 } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { DE } from "../src/copy.de";

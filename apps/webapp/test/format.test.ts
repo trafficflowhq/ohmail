@@ -1,5 +1,6 @@
+import type { EmailAddress, EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appointmentStamp, type EmailAddress, type EngineMessage } from "@ohmail/client-engine";
+import { appointmentStamp } from "@ohmail/client-engine";
 import { fullDateTime, recipientRows, rowStamp, waterlineStamp, writtenDateTime } from "../app/shell/format";
 import { setActiveFormatZone } from "../app/shell/locale";
 

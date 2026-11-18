@@ -22,8 +22,9 @@
  * folder-move REQUEST is not invented here: `REQUEST_KINDS` is closed by CHECK on four members.
  */
 
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { pressVerdict, type EntityReader, type EngineMessage, type PressAnswer } from "@ohmail/client-engine";
+import { pressVerdict, type EntityReader, type PressAnswer } from "@ohmail/client-engine";
 import type { UndoToastFn } from "./undo-door.js";
 import type { DisabledReason, KeyBinding } from "../keys/binding.js";
 import { isModalOpen } from "../session/modal-gate.js";

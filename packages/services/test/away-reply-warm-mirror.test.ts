@@ -1,10 +1,11 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { awayReplies, messages } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import {
   consentPartition, ohboxView, presentationReader,
-  type EngineMessage, type MemoryMirrorStore, type SyncChange,
+  type MemoryMirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import { verbWorld, type VerbWorld } from "../../testing/test/verb-parity/world.js";
 import {

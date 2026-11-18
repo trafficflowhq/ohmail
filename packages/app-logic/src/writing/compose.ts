@@ -6,7 +6,7 @@
  * and `canSend` — so the parsing is testable one row at a time and cannot drift into a second copy
  * of the send rule.
  */
-import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
+import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/wire";
 import type { SignatureState } from "@ohmail/client-engine";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet, localStorageDoor } from "../storage/durable.js";
 import { isDemoOwned } from "../storage/storage-owner.js";

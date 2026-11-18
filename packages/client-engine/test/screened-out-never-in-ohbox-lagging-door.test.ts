@@ -1,3 +1,9 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  RuleEntity as RuleDTO,
+  ScreenerWaitingWire,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter,
@@ -8,11 +14,7 @@ import {
   ohboxView,
   presentationReader,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
-  type RuleDTO,
-  type ScreenerWaitingWire,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

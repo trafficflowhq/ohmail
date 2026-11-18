@@ -2,9 +2,10 @@
  * THE OHBOX'S HOOK OVER PLAIN ROWS: a probe component calls `useOhboxList` with the inputs a test hands it and
  * keeps the model it returned, as the old tests fed the view.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { EngineMessage, ResurfacedThreadRow } from "@ohmail/client-engine";
+import type { ResurfacedThreadRow } from "@ohmail/client-engine";
 import { useOhboxList, type OhboxListInput, type OhboxListModel } from "../../src/ohbox/index.js";
 import { DEFAULT_AFTER_VERB } from "../../src/press/after-verb.js";
 

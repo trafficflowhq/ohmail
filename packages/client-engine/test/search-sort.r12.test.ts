@@ -1,3 +1,4 @@
+import type { MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter,
@@ -5,7 +6,6 @@ import {
   OhmailEngine,
   SERVER_SEARCH_SORTS,
   type EngineAdapter,
-  type MutationOutcome,
   type ServerSearchOpts,
   type ServerSearchWire,
   type SyncResponse,

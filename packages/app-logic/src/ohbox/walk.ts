@@ -1,6 +1,7 @@
 /** The walk j/k and the arrows share, and the zone model's three parts (rail ← list → open message). */
+import type { EngineMessage } from "@ohmail/wire";
 import type { RefObject } from "react";
-import type { EngineMessage, OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
+import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import type { UnreadHold } from "../reading/reader-seen.js";
 import type { Translator } from "../text/translator.js";
 import type { OhboxListModel, OhboxStep } from "./types.js";

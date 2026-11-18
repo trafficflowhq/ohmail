@@ -1,10 +1,10 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { domainOfAddress } from "./consent-cutline.js";
 import type { MutationEffect } from "./mutations.js";
 import { ruleTwins } from "./rule-twins.js";
 import { placementOf } from "./shadow.js";
 import type { EntityReader } from "./store.js";
-import type { RuleDTO } from "./types.js";
 
 /**
  * A DECISION THE WINDOW KEEPS — a confirmed `screener_decide`'s rules, held in memory past its

@@ -6,8 +6,9 @@
  * where it exists and to the weekday where neither does; this file deletes the constructor for the
  * duration of a case and drives all three arms of that order, asking for a label, not an exception.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { FOLDER_OF_VIEW, receiptsByDay, type EngineMessage, type EntityReader } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, receiptsByDay, type EntityReader } from "@ohmail/client-engine";
 
 const NOW = new Date("2026-09-21T10:30:00.000Z");
 const intl = Intl as unknown as Record<string, unknown>;

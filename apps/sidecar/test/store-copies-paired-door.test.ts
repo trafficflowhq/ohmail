@@ -1,10 +1,10 @@
+import type { MessageDTO, SyncChange, SyncResponse } from "@ohmail/wire";
 import fs, { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { messages } from "@trafficflow/db/mail";
-import type { MessageDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { createCloudSidecar, MIRROR_OWNER_FILE, readMirrorRevoked, type CloudSidecar } from "../src/cloud-engine.js";
 import { encodeMirrorRecord, normalizeBase } from "../src/cloud-origin.js";
 import { createSidecarLogger, diagnosticFor } from "../src/log.js";

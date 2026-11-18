@@ -8,8 +8,8 @@
  * (a combined German pattern renders `Sa., 00:07`); the clock is never
  * Intl-formatted — `zonedFields` pins h23; deliberate, as bare `en` is 12-hour.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { zonedDayNumber, zonedFields } from "./zone.js";
-import type { EngineMessage } from "./types.js";
 
 /**
  * Day and month names from Intl, in the caller's locale and the reader's

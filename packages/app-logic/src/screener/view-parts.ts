@@ -2,8 +2,9 @@
  * THE VIEW'S PARTS: what is asked of the person before anything leaves (Mark all spam's question, the unsubscribe
  * question), the one way a decision leaves, what stands open beside the open sender, and the open letters' bodies.
  */
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { useEffect, useRef, useState } from "react";
-import { senderKey, type ScreenerSenderDTO } from "@ohmail/client-engine";
+import { senderKey } from "@ohmail/client-engine";
 import { useEngineOrNull } from "../engine/context.js";
 import { isNothingOrganizes, type OrganizerRefusal } from "../press/organizer-refusal.js";
 import type { DecisionDestination, DecisionScope } from "./decision.js";

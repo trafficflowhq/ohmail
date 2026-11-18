@@ -1,8 +1,9 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { OhmailEngine, INLINE_IMAGE_MAX_BYTES } from "../src/engine.js";
 import { REASK_MAX } from "../src/session-reask.js";
 import { MutationRejectedError } from "../src/types.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * a short drop while a letter opened left its inline picture missing until the

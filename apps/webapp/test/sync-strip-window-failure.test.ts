@@ -7,10 +7,11 @@
  * marks failing outranks the window's own trouble and is named; the sentence clears when the
  * window's drain lands again.
  */
+import type { MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore, OhmailEngine,
-  type EngineAdapter, type MutationOutcome, type SyncResponse, type WindowSyncFailure,
+  type EngineAdapter, type SyncResponse, type WindowSyncFailure,
 } from "@ohmail/client-engine";
 import { startSyncScheduler, SYNC_FAILURE_STREAK, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
 import { deriveMailState, type MailStateInputs, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";

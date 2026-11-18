@@ -4,11 +4,12 @@
  * adopted): the dock says the send's own failure sentence, en and de, and offers Send again, rather
  * than closing silently over a message the person believes went.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider, type AbstractIntlMessages } from "next-intl";
-import { MutationRejectedError, OhmailEngine, MemoryMirrorStore, type EngineMutation } from "@ohmail/client-engine";
+import { MutationRejectedError, OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 

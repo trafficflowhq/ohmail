@@ -8,11 +8,30 @@
  * doctrine); the release family rewrites the sender's own holding rule, or writes an address rule
  * beside a domain rule (`releaseRules`), beside physical `move`s. Mutations read the raw mirror ({@link presentedOf} is for renders); no React, no I/O, no network.
  */
+import type {
+  BodyState,
+  ComposeAttachment,
+  EmailAddress,
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  FailedAtGateDTO,
+  FeedView,
+  Folder,
+  FolderEntity,
+  MessageBody,
+  RuleEntity as RuleDTO,
+  ScreenDest,
+  ScreenerSenderDTO,
+  StayedWhy,
+  TagEntity as TagDTO,
+  UnscreenedPileWire,
+  WithheldMarker,
+} from "@ohmail/wire";
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
-import { authScreens, failedAtGateOf, type FailedAtGateDTO } from "@ohmail/client-engine";
+import { authScreens, failedAtGateOf } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
 import type { ScheduleFilesAnswer } from "@ohmail/client-engine";
-import type { UnscreenedPileWire } from "@ohmail/client-engine";
 import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES, SENT_FORWARD_MAX_PARTS, draftOverCeiling } from "@ohmail/client-engine";
 import { addressBook, formatRecipient, matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
@@ -81,17 +100,7 @@ import {
   type AddressCounts,
   type AddressDirection,
   isJunkHuskLeaving,
-  type BodyState,
-  type WithheldMarker,
-  type EmailAddress,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
-  type ComposeAttachment,
   type EntityReader,
-  type FeedView,
-  type Folder,
-  type FolderEntity,
   type MutationResult,
   type OhmailEngine,
   StoreSearchWalker,
@@ -100,10 +109,6 @@ import {
   type ServerSearchOpts,
   type ServerAddressOutcome,
   type PressVerdict,
-  type RuleDTO,
-  type ScreenDest,
-  type ScreenerSenderDTO,
-  type StayedWhy,
   feedLineUndo,
   inverseMutations,
   pileRowIdsOf,
@@ -122,7 +127,6 @@ import {
   type MailboxScreening,
   type ScreeningSource,
   type SendAndDonePlan,
-  type TagDTO,
   type TrashRowWire,
   type WallClockVerdict,
   type WithdrawOutcome,
@@ -158,7 +162,6 @@ import {
   unsubscribeClaim,
   unsubscribeLetterOf,
   NO_WAITING,
-  type MessageBody,
   type UnsubscribeClaim,
   type WaitingSend,
 } from "@ohmail/client-engine";
@@ -3682,8 +3685,9 @@ export interface LiveDeps {
 export type { AbandonedMutation, EntityReader, MutationResult, QueuedChange, WaitingSend } from "@ohmail/client-engine";
 export { NO_WAITING } from "@ohmail/client-engine";
 /* The sheet's step reads the press's forecast and the rules in play by this door too. */
+export type { RuleEntity as WorldRule } from "@ohmail/wire";
 export type {
-  ConflictGroup, ConsentOptions, PressForecast, RuleDTO as WorldRule, RuleLine, RulesInPlay,
+  ConflictGroup, ConsentOptions, PressForecast, RuleLine, RulesInPlay,
 } from "@ohmail/client-engine";
 /* Where the Ohbox's mail went (`ohbox-where.ts`): the projection and the line read it by this door. */
 export {

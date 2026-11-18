@@ -3,8 +3,8 @@
  * first words and its hour, the letter open marked, and what the place says beside it (where it is, a tag). Pure
  * drawing over the place's model: a press opens.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import type { ReactNode } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { Row, Rows } from "@ohmail/ui/mail";
 
 export interface LetterRowsProps {

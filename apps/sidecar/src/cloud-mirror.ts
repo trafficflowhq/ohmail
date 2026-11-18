@@ -1,3 +1,23 @@
+import type {
+  ApprovalDTO,
+  ChangeOp,
+  DraftDTO,
+  MailboxDTO,
+  MailboxProfileDTO,
+  MessageBodyBatchItem,
+  MessageDTO,
+  MessageStateDTO,
+  Page,
+  RoutingDecisionDTO,
+  RuleDTO,
+  ScreenerSuggestionDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+  TagDTO,
+  ThreadDTO,
+  WithheldMarker,
+} from "@ohmail/wire";
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
@@ -34,10 +54,7 @@ import {
   drainPageLimit, mirrorFreshness, mirrorStale, STALE_RESUME_MS, type MirrorFreshness,
 } from "@trafficflow/core/drain-policy";
 import type {
-  ApprovalDTO, ChangeOp, DraftDTO, EntityType, MailboxDTO, MessageBodyBatchItem, MessageDTO,
-  MailboxProfileDTO, MessageStateDTO, Page, RoutingDecisionDTO, RuleDTO, ScreenerSuggestionDTO, SnapshotResponse,
-  SyncChange, SyncResponse,
-  TagDTO, ThreadDTO, WithheldMarker,
+  EntityType,
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";

@@ -24,6 +24,7 @@
     }
   },
   "dependencies": {
-    "@ohmail/client-engine": "*"
+    "@ohmail/client-engine": "*",
+    "@ohmail/wire": "*"
   }
 }

@@ -5,12 +5,13 @@
  * answer after it. `?view=` picks a view mounted alone (Trash's live sheet, the address view).
  * The rig drives it through `window.__lv`; nothing here reaches a network.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { createElement as h } from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, mutationEffects,
-  type EngineMessage, type EngineMutation, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { AppShell } from "../_todays-shell.js";

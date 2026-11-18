@@ -1,6 +1,6 @@
+import type { SyncChange, SyncResponse } from "@ohmail/wire";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import type { SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "../src/cloud-engine.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
@@ -8,8 +9,6 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";

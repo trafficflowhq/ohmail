@@ -9,12 +9,13 @@
  * `useShellOpenState` (ARCH-022, the L3 ruling) — mirror, then mailto — and the explicit action
  * stands. The old order let the mirror swallow the click, and it is the red arm below.
  */
+import type { EngineDraft } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import { MemoryMirrorStore, type EngineDraft, type MirrorStore, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type MirrorStore, type SyncChange } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { go, parseHash, reflectMessage } from "../app/shell/routing";
 import { EMPTY_COMPOSE, markComposeRowHolds, resetComposerForTest, writeComposeDraft, writeComposeRow } from "@ohmail/app-logic/writing/compose";

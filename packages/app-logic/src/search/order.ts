@@ -4,13 +4,9 @@
  * client cannot compute — a message carries `mailboxId`, never the address — so over the device's
  * rows it degrades to date order, the store's answer being the one that orders by address.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useMemo } from "react";
-import {
-  SERVER_SEARCH_SORTS,
-  type EngineMessage,
-  type SearchHit,
-  type ServerSearchSort,
-} from "@ohmail/client-engine";
+import { SERVER_SEARCH_SORTS, type SearchHit, type ServerSearchSort } from "@ohmail/client-engine";
 import type { StorageScope } from "../storage/scope.js";
 import { searchSortKey, usePersistedChoice } from "../storage/persisted-ui.js";
 

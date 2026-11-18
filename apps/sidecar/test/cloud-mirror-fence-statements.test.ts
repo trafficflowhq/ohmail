@@ -1,3 +1,4 @@
+import type { MailboxDTO, MessageDTO, SyncChange, SyncResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -5,7 +6,6 @@ import { eq, sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { accounts, awayReplies, mailboxes, messages, threads } from "@trafficflow/db/mail";
-import type { MailboxDTO, MessageDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror } from "../src/cloud-mirror.js";

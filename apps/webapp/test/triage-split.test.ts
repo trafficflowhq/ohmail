@@ -30,11 +30,12 @@
  *    the new button to something else. `reply-run.test.ts` owns the run's own semantics (a
  *    failed send discharges nothing); this owns the fact that the header's button is that run.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { OhmailEngine, type EngineMutation, type MutationResult } from "@ohmail/client-engine";
+import { OhmailEngine, type MutationResult } from "@ohmail/client-engine";
 import { triage } from "@ohmail/testing";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";

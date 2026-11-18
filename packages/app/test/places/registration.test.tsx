@@ -4,10 +4,10 @@
  * list in the list column at its own address, and nothing of any other place. No host hands these over yet; this is
  * what the seating step relies on.
  */
+import type { EngineMessage, FolderEntity, TagEntity as TagDTO } from "@ohmail/wire";
 import { cleanup, render, screen } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineMessage, FolderEntity, TagDTO } from "@ohmail/client-engine";
 import { useAddressList } from "@ohmail/app-logic/address";
 import { useDraftsList } from "@ohmail/app-logic/drafts";
 import { useFolderList } from "@ohmail/app-logic/folder";

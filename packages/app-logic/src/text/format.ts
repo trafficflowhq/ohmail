@@ -3,6 +3,7 @@
  * prototype's display time verbatim (`m.time`); rows minted by
  * mutations fall back to a clock/weekday derived from the ISO date.
  */
+import type { EmailAddress, EngineMessage, TagEntity as TagDTO, WithheldMarker } from "@ohmail/wire";
 import {
   appointmentStamp,
   clock,
@@ -20,12 +21,8 @@ import {
   zonedFields,
   zonedInstant,
   zonedWeekday,
-  type EmailAddress,
   type WallClockVerdict,
   type ZonedComposition,
-  type EngineMessage,
-  type TagDTO,
-  type WithheldMarker,
 } from "@ohmail/client-engine";
 import { displayAddress } from "./idn.js";
 import { activeFormatLocale, activeFormatZone, liveCopy } from "./format-words.js";

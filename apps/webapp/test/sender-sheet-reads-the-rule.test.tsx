@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  MemoryMirrorStore, consentPartition, heldRuleId, pressRules, rulesInPlay, type EngineMessage, type RuleDTO, type SyncChange,
+  MemoryMirrorStore, consentPartition, heldRuleId, pressRules, rulesInPlay, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";

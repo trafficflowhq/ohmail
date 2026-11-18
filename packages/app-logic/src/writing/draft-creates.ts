@@ -8,7 +8,8 @@
  * composer and the inline reply, keep their creates here as claims.
  */
 
-import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
+import type { EngineDraft } from "@ohmail/wire";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import { sendRecordNames } from "./send-lock.js";
 import type { StorageScope } from "../storage/scope.js";
 

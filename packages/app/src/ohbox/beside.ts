@@ -4,8 +4,8 @@
  * the Ohbox provides it. Nothing standing above is a mistake, said at once (a default `settled` would say "Nothing
  * in your Ohbox" over unread mail).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createContext, useContext, type ReactNode } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
 import type { NotOrganizingYet } from "@ohmail/app-logic/mail-state/mail-state";
 import type { None } from "../host/index.js";
 

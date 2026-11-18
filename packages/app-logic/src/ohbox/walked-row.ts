@@ -9,8 +9,9 @@
  * that arrives gets its square and a Mark unread turns them, as on the row's own marks. Only the place (the ring) is
  * the walk's. Only the walked row reads anything here: every other row's answer is null and stays null on a step.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useMemo, useState, useSyncExternalStore } from "react";
-import { isOwnOutbound, type EngineMessage, type ThreadMark } from "@ohmail/client-engine";
+import { isOwnOutbound, type ThreadMark } from "@ohmail/client-engine";
 import type { ThreadWalkChannel, ThreadWalkSnapshot } from "../reading/thread-walk-channel.js";
 
 export interface WalkedSquares {

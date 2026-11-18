@@ -1,3 +1,11 @@
+import type {
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  RuleEntity as RuleDTO,
+  RuleKeyAddress,
+  SyncSnapshotPage,
+} from "@ohmail/wire";
 import { mirrorStale } from "@trafficflow/core/drain-policy";
 import { canonicalDestination, isSentFolderPath } from "@trafficflow/core/folder-name";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
@@ -5,8 +13,8 @@ import { heldRuleKey } from "../rule-twins.js";
 import { rulesList } from "../selectors.js";
 import { replaceRecordedSentFolders } from "../sent-folders.js";
 import {
-  encodeSeqCursor, type EngineDraft, type EngineMessage, type EngineMutation, MAILBOX_TYPE, MutationRejectedError,
-  type RuleDTO, type RuleKeyAddress, type SyncChange, type SyncSnapshotPage,
+  encodeSeqCursor, MAILBOX_TYPE, MutationRejectedError,
+  type SyncChange,
 } from "../types.js";
 import { wireKindOf } from "./ceilings.js";
 import type {

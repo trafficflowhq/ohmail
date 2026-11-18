@@ -1,6 +1,6 @@
+import type { MailboxDTO, SyncChange, SyncResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { hashToken } from "@trafficflow/services/mail";
-import type { MailboxDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 
 /**
  * A FAKE OHMAIL CLOUD THAT ANSWERS THE FIVE APPROVAL ROUTES the way `auth-service.ts` does — request,

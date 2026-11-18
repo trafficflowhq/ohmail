@@ -7,11 +7,11 @@
  * false there; the body text is the evidence it has. The note names the setting, links only to the
  * rebuilt Microsoft 365 options page, reports that link to the shell, and stays outside the mail.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { type EngineMessage } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";

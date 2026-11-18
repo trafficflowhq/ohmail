@@ -7,6 +7,7 @@
  * Two shapes: the send failed before the server took it (the row is still a draft), and the
  * server took it and the answer was lost (the row has left `draft`, so a PUT is refused).
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
@@ -14,7 +15,6 @@ import {
   IndexedDbMirrorStore,
   OhmailEngine,
   OUTBOX_TYPE,
-  type EngineMutation,
 } from "@ohmail/client-engine";
 
 const REV = "a".repeat(64);

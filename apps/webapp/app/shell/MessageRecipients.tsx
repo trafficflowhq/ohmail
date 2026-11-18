@@ -18,10 +18,10 @@
  * which is why there is no portal — a portal would fix this component and leave the cause standing
  * for the next fixed descendant.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Icon } from "@ohmail/ui";
-import type { EngineMessage } from "@ohmail/client-engine";
 import type { BlockNotice } from "@ohmail/letter-body";
 import { ContactPopover, type ContactPopoverState } from "./ContactPopover";
 import { recipientRows, writtenDateTime, writtenInstant, type RecipientRowChip } from "./format";

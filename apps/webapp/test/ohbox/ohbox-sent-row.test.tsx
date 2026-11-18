@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { within } from "@testing-library/react";
 import * as React from "react";
@@ -7,7 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../../messages/en.json";
 import { IDBFactory } from "fake-indexeddb";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { IndexedDbMirrorStore, MemoryMirrorStore, OhmailEngine, isOwnSent, ohboxView, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { IndexedDbMirrorStore, MemoryMirrorStore, OhmailEngine, isOwnSent, ohboxView, type SyncChange } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** The fixture's ids, built from their numbers. */

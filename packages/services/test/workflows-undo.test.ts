@@ -1,3 +1,4 @@
+import type { WorkflowStep } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -7,7 +8,7 @@ import {
   workflows, workflowRuns, type Tx,
 } from "@trafficflow/db";
 import { WorkflowExecutor } from "@trafficflow/core";
-import type { DraftPort, WorkflowStep } from "@trafficflow/core";
+import type { DraftPort } from "@trafficflow/core";
 import { WorkflowsService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { ServiceError } from "../src/errors.js";

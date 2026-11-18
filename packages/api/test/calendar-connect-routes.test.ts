@@ -14,11 +14,15 @@ import { CALENDAR_TABLES } from "@trafficflow/db/calendar";
 import {
   calAlarms, calAttendees, calCalendars, calConnections, calCredentials, calEvents, calSettings, calWrites, changeLog, idempotencyKeys,
 } from "@trafficflow/db/mail";
-import type { CalendarConnectionRecord, CalendarConnectWire, CalendarRecord } from "@ohmail/wire";
+import type {
+  CalendarConnectionRecord,
+  CalendarConnectWire,
+  CalendarRecord,
+  SyncResponse,
+} from "@ohmail/wire";
 import { deleteAccount, type Db } from "@trafficflow/services";
 import { calendarFeed } from "@trafficflow/services/calendar";
 import { CALENDAR_CONNECTION_CEILING, offeredWays } from "@trafficflow/services/calendar-connect";
-import type { SyncResponse } from "@trafficflow/services/mail";
 import { makeDeps, req, seedSession, FIXED_NOW, type SeededSession } from "./helpers.js";
 
 /**

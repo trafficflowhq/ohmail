@@ -1,9 +1,9 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   encodeSeqCursor,
   HttpAdapter,
   OhmailEngine,
-  type EngineMessage,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { createEngine } from "../app/shell/engine-config.js";

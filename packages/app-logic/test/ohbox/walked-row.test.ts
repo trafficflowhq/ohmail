@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EngineMessage, ThreadMark } from "@ohmail/client-engine";
+import type { ThreadMark } from "@ohmail/client-engine";
 import { useWalkedSquares, type WalkedSquares } from "../../src/ohbox/walked-row.js";
 import { createThreadWalkChannel, type ThreadWalkChannel } from "../../src/reading/thread-walk-channel.js";
 import { act, msg } from "./harness.js";

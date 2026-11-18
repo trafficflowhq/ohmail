@@ -4,7 +4,7 @@
  * through it, and its sentence and its Undo come from it. The same mutations the web shell's message verbs send for
  * one letter off the Ohbox.
  */
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 import type { MessageAction } from "../press/actions.js";
 import type { ShellDispatch } from "../press/shell-dispatch.js";
 import { markSeenOver } from "./mark-seen.js";

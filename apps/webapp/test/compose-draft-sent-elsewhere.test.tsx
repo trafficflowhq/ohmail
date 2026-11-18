@@ -6,8 +6,9 @@
  * "Saved to your drafts after a moment" while saving nothing, Send did nothing in silence, and Cancel
  * said the letter stays in Drafts. Every word typed after the send was lost on reload.
  */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineDraft, EngineMutation, SyncChange } from "@ohmail/client-engine";
+import type { SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { draftsList } from "@ohmail/client-engine";

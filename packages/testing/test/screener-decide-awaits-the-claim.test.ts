@@ -1,7 +1,6 @@
+import type { MutationOutcome, ScreenDecisionResult } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { HttpAdapter } from "@ohmail/client-engine";
-import type { MutationOutcome } from "@ohmail/client-engine";
-import type { ScreenDecisionResult } from "@trafficflow/services";
 
 /**
  * A DECISION WHOSE MOVE WAITS ON THIS INSTALL'S CLAIM. The door answers 200 with the

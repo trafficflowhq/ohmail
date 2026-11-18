@@ -2,10 +2,10 @@
  * THE OHBOX OVER PLAIN ROWS: the real behaviour hook fed plain letters, the list drawn from its model with the
  * words of the place files, beside it what a shell would say. A test moves the inputs and reads by role and name.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { render, type RenderResult } from "@testing-library/react";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
-import type { EngineMessage } from "@ohmail/client-engine";
 import type { LayoutPlan, PaneProps, Route } from "../../src/frame/contract.js";
 import { NONE } from "../../src/host/index.js";
 import { OhboxAbove, OhboxList, type OhboxBeside } from "../../src/ohbox/index.js";

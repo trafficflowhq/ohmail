@@ -20,9 +20,9 @@
  * has stopped being true is not a caveat, it is an error — the residual limit is a history depth,
  * recorded beside the ingest constant that sets it. State lives above; this component asks nothing.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { Fragment, type ReactNode } from "react";
 import { MessageCard, type PanelReadWiring } from "./MessageCard";
-import type { EngineMessage } from "@ohmail/client-engine";
 
 export function ConversationPanels({
   messages,

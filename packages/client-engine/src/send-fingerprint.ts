@@ -6,7 +6,7 @@
  * (stamped at every press) and `forwardConfirmed` (an answer, not content). Shipped locks were hashed
  * without them, so adding any one strands every stored lock.
  */
-import type { EngineMutation } from "./types.js";
+import type { EngineMutation } from "@ohmail/wire";
 
 type MailSend = Extract<EngineMutation, { kind: "mail_send" }>;
 

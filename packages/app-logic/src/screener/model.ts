@@ -4,7 +4,8 @@
  * assumed armed, a reader taken for the organizer, no Undo). This door names every one: a caller says `null` where it
  * means none, and a missing key does not compile. Called once, where the frame is composed; never inside a pane.
  */
-import type { EngineMessage, EntityReader, OhmailEngine } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
+import type { EntityReader, OhmailEngine } from "@ohmail/client-engine";
 import type { ScreenerRole } from "../mail-state/mail-state.js";
 import type { OrganizerRefusal } from "../press/organizer-refusal.js";
 import type { ScreenerReleaseWindow } from "../press/release-window.js";

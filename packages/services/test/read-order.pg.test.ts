@@ -1,3 +1,4 @@
+import type { MessageDTO } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -5,7 +6,7 @@ import { mailboxes, messages, folderState, messageStates, changeLog, recordChang
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { dbFor, messageService, syncService } from "@trafficflow/services";
-import type { MessageDTO, ServiceContext } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl } from "@trafficflow/db/testing";
 
 /**

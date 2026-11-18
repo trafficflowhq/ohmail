@@ -10,15 +10,13 @@
  * cannot read. The rule named is the one the ROUTER chose ({@link routedRule}), and only when it agrees
  * with where the message is. This reads the mirror — `screening.auditCount` says so.
  */
+import type { EngineMessage, RuleEntity as RuleDTO, ScreenerSenderDTO } from "@ohmail/wire";
 import {
   FOLDER_OF_VIEW,
   canonicalDestination,
   rulesList,
   senderKey,
-  type EngineMessage,
   type EntityReader,
-  type RuleDTO,
-  type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
 import { compareRules, effectForDestination, ruleMatchKey, type OrderedRule } from "@trafficflow/core/rule-order";
 import { bodyTextOf } from "./subject-rule.js";

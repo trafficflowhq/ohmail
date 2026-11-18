@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   BODY_CACHE_MAX,
@@ -9,9 +10,7 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
   type KnownMirrorEntityType,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

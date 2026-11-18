@@ -1,9 +1,9 @@
+import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { materializeMessages } from "@trafficflow/services/mail";
-import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror } from "../src/cloud-mirror.js";

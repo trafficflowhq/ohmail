@@ -28,10 +28,11 @@
 /* The ONE mailbox-address grouping rule, shared with the Mailboxes pane, and the ONE reading of
    why a reader's press has nowhere to go, shared with the server's refusal. Each import is the
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
+import type { FilingRefusalReason } from "@ohmail/wire";
 import { addressKey } from "./address-key.js";
 import { MIRROR_STORE_REFUSED_DETAIL } from "./mailbox-error-key.js";
 import {
-  FILING_REFUSAL_REASONS, IMPORT_FLOOR_MAX_MS, filingRefusalReason, importFloorInWindow, type FilingRefusalReason,
+  FILING_REFUSAL_REASONS, IMPORT_FLOOR_MAX_MS, filingRefusalReason, importFloorInWindow,
 } from "@ohmail/client-engine";
 import { liftedAt, refusalIsStale } from "../session/access-window.js";
 import type { StorageScope } from "../storage/scope.js";

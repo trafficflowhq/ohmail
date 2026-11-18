@@ -1,5 +1,6 @@
+import type { EngineMutation, MutationOutcome, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { HttpAdapter, type EngineMutation, type MutationOutcome, type RuleDTO } from "../src/index.js";
+import { HttpAdapter } from "../src/index.js";
 
 /**
  * THE DECIDE'S CONFIRM CARRIES THE RULES IT WROTE, as `POST /rules` always has: the promoted rule

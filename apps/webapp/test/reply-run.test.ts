@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -6,7 +7,6 @@ import { NextIntlClientProvider } from "next-intl";
 import {
   MutationRejectedError,
   OhmailEngine,
-  type EngineMutation,
   type MutationResult,
 } from "@ohmail/client-engine";
 import { triage } from "@ohmail/testing";

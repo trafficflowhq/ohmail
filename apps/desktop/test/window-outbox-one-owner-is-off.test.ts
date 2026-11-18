@@ -1,6 +1,7 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  MutationRejectedError, OhmailEngine, OUTBOX_TYPE, type EngineLocks, type EngineMutation, type MirrorStore,
+  MutationRejectedError, OhmailEngine, OUTBOX_TYPE, type EngineLocks, type MirrorStore,
 } from "@ohmail/client-engine";
 
 import { WindowOutboxStore, type OutboxFetch } from "../src/window-outbox-store.js";

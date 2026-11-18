@@ -2,11 +2,11 @@
  * A LETTER'S FILES, THE RULES: the ceiling a letter states, and the two commits (a pick, a quality move), each over
  * the list as it stands. Pure; the hook that drives them is `files.ts`.
  */
+import type { ComposeAttachment } from "@ohmail/wire";
 import {
   composeAttachCap,
   composeAttachCapBinding,
   type ComposeAttachCapBinding,
-  type ComposeAttachment,
   type ImageQualityLevel,
 } from "@ohmail/client-engine";
 

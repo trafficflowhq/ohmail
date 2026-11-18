@@ -1,10 +1,11 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import {
   normalizeMessageId, bodyHash, canonicalId, legacyDedupKey,
   messageFingerprint, fingerprintDedupKey, isFingerprintDedupKey, verifiesLegacyIdentity,
   type FingerprintInput,
 } from "../src/identity.js";
-import type { AttachmentMeta, EmailAddress } from "../src/types.js";
+import type { AttachmentMeta } from "../src/types.js";
 import { normalizeMime } from "../src/mime.js";
 import { isHuskSameMessage } from "../src/husk-restore.js";
 

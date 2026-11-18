@@ -540,6 +540,7 @@
     "@ohmail/letter-body": "*",
     "@ohmail/tokens": "*",
     "@ohmail/ui": "*",
+    "@ohmail/wire": "*",
     "use-intl": "3.26.5",
     "@tiptap/extension-code": "3.31.3",
     "@tiptap/extension-link": "3.31.3",

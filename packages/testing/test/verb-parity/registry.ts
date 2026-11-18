@@ -1,3 +1,14 @@
+import type {
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  FolderEntity,
+  MessageStateDTO,
+  MutationKind,
+  RuleEntity as RuleDTO,
+  TagEntity as TagDTO,
+  WaterlineMeta,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import {
@@ -6,17 +17,8 @@ import {
 import { seedScreenerHeld } from "../../../api/test/helpers.js";
 import {
   ohboxView,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type FolderEntity,
-  type MessageStateDTO,
-  type MutationKind,
   type MutationResult,
-  type RuleDTO,
-  type TagDTO,
-  type WaterlineMeta,
 } from "@ohmail/client-engine";
 import type { VerbWorld } from "./world.js";
 

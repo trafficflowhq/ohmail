@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it, vi } from "vitest";
-import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import {
   copyGoes, createLive, dropCopy, handleOf, landingOf, twins, type CreateClaim, type EditorNow,
 } from "@ohmail/app-logic/writing/draft-creates";

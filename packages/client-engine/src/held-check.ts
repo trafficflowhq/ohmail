@@ -1,5 +1,5 @@
+import type { EngineMessage } from "@ohmail/wire";
 import type { HeldCheck } from "@trafficflow/core/sender-headers";
-import type { EngineMessage } from "./types.js";
 
 /**
  * A HELD LETTER'S IDENTITY COLUMN AS A PRESS READS IT (`heldMovesOnPress`, pinned to the server's

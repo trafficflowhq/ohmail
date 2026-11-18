@@ -66,7 +66,6 @@ export function assertLedgerTx(tx: LedgerTx, fn: string): void {
  * growing the set stands. This package names them as its column does.
  */
 export type EntityType = RecordKind;
-export type { ChangeOp };
 
 export interface ChangeInput {
   accountId: string;

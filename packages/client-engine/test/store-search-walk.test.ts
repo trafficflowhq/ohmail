@@ -4,6 +4,7 @@
  * `HISTORY_PAGE_CACHE_ROWS` rows held however far it goes, a page evicted off screen asked again
  * by the cursor that first asked it, and the device's first paint kept in place under relevance.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it, vi } from "vitest";
 import {
   EMPTY_PAGES_FOLLOWED,
@@ -13,7 +14,6 @@ import {
   STORE_ANSWER_TIMEOUT_MS,
   STORE_PAGE_RETRY_MS,
   StoreSearchWalker,
-  type EngineMessage,
   type OhmailEngine,
   type PageAnswer,
 } from "../src/index.js";

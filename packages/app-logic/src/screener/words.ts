@@ -4,7 +4,7 @@
  * comes first and stands whether or not a suggestion was bought; then the model's advice, or why there is none.
  * The words are read where they are drawn: no reader crosses into this package.
  */
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import type { DecisionDestination } from "./decision.js";
 import { acceptDestOf } from "./filter.js";
 

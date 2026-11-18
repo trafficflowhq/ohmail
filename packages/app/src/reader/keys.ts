@@ -7,11 +7,11 @@
  * handed its visit, `j`, `k` and `u` are the list's and the column binds none of them; where no list did, `u`
  * presses the column's own read slot.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useOptionalKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys";
 import { deleteKeyBindings } from "@ohmail/app-logic/press/delete-undo";
 import type { MessageAction } from "@ohmail/app-logic/press/actions";
 import type { ListVisit } from "@ohmail/app-logic/reading";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { useText, type Text } from "../text/index.js";
 import type { Verbs } from "./actions/use-verbs.js";
 

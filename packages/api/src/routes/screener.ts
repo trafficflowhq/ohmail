@@ -3,7 +3,6 @@ import {
   screenUnscreened, unscreenedSummary, organizeDecisionCount, OHBOX_UNSCREENED_GROUPS_MAX, isUnscreenedPile,
   UNSCREENED_CURSOR_MAX_CHARS,
   autoFiledSummary, undoAutoFiled, AUTO_FILED_PAGE_MAX, whyStayed, WHY_STAYED_IDS_MAX,
-  type ScreenBody,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { answer, jsonResponse } from "../responses.js";
@@ -13,7 +12,7 @@ import {
 import type { Route } from "../router.js";
 import { screener, readBody, refundObligationsOf } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
-import type { RequestOf, UntrustedBody } from "@ohmail/wire";
+import type { RequestOf, ScreenBody, UntrustedBody } from "@ohmail/wire";
 
 /**
  * The flagship Screener. `GET /screener` is the derived first-contact queue (one entry per held

@@ -1,8 +1,9 @@
+import type { Cursor, EngineMessage } from "@ohmail/wire";
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 import { cascadeCalendarRemoval } from "./calendar-cascade.js";
 import { beginDerive, noteMirrorMessages } from "./client-vitals.js";
 import { MAILBOX_TYPE, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
-import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
+import type { SyncChange, SyncResponse } from "./types.js";
 
 /**
  * WHAT THE WINDOWS OVER ONE SHARED DISK SAY TO EACH OTHER about its outbox. `changed`: a write or

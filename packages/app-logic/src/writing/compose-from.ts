@@ -9,7 +9,8 @@
  * `connected`. Pure: the view renders from these functions and `AppShell` builds the mutation from them.
  */
 
-import { defaultFrom, type EmailAddress, type FromOption } from "@ohmail/client-engine";
+import type { EmailAddress } from "@ohmail/wire";
+import { defaultFrom, type FromOption } from "@ohmail/client-engine";
 import { parseRecipients } from "./compose.js";
 
 /* The options and the default are shared with the phone's composer. */

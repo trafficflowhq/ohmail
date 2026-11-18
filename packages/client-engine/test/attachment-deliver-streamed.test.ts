@@ -1,7 +1,8 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, vi } from "vitest";
 import { OhmailEngine, type StagedPreview } from "../src/engine.js";
 import { MutationRejectedError } from "../src/types.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * THE DESKTOP'S SAVE HOLDS NO BYTES, AND THE TILE STILL SAYS WHAT IS HAPPENING. `deliverAttachment`

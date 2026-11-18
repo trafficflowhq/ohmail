@@ -12,8 +12,12 @@ import { folderInventoryProbe, refuseOverFolderInventory } from "./read-bounds.j
 import type { MoveIdempotency } from "./message-service.js";
 import { foldersEnabled, userFolderById, userFolderExclusion, type UserFolderRow } from "./folders.js";
 import { folderRowToDTO } from "./dto/materialize.js";
-import type { FolderDTO } from "./dto/types.js";
-import type { FolderCreateBody as WireFolderCreateBody, FolderRenameBody as WireFolderRenameBody, UntrustedBody } from "@ohmail/wire";
+import type {
+  FolderDTO,
+  UntrustedBody,
+  FolderCreateBody as WireFolderCreateBody,
+  FolderRenameBody as WireFolderRenameBody,
+} from "@ohmail/wire";
 
 /**
  * The folder verbs — create / rename / delete, as USER COMMANDS (FOLDERS-SPEC.md stage 2). Every

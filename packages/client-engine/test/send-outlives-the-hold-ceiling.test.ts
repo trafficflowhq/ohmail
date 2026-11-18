@@ -18,10 +18,11 @@
  * `endHold` at any age → case 4 red; the send's barrier kept → cases 1 and 5 red; no drain after
  * the early release → case 1 red.
  */
+import type { ComposeAttachment, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, OUTBOX_HOLD_CEILING_MS, OUTBOX_REPLAY_DEADLINE_MS,
-  OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, type ComposeAttachment, type EngineMutation, type MutationResult,
+  OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, type MutationResult,
 } from "@ohmail/client-engine";
 
 const NOW = "2026-10-23T09:00:00.000Z";

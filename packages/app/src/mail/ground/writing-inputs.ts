@@ -27,8 +27,9 @@
  * nothing; its state becomes this mount's own with the place that draws the run); whether the account's balance was
  * last refused as empty (the Screener's model says it, and it stands in the ground with the Screener's own mount).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { EngineMessage, OhmailEngine } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import { useConsent, usePartition } from "@ohmail/app-logic/consent";
 import { useDerivedVersion, useEngine, useSyncStatus } from "@ohmail/app-logic/engine";
 import { useMailState } from "@ohmail/app-logic/mail-state";

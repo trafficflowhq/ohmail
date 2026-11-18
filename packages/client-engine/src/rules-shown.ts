@@ -1,3 +1,4 @@
+import type { MailboxProfileEntity, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { canonicalDestination } from "@trafficflow/core/destinations";
 import { compareTwins, effectForDestination } from "@trafficflow/core/rule-order";
 import { mailboxProfiles } from "./consent-cutline.js";
@@ -6,7 +7,6 @@ import { PROFILE_APPLIED_MAX } from "./profile-bound.js";
 import { heldRuleId, heldRuleKey, oneRowPerKey, ruleKeyOf } from "./rule-twins.js";
 import { rulesAsRun, rulesList } from "./selectors.js";
 import type { EntityReader } from "./store.js";
-import type { MailboxProfileEntity, RuleDTO } from "./types.js";
 
 /**
  * HOW LONG AN APPLIED PRESS HOLDS ITS KEY over a published copy that does not include it yet. The

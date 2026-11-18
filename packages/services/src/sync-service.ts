@@ -3,7 +3,18 @@ import {
   approvals, changeLog, drafts, messages, messageStates, messageTags, prunedThroughSeq, routingDecisions, seqBounds,
   rules, tags, rulesTheActWrote, isCalendarRecordKind, type EntityType,
 } from "@trafficflow/db";
-import type { CalendarRecordKind, CalendarWindow, SettingsDTO } from "@ohmail/wire";
+import type {
+  CalendarRecordKind,
+  CalendarWindow,
+  ChangeOp,
+  DraftDTO,
+  Folder,
+  SettingsDTO,
+  SnapshotResponse,
+  SnapshotWindow,
+  SyncChange,
+  SyncResponse,
+} from "@ohmail/wire";
 import type { CalendarFeedPort, CalendarKeyset, CalendarSpanMs } from "./calendar-port.js";
 import type { DeviceNumbersPort } from "./device-numbers.js";
 import { dialect } from "@trafficflow/db/dialect";
@@ -81,9 +92,6 @@ import {
 import { foldersEnabled, listUserFolders, userFoldersByIds, type UserFolderRow } from "./folders.js";
 import { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
 import { PAGE_MAX_ROW_BYTES } from "@trafficflow/core/transport-frame";
-import type {
-  ChangeOp, DraftDTO, Folder, SnapshotResponse, SnapshotWindow, SyncChange, SyncResponse,
-} from "./dto/types.js";
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2000;

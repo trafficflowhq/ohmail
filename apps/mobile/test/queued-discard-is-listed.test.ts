@@ -6,10 +6,11 @@
  * `world.queued`, and the strip gives it Try again and Discard. Driven on the app's own
  * `bootEngine` over the loopback server; the chrome is read as source (no RN renderer here).
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
-  HttpAdapter, MemoryMirrorStore, OhmailEngine, OUTBOX_HOLD_CEILING_MS, type EngineMutation,
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, OUTBOX_HOLD_CEILING_MS,
 } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { BearerManagerRN } from "../src/net/bearer";

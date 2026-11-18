@@ -6,9 +6,9 @@
  * engine resolves `trashAvailable()` from the adapter's OPTIONAL capabilities — so dropping
  * either forward turns every arm here into `unavailable` (the `requestPull` defect shape).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, type LiveWorldActions } from "../src/state/live";
 import { trashLanded } from "../src/state/trash-hold";

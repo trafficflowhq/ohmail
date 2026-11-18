@@ -1,7 +1,7 @@
 /** The marks: unread and read in two directions, ⇧I's read of the conversation on screen, and the set it reads. */
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useRef } from "react";
 import { isResurfaced } from "@ohmail/client-engine";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { recordIn, recordOf, type Hold } from "./hold.js";
 import { NO_ROWS } from "./placement.js";
 import type { OhboxListInput, OhboxListModel } from "./types.js";

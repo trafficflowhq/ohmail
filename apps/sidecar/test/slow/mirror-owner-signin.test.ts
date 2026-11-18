@@ -1,11 +1,16 @@
+import type {
+  MessageBodyBatchItem,
+  MessageDTO,
+  Page,
+  SyncChange,
+  SyncResponse,
+  ThreadDTO,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type {
-  MessageBodyBatchItem, MessageDTO, Page, SyncChange, SyncResponse, ThreadDTO,
-} from "@trafficflow/services/mail";
 import {
   createCloudSidecar, readMirrorBase, readMirrorOwner, type CloudSidecar,
 } from "../../src/cloud-engine.js";

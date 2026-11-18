@@ -8,17 +8,19 @@
  * stay reversible; auto-detected spam is held viewable, never deleted
  * silently. On mobile the preview opens full-screen.
  */
+import type {
+  BodyState,
+  ScreenerHeldMail,
+  ScreenerSenderDTO,
+  UnsubscribeHeaderState,
+  UnsubscribeResult,
+} from "@ohmail/wire";
 import { startTransition, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type {
-  BodyState,
   CardReach,
   ListSurface,
-  ScreenerHeldMail,
-  ScreenerSenderDTO,
   UnsubscribeClaim,
-  UnsubscribeHeaderState,
-  UnsubscribeResult,
 } from "@ohmail/client-engine";
 import {
   countWhen, firstContactTime, listSurface, mirrorCountInput, saysEmpty, senderKey, waitingSurfaceInput, type WaitingWhy,

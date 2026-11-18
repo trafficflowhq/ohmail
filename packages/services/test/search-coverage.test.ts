@@ -1,10 +1,11 @@
+import type { SearchResult } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { mailboxes, messageBodies } from "@trafficflow/db";
 import { pgDialect } from "@trafficflow/db/dialect";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
-import { SearchService, type SearchParts, type SearchResult } from "../src/index.js";
+import { SearchService, type SearchParts } from "../src/index.js";
 import { IMPORT_OPEN_MAX_MS, importOpen } from "../src/search-coverage.js";
 import { makeCtx, otherAccount, seedMessage } from "./helpers.js";
 

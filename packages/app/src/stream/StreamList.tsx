@@ -3,8 +3,8 @@
  * and the line "Seen up to here", with when it was drawn, between what is new since the last visit and what is not. A row draws no unread dot: newness is
  * the place above the line. A press opens the item in the stream. On a phone's width the place is the stream itself.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useRef, type ReactNode } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { useListWindow } from "@ohmail/app-logic/lists";
 import { lineStampOf, useStreamModel, type StreamModel } from "@ohmail/app-logic/streams";
 import { Empty } from "@ohmail/ui/base";

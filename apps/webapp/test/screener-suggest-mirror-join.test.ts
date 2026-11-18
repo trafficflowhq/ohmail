@@ -1,5 +1,5 @@
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
 import { joinSuggestion } from "@ohmail/app-logic/screener/screener-state";
 import type { SenderSuggestion, SuggestionOverlay } from "../app/shell/screener-suggest";
 

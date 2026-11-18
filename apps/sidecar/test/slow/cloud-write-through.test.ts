@@ -1,3 +1,4 @@
+import type { Folder, MessageDTO, SyncChange, SyncResponse, ThreadDTO } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +7,6 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { changeLog, folderState, messageStates, messageTags, messages, rules, tags, threads } from "@trafficflow/db/mail";
 import { DESTINATIONS } from "@trafficflow/core/destinations";
-import type { Folder, MessageDTO, SyncChange, SyncResponse, ThreadDTO } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../../src/cloud-engine.js";
 import { createCloudMirror as makeCloudMirror } from "../../src/cloud-mirror.js";
 import { openLocalDb, type OpenLocalDb } from "../../src/db.js";

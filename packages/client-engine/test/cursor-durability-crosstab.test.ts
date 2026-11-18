@@ -1,3 +1,4 @@
+import type { Cursor, EngineMessage, MutationOutcome, SyncSnapshotPage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
@@ -7,13 +8,9 @@ import {
   OhmailEngine,
   SNAPSHOT_PREFIX_SEQ_META,
   encodeSeqCursor,
-  type Cursor,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
-  type SyncSnapshotPage,
 } from "@ohmail/client-engine";
 
 /**

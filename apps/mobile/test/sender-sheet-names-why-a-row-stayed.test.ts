@@ -8,8 +8,8 @@
  * check). Driven through `bootEngine`, the composition the app runs: a forward missing from the
  * account guard reads as "no reason" on the live path only, which is how the phone shipped it.
  */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import type { RuleDTO } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions } from "../src/state/live";

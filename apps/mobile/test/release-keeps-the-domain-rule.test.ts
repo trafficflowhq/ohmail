@@ -4,8 +4,8 @@
  * driven with the sender held by a DOMAIN rule and by their own rule, against the loopback mail
  * server, read on the wire, in the mirror afterwards and in the sentence each deck renders.
  */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { type RuleDTO } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { DE } from "../src/copy.de";
 import { sayArg } from "../src/refusal";

@@ -6,6 +6,7 @@
  * `MemoryMirrorStore`; the move is the sync update the mirror receives for it. Receipts is mounted
  * with the props the shell passes (`AppShell`: `freshCount` from the position, `newCount` the badge).
  */
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -15,9 +16,7 @@ import {
   feedPartition,
   waterlineIdOf,
   FEED_SINCE_ID,
-  type EngineMessage,
   type FeedPartition,
-  type Folder,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";

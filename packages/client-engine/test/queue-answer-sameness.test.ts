@@ -1,6 +1,6 @@
+import type { ScreenerWaitingWire, UnscreenedWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, OhmailEngine, type EngineAdapter, type ScreenerWaitingWire } from "../src/index.js";
-import type { UnscreenedWire } from "../src/adapters/adapter.js";
+import { MemoryMirrorStore, OhmailEngine, type EngineAdapter } from "../src/index.js";
 
 /**
  * A WRITE THAT CHANGES NO RECORD MOVES NO VERSION. The queue page and the undecided-sender offer

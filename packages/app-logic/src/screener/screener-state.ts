@@ -10,6 +10,18 @@
  * presented-only rep routes past the gate through the sender sheet's `planScreeningChange`/`dispatchScreeningChange`
  * (`rule_create` + `applyRetro`), awaited so the toast reflects what the server returned.
  */
+import type {
+  EngineMessage,
+  EngineMutation,
+  FailedAtGateDTO,
+  Folder,
+  HeldReleaseGroupDTO,
+  RuleEntity as RuleDTO,
+  ScreenDest,
+  ScreenerSenderDTO,
+  ScreenerWaitingSenderDTO,
+  UnscreenedGroupDTO,
+} from "@ohmail/wire";
 import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import {
   FOLDER_OF_VIEW,
@@ -35,20 +47,10 @@ import {
   PRESS_THREW,
   tallyVerdicts,
   type CardReach,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type FailedAtGateDTO,
-  type Folder,
-  type HeldReleaseGroupDTO,
-  type UnscreenedGroupDTO,
   type OhmailEngine,
   type PressTally,
-  type RuleDTO,
-  type ScreenDest,
   type ScreenerSegments,
-  type ScreenerSenderDTO,
-  type ScreenerWaitingSenderDTO,
   type UnsubscribeClaim,
   type AbandonedMutation,
   domainOfAddress,

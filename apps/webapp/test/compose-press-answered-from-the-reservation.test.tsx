@@ -9,11 +9,12 @@
  * the server's duplicate claim answers it, naming the first send — never "Message sent.".
  */
 /* @reads: packages/app-logic/src/writing/mail-send.ts */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { MemoryMirrorStore, MutationRejectedError, OhmailEngine, type EngineMutation } from "@ohmail/client-engine";
+import { MemoryMirrorStore, MutationRejectedError, OhmailEngine } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 
 (globalThis as unknown as { React: unknown }).React = React;

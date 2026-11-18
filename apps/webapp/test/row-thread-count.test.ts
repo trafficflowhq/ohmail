@@ -6,6 +6,7 @@
  * — the server's own thread length where the thread row has synced — and `rowThreadOf` is the one
  * place the two sources meet. The census below reads every `<MessageRow` in the app against it.
  */
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -13,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import {
   FOLDER_OF_VIEW, conversationSize, threadOf, threadSizeIndex,
-  type EngineMessage, type EntityReader, type MessageStateDTO,
+  type EntityReader,
 } from "@ohmail/client-engine";
 import { rowThread, rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 

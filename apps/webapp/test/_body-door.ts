@@ -1,5 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import * as React from "react";
-import { bodyOf, type EngineMessage, type OhmailEngine } from "@ohmail/client-engine";
+import { bodyOf, type OhmailEngine } from "@ohmail/client-engine";
 import { MessageChromeProvider, type BodyTarget } from "../app/shell/message-chrome.js";
 
 /**

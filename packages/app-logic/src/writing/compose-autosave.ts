@@ -11,11 +11,12 @@
  * typing, so the last saved value is remembered and an identical form writes nothing.
  */
 
+import type { EmailAddress, EngineDraft } from "@ohmail/wire";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { localStorageDoor } from "../storage/durable.js";
 import { usePinnedScope, type StorageScope } from "../storage/scope.js";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
-import type { EmailAddress, EngineDraft, KeptAsNewDraft, OhmailEngine } from "@ohmail/client-engine";
+import type { KeptAsNewDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields, ComposeRowHolds } from "./compose.js";
 import { COMPOSE_SEND_KEY, composeBufferFingerprint, sendLockOwed, sendNamesRow, writeReplyMeta } from "./mail-send.js";
 import { holdOf, releaseSendLockForRow, sendRecordNames, sendRecordsNaming, type Hold } from "./send-lock.js";

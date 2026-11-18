@@ -2,26 +2,39 @@ import type { ServerAddressOpts, ServerAddressWire, ServerSearchOpts, ServerSear
 import type { WindowSyncFailure } from "../window-sync-failure.js";
 import type { WindowSearchPhases } from "../search-phases.js";
 import type {
-  EngineMutation, MessageBodyBatchWire, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult,
-  WaitingRequestWire,
+  SyncChange, SyncResponse,
 } from "../types.js";
 import type {
-  AttachmentWire, AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire, HeldReleaseGroupWire, HeldReleaseResultWire,
-  HeldReleaseSenderWire, HeldReleaseWire, MutationAnswer, MutationOutcome, MutationQueued, ScreenerWaitingItemWire,
-  ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire,
-  WithdrawSendOutcome, FetchingDTO as FetchingStanding,
+  AttachmentWire,
+  AutoFiledItemWire,
+  AutoFiledUndoWire,
+  AutoFiledWire,
+  EngineMutation,
+  FetchingDTO as FetchingStanding,
+  HeldReleaseGroupWire,
+  HeldReleaseResultWire,
+  HeldReleaseSenderWire,
+  HeldReleaseWire,
+  MessageBodyBatchWire,
+  MessageBodyWire,
+  MutationAnswer,
+  MutationOutcome,
+  MutationQueued,
+  ScreenerWaitingItemWire,
+  ScreenerWaitingWire,
+  StayedWhy,
+  StayedWire,
+  UnscreenedGroupWire,
+  UnscreenedPileWire,
+  UnscreenedResultWire,
+  UnscreenedWire,
+  UnsubscribeResult,
+  WaitingRequestWire,
+  WithdrawSendOutcome,
 } from "@ohmail/wire";
 
 /* Is the server fetching new mail (`behind`, and `since` the last finished pass): from its one home, under the engine's name. */
 export type { FetchingDTO as FetchingStanding } from "@ohmail/wire";
-
-/* What an act comes back as, and the Screener's and the attachment list's answers: from their one home. */
-export type {
-  AttachmentWire, AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire, HeldReleaseGroupWire, HeldReleaseResultWire,
-  HeldReleaseSenderWire, HeldReleaseWire, MutationAnswer, MutationOutcome, MutationQueued, ScreenerWaitingItemWire,
-  ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire,
-  WithdrawSendOutcome,
-} from "@ohmail/wire";
 
 /**
  * ONE interface, two implementations (FixturesAdapter for ?demo/UI tests,

@@ -12,8 +12,9 @@
  * with nothing sent gets its card back, as it stood. All of it is per visit: a pile shown again is
  * today's stream.
  */
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { isOwnOutbound, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
+import { isOwnOutbound } from "@ohmail/client-engine";
 import { MessagePane, type MessageAction } from "./MessagePane";
 import { useMessageChrome } from "./message-chrome";
 import { inlineForwardKey, type SendPhase } from "@ohmail/app-logic/writing/mail-send";

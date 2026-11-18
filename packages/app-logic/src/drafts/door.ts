@@ -3,7 +3,8 @@
  * them. Drafts lists, asks and reports; whether a row may go, what a waiting send answers and the delete itself are the
  * door's.
  */
-import { HELD_SEND_RECHECK_MS, type EngineDraft, type PressVerdict } from "@ohmail/client-engine";
+import type { EngineDraft } from "@ohmail/wire";
+import { HELD_SEND_RECHECK_MS, type PressVerdict } from "@ohmail/client-engine";
 
 /** Why a Discard did nothing, said in its row. */
 export type DiscardRefusalWhy = "still-sending" | "unknown-jar" | "cancel-unknown";

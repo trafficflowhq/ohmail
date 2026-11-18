@@ -11,12 +11,13 @@
  * piles past the group (the settings row); a kept pile that stops receiving props while hidden (the
  * count row); a raw document query in zone-nav's focus follow or list entry (the focus row).
  */
+import type { UnscreenedPileWire } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { OhmailEngine, type UnscreenedPileWire } from "@ohmail/client-engine";
+import { OhmailEngine } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { getFixtures } from "@ohmail/testing";
 

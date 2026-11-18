@@ -1,12 +1,10 @@
+import type { EngineMessage, MessageBodyRecord, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   EAGER_BODIES_MAX,
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MessageBodyRecord,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

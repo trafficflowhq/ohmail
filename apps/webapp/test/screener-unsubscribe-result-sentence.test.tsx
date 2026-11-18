@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
+import type { UnsubscribeResult } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { UnsubscribeResult } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { HeldUnsubscribe } from "../app/views/ScreenerView";
 import { settleFirstPaint } from "./_first-paint.js";

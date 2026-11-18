@@ -3,11 +3,12 @@
  * engine through a server double that answers as production does (one stored response per key
  * for its retention window, one reservation per send key for ever, a tag name UNIQUE per account).
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
   IndexedDbMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE,
-  type EngineMutation, type SendAndDonePlan,
+  type SendAndDonePlan,
 } from "@ohmail/client-engine";
 
 const t0 = Date.parse("2026-10-04T08:00:00.000Z");

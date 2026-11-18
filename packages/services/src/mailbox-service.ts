@@ -1,3 +1,4 @@
+import type { MailboxDTO, MailboxFolderSummary } from "@ohmail/wire";
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
@@ -37,7 +38,7 @@ import {
   leaveMailboxFilings, readMailboxFilings, retryMailboxFilings, type MailboxFilingsDTO,
 } from "./mailbox-filings.js";
 import type { KeyProvider } from "./auth/crypto.js";
-import type { FetchingDTO, MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
+import type { FetchingDTO } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
 // `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
 import { DEFAULT_DORMANCY_DAYS, createLogger, providerAuthservIds, type ScreeningScope } from "@trafficflow/core/mail";

@@ -6,8 +6,9 @@
  * asked for) and a release wrote a second rule beside it. The screening press is driven over the real wire
  * (`bootEngine` against the loopback fake), so the PATCH body and the rule the fake then holds are the reading.
  */
+import type { Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type Folder, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, releaseRules } from "../src/state/live";

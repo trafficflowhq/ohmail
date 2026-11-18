@@ -10,6 +10,7 @@
  * server (`applyRetro` → the worker's resumable `ruleRetroPass`), which alone moves a rule's
  * backlog; the client moves mail only where the move IS the instruction. Pure: returns mutations.
  */
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import {
   FOLDER_OF_VIEW,
   consentIndex,
@@ -29,15 +30,11 @@ import {
   senderKey,
   threadOf,
   twinWinner,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type Folder,
   type MutationStatus,
   type PressForecast,
   type PressResolution,
   type ReleaseIntent,
-  type RuleDTO,
   ruleMatchKey,
 } from "@ohmail/client-engine";
 import type { DecisionDestination } from "../screener/decision.js";

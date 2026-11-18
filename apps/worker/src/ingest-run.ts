@@ -1,3 +1,4 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
 import {
@@ -9,7 +10,6 @@ import {
   foldThreads, messageSearchUpsert, newBodyWriteOf, newFolderStateOf, newMoveDeltaOf, newThreadInputOf,
   threadKeyOf, UNMETERED_STORAGE_CAP, type FoldThread, type RepoChangeInput,
 } from "@trafficflow/core/mail";
-import type { EmailAddress } from "@trafficflow/core";
 import {
   attachmentRowsOf, DrizzleRepo, folderStateRowOf, insertMessageRows, insertNewThreads, instanceTupleOf,
   type IngestRunContext, type IngestRunMember, type IngestRunResult, type WorkerRepo,

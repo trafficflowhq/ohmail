@@ -1,12 +1,13 @@
 /** @vitest-environment jsdom */
 /* @reads: apps/webapp/app/shell/AppShell.tsx */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { MemoryMirrorStore, consentPartition, type EngineMessage, type MirrorStore } from "@ohmail/client-engine";
+import { MemoryMirrorStore, consentPartition, type MirrorStore } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { settleFirstPaint } from "./_first-paint.js";

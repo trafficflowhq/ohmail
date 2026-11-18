@@ -5,9 +5,8 @@ import { calendarRoutes } from "@trafficflow/api/calendar";
 import { eq } from "drizzle-orm";
 import { fencedAccountWrite, recordCalendarChanges } from "@trafficflow/db";
 import { calCalendars, calConnections, calEvents, calSettings, calWrites } from "@trafficflow/db/mail";
-import type { CalendarWriteAnswer } from "@ohmail/wire";
+import type { CalendarWriteAnswer, SyncResponse } from "@ohmail/wire";
 import { calendarFeed } from "@trafficflow/services/calendar";
-import type { SyncResponse } from "@trafficflow/services/mail";
 import { makeDeps, req, seedSession, FIXED_NOW } from "./helpers.js";
 
 /**

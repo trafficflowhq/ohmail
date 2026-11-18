@@ -13,6 +13,7 @@
  * feed (`SyncService`), the client engine's own store, its closed reader of the three numbers and
  * the gate. A client pulls the feed as a wake makes it, and tells what the gate answers.
  */
+import type { SyncChange, SyncResponse } from "@ohmail/wire";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
@@ -25,7 +26,7 @@ import {
   hashToken, makeAuthConfig, makeSessionLifecycle, mintPairingToken, redeemDevicePair, resolveSession,
   type ServiceContext, type SessionLifecycle,
 } from "@trafficflow/services/auth";
-import { SyncService, dbFor, type SyncChange, type SyncResponse } from "@trafficflow/services/mail";
+import { SyncService, dbFor } from "@trafficflow/services/mail";
 import { freshDataDir } from "./_datadir.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";

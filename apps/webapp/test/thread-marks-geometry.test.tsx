@@ -1,10 +1,11 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { threadWalk, type EngineMessage } from "@ohmail/client-engine";
+import { threadWalk } from "@ohmail/client-engine";
 import { MessageRow } from "@ohmail/ui";
 import { ThreadMarksBar, ThreadTip, tipAt, type TipPlace } from "../app/shell/ThreadMarks";
 import messages from "../messages/en.json";

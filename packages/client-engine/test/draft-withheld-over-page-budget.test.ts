@@ -1,7 +1,8 @@
+import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, draftBodyKnown,
-  type EngineDraft, type SyncChange,
+  type SyncChange,
 } from "../src/index.js";
 
 /**

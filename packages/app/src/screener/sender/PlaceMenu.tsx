@@ -3,8 +3,8 @@
  * places in their one order with their keys, the suggested one checked with how sure; on the row's menu the card
  * after them. A press is the view's `decide`, the one way a decision leaves.
  */
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import type { RefObject } from "react";
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
 import {
   DECISION_KEY,
   DECISION_ORDER,

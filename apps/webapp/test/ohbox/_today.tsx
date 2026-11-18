@@ -12,11 +12,12 @@
  * letter: the reader draws a letter from the engine's mirror, where today's pane was handed it as a prop, so there the
  * mirror holds the letters the inputs name (`lettersOver`).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import {
   createContext, createElement as h, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode,
 } from "react";
 import { useMessages } from "next-intl";
-import type { EngineMessage, EntityReader } from "@ohmail/client-engine";
+import type { EntityReader } from "@ohmail/client-engine";
 import { NONE, type None, type ReaderEntry } from "@ohmail/app/host";
 import { Frame, PLACE_IDS, useFrame, type FramePlaces } from "@ohmail/app/frame";
 import { ohboxPlace } from "@ohmail/app/ohbox";

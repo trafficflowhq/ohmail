@@ -1,8 +1,9 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { OhmailEngine } from "../src/engine.js";
 import { MutationRejectedError } from "../src/types.js";
 import { attachmentFaultClass } from "../src/index.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * A FAILED FILE KEEPS THE REFUSAL'S FACTS. The engine's item held only `state` and the server's

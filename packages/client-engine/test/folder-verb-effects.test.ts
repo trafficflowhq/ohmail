@@ -1,8 +1,8 @@
+import type { EngineMessage, EngineMutation, Folder, FolderEntity } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { MemoryMirrorStore } from "../src/store.js";
 import { mutationEffects } from "../src/mutations.js";
 import { filedOutOfOhbox } from "../src/ohbox-rows.js";
-import type { EngineMessage, EngineMutation, Folder, FolderEntity } from "../src/types.js";
 
 /**
  * THE FOLDER VERBS' LOCAL EFFECTS (FOLDERS-SPEC.md stage 2) — pending MARKERS, never pretended

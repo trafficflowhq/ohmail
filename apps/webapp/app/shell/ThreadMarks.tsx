@@ -22,10 +22,11 @@
  * published on the visit's channel (`thread-walk-channel.ts`), so the list row's strip wears the same
  * ring and its press is this jump.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
-import { clock, fullDateTime, isOwnOutbound, shownDateOf, threadWalk, weekdayDateClock, zonedDayNumber, zonedFields, type EngineMessage, type Walk } from "@ohmail/client-engine";
+import { clock, fullDateTime, isOwnOutbound, shownDateOf, threadWalk, weekdayDateClock, zonedDayNumber, zonedFields, type Walk } from "@ohmail/client-engine";
 import { Icon, cssRect, squaresWindow } from "@ohmail/ui";
 import { senderName } from "./format";
 import { activeFormatLocale, activeFormatZone } from "./locale";

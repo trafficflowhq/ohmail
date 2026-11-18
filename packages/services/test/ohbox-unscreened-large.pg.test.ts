@@ -38,21 +38,32 @@ let db: ReturnType<typeof drizzle<typeof schema>>;
 let accountId: string;
 /** Statements this file's own client has sent. */
 let sent = 0;
+let pendingSetup: { phase: string; startedAt: number } | null = null;
+
+function enteringSetup(phase: string): void {
+  pendingSetup = { phase, startedAt: performance.now() };
+}
 
 /** The account, set-based: one statement a table, so the seed costs seconds. */
 async function seedLargeAccount(): Promise<string> {
   const id = randomUUID();
   const mailboxId = randomUUID();
   const at = new Date("2026-09-17T08:00:00.000Z").toISOString();
+  enteringSetup("account insertion");
   await client`insert into accounts (id, name) values (${id}, ${`large-${id.slice(0, 8)}`})`;
+  enteringSetup("mailbox insertion");
   await client`insert into mailboxes (id, account_id, provider, address, organizer_role)
                values (${mailboxId}, ${id}, 'imap', ${`me-${id.slice(0, 8)}@example.test`}, 'organizer')`;
+  enteringSetup("rule insertion");
   await client`insert into rules (account_id, kind, match, destination, provenance)
                select ${id}, 'sender', 'r' || g || '@ruled.test', 'INBOX', 'manual' from generate_series(0, 999) g`;
+  enteringSetup("contact insertion");
   await client`insert into contacts (account_id, address)
                select ${id}, 'c' || g || '@known.test' from generate_series(0, 2999) g`;
   // 79,400 letters from the decided senders, then the strangers' 600.
+  enteringSetup("seed transaction start");
   await client.begin(async (tx) => {
+    enteringSetup("seed table creation");
     await tx`
       create temp table large_seed on commit drop as
       select gen_random_uuid() as id,
@@ -62,15 +73,18 @@ async function seedLargeAccount(): Promise<string> {
       select gen_random_uuid(), 'stranger' || k || '@unknown.test'
         from generate_series(0, ${STRANGERS - 1}::int) k, generate_series(1, 5) n
        where n <= 3 + k % 3`;
+    enteringSetup("message insertion");
     await tx`
       insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address,
                             date, created_at, arrived_at, unread, native_locator)
       select id, ${id}::uuid, ${mailboxId}::uuid, 'h', 'large:' || id, 'Note', sender,
              ${at}::timestamptz, ${at}::timestamptz, ${at}::timestamptz, false, '{"folder":"INBOX","ref":"1:1"}'::jsonb
         from large_seed`;
+    enteringSetup("folder state insertion");
     await tx`
       insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
       select id, ${id}::uuid, 'INBOX', 'INBOX', 'external', 'reconciled', false from large_seed`;
+    enteringSetup("seed commit");
   });
   return id;
 }
@@ -158,12 +172,19 @@ async function sweepToEnd(
 
 describe.skipIf(!PG_UP)("the offer on a large account", () => {
   beforeAll(async () => {
+    enteringSetup("migrations");
     await runMigrations(PG_TEST_URL);
+    enteringSetup("fixture client setup");
     client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, debug: () => { sent++; } });
     db = brandDialect(drizzle(client, { schema }), "pg");
     accountId = await seedLargeAccount();
+    pendingSetup = null;
   }, 240_000);
   afterAll(async () => {
+    if (pendingSetup) {
+      const elapsed = Math.round(performance.now() - pendingSetup.startedAt);
+      console.warn(`Large Ohbox fixture setup stopped during ${pendingSetup.phase} after ${elapsed} ms in that phase.`);
+    }
     await closePooledDbs();
     await client?.end({ timeout: 5 });
   });

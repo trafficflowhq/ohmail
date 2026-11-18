@@ -2,9 +2,9 @@
  * THE LIST PLACES OVER PLAIN ROWS: the words of their place files in both languages, the plans a test draws them at,
  * and a stamp that prints an instant as the seat would. A test builds its rows, mounts the place and reads by role.
  */
+import type { EngineDraft, EngineMessage } from "@ohmail/wire";
 import type { ReactNode } from "react";
 import { render, type RenderResult } from "@testing-library/react";
-import type { EngineDraft, EngineMessage } from "@ohmail/client-engine";
 import type { LayoutPlan, PaneProps, PlaceId, Route } from "../../src/frame/contract.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import addressDe from "../../messages/address.de.json" with { type: "json" };

@@ -1,8 +1,9 @@
+import type { RuleDTO } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { applyScreenerDecision, recordLearningSignal, rules, SCREENER_ACT_TRIGGER_PREFIX } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
-import { materializeRule, syncService, type RuleDTO } from "../src/index.js";
+import { materializeRule, syncService } from "../src/index.js";
 import { materializeRules } from "../src/dto/materialize.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 

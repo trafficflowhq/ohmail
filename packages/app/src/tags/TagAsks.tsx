@@ -2,8 +2,8 @@
  * A TAG'S TWO QUESTIONS. Rename: a field whose Save stands only for a new name no other tag has. Delete: what it
  * takes off, and that the letters stay where they are, said before it is asked.
  */
+import type { TagEntity as TagDTO } from "@ohmail/wire";
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
-import type { TagDTO } from "@ohmail/client-engine";
 import { chordMatches } from "@ohmail/app-logic/keys";
 import type { TagsModel } from "@ohmail/app-logic/tags";
 import { Button, Dialog, Field, Menu } from "@ohmail/ui/base";

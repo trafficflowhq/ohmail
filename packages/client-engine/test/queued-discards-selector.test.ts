@@ -6,10 +6,11 @@
  * Mutations: the kind filter narrowed → all three red (and the web and phone lists); the kept
  * snapshot dropped → case 3 red.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
-  IndexedDbMirrorStore, MutationRejectedError, OhmailEngine, type EngineMutation,
+  IndexedDbMirrorStore, MutationRejectedError, OhmailEngine,
 } from "@ohmail/client-engine";
 
 const NOW = new Date("2026-09-28T09:00:00.000Z");

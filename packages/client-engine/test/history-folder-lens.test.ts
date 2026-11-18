@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, FolderEntity, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -6,10 +7,6 @@ import {
   ohboxView,
   presentationReader,
   physicalFolderOf,
-  type EngineMessage,
-  type Folder,
-  type FolderEntity,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";

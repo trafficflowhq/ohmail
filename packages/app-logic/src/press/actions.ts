@@ -2,7 +2,7 @@
  * The verbs a press can name: one message's (`MessageAction`), a selection's (`BulkAction`) and a move's
  * destination. Behaviour and views share this one vocabulary.
  */
-import type { OhmailView } from "@ohmail/client-engine";
+import type { OhmailView } from "@ohmail/wire";
 
 /**
  * MOVE CARRIES ITS DESTINATION.

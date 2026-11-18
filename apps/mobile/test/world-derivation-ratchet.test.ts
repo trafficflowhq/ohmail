@@ -1,10 +1,9 @@
+import type { EngineMessage, ScreenerWaitingWire } from "@ohmail/wire";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type ScreenerWaitingWire,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";

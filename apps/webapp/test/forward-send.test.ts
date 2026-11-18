@@ -1,9 +1,9 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { forwardEnvelopePlan, forwardSend } from "@ohmail/app-logic/writing/forward-send";
 import { canSend, sendKeyOf, inlineForwardKey, COMPOSE_SEND_KEY } from "@ohmail/app-logic/writing/mail-send";
 import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
 import { TODAYS_COMPOSER_WORDS } from "../app/shell/mail-send-text";
-import type { EngineMessage } from "@ohmail/client-engine";
 
 /**
  * THE FORWARD'S PLAN AND WIRE — the pure halves of the inline forward, pinned key by key.

@@ -299,7 +299,7 @@ export {
   // The calendar's kinds and its one delta door: words and a door, no table of the calendar's.
   CALENDAR_RECORD_KINDS, isCalendarRecordKind, calendarDelta, recordCalendarChanges,
   CALENDAR_CHANGES_PER_TRANSACTION, CalendarChangeRefused, type CalendarChange,
-  type Tx, type LedgerTx, type EntityType, type ChangeOp, type ChangeInput, type SeqBounds,
+  type Tx, type LedgerTx, type EntityType, type ChangeInput, type SeqBounds,
   type MailboxMustBeLive,
 } from "./change-log.js";
 

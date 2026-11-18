@@ -1,9 +1,10 @@
 "use client";
 
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   EVIDENCE_WINDOW_MS, THREAD_TOP_LINES, createThreadRead,
-  type EngineMessage, type LineBox, type ThreadPanel, type ThreadRead, type ThreadView,
+  type LineBox, type ThreadPanel, type ThreadRead, type ThreadView,
 } from "@ohmail/client-engine";
 import { cssRect } from "../geometry/index.js";
 import { SCROLL_KEYS } from "../keys/index.js";

@@ -10,11 +10,12 @@
  * `onStartFR` is the `f` key's callback, the shell fills it from `piles.replyLater`, and a completed reply clears
  * `reply_later` — `test/triage-split.test.ts` pins both ends.
  */
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
-import { type EngineMessage, type TagDTO, type TriagePileEntry, type TriagePiles } from "@ohmail/client-engine";
+import { type TriagePileEntry, type TriagePiles } from "@ohmail/client-engine";
 import {
   Button,
   Icon,

@@ -15,6 +15,7 @@
  * and no letter asks for a picture by itself while the account's word on pictures is not known: over the web's proxy
  * and over a host's own picture door (the desktop's), for a designed letter and for a prose one.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { createElement as h, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -27,7 +28,7 @@ import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import {
   mutationEffects, OhmailEngine,
-  type EngineMessage, type EngineMutation, type MirrorStore, type SyncChange,
+  type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../../messages/en.json";
 import type { AttachmentsChrome } from "../../app/shell/attachments";

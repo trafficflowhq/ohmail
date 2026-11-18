@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider, useTranslations } from "next-intl";
 import {
-  consentPartition, presentAt, presentationReader, winningStates, type EngineMessage, type OhmailEngine,
+  consentPartition, presentAt, presentationReader, winningStates, type OhmailEngine,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
