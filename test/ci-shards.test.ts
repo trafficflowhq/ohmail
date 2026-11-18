@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  ALONE_MARKER, SERVICE_GATE_PREFIX, SHARDS, SQLITE_BUDGET_S, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, costsFrom, dovecotPinned, hashShard, packSqlite,
+  ALONE_MARKER, DESKTOP_INSTALL_MARKER, SERVICE_GATE_PREFIX, SHARDS, SQLITE_BUDGET_S, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, costsFrom, dovecotPinned, hashShard, pack, packSqlite,
   readMap, readSqliteMap, shardFiles, sqliteShardFiles, testFiles, treeCosts, verifyList, verifyReport, verifySqliteReport,
   type ShardMap, type SqliteShardMap,
 } from "./support/ci-shards.mjs";
@@ -598,6 +598,35 @@ describe("the map's two rules, on a planted tree", () => {
     for (let n = 0; n < SHARDS; n++) {
       expect(shardFiles(n, scratch, map)).not.toContain("packages/p/test/twin.pg.test.ts");
       expect(shardFiles(n, scratch, map)).not.toContain(privateAppFile);
+    }
+  });
+
+  it("balances observed costs and still schedules unmeasured and future files once", () => {
+    const normal = Array.from({ length: SHARDS - 1 }, (_, i) => `packages/p/test/f${i}.test.ts`);
+    const pinned = ["packages/core/test/adapters/imap.first.test.ts", "packages/core/test/adapters/imap.second.test.ts"];
+    for (const file of pinned) plant(file);
+    const alone = "packages/p/test/twin.pg.test.ts";
+    const desktop = "apps/desktop/test/desktop-install.test.ts";
+    plant(desktop, `// ${DESKTOP_INSTALL_MARKER}`);
+    const cost = new Map<string, number>(normal.map((file) => [file, 10_000]));
+    cost.set(pinned[0]!, 6_000);
+    cost.set(pinned[1]!, 4_000);
+    cost.set(alone, 50_000);
+    cost.set(desktop, 60_000);
+
+    const { map: repacked, seconds } = pack(scratch, cost, "a".repeat(40));
+    expect(seconds).toEqual(Array.from({ length: SHARDS }, () => 10));
+    expect(repacked.pins.dovecot).toEqual(pinned);
+    expect(repacked.shards).toContainEqual(pinned);
+    expect(repacked.shards.flat().sort()).toEqual([...normal, ...pinned].sort());
+
+    const future = "packages/p/test/future.test.ts";
+    plant(future);
+    const scheduled = repacked.shards.map((_, shard) => shardFiles(shard, scratch, repacked));
+    expect(scheduled.flat().sort()).toEqual(testFiles(scratch).filter((file) => file !== alone && file !== desktop));
+    for (const file of [`packages/p/test/f${SHARDS - 1}.test.ts`, future]) {
+      const holders = scheduled.flatMap((files, shard) => files.includes(file) ? [shard] : []);
+      expect(holders).toEqual([hashShard(file)]);
     }
   });
 
