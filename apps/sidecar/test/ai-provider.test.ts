@@ -779,7 +779,12 @@ describe("the source census — outbound requests live at the seam and nowhere e
   const SRC = fileURLToPath(new URL("../src/", import.meta.url));
   const TRANSPORTS = fileURLToPath(new URL("../../../packages/core/src/ai/transports/", import.meta.url));
   const PROVIDERS = new Set([
-    "ai-anthropic.ts", "ai-ollama.ts", "ai-openai.ts", "ai-opencode-go.ts", "ai-opencode-go-chat.ts",
+    "ai-anthropic.ts",
+    "ai-custom-local.ts",
+    "ai-ollama.ts",
+    "ai-openai.ts",
+    "ai-opencode-go.ts",
+    "ai-opencode-go-chat.ts",
   ]);
   /**
    * A CALL of the global `fetch`. The two lookbehinds are both load-bearing: `[\w$.]` keeps
@@ -948,5 +953,97 @@ describe("contentGoesTo — stated from the stored origin, absent when it cannot
     for (const [name, status] of states.slice(0, 3)) {
       expect(onTheWire(status), `${name} should state a destination`).toContain("contentGoesTo");
     }
+  });
+});
+
+describe("custom-local — keyless OpenAI-compatible endpoint", () => {
+  const config = { baseUrl: "http://127.0.0.1:1234/v1", classifyModel: "local-model", draftModel: "local-model" };
+  const catalogue = () => json({ data: [{ id: "local-model" }] });
+
+  it.each([
+    "file:///tmp/model", "http://user:password@localhost:1234/v1",
+    "http://localhost:1234/v1?token=fixture", "http://localhost:1234/v1#fragment",
+  ])("rejects an unsafe endpoint before saving or making a request: %s", async (baseUrl) => {
+    const { calls, fetchImpl } = recorder([]);
+    const ai = await make({ dataDir: dataDir(), fetchImpl });
+    await expect(ai.save({ provider: "custom-local", customLocal: { ...config, baseUrl } })).rejects.toMatchObject({ code: "invalid_request" });
+    expect(ai.status().provider).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it("saves and restores the endpoint without a keystore, and routes all three questions without credentials", async () => {
+    const dir = dataDir();
+    const { calls, fetchImpl } = recorder([
+      [/\/v1\/models$/, catalogue],
+      [/\/v1\/chat\/completions$/, () => json({ choices: [{ message: { content: JSON.stringify({
+        destination: "ohmail/News", confidence: 0.92, rationale: "a newsletter", spam: false,
+        subject: "Re: Question", body: "I am free tomorrow afternoon.",
+      }) } }] })],
+    ]);
+    const ai = await make({ dataDir: dir, fetchImpl, canStoreKey: false, keyProvider: refusingKeyProvider() });
+    const saved = await ai.save({ provider: "custom-local", customLocal: config });
+    expect(saved.available).toBe(true);
+    expect(saved.contentGoesTo).toBe("this_machine");
+    expect(saved.settings.customLocal).toEqual(config);
+    expect((await ai.classifier()!.classify(anInput("Digest"))).destination).toBe("ohmail/News");
+    expect((await ai.classifier()!.screen!(anInput("Digest"))).destination).toBe("ohmail/News");
+    expect((await ai.drafter()!.draft(aDraftInput())).body).toBe("I am free tomorrow afternoon.");
+    const chatCalls = calls.filter((c) => c.url.endsWith("/chat/completions"));
+    expect(chatCalls).toHaveLength(3);
+    for (const call of calls) expect(call.headers.authorization).toBeUndefined();
+    expect(JSON.parse(chatCalls[0]!.body!).model).toBe("local-model");
+    const restarted = await make({ dataDir: dir, fetchImpl, canStoreKey: false, keyProvider: refusingKeyProvider() });
+    expect(restarted.status().settings.customLocal).toEqual(config);
+    expect(restarted.status().available).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, AI_STORE_FILE), "utf8")).customLocal).toEqual(config);
+  });
+
+  it("choosing the provider alone makes no request and offers no AI capability", async () => {
+    const { calls, fetchImpl } = recorder([]);
+    const ai = await make({ dataDir: dataDir(), fetchImpl });
+    const status = await ai.save({ provider: "custom-local" });
+    expect(status.settings.customLocal).toEqual({ baseUrl: "", classifyModel: "", draftModel: "" });
+    expect(status.unavailableReason).toBe("unverified");
+    expect(status.probe).toBeNull();
+    expect(ai.classifier()).toBeUndefined();
+    expect(ai.drafter()).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    ["missing model", () => json({ data: [{ id: "another-model" }] }), "model_absent"],
+    ["empty catalogue", () => json({ data: [] }), "model_absent"],
+    ["HTML", () => new Response("<html>Not a model server</html>"), "bad_response"],
+    ["wrong JSON shape", () => json({ healthy: true }), "bad_response"],
+    ["missing catalogue", () => new Response("not found", { status: 404 }), "bad_response"],
+    ["unsupported catalogue", () => new Response("not allowed", { status: 405 }), "bad_response"],
+  ] as const)("withholds AI when verification returns %s", async (_name, response, reason) => {
+    const ai = await make({ dataDir: dataDir(), fetchImpl: recorder([[/\/models$/, response]]).fetchImpl });
+    const saved = await ai.save({ provider: "custom-local", customLocal: config });
+    expect(saved.available).toBe(false);
+    expect(saved.probe?.reason).toBe(reason);
+    expect(saved.probe?.models).not.toContain(config.classifyModel);
+    expect(ai.classifier()).toBeUndefined();
+    expect(ai.drafter()).toBeUndefined();
+    expect(ai.classifierForCycle()).toBeUndefined();
+  });
+
+  it("does not claim a remote endpoint is this computer", async () => {
+    const ai = await make({ dataDir: dataDir(), fetchImpl: recorder([[/\/models$/, catalogue]]).fetchImpl });
+    const saved = await ai.save({ provider: "custom-local", customLocal: { ...config, baseUrl: "http://model.example.test/v1" } });
+    expect(saved.available).toBe(true);
+    expect(saved).not.toHaveProperty("contentGoesTo");
+  });
+
+  it("ignores unsolicited token fields instead of persisting or forwarding them", async () => {
+    const dir = dataDir();
+    const { calls, fetchImpl } = recorder([[/\/models$/, catalogue]]);
+    const ai = await make({ dataDir: dir, fetchImpl, canStoreKey: false, keyProvider: refusingKeyProvider() });
+    const customLocal = { ...config, apiKey: "unsolicited-fixture-token", localToken: "unsolicited-fixture-token" };
+    await ai.save({ provider: "custom-local", customLocal });
+    await ai.save({ provider: "custom-local", customLocal: { baseUrl: "http://another.example.test/v1" } });
+    expect(readFileSync(join(dir, AI_STORE_FILE), "utf8")).not.toContain("unsolicited-fixture-token");
+    expect(JSON.stringify(ai.status())).not.toContain("unsolicited-fixture-token");
+    for (const call of calls) expect(call.headers.authorization).toBeUndefined();
   });
 });

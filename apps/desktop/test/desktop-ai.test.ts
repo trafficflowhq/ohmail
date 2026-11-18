@@ -349,11 +349,20 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
           provider?: string | null;
           anthropic?: { apiKey?: string };
           openai?: { apiKey?: string };
+          customLocal?: {
+            baseUrl?: string;
+            classifyModel?: string;
+            draftModel?: string;
+          };
         };
         const provider = (write.provider ?? null) as LocalAiStatus["provider"];
         const settings = { ...current.settings, provider };
         if (write.anthropic?.apiKey) settings.anthropic = { ...settings.anthropic, hasKey: true };
         if (write.openai?.apiKey) settings.openai = { ...settings.openai, hasKey: true };
+        if (write.customLocal) {
+          const prev = settings.customLocal ?? { baseUrl: "", classifyModel: "", draftModel: "" };
+          settings.customLocal = { ...prev, ...write.customLocal };
+        }
         current = {
           ...current,
           provider,
@@ -675,6 +684,68 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
     paneEngine(READY);
     const el = await render(h(DesktopAiSettings, { door: "cloud" as const }));
     expect(el.textContent?.trim()).toBe("");
+  });
+
+  it("offers discovered custom models when the configured model is missing", async () => {
+    const { el } = await paneWith({
+      ...UNSET,
+      provider: "custom-local",
+      unavailableReason: "unreachable",
+      settings: { ...UNSET.settings, provider: "custom-local", customLocal: {
+        baseUrl: "http://127.0.0.1:1234/v1", classifyModel: "typo", draftModel: "typo",
+      } },
+      probe: { ok: false, reason: "model_absent", detail: null, models: ["actual-model"], at: "2026-01-01T00:00:00.000Z" },
+    });
+    const input = el.querySelector("#ai-custom-model") as HTMLInputElement;
+    expect(input.value).toBe("typo");
+    expect(input.list?.querySelector("option")?.value).toBe("actual-model");
+    expect(el.textContent).toContain(en.aiProvider.customModelChoose);
+    expect(el.textContent).not.toContain("models below");
+  });
+
+  it("configures a keyless custom endpoint without preselecting a server or model", async () => {
+    const { el, asked } = await paneWith(UNSET);
+
+    await act(async () => {
+      choiceSaying(el, /Custom Local Endpoint/)!.click();
+    });
+    await settle();
+
+    const baseUrlInput = el.querySelector("#ai-custom-base-url") as HTMLInputElement;
+    const modelInput = el.querySelector("#ai-custom-model") as HTMLInputElement;
+    const keyInput = el.querySelector("#ai-custom-key") as HTMLInputElement;
+
+    expect(baseUrlInput, "Base URL input must be rendered").toBeTruthy();
+    expect(modelInput, "Model Name input must be rendered").toBeTruthy();
+    expect(keyInput, "a configurable endpoint must not accept a credential").toBeNull();
+    expect(baseUrlInput.value).toBe("");
+    expect(modelInput.value).toBe("");
+    expect(buttonSaying(el, /Save and test endpoint/)!.disabled).toBe(true);
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(baseUrlInput, "http://127.0.0.1:1234/v1");
+      baseUrlInput.dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(modelInput, "local-model");
+      modelInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    asked.length = 0;
+    await act(async () => {
+      buttonSaying(el, /Save and test endpoint/)!.click();
+    });
+    await settle();
+
+    const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse(puts[0]!.body)).toEqual({
+      provider: "custom-local",
+      customLocal: {
+        baseUrl: "http://127.0.0.1:1234/v1",
+        classifyModel: "local-model",
+        draftModel: "local-model",
+      },
+    });
   });
 });
 

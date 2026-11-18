@@ -8,7 +8,9 @@ import type {
 import { ServiceError } from "@trafficflow/services/mail";
 import { ClassifierFaultError } from "@trafficflow/worker/classifier-fault";
 import {
-  anthropicTransport, DEFAULT_ANTHROPIC_MODELS, ollamaTransport, DEFAULT_OLLAMA,
+  anthropicTransport, DEFAULT_ANTHROPIC_MODELS,
+  customLocalTransport, DEFAULT_CUSTOM_LOCAL,
+  ollamaTransport, DEFAULT_OLLAMA,
   openaiTransport, DEFAULT_OPENAI_MODELS, opencodeGoTransport, OPENCODE_GO_MODEL_IDS,
 } from "@trafficflow/core/ai-transports";
 import type { AiTransport, ProbeFailure, ProbeOutcome } from "@trafficflow/core/ai-transports";
@@ -28,7 +30,7 @@ import { cadenceDue, stampNow, type CadenceClocks, type CadenceStamp } from "./p
  * data directory. The config is an install-scoped FILE, and a capability is not claimed until PROBED.
  */
 
-export type AiProviderKind = "anthropic" | "openai" | "ollama" | "opencode-go";
+export type AiProviderKind = "anthropic" | "openai" | "ollama" | "opencode-go" | "custom-local";
 
 /**
  * The providers that carry a stored API key.
@@ -64,6 +66,14 @@ export interface OllamaSettings {
   draftModel: string;
 }
 
+/** A keyless OpenAI-compatible endpoint, with the same destination policy as Ollama. */
+export interface CustomLocalSettings {
+  /** An http(s) URL, including the API prefix path. */
+  baseUrl: string;
+  classifyModel: string;
+  draftModel: string;
+}
+
 /** The settings as an interface renders them — no secret, in either direction. */
 export interface LocalAiSettings {
   provider: AiProviderKind | null;
@@ -72,6 +82,7 @@ export interface LocalAiSettings {
   /** Desktop-only provider settings; the phone's offline stub intentionally omits this block. */
   opencodeGo?: HostedSettings & { hasKey: boolean };
   ollama: OllamaSettings;
+  customLocal?: CustomLocalSettings;
 }
 
 /** What a settings write may carry. `apiKey` is accepted, sealed, and never read back. */
@@ -81,6 +92,11 @@ export interface LocalAiSettingsInput {
   openai?: { classifyModel?: unknown; draftModel?: unknown; apiKey?: unknown };
   opencodeGo?: { classifyModel?: unknown; draftModel?: unknown; apiKey?: unknown };
   ollama?: { baseUrl?: unknown; classifyModel?: unknown; draftModel?: unknown };
+  customLocal?: {
+    baseUrl?: unknown;
+    classifyModel?: unknown;
+    draftModel?: unknown;
+  };
 }
 
 /** Why the chosen provider cannot answer right now. Machine-readable; an interface renders it. */
@@ -158,6 +174,7 @@ interface StoredAi {
   /** Additive, including a blank model pair on files written before Go was introduced. */
   opencodeGo: StoredHosted;
   ollama: OllamaSettings;
+  customLocal: CustomLocalSettings;
   probe: AiProbeReport | null;
 }
 
@@ -181,6 +198,7 @@ function emptyStore(): StoredAi {
     },
     opencodeGo: { classifyModel: "", draftModel: "", keyEnc: null, keyVersion: null },
     ollama: { ...DEFAULT_OLLAMA },
+    customLocal: { ...DEFAULT_CUSTOM_LOCAL },
     probe: null,
   };
 }
@@ -227,6 +245,29 @@ export function readBaseUrl(value: unknown, fallback: string): string {
 }
 
 /**
+ * An http(s) endpoint URL for a keyless OpenAI-compatible runtime, preserving any API
+ * prefix path (e.g. `http://127.0.0.1:1234/v1`) while rejecting query strings, fragments, and
+ * embedded credentials.
+ */
+export function readCustomBaseUrl(value: unknown, fallback: string): string {
+  if (value === undefined || value === null || value === "") return fallback;
+  const bad = (): never => {
+    throw new ServiceError("invalid_request", 400, "baseUrl must be an http or https URL");
+  };
+  if (typeof value !== "string") return bad();
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return bad();
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return bad();
+  if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") return bad();
+  const path = url.pathname.replace(/\/+$/, "");
+  return `${url.origin}${path}`;
+}
+
+/**
  * Whether an origin is on the computer the engine is running on.
  *
  * NARROW ON PURPOSE, because it decides a privacy claim rather than a route: anything not plainly
@@ -245,7 +286,13 @@ export function originIsThisMachine(baseUrl: string): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
-const PROVIDER_KINDS: readonly AiProviderKind[] = ["anthropic", "openai", "ollama", "opencode-go"];
+const PROVIDER_KINDS: readonly AiProviderKind[] = [
+  "anthropic",
+  "openai",
+  "ollama",
+  "opencode-go",
+  "custom-local",
+];
 
 function isProviderKind(value: unknown): value is AiProviderKind {
   return typeof value === "string" && (PROVIDER_KINDS as readonly string[]).includes(value);
@@ -427,6 +474,14 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
         draftModel: typeof parsed.ollama?.draftModel === "string"
           ? parsed.ollama.draftModel : base.ollama.draftModel,
       },
+      customLocal: {
+        baseUrl: typeof parsed.customLocal?.baseUrl === "string"
+          ? parsed.customLocal.baseUrl : base.customLocal.baseUrl,
+        classifyModel: typeof parsed.customLocal?.classifyModel === "string"
+          ? parsed.customLocal.classifyModel : base.customLocal.classifyModel,
+        draftModel: typeof parsed.customLocal?.draftModel === "string"
+          ? parsed.customLocal.draftModel : base.customLocal.draftModel,
+      },
       probe: p && typeof p.at === "string"
         ? {
             ok: p.ok === true,
@@ -482,6 +537,14 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
     switch (s.provider) {
       case "ollama":
         return ollamaTransport({ ...s.ollama, fetchImpl: doFetch, timeoutMs });
+      case "custom-local":
+        return customLocalTransport({
+          baseUrl: s.customLocal.baseUrl,
+          classifyModel: s.customLocal.classifyModel,
+          draftModel: s.customLocal.draftModel,
+          fetchImpl: doFetch,
+          timeoutMs,
+        });
       case "anthropic":
         return anthropicTransport({
           apiKey: await apiKey(s.anthropic, "anthropic"),
@@ -515,6 +578,9 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
   const blockedBy = (s: StoredAi): AiUnavailableReason | null => {
     if (s.provider === null) return "not_configured";
     if (isKeyedProvider(s.provider) && !blockFor(s, s.provider).keyEnc) return "key_absent";
+    if (s.provider === "custom-local" && (
+      !s.customLocal.baseUrl || !s.customLocal.classifyModel || !s.customLocal.draftModel
+    )) return "unverified";
     if (!s.probe) return "unverified";
     if (!s.probe.ok) return "unreachable";
     if (s.provider === "opencode-go" && (
@@ -550,6 +616,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
       case "openai": return { contentGoesTo: "openai" };
       case "opencode-go": return { contentGoesTo: "opencode-go" };
       case "ollama": return originIsThisMachine(s.ollama.baseUrl) ? { contentGoesTo: "this_machine" } : {};
+      case "custom-local": return originIsThisMachine(s.customLocal.baseUrl) ? { contentGoesTo: "this_machine" } : {};
       case null: return { contentGoesTo: null };
     }
   };
@@ -577,6 +644,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
         hasKey: s.opencodeGo.keyEnc !== null,
       },
       ollama: { ...s.ollama },
+      customLocal: { ...s.customLocal },
     },
     probe: s.probe ? { ...s.probe, models: [...s.probe.models] } : null,
     canStoreKey: opts.canStoreKey,
@@ -699,6 +767,10 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
       await persist(cleared);
       return cleared;
     }
+    // Choosing this provider precedes entering its URL and model. Do not probe placeholders.
+    if (store.provider === "custom-local" && (
+      !store.customLocal.baseUrl || !store.customLocal.classifyModel || !store.customLocal.draftModel
+    )) return store;
     let outcome: ProbeOutcome;
     try {
       outcome = await (await transportFor(store)).probe();
@@ -796,6 +868,11 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
           baseUrl: readBaseUrl(input.ollama?.baseUrl, store.ollama.baseUrl),
           classifyModel: readModel(input.ollama?.classifyModel, store.ollama.classifyModel, "classifyModel"),
           draftModel: readModel(input.ollama?.draftModel, store.ollama.draftModel, "draftModel"),
+        },
+        customLocal: {
+          baseUrl: readCustomBaseUrl(input.customLocal?.baseUrl, store.customLocal.baseUrl),
+          classifyModel: readModel(input.customLocal?.classifyModel, store.customLocal.classifyModel, "classifyModel"),
+          draftModel: readModel(input.customLocal?.draftModel, store.customLocal.draftModel, "draftModel"),
         },
         // CLEARED, always. A verification is about a configuration, and this is a different one.
         probe: null,
