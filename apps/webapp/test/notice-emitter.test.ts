@@ -47,10 +47,381 @@ const EVERY_MAIL: Notice[] = [
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("the page's emitter", () => {
-  it("carries new mail, waiting senders and pairing, all of them kinds the table lets a browser draw", () => {
-    const { carries } = webNoticeEmitter(page().p, () => wordingIn("en"));
-    expect([...carries]).toEqual(["ohbox", "screener", "pairing"]);
+  it("carries new mail, waiting senders, pairing and the calendar's kinds but its summary, all of them kinds the table lets a browser draw", () => {
+    const { carries, ahead } = webNoticeEmitter(page().p, () => wordingIn("en"));
+    expect([...carries]).toEqual([
+      "ohbox", "screener", "pairing", "cal_alert", "cal_invitation", "cal_change", "cal_answer", "cal_found",
+    ]);
     for (const kind of carries) expect(noticeKindsOf("web")).toContain(kind);
+    expect(ahead, "the page rings its alerts by the caller's own book").toBe("none");
+  });
+
+  it("draws the calendar's kinds: the event's label as the title, the catalogue's words over numbers as the body", () => {
+    const title = { as: "title", text: "Design review" } as const;
+    const today = { hour: 14, minute: 0, day: "today" } as const;
+    const friday = { hour: 9, minute: 5, day: { month: 11, dom: 20, dow: 5 } } as const;
+    const CALENDAR: Notice[] = [
+      { kind: "cal_alert", eventId: "e1", label: title, at: today, allDay: false, leadMin: 10, acts: [] },
+      { kind: "cal_invitation", eventId: "e1", label: { as: "busy" }, at: today, allDay: false },
+      { kind: "cal_change", change: "moved", eventId: "e1", label: title, at: friday, was: today, allDay: false },
+      { kind: "cal_change", change: "moved", eventId: "e1", label: { as: "event" }, at: friday, was: null, allDay: false },
+      { kind: "cal_change", change: "cancelled", eventId: "e1", label: title, at: { hour: 0, minute: 0, day: "tomorrow" }, allDay: true },
+      { kind: "cal_answer", eventId: "e1", label: title, answer: "maybe", count: 2 },
+      { kind: "cal_found", count: 3, at: null },
+    ];
+    const r = page();
+    const emitter = webNoticeEmitter(r.p, () => wordingIn("en"));
+    for (const notice of CALENDAR) emitter.post(notice);
+    expect(r.shown).toEqual([
+      { title: "Design review", body: "Starts in 10 minutes." },
+      { title: "Busy", body: "Invitation · today, 14:00" },
+      { title: "Design review", body: "Now Fri 20 Nov, 09:05 · was today, 14:00" },
+      { title: "Event", body: "Now Fri 20 Nov, 09:05" },
+      { title: "Design review", body: "Cancelled · tomorrow" },
+      { title: "Design review", body: "2 guests said maybe." },
+      { title: "Found in your mail", body: "3 possible events." },
+    ]);
+    expect(r.tags).toEqual([
+      "ohmail-cal-alert", "ohmail-cal-invitation", "ohmail-cal-change", "ohmail-cal-change", "ohmail-cal-change",
+      "ohmail-cal-answer", "ohmail-cal-found",
+    ]);
+    const de = page();
+    const german = webNoticeEmitter(de.p, () => wordingIn("de"));
+    for (const notice of CALENDAR) german.post(notice);
+    expect(de.shown.map((s) => s.body)).toEqual([
+      "Beginnt in 10 Minuten.", "Einladung · heute, 14:00", "Jetzt Fr., 20. Nov., 09:05 · vorher heute, 14:00",
+      "Jetzt Fr., 20. Nov., 09:05", "Abgesagt · morgen", "2 Gäste haben mit Vielleicht geantwortet.", "3 mögliche Termine.",
+    ]);
+    expect(de.shown.slice(1, 4).map((s) => s.title)).toEqual(["Belegt", "Design review", "Termin"]);
+    for (const { body } of [...r.shown, ...de.shown]) expect(body, "the event's title reached a body").not.toContain("Design");
+  });
+
+  it("a take-back withdraws a title still waiting for the worker registration", async () => {
+    const reg = { showNotification: vi.fn(), getNotifications: vi.fn(async () => []) };
+    let release!: (answer: typeof reg) => void;
+    const pending = new Promise<typeof reg>(resolve => { release = resolve; });
+    const getRegistration = vi.fn().mockReturnValueOnce(pending).mockResolvedValue(reg);
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration } });
+    const old = browserNoticePage.show("Earlier event", "Reminder", "ohmail-cal-alert");
+    await browserNoticePage.closeAll();
+    release(reg);
+    expect(await old).toBe(false);
+    expect(reg.showNotification).not.toHaveBeenCalled();
+    expect(await browserNoticePage.show("Current event", "Reminder", "ohmail-cal-alert")).toBe(true);
+    expect(reg.showNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])("a delayed withdrawal leaves a later accepted draw alone (accepted %s)", async accepted => {
+    const retained = { tag: "ohmail-cal-alert", timestamp: 0, close: vi.fn() };
+    const earlier = { tag: "ohmail-cal-invitation", timestamp: 0, close: vi.fn() };
+    const reg = {
+      getNotifications: async () => [retained, earlier],
+      showNotification: async (_title: string, options: NotificationOptions & { timestamp?: number }) => {
+        if (!accepted) throw new Error("refused");
+        retained.timestamp = options.timestamp ?? Date.now();
+      },
+    };
+    let release!: (value: typeof reg) => void;
+    const original = new Promise<typeof reg>(resolve => { release = resolve; });
+    const getRegistration = vi.fn().mockReturnValueOnce(original).mockResolvedValue(reg);
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration } });
+    const close = browserNoticePage.closeAll();
+    expect(await browserNoticePage.show("Current event", "Reminder", retained.tag)).toBe(accepted);
+    release(reg);
+    await close;
+    expect(earlier.close).toHaveBeenCalledTimes(1);
+    expect(retained.close).toHaveBeenCalledTimes(accepted ? 0 : 1);
+  });
+
+  it("closes an older listed event while a newer submission of its kind is still unanswered", async () => {
+    const old = { tag: "ohmail-cal-alert", timestamp: 1, close: vi.fn() };
+    let submitted!: () => void;
+    const received = new Promise<void>(resolve => { submitted = resolve; });
+    const reg = {
+      getNotifications: async () => [old],
+      showNotification: () => { submitted(); return new Promise<void>(() => {}); },
+    };
+    let release!: (value: typeof reg) => void;
+    const pending = new Promise<typeof reg>(resolve => { release = resolve; });
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration: vi.fn().mockReturnValueOnce(pending).mockResolvedValue(reg) } });
+    const cleanup = browserNoticePage.closeAll();
+    void browserNoticePage.show("Current event", "Reminder", old.tag);
+    await received;
+    release(reg);
+    await vi.waitFor(() => expect(old.close).toHaveBeenCalledOnce(), { timeout: 300 });
+    await cleanup;
+  });
+
+  it("closes an old OS submission that becomes listed after the first withdrawal sweep", async () => {
+    const old = { tag: "ohmail-cal-alert", timestamp: 1, close: vi.fn() };
+    let finish!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const listed: typeof old[] = [];
+    const reg = {
+      getNotifications: async () => listed,
+      showNotification: () => {
+        entered();
+        return new Promise<void>(resolve => { finish = () => { listed.push(old); resolve(); }; });
+      },
+    };
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => reg } });
+    const pending = browserNoticePage.show("Earlier event", "Reminder", old.tag);
+    await started;
+    await browserNoticePage.closeAll();
+    expect(old.close).not.toHaveBeenCalled();
+    finish();
+    await pending;
+    expect(old.close).toHaveBeenCalledOnce();
+  });
+
+  it("withdraws a late reminder while preserving the later one when the browser exposes no timestamp", async () => {
+    const tag = "ohmail-cal-alert";
+    const listed: { tag: string; title: string; body: string; data: unknown; close: ReturnType<typeof vi.fn> }[] = [];
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>(resolve => { started = resolve; });
+    let first = true;
+    const reg = {
+      getNotifications: async () => listed,
+      showNotification: async (title: string, options: { tag: string; body: string; data?: unknown }) => {
+        if (first) {
+          first = false;
+          started();
+          await new Promise<void>(resolve => { release = resolve; });
+        }
+        listed.push({ tag, title, body: options.body, data: options.data, close: vi.fn() });
+      },
+    };
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => reg } });
+    const earlier = browserNoticePage.show("Same event", "Same reminder", tag);
+    await pending;
+    await browserNoticePage.closeAll();
+    expect(await browserNoticePage.show("Same event", "Same reminder", tag)).toBe(true);
+    release();
+    expect(await earlier).toBe(false);
+    expect(listed.map(notice => notice.close.mock.calls.length)).toEqual([0, 1]);
+    expect(listed.every(notice => Number.isSafeInteger(notice.data))).toBe(true);
+  });
+
+  it.each([
+    { withdraw: true, oldEligible: false, eligible: true },
+    { withdraw: true, oldEligible: false, eligible: false },
+    { withdraw: false, oldEligible: false, eligible: true },
+    { withdraw: false, oldEligible: true, eligible: true },
+    { withdraw: false, oldEligible: false, eligible: false },
+  ])("keeps the current reminder when a late submission replaces its tag ($withdraw, $oldEligible, $eligible)", async ({ withdraw, oldEligible, eligible }) => {
+    const tag = "ohmail-cal-alert";
+    type Drawn = { tag: string; title: string; data: unknown; close(): void };
+    const active = new Map<string, Drawn>();
+    let began!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>(resolve => { began = resolve; });
+    let calls = 0;
+    let current = true;
+    const reg = {
+      getNotifications: async () => [...active.values()],
+      showNotification: async (title: string, options: { data: unknown }) => {
+        if (++calls === 1) {
+          began();
+          await new Promise<void>(resolve => { finish = resolve; });
+        }
+        const drawn = { tag, title, data: options.data, close() { if (active.get(tag) === drawn) active.delete(tag); } };
+        active.set(tag, drawn);
+      },
+    };
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => reg } });
+    let previous = true;
+    const old = browserNoticePage.show("Previous reminder", "Earlier", tag, () => previous);
+    await started;
+    if (withdraw) await browserNoticePage.closeAll();
+    expect(await browserNoticePage.show("Current reminder", "Now", tag, () => current)).toBe(true);
+    current = eligible;
+    previous = oldEligible;
+    finish();
+    expect(await old).toBe(false);
+    expect(active.get(tag)?.title).toBe(eligible ? "Current reminder" : undefined);
+    expect(calls).toBe(eligible ? 3 : 2);
+  });
+
+  it.each([true, false])("rechecks a visible later submission when its acknowledgement follows displacement (eligible %s)", async eligible => {
+    const tag = "ohmail-cal-alert";
+    type Display = { tag: string; title: string; data: unknown; close(): void };
+    let active: Display | null = null;
+    let oldStarted!: () => void;
+    let newStarted!: () => void;
+    let finishOld!: () => void;
+    let confirmNew!: () => void;
+    const first = new Promise<void>(resolve => { oldStarted = resolve; });
+    const second = new Promise<void>(resolve => { newStarted = resolve; });
+    let count = 0;
+    let current = true;
+    const reg = {
+      getNotifications: async () => active === null ? [] : [active],
+      showNotification: async (title: string, options: { data: unknown }) => {
+        const order = ++count;
+        if (order === 1) { oldStarted(); await new Promise<void>(resolve => { finishOld = resolve; }); }
+        const item = { tag, title, data: options.data, close() { if (active === item) active = null; } };
+        active = item;
+        if (order === 2) { newStarted(); await new Promise<void>(resolve => { confirmNew = resolve; }); }
+      },
+    };
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => reg } });
+    const old = browserNoticePage.show("Previous event", "Earlier", tag);
+    await first;
+    await browserNoticePage.closeAll();
+    const fresh = browserNoticePage.show("Current event", "Now", tag, () => current);
+    await second;
+    finishOld();
+    await old;
+    expect(count).toBe(2);
+    current = eligible;
+    confirmNew();
+    expect(await fresh).toBe(eligible);
+    expect((await reg.getNotifications()).map(item => item.title)).toEqual(eligible ? ["Current event"] : []);
+  });
+
+  it.each([{ replace: true, withdraw: true }, { replace: false, withdraw: true }, { replace: true, withdraw: false }, { replace: false, withdraw: false }])("keeps only the later ordinary notice with identical words ($replace, $withdraw)", async ({ replace, withdraw }) => {
+    const tag = "ohmail-pairing";
+    type Display = { tag: string; title: string; body: string; data?: number; close(): void };
+    const shown = new Set<Display>();
+    let entered!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    let calls = 0;
+    const reg = {
+      getNotifications: async () => [...shown],
+      showNotification: async (title: string, options: { body: string; data?: number }) => {
+        if (++calls === 1) {
+          entered();
+          await new Promise<void>(resolve => { finish = resolve; });
+        }
+        if (replace) shown.clear();
+        const draw = { tag, title, body: options.body, data: options.data, close() { shown.delete(draw); } };
+        shown.add(draw);
+      },
+    };
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => reg } });
+    const older = browserNoticePage.show("Device paired", "One new device", tag);
+    await started;
+    if (withdraw) await browserNoticePage.closeAll();
+    expect(await browserNoticePage.show("Device paired", "One new device", tag)).toBe(true);
+    finish();
+    expect(await older).toBe(false);
+    expect([...shown].map(draw => typeof draw.data)).toEqual(["number"]);
+    expect(calls).toBe(replace ? 3 : 2);
+  });
+
+  it("keeps an eligible earlier reminder when the browser refuses its successor", async () => {
+    const tag = "ohmail-cal-alert";
+    let active: string | null = null;
+    let arrived!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>(resolve => { arrived = resolve; });
+    const reg = {
+      showNotification: async (title: string) => {
+        if (title === "Later") throw new Error("refused");
+        arrived();
+        await new Promise<void>(resolve => { finish = resolve; });
+        active = title;
+      },
+      getNotifications: async () => active === null ? [] : [{ tag, title: active, body: "Reminder", close: () => { active = null; } }],
+    };
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => reg } });
+    const earlier = browserNoticePage.show("Earlier", "Reminder", tag);
+    await started;
+    expect(await browserNoticePage.show("Later", "Reminder", tag)).toBe(false);
+    finish();
+    expect(await earlier).toBe(true);
+    expect(active).toBe("Earlier");
+  });
+
+  it.each([true, false])("keeps an earlier reminder until its later replacement is accepted (accept %s)", async accept => {
+    const tag = "ohmail-cal-alert";
+    type Shown = { tag: string; title: string; data: number; close(): void };
+    const visible = new Set<Shown>();
+    const waiting: { accept(): void; refuse(): void }[] = [];
+    const reg = {
+      getNotifications: async () => [...visible],
+      showNotification: (title: string, options: { data: number }) => new Promise<void>((resolve, reject) => {
+        const item = { tag, title, data: options.data, close() { visible.delete(item); } };
+        waiting.push({ accept() { visible.add(item); resolve(); }, refuse() { reject(new Error("refused")); } });
+      }),
+    };
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => reg } });
+    const old = browserNoticePage.show("Previous", "Reminder", tag);
+    const later = browserNoticePage.show("Current", "Reminder", tag);
+    await vi.waitFor(() => expect(waiting).toHaveLength(2));
+    waiting[0]!.accept();
+    expect(await old).toBe(true);
+    expect([...visible].map(item => item.title)).toEqual(["Previous"]);
+    if (accept) waiting[1]!.accept();
+    else waiting[1]!.refuse();
+    expect(await later).toBe(accept);
+    expect([...visible].map(item => item.title)).toEqual(accept ? ["Current"] : ["Previous"]);
+  });
+
+  it("does not retire the worker's current same-tag notice when it closes an earlier plain page submission", async () => {
+    const tag = "ohmail-new-mail";
+    const title = "New mail";
+    const body = "One new message";
+    let started!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const shown: { title: string; body: string; tag: string; data: unknown; close: ReturnType<typeof vi.fn> }[] = [];
+    const add = (data: unknown) => ({ title, body, tag, data, close: vi.fn() });
+    const reg = {
+      getNotifications: async () => shown,
+      showNotification: async (_title: string, options: { data?: number }) => {
+        if (options.data === undefined) { started(); await new Promise<void>(resolve => { release = resolve; }); }
+        shown.push(add(options.data));
+      },
+    };
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => reg } });
+    const old = browserNoticePage.show(title, body, tag);
+    await entered;
+    await browserNoticePage.closeAll();
+    expect(await browserNoticePage.show(title, body, tag)).toBe(true);
+    const worker = add({ scope: "/" });
+    shown.push(worker);
+    release();
+    await old;
+    expect(shown.map(notice => notice.close.mock.calls.length)).toEqual([0, 0, 1]);
+  });
+
+  it("never identifies a structured worker notice by a browser timestamp equal to the earlier page draw", async () => {
+    const clock = Date.UTC(2070, 0, 1);
+    const now = vi.spyOn(Date, "now").mockReturnValue(clock);
+    try {
+      const tag = "ohmail-new-mail";
+      const title = "New mail";
+      const body = "One new message";
+      const old = { tag, title, body, timestamp: clock, data: null, close: vi.fn() };
+      const worker = { ...old, data: { scope: "/" }, close: vi.fn() };
+      let begin!: () => void;
+      let finish!: () => void;
+      const started = new Promise<void>(resolve => { begin = resolve; });
+      const listed: { tag: string; title: string; body: string; timestamp: number; data: unknown; close: () => void }[] = [];
+      const reg = {
+        getNotifications: async () => listed,
+        showNotification: async (_title: string, options: { data?: number }) => {
+          if (options.data === undefined) {
+            begin();
+            await new Promise<void>(resolve => { finish = resolve; });
+            listed.push(old);
+          } else listed.push({ ...old, data: options.data, close: vi.fn() });
+        },
+      };
+      vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => reg } });
+      const before = browserNoticePage.show(title, body, tag);
+      await started;
+      expect(await browserNoticePage.show(title, body, tag)).toBe(true);
+      listed.push(worker);
+      finish();
+      expect(await before).toBe(false);
+      expect(old.close).toHaveBeenCalledOnce();
+      expect(worker.close).not.toHaveBeenCalled();
+    } finally { now.mockRestore(); }
   });
 
   it("draws each kind in the catalogue's own words, in English and in German", () => {
@@ -112,7 +483,6 @@ describe("the page's emitter", () => {
     emitter.post({ kind: "scheduled", outcome: "sent", count: 1 });
     emitter.post({ kind: "scheduled", outcome: "failed", count: 2 });
     emitter.post({ kind: "cal_summary", events: 3, first: null, toAnswer: 1 });
-    emitter.post({ kind: "cal_found", count: 1, at: null });
     expect(r.shown).toEqual([]);
   });
 

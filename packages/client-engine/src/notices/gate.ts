@@ -3,7 +3,8 @@
  * one function of this type and draws only what it answers.
  */
 import type { NoticeChoices } from "./choices.js";
-import type { Notice, NoticeKind } from "./kinds.js";
+import type { Clock, Notice, NoticeKind } from "./kinds.js";
+import type { NoticedEvent } from "./make.js";
 
 /**
  * What the operating system says about drawing notices at all. `unsupported` is no failure: a
@@ -40,12 +41,56 @@ export interface NoticeSample {
   readonly sends: ReadonlyMap<string, SendStanding>;
   /** The account's named devices; `null` where this surface is not told. */
   readonly devices: NoticeDevices | null;
+  /** What the calendar holds; `null` where this surface has no calendar, which makes no calendar notice. */
+  readonly calendar: CalendarSample | null;
+}
+
+/** An event time whose instant depends on the reader's current zone. */
+export interface ReaderTime {
+  readonly kind: "date" | "floating";
+  readonly value: string;
+}
+
+export interface CalendarStanding {
+  readonly startMs: number;
+  readonly readerTime?: ReaderTime;
+  readonly status: "confirmed" | "tentative" | "cancelled";
+}
+
+/**
+ * What the calendar holds at one instant, as the gate compares it: ids, instants and closed words, never an
+ * event's title. An event with a write of this device's that waits, or that the calendar has not taken yet, is
+ * none of the person's news: it is kept out of `standing` and `answers` and keeps its place in `invitations`.
+ */
+export interface CalendarSample {
+  /** Invitations shown on the calendar that wait for the person's answer: event ids. */
+  readonly invitations: ReadonlySet<string>;
+  /** Events somebody else wrote that the person is in: id -> where it stands. */
+  readonly standing: ReadonlyMap<string, CalendarStanding>;
+  /** The person's own events with invitees: id -> how many said yes, maybe, no. */
+  readonly answers: ReadonlyMap<string, readonly [yes: number, maybe: number, no: number]>;
+  /** Events letters seem to propose, not yet decided: suggestion ids. */
+  readonly found: ReadonlySet<string>;
+}
+
+/**
+ * What the gate reads to MAKE a calendar notice it has decided on, looked up at the settle: the makers' inputs.
+ * It is never part of a sample, so no comparison ever holds an event's title.
+ */
+export interface CalendarLook {
+  /** What a maker reads of an event, and whether it lasts whole days; `null` where it is not held. */
+  event(id: string): { readonly noticed: NoticedEvent; readonly allDay: boolean } | null;
+  /** When something a letter seems to propose starts, as a moment; `null` where that cannot be said. */
+  found(id: string): number | null;
+  /** A start on the reader's clock, as a notice drawn now says it. */
+  clock(startMs: number, readerTime?: ReaderTime): Clock | null;
 }
 
 /**
  * The gate. `before === null` is a surface that has not sampled yet: the answer is nothing, since
  * an app opened with eleven unread letters has not just received eleven. It answers only kinds the
- * surface's emitter carries, never throws, and answers `[]` when nothing may be drawn.
+ * surface's emitter carries, never throws, and answers `[]` when nothing may be drawn. Without a
+ * `look` it makes no calendar notice.
  */
 export type NoticeGate = (
   before: NoticeSample | null,
@@ -53,4 +98,5 @@ export type NoticeGate = (
   choices: NoticeChoices,
   permission: NoticePermission,
   carries: readonly NoticeKind[],
+  look?: CalendarLook | null,
 ) => Notice[];

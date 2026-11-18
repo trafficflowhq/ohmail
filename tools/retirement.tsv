@@ -1115,6 +1115,8 @@ packages/client-engine/test/engine-owns-no-timers.test.ts	source-text	reads sour
 packages/client-engine/test/folder-labels.test.ts	data	through test/support/guard-list.ts: reads a list the environment names	none	engine	
 packages/client-engine/test/hour12-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
 packages/client-engine/test/import-corpus-identity.test.ts	source-text	an import census: reads source as text (mjs)	ohmail/package-borders	tools	
+packages/client-engine/test/notice-lead.test.ts	data	reads data files (json): how an alert says each lead, the table the desktop shell's test reads too	none	notices	
+packages/client-engine/test/notice-ring.test.ts	data	reads data files (json): who hears a calendar alert and when, the cases the desktop shell's test reads too	none	notices	
 packages/client-engine/test/notices-seam.test.ts	data	reads data files (json): what a notice's title does with each character, the table the desktop shell's test reads too	none	notices	
 packages/client-engine/test/open-read-flag-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
 packages/client-engine/test/outbox-hold-ceiling.test.ts	source-text	reads source as text (ts): the fallback door's route	layer 1	engine	

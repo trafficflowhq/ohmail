@@ -4488,6 +4488,104 @@ fn every_granted_permission_is_declared_by_the_build() {
     }
 }
 
+/// THE CALENDAR'S ALERTS ARE GRANTED AS ONE COMMAND OF THE SHELL'S OWN, AND NOTHING COMES WITH IT.
+///
+/// Read against the app's other grants. The window's runtime grant names the alerts once, as
+/// `allow-alerts-set`: the one command sets a set, clears with an empty one and answers the ids
+/// held. No plugin's own permission stands beside it (the notification plugin's least of all: the
+/// window may hand over one closed set, it may not drive the notification API), and no file,
+/// shell, process or network permission. The two capability files compiled into every build
+/// grant the main window nothing and the update window one listen. Grant the plugin's
+/// `notification:default`, or a second alerts command, and this goes red.
+#[test]
+fn the_alerts_grant_is_one_command_and_brings_no_plugin_file_shell_or_network_permission() {
+    let grant: serde_json::Value = serde_json::from_str(LOCAL_ENGINE_CAPABILITY).expect("the window's grant is JSON");
+    let permissions: Vec<&str> =
+        grant["permissions"].as_array().expect("permissions").iter().map(|p| p.as_str().expect("a name")).collect();
+    let alerts: Vec<&str> = permissions.iter().copied().filter(|p| p.contains("alert")).collect();
+    assert_eq!(alerts, ["allow-alerts-set"]);
+    assert!(DECLARED_WINDOW_COMMANDS.split(',').any(|c| c == "alerts_set"), "alerts_set is not declared");
+    assert_eq!(DECLARED_WINDOW_COMMANDS.split(',').filter(|c| c.contains("alert")).count(), 1);
+    // Every permission but the one listen is this shell's own command: none is a plugin's or the core's.
+    let namespaced: Vec<&str> = permissions.iter().copied().filter(|p| p.contains(':')).collect();
+    assert_eq!(namespaced, ["core:event:allow-listen"]);
+    for permission in &permissions {
+        for family in ["notification", "fs", "shell", "http", "process", "dialog", "path", "opener"] {
+            assert!(!permission.starts_with(&format!("{family}:")), "{permission} is {family}'s own permission");
+        }
+    }
+    assert_eq!(grant["windows"], serde_json::json!(["main"]));
+    // The grants every build carries: the main window's is empty, the update window's is one listen.
+    let file = |name: &str| -> serde_json::Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities").join(name);
+        serde_json::from_str(&fs::read_to_string(&path).unwrap_or_else(|e| panic!("could not read {}: {e}", path.display())))
+            .expect("a capability file is JSON")
+    };
+    assert_eq!(file("main.json")["permissions"], serde_json::json!([]));
+    assert_eq!(file("updater.json")["permissions"], serde_json::json!(["core:event:allow-listen"]));
+    assert_eq!(file("updater.json")["windows"], serde_json::json!(["updater"]));
+}
+
+#[test]
+fn calendar_alerts_follow_the_serving_engines_hosted_sign_in() {
+    use crate::alerts::Live;
+    let root = signed_in_root("calendar-session", "https://cloud.test");
+    let shell = Shell::rooted_for_tests(&root);
+    let engine = shell.engine();
+    let frame = |bytes: &[u8]| { accept_header(bytes, &engine.inner).expect("engine frame"); };
+    frame(br#"{"v":1,"t":"ready","baseUrl":"http://sidecar","accountId":"account","userId":"user","mailboxId":"mb-1","sessionToken":"test"}"#);
+    assert_eq!(shell.live_mailbox(), Live::Unknown);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
+    let first = shell.live_mailbox();
+    shell.with_live_mailbox(|current| {
+        assert_eq!(current, first);
+        assert!(shell.engine.try_lock().is_err(), "the serving engine could be replaced during handoff");
+        assert!(engine.inner.shared.try_lock().is_err(), "the hosted session could be revoked during handoff");
+    });
+    let alerts = crate::alerts::Alerts::default();
+    let set = serde_json::json!({"scope":"mb-1","alerts":[{"id":"sample.600000.0","eventId":"sample",
+        "startMs":600000,"atMs":600000,"leadMin":0,"allDay":false,"label":{"as":"title","text":"Earlier event"},"acts":[]}]});
+    alerts.receive(&set, || shell.live_mailbox(), 600000).expect("first session");
+
+    assert_ne!(first, Live::Unknown);
+    assert_ne!(first, Live::Nobody);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":false}"#);
+    assert_eq!(shell.live_mailbox(), Live::Nobody);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
+    assert_ne!(shell.live_mailbox(), first, "the new sign-in must not inherit an earlier schedule");
+    let mut shown = 0;
+    alerts.dispatch(|| shell.live_mailbox(), || 600000, || true, |_, _| shown += 1);
+    assert_eq!(shown, 0);
+    alerts.receive(&set, || shell.live_mailbox(), 600000).expect("current session");
+    alerts.dispatch(|| shell.live_mailbox(), || 600000, || true, |_, _| shown += 1);
+    assert_eq!(shown, 1);
+    engine.inner.set_state(EngineState::Stopped);
+    assert_eq!(shell.live_mailbox(), Live::Unknown);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn calendar_alerts_stop_when_the_serving_run_is_asked_to_leave() {
+    let root = local_door_root("calendar-quit");
+    let shell = Shell::rooted_for_tests(&root);
+    let engine = shell.engine();
+    engine.inner.set_state(EngineState::Serving { mailbox_id: "mb-1".into() });
+    assert_ne!(shell.live_mailbox(), crate::alerts::Live::Unknown);
+    engine.stop(Leaving::Quit);
+    assert_eq!(shell.live_mailbox(), crate::alerts::Live::Unknown);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn calendar_alerts_submit_to_the_platform_before_releasing_the_schedule() {
+    let source = include_str!("engine.rs");
+    let function = source.split("fn show_alert<").nth(1).unwrap().split("fn ring_alerts<").next().unwrap();
+    assert!(function.contains("notify_rust::Notification"), "the plugin detaches another task before submitting to the OS");
+    assert!(function.contains("platform::current_exe()"), "Windows must use the installed executable identity");
+    assert!(!function.contains("{err}"), "a platform's error can repeat the event title");
+    assert!(!function.contains("spawn("));
+}
+
 /// A GRANT THE MANIFEST CANNOT RESOLVE LOSES THAT PERMISSION AND NOTHING ELSE — named to the
 /// caller, never handed to tauri, never a panic.
 ///

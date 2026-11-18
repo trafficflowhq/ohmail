@@ -551,6 +551,8 @@ export type DoorFlavorWire = "managed" | "selfhost" | "desktop-host";
 
 /** What the shell says about the engine. A tagged object; `state` is always there. */
 export interface EngineStatus {
+  noticeDocument?: number;
+  noticeSession?: number;
   state:
     | "absent"
     | "not_configured"

@@ -173,6 +173,8 @@ export interface CloudSidecarConfig {
    * `main.ts` writes it as a `mailbox` frame. Awaited before any answer that depends on it goes out.
    */
   onServedMailbox?: (mailboxId: string) => Promise<void>;
+  /** The same signed-in state /health reports, on activation and loss. */
+  onSignedIn?: (signedIn: boolean) => void;
   /** A sign-in's or pairing's wait for that name — {@link PAIR_SERVED_WAIT_MS}; a test shortens it. */
   pairServedWaitMs?: number;
 }
@@ -1277,6 +1279,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         auth, mirror, proxy, wake: started,
         staged: createStagedUploads({ ...(injectedFetch ? { fetchImpl: injectedFetch } : {}), ...(log ? { log } : {}) }),
       };
+      config.onSignedIn?.(true);
       return authed;
     };
 
@@ -1350,6 +1353,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const signOut = async (): Promise<void> => {
       const live = authed;
       authed = null;
+      if (live) config.onSignedIn?.(false);
       holdApproval(null);
       // THE SPENT SEAL GOES FIRST — before the awaits, not after them. This teardown's tail
       // used to remove the seal after waiting out the mirror, and a sign-in completing inside

@@ -50,6 +50,7 @@ import { organizerNoticeOverBridge } from "./local-organizer-notice.js";
 import { profileImportOverBridge } from "./local-profile-import.js";
 import { checkMailboxHere } from "./local-self-check.js";
 import { LocalSuggest } from "./local-suggest.js";
+import { desktopEmitterFor } from "./notice-emitter.js";
 import { desktopNotificationHost } from "./notify-host.js";
 import { reuseSweepsOverBridge } from "./reuse-sweeps-wire.js";
 import type { ReuseSweepLine } from "../../webapp/app/shell/reuse-sweeps";
@@ -85,6 +86,7 @@ export interface DesktopFrameProps {
   firstRun: FirstRunHost | undefined;
   takesMailLinks: boolean;
   scope: string;
+  liveNoticeScope?: () => string | null;
   onUnread: (unread: number) => void;
   /** Load it now over the bridge (the gate's own door, where the deadline census reads it). */
   liveBody: LiveBodyWire;
@@ -163,6 +165,12 @@ export function DesktopFrame(p: DesktopFrameProps) {
     onStatus, openOverlay, takeOver, setAi, withdrawManage, rereadAccess, recheckSweeps]);
 
   const draftReply = useMemo(() => draftReplyOverBridgeFor(status), [status]);
+  const { noticeDocument, noticeSession } = status;
+  const noticeEmitter = useMemo(() => {
+    return desktopEmitterFor(noticeDocument === undefined || noticeSession === undefined
+      ? null : { document: noticeDocument, session: noticeSession });
+  }, [noticeDocument, noticeSession]);
+
   const host = useMemo(() => desktopHost(p.engine, {
     status,
     session,
@@ -198,13 +206,13 @@ export function DesktopFrame(p: DesktopFrameProps) {
       mailboxes: NONE,
     },
     features,
-    notifications: desktopNotificationHost,
+    notifications: { ...desktopNotificationHost, emitter: noticeEmitter, liveNoticeScope: p.liveNoticeScope },
     frame,
     badge: p.onUnread,
     hostConnection: p.connection,
     linkIn: p.links,
   }), [p.engine, p.liveBody, status, session, p.sessionRefused, hostLabel, p.manageOffered, storage, mayLinkOut,
-    p.takesMailLinks, p.scope, p.account, draftReply, p.firstRun, features, p.onUnread, p.connection, p.links, frame]);
+    p.takesMailLinks, p.scope, p.liveNoticeScope, noticeEmitter, p.account, draftReply, p.firstRun, features, p.onUnread, p.connection, p.links, frame]);
 
   /* What today's views take that the contract does not carry: the Screener's own suggest control, by door, and the
      name of the desktop's pane. */

@@ -215,6 +215,7 @@ export {
   DEFAULT_CHANNELS,
   channelsAreLive,
   decideNotices,
+  mayDrawKind,
   mayPost,
   type NoticePermission,
   type NotificationChannels,
@@ -224,23 +225,36 @@ export {
 // in to draw them, and what the page leaves the phone's native side.
 export {
   CALENDAR_NOTICE_KINDS, MAIL_NOTICE_KINDS, NOTICE_ACTS, NOTICE_COUNT_MAX, NOTICE_KINDS, NOTICE_KIND_FACTS,
-  NOTICE_LEAD_MAX_MIN, noticeCount, noticeKindsOf,
+  NOTICE_LEAD_MAX_MIN, NOTICE_NAMES_EVENT, noticeCount, noticeKindsOf,
   type CalendarNotice, type CalendarNoticeKind, type Clock, type EventLabel, type MailNotice, type MailNoticeKind,
   type Notice, type NoticeAct, type NoticeDate, type NoticeDevice, type NoticeKind, type NoticeKindFacts,
   type NoticeStart, type NoticeSurface,
 } from "./notices/kinds.js";
-export { NOTICE_TEXT_MAX, cleanNoticeText, eventLabel } from "./notices/label.js";
+export {
+  LOCKED_LABEL, NOTICE_TEXT_MAX, cleanNoticeText, eventLabel, noticeTitleOf, type NoticeTitle,
+} from "./notices/label.js";
 export {
   SUMMARY_AT_START, calendarChoicesOf, mailChoicesOf, noticeChoicesOf, noticeStartsOn,
   type CalendarNoticeChoices, type MailNoticeChoices, type NoticeChoices, type NoticeWhere,
 } from "./notices/choices.js";
-export { AHEAD_DAYS, AHEAD_MAX, type NoticeAhead, type NoticeEmitter, type NoticeTaken } from "./notices/emitter.js";
-export type { NoticeDevices, NoticeGate, NoticeSample, SendStanding } from "./notices/gate.js";
+export {
+  AHEAD_DAYS, AHEAD_ID_MAX, AHEAD_LATE_MS, AHEAD_MAX, type AheadSet, type NoticeAhead, type NoticeEmitter, type NoticeTaken,
+} from "./notices/emitter.js";
+export type { CalendarLook, CalendarSample, CalendarStanding, NoticeDevices, NoticeGate, NoticeSample, SendStanding } from "./notices/gate.js";
 export { TOLD_DEVICES_PREFIX, devicesOf, noticeSampleOf } from "./notices/sample.js";
 export {
-  alertNotice, answeredNotice, cancelledNotice, foundNotice, invitationNotice, movedNotice, summaryNotice,
-  type NoticedEvent,
+  aheadAlert, aheadSet, alertNotice, answeredNotice, cancelledNotice, dueNotice, foundNotice, invitationNotice,
+  movedNotice, summaryNotice,
+  type AheadWhen, type NoticedEvent,
 } from "./notices/make.js";
+export { readAhead, readAheadSet, readCalendarSnapshot, readLabel } from "./notices/closed.js";
+export { leadWords, type LeadWords } from "./notices/lead.js";
+export {
+  NOTICE_PRESSES, NOTICE_PRESS_WRITES, decidePress, pressWrites, type NoticePress, type NoticePressAnswer, type PressedOn,
+} from "./notices/press.js";
+export {
+  AlertBook, eventRings, mayRing, ringingLeads, type RingAsk, type RungCalendar, type RungEvent,
+} from "./notices/ring.js";
 export { noticeFields, type NoticeFacts, type NoticeFields, type NoticeWording } from "./notices/fields.js";
 export {
   CALENDAR_SNAPSHOT_FILE, CALENDAR_SNAPSHOT_VERSION, SNAPSHOT_DAYS, SNAPSHOT_DAY_EVENTS_MAX,

@@ -50,6 +50,11 @@ const WINDOW_COMMANDS: &[&str] = &[
     // The two pieces of native chrome the WINDOW drives: what is unread is a fact about
     // mail, so the client decides and the shell performs.
     "notify",
+    // THE CALENDAR'S ALERTS, SET AHEAD (`src/alerts.rs`): one account's alerts as a set of numbers,
+    // ids and labels, replaced whole; an empty set clears, and the answer lists the ids now held.
+    // The shell takes a set only under the mailbox it serves, asks again at each alert's minute,
+    // and writes the words itself. No title and body, no path, no address, no sound to name.
+    "alerts_set",
     "set_badge",
     // The window's own performance numbers — startup marks, open/switch/search percentiles, long
     // frames — written into the engine's log beside `renderer_vitals`. The window reports an

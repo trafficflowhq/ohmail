@@ -100,7 +100,9 @@ describe("a definitive refresh refusal returns the engine to sign-in", () => {
 
     const dataDir = await freshDataDir("ohmail-session-expiry-");
     dirs.push(dataDir);
+    const sessionChanges: boolean[] = [];
     const sidecar = await createCloudSidecar({
+      onSignedIn: (live: boolean) => { sessionChanges.push(live); },
       dataDir,
       cloudUrl: "https://cloud.test",
       address: "me@ohmail.test",
@@ -128,6 +130,8 @@ describe("a definitive refresh refusal returns the engine to sign-in", () => {
       if (Date.now() > deadline) throw new Error("the engine never noticed the dead session");
       await new Promise((r) => setTimeout(r, 25));
     }
+
+    expect(sessionChanges).toEqual([true, false]);
 
     // The read surface now answers the SIGNED-OUT refusal — the window lands on the sign-in
     // surface instead of rendering a silently frozen mailbox behind a dead session. (The mirror's

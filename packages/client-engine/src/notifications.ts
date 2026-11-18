@@ -7,8 +7,9 @@
  */
 
 import type { NoticeChoices } from "./notices/choices.js";
-import { noticeCount, type Notice, type NoticeKind } from "./notices/kinds.js";
-import type { NoticeGate, NoticePermission } from "./notices/gate.js";
+import { noticeCount, type Clock, type Notice, type NoticeKind } from "./notices/kinds.js";
+import type { CalendarLook, CalendarSample, NoticeGate, NoticePermission } from "./notices/gate.js";
+import { answeredNotice, cancelledNotice, foundNotice, invitationNotice, movedNotice } from "./notices/make.js";
 
 export type { NoticePermission };
 
@@ -46,9 +47,10 @@ export const DEFAULT_CHANNELS: NotificationChannels = {
  * The four refusals every notice passes, whatever made it: the platform has granted, the master is
  * on, the kind's own switch is on, and this surface carries the kind. The first two are absolute: a
  * switch cannot override a platform that has not granted, and a kind cannot override the master.
- * One function for the gate and for {@link mayPost}, so a refusal added here holds for both.
+ * One function for the gate and for {@link mayPost}, so a refusal added here holds for both, and
+ * for whoever asks before a notice exists: whether this device sets the calendar's alerts at all.
  */
-function mayDraw(
+export function mayDrawKind(
   kind: NoticeKind, choices: NoticeChoices, permission: NoticePermission, carries: readonly NoticeKind[],
 ): boolean {
   return permission === "granted" && choices.master === true && choices[kind] === true && carries.includes(kind);
@@ -65,9 +67,9 @@ function rose(was: number, now: number): boolean {
  * Ignoring an empty answer draws nothing, which is the right way to fail for a feature whose fault
  * is interrupting people.
  */
-export const decideNotices: NoticeGate = (before, after, choices, permission, carries) => {
+export const decideNotices: NoticeGate = (before, after, choices, permission, carries, look = null) => {
   if (before === null) return [];
-  const may = (kind: NoticeKind): boolean => mayDraw(kind, choices, permission, carries);
+  const may = (kind: NoticeKind): boolean => mayDrawKind(kind, choices, permission, carries);
   const out: Notice[] = [];
 
   // New mail in the Ohbox: a RISE only. A falling count is somebody reading their own mail.
@@ -114,8 +116,91 @@ export const decideNotices: NoticeGate = (before, after, choices, permission, ca
     if (rose(had.made, has.made)) out.push({ kind: "pairing", change: "paired", device: null });
   }
 
+  // What a sync turn brought the calendar, compared id by id and made only by the makers. Nothing where
+  // either sample holds no calendar (a first sample of one, a surface without one) or nothing names the
+  // events; a look that fails makes no calendar notice and takes nothing else down.
+  const was = before.calendar ?? null;
+  const now = after.calendar ?? null;
+  if (was !== null && now !== null && look !== null && look !== undefined) {
+    try {
+      out.push(...calendarNotices(was, now, choices.showTitles, may, look));
+    } catch {
+      /* No calendar notice rather than a wrong one. */
+    }
+  }
+
   return out;
 };
+
+/** The answers an invitee gives that a notice names, in the order a sample counts them. */
+const ANSWERS = ["yes", "maybe", "no"] as const;
+
+/** The calendar's notices between two samples, each kind past its refusals. */
+function calendarNotices(
+  was: CalendarSample, now: CalendarSample, showTitles: boolean, may: (kind: NoticeKind) => boolean, look: CalendarLook,
+): Notice[] {
+  const out: Notice[] = [];
+  const clock = (startMs: number): Clock | null => look.clock(startMs);
+  const keep = (notice: Notice | null): void => {
+    if (notice !== null) out.push(notice);
+  };
+
+  // An invitation waiting for the person's answer that was not waiting before: once.
+  if (may("cal_invitation")) {
+    for (const id of now.invitations) {
+      if (was.invitations.has(id)) continue;
+      const seen = look.event(id);
+      const stands = now.standing.get(id);
+      const at = stands === undefined ? null : clock(stands.startMs);
+      if (seen !== null && at !== null) keep(invitationNotice(seen.noticed, showTitles, { at, allDay: seen.allDay }));
+    }
+  }
+
+  // An event somebody else wrote that the person is in, called off or moved. One that only vanished
+  // leaves nothing to name it by, and says nothing.
+  if (may("cal_change")) {
+    for (const [id, stands] of now.standing) {
+      const stood = was.standing.get(id);
+      if (stood === undefined) continue;
+      const cancelled = stood.status !== "cancelled" && stands.status === "cancelled";
+      const sameStart = stands.readerTime === undefined && stood.readerTime === undefined
+        ? stood.startMs === stands.startMs
+        : stood.readerTime?.kind === stands.readerTime?.kind && stood.readerTime?.value === stands.readerTime?.value;
+      const moved = stood.status !== "cancelled" && stands.status !== "cancelled" && !sameStart;
+      if (!cancelled && !moved) continue;
+      const seen = look.event(id);
+      const at = clock(stands.startMs);
+      if (seen === null || at === null) continue;
+      keep(cancelled
+        ? cancelledNotice(seen.noticed, showTitles, { at, allDay: seen.allDay })
+        : movedNotice(seen.noticed, showTitles, { at, was: look.clock(stood.startMs, stood.readerTime), allDay: seen.allDay }));
+    }
+  }
+
+  // Invitees of the person's own event answered: each answer whose count rose, by how much. Never who.
+  if (may("cal_answer")) {
+    for (const [id, counts] of now.answers) {
+      const had = was.answers.get(id);
+      if (had === undefined) continue;
+      const rises = ANSWERS.map((answer, i) => [answer, counts[i]! - had[i]!] as const).filter(([, rise]) => rise > 0);
+      if (rises.length === 0) continue;
+      const seen = look.event(id);
+      if (seen === null) continue;
+      for (const [answer, rise] of rises) keep(answeredNotice(seen.noticed, showTitles, answer, rise));
+    }
+  }
+
+  // Events letters seem to propose, new since the last turn: one notice for all of them, at the first one's start.
+  if (may("cal_found")) {
+    const fresh = [...now.found].filter((id) => !was.found.has(id));
+    if (fresh.length > 0) {
+      const starts = fresh.map((id) => look.found(id)).filter((ms): ms is number => typeof ms === "number" && Number.isFinite(ms));
+      keep(foundNotice(fresh, starts.length === 0 ? null : clock(Math.min(...starts))));
+    }
+  }
+
+  return out;
+}
 
 /**
  * May this surface draw `notice` at all? The same refusals as the gate's, for a notice that no
@@ -124,7 +209,7 @@ export const decideNotices: NoticeGate = (before, after, choices, permission, ca
 export function mayPost(
   notice: Notice, choices: NoticeChoices, permission: NoticePermission, carries: readonly NoticeKind[],
 ): boolean {
-  return mayDraw(notice.kind, choices, permission, carries);
+  return mayDrawKind(notice.kind, choices, permission, carries);
 }
 
 /**

@@ -194,6 +194,8 @@ const POST_CALL = new RegExp(`${["emit", "ter"].join("")}\\.${["po", "st"].join(
  *    subscriber callback and so useless as a census key;
  *  · the shell's command itself, by its name as a string: a second door that invokes it directly
  *    instead of going through the binding;
+ *  · the same two for the calendar's alerts, which the shell rings at their minute: the binding that
+ *    hands it a set, and its command by name;
  *  · the two browser forms, page and service worker;
  *  · the phone's bridge act, by its word as a string: the page's only road to the native poster.
  *    The word in quotes and nothing around it, so the pattern reads a line once from left to right.
@@ -203,6 +205,8 @@ const POST_CALL = new RegExp(`${["emit", "ter"].join("")}\\.${["po", "st"].join(
 const DRAW_PATTERNS: [string, RegExp][] = [
   ["desktop shell notice", new RegExp(`\\b${["post", "OsNotice"].join("")}\\s*\\(`)],
   ["desktop shell command", new RegExp(`["'\`]${["noti", "fy"].join("")}["'\`]`)],
+  ["desktop shell alerts", new RegExp(`\\b${["set", "OsAlerts"].join("")}\\s*\\(`)],
+  ["desktop shell alerts command", new RegExp(`["'\`]${["alerts", "_set"].join("")}["'\`]`)],
   ["phone bridge act", new RegExp(`["'\`]${["noti", "ces"].join("")}\\.${["po", "st"].join("")}["'\`]`)],
   ["Notification constructor", new RegExp(`new\\s+${["Notifi", "cation"].join("")}\\s*\\(`)],
   ["service-worker notice", new RegExp(`\\.${["show", "Notification"].join("")}\\s*\\(`)],
@@ -228,10 +232,16 @@ describe("the scan reaches the surfaces — a census over nothing passes vacuous
     }
   });
 
-  it("the shell's command is named by its binding — a pattern that matches nothing guards nothing", () => {
+  it("the shell's commands are named by their binding — a pattern that matches nothing guards nothing", () => {
     const binding = shipped.find((f) => f.path === "apps/desktop/src/native.ts")!;
-    const [, command] = DRAW_PATTERNS.find(([label]) => label === "desktop shell command")!;
-    expect(binding.body.split("\n").some((l) => command.test(l)), "the shell's command pattern matches nothing").toBe(true);
+    for (const label of ["desktop shell command", "desktop shell alerts command"]) {
+      const [, command] = DRAW_PATTERNS.find(([named]) => named === label)!;
+      expect(binding.body.split("\n").some((l) => command.test(l)), `the pattern "${label}" matches nothing`).toBe(true);
+    }
+    // The alerts' binding is called by the window's one emitter, and that call is what the scan reads.
+    const emitter = shipped.find((f) => f.path === "apps/desktop/src/notice-emitter.ts")!;
+    const [, alerts] = DRAW_PATTERNS.find(([named]) => named === "desktop shell alerts")!;
+    expect(emitter.body.split("\n").some((l) => alerts.test(l)), "the alerts' binding is called nowhere the scan sees").toBe(true);
   });
 
   it("the bridge's act is named by its guard and its router — a transport that spells nothing is admitted for nothing", () => {

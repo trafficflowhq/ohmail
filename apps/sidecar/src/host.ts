@@ -4,7 +4,7 @@ import { describeMethod, describeRoute, type Diagnostic } from "./log.js";
 import { noteFirstPageServed } from "./first-page-gate.js";
 import {
   decodeRequest, encodeResponse,
-  type ErrorHeader, type LeavingHeader, type MailboxHeader, type ReadyHeader, type ReadyInfo, type RequestHeader,
+  type ErrorHeader, type HostedSessionHeader, type LeavingHeader, type MailboxHeader, type ReadyHeader, type ReadyInfo, type RequestHeader,
 } from "./protocol.js";
 
 /**
@@ -61,6 +61,7 @@ export interface StdioHost {
    * the one writer, so a response written after this resolves reaches the shell after the name.
    */
   mailbox(mailboxId: string): Promise<void>;
+  hostedSession(signedIn: boolean): Promise<void>;
   /** Resolves when the input ends AND every accepted request has been answered. */
   finished(): Promise<void>;
   /** Detach from the streams. Does not close them — the process owns those. */
@@ -252,6 +253,10 @@ export function serveOverStdio(opts: StdioHostOptions): StdioHost {
     async mailbox(mailboxId) {
       const header: MailboxHeader = { v: PROTOCOL_VERSION, t: "mailbox", mailboxId };
       await writer.write(header);
+    },
+    hostedSession(signedIn) {
+      const header: HostedSessionHeader = { v: PROTOCOL_VERSION, t: "hosted-session", signedIn };
+      return writer.write(header);
     },
     finished: () => finished,
     stop,

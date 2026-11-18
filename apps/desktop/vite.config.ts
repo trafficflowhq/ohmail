@@ -890,6 +890,8 @@ export default defineConfig({
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
       /* Behaviour without a screen: a folder's door, then a file by its own name. `tsconfig.json`'s
          `paths` carries the same pair, and the host contract's line under it. */
+      // The calendar's alerts: a folder's door two deep, above the rule that would read it as a file.
+      { find: "@ohmail/app-logic/calendar/alerts", replacement: r("../../packages/app-logic/src/calendar/alerts/index.ts") },
       { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1/index.ts` },
       { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
       // The letter's body: its three leaves ABOVE its door, each by its own file. `tsconfig.json`'s `paths` carries the same four.
@@ -921,6 +923,8 @@ export default defineConfig({
       { find: "@ohmail/app/frame", replacement: r("../../packages/app/src/frame/index.ts") },
       { find: "@ohmail/app/text", replacement: r("../../packages/app/src/text/index.ts") },
       { find: /^use-intl\/core$/, replacement: r("./node_modules/use-intl/dist/esm/core.js") },
+      // The calendar's core: the zone rules and the series' expansion the shell's calendar alerts are made with.
+      { find: "@ohmail/cal-core", replacement: r("../../packages/cal-core/src/index.ts") },
       /* Types only, so no import of it survives to be bundled; listed because `tsconfig.json`'s
          `paths` carries it and the two maps are held to each other. */
       { find: "@ohmail/wire", replacement: r("../../packages/wire/src/index.ts") },

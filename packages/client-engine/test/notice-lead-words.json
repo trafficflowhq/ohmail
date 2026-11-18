@@ -1,0 +1,197 @@
+{
+  "//": "HOW AN ALERT SAYS ITS LEAD: a whole number of minutes from 0 to four weeks, said in words that are true for any such number, an event's own alarms from its provider included. Read by packages/client-engine/test/notice-lead.test.ts (leadWords) and by apps/desktop/src-tauri/src/alerts_tests.rs (the shell's own words): one table, so the page and the shell say the same. `count` is null where the words carry no number.",
+  "rows": [
+    {
+      "leadMin": 0,
+      "allDay": false,
+      "as": "now",
+      "count": null
+    },
+    {
+      "leadMin": 1,
+      "allDay": false,
+      "as": "minutes",
+      "count": 1
+    },
+    {
+      "leadMin": 5,
+      "allDay": false,
+      "as": "minutes",
+      "count": 5
+    },
+    {
+      "leadMin": 10,
+      "allDay": false,
+      "as": "minutes",
+      "count": 10
+    },
+    {
+      "leadMin": 15,
+      "allDay": false,
+      "as": "minutes",
+      "count": 15
+    },
+    {
+      "leadMin": 30,
+      "allDay": false,
+      "as": "minutes",
+      "count": 30
+    },
+    {
+      "leadMin": 45,
+      "allDay": false,
+      "as": "minutes",
+      "count": 45
+    },
+    {
+      "leadMin": 59,
+      "allDay": false,
+      "as": "minutes",
+      "count": 59
+    },
+    {
+      "leadMin": 60,
+      "allDay": false,
+      "as": "hours",
+      "count": 1
+    },
+    {
+      "leadMin": 90,
+      "allDay": false,
+      "as": "minutes",
+      "count": 90
+    },
+    {
+      "leadMin": 120,
+      "allDay": false,
+      "as": "hours",
+      "count": 2
+    },
+    {
+      "leadMin": 1380,
+      "allDay": false,
+      "as": "hours",
+      "count": 23
+    },
+    {
+      "leadMin": 1440,
+      "allDay": false,
+      "as": "days",
+      "count": 1
+    },
+    {
+      "leadMin": 1441,
+      "allDay": false,
+      "as": "minutes",
+      "count": 1441
+    },
+    {
+      "leadMin": 1500,
+      "allDay": false,
+      "as": "hours",
+      "count": 25
+    },
+    {
+      "leadMin": 2880,
+      "allDay": false,
+      "as": "days",
+      "count": 2
+    },
+    {
+      "leadMin": 10080,
+      "allDay": false,
+      "as": "weeks",
+      "count": 1
+    },
+    {
+      "leadMin": 11520,
+      "allDay": false,
+      "as": "days",
+      "count": 8
+    },
+    {
+      "leadMin": 20160,
+      "allDay": false,
+      "as": "weeks",
+      "count": 2
+    },
+    {
+      "leadMin": 40320,
+      "allDay": false,
+      "as": "weeks",
+      "count": 4
+    },
+    {
+      "leadMin": 0,
+      "allDay": true,
+      "as": "today",
+      "count": null
+    },
+    {
+      "leadMin": 1,
+      "allDay": true,
+      "as": "tomorrow",
+      "count": null
+    },
+    {
+      "leadMin": 900,
+      "allDay": true,
+      "as": "tomorrow",
+      "count": null
+    },
+    {
+      "leadMin": 1440,
+      "allDay": true,
+      "as": "tomorrow",
+      "count": null
+    },
+    {
+      "leadMin": 1441,
+      "allDay": true,
+      "as": "days",
+      "count": 2
+    },
+    {
+      "leadMin": 2340,
+      "allDay": true,
+      "as": "days",
+      "count": 2
+    },
+    {
+      "leadMin": 2880,
+      "allDay": true,
+      "as": "days",
+      "count": 2
+    },
+    {
+      "leadMin": 9180,
+      "allDay": true,
+      "as": "weeks",
+      "count": 1
+    },
+    {
+      "leadMin": 10080,
+      "allDay": true,
+      "as": "weeks",
+      "count": 1
+    },
+    {
+      "leadMin": 10081,
+      "allDay": true,
+      "as": "days",
+      "count": 8
+    },
+    {
+      "leadMin": 20160,
+      "allDay": true,
+      "as": "weeks",
+      "count": 2
+    },
+    {
+      "leadMin": 40320,
+      "allDay": true,
+      "as": "weeks",
+      "count": 4
+    }
+  ]
+}

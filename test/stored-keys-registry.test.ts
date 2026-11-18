@@ -34,6 +34,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 import { STORED_KEYS, type StoredKeyRow } from "../packages/client-engine/src/stored-keys.js";
 
 /** The repository's root, which the suite runs from; from anywhere else the walk below finds no tree and throws. */
@@ -79,10 +80,6 @@ const NOT_STORED: Readonly<Record<string, string>> = {
   "ohmail-": "a user-agent word's prefix",
   "ohmail-desktop-host.invalid": "the name on the local door's own certificate",
   "ohmail-organizer": "the phone's background task name",
-  "ohmail-new-mail": "a notification's tag",
-  "ohmail-screener": "a notification's tag",
-  "ohmail-scheduled": "a notification's tag",
-  "ohmail-pairing": "a notification's tag",
   "ohmail-omarchy-live": "a style element's id",
   "ohmail-hear-probe": "a message type a letter's frame is asked with",
   "ohmail-link:": "the scheme a letter's links are rewritten to inside its frame",
@@ -250,24 +247,72 @@ const withoutComments = (text: string): string => text
   .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
   .replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a: string) => a + " ".repeat(m.length - a.length));
 
-interface Found { spelling: string; at: string }
+/** Only these notification delivery slots use the browser's tag. A storage use of the same words needs a row. */
+const NOTICE_PAGE = "apps/webapp/app/shell/notice-emitter.ts";
+const NOTICE_WORKER = "apps/webapp/public/sw.js";
+const NOTICE_TAGS: Readonly<Record<string, string>> = {
+  ohbox: "ohmail-new-mail", screener: "ohmail-screener", scheduled: "ohmail-scheduled", pairing: "ohmail-pairing",
+  cal_alert: "ohmail-cal-alert", cal_invitation: "ohmail-cal-invitation", cal_change: "ohmail-cal-change",
+  cal_answer: "ohmail-cal-answer", cal_found: "ohmail-cal-found",
+};
+
+/** Literal positions in the page's actual tag table or the worker's notification options. */
+function noticeTagPositions(file: string, raw: string): ReadonlySet<number> {
+  const positions = new Set<number>();
+  if (file !== NOTICE_PAGE && file !== NOTICE_WORKER) return positions;
+  const source = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest);
+  const mark = (value: ts.Expression | undefined, expected: string | undefined): void => {
+    if (value && ts.isStringLiteral(value) && value.text === expected) positions.add(value.getStart(source));
+  };
+  const properties = (value: ts.Expression | undefined, names: Readonly<Record<string, string>>): void => {
+    if (!value || !ts.isObjectLiteralExpression(value)) return;
+    for (const property of value.properties) {
+      if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name))
+        mark(property.initializer, names[property.name.text]);
+    }
+  };
+  if (file === NOTICE_PAGE) {
+    for (const statement of source.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const entry of statement.declarationList.declarations) {
+        if (ts.isIdentifier(entry.name) && entry.name.text === "TAGS") properties(entry.initializer, NOTICE_TAGS);
+      }
+    }
+  }
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression.getText(source);
+      if (file === NOTICE_WORKER && callee === "self.registration.showNotification")
+        properties(node.arguments[1], { tag: "ohmail-new-mail" });
+      if (file === NOTICE_PAGE && callee === "tag.startsWith") mark(node.arguments[0], "ohmail-cal-");
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return positions;
+}
+
+interface Found { spelling: string; at: string; noticeTag?: true }
 
 /** Every candidate spelling of one file, in the five forms. A composed name counts as its fixed head. */
 function candidatesIn(file: string, raw: string): Found[] {
   const text = file.endsWith(".json") ? raw : withoutComments(raw);
   const out: Found[] = [];
+  const tags = noticeTagPositions(file, raw);
   /** A sentence is no name, except where it stands as a store call's own argument. */
-  const note = (spelling: string, index: number, sentences = false): void => {
+  const note = (spelling: string, index: number, sentences = false, noticeTag = false): void => {
     const head = spelling.includes("${") ? spelling.slice(0, spelling.indexOf("${")) : spelling;
     if (head === "" || (!sentences && /\s/.test(head))) return;
-    out.push({ spelling: head, at: `${file}:${text.slice(0, index).split("\n").length}` });
+    out.push({ spelling: head, at: `${file}:${text.slice(0, index).split("\n").length}`, ...(noticeTag ? { noticeTag: true } : {}) });
   };
-  for (const m of text.matchAll(LITERAL)) if (PRODUCT.test(m[2]!)) note(m[2]!, m.index!);
+  for (const m of text.matchAll(LITERAL)) {
+    if (PRODUCT.test(m[2]!)) note(m[2]!, m.index!, false, tags.has(m.index!));
+  }
   for (const m of text.matchAll(USED)) note(m[2]!, m.index!, true);
   if (TOUCHES_A_STORE.test(raw) || file.endsWith(".json")) for (const m of text.matchAll(NAMED)) note(m[3]!, m.index!);
   if (WRITES_FILES.test(raw)) for (const m of text.matchAll(file.endsWith(".rs") ? JOINED_RUST : JOINED)) note(m[2]!, m.index!);
   if (file.endsWith(".rs")) for (const f of text.matchAll(NAMING_FN)) for (const m of f[1]!.matchAll(ARM)) note(m[1]!, f.index!);
-  return [...new Map(out.map((c) => [`${c.at} ${c.spelling}`, c])).values()];
+  return [...new Map(out.map((c) => [`${c.at} ${c.spelling} ${c.noticeTag === true}`, c])).values()];
 }
 
 /** The file of a `file:line`. */
@@ -287,7 +332,8 @@ function unregistered(
 ): string[] {
   const earlier = new Set(Object.keys(EARLIER_NAMES));
   const out: string[] = [];
-  for (const { spelling, at } of found) {
+  for (const { spelling, at, noticeTag } of found) {
+    if (noticeTag) continue;
     if (earlier.has(spelling) || spelling in notStored || `${fileOf(at)} ${spelling}` in notStoredHere) continue;
     const mine = rows.filter((r) => r.key === spelling || (r.family === true && spelling.startsWith(r.key)));
     if (mine.length === 0) out.push(`${at} ${spelling}`);
@@ -368,6 +414,12 @@ describe("the registry of stored keys", () => {
     expect(Object.keys(NOT_STORED_HERE).filter((s) => s.slice(s.indexOf(" ") + 1) in NOT_STORED), "listed for a file and for everywhere").toEqual([]);
   });
 
+  it("recognizes the delivery tags at the page and worker that draw them", () => {
+    const tagsAt = (file: string) => found.filter(f => f.noticeTag && fileOf(f.at) === file).map(f => f.spelling).sort();
+    expect(tagsAt(NOTICE_PAGE)).toEqual([...Object.values(NOTICE_TAGS), "ohmail-cal-"].sort());
+    expect(tagsAt(NOTICE_WORKER)).toEqual([NOTICE_TAGS.ohbox]);
+  });
+
   it("the rows are whole: a file each, a reason for a drop, a target that is a row, no words dropped", () => {
     expect(malformed(STORED_KEYS)).toEqual([]);
   });
@@ -417,6 +469,45 @@ describe("the registry of stored keys", () => {
       "planted.ts:5 pairing.backup", "planted.ts:6 side.db", "planted.ts:7 side-copy", "planted.ts:8 pages-v2", "planted.ts:9 tabs",
       "planted.ts:10 Archive/Old",
     ]);
+  });
+
+  it("requires a storage row when a browser notification tag becomes a store key", () => {
+    const lines = [
+      'localStorage.setItem("ohmail-screener", "1");',
+      'sessionStorage.getItem("ohmail-scheduled");',
+      'SecureStore.setItemAsync("ohmail-pairing", "1");',
+      'durableSet("ohmail-cal-alert", "1", "setting");',
+      'indexedDB.open("ohmail-new-mail");',
+    ];
+    for (const file of ["apps/webapp/app/shell/notice-emitter.ts", "apps/webapp/public/sw.js", "planted.ts"]) {
+      expect(unregistered(candidatesIn(file, lines.join("\n")), STORED_KEYS, NOT_STORED, NOT_STORED_HERE)).toEqual([
+        `${file}:1 ohmail-screener`, `${file}:2 ohmail-scheduled`, `${file}:3 ohmail-pairing`,
+        `${file}:4 ohmail-cal-alert`, `${file}:5 ohmail-new-mail`,
+      ]);
+    }
+    const emitter = "apps/webapp/app/shell/notice-emitter.ts";
+    expect(unregistered(candidatesIn(emitter, [
+      'const RECEIPT_KEY = "ohmail-scheduled";',
+      'localStorage.setItem(RECEIPT_KEY, "1");',
+      'const fallback = "ohmail-pairing";',
+      'sessionStorage.setItem(fallback, "1");',
+    ].join("\n")), STORED_KEYS, NOT_STORED, NOT_STORED_HERE)).toEqual([`${emitter}:1 ohmail-scheduled`, `${emitter}:3 ohmail-pairing`]);
+    const storageMap = [
+      'const STORAGE_KEYS = {',
+      '  scheduled: "ohmail-scheduled",',
+      '};',
+      'const TAGS = { scheduled: STORAGE_KEYS.scheduled };',
+      'localStorage.setItem(STORAGE_KEYS.scheduled, "1");',
+    ];
+    expect(unregistered(candidatesIn(NOTICE_PAGE, storageMap.join("\n")), STORED_KEYS, NOT_STORED, NOT_STORED_HERE))
+      .toEqual([`${NOTICE_PAGE}:2 ohmail-scheduled`]);
+    const workerMap = ['const saved = {', '  tag: "ohmail-new-mail",', '};', 'durableSet(saved.tag, "1", "setting");'];
+    expect(unregistered(candidatesIn(NOTICE_WORKER, workerMap.join("\n")), STORED_KEYS, NOT_STORED, NOT_STORED_HERE))
+      .toEqual([`${NOTICE_WORKER}:2 ohmail-new-mail`]);
+    const localRow: StoredKeyRow = {
+      ...known, key: "ohmail-screener", family: undefined, at: ["planted.ts"],
+    } as StoredKeyRow;
+    expect(unregistered(candidatesIn("planted.ts", lines[0]!), [localRow], NOT_STORED, NOT_STORED_HERE)).toEqual([]);
   });
 
   it("REFUSES one assigned to a constant named as a key, a file, a folder or a channel, in a file that touches a store", () => {

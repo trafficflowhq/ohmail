@@ -278,7 +278,10 @@ import { TrashView } from "../views/TrashView";
 import type { TrashWire } from "./trash-window";
 import { TriageView } from "../views/TriageView";
 import { DraftsView } from "../views/DraftsView";
-import { readChannels, reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
+import {
+  readCalendarNotices, readChannels, reconcileWakeRegistration, updateNotifyWords, useNoticesVersion,
+} from "./notification-settings.js";
+import { useHostCalendarNotices } from "@ohmail/app-logic/calendar/alerts";
 import { usePersistedFlag, UI_KEYS } from "@ohmail/app-logic/storage/persisted-ui";
 import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
 import { TodaysScopeProvider } from "./todays-scope";
@@ -1419,14 +1422,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
      and this surface's emitter draws what it answers. Nothing where the host hands in no emitter;
      the choices and the permission are read at each settle, so a switch pressed counts at once. */
   const devicesShown = effectiveView === "settings" && route.settingsPane === "devices";
-  const noticeReads = useMemo(() => noticeReadsOf(engine, notificationHost ?? null, {
-    choices: () => noticeChoicesOf(readChannels(), null, { ohcalPhone: false }),
-    // The Devices list is open in a window that is being looked at: the person is reading it.
+  const noticeChoices = () => noticeChoicesOf(readChannels(), readCalendarNotices(), { ohcalPhone: false });
+  const noticeEmitter = notificationHost?.emitter ?? NONE;
+  const noticeCalendar = useHostCalendarNotices(
+    frame.host, facts === null && ownAddresses.length === 0 ? null : ownAddresses,
+    () => noticeChoices().showTitles, noticeEmitter === NONE ? [] : noticeEmitter.acts,
+  );
+  const noticeReads = noticeReadsOf(engine, notificationHost ?? null, {
+    choices: noticeChoices,
     atDevices: () => devicesShown && typeof document !== "undefined" && document.hasFocus(),
-  }), [engine, notificationHost, devicesShown]);
+    calendar: noticeCalendar,
+  });
+  /* A switch pressed with no mail moving settles the caller too: the version moves with this device's choices. */
+  const noticesVersion = useNoticesVersion(derived);
   useNotices({
     reader: presented,
-    version: derived,
+    version: noticesVersion,
     settled: mailState.settled && screener.storeSettled,
     scope,
     emitter: notificationHost?.emitter ?? "none",

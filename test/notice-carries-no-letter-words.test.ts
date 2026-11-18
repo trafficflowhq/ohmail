@@ -12,11 +12,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  MemoryMirrorStore, NOTICE_KINDS, alertNotice, answeredNotice, cancelledNotice, decideNotices, foundNotice,
+  CALENDAR_NOTICE_KINDS, MemoryMirrorStore, NOTICE_KINDS, alertNotice, answeredNotice, cancelledNotice, decideNotices, foundNotice,
   invitationNotice, mayPost, movedNotice, noticeChoicesOf, noticeFields, noticeSampleOf, summaryNotice,
   type Clock, type Notice, type NoticeChoices, type NoticeKind, type NoticeSample, type SyncChange,
 } from "@ohmail/client-engine";
-import type { CalendarEventRecord, CalendarSuggestionRecord } from "@ohmail/wire";
+import {
+  CALENDAR_SNAPSHOT_VERSION, aheadAlert, aheadSet, eventLabel, readAheadSet, readCalendarSnapshot, type AheadSet, type NoticeAhead,
+} from "@ohmail/client-engine";
+import type { CalendarEventRecord, CalendarRecord, CalendarSuggestionRecord } from "@ohmail/wire";
+import { intlZones } from "@ohmail/cal-core";
+import { calendarLookOf, calendarSampleOf } from "@ohmail/app-logic/calendar/alerts";
 import EN from "../apps/webapp/messages/en.json" with { type: "json" };
 import { noticeWordingOf, webNoticeEmitter } from "../apps/webapp/app/shell/notice-emitter.js";
 import { desktopNoticeEmitter } from "../apps/desktop/src/notice-emitter.js";
@@ -64,6 +69,7 @@ const PHONE_DRAWS = noticeKindsHere(phone().deps);
 function stringsOf(value: unknown, out: string[] = []): string[] {
   if (typeof value === "string") out.push(value);
   else if (value instanceof Map) for (const [k, v] of value) { stringsOf(k, out); stringsOf(v, out); }
+  else if (value instanceof Set) for (const v of value) stringsOf(v, out);
   else if (Array.isArray(value)) for (const v of value) stringsOf(v, out);
   else if (typeof value === "object" && value !== null) for (const [k, v] of Object.entries(value)) { out.push(k); stringsOf(v, out); }
   return out;
@@ -88,6 +94,24 @@ const ARMS: readonly Arm[] = [
     },
   },
   {
+    // An alert set ahead: the record that crosses to a surface that rings by itself (the desktop's shell, a
+    // phone's alarms), made by the one maker and read closed as that side reads it. Its label is its title field.
+    name: "set ahead",
+    carries: ["cal_alert"],
+    draw(notice) {
+      if (notice.kind !== "cal_alert") return { title: "", rest: [] };
+      const atMs = AHEAD_START - notice.leadMin * 60_000;
+      const alert: NoticeAhead = {
+        id: `${notice.eventId}.${AHEAD_START}.${notice.leadMin}`, eventId: notice.eventId, atMs, startMs: AHEAD_START,
+        allDay: notice.allDay, label: notice.label, leadMin: notice.leadMin, acts: notice.acts,
+      };
+      const crossed = readAheadSet(JSON.parse(JSON.stringify(aheadSet("mb-1", [alert], atMs))));
+      if (crossed === null || crossed.alerts.length !== 1) return { title: "", rest: [] };
+      const { label, ...rest } = crossed.alerts[0]!;
+      return { title: label.as === "title" ? label.text : "", rest: [crossed.scope, ...stringsOf(rest), ...stringsOf({ as: label.as })] };
+    },
+  },
+  {
     // The page: its real emitter, over a page that records every notice it is asked to draw.
     name: "web",
     carries: webNoticeEmitter({ focused: () => false, visible: () => true, show: () => {}, closeAll: async () => {} }, () => WEB_WORDS).carries,
@@ -103,16 +127,30 @@ const ARMS: readonly Arm[] = [
   },
   {
     // The desktop's window: its real emitter, over a shell that records what crosses to it. The
-    // shell writes the words (`notice.rs`): an event's label, where one crosses, is its title field.
+    // shell writes the words (`notice.rs`, `alerts.rs`): an event's label, where one crosses, is its
+    // title field. An alert crosses as the account's set handed ahead, never as a post: the arm hands
+    // the emitter the set the caller would, and walks what crossed like the row above.
     name: "desktop",
-    carries: desktopNoticeEmitter({ focused: () => false, post: async () => {} }).carries,
+    carries: desktopNoticeEmitter({ focused: () => false, post: async () => {}, alerts: async () => [] }).carries,
     draw(notice) {
       const crossed: unknown[] = [];
-      desktopNoticeEmitter({ focused: () => false, post: async (n) => { crossed.push(n); } }).post(notice);
+      const emitter = desktopNoticeEmitter({
+        focused: () => false,
+        post: async (n) => { crossed.push(n); },
+        alerts: async (set) => { crossed.push(set); return []; },
+      });
+      const set = setAheadOf(notice);
+      if (set !== null && emitter.ahead !== "none") emitter.ahead(set);
+      else emitter.post(notice);
       if (crossed.length === 0) return { title: "", rest: [] };
-      const { label, ...rest } = crossed[0] as { label?: { as: string; text?: string } };
+      const first = crossed[0] as { scope?: string; alerts?: readonly NoticeAhead[]; label?: { as: string; text?: string } };
+      const [one, scope] = first.alerts === undefined ? [first, []] : [first.alerts[0] ?? {}, [first.scope ?? ""]];
+      const { label, ...rest } = one as { label?: { as: string; text?: string } };
       const title = label?.as === "title" ? label.text ?? "" : "";
-      return { title, rest: [...stringsOf(rest), ...(label ? stringsOf({ as: label.as }) : []), ...stringsOf(crossed.slice(1))] };
+      return {
+        title,
+        rest: [...scope, ...stringsOf(rest), ...(label ? stringsOf({ as: label.as }) : []), ...stringsOf(crossed.slice(1))],
+      };
     },
   },
   {
@@ -136,6 +174,19 @@ const ARMS: readonly Arm[] = [
 ];
 
 const AT = "2026-11-10T09:24:00.000Z";
+/** The start the planted event's alert is set ahead for: 14:00 that day. */
+const AHEAD_START = Date.UTC(2026, 10, 10, 14, 0);
+
+/**
+ * The set the one caller hands a surface that rings by itself for an alert: made by the one maker
+ * from the notice's own members, with no act (the window carries none). `null` for any other kind.
+ */
+function setAheadOf(notice: Notice): AheadSet | null {
+  if (notice.kind !== "cal_alert") return null;
+  const alert = aheadAlert({ id: notice.eventId, title: notice.label.as === "title" ? notice.label.text : "", private: notice.label.as === "busy", heldBack: false },
+    notice.label.as === "title", { startMs: AHEAD_START, allDay: notice.allDay, leadMin: notice.leadMin, acts: [] });
+  return alert === null ? null : aheadSet("mb-1", [alert], alert.atMs);
+}
 let seq = 0;
 const change = (type: string, id: string, entity: unknown, op: "create" | "update" = "create"): SyncChange =>
   ({ type, op, id, seq: ++seq, updatedAt: AT, entity }) as SyncChange;
@@ -180,12 +231,35 @@ const choicesWith = (showTitles: boolean): NoticeChoices => noticeChoicesOf(STOR
 const TWO: Clock = { hour: 14, minute: 0, day: "today" };
 const ELEVEN: Clock = { hour: 11, minute: 0, day: { month: 11, dom: 20, dow: 5 } };
 
-/** The planted world before and after the letters arrive, as the copy's own sample reads it. */
+/** The planted event's calendar, named with a marker of its own: a calendar's name is no notice's either. */
+const CALENDAR: CalendarRecord = {
+  id: "cal-1", connectionId: "conn-1", name: "Zqcalendar studio", color: null, access: "owner", shown: true, timeZone: "Europe/Zurich",
+  window: null, defaultAlarms: [], lastSyncedAt: null, errorCode: null, updatedAt: AT,
+} as CalendarRecord;
+const ZONES = intlZones();
+
+/** The calendar's part of the copy's sample, as the page reads it, over the sample before. */
+const calendarPartOf = (store: MemoryMirrorStore, before: NoticeSample | null) => calendarSampleOf({
+  events: store.list<CalendarEventRecord>("calendar_event").map((record) => ({ record, waiting: null, refusal: null, refusedWriteId: null })),
+  calendars: store.list<CalendarRecord>("calendar"), suggestions: store.list<CalendarSuggestionRecord>("calendar_suggestion"),
+  ownAddresses: [], zone: "Europe/Zurich", zones: ZONES,
+}, before?.calendar ?? null);
+
+/** What the gate looks up in the planted world to name what it decided on. */
+const lookOf = (store: MemoryMirrorStore) => calendarLookOf({
+  events: store.list<CalendarEventRecord>("calendar_event").map((record) => ({ record, waiting: null, refusal: null, refusedWriteId: null })),
+  suggestions: store.list<CalendarSuggestionRecord>("calendar_suggestion"), zone: "Europe/Zurich", zones: ZONES, nowMs: Date.parse(AT),
+});
+
+/** The planted world before and after the letters arrive, as the copy's own sample reads it, the calendar's part with it. */
 async function mailWorld(): Promise<{ store: MemoryMirrorStore; before: NoticeSample; after: NoticeSample }> {
   const store = new MemoryMirrorStore();
   await store.load();
-  await store.applyChanges([change("draft", "later", draft("later", "scheduled", null)), change("draft", "kept", draft("kept", "scheduled", null))]);
-  const before = noticeSampleOf(store, { made: 1, revoked: 0, live: 1 });
+  await store.applyChanges([
+    change("draft", "later", draft("later", "scheduled", null)), change("draft", "kept", draft("kept", "scheduled", null)),
+    change("calendar", "cal-1", CALENDAR),
+  ]);
+  const before = noticeSampleOf(store, { made: 1, revoked: 0, live: 1 }, calendarPartOf(store, null));
   await store.applyChanges([
     change("message", "arrived", letter("arrived", "INBOX", { name: LETTER.senderName, address: LETTER.senderAddress })),
     change("message", "waits", letter("waits", "ohmail/Screener", { name: null, address: LETTER.stranger })),
@@ -194,7 +268,7 @@ async function mailWorld(): Promise<{ store: MemoryMirrorStore; before: NoticeSa
     change("calendar_event", "shown", event("shown")),
     change("calendar_suggestion", "found", proposal("found")),
   ]);
-  return { store, before, after: noticeSampleOf(store, { made: 2, revoked: 0, live: 2 }) };
+  return { store, before, after: noticeSampleOf(store, { made: 2, revoked: 0, live: 2 }, calendarPartOf(store, before)) };
 }
 
 /**
@@ -276,6 +350,24 @@ describe("a notice carries no letter's words", () => {
     expect(holding(stringsOf(before).concat(stringsOf(after)), "zq"), "the sample itself holds a letter's words").toEqual([]);
   });
 
+  it("calendar: a sync turn's notices are made by the makers, with the title only in the title field and no letter's words", async () => {
+    const { store, before, after } = await mailWorld();
+    expect(after.calendar, "the planted world held no calendar for the sample").not.toBeNull();
+    // The calendar's kinds alone: what mail's part of the same turn rang is the mail case's.
+    const notices = decideNotices(before, after, choicesWith(true), "granted", CALENDAR_NOTICE_KINDS, lookOf(store));
+    // The planted world rang: the invitation that arrived and what the letter proposed.
+    expect(notices.map((n) => n.kind)).toEqual(["cal_invitation", "cal_found"]);
+    const all = await everywhere(notices);
+    for (const marker of [...NEVER, "zqcalendar"]) expect(holding(all, marker), marker).toEqual([]);
+    for (const arm of ARMS) expect(await faults(arm, notices), arm.name).toEqual([]);
+    for (const hidden of [{ ...choicesWith(false) }, { ...choicesWith(true), cal_invitation: false }]) {
+      const quiet = decideNotices(before, after, hidden, "granted", CALENDAR_NOTICE_KINDS, lookOf(store));
+      expect(holding(await everywhere(quiet), TITLE.toLowerCase())).toEqual([]);
+    }
+    // The samples themselves hold ids and numbers: no title, no calendar's name, no letter's words.
+    expect(holding(stringsOf([before, after]), "zq"), "a sample holds an event's or a letter's words").toEqual([]);
+  });
+
   it("calendar: an event's title stands in the title field of the kinds that name an event, and nowhere else", async () => {
     const { store } = await mailWorld();
     const notices = calendarNotices(store, choicesWith(true));
@@ -351,5 +443,61 @@ describe("a notice carries no letter's words", () => {
     expect(calendarNotices(store, { ...on, master: false })).toEqual([]);
     expect(calendarNotices(store, { ...on, cal_found: false, cal_alert: false }).map((n) => n.kind))
       .toEqual(["cal_invitation", "cal_change", "cal_change", "cal_answer", "cal_summary"]);
+  });
+
+  it("calendar: what is set ahead and what the phone is left hold an event's title in a label, and nothing else of the event or of a letter", async () => {
+    const { store } = await mailWorld();
+    const planted = store.get<CalendarEventRecord>("calendar_event", "shown")!;
+    const nowMs = AHEAD_START - 60 * 60_000;
+    /** The set and the phone's record as the page makes them from the planted event, read closed as the other side reads them. */
+    const left = (over: Partial<CalendarEventRecord>, showTitles: boolean, widgetTitles: boolean) => {
+      const e = { ...planted, ...over };
+      const alert = aheadAlert(e, showTitles, { startMs: AHEAD_START, allDay: false, leadMin: 10, acts: ["join", "again"] });
+      const set = readAheadSet(JSON.parse(JSON.stringify(aheadSet("mb-1", alert === null ? [] : [alert], nowMs))))!;
+      const label = eventLabel(e, widgetTitles);
+      const events = label === null ? [] : [{ eventId: e.id, label, startMs: AHEAD_START, endMs: AHEAD_START + 3_600_000, allDay: false, toAnswer: true }];
+      const snapshot = readCalendarSnapshot(JSON.parse(JSON.stringify({
+        v: CALENDAR_SNAPSHOT_VERSION, scope: "mb-1", writtenAt: nowMs, zone: "Europe/Zurich", alerts: set.alerts,
+        days: [{ year: 2026, date: { month: 11, dom: 10, dow: 2 }, events, more: 0 }],
+        month: { year: 2026, month: 11, marked: [10] }, toAnswer: 1,
+        summary: { atMs: nowMs + 86_400_000, events: 1, first: TWO, toAnswer: 1 },
+      })));
+      return { set, snapshot };
+    };
+    /** Every string of `value` outside a label's text, and the texts of its labels. */
+    const split = (value: unknown): { texts: string[]; rest: string[] } => {
+      const texts: string[] = [];
+      const rest = stringsOf(JSON.parse(JSON.stringify(value, (key, v) => {
+        if (key === "label" && typeof v === "object" && v !== null && (v as { as?: string }).as === "title") {
+          texts.push((v as { text: string }).text);
+          return { as: "title" };
+        }
+        return v;
+      })));
+      return { texts, rest };
+    };
+
+    const shown = left({}, true, true);
+    expect(shown.snapshot, "the phone's record did not read").not.toBeNull();
+    expect(shown.set.alerts).toHaveLength(1);
+    for (const record of [shown.set, shown.snapshot]) {
+      const { texts, rest } = split(record);
+      // The title stands in a label, once for each place that names the event, and nowhere else.
+      expect(texts.every((text) => text.includes(TITLE)), "a label's text is not the title").toBe(true);
+      expect(texts).toHaveLength(record === shown.set ? 1 : 2);
+      expect(holding(rest, TITLE.toLowerCase())).toEqual([]);
+      for (const marker of NEVER) expect(holding([...texts, ...rest], marker), marker).toEqual([]);
+    }
+    // Hidden by each surface's own switch, a private event, a held-back invitation: no title at all.
+    const silenced = [left({}, false, false), left({ private: true }, true, true), left({ heldBack: true }, true, true)];
+    for (const { set, snapshot } of silenced) {
+      expect(snapshot).not.toBeNull();
+      for (const marker of [...NEVER, TITLE.toLowerCase()]) expect(holding(stringsOf([set, snapshot]), marker), marker).toEqual([]);
+    }
+    expect(silenced[2]!.set.alerts, "a held-back invitation was set to ring").toEqual([]);
+    expect(silenced[2]!.snapshot!.days[0]!.events, "a held-back invitation is on a widget").toEqual([]);
+    // The two switches are two: titles hidden in notifications stay shown on the widgets, and the other way round.
+    expect(split(left({}, false, true).snapshot).texts).toHaveLength(1);
+    expect(split(left({}, true, false).snapshot).texts).toHaveLength(1);
   });
 });

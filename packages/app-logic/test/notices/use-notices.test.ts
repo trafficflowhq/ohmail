@@ -4,14 +4,23 @@
  * gate answered. A switch that is off calls nothing; another account starts from nothing and takes
  * back what was drawn for the one left.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import {
   MAIL_NOTICE_KINDS,
   MemoryMirrorStore,
+  OhmailEngine,
+  HttpAdapter,
+  NOTICE_KINDS,
+  aheadAlert,
+  aheadSet,
   noticeChoicesOf,
+  type AheadSet,
+  type Clock,
   type Notice,
+  type NoticeAct,
+  type NoticeAhead,
   type NoticeChoices,
   type NoticeDevices,
   type NoticeKind,
@@ -19,6 +28,19 @@ import {
   type NoticeTaken,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { intlZones } from "@ohmail/cal-core";
+import { createSyncGate, registerSyncGate } from "../../src/session/sync-scheduler.js";
+import { markSessionDead, resetSessionTruthForTests } from "../../src/session/session-truth.js";
+import { OWNER_COOKIE, readOwner } from "../../src/storage/owner-cookie.js";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "../../src/storage/storage-owner.js";
+import { calendarReadsOf, liveCalendarScope } from "../../src/calendar/alerts/index.js";
+import {
+  OWN,
+  ZURICH,
+  calendarOf as shownCalendar,
+  invitation,
+  suggestion,
+} from "../calendar/invitations/fixtures.js";
 import type { StorageDoor } from "@ohmail/client-engine/durable";
 import {
   NoticeCaller,
@@ -27,6 +49,7 @@ import {
   toldDevicesIn,
   toldDevicesKey,
   useNotices,
+  type CalendarReads,
   type HostNoticeEmitter,
   type NoticesMount,
   type ToldDevices,
@@ -133,6 +156,7 @@ function callerOf(
     devices?: () => NoticeDevices | null;
     atDevices?: () => ToldDevices | null;
     told?: ToldDevicesStore;
+    calendar?: CalendarReads;
   } = {},
 ) {
   return new NoticeCaller(emitter, {
@@ -141,6 +165,7 @@ function callerOf(
     devices: over.devices ?? (() => null),
     atDevices: over.atDevices ?? (() => null),
     told: over.told ?? toldDevicesIn(jar()),
+    calendar: over.calendar ?? "none",
   });
 }
 
@@ -665,6 +690,7 @@ describe("the mounted caller", () => {
         devices: () => null,
         atDevices: () => null,
         told: toldDevicesIn(jar()),
+        calendar: "none",
       },
     };
     function Shell() {
@@ -680,5 +706,533 @@ describe("the mounted caller", () => {
       root.unmount();
     });
     expect(r.takenBack(), "a sign-out left the account's notices listed").toBe(1);
+  });
+});
+
+/** Tuesday 10 November 2026, 14:00 UTC, and the minute its alert rings: ten minutes before. */
+const START = Date.UTC(2026, 10, 10, 14, 0);
+const RINGS = START - 10 * 60_000;
+const TWO: Clock = { hour: 14, minute: 0, day: "today" };
+const weekly = (over: { id?: string; startMs?: number; acts?: readonly NoticeAct[] } = {}): NoticeAhead =>
+  aheadAlert(
+    { id: over.id ?? "ev-weekly", title: "Catalogue weekly", private: false, heldBack: false },
+    true,
+    {
+      startMs: over.startMs ?? START,
+      allDay: false,
+      leadMin: 10,
+      acts: over.acts ?? [],
+    },
+  )!;
+
+/** A calendar that wants `alerts` for the account `scope`, whoever asks. */
+function calendarOf(
+  scope: string,
+  alerts: () => readonly NoticeAhead[],
+  liveScope: () => string | null = () => scope,
+): CalendarReads & { asked: string[] } {
+  const asked: string[] = [];
+  return {
+    asked,
+    liveScope,
+    changes: () => null,
+    ahead: (under, nowMs) => {
+      asked.push(under);
+      return aheadSet(scope, alerts(), nowMs);
+    },
+    clock: () => TWO,
+  };
+}
+
+/** A surface that sets alerts itself: it records each set it is handed. */
+function setting(carries: readonly NoticeKind[] = NOTICE_KINDS) {
+  const r = recording(carries);
+  const sets: AheadSet[] = [];
+  const emitter: HostNoticeEmitter = { ...r.emitter, ahead: (set) => void sets.push(set) };
+  return { ...r, emitter, sets };
+}
+
+const ALERTS_ON = { cal_alert: true };
+
+describe("the one caller rings the calendar's alerts", () => {
+  it("uses the confirmed mirror or the mailbox served now, including a sign-out before the next render", () => {
+    const engine = new OhmailEngine({
+      adapter: new HttpAdapter({
+        fetch: () => {
+          throw new Error("unexpected network read");
+        },
+      }),
+    });
+    const session = { scope: "acct-a", state: "live" as const, liveNoticeScope: storageOwner };
+    try {
+      setStorageOwner("acct-a");
+      expect(liveCalendarScope(engine, session)).toBe("acct-a");
+      setStorageOwner("acct-b");
+      expect(liveCalendarScope(engine, session)).toBeNull();
+      setStorageOwner(null);
+
+      document.cookie = OWNER_COOKIE + "=acct-a; path=/";
+      session.liveNoticeScope = readOwner;
+      const gate = createSyncGate("acct-a");
+      registerSyncGate(engine, gate);
+      expect(liveCalendarScope(engine, session)).toBeNull();
+      gate.confirm("acct-a");
+      expect(liveCalendarScope(engine, session)).toBe("acct-a");
+      document.cookie = OWNER_COOKIE + "=acct-b; path=/";
+      expect(liveCalendarScope(engine, session)).toBeNull();
+      document.cookie = OWNER_COOKIE + "=acct-a; path=/";
+      expect(liveCalendarScope(engine, session)).toBeNull();
+      gate.confirm("acct-a");
+      expect(liveCalendarScope(engine, session)).toBe("acct-a");
+      markSessionDead();
+      expect(liveCalendarScope(engine, session)).toBeNull();
+    } finally {
+      document.cookie = OWNER_COOKIE + "=; Max-Age=0; path=/";
+      resetStorageOwnerForTest();
+      resetSessionTruthForTests();
+    }
+  });
+
+  it.each(["another account", "signed out", "event withdrawn"])(
+    "leaves a waiting alert silent when %s is observed before another settle",
+    async (change) => {
+      let live: string | null = "acct-a";
+      let wanted = [weekly()];
+      const r = recording(NOTICE_KINDS);
+      const calendar = { ...calendarOf("acct-a", () => wanted), liveScope: () => live };
+      const caller = callerOf(r.emitter, { choices: ALERTS_ON, calendar });
+      caller.settle("acct-a", await copyWith(), RINGS - 60_000);
+      expect(caller.nextAtMs()).toBe(RINGS);
+      if (change === "event withdrawn") wanted = [];
+      else live = change === "signed out" ? null : "acct-b";
+      caller.ring(RINGS);
+      expect(r.posted).toEqual([]);
+      expect(caller.nextAtMs()).toBeNull();
+    },
+  );
+
+  it("draws a newly arrived invitation and an offered suggestion only while the same calendar is live", async () => {
+    let live: string | null = "acct-a";
+    const clock = vi.spyOn(Date, "now").mockReturnValue(RINGS);
+    let shown = true;
+    const records = [invitation("first", "20261118")];
+    const proposals = [suggestion("first", "calendar")];
+    const calendar = calendarReadsOf({
+      liveScope: () => live,
+      events: () => records.map((record) => ({ record, waiting: null, refusal: null, refusedWriteId: null })),
+      calendars: () => [shownCalendar({ shown })],
+      suggestions: () => proposals,
+      ownAddresses: () => [OWN],
+      zone: () => ZURICH,
+      zones: intlZones(),
+      showTitles: () => true,
+      acts: [],
+    });
+    const r = recording(NOTICE_KINDS);
+    const delayed = new Map<string, () => boolean>();
+    const emitter: HostNoticeEmitter = {
+      ...r.emitter,
+      post(notice, current) {
+        if (current) delayed.set(notice.kind, current);
+        return r.emitter.post(notice);
+      },
+    };
+    const caller = callerOf(emitter, { choices: { cal_invitation: true, cal_found: true }, calendar });
+    const settle = () => caller.settle("acct-a", store, RINGS);
+    const store = await copyWith();
+    settle();
+    expect(r.posted).toEqual([]);
+    records.push(invitation("second", "20261118"));
+    proposals.push(suggestion("offered", "data"), suggestion("withheld", "rules"));
+    settle();
+    expect(r.posted.map((n) => n.kind)).toEqual(["cal_invitation", "cal_found"]);
+    const waiting = delayed.get("cal_invitation")!;
+    expect(waiting()).toBe(true);
+    shown = false;
+    expect(waiting(), "the invitation's calendar was hidden").toBe(false);
+    shown = true;
+    records[1] = invitation("second", "20261118", { myAnswer: "accepted" });
+    expect(waiting(), "the invitation has already been answered").toBe(false);
+    const found = delayed.get("cal_found")!;
+    expect(found()).toBe(true);
+    proposals.splice(1);
+    expect(found(), "an offer removed while the browser waited").toBe(false);
+    records[1] = invitation("second", "20261118", { private: true });
+    expect(waiting(), "a pending invitation cannot show its earlier public title").toBe(false);
+    live = null;
+    records.push(invitation("while-away", "20261119"));
+    settle();
+    live = "acct-a";
+    settle();
+    expect(r.posted).toHaveLength(2);
+    clock.mockRestore();
+  });
+
+  it.each(["signed out", "withdrawn", "redacted", "too late", "catch-up", "titles off"] as const)(
+    "checks a delayed reminder at delivery after it is %s",
+    async (change) => {
+      let live: string | null = "acct-a";
+      let wanted = [weekly()];
+      const choices = { ...ALERTS_ON, showTitles: true };
+      let allowed: () => boolean = () => true;
+      const emitter: HostNoticeEmitter = {
+        ...recording(NOTICE_KINDS).emitter,
+        post: (_notice, current?: () => boolean) => {
+          if (current) allowed = current;
+        },
+      };
+      const caller = callerOf(emitter, {
+        choices,
+        calendar: calendarOf(
+          "acct-a",
+          () => wanted,
+          () => live,
+        ),
+      });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(RINGS);
+      try {
+        caller.settle("acct-a", await copyWith(), RINGS);
+        expect(allowed()).toBe(true);
+        if (change === "signed out") live = null;
+        if (change === "withdrawn") wanted = [];
+        if (change === "redacted") wanted = [{ ...weekly(), label: { as: "busy" } }];
+        if (change === "too late") clock.mockReturnValue(RINGS + 121_000);
+        if (change === "catch-up") caller.suspendCalendar(RINGS);
+        if (change === "titles off") choices.showTitles = false;
+        expect(allowed()).toBe(false);
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
+  it("a brief catch-up does not repeat an alert the page just rang", async () => {
+    const r = recording(NOTICE_KINDS);
+    const caller = callerOf(r.emitter, {
+      choices: ALERTS_ON,
+      calendar: calendarOf("acct-a", () => [weekly()]),
+    });
+    const store = await copyWith();
+    caller.settle("acct-a", store, RINGS);
+    expect(r.posted).toHaveLength(1);
+    caller.suspendCalendar(RINGS + 1000);
+    expect(caller.nextAtMs()).toBeNull();
+    caller.settle("acct-a", store, RINGS + 2000);
+    expect(r.posted).toHaveLength(1);
+  });
+
+  it("rings an alert at its minute, once, as the notice the gate lets through", async () => {
+    const r = recording(NOTICE_KINDS);
+    const caller = callerOf(r.emitter, {
+      choices: ALERTS_ON,
+      calendar: calendarOf("acct-a", () => [weekly()]),
+    });
+    caller.settle("acct-a", await copyWith(), RINGS - 5 * 60_000);
+    expect(r.posted).toEqual([]);
+    expect(caller.nextAtMs()).toBe(RINGS);
+    caller.ring(RINGS - 1);
+    expect(r.posted).toEqual([]);
+    caller.ring(RINGS);
+    expect(r.posted).toEqual([
+      {
+        kind: "cal_alert",
+        eventId: "ev-weekly",
+        label: { as: "title", text: "Catalogue weekly" },
+        at: TWO,
+        allDay: false,
+        leadMin: 10,
+        acts: [],
+      },
+    ]);
+    caller.ring(RINGS + 1000);
+    caller.settle("acct-a", await copyWith(), RINGS + 2000);
+    expect(r.posted).toHaveLength(1);
+    expect(caller.nextAtMs()).toBeNull();
+  });
+
+  it("an alert already due when the copy settles rings at that settle", async () => {
+    const r = recording(NOTICE_KINDS);
+    const caller = callerOf(r.emitter, {
+      choices: ALERTS_ON,
+      calendar: calendarOf("acct-a", () => [weekly()]),
+    });
+    caller.settle("acct-a", await copyWith(), RINGS + 30_000);
+    expect(r.posted.map((n) => n.kind)).toEqual(["cal_alert"]);
+  });
+
+  it("hands a notice only the acts the surface carries", async () => {
+    const r = recording(NOTICE_KINDS);
+    const emitter: HostNoticeEmitter = { ...r.emitter, acts: ["again"] };
+    const caller = callerOf(emitter, {
+      choices: ALERTS_ON,
+      calendar: calendarOf("acct-a", () => [weekly({ acts: ["join", "again"] })]),
+    });
+    caller.settle("acct-a", await copyWith(), RINGS);
+    expect(r.posted).toMatchObject([{ kind: "cal_alert", acts: ["again"] }]);
+  });
+
+  it("rings nothing while the alerts' switch, the master or the platform says no, read at the alert's minute", async () => {
+    const refusals: { choices?: Partial<NoticeChoices>; permission?: () => NoticePermission }[] = [
+      {}, // alerts are off outside the calendar's phone app until switched on
+      { choices: { cal_alert: false } },
+      { choices: { cal_alert: true, master: false } },
+      { choices: ALERTS_ON, permission: () => "denied" },
+      { choices: ALERTS_ON, permission: () => "default" },
+    ];
+    for (const over of refusals) {
+      const r = recording(NOTICE_KINDS);
+      const caller = callerOf(r.emitter, { ...over, calendar: calendarOf("acct-a", () => [weekly()]) });
+      caller.settle("acct-a", await copyWith(), RINGS - 60_000);
+      caller.ring(RINGS);
+      expect(r.posted, JSON.stringify(over)).toEqual([]);
+    }
+    // A surface that does not carry alerts is handed none.
+    const mailOnly = recording(MAIL_NOTICE_KINDS);
+    const caller = callerOf(mailOnly.emitter, {
+      choices: ALERTS_ON,
+      calendar: calendarOf("acct-a", () => [weekly()]),
+    });
+    caller.settle("acct-a", await copyWith(), RINGS);
+    expect(mailOnly.posted).toEqual([]);
+    // Switched off between the settle and the minute: the choice read at the minute holds.
+    let on = true;
+    const r = recording(NOTICE_KINDS);
+    const late = new NoticeCaller(r.emitter, {
+      choices: () => ({ ...noticeChoicesOf(null, null, { ohcalPhone: false }), cal_alert: on }),
+      permission: () => "granted",
+      devices: () => null,
+      atDevices: () => null,
+      told: toldDevicesIn(jar()),
+      calendar: calendarOf("acct-a", () => [weekly()]),
+    });
+    late.settle("acct-a", await copyWith(), RINGS - 60_000);
+    on = false;
+    late.ring(RINGS);
+    expect(r.posted).toEqual([]);
+  });
+
+  it("an event that moved, was deleted or declined is missing from the next settle's alerts and does not ring", async () => {
+    const r = recording(NOTICE_KINDS);
+    let wanted: NoticeAhead[] = [weekly()];
+    const caller = callerOf(r.emitter, { choices: ALERTS_ON, calendar: calendarOf("acct-a", () => wanted) });
+    caller.settle("acct-a", await copyWith(), RINGS - 60_000);
+    wanted = [weekly({ startMs: START + 30 * 60_000 })];
+    caller.settle("acct-a", await copyWith(), RINGS - 30_000);
+    caller.ring(RINGS);
+    expect(r.posted, "the old minute rang after the event moved").toEqual([]);
+    expect(caller.nextAtMs()).toBe(RINGS + 30 * 60_000);
+    wanted = [];
+    caller.settle("acct-a", await copyWith(), RINGS + 60_000);
+    caller.ring(RINGS + 30 * 60_000);
+    expect(r.posted, "a deleted or declined event rang").toEqual([]);
+    expect(caller.nextAtMs()).toBeNull();
+  });
+
+  it("at an account switch nothing set under the account left rings, and a set of another account is never taken", async () => {
+    const r = recording(NOTICE_KINDS);
+    // The calendar's reads answer account A's alerts whoever asks: a set under another scope than the one settled.
+    let live = "acct-a";
+    const calendar = calendarOf(
+      "acct-a",
+      () => [weekly()],
+      () => live,
+    );
+    const caller = callerOf(r.emitter, { choices: ALERTS_ON, calendar });
+    caller.settle("acct-a", await copyWith(), RINGS - 60_000);
+    expect(caller.nextAtMs()).toBe(RINGS);
+    live = "acct-b";
+    caller.settle("acct-b", await copyWith(), RINGS - 30_000);
+    expect(r.takenBack()).toBe(1);
+    expect(calendar.asked).toEqual(["acct-a", "acct-b"]);
+    expect(caller.nextAtMs(), "account A's alert waits under account B").toBeNull();
+    caller.ring(RINGS);
+    expect(r.posted).toEqual([]);
+  });
+
+  it("at sign-out nothing is left to ring", async () => {
+    const r = recording(NOTICE_KINDS);
+    const caller = callerOf(r.emitter, {
+      choices: ALERTS_ON,
+      calendar: calendarOf("acct-a", () => [weekly()]),
+    });
+    caller.settle("acct-a", await copyWith(), RINGS - 60_000);
+    caller.end();
+    expect(caller.nextAtMs()).toBeNull();
+    caller.ring(RINGS);
+    expect(r.posted).toEqual([]);
+  });
+
+  it("a shell with no calendar sets nothing and rings nothing; reads that throw take nothing down", async () => {
+    const r = recording(NOTICE_KINDS);
+    const none = callerOf(r.emitter, { choices: ALERTS_ON });
+    none.settle("acct-a", await copyWith(), RINGS);
+    none.ring(RINGS);
+    const broken = callerOf(r.emitter, {
+      choices: ALERTS_ON,
+      calendar: {
+        liveScope: () => "acct-a",
+        changes: () => null,
+        ahead: () => {
+          throw new Error("no calendar");
+        },
+        clock: () => {
+          throw new Error("no clock");
+        },
+      },
+    });
+    expect(() => broken.settle("acct-a", await0(), RINGS)).not.toThrow();
+    const noClock = callerOf(r.emitter, {
+      choices: ALERTS_ON,
+      calendar: { ...calendarOf("acct-a", () => [weekly()]), clock: () => null },
+    });
+    noClock.settle("acct-a", await copyWith(), RINGS);
+    expect(r.posted).toEqual([]);
+    expect(none.nextAtMs()).toBeNull();
+  });
+});
+
+/** An empty copy, made without waiting: enough for a caller that reads no letter. */
+function await0(): MemoryMirrorStore {
+  return new MemoryMirrorStore();
+}
+
+describe("a surface that sets alerts itself", () => {
+  it("withdraws what the native surface holds when the presented calendar disappears", async () => {
+    const s = setting();
+    let calendar: CalendarReads | "none" = calendarOf("acct-a", () => [weekly()]);
+    const caller = new NoticeCaller(s.emitter, {
+      choices: () => ({ ...noticeChoicesOf(null, null, { ohcalPhone: false }), ...ALERTS_ON }),
+      permission: () => "granted",
+      devices: () => null,
+      atDevices: () => null,
+      told: toldDevicesIn(jar()),
+      get calendar() {
+        return calendar;
+      },
+    });
+    const store = await copyWith();
+    caller.settle("acct-a", store, RINGS - 60_000);
+    expect(s.sets).toEqual([{ scope: "acct-a", alerts: [weekly()] }]);
+    calendar = "none";
+    caller.settle("acct-a", store, RINGS - 30_000);
+    expect(s.sets.at(-1)).toEqual({ scope: "acct-a", alerts: [] });
+  });
+
+  it("is handed the account's set whole at each settle, and the page rings nothing of it", async () => {
+    const s = setting();
+    let wanted: NoticeAhead[] = [weekly()];
+    const caller = callerOf(s.emitter, { choices: ALERTS_ON, calendar: calendarOf("acct-a", () => wanted) });
+    caller.settle("acct-a", await copyWith(), RINGS - 60_000);
+    expect(s.sets).toEqual([{ scope: "acct-a", alerts: [weekly()] }]);
+    caller.ring(RINGS);
+    expect(s.posted, "the page rang an alert its surface rings itself").toEqual([]);
+    expect(caller.nextAtMs()).toBeNull();
+    wanted = [];
+    caller.settle("acct-a", await copyWith(), RINGS - 30_000);
+    expect(s.sets[1]).toEqual({ scope: "acct-a", alerts: [] });
+  });
+
+  it("is handed an empty set while this device does not ring alerts: a surface holds no choice of its own", async () => {
+    for (const over of [
+      {},
+      { choices: { cal_alert: true, master: false } },
+      { choices: ALERTS_ON, permission: () => "denied" as const },
+    ]) {
+      const s = setting();
+      callerOf(s.emitter, { ...over, calendar: calendarOf("acct-a", () => [weekly()]) }).settle(
+        "acct-a",
+        await copyWith(),
+        RINGS - 60_000,
+      );
+      expect(s.sets, JSON.stringify(over)).toEqual([{ scope: "acct-a", alerts: [] }]);
+    }
+    const s = setting(MAIL_NOTICE_KINDS);
+    callerOf(s.emitter, { choices: ALERTS_ON, calendar: calendarOf("acct-a", () => [weekly()]) }).settle(
+      "acct-a",
+      await copyWith(),
+      RINGS - 60_000,
+    );
+    expect(s.sets).toEqual([{ scope: "acct-a", alerts: [] }]);
+  });
+
+  it("is never handed another account's set, and nothing for a scope that is no account's", async () => {
+    const s = setting();
+    const caller = callerOf(s.emitter, {
+      choices: ALERTS_ON,
+      calendar: calendarOf("acct-a", () => [weekly()]),
+    });
+    caller.settle("acct-b", await copyWith(), RINGS - 60_000);
+    expect(s.sets).toEqual([{ scope: "acct-b", alerts: [] }]);
+    const demo = setting();
+    callerOf(demo.emitter, {
+      choices: ALERTS_ON,
+      calendar: calendarOf("demo:fixtures", () => [weekly()]),
+    }).settle("demo:fixtures", await copyWith(), RINGS);
+    expect(demo.sets).toEqual([]);
+    const throwing = setting();
+    const emitter: HostNoticeEmitter = {
+      ...throwing.emitter,
+      ahead: () => {
+        throw new Error("the shell is gone");
+      },
+    };
+    expect(() =>
+      callerOf(emitter, { choices: ALERTS_ON, calendar: calendarOf("acct-a", () => [weekly()]) }).settle(
+        "acct-a",
+        await0(),
+        RINGS,
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe("the mounted caller wakes for the next alert", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rings at the alert's minute with nothing else moving, and not after the shell is gone", async () => {
+    vi.useFakeTimers({ now: RINGS - 60_000, toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const r = recording(NOTICE_KINDS);
+    const later = weekly({ id: "ev-later", startMs: START + 60 * 60_000 });
+    const mount: NoticesMount = {
+      reader: await copyWith(),
+      version: 1,
+      settled: true,
+      scope: "acct-a",
+      emitter: r.emitter,
+      reads: {
+        choices: () => ({ ...noticeChoicesOf(null, null, { ohcalPhone: false }), cal_alert: true }),
+        permission: () => "granted",
+        devices: () => null,
+        atDevices: () => null,
+        told: toldDevicesIn(jar()),
+        calendar: calendarOf("acct-a", () => [weekly(), later]),
+      },
+    };
+    function Shell() {
+      useNotices(mount);
+      return null;
+    }
+    const root = createRoot(document.createElement("div"));
+    await act(async () => {
+      root.render(createElement(Shell));
+    });
+    expect(r.posted).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(59_000);
+    });
+    expect(r.posted, "rang before its minute").toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(r.posted.map((n) => (n as { eventId?: string }).eventId)).toEqual(["ev-weekly"]);
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(2 * 60 * 60_000);
+    });
+    expect(r.posted, "an alert rang after sign-out").toHaveLength(1);
   });
 });
