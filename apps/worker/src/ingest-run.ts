@@ -1,4 +1,3 @@
-import type { EmailAddress } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
 import {
@@ -253,9 +252,9 @@ export async function persistNewRun(
   return { persisted: members.length, messageIds };
 }
 
-function participantsOf(v: unknown): EmailAddress[] {
+function participantsOf(v: unknown): FoldThread["participants"] {
   const parsed = typeof v === "string" ? JSON.parse(v) as unknown : v;
-  return Array.isArray(parsed) ? parsed as EmailAddress[] : [];
+  return Array.isArray(parsed) ? parsed as FoldThread["participants"] : [];
 }
 
 /** `repo` with {@link persistNewRun} on it, over the handle `repo` speaks: the fence's transaction. */

@@ -114,8 +114,6 @@ export type UnboundCall =
   | "POST /mailboxes/oauth/microsoft/device/start"
   | "POST /mailboxes/oauth/microsoft/start"
   | "POST /mailboxes/probe"
-  // apps/webapp/app/(product)/mailbox/draft-reply-wire.ts
-  | "POST /messages/:id/draft"
   // packages/app-logic/src/reading/live-body.ts
   | "GET /messages/:id/live-body"
   // apps/webapp/app/api-client.ts

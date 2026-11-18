@@ -2,14 +2,18 @@
 // so an edge from here into the hosted half would ship it.
 import { clientIdempotencyKey } from "@trafficflow/db";
 import { ServiceError, parseReaderZone } from "@trafficflow/services/mail";
-import type { RequestOf, UntrustedBody } from "@ohmail/wire";
+import type { AnswerOf, RequestOf, UntrustedBody } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
-import { answer, jsonResponse } from "../responses.js";
+import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import {
   message, drafting, drafter, readBody, spendOf, accessPortOf, refundObligationsOf,
 } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
+
+function replyDraftReceipt(draftId: string): AnswerOf<"POST /messages/:id/draft"> {
+  return { draftId };
+}
 
 /**
  * Messages. `GET /messages?view=…` is the view-partitioned list (400 on a missing or unknown
@@ -164,6 +168,7 @@ export const messageRoutes: Route[] = [
     // paid, non-repeatable action needs the client to say "this is one intent" before we spend.
     method: "POST",
     pattern: "/messages/:id/draft",
+    wire: true,
     relay: true,
     // `paid`: this is the model-inference call, metered against the credit ledger. It carried
     // no cost class at all until this table gained one, which made an unverified account one
@@ -194,11 +199,11 @@ export const messageRoutes: Route[] = [
               key: deps.idempotency.key,
               requestHash: deps.idempotency.requestHash,
               responseStatus: 202,
-              response: (r) => ({ draftId: r.draftId }),
+              response: (r) => replyDraftReceipt(r.draftId),
             }
           : undefined,
       });
-      return jsonResponse({ draftId }, { status: 202, seq });
+      return answer<"POST /messages/:id/draft">()(replyDraftReceipt(draftId), { status: 202, seq });
     },
   },
   {

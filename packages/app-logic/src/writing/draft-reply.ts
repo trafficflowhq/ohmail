@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { AnswerOf, RequestOf } from "@ohmail/wire";
+import type { AnswerOf, ParamsOf, RequestOf } from "@ohmail/wire";
 import { isRichEmpty, type RichValue } from "./rich-text.js";
 import type { Translator } from "../text/translator.js";
 import { aiRefusalKey, draftFailureKey } from "../text/ai-refusal-copy.js";
@@ -52,7 +52,9 @@ export interface DraftReplyWire {
    * `POST /messages/:id/draft`, the purchase. The key is the caller's, minted once per press and
    * reused on a retry of that press, so a lost answer is replayed instead of bought twice.
    */
-  create: (messageId: string, idempotencyKey: string) => Promise<{ draftId: string }>;
+  create: (
+    messageId: ParamsOf<"POST /messages/:id/draft">["id"], idempotencyKey: string,
+  ) => Promise<AnswerOf<"POST /messages/:id/draft">>;
   /** `GET /drafts/:id`, the draft that purchase wrote. A read; it spends nothing. */
   read: (draftId: string) => Promise<DraftReplyRead>;
   /**
@@ -146,7 +148,7 @@ export function useDraftReply(opts: {
    * moment send one request.
    */
   const spend = useCallback((
-    id: string, of: string, buy: (key: string) => Promise<{ draftId: string }>, typed: RichValue | null,
+    id: string, of: string, buy: (key: string) => ReturnType<DraftReplyWire["create"]>, typed: RichValue | null,
     lands: "reply" | "letter",
   ) => {
     if (wire === "none" || io.current.busy) return;

@@ -1,4 +1,3 @@
-import type { WorkflowTrigger } from "@ohmail/wire";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import {
   workflowRuns, workflows as workflowsTbl, UNMETERED, isSpendMetered,
@@ -6,7 +5,7 @@ import {
 } from "@trafficflow/db";
 import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder, ENTITLEMENTS_CALL_BUDGET_MS } from "@trafficflow/db/cloud";
 import type { SpendPort } from "@trafficflow/db";
-import { WorkflowExecutor, silentLogger, type DraftPort, type Logger } from "@trafficflow/core";
+import { WorkflowExecutor, silentLogger, type DraftPort, type Logger, type WorkflowProposal } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { loadServedAccounts } from "./mailboxes.js";
@@ -188,6 +187,8 @@ async function reapStaleClaims(db: Tx, deps: WorkflowDrainDeps, now: Date): Prom
   }
   return reaped;
 }
+
+type WorkflowTrigger = WorkflowProposal["trigger"];
 
 /** A `time` trigger carries an optional recurrence interval (ms) alongside `nextRunAt`. */
 type TimeTrigger = WorkflowTrigger & { intervalMs?: number };
