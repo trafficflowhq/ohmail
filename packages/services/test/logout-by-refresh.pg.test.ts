@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, inArray } from "drizzle-orm";
-import { accounts, devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { authEvents, pushSubscriptions, schema } from "@trafficflow/db/cloud";
+import { accounts, bindDb, devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
+import { authEvents, makeOwnedDb, pushSubscriptions, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, SessionLifecycle, generateToken, hashToken, makeTestAuthDeps,
+  AuthService, SessionLifecycle, dbFor, generateToken, hashToken, makeTestAuthDeps,
   type AuthAuditEvent, type ServiceContext,
 } from "@trafficflow/services";
 
@@ -24,14 +21,16 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 // An hour AGO, so every stamp below is in the past: a shared table must not carry future rows.
 const t0 = new Date(Date.now() - 60 * 60_000);
 const at = (ms: number): Date => new Date(t0.getTime() + ms);
+/** A refresh and a sign-out by token are doors before sign-in, bound to nothing; a signed-in jar's, to its account. */
 const ctx = (now: Date, over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => now, requestId: "logout-by-refresh-pg", ...over,
+  accountId: "", userId: null, now: () => now, requestId: "logout-by-refresh-pg", ...over,
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
 } as unknown as ServiceContext);
 const COOKIE = { concurrentGrace: true, surface: "cookie" } as const;
 
@@ -89,10 +88,10 @@ const REFUSED = { code: "refresh_revoked", httpStatus: 401, message: "invalid re
 describe.skipIf(!PG_UP)("logout by refresh token on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 5 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   const svc = (): AuthService => new AuthService(makeTestAuthDeps());
 

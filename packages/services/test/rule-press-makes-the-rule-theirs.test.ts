@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -22,7 +23,7 @@ async function world(provenance: "promoted" | "seeded-from-sent", destination = 
   const db = (await makeTestDb()) as unknown as Db;
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `press-${accountId.slice(0, 8)}` });
-  const ctx = { db, accountId, now: () => NOW } as unknown as ServiceContext;
+  const ctx = { db: dbFor(db, accountId), accountId, now: () => NOW } as unknown as ServiceContext;
   const [r] = await db.insert(rules).values({
     accountId, kind: "sender", match: `${randomUUID()}@letter.example`, destination, priority: 0, provenance,
   }).returning();

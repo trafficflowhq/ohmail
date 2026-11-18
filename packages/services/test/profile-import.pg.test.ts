@@ -1,14 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq, sql } from "drizzle-orm";
 import {
   accountSyncState, accounts, auditLog, changeLog, fencedAccountWrite, idempotencyKeys, mailboxes, messageStates, messages,
   rules, tags, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, type LedgerTx, type Tx,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -32,10 +31,11 @@ import { TriageService, profileImportService, type ServiceContext } from "@traff
 const PG_UP = await realPgAvailable();
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 const ctx = (accountId: string): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"],
+  db: dbFor(db, accountId),
   accountId,
   userId: null,
   now: () => new Date(),
@@ -72,12 +72,17 @@ const read = async (): Promise<ProfileReadResult> =>
   ({ state: "found", doc: DOC, installId: "elsewhere", ref: 1, residue: 0, generation: 1_000 });
 
 type PgDb = typeof db;
-const named: Array<ReturnType<typeof postgres>> = [];
-/** A one-connection handle under `name`, so `pg_stat_activity` can say who waits on whom. */
+const named: OwnedDb[] = [];
+/**
+ * A pool of the factory's under `name` (a parameter of the address is one of the connection), so
+ * `pg_stat_activity` can say who waits on whom; the account's handle is bound over it.
+ */
 const handle = (name: string): PgDb => {
-  const c = postgres(PG_TEST_URL, { max: 1, onnotice: () => {}, connection: { application_name: name } });
-  named.push(c);
-  return brandDialect(drizzle(c, { schema }), "pg");
+  const address = new URL(PG_TEST_URL);
+  address.searchParams.set("application_name", name);
+  const pool = makeOwnedDb(address.toString());
+  named.push(pool);
+  return pool.db;
 };
 const outcome = (p: Promise<unknown>): Promise<string> => p.then((v) => (v as { state?: string } | undefined)?.state ?? "committed",
   (e: unknown) => `refused: ${String((e as { code?: unknown; cause?: { code?: unknown } }).code ?? (e as { cause?: { code?: unknown } }).cause?.code ?? e)}`);
@@ -143,11 +148,12 @@ describe.skipIf(!PG_UP)("profile import — the concurrency PGlite cannot see", 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 8, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 120_000);
   afterAll(async () => {
-    await client?.end({ timeout: 5 });
-    await Promise.all(named.map((c) => c.end({ timeout: 5 })));
+    await owned?.close(); await client?.end({ timeout: 5 });
+    await Promise.all(named.map((c) => c.close()));
   });
 
   it("EIGHT concurrent applies of one document leave the store exactly as one would", async () => {
@@ -221,14 +227,14 @@ describe.skipIf(!PG_UP)("profile import — the concurrency PGlite cannot see", 
       const key = `pfl-key-${tag}`;
       const fingerprint = profileFingerprint(DOC);
       const press = (): Promise<string> => outcome(c.door === "press"
-        ? profileImportService.apply({ ...ctx(a.accountId), db: handle(DOOR) as unknown as ServiceContext["db"] }, a.m, { fingerprint }, {
+        ? profileImportService.apply({ ...ctx(a.accountId), db: dbFor(handle(DOOR), a.accountId) }, a.m, { fingerprint }, {
           read: async () => { throw new ProfileUnavailableError("the mailbox could not be dialled", { op: "list_profiles" }); },
         })
-        : fencedAccountWrite(handle(DOOR) as unknown as Tx, { accountId: a.accountId }, async (tx) =>
+        : fencedAccountWrite(dbFor(handle(DOOR), a.accountId) as unknown as Tx, { accountId: a.accountId }, async (tx) =>
           applyOrganizerProfile(tx as LedgerTx, { accountId: a.accountId, mailboxId: a.m, doc: DOC, fingerprint, now: new Date() }))
           .then(() => undefined));
       const triage = (): Promise<string> => outcome(new TriageService().setState(
-        { ...ctx(a.accountId), db: handle(TRI) as unknown as ServiceContext["db"] },
+        { ...ctx(a.accountId), db: dbFor(handle(TRI), a.accountId) },
         c.same ? a.inM : a.inN, { state: "reply_later" }, { idempotency: { key, requestHash: "pfl" } },
       ).then(() => undefined));
       let held: { release: () => void; done: Promise<unknown> };

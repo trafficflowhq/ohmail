@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -35,7 +36,7 @@ async function world(provenance: string, destination: string) {
   const db = (await makeTestDb()) as unknown as Db;
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `pu-${accountId.slice(0, 8)}` });
-  const ctx = { db, accountId, now: () => NOW } as unknown as ServiceContext;
+  const ctx = { db: dbFor(db, accountId), accountId, now: () => NOW } as unknown as ServiceContext;
   const [r] = await db.insert(rules).values({
     accountId, kind: "sender", match: SENDER, destination, priority: 0, provenance: provenance as "promoted",
   }).returning();
@@ -55,7 +56,7 @@ async function world(provenance: string, destination: string) {
       ...(m.keepProvenance === true && m.restoreProvenance !== undefined ? { restoreProvenance: m.restoreProvenance } : {}),
     }));
   };
-  return { ctx, id: r!.id, row, dto, send };
+  return { db, ctx, id: r!.id, row, dto, send };
 }
 
 describe("REVIEW-026 probe A: the press over an inferred twin at the Ohbox, also-move off", () => {
@@ -145,7 +146,8 @@ describe("the restore's admission", () => {
   });
   it("is account-scoped: another account's rule is not found", async () => {
     const w = await world("manual", "INBOX");
-    const other = { ...w.ctx, accountId: randomUUID() } as ServiceContext;
+    const otherAccount = randomUUID();
+    const other = { ...w.ctx, accountId: otherAccount, db: dbFor(w.db, otherAccount) } as ServiceContext;
     const e = await rulesService.update(other, w.id,
       { destination: "INBOX", keepProvenance: true, restoreProvenance: "promoted" }).then(() => null, (x: unknown) => x);
     expect(e instanceof ServiceError && e.httpStatus === 404).toBe(true);

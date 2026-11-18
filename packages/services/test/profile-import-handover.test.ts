@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -40,7 +41,7 @@ async function world(at: Date = NOW) {
   // Reachable: the card's question offers nothing for a mailbox this install holds no credential for.
   await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
   let now = at;
-  const ctx = { db, accountId, now: () => now } as unknown as ServiceContext;
+  const ctx = { db: dbFor(db, accountId), accountId, now: () => now } as unknown as ServiceContext;
   return { db, ctx, accountId, mailboxId: mb!.id, advance: (ms: number) => { now = new Date(now.getTime() + ms); } };
 }
 
@@ -193,7 +194,8 @@ describe("GET …/status — where a handed-over press stands, from the row alon
 
   it("another account's mailbox is 404 before any row is read", async () => {
     const w = await world();
-    const other = { ...w.ctx, accountId: randomUUID() } as ServiceContext;
+    const otherAccount = randomUUID();
+    const other = { ...w.ctx, accountId: otherAccount, db: dbFor(w.db, otherAccount) } as ServiceContext;
     const err = await profileImportService.status(other, w.mailboxId, { fingerprint: FP }).then(() => null, (e: unknown) => e);
     expect((err as ServiceError).httpStatus).toBe(404);
   });

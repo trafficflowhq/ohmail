@@ -1,8 +1,9 @@
 import { accountOfUser } from "@trafficflow/db";
+import { dbFor } from "../src/context.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { accounts, sessions, users } from "@trafficflow/db";
+import { accounts, bindDb, sessions, users } from "@trafficflow/db";
 import { authThrottle, credentials, loginTokens, makeOwnedDb, totpSecrets, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -103,8 +104,9 @@ async function person(): Promise<Person> {
 }
 
 /** A request on `handle`: as the caller's session, or (no session) as an anonymous sign-in. */
-const ctxOn = (handle: unknown, p: Person, sessionId: string | null): ServiceContext => ({
-  db: handle as never, accountId: sessionId ? p.accountId : "", userId: sessionId ? p.userId : null, sessionId,
+/** A signed-in session's context is bound to its account; a sign-in or a redeem, before one, to nothing. */
+const ctxOn = (handle: Db, p: Person, sessionId: string | null): ServiceContext => ({
+  db: sessionId ? dbFor(handle, p.accountId) : bindDb(handle, { account: null }), accountId: sessionId ? p.accountId : "", userId: sessionId ? p.userId : null, sessionId,
   now: () => new Date(), requestId: `pw-race-${randomUUID()}`, ip: randomIp(),
 });
 

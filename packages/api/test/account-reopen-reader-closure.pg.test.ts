@@ -5,7 +5,7 @@ import { accounts, mailboxes } from "@trafficflow/db";
 import { accountLifecycleNotices, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import type { ServiceContext } from "@trafficflow/services";
+import { dbFor, type ServiceContext } from "@trafficflow/services";
 import { reopenedCatchUp } from "../src/account-reopen.js";
 import type { ApiDeps } from "../src/deps.js";
 
@@ -48,9 +48,10 @@ describe.skipIf(!AVAILABLE)("the catch-up for a closure inside one night", () =>
       accountId, provider: "imap", address: `night-${randomUUID().slice(0, 8)}@example.invalid`,
       organizerRole: "reader", organizeConsentedAt: new Date("2026-08-01T00:00:00.000Z"), ...extra,
     });
+    const bound = dbFor(db, accountId);
     return {
-      deps: { db, now: () => NOW } as unknown as ApiDeps,
-      ctx: { accountId, db, now: () => NOW } as unknown as ServiceContext,
+      deps: { db: bound, now: () => NOW } as unknown as ApiDeps,
+      ctx: { accountId, db: bound, now: () => NOW } as unknown as ServiceContext,
     };
   }
 

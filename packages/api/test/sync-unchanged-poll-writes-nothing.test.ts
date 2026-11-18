@@ -1,3 +1,4 @@
+import { bindRequest } from "../src/context.js";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -147,7 +148,10 @@ describe("an unchanged /sync poll writes nothing", () => {
       accountId: s.accountId, userId: s.userId, sessionId: s.sessionId, lastTwofaAt: null,
       scope: "full", via: "bearer", emailVerifiedAt: FIXED_NOW,
     };
-    const unread = await statementsOf(db, () => route.handler(req("GET", poll(horizon)), { ...deps, session }, {}));
+    // The request's container, bound to the session's account as the middleware binds it before a route runs.
+    const asked: ApiDeps = { ...deps, session };
+    bindRequest(asked);
+    const unread = await statementsOf(db, () => route.handler(req("GET", poll(horizon)), asked, {}));
     expect(unread.seen.filter(isWrite), "a stamp nobody read was trusted").toHaveLength(2);
     expect(await sessionStamp(db, s.sessionId), "inside the window the predicate refuses").toEqual(FIXED_NOW);
   });

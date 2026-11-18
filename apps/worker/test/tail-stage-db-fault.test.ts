@@ -18,7 +18,12 @@ import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.
  * database calls carry no tag yet (a gap row names it).
  */
 const fault = vi.hoisted(() => {
-  const s = { stage: "", db: null as unknown, err: null as unknown, calls: new Map<string, number>() };
+  const s = {
+    stage: "", db: null as unknown, err: null as unknown, calls: new Map<string, number>(),
+    /** The binder's own reading and binding, set once the real module is loaded (below). */
+    binding: (_h: unknown): { account: string | null } | undefined => undefined,
+    bind: (h: unknown, _account: string | null): unknown => h,
+  };
   /** Wrap one pass: armed for `stage`, its next call meets `err` or runs on the dead `db` once. */
   const wrap = <A extends unknown[], R>(
     stage: string, real: (...a: A) => Promise<R>,
@@ -29,7 +34,18 @@ const fault = vi.hoisted(() => {
     const { db, err } = s;
     s.stage = ""; s.db = null; s.err = null;
     if (err !== null) throw err;
-    return real(...swap(a, db));
+    return real(...swap(a, boundAs(a, db)));
+  };
+  /**
+   * The dead pool's handle, bound as the handle it replaces was bound (the pass's first argument, or
+   * the `db` of an options object there): the worker hands each pass a bound handle, and a plain one
+   * is refused before it ever meets the dead database.
+   */
+  const boundAs = (a: unknown[], dead: unknown): unknown => {
+    const first = a[0] as Record<string, unknown> | undefined;
+    const held = (s.binding(first) === undefined && first !== null && typeof first === "object" && "db" in first)
+      ? s.binding(first.db) : s.binding(first);
+    return held === undefined ? dead : s.bind(dead, held.account);
   };
   type Mod = Record<string, unknown>;
   /** A module factory: the named passes wrapped, everything else the real module's. */
@@ -45,7 +61,13 @@ const fault = vi.hoisted(() => {
   return Object.assign(s, { wrap, mocked });
 });
 
-vi.mock("@trafficflow/db", (load) => fault.mocked({ pruneIdempotencyKeys: "global_maintenance" })(load));
+vi.mock("@trafficflow/db", async (load) => {
+  const real = await (load as () => Promise<typeof import("@trafficflow/db")>)();
+  fault.binding = (h) => real.bindingOf(h);
+  fault.bind = (h, account) => account === null
+    ? real.bindDb(h as object, { account: null }) : real.bindDb(h as object, { account });
+  return fault.mocked({ pruneIdempotencyKeys: "global_maintenance" })(async () => real);
+});
 vi.mock("@trafficflow/db/cloud", (load) => fault.mocked({
   owedSuggestAccounts: "screener_suggest_owed", pruneErasedNotices: "erased_notices",
 })(load));

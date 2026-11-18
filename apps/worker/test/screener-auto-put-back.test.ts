@@ -7,7 +7,7 @@ import {
   accounts, applyScreenerDecision, changeLog, folderState, mailboxes, messageBodies, messages,
   recordChange, rerouteAdvisedLetter, rerouteUnconfirmedHeld, rules, type Tx,
 } from "@trafficflow/db";
-import { autoFiledSummary, undoAutoFiled, type ServiceContext } from "@trafficflow/services";
+import { autoFiledSummary, undoAutoFiled, type ServiceContext, dbFor, type Db as ServicesDb } from "@trafficflow/services";
 import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
@@ -50,7 +50,7 @@ async function world() {
   /** The act's deny of one advised letter. */
   const fileAdvised = (from: string, messageId: string) => inTx((tx) =>
     rerouteAdvisedLetter(tx, { accountId, address: from, appliedFolder: SPAM, now: new Date(), messageId }));
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => new Date(), requestId: "pb" };
+  const ctx: ServiceContext = { db: dbFor(db as unknown as ServicesDb, accountId), accountId, userId: null, now: () => new Date(), requestId: "pb" };
   const desired = async (id: string) =>
     (await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
   return { db, accountId, ctx, held, inTx, fileUnconfirmed, fileAdvised, desired };

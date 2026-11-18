@@ -19,6 +19,7 @@ import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_
 import { FakeAdapterFleet, type FakeControl } from "../../../packages/organizer/test/_fakeadapter.js";
 // The door the first client read after a reopening goes through, driven against the rows this
 // worker left: the catch-up is the two halves meeting, so it is measured where they meet.
+import { bindDb } from "@trafficflow/db";
 import { reopenedCatchUp } from "../../../packages/api/src/account-reopen.js";
 
 /**
@@ -762,7 +763,9 @@ describe("the catch-up a reopening pass records before it spends it", () => {
   }
   const firstClientRead = (db: Db, accountId: string) => {
     const now = (): Date => new Date();
-    return reopenedCatchUp({ db, now } as never, { accountId, db, now } as never);
+    // The door's request, signed in: its container's handle and its context's, bound to the account.
+    const bound = bindDb(db, { account: accountId });
+    return reopenedCatchUp({ db: bound, now } as never, { accountId, db: bound, now } as never);
   };
 
   it("an organizer and a reader-only account each keep their own untold row, told once by the door", async () => {

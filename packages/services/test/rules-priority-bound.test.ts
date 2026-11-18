@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, RULE_PRIORITY_MAX as DRAIN_MAX, validateRulePayload } from "@trafficflow/db";
@@ -16,7 +17,7 @@ async function world(): Promise<ServiceContext> {
   const db = (await makeTestDb()) as unknown as Db;
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `prio-${accountId.slice(0, 8)}` });
-  return { db, accountId, now: () => new Date("2026-09-25T13:00:00Z") } as unknown as ServiceContext;
+  return { db: dbFor(db, accountId), accountId, now: () => new Date("2026-09-25T13:00:00Z") } as unknown as ServiceContext;
 }
 
 const RULE = { kind: "domain", match: "shop.example", destination: "ohmail/News" };

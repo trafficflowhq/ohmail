@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -89,7 +90,7 @@ describe("MailboxService.organizeHere opens no IMAP connection when no password 
     // this test before the thing under test ever ran.
     const svc = makeMailboxService({ allowance: async () => { /* permitted */ } });
     const ctx: ServiceContext = {
-      db: pglite as unknown as ServiceContext["db"],
+      db: dbFor(pglite, accountId),
       accountId, userId: null, now: () => new Date("2026-08-05T12:00:00.000Z"), requestId: "r",
     };
 
@@ -156,7 +157,7 @@ describe("MailboxService.organizeHere opens no IMAP connection when no password 
     }).returning();
     const svc = makeMailboxService({ allowance: async () => { /* permitted */ }, signatureChecks: false });
     const ctx: ServiceContext = {
-      db: pglite as unknown as ServiceContext["db"],
+      db: dbFor(pglite, accountId),
       accountId, userId: null, now: () => new Date("2026-08-05T12:00:00.000Z"), requestId: "r",
     };
 

@@ -1,17 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, sql } from "drizzle-orm";
 import { accounts, snippets } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { UNMETERED_ACCESS } from "@trafficflow/db";
 import { deleteAccount } from "../src/account-deletion-service.js";
 import { readMailboxAllowance } from "../src/mailbox-allowance.js";
-import { withAccountTx, type ServiceContext } from "../src/context.js";
+import { dbFor, withAccountTx, type ServiceContext } from "../src/context.js";
 import { snippetsService } from "../src/snippets-service.js";
 import { kbService } from "../src/kb-service.js";
 import { notifyRulesService } from "../src/notify-rules-service.js";
@@ -53,8 +50,8 @@ import { ServiceError } from "../src/errors.js";
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 const NOW = new Date("2026-09-12T09:00:00.000Z");
 
@@ -79,14 +76,14 @@ async function survivors(accountId: string): Promise<string[]> {
 
 describe.skipIf(!PG_UP)("the erasure fence, against a write already in flight", () => {
   beforeAll(async () => {
-    client = postgres(PG_TEST_URL, { max: 8, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
     await runMigrations(PG_TEST_URL);
   });
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   const ctxFor = (accountId: string): ServiceContext => ({
-    db: db as unknown as ServiceContext["db"],
+    db: dbFor(db, accountId),
     accountId,
     userId: null,
     now: () => NOW,

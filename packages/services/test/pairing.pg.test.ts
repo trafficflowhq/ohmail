@@ -1,18 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, sql } from "drizzle-orm";
-import { accounts, users, sessions, devices, pairingTokens } from "@trafficflow/db";
-import { invites, schema } from "@trafficflow/db/cloud";
+import { accounts, bindDb, users, sessions, devices, pairingTokens } from "@trafficflow/db";
+import { invites, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   mintPairingToken, consumePairingToken, redeemInviteGrant, redeemDevicePair,
   revokePairingToken, listPairingTokens, mintAppHandoff, redeemAppHandoff, generateToken,
   PAIRING_LIVE_TOKENS_MAX, PAIRING_TTL_BOUNDS,
-  makeAuthService, makeTestAuthDeps, hashToken, MailService, SpyMailer, throttleKeysFor,
+  makeAuthService, makeTestAuthDeps, hashToken, dbFor, MailService, SpyMailer, throttleKeysFor,
   type ServiceContext, type PairedDeviceSessionMinter,
 } from "@trafficflow/services";
 
@@ -53,12 +51,14 @@ const PG_UP = await realPgAvailable();
 const FIXED_NOW = new Date("2026-08-17T12:00:00.000Z");
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 /** A ServiceContext over the shared pool — each `.transaction()` call checks out its OWN
- *  connection, which is what makes `Promise.all` here a real race rather than a queue. */
+ *  connection, which is what makes `Promise.all` here a real race rather than a queue. It names
+ *  no account, so its handle is bound to nothing. */
 const ctxFor = (userId: string | null, now: Date = FIXED_NOW): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"],
+  db: bindDb(db, { account: null }),
   accountId: "",
   userId,
   sessionId: null,
@@ -94,13 +94,13 @@ describe.skipIf(!PG_UP)("on real Postgres — a pairing token is spent exactly o
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    // A POOL with headroom over the fan-out, deliberately: `max: 1` would serialise the
-    // transactions and reintroduce the exact blind spot this file exists to remove.
-    client = postgres(PG_TEST_URL, { max: FANOUT + 4 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    // A POOL, deliberately (the factory's, of several connections): one connection would serialise
+    // the transactions and reintroduce the exact blind spot this file exists to remove.
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
     auth = makeAuthService(makeTestAuthDeps());
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   it("TWELVE simultaneous device-pair redeems of one token: ONE session, ONE device, eleven refusals", async () => {
     const { userId } = await seedUser();
@@ -440,10 +440,11 @@ describe.skipIf(!PG_UP)("on real Postgres — a phone app's handoff is spent onc
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: FANOUT + 4 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
     auth = makeAuthService(makeTestAuthDeps());
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); await client?.end({ timeout: 5 }); });
 
   /** A phone paired by a QR code, and a handoff code it minted for a receiver's verifier. */
   async function phoneWithCode() {
@@ -538,7 +539,7 @@ describe.skipIf(!PG_UP)("on real Postgres — a phone app's handoff is spent onc
       const qr = await mintPairingToken(ctxFor(userId), { grant: "device-pair", label: "Pixel" });
       const { tokens } = await redeemDevicePair(ctxFor(null), auth, { token: qr.token, kind: "mobile-android" });
       const [phone] = await db.select().from(sessions).where(eq(sessions.userId, userId));
-      const owner = { ...ctxFor(userId), accountId };
+      const owner = { ...ctxFor(userId), accountId, db: dbFor(db, accountId) };
       const shots = [
         () => mintAppHandoff(ctxFor(null), auth, { renewed: tokens.refreshToken, challenge: hashToken(generateToken()), target: "ohcal" }),
         () => auth.revokeDevice(owner, phone!.deviceId!, { requireStepUp: false }),

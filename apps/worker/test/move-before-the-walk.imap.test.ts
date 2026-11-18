@@ -11,7 +11,7 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, type ImapCursor, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap-types";
-import { MessageService, type ServiceContext } from "@trafficflow/services";
+import { MessageService, type ServiceContext, dbFor, type Db as ServicesDb } from "@trafficflow/services";
 import { reconcileMailbox, runSyncCycle } from "@ohmail/organizer/sync";
 import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
@@ -94,7 +94,7 @@ async function world() {
   const instancesOf = async (id: string) => db.select({ folder: messageInstances.folder, uid: messageInstances.uid })
     .from(messageInstances).where(eq(messageInstances.messageId, id));
   const stateOf = async (id: string) => (await db.select().from(folderState).where(eq(folderState.messageId, id)))[0]!;
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => new Date(), requestId: "walk" };
+  const ctx: ServiceContext = { db: dbFor(db as unknown as ServicesDb, accountId), accountId, userId: null, now: () => new Date(), requestId: "walk" };
   const press = async (id: string, folder: string) => {
     const out = await new MessageService().move(ctx, id, { folder });
     if ("pending" in out) throw new Error("the move became a request; this rig organizes the mailbox");

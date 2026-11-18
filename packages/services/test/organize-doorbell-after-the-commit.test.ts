@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { dbFor } from "../src/context.js";
 
 vi.mock("@trafficflow/db", async (importOriginal) => {
   const real = await importOriginal<typeof import("@trafficflow/db")>();
@@ -85,7 +86,7 @@ async function world(shape: "first" | "rerun", opts: { eraseInThePress?: boolean
     },
   });
   const ctx: ServiceContext = {
-    db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: "r",
+    db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r",
   };
   const mailbox = async () => (await tx.select({
     consented: mailboxes.organizeConsentedAt, stamp: mailboxes.takeoverAuthorizedAt,

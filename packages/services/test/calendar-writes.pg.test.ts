@@ -1,11 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { dbFor } from "../src/context.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, asc, eq } from "drizzle-orm";
 import { accounts, calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calWrites, changeLog, mailboxes } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
-import { brandDialect } from "@trafficflow/db/dialect";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { CALENDAR_WRITE_LIMITS } from "@trafficflow/db/calendar";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -29,11 +27,11 @@ const recordCalendarWrite = (c: ServiceContext, key: string, body: unknown) => r
  * door records, the worker's drain writes. Every value is invented.
  */
 const PG_UP = await realPgAvailable();
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 const ctx = (accountId: string): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => new Date(), requestId: `cw-${randomUUID().slice(0, 8)}`,
+  db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: `cw-${randomUUID().slice(0, 8)}`,
 });
 
 const FIELDS: CalendarEventFields = {
@@ -99,10 +97,10 @@ const pollOf = async (w: World) => (await db.select({ at: calConnections.nextPol
 describe.skipIf(!PG_UP)("the calendar's write door", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 120_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   it("records one act once under its key: the press twice is one row, one event and one answer; another act under the key is refused", async () => {
     const w = await world();

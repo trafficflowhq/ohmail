@@ -1,13 +1,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, mailboxes, mailboxCredentials } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "../src/auth/crypto.js";
 import { MailboxService } from "../src/mailbox-service.js";
 import { ServiceError } from "../src/errors.js";
@@ -40,14 +38,14 @@ const PROBE_OK = { probe: async () => ({ verdict: "ok" as const }) };
 const AVAILABLE = await realPgAvailable();
 
 describe.skipIf(!AVAILABLE)("mailboxes_active_address_uq", () => {
-  let db: ReturnType<typeof drizzle<typeof schema>>;
-  let sql: ReturnType<typeof postgres>;
+  let db: OwnedDb["db"];
+  let owned: OwnedDb;
   let service: MailboxService;
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    sql = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
-    db = brandDialect(drizzle(sql, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
     service = new MailboxService({
       keyProvider: StaticKeyProvider.fromSecret(Buffer.alloc(32, 7), 1),
       // The allowance default is REGISTERED by the full `@trafficflow/services` barrel, which this
@@ -133,7 +131,7 @@ describe.skipIf(!AVAILABLE)("mailboxes_active_address_uq", () => {
 
   it("create() maps 23505 to a 409 the UI can show, not a 500", async () => {
     const accountId = await account();
-    const ctx = { db: db as never, accountId, userId: null, now: () => new Date(), requestId: "t" };
+    const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: "t" };
 
     await db.insert(mailboxes).values({ accountId, provider: "imap", address: "svc@example.test" });
 
@@ -157,7 +155,7 @@ describe.skipIf(!AVAILABLE)("mailboxes_active_address_uq", () => {
       accountId, provider: "imap", address: "reenable@example.test", status: "connected",
     });
 
-    const ctx = { db: db as never, accountId, userId: null, now: () => new Date(), requestId: "t" };
+    const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: "t" };
     const err = await service.update(ctx, old!.id, { status: "connected" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ServiceError);
     expect((err as ServiceError).httpStatus).toBe(409);
@@ -166,7 +164,7 @@ describe.skipIf(!AVAILABLE)("mailboxes_active_address_uq", () => {
 
   it("a genuinely new address still connects — the mapping is not refusing everything", async () => {
     const accountId = await account();
-    const ctx = { db: db as never, accountId, userId: null, now: () => new Date(), requestId: "t" };
+    const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: "t" };
     const dto = await service.create(ctx, body("fresh@example.test"), PROBE_OK);
     expect(dto.address).toBe("fresh@example.test");
     const creds = await db.select().from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, dto.id));

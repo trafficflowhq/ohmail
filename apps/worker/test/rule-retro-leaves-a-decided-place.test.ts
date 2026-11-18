@@ -7,7 +7,7 @@ import {
   accounts, applyRuleRequest, approvals, changeLog, drafts, folderState, mailboxes, messageStates, messages, rules, threads,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
-import { MessageService, RulesService, type ServiceContext } from "@trafficflow/services";
+import { MessageService, RulesService, type ServiceContext, dbFor } from "@trafficflow/services";
 import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 import {
   REFILE_FIXTURE, REFILE_FROM, REFILE_MOVES, REFILE_TO,
@@ -230,7 +230,7 @@ describe("the letter a sender decision was made on follows the next decision", (
       accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@ohmail.test`,
     }).returning();
     let now = new Date("2026-10-26T10:48:00Z");
-    const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => now, requestId: "press" };
+    const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => now, requestId: "press" };
     const ids: string[] = [];
     for (let i = 0; i < n; i++) {
       const dedup = `mid:${randomUUID()}`;

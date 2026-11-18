@@ -20,7 +20,7 @@ import { calendarRoutes } from "@trafficflow/api/calendar";
 import { makeCalendarProviders } from "@ohmail/cal-providers";
 import { createLogger } from "@trafficflow/core";
 import type { HostResolver } from "@trafficflow/core/net";
-import { calSettings } from "@trafficflow/db";
+import { bindDb, calSettings } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL } from "@trafficflow/db/testing";
 import { calendarFeed } from "@trafficflow/services/calendar";
@@ -53,7 +53,8 @@ async function doorOn(w: World, policy: "cloud" | "own-network") {
   const { deps } = await makeDeps(new Date());
   const lines: string[] = [];
   served ??= makeOwnedDb(PG_TEST_URL, { role: "api" });
-  deps.db = served.db as never;
+  // The api role's pool, minted for the request as the host mints its own: bound to nothing.
+  deps.db = bindDb(served.db, { account: null });
   // The door's own clock, which a case may move on: a connection's minute is counted by it.
   let ahead = 0;
   deps.now = () => new Date(Date.now() + ahead);

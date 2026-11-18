@@ -42,6 +42,9 @@ const ALLOWED = new Set([
   // Where the 1.0 line ends and 2.0 begins: three constants and three pure readers, no import.
   // The engine reads them to know which of a store's owed entries the 2.0 transition applies.
   "journal-heads.ts",
+  // The binder, which the search setup asks to refuse a bound handle before an index build: no driver
+  // import, only the dialect's brands and the two settings' names, so every store can load it.
+  "bound.ts",
 ]);
 
 /**

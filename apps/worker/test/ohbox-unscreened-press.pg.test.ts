@@ -1,19 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accounts, contacts, folderState, mailboxes, messageBodies, messages, rules,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { planChange } from "@trafficflow/core/mail";
 import { organizeDecisionCount, screenUnscreened, unscreenedSummary } from "@trafficflow/services/mail";
-import { ScreenerService, type Db, type ServiceContext } from "@trafficflow/services";
+import { ScreenerService, type Db, type ServiceContext, dbFor } from "@trafficflow/services";
 
 /**
  * THE PRESS HANDS THE MAIL TO THE ORGANIZER — and to nothing else.
@@ -37,12 +35,13 @@ const ARRIVED = new Date("2026-09-17T08:00:00.000Z");
 const OLD = new Date("2024-03-01T08:00:00.000Z");
 
 let sql: ReturnType<typeof postgres>;
+let owned: OwnedDb;
 let db: Db;
 
 interface World { accountId: string; mailboxId: string }
 
 const ctxOf = (w: World): ServiceContext => ({
-  db: db as never, accountId: w.accountId, userId: null,
+  db: dbFor(db, w.accountId), accountId: w.accountId, userId: null,
   now: () => NOW, requestId: `oup-${randomUUID().slice(0, 8)}`,
 });
 
@@ -99,9 +98,10 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     sql = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(sql, { schema }), "pg") as unknown as Db;
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db as unknown as Db;
   }, 120_000);
-  afterAll(async () => { await sql?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); await sql?.end({ timeout: 5 }); });
 
   it("the press queues exactly the offered messages, and nothing else", async () => {
     const w = await newWorld();

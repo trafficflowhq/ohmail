@@ -142,11 +142,9 @@ describe("db_busy — a starved connection answers, it does not hang", () => {
    * Driven for real: the session lookup itself raises the ceiling's error.
    */
   it("a starved SESSION LOOKUP on a protected keyed mutation stays retryable", async () => {
-    const { deps } = await makeDeps();
-    // Every access throws, so `resolveSession` fails exactly where the first query would.
-    deps.db = new Proxy({}, {
-      get() { throw new DbAcquireTimeoutError(15_000); },
-    }) as unknown as typeof deps.db;
+    const { db, deps } = await makeDeps();
+    // Every statement throws, so `resolveSession` fails exactly where the first query would.
+    starve(db);
 
     const res = await createApp(protectedMutations).handle(
       req("POST", "/protected-keyed", {
@@ -173,10 +171,8 @@ describe("db_busy — a starved connection answers, it does not hang", () => {
    * server was briefly busy. No key is sent, deliberately: this must not depend on one.
    */
   it("a starved session lookup rescues a protected NON-idempotent, UNKEYED mutation", async () => {
-    const { deps } = await makeDeps();
-    deps.db = new Proxy({}, {
-      get() { throw new DbAcquireTimeoutError(15_000); },
-    }) as unknown as typeof deps.db;
+    const { db, deps } = await makeDeps();
+    starve(db);
 
     const res = await createApp(protectedMutations).handle(
       req("POST", "/protected-plain", { bearer: "the-lookup-never-completes" }), deps,
@@ -502,3 +498,19 @@ describe("/health under a starved connection", () => {
     expect(new DbAcquireTimeoutError(1).code).toBe("db_acquire_timeout");
   });
 });
+
+/**
+ * A STARVED POOL: every statement its handle is asked for raises the acquire ceiling's error. The
+ * hooks sit on the pool's own handle, the one the binder knows, so the handle the host mints for
+ * the request (a view of it) asks its statements through them; the binder itself is untouched.
+ */
+function starve(db: object): void {
+  for (const statement of [
+    "select", "selectDistinct", "selectDistinctOn", "insert", "update", "delete", "execute", "transaction", "with", "$count",
+  ]) {
+    Object.defineProperty(db, statement, {
+      configurable: true, writable: true,
+      value: () => { throw new DbAcquireTimeoutError(15_000); },
+    });
+  }
+}

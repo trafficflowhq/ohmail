@@ -12,7 +12,7 @@ import { makeDeps, seedSession, seedMailbox, seedMessage } from "./helpers.js";
  * which is the shape a slow production database has. A double that failed instead would measure
  * the error path and say nothing about the budget.
  */
-function slowDb<T extends object>(db: T, delayMs: number): T {
+function slowDb(db: object, delayMs: number): void {
   const late = (b: object): object => new Proxy(b, {
     get(target, prop, recv) {
       const v = Reflect.get(target, prop, recv) as unknown;
@@ -32,7 +32,21 @@ function slowDb<T extends object>(db: T, delayMs: number): T {
       return v;
     },
   });
-  return late(db) as T;
+  // On the pool's own handle, the one the binder knows: the handle the host mints for the request
+  // (a view of it) asks every statement through these, and each answer comes late.
+  for (const statement of [
+    "select", "selectDistinct", "selectDistinctOn", "insert", "update", "delete", "execute", "transaction", "with", "$count",
+  ]) {
+    const own = Reflect.get(db, statement) as unknown;
+    if (typeof own !== "function") continue;
+    Object.defineProperty(db, statement, {
+      configurable: true, writable: true,
+      value: function (this: object, ...args: unknown[]) {
+        const out = (own as (...a: unknown[]) => unknown).apply(this, args);
+        return out !== null && typeof out === "object" ? late(out) : out;
+      },
+    });
+  }
 }
 
 /**
@@ -186,10 +200,10 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
       const armed = {
         ...deps,
         alerts: { secret: SECRET, cronSecret: CRON, sinks: [] },
-        // FOUR TIMES the run's whole budget. A route whose reads take their own clock waits all
-        // of it; one that derives a deadline from what is left stops at the budget.
-        db: slowDb(db, 100_000),
       } as unknown as ApiDeps;
+      // FOUR TIMES the run's whole budget. A route whose reads take their own clock waits all
+      // of it; one that derives a deadline from what is left stops at the budget.
+      slowDb(db, 100_000);
 
       const pending = H(get(SECRET), armed);
       // ASYNC advance: the synchronous form settles nothing between timers, so the awaits inside

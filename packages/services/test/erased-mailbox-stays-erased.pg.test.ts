@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import {
   accounts, mailboxes, mailboxCredentials, mailboxFolders, folderOps,
   UNMETERED_ACCESS, type AccessVerdict,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { StaticKeyProvider } from "@trafficflow/core";
@@ -33,10 +31,10 @@ const UNMETERED_READER = { accessOf: async (): Promise<AccessVerdict> => UNMETER
 const PROBE_OK = { probe: async () => ({ verdict: "ok" as const }) };
 const IMAP = { host: "imap.erased.test", port: 993, secure: true, user: "u", pass: "earlier-attempt-password" };
 
-let sqlA: ReturnType<typeof postgres>;
-let sqlB: ReturnType<typeof postgres>;
-let dbA: ReturnType<typeof drizzle<typeof schema>>;
-let dbB: ReturnType<typeof drizzle<typeof schema>>;
+let ownedA: OwnedDb;
+let ownedB: OwnedDb;
+let dbA: OwnedDb["db"];
+let dbB: OwnedDb["db"];
 
 const svc = makeMailboxService({ keyProvider: KP, ...UNMETERED_READER });
 const folders = new FolderOpsService();
@@ -44,18 +42,18 @@ const folders = new FolderOpsService();
 beforeAll(async () => {
   if (!PG_UP) return;
   await runMigrations(PG_TEST_URL);
-  sqlA = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
-  sqlB = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-  dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-  dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+  ownedA = makeOwnedDb(PG_TEST_URL);
+  ownedB = makeOwnedDb(PG_TEST_URL);
+  dbA = ownedA.db;
+  dbB = ownedB.db;
 }, 120_000);
 
 afterAll(async () => {
-  await Promise.all([sqlA?.end({ timeout: 5 }), sqlB?.end({ timeout: 5 })]);
+  await Promise.all([ownedA?.close(), ownedB?.close()]);
 }, 60_000);
 
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
-  ({ db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 async function seeded(): Promise<{ accountId: string; mailboxId: string; address: string }> {
   const [a] = await dbA.insert(accounts).values({ name: `erased-${randomUUID().slice(0, 8)}` }).returning();

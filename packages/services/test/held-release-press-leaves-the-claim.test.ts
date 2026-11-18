@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -41,7 +42,7 @@ async function world() {
     return m!.id;
   };
   await db.insert(contacts).values({ accountId, address: SENDER, source: "inferred" });
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `hr-${randomUUID().slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `hr-${randomUUID().slice(0, 8)}` };
   const desired = async (id: string) =>
     (await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
   return { db, accountId, ctx, held, desired };
