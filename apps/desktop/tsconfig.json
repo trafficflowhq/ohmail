@@ -78,6 +78,7 @@
       "@ohmail/client-engine/providers": ["../../packages/client-engine/src/providers.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui/body-parts": ["../../packages/ui/src/body-parts.ts"],
+      "@ohmail/ui/file-size": ["../../packages/ui/src/format/file-size.ts"],
       "@ohmail/ui/base": ["../../packages/ui/src/base/index.ts"],
       "@ohmail/ui/mail": ["../../packages/ui/src/mail/index.ts"],
       "@ohmail/ui/squares-window": ["../../packages/ui/src/squares-window.ts"],

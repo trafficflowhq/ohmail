@@ -72,6 +72,7 @@
       "@ohmail/client-engine/send-fingerprint": ["../../packages/client-engine/src/send-fingerprint.ts"],
       "@ohmail/client-engine/html-tree-budget": ["../../packages/client-engine/src/html-tree-budget.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
+      "@ohmail/ui/file-size": ["../../packages/ui/src/format/file-size.ts"],
       "@ohmail/ui/long-text": ["../../packages/ui/src/format/long-text.ts"],
       "@ohmail/ui/squares-window": ["../../packages/ui/src/squares-window.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
