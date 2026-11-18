@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -39,6 +40,48 @@ let accountId: string;
 /** Statements this file's own client has sent. */
 let sent = 0;
 let pendingSetup: { phase: string; startedAt: number } | null = null;
+
+const measuredWalks = new Map([
+  ["one request reads every sender nobody decided about, and its statements follow the senders", "full"],
+  ["a request out of time answers a part, and the next request goes on from it", "cursor"],
+]);
+
+/** The runner's visible cgroup and this test database. The service container can have a different CPU quota. */
+async function walkCounters() {
+  const throttled = readFile("/proc/self/cgroup", "utf8").then(async (membership) => {
+    const group = /^0::(\/.*)$/m.exec(membership)?.[1];
+    if (!group || group.split("/").includes("..")) return null;
+    const text = await readFile(`/sys/fs/cgroup${group.replace(/\/$/, "")}/cpu.stat`, "utf8");
+    const found = /^throttled_usec (\d+)$/m.exec(text);
+    return found ? Number(found[1]) / 1000 : null;
+  }).catch(() => null);
+  // A separate, short-lived observer keeps its statements out of the fixture's query-count assertion.
+  const observer = postgres(PG_TEST_URL, {
+    max: 1, connect_timeout: 1, onnotice: () => {}, connection: { statement_timeout: 500 },
+  });
+  let dbActive: number | null = null;
+  let sqlExec: number | null = null;
+  try {
+    const [activity] = await observer<{ ms: number; statements: boolean }[]>`
+      select active_time::float8 as ms, to_regclass('pg_stat_statements') is not null as statements
+      from pg_stat_database where datname = current_database()`;
+    dbActive = activity?.ms ?? null;
+    if (activity?.statements) {
+      const [execution] = await observer<{ ms: number | null }[]>`
+        select sum(total_exec_time)::float8 as ms from pg_stat_statements
+        where dbid = (select oid from pg_database where datname = current_database())`;
+      sqlExec = execution?.ms ?? null;
+    }
+  } catch { /* The original walk still runs on an uninstrumented or busy database. */ }
+  finally { await observer.end({ timeout: 0 }).catch(() => {}); }
+  return { dbActive, sqlExec, throttled: await throttled };
+}
+
+function elapsedCounter(start: number | null, end: number | null): number | null {
+  return start !== null && end !== null && end >= start ? Math.round(end - start) : null;
+}
+
+let walkStart: { label: string; wall: number; statements: number; counters: Awaited<ReturnType<typeof walkCounters>> } | null = null;
 
 function enteringSetup(phase: string): void {
   pendingSetup = { phase, startedAt: performance.now() };
@@ -171,6 +214,26 @@ async function sweepToEnd(
 }
 
 describe.skipIf(!PG_UP)("the offer on a large account", () => {
+  beforeEach(async ({ task }) => {
+    const label = measuredWalks.get(task.name);
+    if (!label) return;
+    const counters = await walkCounters();
+    walkStart = { label, counters, wall: performance.now(), statements: sent };
+  });
+  afterEach(async () => {
+    const start = walkStart;
+    walkStart = null;
+    if (!start) return;
+    const wallMs = Math.round(performance.now() - start.wall);
+    const statements = sent - start.statements;
+    const end = await walkCounters();
+    console.info("Large Ohbox walk timing", {
+      walk: start.label, wallMs, statements,
+      databaseActiveMs: elapsedCounter(start.counters.dbActive, end.dbActive),
+      sqlExecutionMs: elapsedCounter(start.counters.sqlExec, end.sqlExec),
+      processCgroupThrottledMs: elapsedCounter(start.counters.throttled, end.throttled),
+    });
+  });
   beforeAll(async () => {
     enteringSetup("migrations");
     await runMigrations(PG_TEST_URL);

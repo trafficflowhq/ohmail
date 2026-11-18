@@ -1298,6 +1298,7 @@ packages/services/test/mailbox-takeover.no-imap.test.ts	source-text	reads source
 packages/services/test/migration-0144-shipped-allows.test.ts	data	reads data files (sql)	none	services-proof	
 packages/services/test/new-for-you-one-predicate.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	services-proof	
 packages/services/test/new-for-you-one-predicate.test.ts	source-text	reads source as text (mjs, ts)	layer 1	services-proof	
+packages/services/test/ohbox-unscreened-large.pg.test.ts	data	reads the process cgroup membership and its CPU throttling counter	none	services-proof	
 packages/services/test/organizer-role-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/services/test/outbound-html.test.ts	data	reads data files (sql)	none	services-proof	
 packages/services/test/pinning-writers-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
