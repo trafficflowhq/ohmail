@@ -1,12 +1,13 @@
 import { useId, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
-import { Avatar, Sign, Tag, Where } from "../../base/index.js";
+import { Avatar, Sign } from "../../base/index.js";
 import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./row.css";
+import { RowFirst } from "./row-first.js";
 import { RowPlaceFace, type RowPlace } from "./row-place.js";
 import { useKeysFollowStop } from "./row-stop.js";
 import { rowSwipe, type RowSwipe } from "./row-swipe.js";
-import { breakable, RowAmount, RowTickMark, type RowTick } from "./row-tick.js";
+import { breakable, RowTickMark, type RowTick } from "./row-tick.js";
 
 export type { RowPlace } from "./row-place.js";
 export type { RowSwipe, RowSwipeVerb } from "./row-swipe.js";
@@ -267,67 +268,6 @@ function RowFace({ people, peopleMore, peopleLabel, sign, entry, unread, tick, s
       <i className="oh-row-check">
         <Icon name="check" size={18} />
       </i>
-    </span>
-  );
-}
-
-/** Line one: who, the address, and at its end the marks and the time. */
-function RowFirst(props: RowProps & { contact?: (event: MouseEvent<HTMLElement>) => void; twin?: boolean }) {
-  const { who, address, contact, onWhen } = props;
-  const flip = onWhen
-    ? (event: MouseEvent<HTMLElement>) => {
-        event.stopPropagation();
-        onWhen();
-      }
-    : undefined;
-  return (
-    <span className="oh-row-first" aria-hidden={props.twin ? true : undefined}>
-      <b className="oh-row-who">{who}</b>
-      {props.flag ? (
-        <span className="oh-row-flag">
-          <span className="oh-row-flag-sign" role="img" aria-label={props.flag.label}>
-            <Icon name="warn" size={18} />
-          </span>
-          <Tag>{props.flag.word}</Tag>
-        </span>
-      ) : address ? (
-        <span
-          className="oh-row-address"
-          data-press={contact ? "" : undefined}
-          data-whole={props.labels?.length ? "" : undefined}
-          onClick={contact}
-        >
-          {props.labels?.length ? <span>{address}</span> : address}
-        </span>
-      ) : null}
-      <span className="oh-row-room" />
-      {props.labels && props.labels.length > 0 ? (
-        <span className="oh-row-labels">
-          {props.labels.map((label) => (
-            <Tag key={label}>{label}</Tag>
-          ))}
-        </span>
-      ) : null}
-      {props.squares}
-      {props.where ? <Where>{props.where}</Where> : null}
-      {props.tag}
-      {props.file ? (
-        <span className="oh-row-file" role="img" aria-label={props.file}>
-          <Icon name="clip" size={16} />
-        </span>
-      ) : null}
-      {props.amount ? (
-        <RowAmount figure={props.amount} said={props.amountSaid} />
-      ) : props.when ? (
-        <time
-          className="oh-row-when"
-          title={props.whenTitle}
-          data-press={onWhen ? "" : undefined}
-          onClick={flip}
-        >
-          {props.when}
-        </time>
-      ) : null}
     </span>
   );
 }
