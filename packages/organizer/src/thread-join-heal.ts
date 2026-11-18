@@ -1,4 +1,3 @@
-import type { EmailAddress } from "@ohmail/wire";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type LedgerTx, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -6,7 +5,7 @@ import {
   asAuthVerdict, conversationJoinVerdict, counterpartyEvidence, isSentFolderOf,
   MAX_THREAD_PARTICIPANTS, mergeCounterpartyEvidence,
   silentLogger,
-  type ConversationJoinFacts, type CounterpartyEvidence, type Logger,
+  type ConversationJoinFacts, type CounterpartyEvidence, type FoldThread, type Logger, type ParsedAddressHeaders,
 } from "@trafficflow/core/mail";
 
 /* THE THREAD-JOIN HEAL — the deferred merge for a conversation a forward SPLIT. `thread-backfill.ts`
@@ -392,12 +391,12 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           // performs at ingest (ingest maintains a thread row's participants under this very row
           // lock, so the locked rows are current even against the race the retry exists for).
           const byAddress = new Map(
-            ((lockedTarget.participants as EmailAddress[] | null) ?? []).map((p) => [p.address.toLowerCase(), p]),
+            ((lockedTarget.participants as FoldThread["participants"] | null) ?? []).map((p) => [p.address.toLowerCase(), p]),
           );
           for (const source of absorb) {
             const locked = lockedById.get(source.id);
             if (!locked) continue; // vanished (a user merge won); its move predicate matches nothing
-            for (const p of (locked.participants as EmailAddress[] | null) ?? []) {
+            for (const p of (locked.participants as FoldThread["participants"] | null) ?? []) {
               const key = p.address.toLowerCase();
               if (key && !byAddress.has(key) && byAddress.size < MAX_THREAD_PARTICIPANTS) byAddress.set(key, p);
             }
@@ -562,8 +561,8 @@ async function threadFactsOf(db: Tx, accountId: string, threadId: string): Promi
     from: m.from,
     authVerdict: asAuthVerdict(m.authVerdict),
     recipients: [
-      ...((m.to as EmailAddress[] | null) ?? []),
-      ...((m.cc as EmailAddress[] | null) ?? []),
+      ...((m.to as ParsedAddressHeaders["to"] | null) ?? []),
+      ...((m.cc as ParsedAddressHeaders["cc"] | null) ?? []),
     ].map((p) => p.address),
   })));
 

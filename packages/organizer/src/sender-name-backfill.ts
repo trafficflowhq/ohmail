@@ -1,4 +1,3 @@
-import type { EmailAddress } from "@ohmail/wire";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { messageBodies, messages, recordChanges, type LedgerTx, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -11,7 +10,7 @@ import { dialect } from "@trafficflow/db/dialect";
    the refusal named two dozen extra inputs for four symbols that live in the mail half all along.
    `mail.ts` re-exports `mime.ts` and `log.ts`, which is where all four are. */
 import {
-  parseStoredAddressHeaders, silentLogger, type Logger,
+  parseStoredAddressHeaders, silentLogger, type Logger, type ParsedAddressHeaders,
 } from "@trafficflow/core/mail";
 
 /* THE SENDER-NAME / RECIPIENTS BACKFILL — DB-only. Three columns went in after the rows that need them:
@@ -115,8 +114,8 @@ interface Candidate {
 /** The subset of columns a row turned out to be able to fill. Empty ⇒ nothing to write. */
 interface Fill {
   fromName?: string;
-  toAddresses?: EmailAddress[];
-  ccAddresses?: EmailAddress[];
+  toAddresses?: ParsedAddressHeaders["to"];
+  ccAddresses?: ParsedAddressHeaders["cc"];
 }
 
 function asStringArray(v: unknown): string[] | null {
