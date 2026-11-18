@@ -196,6 +196,8 @@ export interface Routes {
   "GET /messages/bodies": { params: None; body: never; answer: Page<MessageBodyBatchItem> };
   "GET /messages/:id": { params: Id; body: never; answer: MessageDTO };
   "GET /messages/:id/body": { params: Id; body: never; answer: MessageBodyDTO };
+  /** Drafts a reply under the press's Idempotency-Key. 202 with the written draft's id and X-Sync-Seq. */
+  "POST /messages/:id/draft": { params: Id; body: never; answer: DraftWrittenAnswer };
   "PATCH /messages": { params: None; body: MarkSeenBody; answer: { items: MessageDTO[] } };
   /** 200: the letter. 202: the folder half became a request for the install that organizes the mailbox. */
   "PATCH /messages/:id": { params: Id; body: MessagePatchBody; answer: Applied | (QueuedAnswer & { dto: MessageDTO }) };

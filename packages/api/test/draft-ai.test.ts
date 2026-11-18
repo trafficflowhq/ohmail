@@ -75,6 +75,30 @@ describe("POST /messages/:id/draft — AI draft-from-history (Phase 3b)", () => 
     expect(body.changes.deletes.find((d: { id: string }) => d.id === draftId)).toBeUndefined();
   });
 
+  it("replays the same draft receipt and sync sequence without buying another draft", async () => {
+    const drafter = mockDrafter();
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const { id: target } = await seedMessage(db, { accountId: s.accountId, mailboxId });
+    const purchase = () => H(req("POST", `/messages/${target}/draft`, {
+      bearer: s.token, headers: { "Idempotency-Key": "one-draft-press" },
+    }), deps);
+
+    const first = await purchase();
+    expect(first.status).toBe(202);
+    const receipt = await first.json();
+    expect(receipt).toEqual({ draftId: expect.any(String) });
+    const seq = first.headers.get("x-sync-seq");
+    expect(seq).toBeTruthy();
+
+    const replay = await purchase();
+    expect(replay.status).toBe(202);
+    expect(replay.headers.get("x-sync-seq")).toBe(seq);
+    expect(await replay.json()).toEqual(receipt);
+    expect(drafter.calls).toBe(1);
+  });
+
   it("a no_ai target → 422 and the drafter is NEVER called (0 calls)", async () => {
     const drafter = mockDrafter();
     const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });

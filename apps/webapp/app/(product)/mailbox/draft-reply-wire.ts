@@ -14,7 +14,7 @@ import type { DraftReplyRead, DraftReplyWire } from "@ohmail/app-logic/writing/d
  */
 export const CLOUD_WIRE: DraftReplyWire = {
   configured: () => apiConfigured(),
-  create: (id, idempotencyKey) => api<{ draftId: string }>(`/messages/${id}/draft`, {
+  create: (id, idempotencyKey) => api<AnswerOf<"POST /messages/:id/draft">>(`/messages/${id}/draft`, {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
   }),
