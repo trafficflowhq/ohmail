@@ -746,6 +746,9 @@ export async function runCloudSidecar(): Promise<void> {
       ...(BAKED_ENGINE_VERSION ? { engineRelease: BAKED_ENGINE_VERSION } : {}),
       onStoreFatal: exitOnStoreFatal,
       // The mirror starts after `ready`, so the host exists by the time a mailbox can be named.
+      onSignedIn: (signedIn) => {
+        void host?.hostedSession(signedIn).catch(() => { void shutdown("transport_fatal", 1); });
+      },
       onServedMailbox: (mailboxId) => host?.mailbox(mailboxId) ?? Promise.resolve(),
     });
   } catch (err) {
@@ -786,6 +789,7 @@ export async function runCloudSidecar(): Promise<void> {
     // The launch snapshot of reachability; `/health.online` is the live value thereafter.
     online: cloud.online(),
   });
+  await host.hostedSession(cloud.signedIn());
   log("cloud_serving", {
     mailboxId: cloud.servedMailboxId(),
     state: cloud.signedIn() ? "signed_in" : "signed_out",

@@ -2572,6 +2572,7 @@ dependencies = [
  "keyring",
  "libc",
  "minisign-verify",
+ "notify-rust",
  "objc2",
  "objc2-foundation",
  "objc2-web-kit",

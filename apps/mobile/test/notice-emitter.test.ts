@@ -134,6 +134,7 @@ describe("the page's emitter over the bridge", () => {
       devices: () => devices,
       atDevices: () => null,
       told,
+      calendar: "none",
     });
     const reader = new MemoryMirrorStore();
     await reader.load();

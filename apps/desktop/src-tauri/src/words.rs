@@ -506,6 +506,80 @@ impl NoticeWords {
     }
 }
 
+/// What the shell says for a calendar alert it rings: the two words for an event whose title is not
+/// shown, and how long until the start. An alert is handed over as numbers and a label
+/// ([`crate::alerts`]); no sentence comes from the window. The page's catalogue holds the same
+/// sentences (`frame.systemNotice`, `alert…`), and `alerts_tests.rs` holds the two equal.
+pub struct AlertWords {
+    pub busy: &'static str,
+    pub event: &'static str,
+    pub now: &'static str,
+    pub minute_one: &'static str,
+    pub minute_many: &'static str,
+    pub hour_one: &'static str,
+    pub hour_many: &'static str,
+    pub day_one: &'static str,
+    pub day_many: &'static str,
+    pub week_one: &'static str,
+    pub week_many: &'static str,
+    pub today: &'static str,
+    pub tomorrow: &'static str,
+    pub all_days: &'static str,
+    pub all_week_one: &'static str,
+    pub all_week_many: &'static str,
+}
+
+/// English alerts.
+pub const EN_ALERTS: AlertWords = AlertWords {
+    busy: "Busy",
+    event: "Event",
+    now: "Starts now.",
+    minute_one: "Starts in one minute.",
+    minute_many: "Starts in {count} minutes.",
+    hour_one: "Starts in one hour.",
+    hour_many: "Starts in {count} hours.",
+    day_one: "Starts in one day.",
+    day_many: "Starts in {count} days.",
+    week_one: "Starts in one week.",
+    week_many: "Starts in {count} weeks.",
+    today: "Today, all day.",
+    tomorrow: "Tomorrow, all day.",
+    all_days: "In {count} days, all day.",
+    all_week_one: "In one week, all day.",
+    all_week_many: "In {count} weeks, all day.",
+};
+
+/// German alerts.
+pub const DE_ALERTS: AlertWords = AlertWords {
+    busy: "Belegt",
+    event: "Termin",
+    now: "Beginnt jetzt.",
+    minute_one: "Beginnt in einer Minute.",
+    minute_many: "Beginnt in {count} Minuten.",
+    hour_one: "Beginnt in einer Stunde.",
+    hour_many: "Beginnt in {count} Stunden.",
+    day_one: "Beginnt in einem Tag.",
+    day_many: "Beginnt in {count} Tagen.",
+    week_one: "Beginnt in einer Woche.",
+    week_many: "Beginnt in {count} Wochen.",
+    today: "Heute, ganztägig.",
+    tomorrow: "Morgen, ganztägig.",
+    all_days: "In {count} Tagen, ganztägig.",
+    all_week_one: "In einer Woche, ganztägig.",
+    all_week_many: "In {count} Wochen, ganztägig.",
+};
+
+impl AlertWords {
+    /// The alerts' words of a language.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    pub fn of(language: Language) -> &'static AlertWords {
+        match language {
+            Language::En => &EN_ALERTS,
+            Language::De => &DE_ALERTS,
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "words_tests.rs"]
 mod tests;

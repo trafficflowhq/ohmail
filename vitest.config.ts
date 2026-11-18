@@ -206,6 +206,7 @@ export default defineConfig({
       { find: "@ohmail/letter-body/words", replacement: r("./packages/letter-body/src/words.ts") },
       { find: /^@ohmail\/letter-body$/, replacement: r("./packages/letter-body/src/index.ts") },
       // The calendar's doors that are folders, above the file rule that would read them as files.
+      { find: "@ohmail/app-logic/calendar/alerts", replacement: r("./packages/app-logic/src/calendar/alerts/index.ts") },
       { find: "@ohmail/app-logic/calendar/beside", replacement: r("./packages/app-logic/src/calendar/beside/index.ts") },
       { find: "@ohmail/app-logic/calendar/found", replacement: r("./packages/app-logic/src/calendar/found/index.ts") },
       { find: "@ohmail/app-logic/calendar/invitations", replacement: r("./packages/app-logic/src/calendar/invitations/index.ts") },

@@ -10,6 +10,12 @@
       "node": "./dist/calendar/index.js",
       "default": "./src/calendar/index.ts"
     },
+    "./calendar/alerts": {
+      "types": "./src/calendar/alerts/index.ts",
+      "ohmail-source": "./src/calendar/alerts/index.ts",
+      "node": "./dist/calendar/alerts/index.js",
+      "default": "./src/calendar/alerts/index.ts"
+    },
     "./calendar/beside": {
       "types": "./src/calendar/beside/index.ts",
       "ohmail-source": "./src/calendar/beside/index.ts",

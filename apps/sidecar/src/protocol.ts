@@ -140,6 +140,13 @@ export interface MailboxHeader extends Record<string, unknown> {
   mailboxId: string;
 }
 
+/** A cloud engine's current sign-in behind its mirror, also reported by /health. */
+export interface HostedSessionHeader extends Record<string, unknown> {
+  v: number;
+  t: "hosted-session";
+  signedIn: boolean;
+}
+
 /**
  * THE SHELL SAYING WHY IT IS ABOUT TO CLOSE THIS ENGINE'S INPUT — written once, just before the
  * EOF, and answered by nothing. Only `reason: "restart"` means anything (the claim is kept for the
@@ -152,7 +159,7 @@ export interface LeavingHeader extends Record<string, unknown> {
 }
 
 export type AnyHeader =
-  | RequestHeader | ResponseHeader | ErrorHeader | ReadyHeader | PhaseHeader | MailboxHeader | LeavingHeader;
+  | RequestHeader | ResponseHeader | ErrorHeader | ReadyHeader | PhaseHeader | MailboxHeader | HostedSessionHeader | LeavingHeader;
 
 /** A `Request` → the frame that carries it. Consumes the request's body. */
 export async function encodeRequest(

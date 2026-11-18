@@ -7,7 +7,7 @@ import type { EngineDraft } from "@ohmail/wire";
 import { ohboxUnreadIds } from "../ohbox-rows.js";
 import { ohboxView, resurfacedThreads, screenerSegments } from "../selectors.js";
 import type { EntityReader } from "../store.js";
-import type { NoticeDevices, NoticeSample, SendStanding } from "./gate.js";
+import type { CalendarSample, NoticeDevices, NoticeSample, SendStanding } from "./gate.js";
 
 /** Where an unsent draft stands. Only a send with an appointment waits; one handed back with its failure went wrong. */
 function standingOf(draft: Pick<EngineDraft, "status" | "sendError">): SendStanding {
@@ -41,9 +41,12 @@ export function devicesOf(reader: EntityReader): NoticeDevices | null {
 /**
  * The sample of `reader`. `devices` is handed in by the surface, from its engine's own copy
  * ({@link devicesOf}): the copy a surface presents is not always the one that holds the settings
- * record, and a surface that is not told hands `null`.
+ * record, and a surface that is not told hands `null`. So is `calendar`, the calendar's sample as
+ * the page reads it on the reader's clock (`calendarSampleOf`); a surface with no calendar hands `null`.
  */
-export function noticeSampleOf(reader: EntityReader, devices: NoticeDevices | null = null): NoticeSample {
+export function noticeSampleOf(
+  reader: EntityReader, devices: NoticeDevices | null = null, calendar: CalendarSample | null = null,
+): NoticeSample {
   const sends = new Map<string, SendStanding>();
   for (const draft of reader.list<EngineDraft>("draft")) {
     if (draft.status !== "sent") sends.set(draft.id, standingOf(draft));
@@ -53,6 +56,7 @@ export function noticeSampleOf(reader: EntityReader, devices: NoticeDevices | nu
     screenerWaiting: screenerSegments(reader).waitingTotal,
     sends,
     devices,
+    calendar,
   };
 }
 

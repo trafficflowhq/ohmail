@@ -29,7 +29,7 @@ import { createFeed, NONE, type HostConnectionState } from "@ohmail/app/host";
 import { EngineProvider } from "../../webapp/app/shell/engine";
 import { DesktopFrame } from "./DesktopFrame.js";
 import { linkSlot } from "./link-in.js";
-import { setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { setComposerScope } from "@ohmail/app-logic/writing/compose";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
@@ -1415,6 +1415,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
             firstRun={firstRun}
             takesMailLinks={!isPreview()}
             scope={shellKey}
+            liveNoticeScope={storageOwner}
             onUnread={onUnread}
             liveBody={liveBodyOverBridge}
             links={links}

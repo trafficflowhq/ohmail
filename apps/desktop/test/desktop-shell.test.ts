@@ -655,6 +655,15 @@ describe("the Rust side", () => {
   it("is these sixty-six files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
+      // THE CALENDAR'S ALERTS, SET AHEAD: one account's alerts as the window hands them over, read
+      // closed (numbers, ids, a label of three forms; a member too many refuses the set), kept in a
+      // book that is asked again at each alert's minute whether the mailbox served is still the one
+      // the set was made under, and worded by the shell. ALWAYS compiled and Tauri-free: it opens,
+      // spawns, reads and sends nothing; the command that fills the book and the thread that shows
+      // an alert are `engine.rs`'s, under `local-engine`. Its tests read the window's two tables of
+      // cases and its catalogue.
+      "alerts.rs",
+      "alerts_tests.rs",
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
       // thread its own 64 MiB arena and the webview's process runs dozens of threads; five of
       // them held a quarter of the renderer on the measured guest. The cap is an environment
@@ -1008,6 +1017,9 @@ describe("the Rust side", () => {
     expect(enabled, "the local-engine feature list has stopped matching this reader").toEqual([
       "dep:getrandom",
       "dep:keyring",
+      // The calendar submits synchronously through the plugin's existing backend while the
+      // engine still owns the active mailbox and schedule.
+      "dep:notify-rust",
       // Start-at-login, driven only from host mode's arming ceremony and the shell's own
       // autostart commands. Optional for the reason the keystore is: the preview must carry no
       // way to register itself to start with anybody's computer.
@@ -1027,6 +1039,11 @@ describe("the Rust side", () => {
       // the capability to.
       "tauri/tray-icon",
     ]);
+    // A direct backend must remain optional and activated only here. Inspect other features too,
+    // so a second activation in the preview cannot pass the engine's positive inventory.
+    expect(cargo.match(/^notify-rust\s*=.*$/gm)).toEqual(['notify-rust = { version = "4.18", optional = true }']);
+    const allFeatures = /^\[features\]([\s\S]*?)(?=^\[)/m.exec(cargo)?.[1] ?? "";
+    expect(allFeatures.match(/"(?:dep:)?notify-rust(?:\??\/[^"]+)?"/g)).toEqual(['"dep:notify-rust"']);
     expect(cargo).toMatch(/^serde_json = "1"$/m);
     // The keystore dependencies stay optional: the preview has no business being
     // linked against the OS keystore at all — it stores nothing, so it needs
@@ -1167,6 +1184,12 @@ describe("the Rust side", () => {
       // The two the WINDOW drives rather than the shell — a notice in the operating system's
       // notification centre, and the count on the dock icon.
       "notify",
+      // The calendar's alerts set ahead: one account's alerts as a set the shell reads closed
+      // (numbers, ids, a label of three forms), replaced whole; an empty set clears and the answer
+      // lists the ids held. Taken only under the mailbox the shell serves, asked again at each
+      // alert's minute, worded by the shell (`alerts.rs`). It names no text to show, no path, no
+      // address and no sound, and brings no plugin permission with it.
+      "alerts_set",
       "set_badge",
       // The window's own performance numbers into the engine's log — startup marks, the open,
       // switch and search percentiles, long frames, and what the client engine's derivation
