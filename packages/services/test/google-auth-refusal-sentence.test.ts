@@ -4,7 +4,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { GOOGLE_AUTH_HINTS } from "@trafficflow/core/adapters/imap";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { GOOGLE_AUTH_REFUSAL, launchRefused } from "../src/mailbox-service.js";
 
 /**
@@ -24,7 +24,7 @@ let ctx: ServiceContext;
 beforeAll(async () => {
   const db = await makeTestDb();
   const [a] = await db.insert(accounts).values({ name: "google-refusal" }).returning();
-  ctx = { db, accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
+  ctx = { db: dbFor(db, a!.id), accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
 });
 
 const caught = async (run: () => Promise<unknown>): Promise<Refused | null> => {

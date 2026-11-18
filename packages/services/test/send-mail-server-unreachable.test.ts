@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, drafts, outboundSends } from "@trafficflow/db";
 import type { OpenSendAdapter } from "@trafficflow/core";
-import { SendService, ServiceError, SEND_FAILED_SENTENCE, SEND_TIMEOUT_SENTENCE } from "../src/index.js";
+import { SendService, ServiceError, SEND_FAILED_SENTENCE, SEND_TIMEOUT_SENTENCE, dbFor } from "../src/index.js";
 import type { ServiceContext, StagedAttachmentSource } from "../src/index.js";
 import {
   MailServerUnreachable, SEND_UNREACHABLE_SENTENCE, mailServerUnreachable,
@@ -28,7 +28,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: "u@outage.example",
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   const newDraft = async (scheduledKey?: string): Promise<string> => {
     const [d] = await db.insert(drafts).values({
       accountId, mailboxId: mb!.id, subject: "Re: hi", body: "Thanks!",

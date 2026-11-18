@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * A SERVER ON THIS COMPUTER IS SAID AS ITS OWN ONLY WHERE THE LONG WAIT APPLIED. The stamp is the
@@ -25,7 +25,7 @@ let ctx: ServiceContext;
 beforeAll(async () => {
   const db = await makeTestDb();
   const [a] = await db.insert(accounts).values({ name: "local-server" }).returning();
-  ctx = { db, accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
+  ctx = { db: dbFor(db, a!.id), accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
 });
 
 /** One connect press with both legs' verdicts given; the refusal it answered, or null. */

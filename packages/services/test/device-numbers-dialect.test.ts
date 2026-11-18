@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { accounts, changeLog, devices, sessions, users } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { ringDeviceMade, ringDeviceRevoked } from "../src/auth/device-doorbell.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 import { deviceNumbers } from "../src/device-numbers.js";
 import { materializeSettings } from "../src/dto/materialize.js";
 
@@ -44,8 +44,9 @@ async function seeded() {
       accessExpiresAt: new Date(NOW.getTime() + 3_600_000), refreshExpiresAt: new Date(NOW.getTime() + 7_200_000), lastSeenAt: NOW,
     });
   };
+  // A take-back is a call with a session: its handle is bound to that session's account.
   const ctx = (who: { accountId: string; userId: string }): ServiceContext =>
-    ({ db: db as never, accountId: who.accountId, userId: who.userId, now: () => NOW, requestId: "devices-twin" });
+    ({ db: dbFor(db, who.accountId), accountId: who.accountId, userId: who.userId, now: () => NOW, requestId: "devices-twin" });
   const rings = async (accountId: string): Promise<number> => (await db.select({ seq: changeLog.seq }).from(changeLog)
     .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityType, "settings")))).length;
   return { db, person, device, browser, ctx, rings };

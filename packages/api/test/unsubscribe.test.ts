@@ -3,7 +3,7 @@ import { createApp, apiRoutes, unsubscribeRoutesGroup, type ApiDeps } from "@tra
 import { messages, folderState, learningSignals, rules, unsubscribeRecords } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import { NO_TRUSTED_AUTHSERV_IDS } from "@trafficflow/core/mail";
-import type { OneClickPost, ServiceContext } from "@trafficflow/services";
+import { dbFor, type OneClickPost, type ServiceContext } from "@trafficflow/services";
 import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
@@ -242,7 +242,7 @@ describe("the automatic arm and a sender nobody confirmed", () => {
       destination: "ohmail/Screened", provenance: "promoted", personDecidedAt: deps.now() });
     await db.insert(learningSignals).values({ accountId: s.accountId, triggeringActionId: `screener:${crypto.randomUUID()}`,
       kind: "screener", senderAddress: "news@sender.example", destination: "ohmail/Screened", label: "positive" });
-    const ctx: ServiceContext = { db, accountId: s.accountId, userId: null, now: deps.now, requestId: "t" };
+    const ctx: ServiceContext = { db: dbFor(db, s.accountId), accountId: s.accountId, userId: null, now: deps.now, requestId: "t" };
     return { s, id, ctx };
   }
   const recordsOf = (db: Awaited<ReturnType<typeof makeDeps>>["db"], id: string) =>

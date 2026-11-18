@@ -5,7 +5,7 @@
  * billing, the funnel and the operator connection are declared in `deps-cloud.ts`, which augments
  * the two interfaces below and which only a hosted build loads. */
 import type {
-  AuthConfig, Db, KeyProvider, SearchSupersede, ServiceContext, SessionScope,
+  AuthConfig, ContextDb, Db, KeyProvider, SearchSupersede, ServiceContext, SessionScope, UnboundDb,
   SyncService, PushService, MailboxService, RulesService,
   MessageService, ThreadService,
   ScreenerService, ApprovalService, TriageService, SearchService, PrivacyService,
@@ -124,7 +124,7 @@ export interface AttachmentStagingPort {
  * the retired `aiCredits` factory did over the same handle: the bag is per cold instance and
  * a database handle is not, so the bag holds the factory and the handler holds the port.
  */
-export type AttachmentStagingFactory = (db: Db) => AttachmentStagingPort;
+export type AttachmentStagingFactory = (db: ContextDb) => AttachmentStagingPort;
 
 /**
  * WHAT ONE STORAGE MAIL SAYS (cloud 0057), structural for `customerMail`'s reason: numbers, closed
@@ -918,14 +918,19 @@ export interface PressContext {
  * PGlite `Db`; a hosted deployment builds one per request around a pooled Postgres `Db`.
  */
 export interface ApiDeps {
-  db: Db;
+  /**
+   * THE REQUEST'S HANDLE, never the pool's own. Its host mints it bound to nothing, the session's
+   * door binds it to the session's account, and a container made over a plain handle does not
+   * compile: no route can reach the database without the binder having named whom it acts for.
+   */
+  db: ContextDb;
   /**
    * The same pool behind the SESSION wait-to-begin ceiling, which `withSessionAcquireCeiling` puts
    * in place of {@link db} on the session doors. A port for {@link ApiFaultLogPort}'s reason:
    * the ceiling's number lives in `@trafficflow/db/cloud`, which this file may not name. Absent ⇒
    * the doors keep `db` — PGlite hosts, the desktop door, every local install.
    */
-  sessionDb?: () => Db;
+  sessionDb?: () => UnboundDb;
   now: () => Date;
   requestId: string;
   /**
@@ -948,7 +953,7 @@ export interface ApiDeps {
    * the handle it read the mailbox's credential on, a request's or a pass's row's. A refresh token
    * Microsoft replaces during that dial is written there, in a flight that names what the dial names.
    */
-  oauth?: OAuthTokenProvider<Db>;
+  oauth?: OAuthTokenProvider<ContextDb>;
   /** Set by `withIdempotency`; consumed by the handler's service. */
   idempotency?: IdempotencyContext | null;
   /** Set by `withPressAge`; threaded onto the service context as `pressFloor`. */

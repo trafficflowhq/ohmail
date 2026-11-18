@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { drafts, messageInvitations, outboundSends } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { answerInvitation } from "../src/invitation-answer-service.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 import { invitationLetter, mailboxAt, outbox, stampOf } from "./_invitation-answer.js";
 
 /**
@@ -20,16 +17,21 @@ import { invitationLetter, mailboxAt, outbox, stampOf } from "./_invitation-answ
  */
 const PG_UP = await realPgAvailable();
 
-const conn = (name: string) => postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, connection: { application_name: name } });
-const sqlA = conn("invitation-answer-a");
-const sqlB = conn("invitation-answer-b");
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+/** A pool of the factory's, named by its address (a parameter of the address is one of the connection). */
+const conn = (name: string) => {
+  const address = new URL(PG_TEST_URL);
+  address.searchParams.set("application_name", name);
+  return makeOwnedDb(address.toString());
+};
+const ownedA = conn("invitation-answer-a");
+const ownedB = conn("invitation-answer-b");
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-11-15T09:30:00.000Z");
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await Promise.all([sqlA, sqlB].map((s) => s.end({ timeout: 5 }))); });
+afterAll(async () => { await Promise.all([ownedA.close(), ownedB.close()]); });
 
 async function world() {
   const accountId = randomUUID();
@@ -37,7 +39,7 @@ async function world() {
   const mailboxId = await mailboxAt(dbA, accountId, address);
   const messageId = await invitationLetter(dbA, accountId, mailboxId, { attendees: [address] });
   const box = outbox();
-  const ctx = (db: typeof dbA, id: string): ServiceContext => ({ db, accountId, userId: null, now: () => NOW, requestId: id });
+  const ctx = (db: typeof dbA, id: string): ServiceContext => ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: id });
   const press = (db: typeof dbA, answer: string, key: string) =>
     answerInvitation(ctx(db, key), { messageId, answer, basis: null, key }, { send: { openSendAdapter: box.factory } });
   return { accountId, messageId, box, press };
@@ -69,8 +71,9 @@ describe.skipIf(!PG_UP)("two devices pressing at once", () => {
 
   it("another account's letter is the missing letter's 404, and nothing is made", async () => {
     const w = await world();
+    const stranger = randomUUID();
     const err = await answerInvitation(
-      { db: dbB, accountId: randomUUID(), userId: null, now: () => NOW, requestId: "x" },
+      { db: dbFor(dbB, stranger), accountId: stranger, userId: null, now: () => NOW, requestId: "x" },
       { messageId: w.messageId, answer: "accepted", basis: null, key: "k" }, { send: { openSendAdapter: w.box.factory } },
     ).then(() => null, (e: unknown) => e as { code?: string; httpStatus?: number });
     expect([err?.code, err?.httpStatus]).toEqual(["not_found", 404]);

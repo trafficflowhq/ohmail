@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
@@ -47,7 +48,7 @@ const app = createApp(apiRoutes);
 /** A real-Postgres `ApiDeps` on its OWN connection — separate connections are what make a race. */
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
     now: () => FIXED_NOW,
     requestId: `pg-${randomUUID()}`,
@@ -83,7 +84,7 @@ function depsOn(db: Db): ApiDeps {
       workflows: workflowsService,
       proposals: proposalsService,
     },
-  };
+  });
 }
 
 describe.skipIf(!PG_UP)("the desktop handoff code is single-use against real Postgres", () => {

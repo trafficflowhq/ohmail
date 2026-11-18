@@ -10,7 +10,7 @@ import { answerInvitation, type InvitationAnswerDeps } from "../src/invitation-a
 import { sendService } from "../src/send-service.js";
 import { syncService } from "../src/sync-service.js";
 import { ServiceError } from "../src/errors.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 import { makeCtx } from "./helpers.js";
 import { conversation, invitationLetter, ME, ORGANIZER, outbox, stampOf, type Invitation } from "./_invitation-answer.js";
 
@@ -241,7 +241,8 @@ describe("refused with a word, sending nothing and making no draft", () => {
 
   it("another account's letter, a deleted one and one without an invitation answer as a missing letter", async () => {
     const w = await world();
-    const missing = await refusal(w.press("accepted", null, "k", { ...w.ctx, accountId: randomUUID() }));
+    const stranger = randomUUID();
+    const missing = await refusal(w.press("accepted", null, "k", { ...w.ctx, accountId: stranger, db: dbFor(w.db, stranger) }));
     const random = await refusal(answerInvitation(w.ctx, { messageId: randomUUID(), answer: "accepted", basis: null, key: "k" }, w.deps));
     expect([missing.code, missing.httpStatus, missing.message, missing.details]).toEqual([random.code, random.httpStatus, random.message, random.details]);
     expect([random.code, random.httpStatus]).toEqual(["not_found", 404]);
@@ -385,7 +386,8 @@ describe("the log", () => {
     const deps = { send: { ...w.deps.send, log }, log };
     await w.press("accepted", null, "press-1", w.ctx, deps);
     await refusal(w.press("declined", null, "press-2", w.ctx, deps));
-    await refusal(w.press("accepted", null, "press-3", { ...w.ctx, accountId: randomUUID() }, deps));
+    const stranger = randomUUID();
+    await refusal(w.press("accepted", null, "press-3", { ...w.ctx, accountId: stranger, db: dbFor(w.db, stranger) }, deps));
     const forwarded = await world({ ...marked, attendees: ["someone@elsewhere.example"] });
     await refusal(forwarded.press("accepted", null, "press-4", forwarded.ctx, deps));
     const failing = await world(marked);

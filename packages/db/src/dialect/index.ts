@@ -44,6 +44,13 @@ export const ERASURE_FENCE_BRAND: unique symbol = Symbol.for("ohmail.db.erasureF
  */
 export const BINDING_BRAND: unique symbol = Symbol.for("ohmail.db.binding") as never;
 
+/**
+ * Set on a server pool's handle where its factory registers its door (`bound.ts`), read through
+ * every view of it, and carried to every transaction opened on either: a role and its policies
+ * stand behind the statements of such a handle. A device's store never carries it.
+ */
+export const SERVER_POOL_BRAND: unique symbol = Symbol.for("ohmail.db.serverPool") as never;
+
 /** Set on a transaction opened inside another one: a savepoint, never the outermost handle. */
 export const SAVEPOINT_BRAND: unique symbol = Symbol.for("ohmail.db.savepoint") as never;
 
@@ -68,6 +75,11 @@ function intoTransaction<T extends object>(tx: T, parent: object): T {
   if (binding !== undefined) {
     Object.defineProperty(tx, BINDING_BRAND, {
       value: binding, enumerable: false, configurable: true, writable: false,
+    });
+  }
+  if (from[SERVER_POOL_BRAND] === true) {
+    Object.defineProperty(tx, SERVER_POOL_BRAND, {
+      value: true, enumerable: false, configurable: true, writable: false,
     });
   }
   return tx;

@@ -35,13 +35,20 @@ export function clientIp(req: Request): string {
 }
 
 /**
- * Refuse a request's handle that is not as its host minted it: bound to an account, or carrying a
- * key. The host hands every request a handle bound to nothing; one that names more was bound for
- * another request, and a second request on its container must fail, never run as the first.
+ * REFUSE A REQUEST'S HANDLE THAT IS NOT AS ITS HOST MINTED IT. The host hands every request a handle
+ * bound to nothing, with no key (`depsFor`); that, and nothing else, is what a request starts on:
+ *
+ * - a handle with no binding at all is one no host minted. A host that stopped minting would run
+ *   every route on the pool's own handle, with no account named on the wire;
+ * - a handle that names an account, or carries a key, was bound for another request: a second
+ *   request on its container must fail, never run as the first.
  */
-function refuseSpentHandle(deps: ApiDeps, what: string): void {
+function refuseUnmintedHandle(deps: ApiDeps, what: string): void {
   const held = bindingOf(deps.db);
-  if (held !== undefined && (held.account !== null || held.keyed)) {
+  if (held === undefined) {
+    throw new BindingRefusedError(`${what} was asked on a request whose handle no host minted`);
+  }
+  if (held.account !== null || held.keyed) {
     throw new BindingRefusedError(`${what} was asked on a request whose handle is bound already`);
   }
 }
@@ -59,40 +66,35 @@ function refuseSpentHandle(deps: ApiDeps, what: string): void {
  * the handle bound to nothing. The session doors' second handle (`deps.sessionDb`) is closed here:
  * nothing swaps the request's handle after it was bound.
  *
- * A handle that already names an account, or carries a key, is refused: a container handed to a
- * second request fails here. A handle with no binding at all is one no host minted (a test's
- * container, the desktop's until its host mints too): it is left as it is, and
- * {@link serviceContext} binds each context from the session.
+ * The handle must be as the host minted it ({@link refuseUnmintedHandle}): one that names an
+ * account or carries a key is refused, so a container handed to a second request fails here, and
+ * so is one no host minted.
  */
 export function bindRequest(deps: ApiDeps): void {
-  refuseSpentHandle(deps, "the session's binding");
+  refuseUnmintedHandle(deps, "the session's binding");
   delete deps.sessionDb;
-  if (deps.session && bindingOf(deps.db) !== undefined) {
-    deps.db = bindDb(deps.db, { account: deps.session.accountId });
-  }
+  if (deps.session) deps.db = bindDb(deps.db, { account: deps.session.accountId });
 }
 
 /**
  * THE HANDLE OF A DOOR THAT RUNS FOR NO ACCOUNT: a clock's route, which walks rows of many accounts
  * and binds each row's own (`passContext`). Bound to nothing, with no key: the request's handle as
- * the host minted it. A request that was bound to an account has no such door, and is refused.
+ * the host minted it ({@link refuseUnmintedHandle}). A request that was bound to an account has no
+ * such door, and neither has one whose handle no host minted.
  */
 export function doorDb(deps: ApiDeps): UnboundDb {
-  refuseSpentHandle(deps, "a door without an account");
+  refuseUnmintedHandle(deps, "a door without an account");
   return bindDb(deps.db, { account: null });
 }
 
 /**
- * A context's handle. On a host that mints the request's handle it is `deps.db` itself, which
- * {@link bindRequest} bound: the session and the handle must agree, and a handle that names
- * another account, or nothing while a session stands, is refused. A handle with no binding (no
- * host minted it) is bound here from the session's row, each time it is asked.
+ * A context's handle: `deps.db` itself, which the host minted and {@link bindRequest} bound. The
+ * session and the handle must agree: a handle that names another account, nothing while a session
+ * stands, an account while none does, or no binding at all (no host minted it) is refused.
  */
 function contextDb(deps: ApiDeps): BoundDb | UnboundDb {
-  const account = deps.session ? deps.session.accountId : null;
   const db = deps.db;
-  if (bindingOf(db) === undefined) return account === null ? bindDb(db, { account: null }) : bindDb(db, { account });
-  assertBinding(db, account);
+  assertBinding(db, deps.session ? deps.session.accountId : null);
   return db;
 }
 

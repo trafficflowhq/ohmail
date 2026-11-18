@@ -5,7 +5,7 @@ import { accounts, mailboxCredentials, mailboxes, type Tx } from "@trafficflow/d
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger } from "@trafficflow/core/mail";
 import { formatClaim, isMalformed, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { SYNC_KICK_EVERY_MS, startWorker } from "../src/index.js";
 import { syncKickPass } from "../src/sync-kick.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
@@ -52,7 +52,7 @@ async function handedBack(db: Db): Promise<ServiceContext & { mailboxId: string 
     mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
-  return { db, accountId, userId: null, now: () => new Date(), requestId: randomUUID(), mailboxId: row!.id };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: randomUUID(), mailboxId: row!.id };
 }
 
 const rowOf = async (db: Db, id: string) =>

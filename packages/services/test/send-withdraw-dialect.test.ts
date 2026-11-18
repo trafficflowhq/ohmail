@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { drafts, mailboxes, outboundSends } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendService, ServiceError } from "../src/index.js";
+import { SendService, ServiceError, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -26,7 +26,7 @@ async function world() {
     accountId, mailboxId: mb!.id, subject: "the cancelled send", body: "words",
     to: [{ name: null, address: "you@example.com" }], status: "draft", createdAt: NOW, updatedAt: NOW,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   const rowOf = async (key: string) => {
     const [row] = await db.select().from(outboundSends)
       .where(and(eq(outboundSends.accountId, accountId), eq(outboundSends.idempotencyKey, key)));

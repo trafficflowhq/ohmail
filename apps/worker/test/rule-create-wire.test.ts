@@ -5,7 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accountWritesHere, listSentRequests, mailboxes, markRequestsSent, organizerRequests, rules, type Tx,
 } from "@trafficflow/db";
-import { RulesService, type RuleMutation, type ServiceContext } from "@trafficflow/services";
+import { RulesService, dbFor, type RuleMutation, type ServiceContext } from "@trafficflow/services";
 import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -61,7 +61,7 @@ async function world(mixed: boolean) {
   let ticking = false;
   // `ticking`: every call is a fresh instant, as production's `now: () => new Date()` is.
   const ctx = {
-    db: here, accountId: ACCT, userId: null, requestId: "r",
+    db: dbFor(here, ACCT), accountId: ACCT, userId: null, requestId: "r",
     now: () => (ticking ? (clock = new Date(clock.getTime() + 1)) : clock),
   } as ServiceContext;
   const m = sharedMeta();

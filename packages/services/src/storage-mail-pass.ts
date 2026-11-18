@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { dialect } from "@trafficflow/db/dialect";
 import { silentLogger, type Logger } from "@trafficflow/core";
-import { bridgeDb, bridgeTx, passContext, type Db } from "./context.js";
+import { bridgeDb, bridgeTx, passContext, type Db, type UnboundDb } from "./context.js";
 import type { MailContext } from "./mail/index.js";
 
 /**
@@ -112,7 +112,7 @@ export function addonBytesOf(offer: StorageOffer): number {
   return plan === undefined ? 0 : Math.max(0, offer.fit.roomBytes - plan.roomBytes);
 }
 
-export async function runStorageMailPass(walk: Db, deps: StorageMailPassDeps): Promise<StorageMailPassResult> {
+export async function runStorageMailPass(walk: UnboundDb, deps: StorageMailPassDeps): Promise<StorageMailPassResult> {
   const log = deps.log ?? silentLogger;
   const clock = deps.clock ?? Date.now;
   const started = clock();

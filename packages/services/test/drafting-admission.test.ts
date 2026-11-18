@@ -4,7 +4,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, clientIdempotencyKey } from "@trafficflow/db";
 import type { RefundObligation, RefundObligationPort } from "@trafficflow/db";
 import { ENTITLEMENTS_CALL_BUDGET_MS } from "@trafficflow/db/cloud";
-import { DraftingService, DRAFT_ADMISSION, draftWindow } from "../src/index.js";
+import { DraftingService, DRAFT_ADMISSION, dbFor, draftWindow } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import type { DraftCallOptions, DraftInput, DraftPort } from "@trafficflow/core";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
@@ -53,7 +53,7 @@ async function setup() {
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `adm:${randomUUID()}`,
     subject: "Seed subject", fromAddress: "sender@example.com", snippet: "seed", date: NOW,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { ctx, messageId: m!.id };
 }
 

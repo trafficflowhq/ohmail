@@ -1,14 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { accounts, mailboxes, messages, folderState, routingDecisions } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import type { ClassifierPort } from "@trafficflow/core";
-import { ScreenerService, type ScreenerSuggestResult, type ServiceContext } from "@trafficflow/services";
+import { ScreenerService, dbFor, type ScreenerSuggestResult, type ServiceContext } from "@trafficflow/services";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
@@ -34,10 +31,12 @@ import { PLANE_PRICING } from "./helpers/plane-pricing.js";
  */
 const URL = pgTestUrl(import.meta.url);
 
-const sqlA = postgres(URL, { max: 5 });
-const sqlB = postgres(URL, { max: 5 });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+// The factory's pools, one per racer: the binder takes a server handle only from the factory that
+// registered its door.
+const ownedA = makeOwnedDb(URL);
+const ownedB = makeOwnedDb(URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-07-28T12:00:00Z");
 
@@ -62,7 +61,7 @@ credits.exclusive();
 
 
 function ctxFor(db: typeof dbA, accountId: string): ServiceContext {
-  return { db, accountId, userId: null, now: () => NOW, requestId: randomUUID() };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: randomUUID() };
 }
 
 /** An account with a mailbox, `senders.length` held first-contact rows, and `granted` spends. */
@@ -94,7 +93,7 @@ const asksOf = (accountId: string) =>
 
 describe("concurrent suggestion purchases against real Postgres", () => {
   beforeAll(async () => { await runMigrations(URL); });
-  afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+  afterAll(async () => { await ownedA.close(); await ownedB.close(); });
 
   it("two simultaneous purchases of the SAME five senders charge five credits, not ten", async () => {
     // The double-charge this exists to prevent. The attempt key is the MESSAGE, so `sourceFor`

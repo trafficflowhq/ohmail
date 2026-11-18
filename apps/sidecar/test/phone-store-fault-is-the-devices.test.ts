@@ -11,7 +11,7 @@ import { agreeSweepRun, makeDrizzleRepo } from "@trafficflow/core/adapters/drizz
 import {
   accounts, auditAction, auditLog, changeLog, folderState, mailboxes, messageBodies, messageFailures, messages, threads,
 } from "@trafficflow/db";
-import { screenUnscreened, type ServiceContext } from "@trafficflow/services/mail";
+import { dbFor, screenUnscreened, type Db, type ServiceContext } from "@trafficflow/services/mail";
 import { classifyIngestFault, markStoreStatement, StoreStatementFaultError } from "@ohmail/organizer/dead-letter";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import {
@@ -518,8 +518,9 @@ async function organizerOhbox(db: unknown, count: number, senders: number) {
 }
 
 type TxHandle = { transaction: (fn: (tx: { run: (q: unknown) => Promise<unknown> }) => Promise<unknown>) => Promise<unknown> };
+// The press runs for the store's one account, on the app's door bound to it.
 const pressCtx = (db: unknown, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => new Date(), requestId: "screen-batch" }) as unknown as ServiceContext;
+  ({ db: dbFor(db as Db, accountId), accountId, userId: null, now: () => new Date(), requestId: "screen-batch" });
 
 describe.runIf(ON_DEVICE_STORE)("a thousand-letter Screen press on a device-slow store", () => {
   it("a drain's transaction during the press is served, and the press holds its turn for a few statements", async () => {

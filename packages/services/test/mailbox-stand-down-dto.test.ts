@@ -4,7 +4,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, MAILBOX_DISABLED_REASONS, UNMETERED_ACCESS,} from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * THE ORGANIZER LEASE'S VERDICT REACHES THE CLIENT, AND ONLY WHEN IT IS TRUE.
@@ -37,7 +37,7 @@ const svc = makeMailboxService({ keyProvider: KP, accessOf: async () => UNMETERE
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 /** Exactly what `markMailboxStoodDown` leaves behind — every column, including the cleared ones. */
 const STOOD_DOWN = {

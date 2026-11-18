@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { mailboxes, mailboxProfileMirror } from "@trafficflow/db/mail";
 import {
-  syncService, type MailboxDTO, type MailboxProfileDTO, type RuleDTO, type ServiceContext,
+  dbFor, syncService, type MailboxDTO, type MailboxProfileDTO, type RuleDTO, type ServiceContext,
   type SnapshotResponse, type SyncChange, type SyncResponse,
 } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
@@ -107,7 +107,7 @@ const EMPTY_SNAPSHOT: SnapshotResponse = { asOfSeq: 99, changes: [], nextCursor:
 
 /** What the window reads: page 1 of this install's own snapshot. */
 async function localProfile(db: OpenLocalDb["db"], world: LocalWorld): Promise<MailboxProfileDTO | undefined> {
-  const ctx: ServiceContext = { db, accountId: world.accountId, userId: null, now: () => new Date(AS_OF), requestId: "profile" };
+  const ctx: ServiceContext = { db: dbFor(db, world.accountId), accountId: world.accountId, userId: null, now: () => new Date(AS_OF), requestId: "profile" };
   const page = await syncService.getSnapshot(ctx, {});
   return page.changes.find((c) => c.type === "mailbox_profile")?.entity as MailboxProfileDTO | undefined;
 }

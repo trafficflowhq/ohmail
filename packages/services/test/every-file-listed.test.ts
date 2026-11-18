@@ -6,7 +6,7 @@ import { outboundToMail } from "@trafficflow/core/adapters/imap";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { AttachmentsService } from "../src/attachments-service.js";
 import { materializeMessage } from "../src/dto/materialize.js";
-import type { ServiceContext } from "../src/index.js";
+import { dbFor, type ServiceContext } from "../src/index.js";
 import { makeCtx, otherAccount } from "./helpers.js";
 
 /**
@@ -111,7 +111,7 @@ describe("the account's own sent invoice lists its PDF as a file", () => {
   async function account() {
     const { db } = await makeCtx();
     const { accountId, mailboxId } = await otherAccount(db, OWN);
-    const ctx: ServiceContext = { db, accountId, userId: null, now: () => new Date("2026-09-27T12:00:00Z"), requestId: "r" };
+    const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-09-27T12:00:00Z"), requestId: "r" };
     return { db, accountId, mailboxId, ctx, repo: makeDrizzleRepo(db) };
   }
   async function expectTheInvoice(a: Awaited<ReturnType<typeof account>>, messageId: string): Promise<void> {

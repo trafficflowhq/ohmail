@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes } from "@trafficflow/db";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * A poll's filing aggregate reads the caller's own rows, however much mail another account on the
@@ -97,7 +97,7 @@ describe("the poll's filing aggregate beside a larger account", () => {
 
     const svc = makeMailboxService({ installId: "install-here", organizerStanding: async () => ({ lastCycleAt: null, behind: false, since: null }) });
     const ctx: ServiceContext = {
-      db, accountId: MINE, userId: null, now: () => new Date("2026-10-21T10:00:00.000Z"), requestId: "r",
+      db: dbFor(db, MINE), accountId: MINE, userId: null, now: () => new Date("2026-10-21T10:00:00.000Z"), requestId: "r",
     };
     const sent: Array<{ text: string; params: unknown[] }> = [];
     const query = c.query;

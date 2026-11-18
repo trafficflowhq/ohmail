@@ -29,6 +29,7 @@ import {
 } from "./window-report.js";
 import { WINDOW_OUTBOX_ROUTE } from "./window-outbox.js";
 import { SEARCH_INDEX_ROUTE } from "./search-index-door.js";
+import { unboundOf } from "./store-binding.js";
 import type { SidecarConfig } from "./engine-types.js";
 import { releaseOwnClaim } from "./engine-local-services.js";
 import { LOCAL_CONNECTIONS_LOG_EVERY_MS } from "./engine-reconnect.js";
@@ -221,7 +222,7 @@ export function requestDoorSection(scope: EngineScope, config: SidecarConfig): v
           const token = header && /^Bearer\s+/i.test(header)
             ? header.replace(/^Bearer\s+/i, "").trim()
             : "";
-          const live = token ? await resolveSession(scope.db, token, scope.now()) : null;
+          const live = token ? await resolveSession(scope.unbound, token, scope.now()) : null;
           /* ── THE WAY OUT OF A BROKEN SESSION MAY NOT DEPEND ON IT ─────────────────────────
            *
            * The launch bearer renews while it is used (`launch-bearer.ts`); a session that ended
@@ -521,9 +522,9 @@ export function requestDoorSection(scope: EngineScope, config: SidecarConfig): v
               const deps = scope.depsFor();
               const dto = await deps.services!.mailbox.probeConnection(
                 {
-                  db: scope.db, accountId: core.accountId, userId: core.userId,
+                  db: dbFor(scope.db, core.accountId), accountId: core.accountId, userId: core.userId,
                   now: scope.now, requestId: "", sessionId: core.sessionId ?? null,
-                } as never,
+                },
                 {
                   address: typeof body.address === "string" ? body.address : "",
                   /* FIELD BY FIELD, NEVER A SPREAD — the shared route's own rule, and it is
@@ -1460,9 +1461,10 @@ export function requestDoorSection(scope: EngineScope, config: SidecarConfig): v
             },
           );
         }
-        /* THE APP'S DOOR READS COMMITTED ROWS ONLY where a drain page can be open (PERF-026). */
+        /* THE APP'S DOOR READS COMMITTED ROWS ONLY where a drain page can be open (PERF-026): the
+           request's handle is then minted over that door to the store, bound to nothing as `depsFor`'s is. */
         const deps = { ...scope.depsFor(), ...(supersede ? { searchSupersede: supersede } : {}) };
-        const answered = await scope.asPerson(req, () => scope.app.handle(req, scope.opened.routeDb ? { ...deps, db: scope.opened.routeDb } : deps));
+        const answered = await scope.asPerson(req, () => scope.app.handle(req, scope.opened.routeDb ? { ...deps, db: unboundOf(scope.opened.routeDb) } : deps));
         scope.noteDoorWrite(req, answered);
         // The mailbox list carries this install's own settled sync verdicts — on `handle`
         // ALONE, like the local routes above: a paired device renders its own indicator and

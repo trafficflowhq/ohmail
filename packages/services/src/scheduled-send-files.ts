@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import { drafts, reclaimSpace, scheduledSendFiles, type Tx } from "@trafficflow/db";
-import { bridgeTx, type Db } from "./context.js";
+import { bridgeTx, type Db, type UnboundDb } from "./context.js";
 
 /**
  * A SCHEDULED LETTER'S FILES (mail 0179, 0180) — kept from the schedule press until the appointment
@@ -228,7 +228,7 @@ export async function readScheduledFiles(
  * for a caller that reclaims it itself).
  */
 export async function sweepScheduledSendFiles(
-  db: Db, opts: { mailboxIds?: readonly string[]; vacuum?: boolean } = {},
+  db: UnboundDb, opts: { mailboxIds?: readonly string[]; vacuum?: boolean } = {},
 ): Promise<number> {
   if (opts.mailboxIds !== undefined && opts.mailboxIds.length === 0) return 0;
   const tx = bridgeTx(db);
@@ -251,7 +251,7 @@ export async function sweepScheduledSendFiles(
  * this — at most {@link SCHEDULE_FILES_MAX_AHEAD_MS} ahead, closed a day after its time — so this
  * reaches only a letter something else left behind, which then closes as unreadable when it comes due.
  */
-export async function sweepAgedScheduledFiles(db: Db, before: Date): Promise<number> {
+export async function sweepAgedScheduledFiles(db: UnboundDb, before: Date): Promise<number> {
   const gone = await bridgeTx(db).delete(scheduledSendFiles)
     .where(and(
       lt(scheduledSendFiles.createdAt, before),

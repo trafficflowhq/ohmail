@@ -9,7 +9,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { pgTestUrl } from "@trafficflow/db/testing";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 
 /**
@@ -38,7 +38,7 @@ const N = randomUUID();
 const NEIGHBOUR_MATCHES = 30_000;
 const MATCHES = 300;
 let mailboxId = "";
-const ctx = (): ServiceContext => ({ db, accountId: A, userId: null, now: () => NOW, requestId: "search-reach" });
+const ctx = (): ServiceContext => ({ db: dbFor(db, A), accountId: A, userId: null, now: () => NOW, requestId: "search-reach" });
 
 describe("what a search says about its reach (real Postgres)", () => {
   beforeAll(async () => {

@@ -3,7 +3,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, users } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
 import {
-  adminAccountDetail, makeMailboxService, type AdminDb, type ServiceContext,
+  adminAccountDetail, dbFor, makeMailboxService, type AdminDb, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -111,7 +111,7 @@ describe("a block survives the projection even when its reason does not", () => 
     // over the same columns, and an earlier fix is the precedent for a fix landing on one surface only.
     const db = await makeTestDb();
     const { accountId } = await seedBlockedMailbox(db, FUTURE_REASON);
-    const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+    const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
 
     const [dto] = await makeMailboxService({ keyProvider: KP }).list(ctx);
 
@@ -134,7 +134,7 @@ describe("a block survives the projection even when its reason does not", () => 
     const detail = await adminAccountDetail(db as unknown as AdminDb, NOW, accountId, { roles: ["owner"] });
     expect(detail!.mailboxes[0]!.syncBlockedReason).toBe("lease_unreadable");
 
-    const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+    const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
     const [dto] = await makeMailboxService({ keyProvider: KP }).list(ctx);
     expect(dto!.syncBlockedReason).toBe("lease_unreadable");
   });
@@ -153,7 +153,7 @@ describe("a block survives the projection even when its reason does not", () => 
     expect(detail!.mailboxes[0]!.syncBlockedReason).toBeNull();
     expect(detail!.mailboxes[0]!.syncBlockedSince).toBeNull();
 
-    const ctx: ServiceContext = { db, accountId: a!.id, userId: null, now: () => NOW, requestId: "r" };
+    const ctx: ServiceContext = { db: dbFor(db, a!.id), accountId: a!.id, userId: null, now: () => NOW, requestId: "r" };
     const [dto] = await makeMailboxService({ keyProvider: KP }).list(ctx);
     expect(dto!.syncBlockedReason).toBeNull();
     expect(dto!.syncBlockedSince).toBeNull();

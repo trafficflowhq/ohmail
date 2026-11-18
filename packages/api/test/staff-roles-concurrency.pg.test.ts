@@ -76,25 +76,44 @@ describe.skipIf(!PG_UP)("two owners revoking each other", () => {
   it("one revoke lands, the other is refused, and an owner remains", async () => {
     const a = await owner();
     const b = await owner();
-    // One barrier across both connections: each request waits at `transaction` for the other.
+    // One barrier across both connections: each request waits at `transaction` for the other. It
+    // sits on each pool's own handle, the one the binder knows: the staff door's handle the route
+    // binds over it opens its transaction through it.
     let arrived = 0;
     let release!: () => void;
     const both = new Promise<void>((r) => { release = r; });
-    const meet = (db: Db): Db => new Proxy(db, {
-      get(t, prop, receiver) {
-        if (prop !== "transaction") return Reflect.get(t, prop, receiver) as unknown;
-        return async (fn: (tx: unknown) => unknown, cfg?: unknown) => {
+    const meet = (pool: OwnedDb["db"]): (() => void) => {
+      // What stands there is the factory's own `transaction`, an own property that stamps every
+      // transaction it opens: it is put back as it was, never deleted.
+      const stood = Object.getOwnPropertyDescriptor(pool, "transaction");
+      const transaction = pool.transaction;
+      Object.defineProperty(pool, "transaction", {
+        configurable: true,
+        value: async function (this: unknown, fn: Parameters<typeof transaction>[0], cfg?: Parameters<typeof transaction>[1]) {
           arrived += 1;
           if (arrived >= 2) release();
           await both;
-          return (t as unknown as { transaction(f: typeof fn, c?: unknown): Promise<unknown> }).transaction(fn, cfg);
-        };
-      },
-    }) as Db;
-    const [ra, rb] = await Promise.all([
-      revoke(a, b.email, meet(ownedA.db as unknown as Db)),
-      revoke(b, a.email, meet(ownedB.db as unknown as Db)),
-    ]);
+          return transaction.call(this as typeof pool, fn, cfg);
+        },
+      });
+      return () => {
+        if (stood) Object.defineProperty(pool, "transaction", stood);
+        else Reflect.deleteProperty(pool, "transaction");
+      };
+    };
+    const partA = meet(ownedA.db);
+    const partB = meet(ownedB.db);
+    let ra: Response;
+    let rb: Response;
+    try {
+      [ra, rb] = await Promise.all([
+        revoke(a, b.email, ownedA.db as unknown as Db),
+        revoke(b, a.email, ownedB.db as unknown as Db),
+      ]);
+    } finally {
+      partA();
+      partB();
+    }
     expect(arrived, "both requests reached the transaction before either committed").toBe(2);
     const statuses = [ra.status, rb.status].sort();
     expect(statuses).toEqual([200, 403]);

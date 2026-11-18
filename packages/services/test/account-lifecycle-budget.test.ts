@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { inArray } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, users, type AccessLifecycle, type AccessVerdict } from "@trafficflow/db";
+import { accounts, users, type AccessLifecycle, type AccessVerdict, bindDb } from "@trafficflow/db";
 import {
   runAccountLifecyclePass, ACCOUNT_LIFECYCLE_BUDGET_MS, ERASURE_DUE_PER_RUN,
   type AccountLifecyclePassDeps,
@@ -56,11 +56,11 @@ describe("the account-lifecycle sweep's budget", () => {
     const ids = await seed(250);
     const mine = new Set(ids);
     const { deps, read } = slowPlane(mine, () => OPEN);
-    const first = await runAccountLifecyclePass(db, deps);
+    const first = await runAccountLifecyclePass(bindDb(db, { account: null }), deps);
     expect(first.next, "a sweep over its budget did not stop").not.toBeNull();
     expect(first.accounts).toBeLessThan(250);
     expect(first.accounts, "the budget was not the 45 s one").toBe((ACCOUNT_LIFECYCLE_BUDGET_MS / 1000) * 4);
-    const second = await runAccountLifecyclePass(db, { ...deps, after: first.next, clock: () => 0 });
+    const second = await runAccountLifecyclePass(bindDb(db, { account: null }), { ...deps, after: first.next, clock: () => 0 });
     expect(second.next, "the follow-up did not reach the end").toBeNull();
     const seen = read.filter((id) => mine.has(id));
     expect(new Set(seen).size, "an account was read twice across the two sweeps").toBe(seen.length);
@@ -71,7 +71,7 @@ describe("the account-lifecycle sweep's budget", () => {
     const [due] = await seed(1);
     const { deps, released } = slowPlane(new Set([due!]), (id) => (id === due
       ? { ok: false, reason: "payment_required", lifecycle: DUE } : OPEN));
-    const r = await runAccountLifecyclePass(db, { ...deps, clock: () => 0 });
+    const r = await runAccountLifecyclePass(bindDb(db, { account: null }), { ...deps, clock: () => 0 });
     expect(r.erasureDue, "the due account was not named").toContain(due);
     expect(released, "the sweep stopped a subscription itself").toEqual([]);
     const [row] = await db.select({ erasedAt: accounts.erasedAt }).from(accounts).where(inArray(accounts.id, [due!]));
@@ -82,7 +82,7 @@ describe("the account-lifecycle sweep's budget", () => {
     const ids = await seed(ERASURE_DUE_PER_RUN + 12);
     const mine = new Set(ids);
     const { deps } = slowPlane(mine, (id) => (mine.has(id) ? { ok: false, reason: "payment_required", lifecycle: DUE } : OPEN));
-    const r = await runAccountLifecyclePass(db, { ...deps, clock: () => 0, after: null });
+    const r = await runAccountLifecyclePass(bindDb(db, { account: null }), { ...deps, clock: () => 0, after: null });
     const named = r.erasureDue.filter((id) => mine.has(id));
     expect(named.length).toBeLessThanOrEqual(ERASURE_DUE_PER_RUN + 3);
     expect(r.next, "a sweep past its due bound did not stop").not.toBeNull();

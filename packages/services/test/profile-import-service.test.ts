@@ -20,7 +20,7 @@ import { awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
 import { PROFILE_IMPORT_MAX, profileImportService, type ProfileImportApplied } from "../src/profile-import-service.js";
 import { mailboxService } from "../src/mailbox-service.js";
 import { ServiceError } from "../src/errors.js";
-import type { Db, ServiceContext } from "../src/context.js";
+import { dbFor, type Db, type ServiceContext } from "../src/context.js";
 
 /**
  * The confirm's INLINE answer. Every read in this file fits the request, so a hand-over to the
@@ -64,7 +64,7 @@ async function world(): Promise<World> {
   }).returning();
   // A mailbox this install can reach: the card's question offers nothing for one it cannot.
   await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
-  const ctx = { db, accountId, now: () => NOW } as unknown as ServiceContext;
+  const ctx = { db: dbFor(db, accountId), accountId, now: () => NOW } as unknown as ServiceContext;
   return { db, ctx, accountId, mailboxId: mb!.id };
 }
 
@@ -462,7 +462,7 @@ describe("apply — natural keys, one transaction, convergence", () => {
     const after = await w.db.select({ signature: mailboxes.signature, signatureHtml: mailboxes.signatureHtml })
       .from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
     expect(after[0], "the import erased the signature typed on this mailbox").toEqual(TYPED);
-    expect((await effectiveMailboxSignatures(w.db, w.accountId)).signatures[w.mailboxId]).toBe(TYPED.signature);
+    expect((await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId)).signatures[w.mailboxId]).toBe(TYPED.signature);
     expect(await profileImportWriteReleased(w.db as unknown as Tx, {
       accountId: w.accountId, mailboxId: w.mailboxId, fingerprint: profileFingerprint(d),
     }), "the organizer's hold never ends").toBe(true);

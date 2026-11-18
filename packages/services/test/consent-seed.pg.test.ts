@@ -1,16 +1,13 @@
 import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq, inArray } from "drizzle-orm";
 import { accounts, accountSettings, changeLog, contacts, folderState, mailboxes, messageBodies, messages, ruleRemovals, rules } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { buildSeedReview, confirmSeed, type SeedConfirmResult } from "../src/consent-seed.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 
 /**
  * THE SENT-MAIL SEED, AGAINST REAL POSTGRES.
@@ -36,8 +33,9 @@ import type { ServiceContext } from "../src/context.js";
  */
 
 const AVAILABLE = await realPgAvailable();
-const client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(PG_TEST_URL);
+const db = owned.db;
 
 const NOW = new Date("2026-08-04T12:00:00.000Z");
 const ACCOUNT = randomUUID();
@@ -45,7 +43,7 @@ const OWN = `seed-own-${ACCOUNT.slice(0, 8)}@example.com`;
 let mailboxId = "";
 
 const ctx: ServiceContext = {
-  db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "consent-seed",
+  db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "consent-seed",
 };
 
 /** One of the user's own messages, with the headers the seed actually reads. */
@@ -122,7 +120,7 @@ describe.skipIf(!AVAILABLE)("the sent-mail seed writes consent and moves nothing
     await sent({ to: "Anna SÃ¸rensen <anna@fjordline.example>", date: new Date("2026-07-16T09:00:00.000Z") });
   }, 120_000);
 
-  afterAll(async () => { await client.end({ timeout: 5 }); });
+  afterAll(async () => { await owned.close(); });
 
   it("offers the people written to, and discloses every robot it removed", async () => {
     const review = await buildSeedReview(ctx);
@@ -275,7 +273,7 @@ describe.skipIf(!AVAILABLE)("the sent-mail seed writes consent and moves nothing
       messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: { to: ["pia@atelier.example"] },
     });
 
-    const raceCtx: ServiceContext = { ...ctx, accountId: raceAccount };
+    const raceCtx: ServiceContext = { ...ctx, accountId: raceAccount, db: dbFor(db, raceAccount) };
     const both = await Promise.allSettled([
       confirmSeed(raceCtx, ["pia@atelier.example"]),
       confirmSeed(raceCtx, ["pia@atelier.example"]),

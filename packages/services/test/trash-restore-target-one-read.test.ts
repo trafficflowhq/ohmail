@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { folderState, mailboxFolders, mailboxes, messages } from "@trafficflow/db";
-import { MessageService, type ServiceContext } from "../src/index.js";
+import { MessageService, dbFor, type ServiceContext } from "../src/index.js";
 
 /**
  * A TRASH PAGE RESOLVES EVERY ROW'S RESTORE TARGET IN ONE READ.
@@ -65,7 +65,7 @@ async function world() {
     return m!.id;
   };
   const ctx: ServiceContext = {
-    db, accountId: account, userId: null, now: () => new Date("2026-09-26T12:00:00.000Z"), requestId: "trash",
+    db: dbFor(db, account), accountId: account, userId: null, now: () => new Date("2026-09-26T12:00:00.000Z"), requestId: "trash",
   };
   return { db, a, b, theirs, trashed, ctx };
 }

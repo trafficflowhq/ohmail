@@ -18,9 +18,9 @@ import { format } from "node:util";
 import { and, desc, eq } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, changeLog, devices, refreshTokens, sessions } from "@trafficflow/db";
+import { accounts, bindDb, changeLog, devices, refreshTokens, sessions } from "@trafficflow/db";
 import {
-  AuthService, makeTestAuthDeps, generateToken, hashToken, mintAppHandoff, mintPairingToken, redeemAppHandoff,
+  AuthService, dbFor, makeTestAuthDeps, generateToken, hashToken, mintAppHandoff, mintPairingToken, redeemAppHandoff,
   redeemDevicePair, resolveSession,
   type OAuthTokens, type ServiceContext, type SessionUser,
 } from "../src/index.js";
@@ -66,14 +66,16 @@ async function world(): Promise<World> {
   let watched: string | null = null;
   let log: Opened[] = [];
   const counting = Object.create(db) as Db;
+  // Called on the view a context holds: the store's own `transaction` runs with that view as `this`,
+  // so the transaction it opens carries the view's binding.
   Object.defineProperty(counting, "transaction", {
-    value: async (fn: (tx: unknown) => Promise<unknown>) => {
+    value: async function (this: unknown, fn: (tx: unknown) => Promise<unknown>) {
       if (watched !== null) {
         log.push({ alreadyOpen: depth, rings: await rings(watched), made: (await deviceNumbers(db, watched)).made });
       }
       depth += 1;
       try {
-        return await (db as unknown as { transaction: (f: typeof fn) => Promise<unknown> }).transaction(fn);
+        return await (db as unknown as { transaction: (f: typeof fn) => Promise<unknown> }).transaction.call(this, fn);
       } finally {
         depth -= 1;
       }
@@ -84,8 +86,10 @@ async function world(): Promise<World> {
     svc: new AuthService(makeTestAuthDeps()),
     now: () => t,
     advance: (ms) => { t = new Date(t.getTime() + ms); },
+    // A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
     ctx: (over = {}) => ({
-      db: counting as unknown as ServiceContext["db"], accountId: "", userId: null, now: () => t, requestId: "r", ip: "1.2.3.4", ...over,
+      db: over.accountId === undefined || over.accountId === "" ? bindDb(counting, { account: null }) : dbFor(counting, over.accountId),
+      accountId: "", userId: null, now: () => t, requestId: "r", ip: "1.2.3.4", ...over,
     }),
     opened: async (accountId) => {
       const seen = log;
@@ -128,7 +132,7 @@ async function enrolling(w: World) {
   const email = `enrolling-${++people}@x.example`;
   const reg = await w.svc.register(w.ctx(), { email, password: PASSWORD, displayName: "E", inviteCode: "INVITE-OK" });
   if (!("user" in reg)) throw new Error("registration answered pending; the invite path mints a session");
-  const resolved = await resolveSession(w.db, reg.enrollmentToken, w.now());
+  const resolved = await resolveSession(bindDb(w.db, { account: null }), reg.enrollmentToken, w.now());
   const ctx = w.ctx({ userId: reg.user.userId, accountId: reg.user.accountId, sessionId: resolved!.sessionId });
   return { user: reg.user, ctx, accountId: reg.user.accountId };
 }
@@ -486,7 +490,7 @@ describe("the ring can fail nothing, and rings only after a commit", () => {
     // A plain transaction, and one that opened on this account's fence as every sign-in path's does:
     // inside that one a fenced transaction of the ring's own would open as a part of it, and its
     // change row would be written under whatever the path still holds.
-    await (w.db as unknown as { transaction: (f: (tx: unknown) => Promise<void>) => Promise<void> }).transaction(async (tx) => {
+    await (bindDb(w.db, { account: null }) as unknown as { transaction: (f: (tx: unknown) => Promise<void>) => Promise<void> }).transaction(async (tx) => {
       await ringDeviceMade({ ...w.ctx(), db: tx as ServiceContext["db"] }, p.accountId);
     });
     await runInTransaction(w.ctx(), async (txCtx) => {
@@ -506,12 +510,14 @@ describe("the ring can fail nothing, and rings only after a commit", () => {
     let opened = 0;
     const failing = Object.create(w.db) as Db;
     Object.defineProperty(failing, "transaction", {
-      value: (fn: (tx: unknown) => Promise<unknown>) => (++opened === 2
-        ? Promise.reject(new Error("the store went away"))
-        : (w.db as unknown as { transaction: (f: typeof fn) => Promise<unknown> }).transaction(fn)),
+      value: function (this: unknown, fn: (tx: unknown) => Promise<unknown>) {
+        return ++opened === 2
+          ? Promise.reject(new Error("the store went away"))
+          : (w.db as unknown as { transaction: (f: typeof fn) => Promise<unknown> }).transaction.call(this, fn);
+      },
     });
     const h = heard();
-    const answer = await redeemDevicePair({ ...w.ctx(), db: failing as unknown as ServiceContext["db"] }, w.svc, { token: minted.token, kind: "mobile-android" });
+    const answer = await redeemDevicePair({ ...w.ctx(), db: bindDb(failing, { account: null }) }, w.svc, { token: minted.token, kind: "mobile-android" });
     expect(answer.tokens.accessToken).toBeTruthy();
     expect(opened).toBe(2);
     expect(await w.rings(p.accountId), "the change row was not written").toBe(before);

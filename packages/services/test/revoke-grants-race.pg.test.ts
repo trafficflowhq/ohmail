@@ -2,12 +2,12 @@ import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { accounts, pairingTokens, refreshTokens, sessions, users } from "@trafficflow/db";
+import { accounts, bindDb, pairingTokens, refreshTokens, sessions, users } from "@trafficflow/db";
 import { credentials, loginTokens, makeOwnedDb, totpSecrets, webauthnCredentials, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  DESKTOP_LINK_PURPOSE, OAuthCodeReplayed, generateToken, hashToken, makeAuthService, makeTestAuthDeps,
+  DESKTOP_LINK_PURPOSE, OAuthCodeReplayed, dbFor, generateToken, hashToken, makeAuthService, makeTestAuthDeps,
   mintPairingToken, redeemDevicePair, type Db, type ServiceContext,
 } from "../src/index.js";
 import { newTotpSecret, totpNow } from "../src/auth/totp.js";
@@ -128,7 +128,8 @@ async function person(): Promise<Person> {
 
 /** A request on `handle`: as the given session, or (no session) as an anonymous redeem. */
 const ctxOn = (handle: unknown, p: Person, sessionId: string | null): ServiceContext => ({
-  db: handle as never, accountId: sessionId ? p.accountId : "", userId: sessionId ? p.userId : null, sessionId,
+  // A signed-in call on its account's handle; a door before sign-in on one bound to nothing.
+  db: sessionId ? dbFor(handle as Db, p.accountId) : bindDb(handle as Db, { account: null }), accountId: sessionId ? p.accountId : "", userId: sessionId ? p.userId : null, sessionId,
   now: () => new Date(), requestId: `rg-race-${randomUUID()}`, ip: randomIp(),
 });
 

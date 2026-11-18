@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { users } from "@trafficflow/db";
+import { bindDb, users } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import {
-  AuthService, makeTestAuthDeps, MailService, SpyMailer, throttleKeysFor, type ServiceContext,
+  AuthService, dbFor, makeTestAuthDeps, MailService, SpyMailer, throttleKeysFor, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -30,8 +30,10 @@ async function harness(ttlMs?: number) {
   });
   const deps = makeTestAuthDeps({ publicSignup: true, maxPublicRegistrationsPerWindow: 50 }, mail);
   const svc = new AuthService(deps);
+  // A door before sign-in holds a handle bound to nothing; a call that carries an account, that account's.
   const ctx = (o: Partial<ServiceContext> = {}): ServiceContext => ({
-    db, accountId: "", userId: null, now: () => NOW, requestId: "r", ip: "1.2.3.4", ...o,
+    db: o.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, o.accountId),
+    accountId: "", userId: null, now: () => NOW, requestId: "r", ip: "1.2.3.4", ...o,
   });
   const register = (email: string, locale?: unknown) =>
     svc.register(ctx(), { email, password: PW, displayName: "Stranger", ...(locale === undefined ? {} : { locale }) });

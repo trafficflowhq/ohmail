@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { drafts, junkRescues, mailboxes, messageBodies, messages, threads } from "@trafficflow/db/mail";
-import { mailboxService } from "@trafficflow/services/mail";
+import { dbFor, mailboxService } from "@trafficflow/services/mail";
 import type {
   DraftDTO, MailboxDTO, MessageBodyBatchItem, MessageDTO, Page, ServiceContext, SnapshotResponse,
   SyncChange, SyncResponse, ThreadDTO,
@@ -79,7 +79,7 @@ async function standUp(address = LOGIN): Promise<{
 const iso = (): string => new Date().toISOString();
 
 const ctxFor = (db: LocalDb, world: LocalWorld): ServiceContext => ({
-  db, accountId: world.accountId, userId: world.userId, sessionId: null,
+  db: dbFor(db, world.accountId), accountId: world.accountId, userId: world.userId, sessionId: null,
   now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined,
 });
 

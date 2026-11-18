@@ -1,12 +1,9 @@
 import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { accounts, folderState, mailboxes, messages } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -14,7 +11,7 @@ import {
   type EngineMessage, type Folder, type SyncChange,
 } from "@ohmail/client-engine";
 import { cutlineCounts } from "../src/consent-cutline.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 
 /**
  * ══ THE CUTLINE, OVER MAIL THAT IS ALREADY FILED ══════════════════════════════════════════
@@ -60,8 +57,9 @@ import type { ServiceContext } from "../src/context.js";
  * Both counts are asserted, so the wrong fix is red here rather than shipped.
  */
 const AVAILABLE = await realPgAvailable();
-const client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(PG_TEST_URL);
+const db = owned.db;
 
 const NOW = new Date("2026-08-08T12:00:00.000Z");
 const RECENT = new Date("2026-08-01T09:00:00.000Z");
@@ -72,7 +70,7 @@ const OWN = `filed-own-${ACCOUNT.slice(0, 8)}@example.com`;
 let mailboxId = "";
 
 const ctx: ServiceContext = {
-  db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "cutline-filed",
+  db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "cutline-filed",
 };
 
 /**
@@ -143,7 +141,7 @@ describe.skipIf(!AVAILABLE)("the cutline over mail that is already filed", () =>
     }
   }, 120_000);
 
-  afterAll(async () => { await client.end({ timeout: 5 }); });
+  afterAll(async () => { await owned.close(); });
 
   it("server and client agree on how many senders are still owed a decision", async () => {
     const server = await cutlineCounts(ctx);

@@ -8,7 +8,7 @@ import { and, eq } from "drizzle-orm";
 import { auditLog, folderState, mailboxes, messageBodies, messageInstances, messages, messageSearch } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
-import { MailboxService, MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, MailboxService, MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
 import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
 import { makeHarness, rawClient, uidInFolder, DB_URL, ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerenv.js";
 import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
@@ -55,7 +55,7 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
       storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
       role: "organizer", trustedAuthservIds: new Set<string>(),
     };
-    const ctx: ServiceContext = { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "gone" };
+    const ctx: ServiceContext = { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "gone" };
     const idOf = async (header: string) => (await h.db.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.mailboxId, h.mailboxId), eq(messages.messageIdHeader, header))))[0]?.id;
     const filingOf = async (id: string) =>

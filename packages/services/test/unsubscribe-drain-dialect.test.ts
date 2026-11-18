@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { folderState, mailboxes, messageBodies } from "@trafficflow/db";
+import { folderState, mailboxes, messageBodies, bindDb } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   makeUnsubscribeService, type HostResolver, type OneClickPost,
@@ -65,7 +65,7 @@ async function seedScreenedOut(headers: Record<string, string[]>): Promise<{
 
 const drain = (db: Db, post: OneClickPost) =>
   makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL })
-    .drainScreenedOut(db, { now: () => NOW, requestId: "d1" });
+    .drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "d1" });
 
 describe("the unsubscribe drain reads its candidates the same way on both stores", () => {
   it("runs to its end and posts the one message that publishes a route", async () => {

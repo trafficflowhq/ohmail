@@ -2,8 +2,8 @@ import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type { mailSchema } from "@trafficflow/db/mail";
 import { carryDialect, dialect, type LockMode } from "@trafficflow/db/dialect";
 import {
-  AccountErasedError, bindDb, bindingOf, BindingRefusedError, carryBinding, claimIdempotencyKey, fencedAccountOf,
-  fencedAccountWrite, inTransactionHandle, markFenced, readAccountErasedAt,
+  AccountErasedError, assertBinding, bindDb, bindingOf, BindingRefusedError, carryBinding, claimIdempotencyKey,
+  fencedAccountOf, fencedAccountWrite, inTransactionHandle, markFenced, readAccountErasedAt,
   type AccountBound, type LedgerTx, type NothingBound, type Tx,
 } from "@trafficflow/db";
 import type { SendAdapter } from "@trafficflow/core/mail";
@@ -36,11 +36,19 @@ export type BoundDb = Db & AccountBound;
 export type UnboundDb = Db & NothingBound;
 
 /**
- * A context's handle for `accountId`, which the caller read from a row and never from a request:
- * bound to that account, or to nothing for `""` (a door that runs for no account).
+ * What a context and a request's container hold: a handle the binder minted, bound to an account or
+ * to nothing. The pool's own handle (`Db`) is neither, and does not fit where this is asked.
  */
-export function dbFor(db: Db, accountId: string): BoundDb | UnboundDb {
-  return accountId === "" ? bindDb(db, { account: null }) : bindDb(db, { account: accountId });
+export type ContextDb = BoundDb | UnboundDb;
+
+/**
+ * A context's handle for `accountId`, which the caller read from a row and never from a request:
+ * bound to that account. No string names "no account": `""` is refused by the binder as any id
+ * that is no account's is, and a door that runs for none says so (`bindDb(db, { account: null })`,
+ * in a file the binder's list names).
+ */
+export function dbFor(db: Db, accountId: string): BoundDb {
+  return bindDb(db, { account: accountId });
 }
 
 /**
@@ -102,7 +110,7 @@ export async function claimOrLose(
  */
 export interface ServiceContext {
   /** Bound to the account this context runs for, or to nothing; never a plain handle (`dbFor`, `serviceContext`). */
-  db: BoundDb | UnboundDb;
+  db: ContextDb;
   accountId: string;
   userId: string | null;
   now: () => Date;
@@ -196,7 +204,7 @@ export interface ServiceContext {
  * no account. No other place builds a context for an account outside a request.
  */
 export function passContext(
-  walk: Db, accountId: string, rest: Omit<ServiceContext, "db" | "accountId">,
+  walk: UnboundDb, accountId: string, rest: Omit<ServiceContext, "db" | "accountId">,
 ): PassContext {
   if (bindingOf(walk)?.keyed === true) {
     throw new BindingRefusedError("a pass's context was asked on a handle that carries a key");
@@ -222,6 +230,18 @@ export interface SearchSupersede {
 }
 
 /**
+ * REFUSE A TRANSACTION ON A HANDLE THAT DOES NOT NAME ITS CONTEXT'S ACCOUNT, before it opens. A
+ * context's handle and its account come by separate ways (a literal, a spread, a service's own
+ * context), and here they must agree: the handle names `accountId`, or nothing where the context
+ * runs for none (`""`). Refused with the binder's own error, fixed words and never an id: a handle
+ * with no binding at all, one that names another account, one that names nothing where an account
+ * is asked, one that names an account where none is.
+ */
+function refuseUnnamed(db: object, accountId: string): void {
+  assertBinding(db, accountId === "" ? null : accountId);
+}
+
+/**
  * Run `fn` in a transaction, and release its credential report only on COMMIT. The single
  * implementation, on purpose: there were two — one on `SessionLifecycle`, one private to
  * `pairing.ts` — and only the first buffered {@link ServiceContext.noteCredentialAccount}, so a
@@ -230,12 +250,22 @@ export interface SearchSupersede {
  * the `txCtx` handed to `fn` reports into a local slot, forwarded only after `transaction()`
  * resolves; a rollback, a throw, or a swallowed commit failure discards it, and the response
  * names nobody. Nesting composes; reporting outside any transaction goes straight through.
+ *
+ * Before it opens, the context's handle must name the context's account ({@link refuseUnnamed}).
  */
 export async function runInTransaction<T>(
   ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
   opts: { readonly fence?: TransactionFence<T> } = {},
 ): Promise<T> {
   const fence = opts.fence;
+  refuseUnnamed(ctx.db, ctx.accountId);
+  // THE FENCE'S ACCOUNT IS NOT HELD TO THE HANDLE'S HERE, and that is owed. A credential's door
+  // fences for the account of the row its credential found. Before sign-in its handle names no
+  // account; and where a browser signed in as one account presents another's credential, the
+  // handle names the first and the fence the second, and the door answers 409 from inside
+  // (`refuseCrossAccountCredential`). A refusal here would answer 500 in its place, and end every
+  // sign-in and renewal. It becomes one when each such door names its account inside its own
+  // transaction and refuses the other's credential before it opens.
   const held = fencedAccountOf(ctx.db);
   if (fence !== undefined && fence.accountId === "") throw new Error("a fenced transaction names no account");
   if (fence !== undefined && held === undefined && inTransactionHandle(ctx.db)) {
@@ -283,7 +313,8 @@ export interface TransactionFence<T> {
  * that belongs to one; `lock` raises the strength for a body that will take `accounts FOR UPDATE`
  * later; `mailboxLock` raises the mailbox row's alone, for a body that writes it; `db` names the
  * handle for a caller that holds one directly. The census reddens a door
- * that is neither fenced, fenced by construction, nor allow-listed.
+ * that is neither fenced, fenced by construction, nor allow-listed. The handle it opens on, `db`
+ * included, must name the context's account ({@link refuseUnnamed}).
  */
 export async function withAccountTx<T>(
   ctx: ServiceContext, fn: (tx: LedgerTx) => Promise<T>,
@@ -295,6 +326,7 @@ export async function withAccountTx<T>(
   } = {},
 ): Promise<T> {
   const db = opts.db ?? ctx.db;
+  refuseUnnamed(db, ctx.accountId);
   try {
     return await fencedAccountWrite(
       bridgeTx(db),

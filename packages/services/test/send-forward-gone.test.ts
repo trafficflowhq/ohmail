@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { attachments, drafts, messages, outboundSends } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
-import { sendService } from "@trafficflow/services/mail";
+import { dbFor, sendService } from "@trafficflow/services/mail";
 import { ServiceError } from "@trafficflow/services/mail";
 import type { ServiceContext, AttachmentAdapter, OpenAdapter } from "@trafficflow/services/mail";
 import { ImapAdapter, MessageGoneError, ReadNotAnsweredError } from "@trafficflow/core/adapters/imap";
@@ -111,7 +111,7 @@ async function world() {
   }).returning();
 
   const ctx: ServiceContext = {
-    db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-gone",
+    db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-gone",
   };
   return { db, ctx, accountId: s.accountId, draftId: draft!.id, originalId: orig.id };
 }

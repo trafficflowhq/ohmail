@@ -5,6 +5,7 @@ import { accounts, accountSettings, junkRescues, mailboxes, rules as rulesTbl } 
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
+import { dbFor } from "@trafficflow/services/mail";
 import { rescueJunk } from "../src/junk-window.js";
 import type { ApiDeps } from "../src/deps.js";
 
@@ -90,8 +91,11 @@ describe.skipIf(!AVAILABLE)("two Not junk presses on one mailbox at once", () =>
     const names = [`jr2-a-${tag}`, `jr2-b-${tag}`] as const;
     const g = await gate(w.accountId, w.mailboxId, [101, 102]);
     const presses = names.map((name, i) => {
-      const deps = { db: open(name).db, now: () => NOW } as unknown as ApiDeps;
-      const ctx = { accountId: w.accountId, now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
+      // One named pool per press: its context's handle, bound to the account, is over the same pool,
+      // so the press's transaction runs on the backend `untilWaiting` names.
+      const own = open(name).db;
+      const deps = { db: own, now: () => NOW } as unknown as ApiDeps;
+      const ctx = { accountId: w.accountId, db: dbFor(own, w.accountId), now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
       return rescueJunk(deps, ctx, {
         mailboxId: w.mailboxId, uid: 101 + i, uidValidity: "7",
         ...(allow[i] ? { allow: { sender: `sender${i}@example.invalid` } } : {}),

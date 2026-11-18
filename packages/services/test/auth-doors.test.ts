@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { eq, like, sql } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { sessions } from "@trafficflow/db";
+import { bindDb, sessions } from "@trafficflow/db";
 import { authThrottle } from "@trafficflow/db/cloud";
 import {
-  AuthService, MailService, SpyMailer, makeTestAuthDeps, throttleKeysFor, ServiceError,
+  AuthService, MailService, SpyMailer, dbFor, makeTestAuthDeps, throttleKeysFor, ServiceError,
   type AuthDeps, type MailerPort, type ServiceContext, type SessionUser,
 } from "../src/index.js";
 
@@ -38,8 +38,10 @@ async function harness(over: Parameters<typeof makeTestAuthDeps>[0] = {}, mailer
     : undefined;
   const deps: AuthDeps = makeTestAuthDeps(over, mail);
   const svc = new AuthService(deps);
+  // A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
   const ctx = (ip: string, extra: Partial<ServiceContext> = {}): ServiceContext => ({
-    db, accountId: "", userId: null, now: clock.now, requestId: "r", ip, ...extra,
+    db: extra.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, extra.accountId),
+    accountId: "", userId: null, now: clock.now, requestId: "r", ip, ...extra,
   });
   return { db, clock, deps, svc, ctx };
 }

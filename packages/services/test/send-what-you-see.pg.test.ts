@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { mailboxes, drafts } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendService, materializeDraft } from "../src/index.js";
+import { SendService, dbFor, materializeDraft } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -27,9 +25,11 @@ import type { ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
+// The factory's handle: the binder takes a server handle only from the factory that registered its
+// door. `sqlB` is the other window's raw client.
+const owned = makeOwnedDb(PG_TEST_URL);
+const dbA = owned.db;
 const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
 
 const NOW = new Date("2026-09-14T12:00:00.000Z");
 const sendSvc = new SendService();
@@ -61,14 +61,14 @@ async function seeded() {
     to: [{ name: null, address: "chosen@example.com" }], status: "draft",
     createdAt: NOW, updatedAt: NOW,
   }).returning();
-  const ctx: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(dbA, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   // READ THE WAY A CLIENT READS IT — off the row's own DTO, never recomputed here.
   const dto = await materializeDraft(dbA, accountId, d!.id);
   return { ctx, draftId: d!.id, revision: dto!.contentRevision };
 }
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); await sqlB.end({ timeout: 5 }); });
 
 describe.skipIf(!PG_UP)("a send that waited on another window's write", () => {
   it("reads what the other window committed and refuses — nothing is delivered", async () => {

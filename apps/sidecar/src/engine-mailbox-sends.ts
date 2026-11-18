@@ -56,7 +56,7 @@ export function sendsSection(scope: EngineScope, box: MailboxScope, mb: LocalRos
           return;
         }
         try {
-          const r = await runScheduledSendPass(scope.db as never, {
+          const r = await runScheduledSendPass(scope.unbound, {
             /* ── THE PASS STOPS IF THIS MAILBOX STOPS BEING OURS WHILE IT RUNS ─────────────
              *
              * Checked BETWEEN ROWS rather than once before the pass, because the change this
@@ -154,7 +154,7 @@ export function sendsSection(scope: EngineScope, box: MailboxScope, mb: LocalRos
           }
         };
         try {
-          const r = await runAwayResponderPass(scope.db as never, {
+          const r = await runAwayResponderPass(scope.unbound, {
             /* ── THE PASS STOPS IF THIS MAILBOX STOPS BEING OURS WHILE IT RUNS ─────────────
              *
              * Checked BETWEEN ROWS rather than once before the pass, because the change this
@@ -202,7 +202,7 @@ export function sendsSection(scope: EngineScope, box: MailboxScope, mb: LocalRos
        */
       const reconcileStrandedSends = async (): Promise<void> => {
         try {
-          const r = await runSendReconcilePass(scope.db as never, {
+          const r = await runSendReconcilePass(scope.unbound, {
             openSendAdapter: scope.openLocalSend,
             /* NO account filter, and none is available: the pass is store-wide by design, exactly
                like the scheduled sender it settles for. That is correct on this door for a reason
@@ -242,7 +242,7 @@ export function sendsSection(scope: EngineScope, box: MailboxScope, mb: LocalRos
       const fileOwedSentCopies = async (): Promise<void> => {
         const recorded = sendService.owedCopiesRecorded(mb.id);
         if (noneOwedAt === recorded) return;
-        const ctx = { db: scope.db as never, accountId: scope.world.accountId, userId: null, now: scope.now, requestId: "owed-copies" };
+        const ctx = scope.ownContext("owed-copies");
         try {
           if (await sendService.owesSentCopies(ctx, mb.id)) {
             await sendService.fileOwedCopies(

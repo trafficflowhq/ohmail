@@ -6,7 +6,7 @@ import { eq, sql } from "drizzle-orm";
 import { accountSettings, mailboxes, messageBodies, trackerEvents } from "@trafficflow/db";
 import { HELD_FOLDERS } from "@trafficflow/core/destinations";
 import {
-  makePrivacyService, makeNodeRemoteFetch, isBlockedAddress, ServiceError,
+  dbFor, makePrivacyService, makeNodeRemoteFetch, isBlockedAddress, ServiceError,
   PROXY_URL_MAX_CHARS,
   type HostResolver, type RemoteFetch,
 } from "../src/index.js";
@@ -149,11 +149,12 @@ describe("PrivacyService.proxyImage", () => {
   });
 
   it("a cross-account message id is a 404 (IDOR) — and never fetches", async () => {
-    const { ctx } = await makeCtx();
+    const { db, ctx } = await makeCtx();
     const remote = mockRemote({ body: GIF_1x1 });
     const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
+    const stranger = randomUUID();
     await expect(
-      svc.proxyImage({ ...ctx, accountId: randomUUID() }, { messageId: randomUUID(), url: "https://x.example/a.gif" }),
+      svc.proxyImage({ ...ctx, accountId: stranger, db: dbFor(db, stranger) }, { messageId: randomUUID(), url: "https://x.example/a.gif" }),
     ).rejects.toMatchObject({ httpStatus: 404 });
     expect(remote.calls).toHaveLength(0);
   });
@@ -373,9 +374,10 @@ describe("PrivacyService.loadRemote", () => {
   });
 
   it("cross-account message → 404", async () => {
-    const { ctx } = await makeCtx();
+    const { db, ctx } = await makeCtx();
     const svc = makePrivacyService({ remote: mockRemote({ body: GIF_1x1 }), resolver: PUBLIC_DNS });
-    await expect(svc.loadRemote({ ...ctx, accountId: randomUUID() }, randomUUID()))
+    const stranger = randomUUID();
+    await expect(svc.loadRemote({ ...ctx, accountId: stranger, db: dbFor(db, stranger) }, randomUUID()))
       .rejects.toMatchObject({ httpStatus: 404 });
   });
 });
@@ -489,7 +491,8 @@ describe("PrivacyService.listTrackerEvents", () => {
     const m = await seedMessage(db, accountId, mailboxId);
     await db.insert(trackerEvents).values({ accountId, messageId: m, kind: "pixel", trackerHost: "spy.com" });
     const svc = makePrivacyService({ remote: mockRemote({ body: GIF_1x1 }), resolver: PUBLIC_DNS });
-    const other = await svc.listTrackerEvents({ ...ctx, accountId: randomUUID() }, {});
+    const stranger = randomUUID();
+    const other = await svc.listTrackerEvents({ ...ctx, accountId: stranger, db: dbFor(db, stranger) }, {});
     expect(other.items).toHaveLength(0);
   });
 

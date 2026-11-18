@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -54,7 +55,7 @@ const app = createApp(apiRoutes);
 
 function depsFor(): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
     now: () => FIXED_NOW,
     requestId: `replay-${randomUUID()}`,
@@ -93,7 +94,7 @@ function depsFor(): ApiDeps {
       // `packages/api/test/helpers.ts` wires — this fixture's subject is the replay.
       imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot },
     },
-  };
+  });
 }
 
 const createDraft = (o: { bearer: string; key: string; mailboxId: string }): Request =>

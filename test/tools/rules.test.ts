@@ -508,6 +508,70 @@ describe("the lint rules, run on source text", () => {
     });
   });
 
+  describe("the binder, named by its listed callers alone", () => {
+    const binders = {
+      root: "/repo",
+      names: ["bindDb", "rebindTx", "passContext", "dbFor"],
+      files: ["packages/db/src/bound.ts", "packages/services/src/context.ts", "apps/host/src/deps.ts"],
+    };
+    const at = "/repo/packages/services/src/drafts-service.ts";
+    const named = (code: string, filename = at, options: unknown[] = [binders]) =>
+      lint("binder-callers", code, options, filename);
+
+    it("refuses each binder in a file outside the list, however it is reached and whatever it is called there", () => {
+      for (const code of [
+        'import { bindDb } from "@trafficflow/db"; export const a = (db: object) => bindDb(db, { account: null });',
+        'import { bindDb as viewOf } from "@trafficflow/db"; export const a = viewOf;',
+        'import { rebindTx } from "../../db/src/bound.js"; export const a = rebindTx;',
+        'import { passContext } from "./context.js"; export const a = passContext;',
+        'import { dbFor as handleFor } from "@trafficflow/services/mail"; export const a = handleFor;',
+        'export { bindDb } from "@trafficflow/db";',
+        'export { dbFor as contextHandle } from "./context.js";',
+        'import * as db from "@trafficflow/db"; export const a = (h: object) => db.bindDb(h, { account: null });',
+        'import * as db from "@trafficflow/db"; export const a = db["bindDb"];',
+        'export const a = async (h: object) => (await import("@trafficflow/db")).bindDb(h, { account: null });',
+        'export const a = async () => { const { rebindTx: again } = await import("@trafficflow/db"); return again; };',
+        "export function dbFor(db: object): object { return db; }",
+      ]) {
+        expect(named(code), code).toEqual([
+          expect.stringMatching(/^\w+ binds a database handle to an account or to none/),
+        ]);
+      }
+    });
+
+    it("lets a listed file name them, and any file read a binding or carry one", () => {
+      const binds =
+        'import { bindDb } from "./bound.js"; export const a = (db: object) => bindDb(db, { account: null });';
+      for (const file of binders.files) expect(named(binds, `/repo/${file}`), file).toEqual([]);
+      for (const code of [
+        'import { bindingOf, carryBinding, assertBinding } from "@trafficflow/db"; export const a = [bindingOf, carryBinding, assertBinding];',
+        'import type { BoundDb, UnboundDb } from "./context.js"; export type A = BoundDb | UnboundDb;',
+        "// bindDb is the binder's name, and a comment may say so\nexport const a = 1;",
+        'export const a = "the handle is bound with bindDb";',
+      ]) {
+        expect(named(code), code).toEqual([]);
+      }
+    });
+
+    it("refuses a listed file that names none: it leaves the list", () => {
+      expect(named("export const a = 1;", "/repo/apps/host/src/deps.ts")).toEqual([
+        "apps/host/src/deps.ts is listed in tools/binders.json and names no binder; it leaves the list",
+      ]);
+    });
+
+    it("refuses every file when it has no list of callers or no name to look for", () => {
+      for (const options of [
+        [],
+        [{ root: "/repo", names: binders.names, files: [] }],
+        [{ root: "/repo", files: binders.files }],
+      ]) {
+        expect(named("export const a = 1;", at, options)).toEqual([
+          expect.stringMatching(/so every file is refused/),
+        ]);
+      }
+    });
+  });
+
   describe("the old shell's side of the frame, closed", () => {
     const shell = "/repo/apps/webapp/app/shell";
     const list = {

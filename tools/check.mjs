@@ -207,6 +207,27 @@ function staleReaders(root) {
   return refusals;
 }
 
+/** A file `ohmail/binder-callers` lists stands in the tree, and its row says whose account it binds and why. */
+function staleBinders(root) {
+  const { names = [], binders = [] } = JSON.parse(read(root, "tools/binders.json"));
+  const refusals = [];
+  if (names.length === 0) refusals.push("binders: the list names no binder");
+  for (const entry of binders) {
+    if (!entry.id || !entry.account || !entry.reason || !entry.files?.length)
+      refusals.push(
+        `binders: ${entry.id ?? "an entry"} needs an id, the source of its account, a reason and its files`,
+      );
+    for (const file of entry.files ?? []) {
+      if (!existsSync(path.join(root, file)))
+        refusals.push(`binders: ${file} is not in the tree; a file that is gone leaves the list`);
+    }
+  }
+  const listed = binders.flatMap((entry) => entry.files ?? []);
+  for (const file of new Set(listed.filter((entry, at) => listed.indexOf(entry) !== at)))
+    refusals.push(`binders: ${file} is listed twice; a file has one row`);
+  return refusals;
+}
+
 function references(root) {
   const folders = ["apps", "packages"].flatMap((parent) =>
     readdirSync(path.join(root, parent), { withFileTypes: true })
@@ -377,6 +398,7 @@ async function everything(root, flags) {
     ...compareWithTree(baseline.rows, findings),
     ...doors,
     ...staleReaders(root),
+    ...staleBinders(root),
   ];
   refusals.push(...otherLinterConfigs(readdirSync(root)));
   refusals.push(...covered.unreached.map(unreachedRefusal));

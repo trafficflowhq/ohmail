@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { eq, desc } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { sessions } from "@trafficflow/db";
-import { AuthService, makeTestAuthDeps, type AuthDeps, type ServiceContext } from "../src/index.js";
+import { bindDb, sessions } from "@trafficflow/db";
+import { AuthService, dbFor, makeTestAuthDeps, type AuthDeps, type ServiceContext } from "../src/index.js";
 
 /**
  * ═══ THE STEP-UP RE-STAMP IS A GUARDED WRITE — the service-level cases HTTP cannot reach ═══
@@ -36,8 +36,10 @@ async function harness(): Promise<{
   const svc = new AuthService(deps);
   return {
     db, svc, clock,
+    // A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
     ctx: (o: Partial<ServiceContext> = {}): ServiceContext => ({
-      db, accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...o,
+      db: o.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, o.accountId),
+      accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...o,
     }),
   };
 }

@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
 import { mailboxes, drafts, outboundSends } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { DraftsService } from "../src/index.js";
+import { DraftsService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
-import { brandDialect } from "@trafficflow/db/dialect";
 
 /**
  * DELETING A DRAFT A SEND IS RESERVING — the two interleavings PGlite cannot run.
@@ -51,9 +49,12 @@ import { brandDialect } from "@trafficflow/db/dialect";
  */
 const PG_UP = await realPgAvailable();
 
+// The factory's handle: the binder takes a server handle only from the factory that registered its
+// door. `sqlA` and `sqlB` are raw clients that hold the row from beside the service.
+const owned = makeOwnedDb(PG_TEST_URL);
+const dbA = owned.db;
 const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
 const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
 
 const NOW = new Date("2026-09-08T12:00:00.000Z");
 const draftsSvc = new DraftsService();
@@ -70,12 +71,12 @@ async function seeded(): Promise<{ ctx: ServiceContext; draftId: string; account
     to: [{ name: null, address: "you@example.com" }], status: "draft",
     createdAt: NOW, updatedAt: NOW,
   }).returning();
-  const ctx: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(dbA, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { ctx, draftId: d!.id, accountId };
 }
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
 
 describe.skipIf(!PG_UP)("deleting a draft a send is reserving, across a held row lock", () => {
   it("a delete behind an uncommitted reservation waits, then answers 409 — never the foreign key", async () => {

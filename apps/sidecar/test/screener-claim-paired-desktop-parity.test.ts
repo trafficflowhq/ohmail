@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, contacts, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
-import { ScreenerService, type ServiceContext } from "@trafficflow/services";
+import { ScreenerService, dbFor, type ServiceContext } from "@trafficflow/services";
 import { materializeMessages, type MailboxDTO, type MessageDTO } from "@trafficflow/services/mail";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, consentPartition, presentationReader, screenerSegments,
@@ -90,7 +90,7 @@ describe("a Cloud claim on a paired desktop and on the server", () => {
       await server.insert(contacts).values({ accountId, address: from, source: "inferred" });
       ids.push(m!.id);
     }
-    const ctx: ServiceContext = { db: server as never, accountId, userId: null, now: () => now, requestId: `pd-${randomUUID().slice(0, 8)}` };
+    const ctx: ServiceContext = { db: dbFor(server, accountId), accountId, userId: null, now: () => now, requestId: `pd-${randomUUID().slice(0, 8)}` };
     const serverList = (await new ScreenerService({}).list(ctx, { limit: 50 })).items.map((i) => i.sender.address).sort();
     expect(serverList).toEqual(["before@partner.invalid"]);
 

@@ -2,7 +2,7 @@ import type { KeyProvider, KekEnvIdentity, OpenSendAdapter } from "@trafficflow/
 import type { ImapConfig, NetTimeouts } from "@trafficflow/core/adapters/imap";
 import type { DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { SignatureCheck } from "@trafficflow/core/adapters/dkim";
-import type { AuthConfig, UnsubscribeService, SearchSupersede } from "@trafficflow/services/mail";
+import type { AuthConfig, UnsubscribeService, SearchSupersede, PassContext } from "@trafficflow/services/mail";
 import type { App, ProbeDialer, SmtpProbeOptions, ApiDeps } from "@trafficflow/api/local";
 import type { SignOutFence } from "./signout-fence.js";
 import type { ResolvedHostConfig } from "./host-listener.js";
@@ -12,7 +12,8 @@ import type { ScreenerAutoActSettings } from "@ohmail/organizer/screener-auto-ac
 import type { ThreadJoinHealCursor } from "@ohmail/organizer/thread-join-heal";
 import type { ImpersonationCutlineSettings } from "@ohmail/organizer/screener-impersonation";
 import type { LocalAi } from "./ai-provider.js";
-import type { OpenLocalDb, LocalDb } from "./db.js";
+import type { OpenLocalDb } from "./db.js";
+import type { StoreDb, UnboundLocalDb } from "./store-binding.js";
 import type { LocalWorld, LocalRosterRow } from "./identity.js";
 import type { mintLaunchBearer } from "./launch-bearer.js";
 import type { LocalRoster, LocalMailboxRuntime, DialAnswer } from "./roster.js";
@@ -55,7 +56,12 @@ export interface EngineScope {
   connectionsAnsweredAt: number;   // changes
   tBoot: number;
   opened: OpenLocalDb;
-  db: LocalDb;
+  /* The store's own handle, with no binding: the organizer's and the engine's own statements (`store-binding.ts`). */
+  db: StoreDb;
+  /* The store's view that names no account: a request's handle as it is minted, a session's look-up, a pass's walk. */
+  unbound: UnboundLocalDb;
+  /* A context of the engine's own, bound to this world's account and to no other. */
+  ownContext: (requestId: string) => PassContext;
   statisticsUpkeep: ReturnType<typeof createStatisticsUpkeep>;
   knownSetStatisticsOnce: () => Promise<void>;
   yieldToFirstPage: () => Promise<void>;
@@ -97,6 +103,7 @@ export interface EngineScope {
   smtpProbeOpts: SmtpProbeOptions;
   openLocalSend: OpenSendAdapter;
   depsFor: () => ApiDeps;
+  ownDeps: () => ApiDeps;
   hostAuthConfig: AuthConfig;
 
   /* ── engine.ts (the shared state) ── */

@@ -6,7 +6,7 @@ import { refreshTokens, sessions } from "@trafficflow/db";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
 import { createLogger, type Logger } from "@trafficflow/core/mail";
 import { resetSseCounters } from "../src/routes/events.js";
-import { makeDeps, seedDevice, seedSession, seedSessionFor, req, FIXED_NOW, type SeededSession } from "./helpers.js";
+import { makeDeps, seedDevice, seedSession, seedSessionFor, req, FIXED_NOW, type SeededSession, perRequest } from "./helpers.js";
 
 /**
  * AN OPEN `/events` STREAM ENDS WITH ITS SESSION (SEC3-AUTH-4). Every read the stream makes is ONE
@@ -66,7 +66,7 @@ async function watch(deps: ApiDeps, token: string): Promise<Watched> {
       return fn.bind(target);
     },
   }) as Db;
-  const res = await H(req("GET", "/events", { bearer: token }), { ...deps, db }, SSE);
+  const res = await H(req("GET", "/events", { bearer: token }), perRequest({ ...deps, db }), SSE);
   expect(res.status).toBe(200);
   const reader = res.body!.getReader();
   const dec = new TextDecoder();
@@ -319,7 +319,7 @@ describe("a failed read closes with a 30 s reconnect hint; every other close kee
       if (calls > 1) throw new Error("connection terminated unexpectedly");
       return [{ max: null, live: true }];
     });
-    const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+    const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     expect(retries(text)).toEqual(["3000", "30000"]);
     expect(text).toContain("event: sync_failed");
   }, 20_000);
@@ -327,17 +327,17 @@ describe("a failed read closes with a 30 s reconnect hint; every other close kee
   it("the first read's failure arm writes retry: 30000 before it closes", async () => {
     const { deps } = await makeDeps();
     const db = pollDb(async () => { throw new Error("no connection"); });
-    const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+    const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     expect(retries(text)).toEqual(["3000", "30000"]);
     expect(text).toContain("event: sync_failed");
   }, 20_000);
 
   it("controls: the lifetime's close and the session's close keep the 3 s hint, and send no sync_failed", async () => {
     const { deps } = await makeDeps();
-    const lifetime = await drain(await HS({ ...deps, db: pollDb(async () => [{ max: null, live: true }]) },
+    const lifetime = await drain(await HS(perRequest({ ...deps, db: pollDb(async () => [{ max: null, live: true }]) }),
       { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 100 }));
     let calls = 0;
-    const revoked = await drain(await HS({ ...deps, db: pollDb(async () => { calls += 1; return [{ max: null, live: calls < 3 }]; }) },
+    const revoked = await drain(await HS(perRequest({ ...deps, db: pollDb(async () => { calls += 1; return [{ max: null, live: calls < 3 }]; }) }),
       { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     for (const text of [lifetime, revoked]) {
       expect(retries(text)).toEqual(["3000"]);
@@ -350,7 +350,7 @@ describe("a failed read closes with a 30 s reconnect hint; every other close kee
     const { deps } = await makeDeps();
     let calls = 0;
     const db = pollDb(async () => { calls += 1; return [{ max: "7", live: false }]; });
-    const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+    const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     expect(calls).toBe(1);
     expect(text).toBe("retry: 3000\n\n");
   }, 20_000);
@@ -360,7 +360,7 @@ describe("a failed read closes with a 30 s reconnect hint; every other close kee
     for (const live of ["f", "t", "true", "1", 0, 2, 1n, null, undefined] as unknown[]) {
       let calls = 0;
       const db = pollDb(async () => { calls += 1; return [{ max: null, live: live as boolean }]; });
-      const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 2_000 }));
+      const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 2_000 }));
       expect(calls, `live: ${String(live)}`).toBe(1);
       expect(text).toBe("retry: 3000\n\n");
     }
@@ -374,7 +374,7 @@ describe("the read stays ONE statement per poll, as at the base", () => {
     const db = pollDb(async () => { statements += 1; return [{ max: null, live: true }]; });
     vi.useFakeTimers();
     try {
-      const res = await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 1_000, lifetimeMs: 3_600_000 });
+      const res = await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 1_000, lifetimeMs: 3_600_000 });
       await vi.advanceTimersByTimeAsync(0);
       expect(statements).toBe(1);
       for (let i = 1; i <= 5; i++) {
@@ -393,7 +393,7 @@ describe("the SQLite shape: the dialect answers exists as the integer 1", () => 
     const { deps } = await makeDeps();
     let calls = 0;
     const db = pollDb(async () => { calls += 1; return [{ max: calls > 2 ? "9" : "5", live: 1 }]; });
-    const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 300 }));
+    const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 300 }));
     expect(calls, "the first read closed a live session's stream").toBeGreaterThan(3);
     expect(text).toContain('event: sync\ndata: {"seq":9}');
   }, 20_000);
@@ -475,7 +475,7 @@ describe("a pushed frame rides the last read that found the session live", () =>
       if (reads === 1) { firstReadAt = Date.now(); return [{ max: "5", live: true }]; }
       return new Promise((r) => { hold.release = r; });
     });
-    const res = await HS({ ...deps, db, changeWake: h.hub }, { heartbeatMs: 3_600_000, pollMs: P, lifetimeMs: 10_000 });
+    const res = await HS(perRequest({ ...deps, db, changeWake: h.hub }), { heartbeatMs: 3_600_000, pollMs: P, lifetimeMs: 10_000 });
     const out = readFor(res, 30 * P);
     const pushedAt = new Map<bigint, number>();
     let seq = 10n;
@@ -520,7 +520,7 @@ describe("a failed read logs one sse_read_failed line: its error class and nothi
         if (arm === "first read" || calls > 1) throw new Error(SECRET_TEXT);
         return [{ max: null, live: true }];
       });
-      await drain(await HS({ ...deps, db, logger }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+      await drain(await HS(perRequest({ ...deps, db, logger }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
       const mine = lines().filter((l) => l.event === "sse_read_failed");
       expect(mine).toHaveLength(1);
       expect(mine[0]).toMatchObject({ level: "warn", errorClass: "Error" });
@@ -533,7 +533,7 @@ describe("a failed read logs one sse_read_failed line: its error class and nothi
     const { deps } = await makeDeps();
     const { logger, raw, lines } = realLogger();
     const db = pollDb(async () => { throw SECRET_TEXT; });
-    await drain(await HS({ ...deps, db, logger }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+    await drain(await HS(perRequest({ ...deps, db, logger }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     const mine = lines().filter((l) => l.event === "sse_read_failed");
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ errorClass: "String" });
@@ -544,9 +544,9 @@ describe("a failed read logs one sse_read_failed line: its error class and nothi
   it("controls: a stream that ends by its lifetime or its session logs no sse_read_failed", async () => {
     const { deps } = await makeDeps();
     const { logger, lines } = realLogger();
-    await drain(await HS({ ...deps, db: pollDb(async () => [{ max: null, live: true }]), logger },
+    await drain(await HS(perRequest({ ...deps, db: pollDb(async () => [{ max: null, live: true }]), logger }),
       { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 100 }));
-    await drain(await HS({ ...deps, db: pollDb(async () => [{ max: null, live: false }]), logger },
+    await drain(await HS(perRequest({ ...deps, db: pollDb(async () => [{ max: null, live: false }]), logger }),
       { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     expect(lines().filter((l) => l.event === "sse_read_failed")).toEqual([]);
   }, 20_000);

@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq, isNull } from "drizzle-orm";
-import { schema } from "@trafficflow/db/cloud";
-import { accounts, users, devices, sessions, refreshTokens } from "@trafficflow/db";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
+import { accounts, bindDb, users, devices, sessions, refreshTokens } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  makeAuthService, makeTestAuthDeps, generateToken, hashToken,
+  dbFor, makeAuthService, makeTestAuthDeps, generateToken, hashToken,
   resolveSession, REVOKE_WEB_SESSIONS_MAX_AGE_DAYS, type ServiceContext,
 } from "../src/index.js";
 
@@ -32,23 +29,27 @@ import {
 
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+// The factory's handle (postgres-js): the binder takes a server handle only from the factory that
+// registered its door.
+let owned: OwnedDb | undefined;
+let db: OwnedDb["db"];
 
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(),
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+  accountId: "", userId: null, now: () => new Date(),
   requestId: "revoke-race-pg", ip: "10.1.1.1", ...over,
 });
 
 describe.skipIf(!PG_UP)("revokeWebSessions racing rotateRefresh (postgres-js)", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 8 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   });
 
   afterAll(async () => {
-    await client?.end();
+    await owned?.close();
   });
 
   it("a revoked web session has no usable descendant, under every interleaving", async () => {
@@ -98,7 +99,7 @@ describe.skipIf(!PG_UP)("revokeWebSessions racing rotateRefresh (postgres-js)", 
         // The racer got a pair out — the interleaving under test. Neither half may work:
         // the access token resolves to nothing (revoked session), and presenting the refresh
         // token trips the orphan guard, which kills the family instead of rotating it.
-        expect(await resolveSession(db, rotation.tokens.accessToken, new Date()),
+        expect(await resolveSession(bindDb(db, { account: null }), rotation.tokens.accessToken, new Date()),
           `round ${round}: a rotated access token still resolves on a revoked session`).toBeNull();
         await expect(
           svc.refresh(ctx(), { refreshToken: rotation.tokens.refreshToken }, { surface: "cookie" }),
@@ -137,12 +138,12 @@ describe.skipIf(!PG_UP)("revokeWebSessions racing rotateRefresh (postgres-js)", 
 describe.skipIf(!PG_UP)("revokeWebSessions with an age cutoff (postgres-js)", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 4 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   });
 
   afterAll(async () => {
-    await client?.end();
+    await owned?.close();
   });
 
   /** A fresh account, and the plain web sessions it holds, each stamped with when it was seen. */

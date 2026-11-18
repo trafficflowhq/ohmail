@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { accounts, mailboxes, messages, type AccessVerdict, type SpendOutcome } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import type { ClassifierInput, ClassifierPort, ClassifierResult, DraftInput, DraftPort } from "@trafficflow/core";
-import { DraftingService, ScreenerService, type ServiceContext } from "../src/index.js";
+import { DraftingService, ScreenerService, dbFor, type ServiceContext } from "../src/index.js";
 import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
 
@@ -103,7 +103,7 @@ async function draftPress(outcome: SpendOutcome, access?: ReturnType<typeof acce
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: dedup,
     subject: "s", fromAddress: "sender@example.com", snippet: "hi", date: NOW,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   const drafter: DraftPort = { async draft(_i: DraftInput) { throw new Error("the model was reached"); } };
   return new DraftingService().draftFromMessage(ctx, m!.id, {
     drafter,

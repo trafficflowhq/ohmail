@@ -3,7 +3,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   staffSessions, staffUsers, staffAuditLog, staffRoleGrants, authThrottle, STAFF_ROLES,
 } from "@trafficflow/db/cloud";
-import type { Tx } from "@trafficflow/db";
+import { carryBinding, type Tx } from "@trafficflow/db";
 import {
   scryptHasher, generateToken, hashToken, throttleKeysFor,
   newTotpSecret, totpUri, verifyTotp, isUuid, AUDIT_PATH_RE,
@@ -306,10 +306,11 @@ async function mintSession(
 async function mintAuditedSession(
   deps: ApiDeps, user: { id: string; email: string }, now: Date, requestId: string,
 ): Promise<{ token: string; expiresAt: Date }> {
-  return (staffDb(deps) as unknown as Tx).transaction(async (tx) => {
+  const door = staffDb(deps);
+  return (door as unknown as Tx).transaction(async (tx) => {
     const minted = await mintSession(tx, user.id, now);
     const roles = await liveRolesOf(tx, user.id);
-    await recordStaffEvents(tx, [{
+    await recordStaffEvents(carryBinding(door, tx), [{
       requestId, at: now, action: "staff.signin", outcome: "ok",
       actor: { staffId: user.id, sessionId: minted.sessionId, email: user.email, roles },
     }]);
@@ -838,11 +839,12 @@ async function stepUp(
   }
 
   // The fresh stamp and its record, together: a step-up the audit cannot record grants nothing.
-  await (staffDb(deps) as unknown as Tx).transaction(async (tx) => {
+  const door = staffDb(deps);
+  await (door as unknown as Tx).transaction(async (tx) => {
     await tx.update(staffSessions)
       .set({ lastTwofaAt: now })
       .where(and(eq(staffSessions.tokenHash, hashToken(token!)), isNull(staffSessions.revokedAt)));
-    await recordStaffEvents(tx, [{ requestId, at: now, action: "staff.stepup", outcome: "ok", actor: actorOf(session) }]);
+    await recordStaffEvents(carryBinding(door, tx), [{ requestId, at: now, action: "staff.stepup", outcome: "ok", actor: actorOf(session) }]);
   });
   await throttleClear(staffDb(deps), ip);
 
@@ -1109,9 +1111,10 @@ async function changeRole(
   if (!target) return refuse(404, "staff_not_found");
   if (target.id === who.staffId) return refuse(409, "self_change_refused", target.id);
 
-  const outcome = await (staffDb(deps) as unknown as Tx).transaction(async (tx) => {
+  const door = staffDb(deps);
+  const outcome = await (door as unknown as Tx).transaction(async (tx) => {
     const record = (o: "ok" | "no_change" | "refused", refusalCode: string | null): Promise<void> =>
-      recordStaffEvents(tx, [{
+      recordStaffEvents(carryBinding(door, tx), [{
         requestId, at: now, action, outcome: o, refusalCode, actor: actorOf(who),
         detail: { role, targetStaffUserId: target.id },
       }]);

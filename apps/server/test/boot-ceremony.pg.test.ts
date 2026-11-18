@@ -1,3 +1,4 @@
+import { dbFor } from "@trafficflow/services";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Server } from "node:http";
 import { readFileSync } from "node:fs";
@@ -300,7 +301,7 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
     } as NodeJS.ProcessEnv).keyProvider });
     const [{ accountId }] = await owned.db.select({ accountId: users.accountId }).from(users).limit(1);
     const ctx: ServiceContext = {
-      db: owned.db as unknown as ServiceContext["db"],
+      db: dbFor(owned.db, accountId),
       accountId, userId: null, now: () => new Date(), requestId: "f6-revert",
     };
     // THE REFUSAL MOVED CLASS WITH THE ENTITLEMENTS SEAM AND THE SUBJECT DID NOT: a mailbox

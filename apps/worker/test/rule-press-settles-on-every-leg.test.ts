@@ -5,7 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, eraseOwedMailbox, mailboxes, organizerRequests, rules, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { MailboxService, RulesService, type PatchRuleBody, type ServiceContext } from "@trafficflow/services";
+import { MailboxService, RulesService, dbFor, type PatchRuleBody, type ServiceContext } from "@trafficflow/services";
 import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -82,7 +82,7 @@ async function world(holders: Array<{ rules?: boolean; has: string | null }>, re
   let clock = at(1);
   // Production's `now: () => new Date()`: every call is a fresh instant.
   const ctx = {
-    db: here, accountId: ACCT, userId: null, requestId: "r",
+    db: dbFor(here, ACCT), accountId: ACCT, userId: null, requestId: "r",
     now: () => (clock = new Date(clock.getTime() + 1)),
   } as ServiceContext;
   const rowsOf = async (db: TestDb) => (await db.select({ d: rules.destination }).from(rules).where(eq(rules.accountId, ACCT))).map((r) => r.d).sort();

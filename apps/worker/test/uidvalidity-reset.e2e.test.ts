@@ -6,7 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { mailboxFolders, messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { mailboxService } from "@trafficflow/services";
+import { dbFor, mailboxService } from "@trafficflow/services";
 import { runSyncCycle } from "@ohmail/organizer/sync";
 import { makeHarness, rawClient, emlOf, imapCfg, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
@@ -383,7 +383,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
     expect(Number(before!.uidnext), "a drained pass publishes the server's UIDNEXT").toBeGreaterThan(2);
 
     await mailboxService.requestResync(
-      { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "w-cursor" },
+      { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "w-cursor" },
       h.mailboxId,
     );
 

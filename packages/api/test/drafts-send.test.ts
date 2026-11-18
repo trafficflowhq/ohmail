@@ -1,3 +1,4 @@
+import type { Db } from "@trafficflow/services";
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { drafts, outboundSends, outboundSendFingerprints, outboundSentCopies } from "@trafficflow/db";
@@ -29,7 +30,7 @@ function fakeAdapter(opts: { inSent?: boolean } = {}) {
 }
 
 async function seedDraft(
-  db: ApiDeps["db"], accountId: string, mailboxId: string, status = "draft",
+  db: Db, accountId: string, mailboxId: string, status = "draft",
   over: Partial<{ subject: string; body: string; html: string; to: unknown; cc: unknown }> = {},
 ): Promise<string> {
   const [d] = await db.insert(drafts).values({

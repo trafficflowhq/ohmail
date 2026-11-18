@@ -79,10 +79,12 @@ export interface WakeSource {
 
 export interface PushWakeDeps {
   /**
-   * The worker's own db handle. Reads `push_subscriptions`, deletes dead rows, and asks `change_log`
-   * one question per window ("is there a record here that is not the calendar's") by the literal `1`.
+   * THE HANDLE OF THE ACCOUNT A WAKE IS FOR. Asked only after {@link ownsAccount} answered that the
+   * account is this shard's (a wake's account is a hint until then), once per wake: the account's
+   * registrations are read, a dead one deleted, and `change_log` asked one question per window ("is
+   * there a record here that is not the calendar's") by the literal `1`, there and nowhere else.
    */
-  db: Tx;
+  dbOf: (accountId: string) => Tx;
   /** The change-wake hub. Every account's advances, one subscription — see `ChangeWakeFanout`. */
   source: WakeSource;
   /**
@@ -268,7 +270,7 @@ export function vapidFromEnv(env: NodeJS.ProcessEnv = process.env): VapidFromEnv
  * everybody's mail with it.
  */
 export function startPushWake(deps: PushWakeDeps): RunningPushWake {
-  const { db, source, guard, ownsAccount, log } = deps;
+  const { dbOf, source, guard, ownsAccount, log } = deps;
   const debounceMs = deps.debounceMs ?? WAKE_DEBOUNCE_MS;
   const minIntervalMs = deps.minIntervalMs ?? WAKE_MIN_INTERVAL_MS;
   const timeoutMs = deps.timeoutMs ?? WAKE_TIMEOUT_MS;
@@ -356,6 +358,8 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
      */
     if (!await ownsAccount(accountId)) return;
     if (stopped) return;
+    // The wake's account is the shard's own now: its handle, for its read and its prune.
+    const db = dbOf(accountId);
 
     const rows = await db.select({
       id: pushSubscriptions.id,

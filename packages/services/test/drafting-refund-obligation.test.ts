@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, clientIdempotencyKey } from "@trafficflow/db";
 import type { RefundObligation, RefundObligationPort } from "@trafficflow/db";
-import { DraftingService } from "../src/index.js";
+import { DraftingService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { makeSonnetDrafter, type AnthropicLike, type DraftPort } from "@trafficflow/core";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
@@ -56,7 +56,7 @@ async function setup() {
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `obl:${randomUUID()}`,
     subject: "Seed subject", fromAddress: "sender@example.com", snippet: "seed", date: NOW,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { db, accountId, messageId: m!.id, ctx };
 }
 

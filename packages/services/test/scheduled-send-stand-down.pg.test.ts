@@ -4,13 +4,13 @@ import postgres from "postgres";
 import { and, eq } from "drizzle-orm";
 import {
   changeLog, closeStoodDownAppointments, drafts, mailboxes, outboundSends, scheduledSendFiles,
-  STAND_DOWN_SEND_SENTENCES,
+  STAND_DOWN_SEND_SENTENCES, bindDb,
 } from "@trafficflow/db";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { ScheduleService, runScheduledSendPass, sweepScheduledSendFiles } from "../src/index.js";
+import { ScheduleService, dbFor, runScheduledSendPass, sweepScheduledSendFiles } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -118,7 +118,7 @@ async function seeded(opts: { at?: Date; files?: { filename: string; contentType
     to: [{ name: null, address: "you@example.com" }], status: "draft",
     createdAt: NOW, updatedAt: NOW,
   }).returning();
-  const ctx: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(dbA, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   await schedules.schedule(
     ctx, d!.id, (opts.at ?? DUE).toISOString(), opts.files ? { files: opts.files, surfaceMaxTotalBytes: null } : undefined,
   );
@@ -228,7 +228,7 @@ describe.skipIf(!PG_UP)("a handover orphans a pending scheduled send", () => {
     // process. Both claim arms require a standing `send_key`, and the close cleared it, so there
     // is nothing here to find however late the pass runs.
     const fake = fakeAdapter();
-    await runScheduledSendPass(dbA, {
+    await runScheduledSendPass(bindDb(dbA, { account: null }), {
       openSendAdapter: fake.factory,
       now: () => new Date(DUE.getTime() + 48 * 60 * 60 * 1000),
     });
@@ -257,10 +257,10 @@ describe.skipIf(!PG_UP)("a handover orphans a pending scheduled send", () => {
     });
     const files = () => dbA.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, w.draftId));
     expect(await files(), "the close itself leaves the bytes to the sweep").toHaveLength(1);
-    await sweepScheduledSendFiles(dbA, { mailboxIds: [w.mailboxId] });
+    await sweepScheduledSendFiles(bindDb(dbA, { account: null }), { mailboxIds: [w.mailboxId] });
     expect(await files()).toHaveLength(0);
     expect(await rowOf(w.draftId)).toMatchObject({ status: "draft", sendKey: null, sendFiles: 1 });
-    await runScheduledSendPass(dbA, { openSendAdapter: fakeAdapter().factory, now: () => new Date(DUE.getTime() + 60_000) });
+    await runScheduledSendPass(bindDb(dbA, { account: null }), { openSendAdapter: fakeAdapter().factory, now: () => new Date(DUE.getTime() + 60_000) });
     expect(await dbA.select().from(outboundSends).where(eq(outboundSends.accountId, w.accountId))).toHaveLength(0);
   });
 
@@ -440,7 +440,7 @@ describe.skipIf(!PG_UP)("a handover orphans a pending scheduled send", () => {
     });
 
     const fake = fakeAdapter();
-    await runScheduledSendPass(dbA, {
+    await runScheduledSendPass(bindDb(dbA, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(DUE.getTime() + 60_000),
     });
     // Account-scoped for the reason the test above states in full: this pass is global and the

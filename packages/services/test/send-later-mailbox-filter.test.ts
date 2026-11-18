@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { drafts, mailboxes } from "@trafficflow/db";
+import { drafts, mailboxes, bindDb } from "@trafficflow/db";
 import type { OutboundMessage, SendAdapter } from "@trafficflow/core";
-import { DraftsService, ScheduleService, runScheduledSendPass, SEND_STALE_AFTER_MS } from "../src/index.js";
+import { DraftsService, ScheduleService, dbFor, runScheduledSendPass, SEND_STALE_AFTER_MS } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -64,7 +64,7 @@ async function twoMailboxes() {
   const [reader] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: "reader@filter.test",
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
 
   const mk = async (mailboxId: string, subject: string): Promise<string> => {
     const { draft } = await draftsSvc.create(ctx, {
@@ -90,7 +90,7 @@ describe("the scheduled-send pass claims only the mailboxes it was given", () =>
   it("claims the named mailbox's appointment and leaves the other one standing", async () => {
     const t = await twoMailboxes();
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(t.db, {
+    const r = await runScheduledSendPass(bindDb(t.db, { account: null }), {
       openSendAdapter: fake.factory, now: () => AFTER, mailboxIds: [t.organizerId],
     });
 
@@ -107,7 +107,7 @@ describe("the scheduled-send pass claims only the mailboxes it was given", () =>
   it("an EMPTY list claims nothing at all — it is not the same as no filter", async () => {
     const t = await twoMailboxes();
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(t.db, {
+    const r = await runScheduledSendPass(bindDb(t.db, { account: null }), {
       openSendAdapter: fake.factory, now: () => AFTER, mailboxIds: [],
     });
     expect(r.claimed).toBe(0);
@@ -119,7 +119,7 @@ describe("the scheduled-send pass claims only the mailboxes it was given", () =>
   it("NO filter claims everything — the hosted clock is byte-identical to before", async () => {
     const t = await twoMailboxes();
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(t.db, { openSendAdapter: fake.factory, now: () => AFTER });
+    const r = await runScheduledSendPass(bindDb(t.db, { account: null }), { openSendAdapter: fake.factory, now: () => AFTER });
     expect(r).toMatchObject({ claimed: 2, sent: 2 });
     expect(fake.delivered.map((m) => m.subject).sort())
       .toEqual(["from the organizer", "from the reader"]);
@@ -137,7 +137,7 @@ describe("the scheduled-send pass claims only the mailboxes it was given", () =>
       .where(eq(drafts.id, t.readerDraft));
 
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(t.db, {
+    const r = await runScheduledSendPass(bindDb(t.db, { account: null }), {
       openSendAdapter: fake.factory, now: () => AFTER, mailboxIds: [t.organizerId],
     });
     expect(fake.delivered.map((m) => m.subject)).toEqual(["from the organizer"]);
@@ -149,7 +149,7 @@ describe("the scheduled-send pass claims only the mailboxes it was given", () =>
   it("claims for several named mailboxes at once", async () => {
     const t = await twoMailboxes();
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(t.db, {
+    const r = await runScheduledSendPass(bindDb(t.db, { account: null }), {
       openSendAdapter: fake.factory, now: () => AFTER,
       mailboxIds: [t.organizerId, t.readerId],
     });

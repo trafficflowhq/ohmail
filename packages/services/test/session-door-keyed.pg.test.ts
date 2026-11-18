@@ -53,12 +53,15 @@ describe.skipIf(!PG_UP)("the look-ups before sign-in are keyed by the token's di
     return { value, flights: flightsOf(r), bytes: Buffer.concat([...r.texts, ...r.binds]) };
   };
 
-  for (const [name, handle] of [
-    ["the pool's own handle", () => pool],
-    ["the request's handle as its host minted it", () => bindDb(pool, { account: null })],
+  for (const [name, lookUp] of [
+    // The pool's own handle no longer compiles here; what it does at run time is held all the same.
+    ["the pool's own handle", () =>
+      // @ts-expect-error — a plain handle is refused by the type; the case is the look-up at run time
+      resolveSession(pool, token, now)],
+    ["the request's handle as its host minted it", () => resolveSession(bindDb(pool, { account: null }), token, now)],
   ] as const) {
     it(`the session's look-up on ${name}: one flight of its own, no account, the digest as its key, one burst`, async () => {
-      const { value, flights, bytes } = await written(() => resolveSession(handle(), token, now));
+      const { value, flights, bytes } = await written(lookUp);
       expect(value?.accountId).toBe(accountId);
       expect(flights).toHaveLength(1);
       const [flight] = flights;
@@ -74,7 +77,7 @@ describe.skipIf(!PG_UP)("the look-ups before sign-in are keyed by the token's di
 
   it("a token no session answers rides its own digest and reads no row", async () => {
     const stranger = generateToken();
-    const { value, flights } = await written(() => resolveSession(pool, stranger, now));
+    const { value, flights } = await written(() => resolveSession(bindDb(pool, { account: null }), stranger, now));
     expect(value).toBeNull();
     expect(flights.map((f) => [f.door, f.account, f.keyed])).toEqual([["lone", null, true]]);
     expect(keyEquals(flights[0]!, hashToken(stranger))).toBe(true);
@@ -97,7 +100,9 @@ describe.skipIf(!PG_UP)("the look-ups before sign-in are keyed by the token's di
     const bound = bindDb(pool, { account: accountId });
     const svc = new AuthService(makeTestAuthDeps());
     const { flights } = await written(async () => {
+      // @ts-expect-error — an account's handle is refused by the type too; the case is the refusal at run time
       await expect(resolveSession(bound, token, now)).rejects.toMatchObject({ code: "binding_refused" });
+      // @ts-expect-error — the same for the erased-bearer look-up
       await expect(svc.bearerOfErasedAccount(bound, token, now)).rejects.toMatchObject({ code: "binding_refused" });
     });
     expect(flights).toEqual([]);

@@ -5,12 +5,12 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { generateSync } from "otplib";
-import { accounts, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { authEvents, schema } from "@trafficflow/db/cloud";
+import { accounts, bindDb, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
+import { authEvents, makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, deleteAccount, hashToken, makeTestAuthDeps, reapStaleWebSessions, type ServiceContext,
+  AuthService, dbFor, deleteAccount, hashToken, makeTestAuthDeps, reapStaleWebSessions, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -25,16 +25,20 @@ import {
 
 const PG_UP = await realPgAvailable();
 type Sql = ReturnType<typeof postgres>;
-type Db = ReturnType<typeof drizzle<typeof schema>>;
+type Db = OwnedDb["db"];
 type Settled<T> = { ok: true; v: T } | { ok: false; e: unknown };
 
 let client: Sql;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let owned: OwnedDb;
 let db: Db;
 const extra: Sql[] = [];
 let ipCell = 0;
 let ip = "10.47.0.1";
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(), requestId: "k91", ip, ...over,
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+  accountId: "", userId: null, now: () => new Date(), requestId: "k91", ip, ...over,
 });
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const settle = <T>(p: Promise<T>): Promise<Settled<T>> =>
@@ -158,10 +162,12 @@ describe.skipIf(!PG_UP)("an erasure against every writer of several session rows
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 60_000);
   afterAll(async () => {
     for (const c of extra) await c.end({ timeout: 5 }).catch(() => {});
+    await owned?.close();
     await client?.end({ timeout: 5 });
   });
 

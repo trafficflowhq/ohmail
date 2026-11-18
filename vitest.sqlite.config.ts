@@ -454,6 +454,9 @@ export default defineConfig({
       // transaction is open, and an announcement made inside one. Both are about the
       // proxy's separate `begin`/statement/`commit` calls, so only this project sees them.
       "apps/sidecar/test/phone-one-write-door.test.ts",
+      // WHOM THE PHONE'S HANDLES ACT FOR: a request is minted over the app's door to the store, the
+      // third handle only this store has, so only this project reads it under a session's account.
+      "apps/sidecar/test/phone-store-binding.test.ts",
       // WHAT THE FIRST SYNC PRODUCED, against a real server and a relay that refuses to hand over
       // the mail. Here for `phone-engine-boot.test.ts`'s reason — the whole engine over the device
       // store — and it carries the same premise case for the default project.

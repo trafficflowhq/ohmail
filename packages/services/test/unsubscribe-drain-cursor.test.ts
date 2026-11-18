@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
-  folderState, mailboxes, messageBodies, messages, unsubscribeDrainState, unsubscribeExamined, unsubscribeRecords,
+  folderState, mailboxes, messageBodies, messages, unsubscribeDrainState, unsubscribeExamined, unsubscribeRecords, bindDb,
 } from "@trafficflow/db";
 import {
   makeUnsubscribeService, type HostResolver, type OneClickPost,
@@ -78,12 +78,12 @@ describe("a message from a list already left is examined once", () => {
     const post = spy();
     const svc = svcWith(post);
 
-    const first = await svc.drainScreenedOut(db, { now: () => NOW, requestId: "d1" });
+    const first = await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "d1" });
     expect(first.sweep.posted, "the list is left once, from the oldest message").toBe(1);
     expect(first.sweep.considered, "all three are looked at on the first pass").toBe(3);
     expect(post.calls).toHaveLength(1);
 
-    const second = await svc.drainScreenedOut(db, { now: () => NOW, requestId: "d2" });
+    const second = await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "d2" });
     // THE ROW, CLOSED. Before this change the second run considered 2, spent five statements on
     // each of them — the loads, the organizer read, an `update messages set auth_verdict`, the
     // conflicting insert and its read-back — and answered `remaining` 2 for ever.
@@ -104,13 +104,13 @@ describe("a message from a list already left is examined once", () => {
     await seedAt(db, accountId, mailboxId, ONE_CLICK, "a@sender.example", ago(60_000));
     const post = spy();
     const svc = svcWith(post);
-    await svc.drainScreenedOut(db, { now: () => NOW, requestId: "d1" });
+    await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "d1" });
     expect(post.calls).toHaveLength(1);
 
     // A DIFFERENT list, arriving after the first pass: the mark closes the list it was written
     // for and nothing else. A refusal rule with no admission is a rule that says "everything".
     await seedAt(db, accountId, mailboxId, ONE_CLICK, "b@elsewhere.example", ago(30_000));
-    const second = await svc.drainScreenedOut(db, { now: () => NOW, requestId: "d2" });
+    const second = await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "d2" });
     expect(second.sweep.posted).toBe(1);
     expect(post.calls).toHaveLength(2);
   });
@@ -147,7 +147,7 @@ describe("the window walk resumes where it stopped", () => {
 
     const posted: number[] = [];
     for (let r = 0; r < 4; r += 1) {
-      const out = await svc.drainScreenedOut(db, {
+      const out = await svc.drainScreenedOut(bindDb(db, { account: null }), {
         now: () => NOW, requestId: `d${r}`, accounts: 1, perAccount: 1,
       });
       posted.push(out.sweep.posted);
@@ -163,13 +163,13 @@ describe("the window walk resumes where it stopped", () => {
     await seedAt(db, accountId, mailboxId, STICKY, "stuck@sender.example", ago(600_000));
     const svc = svcWith(spy());
     // One row, one slot: the walk takes it and stops, so the cursor points at it.
-    await svc.drainScreenedOut(db, { now: () => NOW, requestId: "d0", accounts: 1, perAccount: 1 });
+    await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "d0", accounts: 1, perAccount: 1 });
     const [afterTake] = await db.select().from(unsubscribeDrainState);
     expect(afterTake!.cursorMessageId, "the walk stopped on the row it took").not.toBeNull();
     expect(afterTake!.cursorAt).not.toBeNull();
 
     // The next run finds nothing past it and reaches the end of the window: the lap is over.
-    await svc.drainScreenedOut(db, { now: () => NOW, requestId: "d1", accounts: 1, perAccount: 1 });
+    await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "d1", accounts: 1, perAccount: 1 });
     const [afterLap] = await db.select().from(unsubscribeDrainState);
     expect(afterLap!.cursorMessageId, "a finished lap starts the next one at the head").toBeNull();
     expect(afterLap!.cursorAt).toBeNull();
@@ -179,7 +179,7 @@ describe("the window walk resumes where it stopped", () => {
     const { db, accountId, mailboxId } = await makeCtx();
     await window3(db, accountId, mailboxId);
     const svc = svcWith(spy());
-    await svc.drainScreenedOut(db, { now: () => NOW, requestId: "d0", accounts: 1, perAccount: 1 });
+    await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "d0", accounts: 1, perAccount: 1 });
     const [ended] = await db.select().from(unsubscribeDrainState);
     const at = ended!.cursorAt;
     const messageId = ended!.cursorMessageId;
@@ -209,7 +209,7 @@ describe("the window walk resumes where it stopped", () => {
       },
     }) as typeof db;
 
-    await expect(svc.drainScreenedOut(failing, {
+    await expect(svc.drainScreenedOut(bindDb(failing, { account: null }), {
       now: () => NOW, requestId: "d1", accounts: 1, perAccount: 1,
     })).rejects.toThrow("the window read died");
 
@@ -262,7 +262,7 @@ describe("a sender the provider did not confirm is not a drain candidate", () =>
     }
     await letter(w.db, w.accountId, w.gmail, "letters@confirmed.example", "gmail", ago(1_800_000), "pass");
 
-    const run = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    const run = await w.svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d1" });
     expect(w.post.calls).toEqual(["https://sender.example/u?t=gmail"]);
     expect(run.sweep).toMatchObject({ considered: 1, posted: 1 });
     expect(run.remaining, "a refused letter is not counted as owed").toBe(0);
@@ -275,13 +275,13 @@ describe("a sender the provider did not confirm is not a drain candidate", () =>
     }
     await letter(w.db, w.accountId, w.gmail, "letters@confirmed.example", "gmail", ago(1_800_000), null);
 
-    const first = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    const first = await w.svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d1" });
     expect(first.sweep).toMatchObject({ considered: 10, posted: 0, skipped: 10 });
-    const second = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d2" });
+    const second = await w.svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d2" });
     expect(second.sweep, "the ten refused at the first look are not looked at again").toMatchObject({ considered: 3, posted: 1 });
     expect(w.post.calls).toEqual(["https://sender.example/u?t=gmail"]);
     expect(second.remaining).toBe(0);
-    const third = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d3" });
+    const third = await w.svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d3" });
     expect(third.sweep.considered).toBe(0);
   });
 });
@@ -327,7 +327,7 @@ describe("a letter whose sender's signature ingest checked", () => {
   it("at a mailbox no provider entry names, a stored pass is unsubscribed for and kept", async () => {
     const w = await world();
     const id = await screenedOut(w.db, w.accountId, w.unmapped, "news@signed.example", "signed", "pass");
-    const run = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    const run = await w.svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d1" });
     expect(w.post.calls).toEqual(["https://sender.example/u?t=signed"]);
     expect(run.sweep).toMatchObject({ considered: 1, posted: 1 });
     expect(await stored(w.db, id), "the request overwrote the signature's pass").toBe("pass");
@@ -336,7 +336,7 @@ describe("a letter whose sender's signature ingest checked", () => {
   it("a stored NULL there is still refused, and reads unavailable", async () => {
     const w = await world();
     const id = await screenedOut(w.db, w.accountId, w.unmapped, "news@unsigned.example", "unsigned", null);
-    const run = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    const run = await w.svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d1" });
     expect(w.post.calls).toEqual([]);
     expect(run.sweep).toMatchObject({ considered: 1, posted: 0, skipped: 1 });
     expect(await stored(w.db, id)).toBe("unavailable");
@@ -345,7 +345,7 @@ describe("a letter whose sender's signature ingest checked", () => {
   it("at a Gmail mailbox a stored pass is read from the stored headers, as before", async () => {
     const w = await world();
     const id = await screenedOut(w.db, w.accountId, w.gmail, "news@gmail-held.example", "gmail", "pass");
-    await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    await w.svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d1" });
     expect(w.post.calls, "Gmail's header is not on the letter, so its provider did not confirm it").toEqual([]);
     expect(await stored(w.db, id)).toBe("unavailable");
   });

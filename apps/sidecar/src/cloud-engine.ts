@@ -18,6 +18,7 @@ import {
   type OpenLocalDb,
 } from "./db.js";
 import { ensureLocalWorld, type LocalWorld } from "./identity.js";
+import { unboundOf } from "./store-binding.js";
 import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
 import {
   createCloudAuth, openSealedTokens, readSessionMarker, sealTokens, ACCOUNT_ERASED, REFUSAL_CODES,
@@ -1588,7 +1589,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       const decided = token ? await session.decide(token, now()) : "unknown";
       if (decided === "refused") return launchSessionExpiredResponse();
       const core = !token ? null
-        : decided === "unknown" ? await resolveSession(db, token, now()) : decided.held;
+        : decided === "unknown" ? await resolveSession(unboundOf(db), token, now()) : decided.held;
       if (!core) return json({ error: { code: "unauthorized", message: "authentication required" } }, 401);
 
       // A PERSON'S INPUT AT THE WINDOW: `queued` already took it as a person's request (`personSeen`).

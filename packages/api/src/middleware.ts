@@ -5,7 +5,7 @@ import {
 import { silentLogger } from "@trafficflow/core/mail";
 // The reader refusal, from the package that throws it — see the envelope arm below for why it
 // cannot live beside `ServiceError`.
-import { bindRequest } from "./context.js";
+import { bindRequest, doorDb } from "./context.js";
 import { jarCookie } from "./cookies.js";
 import { csrfTokenFor } from "./csrf.js";
 import { errorResponse } from "./responses.js";
@@ -483,7 +483,8 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
   const token = readSessionToken(req, deps.allowCookieAuth !== false);
   if (token) {
     const t0 = performance.now();
-    const core = await resolveSession(deps.db, token.value, deps.now());
+    // On the request's handle as its host minted it (`doorDb`): the look-up runs before any account is bound.
+    const core = await resolveSession(doorDb(deps), token.value, deps.now());
     deps.sessionMs = performance.now() - t0;
     if (core) deps.session = { ...core, via: token.via };
   }
@@ -528,7 +529,7 @@ export async function erasedAccountBearer(req: Request, deps: ApiDeps, token: st
   const auth = deps.services?.auth;
   if (!auth) return null;
   try {
-    const account = await auth.bearerOfErasedAccount(deps.db, token, deps.now());
+    const account = await auth.bearerOfErasedAccount(doorDb(deps), token, deps.now());
     if (account) deps.erasedAccount = account;
     return account;
   } catch {

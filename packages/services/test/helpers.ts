@@ -7,6 +7,7 @@ import type { AdapterPort, NativeLocator } from "@trafficflow/core";
 import type {
   AlreadyGoneResult, MoveRequestResult, MoveResult, RuleCreation, RuleMutation, RuleRequestResult, ServiceContext,
 } from "../src/index.js";
+import { dbFor } from "../src/index.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -65,7 +66,7 @@ export async function makeCtx(now = new Date("2026-07-28T12:00:00Z")): Promise<{
   const db = await makeTestDb();
   const accountId = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "mila@lichtgrat.example" }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => now, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => now, requestId: "r" };
   return { db, accountId, mailboxId: mb.id, ctx };
 }
 

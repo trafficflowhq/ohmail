@@ -1,0 +1,26 @@
+{
+  "id": "ohmail/binder-callers",
+  "base": "ba6c9a9753eb88af44d63fec73e8b3637074f4ea",
+  "recorded": "2026-11-17",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a service binds a handle by hand, the binder under another name",
+      "file": "packages/services/src/planted/binds-by-hand.ts",
+      "line": 1,
+      "refused": "bindDb binds a database handle to an account or to none, and only the files of tools/binders.json name it; a context takes its handle from the request, a pass's row from its pass"
+    },
+    {
+      "control": "a route makes a context's handle for an id it was handed",
+      "file": "packages/api/src/planted/context-by-hand.ts",
+      "line": 3,
+      "refused": "dbFor binds a database handle to an account or to none, and only the files of tools/binders.json name it; a context takes its handle from the request, a pass's row from its pass"
+    }
+  ],
+  "green": [
+    {
+      "control": "a service reads what a handle is bound to",
+      "file": "packages/services/src/planted/reads-a-binding.ts"
+    }
+  ]
+}

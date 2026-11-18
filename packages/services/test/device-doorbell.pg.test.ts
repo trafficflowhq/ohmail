@@ -5,12 +5,12 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { accounts, changeLog, devices, refreshTokens, sessions, users } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { accounts, bindDb, changeLog, devices, refreshTokens, sessions, users } from "@trafficflow/db";
+import { makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  hashToken, makeAuthService, makeTestAuthDeps, mintPairingToken, redeemDevicePair,
+  dbFor, hashToken, makeAuthService, makeTestAuthDeps, mintPairingToken, redeemDevicePair,
   type OAuthTokens, type ServiceContext,
 } from "@trafficflow/services";
 import { deviceNumbers } from "../src/device-numbers.js";
@@ -39,11 +39,20 @@ const NOW = new Date("2026-11-17T10:00:00.000Z");
 
 let client: ReturnType<typeof postgres>;
 let db: ReturnType<typeof drizzle<typeof schema>>;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let owned: OwnedDb;
 let auth: ReturnType<typeof makeAuthService>;
 
 type Handle = ServiceContext["db"];
-const ctxOn = (handle: unknown, who: { accountId: string; userId: string } | null, sessionId: string | null = null): ServiceContext => ({
-  db: handle as Handle, accountId: who?.accountId ?? "", userId: who?.userId ?? null, sessionId,
+/**
+ * A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
+ * `wrap` puts a double over that bound handle (never binds the double).
+ */
+const ctxOn = (
+  who: { accountId: string; userId: string } | null, sessionId: string | null = null, wrap: (h: object) => object = (h) => h,
+): ServiceContext => ({
+  db: wrap(who === null ? bindDb(owned.db, { account: null }) : dbFor(owned.db, who.accountId)) as Handle,
+  accountId: who?.accountId ?? "", userId: who?.userId ?? null, sessionId,
   now: () => NOW, requestId: `bell-${randomUUID().slice(0, 8)}`, ip: "10.9.8.7",
 });
 
@@ -64,11 +73,11 @@ async function person() {
 type Person = Awaited<ReturnType<typeof person>>;
 
 const mint = async (p: Person): Promise<{ token: string; id: string }> =>
-  mintPairingToken(ctxOn(db, p.who, p.browser), { grant: "device-pair", label: "Kitchen phone" });
+  mintPairingToken(ctxOn(p.who, p.browser), { grant: "device-pair", label: "Kitchen phone" });
 
-async function paired(p: Person, handle: unknown = db): Promise<{ tokens: OAuthTokens; deviceId: string }> {
+async function paired(p: Person): Promise<{ tokens: OAuthTokens; deviceId: string }> {
   const minted = await mint(p);
-  const { tokens } = await redeemDevicePair(ctxOn(handle, null), auth, { token: minted.token, kind: "mobile-android" });
+  const { tokens } = await redeemDevicePair(ctxOn(null), auth, { token: minted.token, kind: "mobile-android" });
   const [row] = await db.select({ deviceId: sessions.deviceId }).from(refreshTokens)
     .innerJoin(sessions, eq(sessions.id, refreshTokens.sessionId))
     .where(eq(refreshTokens.tokenHash, hashToken(tokens.refreshToken))).limit(1);
@@ -105,18 +114,25 @@ async function writer() {
   };
 }
 
-/** A view of the pool that runs `between` once, before the second transaction opened through it. */
-function betweenTheTwo(between: () => Promise<void>): { handle: unknown; opened: () => number } {
+/**
+ * A double over a door's bound handle that runs `between` once, before the second transaction opened
+ * through it. The handle's own `transaction` runs with the double as `this`, so the transaction carries
+ * the handle's binding.
+ */
+function betweenTheTwo(between: () => Promise<void>): { wrap: (h: object) => object; opened: () => number } {
   let opened = 0;
-  const handle = Object.create(db) as object;
-  Object.defineProperty(handle, "transaction", {
-    value: async (fn: (tx: unknown) => Promise<unknown>) => {
-      opened += 1;
-      if (opened === 2) await between();
-      return (db as unknown as { transaction: (f: typeof fn) => Promise<unknown> }).transaction(fn);
-    },
-  });
-  return { handle, opened: () => opened };
+  const wrap = (bound: object): object => {
+    const handle = Object.create(bound) as object;
+    Object.defineProperty(handle, "transaction", {
+      value: async function (this: unknown, fn: (tx: unknown) => Promise<unknown>) {
+        opened += 1;
+        if (opened === 2) await between();
+        return (bound as { transaction: (f: typeof fn) => Promise<unknown> }).transaction.call(this, fn);
+      },
+    });
+    return handle;
+  };
+  return { wrap, opened: () => opened };
 }
 
 function printed(): () => string {
@@ -132,9 +148,13 @@ describe.skipIf(!PG_UP)("the devices' doorbell on real Postgres", () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 24, onnotice: () => {} });
     db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
     auth = makeAuthService(makeTestAuthDeps());
   }, 120_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => {
+    await owned?.close();
+    await client?.end({ timeout: 5 });
+  });
   afterEach(() => { vi.restoreAllMocks(); });
 
   it("a pairing is committed and its rows are free while its ring still waits for the counter", async () => {
@@ -145,7 +165,7 @@ describe.skipIf(!PG_UP)("the devices' doorbell on real Postgres", () => {
 
     const other = await writer();
     await other.sql`select 1 from account_sync_state where account_id = ${p.accountId} for update`;
-    const redeem = redeemDevicePair(ctxOn(db, null), auth, { token: minted.token, kind: "mobile-android" });
+    const redeem = redeemDevicePair(ctxOn(null), auth, { token: minted.token, kind: "mobile-android" });
     let answered = false;
     void redeem.then(() => { answered = true; }, () => { answered = true; });
     try {
@@ -179,7 +199,7 @@ describe.skipIf(!PG_UP)("the devices' doorbell on real Postgres", () => {
 
     const other = await writer();
     await other.sql`select 1 from account_sync_state where account_id = ${p.accountId} for update`;
-    const takeBack = auth.revokeDevice(ctxOn(db, p.who, p.browser), phone.deviceId);
+    const takeBack = auth.revokeDevice(ctxOn(p.who, p.browser), phone.deviceId);
     void takeBack.catch(() => undefined);
 
     try {
@@ -223,7 +243,7 @@ describe.skipIf(!PG_UP)("the devices' doorbell on real Postgres", () => {
       })();
     });
 
-    const answer = await redeemDevicePair(ctxOn(view.handle, null), auth, { token: minted.token, kind: "mobile-android" });
+    const answer = await redeemDevicePair(ctxOn(null, null, view.wrap), auth, { token: minted.token, kind: "mobile-android" });
 
     expect(answer.tokens.accessToken, "the pairing had committed and answers").toBeTruthy();
     expect(view.opened(), "the redeem's transaction, then the ring's").toBe(2);
@@ -241,7 +261,7 @@ describe.skipIf(!PG_UP)("the devices' doorbell on real Postgres", () => {
       await db.update(accounts).set({ erasedAt: NOW }).where(eq(accounts.id, p.accountId));
     });
 
-    await auth.revokeDevice(ctxOn(view.handle, p.who, p.browser), phone.deviceId);
+    await auth.revokeDevice(ctxOn(p.who, p.browser, view.wrap), phone.deviceId);
 
     const [session] = await db.select({ at: sessions.revokedAt }).from(sessions).where(eq(sessions.deviceId, phone.deviceId));
     expect(session!.at, "the take-back itself had committed").not.toBeNull();
@@ -260,13 +280,13 @@ describe.skipIf(!PG_UP)("the devices' doorbell on real Postgres", () => {
       settled.map((s) => (s.status === "fulfilled" ? "ok" : String((s.reason as { code?: string }).code ?? s.reason)));
 
     const pairings = await Promise.allSettled(
-      tokens.map((t) => redeemDevicePair(ctxOn(db, null), auth, { token: t.token, kind: "mobile-android" })));
+      tokens.map((t) => redeemDevicePair(ctxOn(null), auth, { token: t.token, kind: "mobile-android" })));
     expect(answers(pairings)).toEqual(Array.from({ length: 6 }, () => "ok"));
     expect(await deviceNumbers(db as never, p.accountId)).toEqual({ made: 9, revoked: 0, live: 9 });
     expect(await rings(p.accountId), "one change row for each device made").toBe(before + 6);
 
     const takeBacks = await Promise.allSettled(
-      standing.map((s) => auth.revokeDevice(ctxOn(db, p.who, p.browser), s.deviceId)));
+      standing.map((s) => auth.revokeDevice(ctxOn(p.who, p.browser), s.deviceId)));
     expect(answers(takeBacks)).toEqual(["ok", "ok", "ok"]);
     expect(await deviceNumbers(db as never, p.accountId)).toEqual({ made: 9, revoked: 3, live: 6 });
     expect(await rings(p.accountId), "and one for each taken back").toBe(before + 9);

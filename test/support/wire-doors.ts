@@ -3,6 +3,7 @@ import {
   serverTables,
 } from "@trafficflow/db/cloud";
 import { keyEquals, type PgWireFlight } from "@trafficflow/db/testing";
+import { OWED_STATEMENTS } from "./wire-owed-statements.js";
 
 /**
  * THE DOORS A STATEMENT MAY COME THROUGH, AND WHAT EACH MAY NAME: the closed lists the two wire
@@ -20,8 +21,12 @@ import { keyEquals, type PgWireFlight } from "@trafficflow/db/testing";
  *
  * {@link OWED} holds what is admitted today and must not be: a statement that reads or writes rows
  * of many accounts on a handle that names none, or one account's row on a door that should not
- * reach it. Each row names the work that takes it away. The list only shrinks: a wire test fails
- * on a statement no list admits, and on an owed row its journeys no longer meet.
+ * reach it. Each row names the work that takes it away, and THE EXACT STATEMENTS it admits
+ * (`wire-owed-statements.ts`): a row is met by one of its own statement texts and by no other, so
+ * a new statement on an owed row's table and door is refused like any statement no list admits. A
+ * row whose journeys no test drives admits nothing until a ruling lists its text. The list only
+ * shrinks: a wire test fails on a statement no list admits, and on an owed row its journeys no
+ * longer meet.
  */
 
 /** A statement's verb, as the lists tell reads from writes. */
@@ -124,12 +129,38 @@ export interface OwedRow {
    * with rows they do not make, or not at all. A row a test is said to meet and does not is stale.
    */
   readonly metBy: "server" | "worker" | "none";
+  /**
+   * The statements the row admits, each by its whole shape ({@link statementShape}): those its wire
+   * test's journeys send, and those a ruling named. A statement of the row's login, door, table and
+   * verb whose shape is not here is refused.
+   */
+  readonly statements: readonly string[];
 }
 
 const owed = (
   login: OwedRow["login"], door: Door, verb: Verb, table: string, metBy: OwedRow["metBy"], to: OwedTo | readonly OwedTo[],
   where: string, why: string,
-): OwedRow => ({ login, door, table, verb, where, why, to: typeof to === "string" ? [to] : to, metBy });
+): OwedRow => ({
+  login, door, table, verb, where, why, to: typeof to === "string" ? [to] : to, metBy,
+  statements: OWED_STATEMENTS[`${login} ${door} ${verb} ${table}`] ?? [],
+});
+
+/** A statement's text: its runs of white space as one space, trimmed. */
+export function statementText(statement: string): string {
+  return statement.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * A statement's SHAPE, as the owed rows list it: its text, with the two parts that move with the
+ * rows a journey made read as one each: a list of placeholders (`in ($1, $2)` and `in ($1, $2, $3)`
+ * are one shape) and a number written into the text (the batch stamp writes its interval's
+ * milliseconds there). Every table, column, condition and verb stays as sent.
+ */
+export function statementShape(statement: string): string {
+  return statementText(statement)
+    .replace(/\(\$\d+(?:, \$\d+)*\)/g, "($…)")
+    .replace(/(?<![$\w])\d+(?!\w)/g, "#");
+}
 
 const OPERATIONS = new Set<string>(OPERATIONS_TABLES);
 const STAFF = new Set<string>(STAFF_TABLES);
@@ -315,15 +346,10 @@ export const OWED: readonly OwedRow[] = [
   owed("worker", "plain", "read", "accounts", "none", "walks", "apps/worker/src/storage-cap.ts, packages/db/src/storage-hold.ts (heldStorageLimitOf)", "the account's row is read by that write's fence, on the pool's own handle"),
   owed("worker", "plain", "write", "credit_refund_obligations", "none", "walks",
     "apps/worker/src/index.ts (refundObligationsOn)", "a spend that bought nothing is remembered for its account on the pool's own handle"),
-  owed("worker", "plain", "write", "push_subscriptions", "none", "walks", "apps/worker/src/push-wake.ts (a dead endpoint's prune)", "a registration whose endpoint answered gone is deleted on the pool's own handle: under the lock it deletes nothing, and the dead endpoint is posted at every wake"),
-  owed("worker", "plain", "read", "change_log", "none", "walks", "apps/worker/src/push-wake.ts (the wake's look for a change that is not a calendar's)",
-    "one account's change log is read on the pool's own handle before its registrations are woken: under the lock it finds nothing, and no phone is woken; met only with a registration"),
-  owed("worker", "plain", "read", "push_subscriptions", "none", "walks",
-    "apps/worker/src/push-wake.ts", "one account's push registrations are read on the pool's own handle when its change log signals"),
 ];
 
 const owedKey = (r: Pick<OwedRow, "login" | "door" | "table" | "verb">): string => `${r.login} ${r.door} ${r.verb} ${r.table}`;
-const OWED_KEYS = new Set(OWED.map(owedKey));
+const OWED_BY_KEY = new Map(OWED.map((r) => [owedKey(r), new Set(r.statements)] as const));
 
 /** A statement no list admits: what it named, through which door. */
 export interface Refused { readonly door: Door; readonly table: string; readonly verb: Verb; readonly statement: string }
@@ -344,8 +370,9 @@ export function refusedOf(
         const verb: Verb = named.writes === table ? "write" : "read";
         if (admitted(login, door, table, verb)) continue;
         const key = owedKey({ login, door, table, verb });
-        if (OWED_KEYS.has(key)) { met.add(key); continue; }
-        out.push({ door, table, verb, statement: statement.replace(/\s+/g, " ").trim().slice(0, 160) });
+        // An owed row admits its own statements and no other text on its table and door.
+        if (OWED_BY_KEY.get(key)?.has(statementShape(statement)) === true) { met.add(key); continue; }
+        out.push({ door, table, verb, statement: statementText(statement).slice(0, 160) });
       }
       if (door === "unknown-key" && named.reads.length === 0) {
         out.push({ door, table: "", verb: "read", statement: statement.replace(/\s+/g, " ").trim().slice(0, 160) });

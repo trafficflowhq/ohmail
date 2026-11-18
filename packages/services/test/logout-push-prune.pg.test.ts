@@ -7,11 +7,11 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, inArray } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { authEvents, credentials, schema, pushSubscriptions, webauthnCredentials } from "@trafficflow/db/cloud";
+import { authEvents, credentials, makeOwnedDb, schema, pushSubscriptions, webauthnCredentials } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, generateToken, hashToken, makeAuthService, makeTestAuthDeps, pushService, type ServiceContext,
+  AuthService, dbFor, generateToken, hashToken, makeAuthService, makeTestAuthDeps, pushService, type ServiceContext,
 } from "@trafficflow/services";
 import { seedFullAccount, type SeededAccount } from "./helpers/erasure-fixture.js";
 
@@ -417,13 +417,16 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
     const caller = await browser(seeded, { twofaAt: new Date() });
     const w1 = await browser(seeded);
     const app = `c0056-race-${randomUUID().slice(0, 8)}`;
-    const second = postgres(PG_TEST_URL, { max: 1, onnotice: () => {}, connection: { application_name: app } });
+    // A pool of the factory's, named by its address (a parameter of the address is one of the connection).
+    const address = new URL(PG_TEST_URL);
+    address.searchParams.set("application_name", app);
+    const second = makeOwnedDb(address.toString());
     try {
       const revoke = revokeW1(new Held(makeTestAuthDeps()), seeded, caller.sessionId, w1.sessionId);
       await atPrune;
       const endpoint = `https://push.test/${randomUUID()}`;
       const register = pushService.subscribe(
-        { ...ctxFor(seeded.accountId, seeded.userId, w1.sessionId), db: brandDialect(drizzle(second, { schema }), "pg") } as ServiceContext,
+        { ...ctxFor(seeded.accountId, seeded.userId, w1.sessionId), db: dbFor(second.db, seeded.accountId) },
         { transport: "webpush", endpoint, p256dh: "p", auth: "a" },
       ).then(() => "registered", (e: { httpStatus?: number }) => e.httpStatus);
       expect(await waitsOnALock(app, 5_000), "the registration never waited on the revoke").toBe(true);
@@ -434,7 +437,7 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
       expect(await live([caller.row, w1.row])).toEqual([caller.row]);
     } finally {
       open();
-      await second.end({ timeout: 5 });
+      await second.close();
     }
   }, 30_000);
 });

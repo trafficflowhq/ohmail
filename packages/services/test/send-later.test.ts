@@ -3,12 +3,12 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, changeLog, drafts, mailboxes, outboundSends, outboundSendFingerprints, outboundSentCopies, scheduledSendFiles,
+  accounts, changeLog, drafts, mailboxes, outboundSends, outboundSendFingerprints, outboundSentCopies, scheduledSendFiles, bindDb,
 } from "@trafficflow/db";
 import { StaticKeyProvider, createLogger, type OpenSendAdapter, type OutboundMessage, type SendOptions } from "@trafficflow/core";
 import { DbAcquireTimeoutError, runKekRewrap } from "@trafficflow/db/cloud";
 import {
-  DraftsService, ScheduleService, SendService, ServiceError, runScheduledSendPass,
+  DraftsService, ScheduleService, SendService, ServiceError, dbFor, runScheduledSendPass,
   SCHEDULE_MAX_AHEAD_MS,
   SCHEDULED_SEND_EXPIRY_MS, SEND_FAILED_SENTENCE, SEND_STALE_AFTER_MS,
   SEND_DUPLICATE_WINDOW_MS, SCHEDULED_FILES_UNREADABLE, sendContentFingerprint,
@@ -74,7 +74,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes).values({
     accountId: A, provider: "imap", address: "me@later.test",
   }).returning();
-  const ctx: ServiceContext = { db, accountId: A, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, A), accountId: A, userId: null, now: () => NOW, requestId: "r" };
   const { draft } = await draftsSvc.create(ctx, {
     mailboxId: mb!.id, subject: "later", body: "the words",
     to: [{ name: null, address: "you@example.com" }],
@@ -165,7 +165,8 @@ describe("ScheduleService.schedule", () => {
 
   it("cross-account ids are 404, and rows past 'draft' are 409", async () => {
     const { db, ctx, draftId } = await setup();
-    const stranger: ServiceContext = { ...ctx, accountId: randomUUID() };
+    const other = randomUUID();
+    const stranger: ServiceContext = { ...ctx, accountId: other, db: dbFor(db, other) };
     await expect(schedules.schedule(stranger, draftId, iso(AT))).rejects.toMatchObject({ httpStatus: 404 });
     await db.update(drafts).set({ status: "sent" }).where(eq(drafts.id, draftId));
     await expect(schedules.schedule(ctx, draftId, iso(AT))).rejects.toMatchObject({ httpStatus: 409 });
@@ -235,7 +236,7 @@ describe("runScheduledSendPass", () => {
       async close() { /* nothing to tear down */ },
     });
     const after = new Date(AT.getTime() + 30 * 1000);
-    expect(await runScheduledSendPass(db, { openSendAdapter: refusing, now: () => after, keepOwedCopy: true }))
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: refusing, now: () => after, keepOwedCopy: true }))
       .toMatchObject({ claimed: 1, sent: 1 });
     const owed = await db.select().from(outboundSentCopies);
     expect(owed.map((r) => Buffer.from(r.rawB64, "base64").toString())).toEqual(["the words"]);
@@ -245,7 +246,7 @@ describe("runScheduledSendPass", () => {
     const { db, ctx, draftId } = await setup();
     await schedules.schedule(ctx, draftId, iso(AT)); // due at 18:00
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory, now: () => NOW, // noon — not due
     });
     expect(r.claimed).toBe(0);
@@ -262,7 +263,7 @@ describe("runScheduledSendPass", () => {
     const fake = fakeAdapter();
     const after = new Date(AT.getTime() + 30 * 1000);
 
-    const r = await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => after });
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => after });
     expect(r).toMatchObject({ claimed: 1, sent: 1, failed: 0, deferred: 0 });
     expect(fake.state.delivered).toHaveLength(1);
     expect(fake.state.delivered[0]!.text).toContain("the words");
@@ -279,7 +280,7 @@ describe("runScheduledSendPass", () => {
     expect(row!.sendKey).toBeNull();
 
     // ONE press is one delivery: the next pass claims nothing and the fake counts one send.
-    const r2 = await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => after });
+    const r2 = await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => after });
     expect(r2.claimed).toBe(0);
     expect(fake.state.delivered).toHaveLength(1);
   });
@@ -289,7 +290,7 @@ describe("runScheduledSendPass", () => {
     await schedules.schedule(ctx, draftId, iso(AT));
     await schedules.cancel(ctx, draftId);
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(AT.getTime() + 60_000),
     });
     expect(r.claimed).toBe(0);
@@ -304,7 +305,7 @@ describe("runScheduledSendPass", () => {
     await draftsSvc.update(ctx, draftId, { body: "the FINAL words" });
     await schedules.schedule(ctx, draftId, iso(AT));
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(AT.getTime() + 60_000),
     });
     expect(r.sent).toBe(1);
@@ -321,7 +322,7 @@ describe("runScheduledSendPass", () => {
     const fake = fakeAdapter();
     const before = await db.select().from(changeLog).where(eq(changeLog.accountId, A));
 
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(AT.getTime() + 60_000),
     });
     expect(r).toMatchObject({ claimed: 1, sent: 0, failed: 1 });
@@ -368,7 +369,7 @@ describe("runScheduledSendPass", () => {
     const [before] = await db.select().from(drafts).where(eq(drafts.id, draftId));
     // The adapter factory throws — after `reserve` committed, before anything was offered.
     const broken = fakeAdapter({ failWith: () => new Error("ECONNRESET") });
-    const r1 = await runScheduledSendPass(db, {
+    const r1 = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: broken.factory, now: () => new Date(AT.getTime() + 60_000),
     });
     expect(r1).toMatchObject({ claimed: 1, failed: 1, deferred: 0, sent: 0, unverified: 0 });
@@ -390,7 +391,7 @@ describe("runScheduledSendPass", () => {
     // claim and nothing to probe. This is the half the old contract got wrong — it spent a
     // Sent-folder probe on a message that had never left.
     const healed = fakeAdapter({ inSent: false });
-    const r2 = await runScheduledSendPass(db, {
+    const r2 = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: healed.factory,
       now: () => new Date(AT.getTime() + SEND_STALE_AFTER_MS + 120_000),
     });
@@ -420,7 +421,7 @@ describe("runScheduledSendPass", () => {
       sendThrows: () => new Error("write EPIPE after DATA"),
       probeThrows: () => new Error("the Sent probe could not read the folder either"),
     });
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: ambiguous.factory, now: () => new Date(AT.getTime() + 60_000),
     });
     expect(r).toMatchObject({ claimed: 1, deferred: 1, failed: 0, sent: 0, unverified: 0 });
@@ -437,7 +438,7 @@ describe("runScheduledSendPass", () => {
 
     // The standing machinery ends it terminally once stale, with no resend.
     const healed = fakeAdapter({ inSent: false });
-    const r2 = await runScheduledSendPass(db, {
+    const r2 = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: healed.factory,
       now: () => new Date(AT.getTime() + SEND_STALE_AFTER_MS + 120_000),
     });
@@ -460,12 +461,12 @@ describe("runScheduledSendPass", () => {
       return { ...a, send: async (msg: OutboundMessage) => { t += 30_000; return a.send(msg); } };
     };
     const started = t;
-    const r = await runScheduledSendPass(db, { openSendAdapter: slow, now: () => new Date(t), budgetMs: 60_000 });
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: slow, now: () => new Date(t), budgetMs: 60_000 });
     expect(r).toMatchObject({ claimed: 3, sent: 1, deferred: 2 });
     expect(t - started, "the pass ends inside the invocation").toBeLessThanOrEqual(60_000);
     const left = await db.select().from(drafts).where(eq(drafts.status, "scheduled"));
     expect(left.map((d) => d.sendKey === null)).toEqual([false, false]);
-    const next = await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => new Date(t), budgetMs: 60_000 });
+    const next = await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => new Date(t), budgetMs: 60_000 });
     expect(next).toMatchObject({ claimed: 2, sent: 2 });
     expect(fake.state.delivered).toHaveLength(3);
   });
@@ -475,7 +476,7 @@ describe("runScheduledSendPass", () => {
     await schedules.schedule(ctx, draftId, iso(AT));
     // A working adapter, deliberately: the refusal must come from the age, not from a fault.
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory,
       now: () => new Date(AT.getTime() + SCHEDULED_SEND_EXPIRY_MS + 60_000),
     });
@@ -495,7 +496,7 @@ describe("runScheduledSendPass", () => {
     await db.update(drafts).set({ status: "draft" }).where(eq(drafts.id, draftId));
     const fake = fakeAdapter();
     const wayPast = new Date(AT.getTime() + SEND_STALE_AFTER_MS + 60_000);
-    const r = await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => wayPast });
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => wayPast });
     expect(r).toMatchObject({ claimed: 1, sent: 1 });
     expect(fake.state.delivered).toHaveLength(1);
   });
@@ -515,7 +516,7 @@ describe("runScheduledSendPass", () => {
     // The probe finds the copy in Sent ⇒ reconcile to sent, NO resend.
     const fake = fakeAdapter({ inSent: true });
     const wayPast = new Date(AT.getTime() + SEND_STALE_AFTER_MS + 60_000);
-    const r = await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => wayPast });
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => wayPast });
     expect(r).toMatchObject({ claimed: 1, sent: 1 });
     expect(fake.state.delivered, "recovery resent a delivery it could not verify").toHaveLength(0);
     expect(fake.state.probes).toBeGreaterThan(0);
@@ -533,7 +534,7 @@ describe("the review round's guards (round 1)", () => {
     const after = new Date(AT.getTime() + 60_000);
 
     let handedHandle: unknown = null;
-    const r1 = await runScheduledSendPass(db, {
+    const r1 = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory, now: () => after,
       accountEligible: async (_accountId, handle) => { handedHandle = handle; return false; },
     });
@@ -552,7 +553,7 @@ describe("the review round's guards (round 1)", () => {
     expect(held!.status).toBe("scheduled");
     expect(await db.select().from(outboundSends)).toHaveLength(0);
 
-    const r2 = await runScheduledSendPass(db, {
+    const r2 = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory, now: () => after,
       accountEligible: async () => true,
     });
@@ -583,7 +584,7 @@ describe("the review round's guards (round 1)", () => {
     const refusing = fakeAdapter({
       failWith: () => new ServiceError("mailbox_not_signed_in", 424, "this mailbox is not signed in here, so nothing was fetched or sent — sign in again in Settings", undefined, false),
     });
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: refusing.factory, now: () => new Date(AT.getTime() + 60_000),
     });
     expect(r).toMatchObject({ claimed: 1, failed: 1, deferred: 0, sent: 0, unverified: 0 });
@@ -632,8 +633,8 @@ describe("the review round's guards (round 2)", () => {
     const [mbH] = await db.insert(mailboxes).values({
       accountId: healthy, provider: "imap", address: "alive@later.test",
     }).returning();
-    const ctxS: ServiceContext = { db, accountId: suspended, userId: null, now: () => NOW, requestId: "r" };
-    const ctxH: ServiceContext = { db, accountId: healthy, userId: null, now: () => NOW, requestId: "r" };
+    const ctxS: ServiceContext = { db: dbFor(db, suspended), accountId: suspended, userId: null, now: () => NOW, requestId: "r" };
+    const ctxH: ServiceContext = { db: dbFor(db, healthy), accountId: healthy, userId: null, now: () => NOW, requestId: "r" };
 
     // The suspended account owns the OLDEST due rows — more than one whole scan page of them,
     // which is exactly the prefix that re-filled a fixed window every cycle and starved
@@ -653,7 +654,7 @@ describe("the review round's guards (round 2)", () => {
     await schedules.schedule(ctxH, alive.id, iso(new Date(AT.getTime() + 60_000)));
 
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory,
       now: () => new Date(AT.getTime() + 120_000),
       accountEligible: async (accountId) => accountId !== suspended,
@@ -691,7 +692,7 @@ describe("the review round's guards (round 3)", () => {
     const [mbH] = await db.insert(mailboxes).values({
       accountId: healthy, provider: "imap", address: "deep-alive@deep.test",
     }).returning();
-    const ctxH: ServiceContext = { db, accountId: healthy, userId: null, now: () => NOW, requestId: "r" };
+    const ctxH: ServiceContext = { db: dbFor(db, healthy), accountId: healthy, userId: null, now: () => NOW, requestId: "r" };
     const { draft: alive } = await draftsSvc.create(ctxH, {
       mailboxId: mbH!.id, subject: "deep alive", body: "past eleven parked accounts",
       to: [{ name: null, address: "you@example.com" }],
@@ -700,7 +701,7 @@ describe("the review round's guards (round 3)", () => {
 
     const parked = new Set(parkedAccounts);
     const fake = fakeAdapter();
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory,
       now: () => new Date(AT.getTime() + 600_000),
       accountEligible: async (accountId) => !parked.has(accountId),
@@ -739,7 +740,7 @@ describe("the scheduled pass and the duplicate-send refusal", () => {
     await schedules.schedule(ctx, b.draft.id, iso(AT));
 
     const after = new Date(AT.getTime() + 1000);
-    const r = await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => after });
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => after });
 
     expect(r.claimed).toBe(2);
     expect(fake.state.delivered, "exactly one envelope reached the mail server").toHaveLength(1);
@@ -772,7 +773,7 @@ describe("the scheduled pass and the duplicate-send refusal", () => {
       to: [{ name: null, address: "you@example.com" }],
     });
     await schedules.schedule(ctx, a.draft.id, iso(AT));
-    await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => new Date(AT.getTime() + 1000) });
+    await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => new Date(AT.getTime() + 1000) });
     expect(fake.state.delivered).toHaveLength(1);
 
     const b = await draftsSvc.create(ctx, {
@@ -800,7 +801,7 @@ describe("the scheduled pass and the duplicate-send refusal", () => {
     const ctxLater: ServiceContext = { ...ctx, now: () => new Date(AT.getTime() + 1000) };
     await schedules.schedule(ctxLater, b.draft.id, iso(wayLater));
 
-    const r = await runScheduledSendPass(db, {
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(wayLater.getTime() + 1000),
     });
     expect(r.sent).toBe(1);
@@ -838,7 +839,7 @@ describe("the scheduled pass and a RETRYABLE refusal", () => {
     // appointment correctly closes. The retryable arm is exercised by the reservation being
     // `pending` instead, which is the interleaving below.
     const after = new Date(AT.getTime() + 1000);
-    await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => after });
+    await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => after });
     expect(fake.state.delivered).toHaveLength(1);
 
     // Now the retryable shape: a THIRD appointment for the same words, judged while a reservation
@@ -851,7 +852,7 @@ describe("the scheduled pass and a RETRYABLE refusal", () => {
     await db.update(outboundSends).set({ status: "pending" })
       .where(eq(outboundSends.accountId, ctx.accountId));
 
-    const r = await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => after });
+    const r = await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => after });
 
     expect(r.deferred, "a retryable refusal defers rather than failing").toBeGreaterThan(0);
     const [row] = await db.select().from(drafts).where(eq(drafts.id, c.draft.id));
@@ -1039,14 +1040,14 @@ describe("a scheduled letter keeps its files", () => {
     expect((await db.select().from(scheduledSendFiles)).length, "the PDF takes two pieces").toBe(3);
 
     const fake = fakeAdapter();
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due }))
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due }))
       .toMatchObject({ claimed: 1, sent: 1, failed: 0 });
     expect(fake.state.delivered).toHaveLength(1);
     const sent = fake.state.delivered[0]!.attachments!;
     expect(sent.map((a) => [a.filename, a.contentType, sha(a.content as Buffer)]))
       .toEqual([[picture.filename, picture.contentType, sha(picture.content)], [pdf.filename, pdf.contentType, sha(pdf.content)]]);
     expect(await db.select().from(scheduledSendFiles), "the bytes outlived the send").toHaveLength(0);
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due })).toMatchObject({ claimed: 0 });
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due })).toMatchObject({ claimed: 0 });
     expect(fake.state.delivered).toHaveLength(1);
   });
 
@@ -1057,7 +1058,7 @@ describe("a scheduled letter keeps its files", () => {
     expect(draft).toMatchObject({ status: "draft", sendFiles: 1 });
     expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
     const fake = fakeAdapter();
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due })).toMatchObject({ claimed: 0 });
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due })).toMatchObject({ claimed: 0 });
     expect(fake.state.delivered).toHaveLength(0);
     const plain = await schedules.schedule(ctx, draftId, iso(AT));
     expect(plain.draft.sendFiles, "a schedule without files rewrites the mark").toBeUndefined();
@@ -1100,7 +1101,7 @@ describe("a scheduled letter keeps its files", () => {
       await schedules.schedule(ctx, draftId, iso(AT), { files: [picture, pdf], surfaceMaxTotalBytes: null });
       await spoil(db, draftId);
       const fake = fakeAdapter();
-      expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due }))
+      expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due }))
         .toMatchObject({ claimed: 1, failed: 1, sent: 0 });
       expect(fake.state.opened, "a letter with files left without them").toHaveLength(0);
       const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
@@ -1130,7 +1131,7 @@ describe("a scheduled letter keeps its files", () => {
     const [before] = await db.select().from(drafts).where(eq(drafts.id, draftId));
     const fake = fakeAdapter();
     const wayPast = new Date(AT.getTime() + SEND_STALE_AFTER_MS + 60_000);
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => wayPast }))
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: () => wayPast }))
       .toMatchObject({ claimed: 1, sent: 1 });
     expect(fake.state.delivered).toHaveLength(1);
     expect(fake.state.delivered[0]!.attachments!.map((a) => sha(a.content as Buffer))).toEqual([sha(picture.content), sha(pdf.content)]);
@@ -1142,7 +1143,7 @@ describe("a scheduled letter keeps its files", () => {
     const { db, ctx, draftId } = await setup();
     await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null });
     const fake = fakeAdapter();
-    expect(await runScheduledSendPass(db, {
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(AT.getTime() + SCHEDULED_SEND_EXPIRY_MS + 60_000),
     })).toMatchObject({ claimed: 1, failed: 1 });
     const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
@@ -1154,9 +1155,9 @@ describe("a scheduled letter keeps its files", () => {
     const { db, ctx, draftId } = await setup();
     await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null });
     const ambiguous = fakeAdapter({ sendThrows: () => new Error("write EPIPE after DATA"), probeThrows: () => new Error("no folder") });
-    await runScheduledSendPass(db, { openSendAdapter: ambiguous.factory, now: due });
+    await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: ambiguous.factory, now: due });
     const healed = fakeAdapter({ inSent: false });
-    expect(await runScheduledSendPass(db, {
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: healed.factory, now: () => new Date(AT.getTime() + SEND_STALE_AFTER_MS + 120_000),
     })).toMatchObject({ claimed: 1, unverified: 1 });
     const [claim] = await db.select().from(outboundSendFingerprints);
@@ -1230,14 +1231,14 @@ describe("a server keeps a scheduled letter's files sealed", () => {
     expect(rows.every((r) => r.dekEnc !== null && r.dekKeyVersion === 1)).toBe(true);
 
     const fake = fakeAdapter();
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
       .toMatchObject({ claimed: 1, sent: 1, failed: 0 });
     const [sent] = fake.state.delivered;
     expect(sent!.from, "the letter's own sender").toBe("me@later.test");
     expect(sent!.attachments!.map((a) => [a.filename, a.contentType, sha(a.content)]))
       .toEqual([[picture.filename, picture.contentType, sha(picture.content)], [pdf.filename, pdf.contentType, sha(pdf.content)]]);
     expect(await db.select().from(scheduledSendFiles), "the sealed bytes outlived the send").toHaveLength(0);
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) })).toMatchObject({ claimed: 0 });
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due, files: opener(keeping) })).toMatchObject({ claimed: 0 });
     expect(fake.state.delivered).toHaveLength(1);
   });
 
@@ -1271,7 +1272,7 @@ describe("a server keeps a scheduled letter's files sealed", () => {
     await db.update(scheduledSendFiles).set(piece).where(eq(scheduledSendFiles.draftId, draftId));
 
     const fake = fakeAdapter();
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
       .toMatchObject({ claimed: 1, failed: 1, sent: 0 });
     expect(fake.state.opened).toHaveLength(0);
     const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
@@ -1282,7 +1283,7 @@ describe("a server keeps a scheduled letter's files sealed", () => {
     const { db, ctx, draftId } = await setup();
     await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null, keeping: sealed() });
     const fake = fakeAdapter();
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due }))
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due }))
       .toMatchObject({ claimed: 1, failed: 1, sent: 0 });
     expect(fake.state.opened).toHaveLength(0);
     const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
@@ -1309,7 +1310,7 @@ describe("a server keeps a scheduled letter's files sealed", () => {
       const log = createLogger({ service: "scheduled-send", sink: (l) => { lines.push(l); } });
       const at = (): Date => new Date(AT.getTime() + SEND_STALE_AFTER_MS + 60_000);
       const fake = fakeAdapter({ inSent: true });
-      expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: at, files: opener(keeping), log }))
+      expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: at, files: opener(keeping), log }))
         .toMatchObject({ claimed: 1, sent: 0, failed: 0, deferred: 1 });
       const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
       expect(row).toMatchObject({ status: midSend ? "sending" : "scheduled", sendKey: before!.sendKey, sendError: null });
@@ -1318,7 +1319,7 @@ describe("a server keeps a scheduled letter's files sealed", () => {
       expect(lines.map((l) => JSON.parse(l) as Record<string, unknown>))
         .toContainEqual(expect.objectContaining({ event: "scheduled_send_files_read_failed", errorClass: "DbAcquireTimeoutError" }));
 
-      expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: at, files: opener(keeping) }))
+      expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: at, files: opener(keeping) }))
         .toMatchObject({ claimed: 1, sent: 1 });
       // A letter mid-send is found in Sent and never sent again.
       expect(fake.state.delivered.map((m) => m.attachments!.map((a) => sha(a.content))))
@@ -1337,7 +1338,7 @@ describe("a server keeps a scheduled letter's files sealed", () => {
     expect(up.state.fetched).toBe(1);
     up.store.clear();
     const fake = fakeAdapter();
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
       .toMatchObject({ claimed: 1, sent: 1 });
     expect(fake.state.delivered[0]!.attachments!.map((a) => sha(a.content))).toEqual([sha(pdf.content)]);
   });
@@ -1349,7 +1350,7 @@ describe("a server keeps a scheduled letter's files sealed", () => {
     await schedules.cancel(ctx, draftId);
     expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
     const fake = fakeAdapter();
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) })).toMatchObject({ claimed: 0 });
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due, files: opener(keeping) })).toMatchObject({ claimed: 0 });
     expect(fake.state.delivered).toHaveLength(0);
   });
 
@@ -1403,7 +1404,7 @@ describe("a server keeps a scheduled letter's files sealed", () => {
     await db.update(drafts).set({ status: "draft" }).where(eq(drafts.id, claimed.draft.id));
     await db.update(drafts).set({ sendKey: randomUUID() }).where(eq(drafts.id, orphan.draft.id));
     const kept = async (id: string) => (await db.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, id))).length;
-    const pass = (at: Date) => runScheduledSendPass(db, {
+    const pass = (at: Date) => runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fakeAdapter().factory, now: () => at, accountEligible: async () => false, files: opener(keeping),
     });
 
@@ -1435,13 +1436,13 @@ describe("a server keeps a scheduled letter's files sealed", () => {
     await schedules.schedule(ctx, later.draft.id, iso(at2), { files: [pdf], surfaceMaxTotalBytes: null, keeping: v1 });
 
     const fake = fakeAdapter();
-    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(sealed({ 1: K1, 2: K2 })) }))
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due, files: opener(sealed({ 1: K1, 2: K2 })) }))
       .toMatchObject({ claimed: 1, sent: 1 });
     const moved = await runKekRewrap({ db: db as never, keyProvider: new StaticKeyProvider({ 1: K1, 2: K2 }), apply: true });
     expect(moved.failed).toBe(0);
     const rows = await db.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, later.draft.id));
     expect(rows.map((r) => r.dekKeyVersion)).toEqual([2, 2]);
-    expect(await runScheduledSendPass(db, {
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(at2.getTime() + 60_000), files: opener(sealed({ 2: K2 })),
     })).toMatchObject({ claimed: 1, sent: 1 });
     expect(fake.state.delivered.map((m) => m.attachments!.map((a) => sha(a.content))))

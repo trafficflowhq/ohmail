@@ -13,7 +13,7 @@ import {
   type EngineAdapter, type EngineMessage, type StorePolicy, type SyncSnapshotPage,
 } from "@ohmail/client-engine";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, SyncService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, SyncService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * AN ERASED MAILBOX LEAVES THE OTHER MAILBOX'S SCREENER WHERE IT STOOD BEFORE THE ADD — the hosted
@@ -34,7 +34,7 @@ const sync = new SyncService();
 
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "erasure-refills-the-window" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "erasure-refills-the-window" });
 
 /** Mail as ingest leaves it: a row plus its `create` on the change log. */
 async function deliver(db: Db, accountId: string, mailboxId: string, mail: Array<[string, number]>): Promise<void> {

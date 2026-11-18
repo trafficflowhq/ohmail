@@ -1,14 +1,12 @@
 import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect, dialect } from "@trafficflow/db/dialect";
+import { dialect } from "@trafficflow/db/dialect";
 import { eq, sql } from "drizzle-orm";
 import {
   accounts, folderState, mailboxes, messages, resolveCutline, rules, senderIsActiveSql,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -17,7 +15,7 @@ import {
 } from "@ohmail/client-engine";
 import { DEFAULT_DORMANCY_DAYS, cutlineCounts, hasUndecidedActiveSenders } from "../src/consent-cutline.js";
 import { messageRowToDTO } from "../src/dto/materialize.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 
 /**
  * THE CUTLINE, AND THE AGREEMENT BETWEEN ITS TWO IMPLEMENTATIONS.
@@ -32,8 +30,9 @@ import type { ServiceContext } from "../src/context.js";
  */
 
 const AVAILABLE = await realPgAvailable();
-const client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(PG_TEST_URL);
+const db = owned.db;
 
 const NOW = new Date("2026-08-05T12:00:00.000Z");
 const RECENT = new Date("2026-07-25T09:00:00.000Z");
@@ -43,7 +42,7 @@ const OWN = `cut-own-${ACCOUNT.slice(0, 8)}@example.com`;
 let mailboxId = "";
 
 const ctx: ServiceContext = {
-  db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "consent-cutline",
+  db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "consent-cutline",
 };
 
 /**
@@ -158,7 +157,7 @@ async function mirror(): Promise<MemoryMirrorStore> {
 }
 
 // Top level: both describe blocks below read the one client.
-afterAll(async () => { await client.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); });
 
 describe.skipIf(!AVAILABLE)("the cutline, and its two implementations", () => {
   beforeAll(async () => {
@@ -404,7 +403,7 @@ describe.skipIf(!AVAILABLE)("the cutline, and its two implementations", () => {
  */
 describe.skipIf(!AVAILABLE)("a held letter's arrival, on both implementations", () => {
   const ACCT = randomUUID();
-  const actx: ServiceContext = { db, accountId: ACCT, userId: null, now: () => NOW, requestId: "consent-cutline-arrival" };
+  const actx: ServiceContext = { db: dbFor(db, ACCT), accountId: ACCT, userId: null, now: () => NOW, requestId: "consent-cutline-arrival" };
   const BASE = new Date("2026-08-01T00:00:00.000Z");
   const JUNE = new Date("2026-05-02T09:00:00.000Z");
   const mbs: string[] = [];

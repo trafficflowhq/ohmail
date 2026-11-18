@@ -12,7 +12,7 @@ import {
   accounts, calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calSuggestions, calWrites, changeLog,
   mailboxes,
 } from "@trafficflow/db/mail";
-import { SyncService, type SyncChange, type SyncResponse } from "@trafficflow/services/mail";
+import { SyncService, dbFor, type SyncChange, type SyncResponse } from "@trafficflow/services/mail";
 import { calendarFeed, setCalendarSettings } from "@trafficflow/services/calendar";
 import { calendarRoutes } from "@trafficflow/api/calendar";
 import { HttpAdapter, MemoryMirrorStore, NAMED_FEED_KINDS, OhmailEngine, SYNC_ENTITY_TYPES } from "@ohmail/client-engine";
@@ -61,7 +61,7 @@ async function server(events = 1, opts: { word?: boolean; marks?: boolean } = {}
   const s = await seedSession(db, { now: FIXED_NOW });
   const mailboxId = await seedMailbox(db, { accountId: s.accountId });
   const ids = { connection: randomUUID(), calendar: randomUUID(), suggestion: randomUUID(), events: [] as string[] };
-  const ctx = { db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "switch" } as never;
+  const ctx = { db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "switch" } as never;
   await setCalendarSettings(ctx, { enabled: true });
   await db.insert(calConnections).values({
     id: ids.connection, accountId: s.accountId, provider: "caldav", label: "Work", serverUrl: "https://dav.example.test/cal/me/",
@@ -182,7 +182,7 @@ async function desktopCopy(route: (p: string) => Promise<Response>, mailboxId: s
   expect((await opened.db.select({ at: calSettings.enabledAt }).from(calSettings))[0]?.at).toEqual(FIXED_NOW);
   // THE LOCAL DOOR: the copy's own feed, which the desktop's window reads.
   const local = await new SyncService().getChanges(
-    { db: opened.db, accountId: world.accountId, userId: null, now: () => new Date(), requestId: "local", storeGeneration: undefined } as never,
+    { db: dbFor(opened.db, world.accountId), accountId: world.accountId, userId: null, now: () => new Date(), requestId: "local", storeGeneration: undefined } as never,
     { since: "0", limit: 2000, types: [...CALENDAR_RECORD_KINDS, "settings"], calendar: calendarFeed },
   );
   const second = new MemoryMirrorStore();

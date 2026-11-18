@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { like } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
+import { bindDb } from "@trafficflow/db";
 import { authThrottle } from "@trafficflow/db/cloud";
 import {
   AuthService, MailService, SpyMailer, makeTestAuthDeps, THROTTLE_PREFIX, ServiceError, throttleKeysFor, type ServiceContext,
@@ -20,8 +21,9 @@ const START = new Date("2026-10-03T10:00:00.000Z");
 async function harness() {
   const db = await makeTestDb();
   const svc = new AuthService(makeTestAuthDeps({ maxFailures: 5, maxAddressFailures: 20 }));
+  // The sign-in doors run before any session: their handle is bound to nothing.
   const ctx = (ip: string): ServiceContext => ({
-    db, accountId: "", userId: null, now: () => START, requestId: "r", ip,
+    db: bindDb(db, { account: null }), accountId: "", userId: null, now: () => START, requestId: "r", ip,
   });
   const attempt = (ip: string, password = "WRONG") =>
     svc.login(ctx(ip), { email: "owner@x.example", password }).then(() => "ok", (e: unknown) => (e as ServiceError).code ?? "threw");
@@ -62,7 +64,7 @@ describe("an unknown client", () => {
       throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
     });
     const svc = new AuthService(makeTestAuthDeps({ publicSignup: true, maxAddressFailures: 3 }, mail));
-    const ctx = (ip: string): ServiceContext => ({ db, accountId: "", userId: null, now: () => START, requestId: "r", ip });
+    const ctx = (ip: string): ServiceContext => ({ db: bindDb(db, { account: null }), accountId: "", userId: null, now: () => START, requestId: "r", ip });
     await svc.register(ctx("1.2.3.4"), { email: "new@x.example", password: PASSWORD, displayName: "N" });
     const token = new URL(spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
     const verify = (password: string) =>
