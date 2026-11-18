@@ -69,7 +69,7 @@ apps/desktop/src/host-contract.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/src/install-role.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/src/junk-wire.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/link-in.ts	ohmail/declared-dependency	1	ruling:frame-hosts
-apps/desktop/src/local-away.ts	ohmail/package-borders:apps/webapp	2	desktop-layer
+apps/desktop/src/local-away.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/local-consent.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/src/local-diagnostics.ts	ohmail/declared-dependency	3	desktop-layer
 apps/desktop/src/local-draft-reply.ts	ohmail/declared-dependency	1	ruling:composition-lift

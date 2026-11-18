@@ -35,6 +35,7 @@ import { webLane, type LaneTicket } from "@ohmail/app-logic/session/resume-lane"
 import { clientDeclaration } from "./shell/client-declaration";
 import { RELOAD_REMEDY, noticeServerAnswered, noticeUpdateAnswer, updateAnswerSentence } from "./shell/update-answer";
 import { updateAnswerOf } from "@ohmail/client-engine";
+import type { AnswerOf, AwayResponderEdit, AwayResponderSaveReading, OnlyNamesOf, RequestOf } from "@ohmail/wire";
 
 /**
  * A SENTENCE THIS CLIENT WRITES ITSELF, in the reader's language: the `session` catalogue's
@@ -3098,88 +3099,30 @@ export const consent = {
     }>("/consent/reset", { method: "POST" }),
 };
 
-/** The single per-account autoresponder row, as `GET/PUT /away-responder` serve it. */
+/** The responder is replaced as one row, under the server's full-replace contract. */
+type AwayRead = AnswerOf<"GET /away-responder">;
+
 export interface AwayResponderWire {
-  enabled: boolean;
-  /**
-   * NO `subject`. The responder is REPLY-ONLY: it answers with `Re: <what the correspondent
-   * wrote>`, threaded by `In-Reply-To`/`References`, so there is no subject for anyone to compose.
-   * The server accepts the field from an older client and ignores it, which is what keeps a browser
-   * tab that has not reloaded from 400ing on every save — including the save that turns the
-   * responder off.
-   */
-  body: string | null;
-  startsAt: string | null;
-  /**
-   * WHEN THE RESPONDER STOPS — the instant the settings pane's date field resolves to (end of the
-   * chosen day where the reader is), or `null` for open-ended.
-   *
-   * Past it the responder answers nobody, and the away pass then switches the row off and clears
-   * this field, so `enabled` and this date cannot disagree for longer than one pass cycle. The
-   * server refuses an instant already past while `enabled` is true.
-   */
-  endsAt: string | null;
-  /** Who gets an automatic reply. `screened_in` restricts it to senders past the Screener. */
-  audience: "screened_in" | "everyone";
-  /**
-   * How often ONE PERSON may be answered. `per_day` is the default and what every existing
-   * responder carries. `per_message` means "once, until you change the text" — keyed by the text
-   * itself, so saving without editing does not re-answer anybody.
-   */
-  throttle: "always" | "per_message" | "per_day" | "per_week";
-  /**
-   * WHICH PILES GET A REPLY — folder names, `['INBOX']` for a responder nobody has widened. The second dimension
-   * beside `audience`, answering a different question: `audience` is about a SENDER (past the Screener, decided
-   * once), this is about WHERE their mail landed. A sender let in once whose later mail files to Reads is still
-   * "somebody I've let in", which is how eight automatic replies reached shop and notification senders. FOLDERS, not
-   * pile words — the Ohbox pile's folder is `INBOX`. `AWAY_PILE_VIEW` and `awayEffectivePiles`
-   * (`@trafficflow/core/away-scope`) translate for display, and the settings control imports the offered set from
-   * there so it cannot offer a pile the server refuses. PUT IS A FULL REPLACE, so this field is not optional for a
-   * caller: omitting it resets the scope to the Ohbox. An EMPTY array is "answer nobody" and is stored as asked.
-   */
-
-  /**
-   * `ohmail/Screener` is only storable beside `audience: "everyone"` — the server answers 400 for the other pair, and
-   * the control disables that box.
-   */
-  piles: ("INBOX" | "ohmail/News" | "ohmail/Receipts" | "ohmail/Screener")[];
-  updatedAt: string | null;
-  /** On a reader: where this install's last away change went. Absent: nothing to say. */
-  change?: TravelledChangeWire;
+  enabled: AwayRead["enabled"];
+  body: AwayRead["body"];
+  startsAt: AwayRead["startsAt"];
+  endsAt: AwayRead["endsAt"];
+  audience: AwayRead["audience"];
+  throttle: AwayRead["throttle"];
+  piles: AwayRead["piles"];
+  updatedAt: AwayRead["updatedAt"];
+  change?: NonNullable<AwayRead["change"]>;
 }
+export type AwayResponderSaveWire = AwayResponderSaveReading;
 
-/**
- * The away responder. REST-only, like the consent settings above and for the same reason: one row per account that
- * changes when somebody goes on holiday. `PUT` IS A FULL REPLACE, and every caller has to treat it as one. The route
- * stores exactly the fields in the body and defaults the ones that are absent — an omitted `audience` becomes
- * `screened_in`, the narrow member — so a partial write is a silent reset of whatever it left out, never a merge.
- * `AwayResponderRow` therefore sends the whole row back and never a single field. No `Idempotency-Key`: the upsert is
- * keyed on the account, so a replay stores the same row twice and the only thing that moves is `updatedAt`.
- */
-
-/**
- * That is not free — `updatedAt` is the away responder's ENABLEMENT EPISODE, so a replay lets each correspondent be
- * answered once more — which is why this client never retries the call automatically and why the row's control is a
- * deliberate press rather than a debounced autosave.
- */
-/**
- * WHAT A SAVE ANSWERS — the row, plus the one discriminator a 202 carries.
- *
- * `PUT /away-responder` answers 202 with `pending: true` on an account whose mailboxes are
- * organized by another install: nothing was written here and a request is waiting on the machine
- * that organizes them. The wire type used to be the row alone, so that field was dropped and the
- * pane announced "Saved." over the values it had just put back — a false state about a setting
- * that decides what strangers are told. Separate from {@link AwayResponderWire} rather than a
- * field on it, so the PUT BODY cannot grow a member the server never asked for.
- */
-export interface AwayResponderSaveWire extends AwayResponderWire {
-  pending?: boolean;
-}
+type AwayRequest = RequestOf<"PUT /away-responder">;
 
 export const away = {
-  state: () => api<AwayResponderWire>("/away-responder"),
-  save: (next: Omit<AwayResponderWire, "updatedAt">) =>
-    api<AwayResponderSaveWire>("/away-responder", { method: "PUT", body: next }),
+  state: () => api<AwayRead>("/away-responder"),
+  save: (next: AwayResponderEdit) => {
+    const body: AwayRequest & OnlyNamesOf<typeof next, AwayRequest> = next;
+    return api<AnswerOf<"PUT /away-responder">>("/away-responder", { method: "PUT", body });
+  },
 };
 
 /**

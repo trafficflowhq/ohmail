@@ -31,9 +31,10 @@ async function world(role: "reader" | "organizer" = "reader") {
   return { w, token: s.token, accountId: s.accountId, mailboxId: mb!.id };
 }
 
-async function call(w: Deps, token: string, method: string, path: string, body?: unknown) {
+async function call(w: Deps, token: string, method: string, path: string, body?: unknown, status?: number) {
   const res = await H(req(method, path, { bearer: token, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.deps);
-  expect(res.status, `${method} ${path}`).toBeLessThan(300);
+  if (status === undefined) expect(res.status, `${method} ${path}`).toBeLessThan(300);
+  else expect(res.status, `${method} ${path}`).toBe(status);
   return res.json();
 }
 
@@ -50,20 +51,53 @@ const REFUSED = { state: "refused", holder: HOLDER, refusal: "unreadable" };
 
 describe("the away responder on a reader", () => {
   it("the 202 says the change is waiting, and a refusal reaches the read", async () => {
-    const { w, token, accountId } = await world();
-    const put = await call(w, token, "PUT", "/away-responder", { enabled: true, body: "Back Monday." });
+    const { w, token, accountId, mailboxId } = await world();
+    const put = await call(w, token, "PUT", "/away-responder", { enabled: true, body: "Back Monday." }, 202);
     expect(put.pending).toBe(true);
     expect(put.change).toEqual(ASKED);
+    expect(put.enabled).toBe(false);
+    expect(put.body).toBeNull();
+    expect(put.travel).toEqual({
+      appliedLocally: [],
+      pending: [{ mailboxId, requestId: expect.any(String), holder: expect.objectContaining({ name: HOLDER }) }],
+      refused: [],
+    });
     await refuseNewest(w, accountId, "invalid_payload");
     expect((await call(w, token, "GET", "/away-responder")).change, "the refusal reached no surface")
       .toEqual(REFUSED);
   });
 
+  it("a mixed account writes here and names the held mailbox in the 200 answer", async () => {
+    const { w, token, accountId, mailboxId } = await world("organizer");
+    const [held] = await w.db.insert(mailboxes).values({
+      accountId, provider: "imap", address: "held@example.invalid",
+      organizerRole: "reader", organizerState: "held", organizedByCapabilities: "requests,profile",
+      organizedByKind: "local", organizedByName: HOLDER,
+    }).returning();
+
+    const put = await call(w, token, "PUT", "/away-responder", { enabled: true, body: "Back Monday." }, 200);
+    expect(put.body).toBe("Back Monday.");
+    expect(put).not.toHaveProperty("pending");
+    expect(put).not.toHaveProperty("change");
+    expect(put.travel).toEqual({
+      appliedLocally: [mailboxId],
+      pending: [{ mailboxId: held!.id, requestId: expect.any(String), holder: expect.objectContaining({ name: HOLDER }) }],
+      refused: [],
+    });
+    const { travel: _spread, ...row } = put;
+    expect(await call(w, token, "GET", "/away-responder", undefined, 200)).toEqual(row);
+  });
+
   it("CONTROL: an install that organizes answers without it", async () => {
     const { w, token } = await world("organizer");
-    const put = await call(w, token, "PUT", "/away-responder", { enabled: true, body: "Back Monday." });
+    const put = await call(w, token, "PUT", "/away-responder", { enabled: true, body: "Back Monday." }, 200);
     expect("change" in put).toBe(false);
-    expect("change" in (await call(w, token, "GET", "/away-responder"))).toBe(false);
+    expect("travel" in put).toBe(false);
+    expect("pending" in put).toBe(false);
+    expect(put.body).toBe("Back Monday.");
+    const get = await call(w, token, "GET", "/away-responder", undefined, 200);
+    expect("change" in get).toBe(false);
+    expect(get).toEqual(put);
   });
 });
 

@@ -2,6 +2,7 @@
  * RECORDS A CLIENT ASKS FOR AND THE FEED NEVER CARRIES: tracker events, contacts, notes,
  * snippets, notify rules, the away responder and the knowledge base. Clients refetch them.
  */
+import type { RuleTravel } from "./act-answers.js";
 import type { EmailAddress, ISODateTime } from "./base.js";
 
 // ── Tracker / spy-pixel events — "who tried to spy
@@ -102,6 +103,40 @@ export interface AwayResponderDTO {
   throttle: "always" | "per_message" | "per_day" | "per_week";
   updatedAt: ISODateTime | null;  // null when never configured (default disabled shape)
 }
+
+/** The current client's full replace, without the server's own receipt fields. */
+export type AwayResponderEdit = Omit<AwayResponderDTO, "updatedAt">;
+
+/** Fields the route has always accepted. Omitted values take the defaults of a full replace. */
+export interface AwayResponderBody extends Partial<Omit<AwayResponderEdit, "audience" | "throttle" | "piles">> {
+  /** An old client may still send a subject. The reply-only responder accepts and ignores it. */
+  subject?: string | null;
+  /** The service validates these names; a client can echo a value it has never seen before. */
+  audience?: string | null;
+  throttle?: string | null;
+  piles?: string[] | null;
+}
+
+/** The most recent settings request on a reader, when there is a result to report. */
+export interface ProfileChangeWire {
+  state: "asked" | "applied" | "refused";
+  holder: string | null;
+  refusal: "unreadable" | "other" | null;
+}
+
+export interface AwayResponderRead extends AwayResponderDTO {
+  change?: ProfileChangeWire;
+}
+
+/** The 200 carries the written row; the 202 carries the unchanged row with the request's travel. */
+export type AwayResponderSaveAnswer =
+  | (AwayResponderDTO & { pending?: never; travel?: RuleTravel; change?: never })
+  | (AwayResponderRead & { pending: true; travel: RuleTravel });
+
+/** An older responder client can show a pending save without needing its per-mailbox travel detail. */
+export type AwayResponderSaveReading = Omit<AwayResponderSaveAnswer, "travel"> & {
+  travel?: AwayResponderSaveAnswer["travel"];
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Knowledge Base + manual drafts (`/kb`, `/drafts`).
