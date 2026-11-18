@@ -62,7 +62,7 @@ export function draftReplyVia(
 ): DraftReplyWire {
   return {
     configured,
-    create: async (messageId, idempotencyKey) => answerOf<{ draftId: string }>(
+    create: async (messageId, idempotencyKey) => answerOf<Awaited<ReturnType<DraftReplyWire["create"]>>>(
       await fetchImpl(`/messages/${encodeURIComponent(messageId)}/draft`, {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },

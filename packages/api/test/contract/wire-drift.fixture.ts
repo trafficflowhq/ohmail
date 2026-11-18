@@ -113,3 +113,18 @@ export const table: Route[] = [
 
 // @ts-expect-error not a bound route
 export const noSuchRoute: RouteName = "GET /nowhere";
+
+/* A drafted reply has a bodyless request and stores a receipt with only the row id. */
+type ReplyDraft = "POST /messages/:id/draft";
+declare const replyDraft: AnswerOf<ReplyDraft>;
+export const draftReceipt = answer<ReplyDraft>()({ draftId: replyDraft.draftId });
+// @ts-expect-error a handler renaming the draft id breaks the reply editor's follow-up read
+export const wrongDraftReceipt = answer<ReplyDraft>()({ id: replyDraft.draftId });
+// @ts-expect-error the reply receipt gives only the draft id; it never exposes its contents
+export const excessDraftReceipt = answer<ReplyDraft>()({ ...replyDraft, body: "draft text" });
+export const replyDraftRead = replyDraft.draftId;
+// @ts-expect-error a consumer reading another name does not have the draft id
+export const wrongReplyDraftRead = replyDraft.id;
+export const draftAsked = call("POST /messages/:id/draft", { params: { id: "m" } });
+// @ts-expect-error this request addresses a message and carries no body
+export const draftAskedWithBody = call("POST /messages/:id/draft", { params: { id: "m" }, body: { text: "draft text" } });
