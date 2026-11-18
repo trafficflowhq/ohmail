@@ -16,6 +16,12 @@
       "node": "./dist/body-parts.js",
       "default": "./src/body-parts.ts"
     },
+    "./file-size": {
+      "types": "./src/format/file-size.ts",
+      "ohmail-source": "./src/format/file-size.ts",
+      "node": "./dist/format/file-size.js",
+      "default": "./src/format/file-size.ts"
+    },
     "./long-text": {
       "types": "./src/format/long-text.ts",
       "ohmail-source": "./src/format/long-text.ts",

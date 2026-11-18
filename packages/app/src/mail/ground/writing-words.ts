@@ -8,7 +8,7 @@ import { activeFormatLocale, activeFormatZone } from "@ohmail/app-logic/text";
 import { scheduleLabel } from "@ohmail/app-logic/text/format";
 import type { ComposerWords } from "@ohmail/app-logic/writing/composer-types";
 import { sendLineValuesOver } from "@ohmail/app-logic/writing/send-line";
-import { formatFileSize } from "@ohmail/ui/base";
+import { formatFileSize } from "@ohmail/ui/file-size";
 
 /** A file's size in the person's language, as every line of the letter names one. */
 export function fileSize(bytes: number): string {

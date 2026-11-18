@@ -881,6 +881,7 @@ export default defineConfig({
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       // The kit's doors and its squares window, ABOVE the old kit's bare name.
       { find: "@ohmail/ui/body-parts", replacement: r("../../packages/ui/src/body-parts.ts") },
+      { find: "@ohmail/ui/file-size", replacement: r("../../packages/ui/src/format/file-size.ts") },
       { find: "@ohmail/ui/base", replacement: r("../../packages/ui/src/base/index.ts") },
       { find: "@ohmail/ui/mail", replacement: r("../../packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui/squares-window", replacement: r("../../packages/ui/src/squares-window.ts") },
