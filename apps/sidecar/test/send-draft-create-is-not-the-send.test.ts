@@ -1,7 +1,8 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HttpAdapter, OhmailEngine, draftsList, type EngineMutation } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine, draftsList } from "@ohmail/client-engine";
 
 import { WindowOutboxStore } from "../../desktop/src/window-outbox-store.js";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";

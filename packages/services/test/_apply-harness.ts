@@ -1,4 +1,4 @@
-import type { SyncChange, SyncResponse } from "../src/index.js";
+import type { SyncChange, SyncResponse } from "@ohmail/wire";
 
 /**
  * A minimal reference implementation of the client apply algorithm (contract §3.3):

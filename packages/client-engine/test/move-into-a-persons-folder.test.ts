@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation, FolderEntity } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -5,9 +6,6 @@ import {
   OhmailEngine,
   OUTBOX_TYPE,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type FolderEntity,
   type SyncChange,
 } from "@ohmail/client-engine";
 

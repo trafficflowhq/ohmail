@@ -1,5 +1,5 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage, Folder } from "./types.js";
 
 /**
  * A READER WITH SOME MESSAGES SHOWN SOMEWHERE ELSE — what makes a held routing press look filed.

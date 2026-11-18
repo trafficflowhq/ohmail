@@ -1,14 +1,12 @@
+import type { EngineMessage, MessageStateDTO, TriageItemDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   messagesByDateDesc,
   oneSourceReader,
   triagePiles,
-  type EngineMessage,
   type EntityReader,
-  type MessageStateDTO,
   type SyncChange,
-  type TriageItemDTO,
   type TriagePiles,
 } from "@ohmail/client-engine";
 

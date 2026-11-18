@@ -2,6 +2,7 @@
  * The read hold and the visit's record: the row being read keeps its place, and the visit's record says what of its
  * conversation was entered. Refs that stable callbacks read the list, the cursor and the writer through.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import {
   useCallback,
   useRef,
@@ -11,7 +12,7 @@ import {
   type SetStateAction,
 } from "react";
 import { conversationKeyOf, createThreadRead } from "@ohmail/client-engine";
-import type { EngineMessage, ThreadRead } from "@ohmail/client-engine";
+import type { ThreadRead } from "@ohmail/client-engine";
 import type { OhboxListInput } from "./types.js";
 
 /**

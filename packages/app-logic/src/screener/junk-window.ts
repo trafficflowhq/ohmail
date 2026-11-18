@@ -37,8 +37,9 @@
  * and sentences are decided above the seam.
  */
 
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FOLDER_OF_VIEW, createSessionBodyDoor, type EntityReader, type EngineMessage, type SessionBodyHeld } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, createSessionBodyDoor, type EntityReader, type SessionBodyHeld } from "@ohmail/client-engine";
 import type { ToastFn } from "../press/report.js";
 import type { Translator } from "../text/translator.js";
 import type {

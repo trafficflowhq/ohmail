@@ -1,8 +1,6 @@
 /**
- * @ohmail/client-engine — the wire vocabulary's VALUES. The shapes themselves are declared once,
- * in `@ohmail/wire`, without importing any backend package, and are re-exported here under the
- * names this package has always given them; what stays in this file is what runs: the lists, the
- * view maps, the errors and the cursor helpers. Clients tolerate unknown fields and entity types
+ * Client engine lists, view maps, errors, cursor helpers, and device-specific types. The shared
+ * shapes are declared in `@ohmail/wire`. Clients tolerate unknown fields and entity types
  * (forward-compatible parsing), hence the open unions. The `§` references cite the Cloud API
  * contract document, which is not public — the citations stay because they are load-bearing
  * where the file is authored; nothing here depends on reading it.
@@ -15,22 +13,6 @@ import type {
 } from "@ohmail/wire";
 import type { KnownMirrorEntityType } from "./mirror-bounds.js";
 
-/* The vocabulary's types, from their one home. */
-export type {
-  BodyState, ChangeOp, ComposeAttachment, Cursor, EmailAddress, EngineDraft, EngineMessage, EngineMessageExtras,
-  EngineMutation, FailedAtGateDTO, FeedSinceMeta, FeedView, Folder, FolderEntity, HeldReleaseGroupDTO, ISODateTime,
-  MailboxProfileEntity, MessageBody, MessageBodyBatchWire, MessageBodyRecord, MessageBodyWire, MessageStateDTO,
-  MutationKind, OhmailView, RuleKeyAddress, ScreenDest, ScreenerHeldMail, ScreenerSegment, ScreenerSenderDTO,
-  ScreenerSuggestionEntity, ScreenerWaitingDTO, ScreenerWaitingPageDTO, ScreenerWaitingSenderDTO, SensitivityFlags,
-  SyncEntityType, SyncSnapshotPage, TriageItemDTO, UnscreenedGroupDTO, UnsubscribeHeaderState, UnsubscribeRefusal, UnsubscribeResult,
-  WaitingRequestWire, WaitingTargetWire, WaterlineMeta, WithheldMarker,
-} from "@ohmail/wire";
-/*
- * Three names this package gives a wire type of another name. A rule and a tag as a device copy
- * reads them (the server's records are the wire's `RuleDTO` and `TagDTO`), and every triage state
- * that crosses the wire.
- */
-export type { RuleEntity as RuleDTO, TagEntity as TagDTO, TriageState as TriageWireState } from "@ohmail/wire";
 // The News pile's pre-0.22 folder name: mirror rows written before the organizer renamed the
 // folder still carry it, so the view map admits both spellings (`VIEW_OF_FOLDER` below).
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
@@ -142,7 +124,7 @@ export type SyncResponse = WireSyncResponse<MirrorEntityType>;
  * client's word for a bottom pile (`TriageItemDTO.pile` is its piles), and a resurfaced message
  * belongs to NO pile — it is pinned at the top of the Ohbox — so widening `TriageState` would
  * invite a fourth pile that must never exist. Every state that crosses the wire is
- * `TriageWireState`: server-set by `bubbleUpPass`, and client-settable for "resurface this now"
+ * the wire's `TriageState`: server-set by `bubbleUpPass`, and client-settable for "resurface this now"
  * (a past `bubbleUpAt` pins nothing on standalone).
  */
 export type TriageState = Exclude<WireTriageState, "resurfaced">;

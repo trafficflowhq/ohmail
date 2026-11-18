@@ -1,8 +1,9 @@
+import type { EngineMessage, Folder, MailboxProfileEntity, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, consentIndex, consentPartition, decidedDestination, mailboxProfiles,
   heldRuleId, heldRuleKey, presentationReader, rulesAsRun, rulesInPlay, rulesList, rulesShown, screenerSegments, senderKey,
-  type EngineMessage, type Folder, type MailboxProfileEntity, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { placedRule } from "../src/consent-cutline.js";
 

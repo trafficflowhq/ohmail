@@ -13,11 +13,12 @@
  * their group, so they unmount when scrolled past — a bounded spacer drift, taken over per-row offset bookkeeping.
  * Read-only in the foundation stage: no move verb, no rules door, no menu.
  */
+import type { EngineMessage, FolderEntity, TagEntity as TagDTO } from "@ohmail/wire";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
-import { presentsUnread, type EngineMessage, type FolderEntity, type TagDTO } from "@ohmail/client-engine";
+import { presentsUnread } from "@ohmail/client-engine";
 import { ListGroupLabel, ListPane, ListRows, MessageRow, Spinner, TAG_HUES } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";

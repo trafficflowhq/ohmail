@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import {
   FOLDER_OF_VIEW,
   consentPartition,
@@ -7,12 +8,8 @@ import {
   mailboxProfiles,
   senderKey,
   stayVerdict,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type Folder,
   type MutationStatus,
-  type RuleDTO,
   type StayVerdict,
   ruleMatchKey,
 } from "@ohmail/client-engine";

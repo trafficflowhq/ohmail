@@ -1,8 +1,9 @@
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, OhmailEngine, ohboxRows, type EngineAdapter, type EngineMessage, type EngineMutation, type SyncChange, type SyncResponse,
+  MemoryMirrorStore, OhmailEngine, ohboxRows, type EngineAdapter, type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 import { liveActions, liveMessage, type WorldView } from "../src/state/live";
 import { conversationUnreadIds } from "../src/ui/read-slot";

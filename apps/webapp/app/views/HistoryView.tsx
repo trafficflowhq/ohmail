@@ -7,13 +7,14 @@
  * Nothing here has moved — every row names the server folder the message sits in. The mirror only
  * paints first and is replaced in place; no path here reads or writes the mirror's window.
  */
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 import {
   countWhen, listSurface, physicalFolderOf, saysEmpty,
-  type EngineMessage, type OhmailEngine, type TagDTO,
+  type OhmailEngine,
 } from "@ohmail/client-engine";
 import { InfoNote, ListPane, ListRows, MessageRow, TAG_HUES, cssRect } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";

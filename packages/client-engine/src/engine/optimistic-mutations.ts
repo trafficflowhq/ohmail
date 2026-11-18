@@ -1,5 +1,15 @@
 import type {
-  CreatedDraftRow, MutationOutcome, MutationQueued, WithdrawSendAnswer, WithdrawSendOutcome,
+  ComposeAttachment,
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  MutationOutcome,
+  MutationQueued,
+  RuleEntity as RuleDTO,
+  WithdrawSendOutcome,
+} from "@ohmail/wire";
+import type {
+  CreatedDraftRow, WithdrawSendAnswer,
 } from "../adapters/adapter.js";
 import {
   keepsWrite, OUTBOX_WITHDRAWN_CODE, STAGING_UNREACHABLE_CODE, UPDATE_ANSWER_CODES, type UpdateAnswerCode,
@@ -19,8 +29,8 @@ import { sendFingerprint } from "../send-fingerprint.js";
 import { verbTargetsOf } from "../shadow.js";
 import type { OutboxRowAct, OutboxRowVerdict } from "../store.js";
 import {
-  type ComposeAttachment, type EngineDraft, type EngineMessage, type EngineMutation, FOLDER_OF_VIEW,
-  MutationRejectedError, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, type RuleDTO,
+  FOLDER_OF_VIEW,
+  MutationRejectedError, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE,
 } from "../types.js";
 import { type AttachmentItem, base64ToBytes } from "./attachment-items.js";
 import { EngineAttachments } from "./attachments.js";

@@ -18,8 +18,7 @@ import { mailboxProfileRowToDTO, mailboxProfileRows, materializeRule } from "./d
 import {
   lockFanOutTargets, planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutRefusal,
 } from "./reader-request.js";
-import type { Folder, RuleDTO } from "./dto/types.js";
-import type { CreateRuleBody, PatchRuleBody } from "@ohmail/wire";
+import type { CreateRuleBody, Folder, PatchRuleBody, RuleDTO } from "@ohmail/wire";
 
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
 const asDb = (tx: Tx): Db => bridgeDb(tx);
@@ -41,7 +40,6 @@ const FOLDER_SET = new Set<string>(FOLDERS);
 export { MAX_SUBJECT_CONTAINS_CHARS, MAX_BODY_CONTAINS_CHARS };
 
 /** The bodies of a rule's create and of its patch: declared with the wire's vocabulary. */
-export type { CreateRuleBody, PatchRuleBody };
 
 /**
  * Idempotency handle threaded in by the route; the row is written IN the create tx.

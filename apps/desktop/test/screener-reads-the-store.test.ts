@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome, ScreenerWaitingWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -5,10 +6,7 @@ import {
   consentPartition,
   presentationReader,
   screenerSegments,
-  type EngineMessage,
-  type MutationOutcome,
   type ScreenerSegments,
-  type ScreenerWaitingWire,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";

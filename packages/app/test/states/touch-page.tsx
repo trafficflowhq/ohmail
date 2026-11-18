@@ -4,8 +4,8 @@
  * behaviour hook over sixty plain letters, so the list scrolls. What the model is asked to do is counted on
  * `window.touchSaid` for the browser's test to read. Fictional people only.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createRoot } from "react-dom/client";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
 import { Frame } from "../../src/frame/Frame.js";

@@ -1,3 +1,4 @@
+import type { SnapshotResponse } from "@ohmail/wire";
 import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -12,7 +13,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { SNAPSHOT_FIRST_PAGE_MESSAGES, syncService } from "@trafficflow/services";
-import type { ServiceContext, SnapshotResponse } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 
 /**
  * AGAINST REAL POSTGRES — the bound and the PLAN are what is under test.

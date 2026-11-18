@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,7 @@ import {
   accounts, changeLog, drafts, mailboxCredentials, mailboxes, messages, messageStates,
 } from "@trafficflow/db";
 import { ScheduleService } from "@trafficflow/services/mail";
-import { HttpAdapter, OhmailEngine, draftsList, type EngineMessage } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine, draftsList } from "@ohmail/client-engine";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { openLocalDb } from "../src/db.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";

@@ -1,3 +1,4 @@
+import type { EmailAddress, Page } from "@ohmail/wire";
 import JSZip from "jszip";
 import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNull } from "drizzle-orm";
@@ -5,12 +6,11 @@ import { attachments, messages } from "@trafficflow/db";
 import {
   CALENDAR_FALLBACK_FILENAME, candidateSections, createLogger, enumerateSections, isCalendarMime, isMessageGone,
   sectionHoldsFile, transferDecoded,
-  type Logger, type MimeStructure, type NativeLocator, type EmailAddress,
+  type Logger, type MimeStructure, type NativeLocator,
 } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
-import type { Page } from "./dto/types.js";
 
 /**
  * AttachmentsService. Attachment METADATA is stored

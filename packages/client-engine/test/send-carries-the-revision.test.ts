@@ -1,7 +1,8 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter, MutationRejectedError,
-  type EngineMutation, type FetchLike,
+  type FetchLike,
 } from "../src/index.js";
 
 /**

@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core/mail";
 import { eq } from "drizzle-orm";
-import type { AnswerOf } from "@ohmail/wire";
+import type { AnswerOf, SyncResponse } from "@ohmail/wire";
 import { mailboxes, recordMailboxRemoved, type LedgerTx, type Tx } from "@trafficflow/db";
 import { deleteMailboxRows } from "./local-mirror.js";
 import { wipeCalendarCopy } from "./cloud-mirror-calendar.js";
@@ -11,7 +11,7 @@ import { calendarFeed } from "@trafficflow/services/calendar";
 import { hostedDevices } from "./cloud-mirror-devices.js";
 import {
   resolveSession, syncService, ServiceError, dbFor, isUuid,
-  type EntityType, type ServiceContext, type SyncResponse,
+  type EntityType, type ServiceContext,
 } from "@trafficflow/services/mail";
 import {
   closeAfterFailedStart, openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress,

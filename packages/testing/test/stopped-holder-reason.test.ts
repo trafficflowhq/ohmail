@@ -1,6 +1,6 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { mailboxes } from "@trafficflow/db";
-import type { RuleDTO } from "@ohmail/client-engine";
 import { verbWorld, type VerbWorld } from "./verb-parity/world.js";
 
 /**

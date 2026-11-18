@@ -6,11 +6,12 @@
  * older row carrying the press-time mutations is still a Send + Done and what it carried is never
  * dispatched.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE,
   applySendAndDone, asSendAndDoneIntent, intentOf, ohboxView, releasePlanAt, sendAndDonePlanFor,
-  type EngineMessage, type EngineMutation, type EntityReader, type MutationResult,
+  type EntityReader, type MutationResult,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 

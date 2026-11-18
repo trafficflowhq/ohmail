@@ -3,11 +3,11 @@
  * set — else the device's own, counted over what is on screen. What is pressed narrows the device's first paint here
  * and goes to the store, each as its own filter.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useState } from "react";
 import {
   folderLeaf,
   VIEW_OF_FOLDER,
-  type EngineMessage,
   type SearchHit,
   type ServerSearchFacets,
   type ServerSearchFilters,

@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { createThreadRead, type EngineMessage } from "@ohmail/client-engine";
+import { createThreadRead } from "@ohmail/client-engine";
 import type { ThreadReadWiring } from "../../src/reading/reader-seen.js";
 import { useColumnVisit, type ColumnVisit } from "../../src/reader/visit.js";
 

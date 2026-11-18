@@ -1,6 +1,6 @@
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import type { MutationEffect } from "./mutations.js";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage, EngineMutation } from "./types.js";
 
 /**
  * THE ROWS A VERB ACTS ON — the one verb → affected-entity registry the shadow reads. A confirmed

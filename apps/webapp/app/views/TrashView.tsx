@@ -15,9 +15,10 @@
  * independent. The reading pane has one verb or none: restore over a mirrored row; over a LIVE row nothing ({@link
  * trashReadVerbs}) — a message the mirror never held records no folder for a restore to aim at.
  */
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { presentsUnread, type EngineMessage, type TagDTO, type TrashRowWire } from "@ohmail/client-engine";
+import { presentsUnread, type TrashRowWire } from "@ohmail/client-engine";
 import { ListPane, ListRows, MessageRow, Reader, Spinner, TAG_HUES } from "@ohmail/ui";
 import type { TrashWindowItemWire } from "../api-client";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";

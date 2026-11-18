@@ -1,3 +1,4 @@
+import type { WorkflowPattern } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, bindDb, learningSignals, rules, workflowProposals, type Tx } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { generateProposals } from "../../../src/ai/workflows/proposals.js";
-import { makeOpusProposer, type WorkflowPattern } from "../../../src/ai/workflows/propose.js";
+import { makeOpusProposer } from "../../../src/ai/workflows/propose.js";
 import type { AnthropicLike } from "../../../src/ai/classify.js";
 
 /**

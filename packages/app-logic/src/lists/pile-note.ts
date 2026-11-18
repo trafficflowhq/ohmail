@@ -8,8 +8,8 @@
  * no such route. Nothing moves without the press, and the press writes intents only.
  */
 
+import type { UnscreenedPileWire } from "@ohmail/wire";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { UnscreenedPileWire } from "@ohmail/client-engine";
 
 /** What News or Receipts draws: the count, whether it is a floor, and the press. */
 export interface PileNoteOffer {

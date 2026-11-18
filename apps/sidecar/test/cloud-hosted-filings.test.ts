@@ -1,6 +1,6 @@
+import type { MailboxDTO, SyncChange, SyncResponse } from "@ohmail/wire";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { MailboxDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";

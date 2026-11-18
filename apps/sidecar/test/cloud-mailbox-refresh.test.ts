@@ -1,3 +1,14 @@
+import type {
+  DraftDTO,
+  MailboxDTO,
+  MessageBodyBatchItem,
+  MessageDTO,
+  Page,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+  ThreadDTO,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,8 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { drafts, junkRescues, mailboxes, messageBodies, messages, threads } from "@trafficflow/db/mail";
 import { dbFor, mailboxService } from "@trafficflow/services/mail";
 import type {
-  DraftDTO, MailboxDTO, MessageBodyBatchItem, MessageDTO, Page, ServiceContext, SnapshotResponse,
-  SyncChange, SyncResponse, ThreadDTO,
+  ServiceContext,
 } from "@trafficflow/services/mail";
 import { openLocalDb, type LocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";

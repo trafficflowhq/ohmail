@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO, ScreenerSenderDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { getFixtures } from "@ohmail/testing";
 import {
@@ -7,10 +8,6 @@ import {
   mutationEffects,
   presentationReader,
   screenerSegments,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
-  type ScreenerSenderDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,7 +7,7 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { MemoryMirrorStore, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import en from "../apps/webapp/messages/en.json";
 import de from "../apps/webapp/messages/de.json";
 import { AutoUnsubscribeRow } from "../apps/webapp/app/shell/AutoUnsubscribeRow";

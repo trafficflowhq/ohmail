@@ -5,8 +5,9 @@
  * out is two messages that hash alike. The field list is TYPED as every key of `mail_send`, so a field
  * added to the mutation and not listed here is a type error the test-dir ratchet refuses.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { withSignature, type EngineMutation } from "@ohmail/client-engine";
+import { withSignature } from "@ohmail/client-engine";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 
 type MailSend = Extract<EngineMutation, { kind: "mail_send" }>;

@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { type MirrorFreshness, mirrorFreshness } from "@trafficflow/core/drain-policy";
 import { countNotify } from "../client-vitals.js";
 import { warmBodyTermNames } from "../consent-cutline.js";
@@ -5,7 +6,6 @@ import type { MutationEffect } from "../mutations.js";
 import { OHBOX_VISIT_ID, ohboxVisitMark, type OhboxVisitMeta } from "../ohbox-where.js";
 import { ohboxView } from "../selectors.js";
 import type { EntityReader } from "../store.js";
-import type { EngineMessage, EngineMutation } from "../types.js";
 import { LAST_DRAIN_AT_META } from "./options.js";
 import { EngineState } from "./state.js";
 

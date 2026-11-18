@@ -16,10 +16,11 @@
  * THE REPLY'S OPEN LETTER is the mount's own: a change of place closes it and keeps its words; a reply draft opened
  * from a place with no reading column rides the walk to its letter; on one column an opened reply shows its letter.
  */
+import type { EngineDraft, EngineMessage, EngineMutation } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineDraft, EngineMessage, EngineMutation, OhmailEngine } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import { useComposer } from "@ohmail/app-logic/writing/composer-record";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";

@@ -1,3 +1,4 @@
+import type { AuthVerdict, EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 import {
@@ -12,13 +13,10 @@ import {
   readsPartition,
   screenerSegments,
   senderActivity,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import {
-  DEFAULT_OHBOX_POLICY, evaluateRules, type AuthVerdict, type NormalizedMessage, type Rule,
+  DEFAULT_OHBOX_POLICY, evaluateRules, type NormalizedMessage, type Rule,
 } from "@trafficflow/core/mail";
 
 /**

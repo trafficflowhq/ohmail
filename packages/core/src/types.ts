@@ -1,7 +1,6 @@
 import type { Assert, Complete, EmailAddress, Folder } from "@ohmail/wire";
 import type { LetterCalendar } from "./invitation-mail.js";
 
-export type { EmailAddress };
 
 /** The six folders ohmail may put mail into: the wire's `Folder`, under the name the rules use. */
 export type Destination = Folder;

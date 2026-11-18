@@ -1,4 +1,4 @@
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 
 /**
  * A suggestion bought this session, as the Screener's rows take it: the mirror's own suggestion shape, plus the id of

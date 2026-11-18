@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -6,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { useSuggestText } from "../app/shell/suggest-text";
 import {
   OhmailEngine, MemoryMirrorStore, mutationEffects,
-  type EngineMessage, type EngineMutation, type Folder, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
 import messages from "../messages/en.json";

@@ -1,10 +1,9 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MutationRejectedError,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";

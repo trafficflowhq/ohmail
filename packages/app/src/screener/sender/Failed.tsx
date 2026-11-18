@@ -4,7 +4,7 @@
  * to the Ohbox. Filing it moves mail, so an install that does not organize this mailbox draws no answer: what this
  * computer may not do, or who decides, and the way to Mailboxes.
  */
-import type { FailedAtGateDTO } from "@ohmail/client-engine";
+import type { FailedAtGateDTO } from "@ohmail/wire";
 import type { ScreenerView } from "@ohmail/app-logic/screener";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { Dot, Sentence } from "@ohmail/ui/base";

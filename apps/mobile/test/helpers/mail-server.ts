@@ -3,8 +3,9 @@
  * dataset the mobile suites drive the REAL engine against. Extracted from the live-screens
  * suite so the no-collapse census runs over the same wire; nothing here ships in the app.
  */
+import type { EmailAddress, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { createServer, type Server } from "node:http";
-import { encodeSeqCursor, twinWinner, type EmailAddress, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { encodeSeqCursor, twinWinner, type SyncChange } from "@ohmail/client-engine";
 
 export type Dto = ReturnType<typeof dto>;
 

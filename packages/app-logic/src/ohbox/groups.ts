@@ -2,6 +2,7 @@
  * The Ohbox's rows as drawn: the three groups after the session's placement, folded one row per conversation, what
  * the list may say about itself, and the voices and the people a folded row speaks for.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import {
   arrivalMs,
   countWhen,
@@ -11,12 +12,7 @@ import {
   listSurface,
   ohboxUnreadIds,
 } from "@ohmail/client-engine";
-import type {
-  EngineMessage,
-  ListSurface,
-  OhboxRow as OhboxRowGroup,
-  ResurfacedThreadRow,
-} from "@ohmail/client-engine";
+import type { ListSurface, OhboxRow as OhboxRowGroup, ResurfacedThreadRow } from "@ohmail/client-engine";
 import { useMemo } from "react";
 import { NO_ROWS, type SessionPlacement } from "./placement.js";
 import type { OhboxListInput, OhboxListModel, OhboxPerson } from "./types.js";

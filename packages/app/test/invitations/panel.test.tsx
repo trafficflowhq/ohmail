@@ -4,11 +4,11 @@
  * only after our server's verdict, the next invitation opened after it, a cancel drawn at once while its row is open,
  * a calendar that can only be looked at offering no press, and the all-clear once nothing waits.
  */
+import type { CalendarAct } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type {
-  CalendarAct,
   CalendarConnectionRecord,
   CalendarEventRecord,
   CalendarPort,

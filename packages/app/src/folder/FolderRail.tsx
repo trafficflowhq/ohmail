@@ -5,8 +5,8 @@
  * the one under the pointer most. The frame mounts it as the Folders group's body; the device's record of the pins
  * and the recent ones is the seat's, handed in.
  */
+import type { EngineMessage, FolderEntity } from "@ohmail/wire";
 import { useMemo, useState } from "react";
-import type { EngineMessage, FolderEntity } from "@ohmail/client-engine";
 import { FIND_FROM, foldOf, shelfKeyOf, shelfOf } from "@ohmail/app-logic/folder";
 import { folderLeafOf, folderUnreadCounts, folderUnreadDeep } from "@ohmail/app-logic/lists/folders";
 import { Menu, MenuItem } from "@ohmail/ui/base";

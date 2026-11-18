@@ -15,7 +15,8 @@
  * reply nobody meant, so the untouched plan carries `to: []`, which `canSend` refuses, and the editor opens with the
  * recipient rows showing.
  */
-import { forwardSubject, type ComposeAttachment, type EngineMessage } from "@ohmail/client-engine";
+import type { ComposeAttachment, EngineMessage } from "@ohmail/wire";
+import { forwardSubject } from "@ohmail/client-engine";
 import {
   replyEnvelopePlan,
   replyEnvelopeOnWire,

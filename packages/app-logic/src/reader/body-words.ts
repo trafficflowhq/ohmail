@@ -3,12 +3,8 @@
  * verdict's husk on a letter moved out of Junk is text on its way. The reader does not know a mailbox stood down, so
  * the storage cap says the plain sentence.
  */
-import {
-  isJunkHuskLeaving,
-  isProtectedMessage,
-  type EngineMessage,
-  type MessageBody,
-} from "@ohmail/client-engine";
+import type { EngineMessage, MessageBody } from "@ohmail/wire";
+import { isJunkHuskLeaving, isProtectedMessage } from "@ohmail/client-engine";
 
 export type WithheldKey =
   "withheld" | "withheldJunk" | "withheldJunkLoading" | "withheldExpunged" | "withheldTooLarge";

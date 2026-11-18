@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft } from "@ohmail/wire";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineDraft, PressVerdict } from "@ohmail/client-engine";
+import type { PressVerdict } from "@ohmail/client-engine";
 import { useDiscardWindow, type DiscardWords, type DraftsDoor } from "@ohmail/app-logic/drafts";
 import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import type { UndoToastOptions } from "@ohmail/app-logic/press/undo-door";

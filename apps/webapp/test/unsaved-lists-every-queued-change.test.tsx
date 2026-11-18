@@ -9,12 +9,13 @@
  * Mutations: `queuedReason` answering the reach sentence for everything → cases 1, 2, 4 and 6 red;
  * the server's own sentence dropped → case 2 red.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMutation, QueuedChange } from "@ohmail/client-engine";
+import type { QueuedChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { UnsavedChangesList } from "../app/shell/UnsavedChanges";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";

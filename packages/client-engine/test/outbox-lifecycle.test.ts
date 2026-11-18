@@ -17,6 +17,7 @@
  * invalidation sat below an early return that counts LIVE rows, so a boot with abandoned records
  * and an empty queue showed an empty list for the whole session.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import { engineSource } from "./helpers/engine-source.js";
@@ -34,8 +35,6 @@ import {
   OUTBOX_TYPE,
   SqlMirrorStore,
   targetOf,
-  type EngineMessage,
-  type EngineMutation,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 

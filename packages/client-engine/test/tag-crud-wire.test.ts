@@ -1,6 +1,7 @@
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { HttpAdapter, mutationEffects } from "@ohmail/client-engine";
-import type { EngineMessage, EntityReader, TagDTO } from "@ohmail/client-engine";
+import type { EntityReader } from "@ohmail/client-engine";
 
 /**
  * THE THREE TAG VERBS THAT HAD NO CALLER — on the wire, and in the mirror.

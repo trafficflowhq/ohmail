@@ -1,3 +1,4 @@
+import type { EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
@@ -5,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, rules } from "@trafficflow/db";
 import { evaluateRules, type NormalizedMessage, type Rule } from "@trafficflow/core/mail";
-import { pressOverTwins, type EngineMutation, type RuleDTO } from "@ohmail/client-engine";
+import { pressOverTwins } from "@ohmail/client-engine";
 import { rulesService } from "../src/rules-service.js";
 import { mutated } from "./helpers.js";
 import { ServiceError } from "../src/errors.js";

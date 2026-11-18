@@ -2,8 +2,8 @@
  * DRAFTS' MODEL: the scheduled sends first (soonest first), then the drafts, minus the rows a Discard hides. What the
  * list may say while the mirror is owed is the mail facts' (`settled`, `owed`), handed in, never guessed.
  */
+import type { EngineDraft } from "@ohmail/wire";
 import { createContext, useContext, useMemo } from "react";
-import type { EngineDraft } from "@ohmail/client-engine";
 import type { UndoToastFn } from "../press/undo-door.js";
 import { useDiscardWindow, type DiscardWords } from "./discard-window.js";
 import type { DiscardRefusal, DraftsDoor } from "./door.js";

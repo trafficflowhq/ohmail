@@ -1,3 +1,11 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  MailboxProfileEntity,
+  MutationOutcome,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -5,15 +13,9 @@ import {
   consentPartition,
   pressForecast,
   pressRules,
-  type MailboxProfileEntity,
   type SyncChange,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type MutationOutcome,
   type PressInput,
-  type RuleDTO,
   type SyncResponse,
 } from "@ohmail/client-engine";
 

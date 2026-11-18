@@ -1,6 +1,7 @@
+import type { MailboxDTO } from "@ohmail/wire";
 import { sql } from "drizzle-orm";
 import { accounts, mailboxes } from "@trafficflow/db";
-import { dbFor, makeMailboxService, type MailboxDTO, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import type { Db } from "./mailbox-facts-seed.js";
 
 /**

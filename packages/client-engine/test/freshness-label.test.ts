@@ -1,3 +1,4 @@
+import type { MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   LAST_DRAIN_AT_META,
@@ -5,7 +6,6 @@ import {
   OhmailEngine,
   STALE_RESUME_MS,
   type EngineAdapter,
-  type MutationOutcome,
   type SyncResponse,
 } from "../src/index.js";
 

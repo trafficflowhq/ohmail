@@ -6,13 +6,20 @@ import type { ServiceContext, Db } from "./context.js";
 import { boolLiteral, dialect, orSidesOf, pgOnly, queryOperandsOf, partSidesOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
-import type { AddressSearchResult, Assert, Complete, Facets, SearchResult, AddressSearchDirection as WireAddressSearchDirection } from "@ohmail/wire";
+import type {
+  AddressSearchResult,
+  Assert,
+  Complete,
+  Facets,
+  MessageDTO,
+  SearchResult,
+  AddressSearchDirection as WireAddressSearchDirection,
+} from "@ohmail/wire";
 import { ServiceError } from "./errors.js";
 import { storeProbe } from "./store-probe.js";
 import { afterSettings, afterSettingsRead } from "./settings-first.js";
 import { importOpen, storeStillImporting, truthy } from "./search-coverage.js";
 import { instantRefusal, readInstant } from "./instant.js";
-import type { MessageDTO } from "./dto/types.js";
 import type { SearchSize } from "./search-timing.js";
 
 /**
@@ -261,7 +268,6 @@ export interface SearchOptions {
 }
 
 /** The text search's answer, its facets, and the address arm's answer: declared with the wire's vocabulary. */
-export type { SearchResult, Facets, AddressSearchResult };
 
 /** A part's reading of {@link SearchResult.importing}, taken in the part's own session. */
 interface Coverage { importing?: true }

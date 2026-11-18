@@ -3,10 +3,11 @@
  * place and reason, each with its "Move it too" unless the reason is a failed sign-in check, which
  * the person cannot overrule from here. Pure, so a test reads what the sheet renders.
  */
+import type { StayedWhy } from "@ohmail/wire";
 import { Copy } from "../copy";
 import { destDone, type Destination } from "../state/model";
 import { folderLeafOf } from "../state/folders";
-import { ownFolderOf, stayedLines, type StayedAsk, type StayedPlace, type StayedWhy } from "../state/sender-stayed";
+import { ownFolderOf, stayedLines, type StayedAsk, type StayedPlace } from "../state/sender-stayed";
 
 export interface StayedRow {
   key: string;

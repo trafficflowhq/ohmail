@@ -1,3 +1,4 @@
+import type { SettingsDTO } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import { changeLog, mailboxes } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
 import {
   MAILBOX_SIGNATURE_MAX_CHARS, MailboxService, SyncService, dbFor, mailboxSignatures, setMailboxSignature,
-  type ServiceContext, type SettingsDTO,
+  type ServiceContext,
 } from "../src/index.js";
 
 /**

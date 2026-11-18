@@ -5,12 +5,12 @@
  * The list beside it is a stand-in drawn from the kit's rows: the reference's "Reading" list is its own catalogue,
  * no place of the product.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createRoot } from "react-dom/client";
 import { GroupHeading, ListHead, Row, Rows } from "@ohmail/ui/mail";
 import type { PictureSeam } from "@ohmail/app-logic/reader";
 import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { markSessionDead } from "@ohmail/app-logic/session/session-truth";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { Frame } from "../../src/frame/Frame.js";
 import { useRailModel } from "../../src/frame/commands.js";
 import type { PaneProps, PlaceEntry, RailModel } from "../../src/frame/contract.js";

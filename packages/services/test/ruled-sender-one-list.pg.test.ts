@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -13,7 +14,7 @@ import type { Change } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   MemoryMirrorStore, consentIndex, consentPartition, decidedDestination, presentationReader,
-  screenerSegments, type EngineMessage, type Folder, type RuleDTO, type SyncChange,
+  screenerSegments, type SyncChange,
 } from "@ohmail/client-engine";
 import { ScreenerService, type ServiceContext } from "../src/index.js";
 import { cutlineCounts } from "../src/consent-cutline.js";

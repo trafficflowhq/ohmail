@@ -5,12 +5,13 @@
  * key it holds answers `already_sent` (or `in_flight` while held), a key it never saw is tombstoned
  * and refused at the wire. `withdrawMode` makes the withdraw unreachable or a server without it.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { IDBFactory, IDBKeyRange as FakeKeyRange } from "fake-indexeddb";
 import {
   carriedOutboxMarks, HttpAdapter, IndexedDbMirrorStore, MemoryMirrorStore, MutationRejectedError, OhmailEngine,
   OUTBOX_ABANDONED_TYPE, OUTBOX_MAX_SERVER_FAILURES, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
-  type EngineLocks, type EngineMutation, type MirrorStore, type MutationResult,
+  type EngineLocks, type MirrorStore, type MutationResult,
 } from "@ohmail/client-engine";
 import { HostOutboxStore } from "../../paired-page/src/outbox-store.js";
 

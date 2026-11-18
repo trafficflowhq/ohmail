@@ -1,3 +1,4 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type LedgerTx, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -5,7 +6,7 @@ import {
   asAuthVerdict, conversationJoinVerdict, counterpartyEvidence, isSentFolderOf,
   MAX_THREAD_PARTICIPANTS, mergeCounterpartyEvidence,
   silentLogger,
-  type ConversationJoinFacts, type CounterpartyEvidence, type EmailAddress, type Logger,
+  type ConversationJoinFacts, type CounterpartyEvidence, type Logger,
 } from "@trafficflow/core/mail";
 
 /* THE THREAD-JOIN HEAL — the deferred merge for a conversation a forward SPLIT. `thread-backfill.ts`

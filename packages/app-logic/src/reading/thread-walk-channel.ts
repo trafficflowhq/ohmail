@@ -1,6 +1,7 @@
 "use client";
 
-import { isOwnOutbound, type EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
+import { isOwnOutbound } from "@ohmail/client-engine";
 
 /**
  * THE OPEN CONVERSATION'S PLACE, shared by its two sets of squares: the column beside the reader

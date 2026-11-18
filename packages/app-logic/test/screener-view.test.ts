@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
 import { SHARED_PROVIDER_DOMAINS } from "@trafficflow/core/rule-order";
 import {
   activeFilterOf,

@@ -1,8 +1,15 @@
+import type {
+  EngineMutation,
+  ISODateTime,
+  RuleEntity as RuleDTO,
+  RuleKeyAddress,
+  WaitingTargetWire,
+} from "@ohmail/wire";
 import type { CreatedDraftRow } from "../adapters/adapter.js";
 import { OUTBOX_WITHDRAWN_CODE } from "../adapters/refusal-shape.js";
 import type { SendAndDonePlan } from "../send-and-done.js";
 import type {
-  EngineMutation, ISODateTime, MutationRejectedError, RuleDTO, RuleKeyAddress, WaitingTargetWire,
+  MutationRejectedError,
 } from "../types.js";
 import type { PersistedOutboxEntry } from "./outbox-record.js";
 

@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter,
@@ -5,9 +6,6 @@ import {
   isResurfaced,
   ohboxView,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";

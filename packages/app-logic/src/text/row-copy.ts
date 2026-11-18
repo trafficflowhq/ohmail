@@ -9,8 +9,8 @@
  * Seven views render the row. Rather than seven chances to word it differently, they take the words from here, each
  * handing the translator it reads.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useMemo } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
 import type { Translator } from "./translator.js";
 import { sentAvatarOf, sentRowRecipient } from "./format.js";
 

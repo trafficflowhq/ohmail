@@ -4,8 +4,8 @@
  * door refused them, was retargeted by a Move and the pill said "Future mail from them files there
  * too". The letter moves with no rule and the plain sentence. A friend's letter is the control.
  */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { type RuleDTO } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { closeRoutingSession, openRoutingSession } from "../src/state/held-routing";

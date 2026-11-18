@@ -1,10 +1,10 @@
+import type { MessageDTO } from "@ohmail/wire";
 import fs, { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { messages } from "@trafficflow/db/mail";
-import type { MessageDTO } from "@trafficflow/services/mail";
 import { createCloudSidecar, MIRROR_OWNER_FILE, type CloudSidecar } from "../src/cloud-engine.js";
 import { LocalStoreOpenError, PGDATA_SUBDIR, openLocalDb } from "../src/db.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";

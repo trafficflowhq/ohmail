@@ -1,11 +1,10 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { HELD_FOLDERS, ORGANIZED_FOLDERS, isHeldFolder } from "@trafficflow/core/destinations";
 import {
   MemoryMirrorStore,
   VIEW_OF_FOLDER,
   screenerSegments,
-  type EngineMessage,
-  type Folder,
   type SyncChange,
 } from "@ohmail/client-engine";
 

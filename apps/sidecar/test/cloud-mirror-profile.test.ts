@@ -1,3 +1,11 @@
+import type {
+  MailboxDTO,
+  MailboxProfileDTO,
+  RuleDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -5,8 +13,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { mailboxes, mailboxProfileMirror } from "@trafficflow/db/mail";
 import {
-  dbFor, syncService, type MailboxDTO, type MailboxProfileDTO, type RuleDTO, type ServiceContext,
-  type SnapshotResponse, type SyncChange, type SyncResponse,
+  dbFor, syncService, type ServiceContext,
 } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";

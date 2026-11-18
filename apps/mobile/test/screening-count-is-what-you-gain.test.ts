@@ -6,9 +6,9 @@
  * a real wire: one letter in the INBOX shown at the gate, one in Screened, and (waiting) one held.
  * Green before the web fix by construction; they fail the day the phone says a count of moves.
  */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
-import type { EngineMessage, RuleDTO } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, type LiveWorldActions } from "../src/state/live";
 import { dto, listen, mailServer } from "./helpers/mail-server";

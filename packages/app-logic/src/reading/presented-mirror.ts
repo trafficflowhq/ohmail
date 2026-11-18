@@ -5,13 +5,13 @@
  * mirror. Bodies, hydration and every mutation keep the raw mirror. Null: nobody handed one, and the column fails
  * closed (no letter loads a remote picture by itself).
  */
+import type { Folder } from "@ohmail/wire";
 import { createContext, useContext, type Context } from "react";
 import {
   presentAt,
   presentationReader,
   type ConsentPartition,
   type EntityReader,
-  type Folder,
 } from "@ohmail/client-engine";
 import { hideMessages } from "../press/delete-undo.js";
 

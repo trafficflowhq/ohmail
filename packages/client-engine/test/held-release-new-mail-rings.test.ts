@@ -1,8 +1,15 @@
+import type {
+  EngineMessage,
+  Folder,
+  HeldReleaseGroupWire,
+  HeldReleaseWire,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import { describe, expect, it, vi } from "vitest";
 import { OhmailEngine } from "../src/engine.js";
 import { heldReleaseDismissedOf, heldReleaseGroups } from "../src/selectors.js";
-import type { EngineAdapter, HeldReleaseGroupWire, HeldReleaseWire } from "../src/adapters/adapter.js";
-import type { EngineMessage, Folder, RuleDTO, SyncChange } from "../src/types.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
+import type { SyncChange } from "../src/types.js";
 
 /**
  * NEW HELD MAIL REACHES AN OPEN SCREEN WITH THE PULL THAT BROUGHT IT.

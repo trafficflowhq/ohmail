@@ -1,12 +1,10 @@
+import type { EngineMessage, Folder, ScreenerSuggestionEntity } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   SYNC_ENTITY_TYPES,
   screenerSegments,
-  type EngineMessage,
   type EntityReader,
-  type Folder,
-  type ScreenerSuggestionEntity,
   type SyncChange,
 } from "../src/index.js";
 

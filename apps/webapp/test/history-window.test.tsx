@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
+import type { TagEntity as TagDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { OhmailEngine, TagDTO } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { HistoryView as HistoryViewRaw } from "../app/views/HistoryView";
 import { KeymapProvider } from "@ohmail/app/keys";

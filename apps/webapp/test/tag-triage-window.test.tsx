@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { TagView } from "../app/views/TagView";
 import { TriageView } from "../app/views/TriageView";

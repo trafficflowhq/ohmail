@@ -6,11 +6,11 @@
  * HttpAdapter against the fake speaking the drafts routes; the sheet's wiring is READ, the
  * `compose-offline-send` idiom (no React Native renderer in this workspace).
  */
+import type { EngineDraft, EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EngineDraft, EngineMessage } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { Copy } from "../src/copy";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

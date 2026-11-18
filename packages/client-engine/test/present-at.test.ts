@@ -1,7 +1,7 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { presentAt } from "../src/present-at.js";
 import type { EntityReader } from "../src/store.js";
-import type { EngineMessage, Folder } from "../src/types.js";
 
 /**
  * THE HELD PRESS'S PRESENTATION. A row's place comes from its sender's RULE, so a Move whose rule

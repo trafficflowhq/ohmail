@@ -6,6 +6,7 @@
  * Search answers `page`, `estimate` and `summary` by the store's contract: an arm is cut at four
  * pages' worth of candidates, and a cut estimate's `totalEstimate` is a planner's guess.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import {
   MemoryMirrorStore,
   MutationRejectedError,
@@ -13,8 +14,6 @@ import {
   decodeSeqCursor,
   encodeSeqCursor,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
   type EngineOptions,
   type ListOlderFn,
   type MirrorStore,

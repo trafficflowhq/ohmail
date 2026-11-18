@@ -6,8 +6,9 @@
  * geometry is the engine's `threadWalk`, the one the old column's squares run; the walk's channel lets a list row's
  * squares show the same place and press through to this column.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { threadWalk, type EngineMessage, type Walk } from "@ohmail/client-engine";
+import { threadWalk, type Walk } from "@ohmail/client-engine";
 import { cssRect } from "../geometry/index.js";
 import { nextFrame, viewOf, THREAD_DOM, type ThreadDomNames } from "../reading/reader-seen.js";
 import type { ThreadWalkChannel } from "../reading/thread-walk-channel.js";

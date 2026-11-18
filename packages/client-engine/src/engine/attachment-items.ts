@@ -1,8 +1,8 @@
 // `@trafficflow/core/ics` maps to a dependency-free SOURCE module (see its header) — the ONE
 // core entry point browser bundles may import. Never the barrel or `./mail` from here: both
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
+import type { AttachmentWire } from "@ohmail/wire";
 import { CALENDAR_FALLBACK_FILENAME, isCalendarBodyPart, isCalendarMime } from "@trafficflow/core/ics";
-import type { AttachmentWire } from "../adapters/adapter.js";
 
 // ── attachments ────────────────────────────────────────────────────────────
 //

@@ -1,15 +1,12 @@
+import type { EngineMessage, MutationOutcome, RuleEntity as RuleDTO, SyncSnapshotPage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   LAST_DRAIN_AT_META,
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
-  type RuleDTO,
   type SyncChange,
   type SyncResponse,
-  type SyncSnapshotPage,
 } from "../src/index.js";
 
 /**

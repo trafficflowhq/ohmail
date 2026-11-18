@@ -5,6 +5,7 @@
  * the head says, the read rule on the reading column's scroller, the leave's one commit, Mark unread and Mark all
  * read. Called once, above both panes; the list and the stream read it from `StreamModelContext`.
  */
+import type { EngineMessage, WaterlineMeta } from "@ohmail/wire";
 import {
   createContext,
   useCallback,
@@ -15,7 +16,7 @@ import {
   useState,
   type Context,
 } from "react";
-import { appointmentStamp, type EngineMessage, type WaterlineMeta } from "@ohmail/client-engine";
+import { appointmentStamp } from "@ohmail/client-engine";
 import { leaveSaysSomething, streamLeaveCommit, type StreamLeaveCommit } from "./leave.js";
 import { useStreamRead, type StreamReadDom } from "./stream-read-dom.js";
 import { useStreamScroll, type StreamCardNames, type StreamScroll } from "./stream-scroll.js";

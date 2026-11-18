@@ -37,9 +37,19 @@ import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
 } from "./reader-request.js";
 import type {
-  Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, TrashRowDTO, TriageState, WithheldMarker,
-} from "./dto/types.js";
-import type { MarkSeenBody as WireMarkSeenBody, MessagePatchBody, MoveBody, UntrustedBody } from "@ohmail/wire";
+  Folder,
+  MessageBodyBatchItem,
+  MessageBodyDTO,
+  MessageDTO,
+  MessagePatchBody,
+  MoveBody,
+  Page,
+  TrashRowDTO,
+  TriageState,
+  UntrustedBody,
+  MarkSeenBody as WireMarkSeenBody,
+  WithheldMarker,
+} from "@ohmail/wire";
 
 /**
  * Where a best-effort filing doorbell reports a throw. Module scope and not injected: it is a
@@ -196,7 +206,6 @@ interface TimelineMonth {
 const HISTORY_PAGE_MAX = 50;
 
 /** The bodies of a letter's patch and move: declared with the wire's vocabulary. */
-export type { MessagePatchBody, MoveBody };
 
 /** `PATCH /messages` as it arrives: the wire's body, every field still to be judged here. */
 export type MarkSeenBody = UntrustedBody<WireMarkSeenBody>;

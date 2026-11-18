@@ -1,3 +1,4 @@
+import type { ThreadDTO } from "@ohmail/wire";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -6,7 +7,6 @@ import {
 import { bridgeDb, bridgeTx, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeThread } from "./dto/materialize.js";
-import type { ThreadDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 const asDb = (tx: Tx): Db => bridgeDb(tx);

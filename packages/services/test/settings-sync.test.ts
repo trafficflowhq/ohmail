@@ -1,3 +1,4 @@
+import type { SettingsDTO } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -12,7 +13,7 @@ import {
   SyncService, dbFor, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels, setDormancyDays, setFoldersEnabled, setLocale, effectiveMailboxSignatures, profileImportService,
   setMailboxFoldersEnabled, setThemeFace,
-  type ServiceContext, type SettingsDTO,
+  type ServiceContext,
 } from "../src/index.js";
 
 /**

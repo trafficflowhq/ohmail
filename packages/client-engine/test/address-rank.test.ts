@@ -1,5 +1,6 @@
+import type { EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { outrankCoveringDomains, type EngineMutation, type Folder, type RuleDTO } from "@ohmail/client-engine";
+import { outrankCoveringDomains } from "@ohmail/client-engine";
 import { RULE_PRIORITY_MAX } from "@trafficflow/core/rule-order";
 
 /**

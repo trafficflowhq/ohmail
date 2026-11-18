@@ -2,7 +2,7 @@
  * The Ohbox's key table: the walk's keys, the selection layer that is there only while a selection exists, and the
  * cursor's keys. Declaration order is precedence inside the layer.
  */
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 import type { KeyBinding } from "../keys/index.js";
 import type { BulkAction } from "../press/actions.js";
 import { isModalOpen } from "../session/modal-gate.js";

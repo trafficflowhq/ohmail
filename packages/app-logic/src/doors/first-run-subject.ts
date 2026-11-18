@@ -7,7 +7,8 @@
  * the screen printing them named one mailbox. Structurally typed — no DTO import — so the shell's
  * row type can grow without touching this.
  */
-import { isOwnSent, type Folder } from "@ohmail/client-engine";
+import type { Folder } from "@ohmail/wire";
+import { isOwnSent } from "@ohmail/client-engine";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 
 /** The unresolvable arm, named: a run that names a mailbox this install does not hold. */

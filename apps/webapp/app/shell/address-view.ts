@@ -21,13 +21,13 @@
  * asserts the snapshot emits a folder outside the union, another that the selector labels such a row.
  */
 
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { addressHash } from "./routing";
 import {
   createSessionReask,
   type AddressCounts,
   type AddressDirection,
-  type EngineMessage,
   type OhmailEngine,
   type SearchHit as EngineSearchHit,
   type ServerAddressOutcome,

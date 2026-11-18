@@ -3,11 +3,12 @@
  * other badge, the copy twins carry both forms in both languages, and the German is du-form. The
  * phone reads the fact off the wire and holds no dictionary of its own.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MemoryMirrorStore, OhmailEngine, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type SyncChange } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import type { Mail } from "../src/state/model";
 import { liveMessage, liveScreener, presentedOf, type WorldView } from "../src/state/live";

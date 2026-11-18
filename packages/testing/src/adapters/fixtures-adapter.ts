@@ -1,3 +1,15 @@
+import type {
+  AttachmentWire,
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  FeedSinceMeta,
+  Folder,
+  MessageStateDTO,
+  MutationOutcome,
+  ScreenerSenderDTO,
+  TriageItemDTO,
+} from "@ohmail/wire";
 import {
   getFixtures,
   tagsOf,
@@ -14,18 +26,10 @@ import {
   MutationRejectedError,
   decodeSeqCursor,
   encodeSeqCursor,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
-  type FeedSinceMeta,
-  type Folder,
-  type MessageStateDTO,
-  type ScreenerSenderDTO,
   type SyncChange,
   type SyncResponse,
-  type TriageItemDTO,
 } from "@ohmail/client-engine";
-import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams, WithdrawSendAnswer } from "@ohmail/client-engine";
+import type { EngineAdapter, SyncParams, WithdrawSendAnswer } from "@ohmail/client-engine";
 import { OUTBOX_WITHDRAWN_CODE } from "@ohmail/client-engine";
 
 /** The demo world's fixed "now" — a Wednesday; "Tue" fixtures land the day before. */

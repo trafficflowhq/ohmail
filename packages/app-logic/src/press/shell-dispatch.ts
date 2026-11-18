@@ -10,6 +10,7 @@
  * same question asked in different words, so they live together. Lifted out of `AppShell.tsx`
  * unchanged (ARCH-022); it closes over nothing derived from the mirror.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { useMemo, useRef, type MutableRefObject } from "react";
 import {
   inverseMutations,
@@ -17,7 +18,6 @@ import {
   pressVerdict,
   tallyVerdicts,
   undoInOrder,
-  type EngineMutation,
   type EntityReader,
   type MutationRejectedError,
   type OhmailEngine,

@@ -8,8 +8,9 @@
  * sign-in lands; a recovery waiting for the lock while it lands. Each is kept, never rolled back, never
  * applied on B and never renews B; applied on A once when A is back. Both sentences read in both catalogues.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineAdapter, EngineMutation } from "@ohmail/client-engine";
+import type { EngineAdapter } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 

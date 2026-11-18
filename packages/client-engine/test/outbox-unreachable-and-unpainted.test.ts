@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -6,8 +7,6 @@ import {
   OUTBOX_TYPE,
   OUTBOX_UNREACHABLE_CEILING_MS,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";

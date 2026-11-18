@@ -1,10 +1,10 @@
+import type { ContactDTO, NoteDTO, Page } from "@ohmail/wire";
 import { and, asc, eq, gt, ilike } from "drizzle-orm";
 import { contacts, contactNotes, threadNotes, threads } from "@trafficflow/db";
 import { containsPattern } from "@trafficflow/db/dialect";
 import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
-import type { ContactDTO, NoteDTO, Page } from "./dto/types.js";
 
 /**
  * The longest `?q=` the contact list accepts. `q` becomes the ILIKE pattern `'%' || q || '%'`, its

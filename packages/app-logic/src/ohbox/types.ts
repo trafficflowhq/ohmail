@@ -2,15 +2,10 @@
  * The Ohbox's shapes: what a host hands the list's behaviour (`OhboxListInput`), what the selection can be asked to
  * do, and the model `useOhboxList` hands back.
  */
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import type * as React from "react";
 import type { MouseEvent as ReactMouseEvent, MutableRefObject, RefObject } from "react";
-import type {
-  EngineMessage,
-  ListSurface,
-  ResurfacedThreadRow,
-  TagDTO,
-  ThreadMark,
-} from "@ohmail/client-engine";
+import type { ListSurface, ResurfacedThreadRow, ThreadMark } from "@ohmail/client-engine";
 import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import type { ThreadReadWiring } from "../reading/reader-seen.js";
 import type { ThreadWalkChannel } from "../reading/thread-walk-channel.js";

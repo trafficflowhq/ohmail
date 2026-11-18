@@ -29,6 +29,7 @@
  *   · move the Screener glyph after the time                           → the Screener order case
  *   · move the header glyph after the ⋯ menu                           → the pane order case
  */
+import type { EngineMessage, MessageBodyWire } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -38,8 +39,6 @@ import { join, relative, resolve } from "node:path";
 import {
   MemoryMirrorStore,
   OhmailEngine,
-  type EngineMessage,
-  type MessageBodyWire,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";

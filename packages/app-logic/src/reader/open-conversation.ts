@@ -4,15 +4,9 @@
  * THE OPEN CONVERSATION AND ITS LETTERS' TEXT, read off the mounted engine. Each hook re-renders only for what it
  * draws: the conversation for any change of the mirror, a letter's text when that letter's body record moves.
  */
+import type { EngineMessage, MessageBody } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import {
-  bodyOf,
-  threadOf,
-  threadSubject,
-  type EngineMessage,
-  type EntityReader,
-  type MessageBody,
-} from "@ohmail/client-engine";
+import { bodyOf, threadOf, threadSubject, type EntityReader } from "@ohmail/client-engine";
 import { useEngineOrNull } from "../engine/index.js";
 import { useBodyArrival } from "../reading/body-arrival.js";
 import { conversationOnScreen } from "../reading/conversation-on-screen.js";

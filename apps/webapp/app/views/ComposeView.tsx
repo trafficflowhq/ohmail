@@ -10,10 +10,11 @@
  * lock (`mail-send.ts`). `AppShell` owns the fields so a half-written message survives leaving the view; no import
  * from `@ohmail/testing` — `test/demo-zero-network.test.ts` forbids one anywhere under `app/`.
  */
+import type { EngineDraft } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { addressBook } from "@ohmail/client-engine";
-import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import type { Editor } from "@tiptap/react";
 import { Button, Chip, Icon, Kbd, TextField, cssRect, formatFileSize, useToast } from "@ohmail/ui";
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";

@@ -7,8 +7,9 @@
  * SEND-DONE-CONFIRMED-DURING-ANOTHER-SEND-LOSES-ITS-UNDO, PHONE-OFFLINE-REPRESS-KEEPS-THE-FIRST-PRESS-PLAN,
  * SEND-AND-DONE-LATE-RELEASE-APPLIES-THE-PRESS-TIME-PLAN (the phone half).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { sendAndDonePlanFor, type EngineMessage, type EntityReader } from "@ohmail/client-engine";
+import { sendAndDonePlanFor, type EntityReader } from "@ohmail/client-engine";
 import { bootEngine, LOCAL_ENGINE_ORIGIN, type LocalEngineDoor, type MobileEngineDeps } from "../src/engine/boot";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
 import { flushQueued, liveActions, type ToastOpts } from "../src/state/live";

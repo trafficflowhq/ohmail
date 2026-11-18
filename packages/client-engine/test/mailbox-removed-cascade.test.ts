@@ -1,9 +1,8 @@
+import type { MessageBodyRecord, ScreenerWaitingWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, OhmailEngine, consentPartition, ohboxView, presentationReader, screenerSegments, senderKey,
   type EngineAdapter,
-  type MessageBodyRecord,
-  type ScreenerWaitingWire,
   type SyncChange,
 } from "@ohmail/client-engine";
 

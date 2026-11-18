@@ -17,9 +17,10 @@
  * hold the only copy of a message that may never have been delivered. Discard works on them too.
  */
 
+import type { EngineDraft } from "@ohmail/wire";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { HELD_SEND_RECHECK_MS, listSurface, saysEmpty, type EngineDraft } from "@ohmail/client-engine";
+import { HELD_SEND_RECHECK_MS, listSurface, saysEmpty } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
 import { displayTime, scheduleLabel } from "../shell/format";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";

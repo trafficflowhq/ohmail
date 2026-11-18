@@ -1,10 +1,9 @@
+import type { MessageStateDTO, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   OhmailEngine,
   triagePiles,
   type EngineAdapter,
-  type MessageStateDTO,
-  type MutationOutcome,
   type SyncChange,
   type SyncParams,
   type SyncResponse,

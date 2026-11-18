@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
@@ -8,9 +9,7 @@ import {
   routingIntentsKey,
   ruleFingerprint,
   screenIntentsKey,
-  type EngineMutation,
   type EntityReader,
-  type RuleDTO,
   type ScreenIntent,
   type SyncChange,
 } from "@ohmail/client-engine";

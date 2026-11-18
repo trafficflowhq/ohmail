@@ -5,8 +5,8 @@
  * A row press opens; a step lands, and the rest enters it. What turns read is the reader's rule, written through
  * the seat's `markSeen`, never here. The steps' names and the blank are the drawing's, in its words.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useMemo } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
 import type { MessageAction } from "../press/actions.js";
 import type { ListStep, ListVisit } from "../reading/list-meeting.js";
 import { useReaderVisit, type ReaderMarkSeen } from "../reading/reader-seen.js";

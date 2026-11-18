@@ -4,12 +4,13 @@
  * store can say: the boot replay with auto-replay on, a refused replacement mid-flush, a send
  * that outran its deadline, and Try again's row after a kill (LOW-4).
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
   IndexedDbMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
   OUTBOX_BACKOFF_CAP_MS, OUTBOX_MAX_SERVER_FAILURES,
-  type EngineMutation, type MutationResult, type SendAndDonePlan,
+  type MutationResult, type SendAndDonePlan,
 } from "@ohmail/client-engine";
 
 const NOW = Date.parse("2026-10-02T08:00:00.000Z");

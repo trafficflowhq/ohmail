@@ -23,6 +23,7 @@
  * `feedPartition`, so these guards break if the views and the selector ever stop reading
  * the same source.
  */
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -32,9 +33,7 @@ import {
   feedPartition,
   waterlineIdOf,
   FEED_SINCE_ID,
-  type EngineMessage,
   type FeedPartition,
-  type Folder,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";

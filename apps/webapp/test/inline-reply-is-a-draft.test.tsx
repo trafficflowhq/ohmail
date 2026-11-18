@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import {
-  MutationRejectedError, OUTBOX_TYPE, draftsList, type EngineDraft, type EngineLocks, type EngineMutation, type IndexedDbMirrorStore,
+  MutationRejectedError, OUTBOX_TYPE, draftsList, type EngineLocks, type IndexedDbMirrorStore,
 } from "@ohmail/client-engine";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import { typeInto } from "./fixtures/rich-editor-driver";

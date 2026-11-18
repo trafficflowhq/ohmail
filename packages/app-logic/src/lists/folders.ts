@@ -8,7 +8,7 @@
  * the canonical `/`-joined path is the one spelling everything joins on.
  */
 
-import type { EngineMessage, FolderEntity } from "@ohmail/client-engine";
+import type { EngineMessage, FolderEntity } from "@ohmail/wire";
 
 /** The last path segment — what a tree row shows for its label. */
 export function folderLeafOf(path: string): string {

@@ -1,3 +1,4 @@
+import type { EngineMessage, MessageBodyRecord } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FAILED_BODY_HOLD_MS,
@@ -5,8 +6,6 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   bodyOf,
-  type EngineMessage,
-  type MessageBodyRecord,
   type SyncChange,
 } from "../src/index.js";
 import { BODY_FETCH_TIMEOUT_MS } from "../src/adapters/http-adapter.js";

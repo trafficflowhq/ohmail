@@ -1,13 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
   type MutationStatus,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { existsSync, readFileSync } from "node:fs";

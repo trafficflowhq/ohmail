@@ -6,13 +6,14 @@
  * the recipient's mailbox on the lane GreenMail: one copy, the original quoted, its attachment
  * with it, and one draft row on the phone.
  */
+import type { EngineDraft } from "@ohmail/wire";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EngineDraft, SqlExecutor, SqlRow, SqlValue } from "@ohmail/client-engine";
+import type { SqlExecutor, SqlRow, SqlValue } from "@ohmail/client-engine";
 import type { MessageStructureObject } from "imapflow";
 import {
   Cable, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, PORT, SMTP_PORT,

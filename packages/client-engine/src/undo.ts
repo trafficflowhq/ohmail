@@ -1,8 +1,9 @@
+import type { EngineMessage, EngineMutation, FeedView, MutationKind, WaterlineMeta } from "@ohmail/wire";
 import { isOrganizedFolder } from "@trafficflow/core/destinations";
 import { movableInto, moveLanding } from "./mutations.js";
 import { filedOutOfOhbox, pinsSpentBy } from "./ohbox-rows.js";
 import type { EntityReader } from "./store.js";
-import { waterlineIdOf, type EngineMessage, type EngineMutation, type FeedView, type MutationKind, type WaterlineMeta } from "./types.js";
+import { waterlineIdOf } from "./types.js";
 
 /**
  * How a user verb is taken back — the one classification every surface reads. "inverse":

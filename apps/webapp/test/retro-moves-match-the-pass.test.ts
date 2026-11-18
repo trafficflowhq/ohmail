@@ -9,15 +9,13 @@
  * person's own instruction and still moves the visible mail, narrowed by the predicate, newest
  * fifty. The fixture is `test/support/retro-candidates.ts`, shared with the phone's twin.
  */
+import type { EngineMessage, Folder, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   pressForecast,
   refileWouldMove,
   retroPassWouldMove,
-  type EngineMessage,
-  type Folder,
-  type MessageStateDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { movesAtLanding, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";

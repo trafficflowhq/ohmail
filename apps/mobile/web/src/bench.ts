@@ -5,7 +5,8 @@
  * Send does, and reads counts, so the proofs nobody can time by hand (a kill 0 to 300 ms after a key, 0 to 400 ms
  * after a send) run at the engine's level until the places that draw them are registered.
  */
-import type { EmailAddress, EngineMutation, MirrorStore, OhmailEngine } from "./engine-package";
+import type { EmailAddress, EngineMutation } from "@ohmail/wire";
+import type { MirrorStore, OhmailEngine } from "./engine-package";
 import { OUTBOX_TYPE } from "./engine-package";
 import { isKept } from "../../src/shell/kept-families";
 import type { LinkInTarget, SwitchPlace } from "../../src/shell/bridge-kinds";

@@ -1,8 +1,9 @@
+import type { AuthVerdict } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { planChange, commitChange , UNMETERED_STORAGE_CAP, signaturesForCycle } from "../src/pipeline.js";
 import { FakeRepo } from "./fakes.js";
 import type { Change } from "../src/ports.js";
-import type { AuthVerdict, Rule } from "../src/rules.js";
+import type { Rule } from "../src/rules.js";
 import { providerAuthservIds } from "../src/authserv-ids.js";
 import { fakeKeys, letter, nodemailerSign, rsaKey } from "./fixtures/dkim-signed.js";
 

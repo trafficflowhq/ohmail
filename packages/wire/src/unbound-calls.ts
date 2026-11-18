@@ -114,9 +114,9 @@ export type UnboundCall =
   | "POST /mailboxes/oauth/microsoft/device/start"
   | "POST /mailboxes/oauth/microsoft/start"
   | "POST /mailboxes/probe"
-  // apps/webapp/app/shell/shell-verbs.ts
+  // apps/webapp/app/(product)/mailbox/draft-reply-wire.ts
   | "POST /messages/:id/draft"
-  // apps/webapp/app/shell/live-body.ts
+  // packages/app-logic/src/reading/live-body.ts
   | "GET /messages/:id/live-body"
   // apps/webapp/app/api-client.ts
   | "POST /messages/:id/load-remote"
@@ -151,7 +151,7 @@ export type UnboundCall =
   | "POST /screener/suggest"
   | "GET /screener/unscreened/count"
   | "GET /screener/waiting/count"
-  // apps/webapp/app/shell/shell-verbs.ts
+  // The former web caller reads tags from the mirror now; this entry awaits the route audit.
   | "GET /tags"
   // apps/sidecar/src/cloud-engine.ts
   | "GET /threads/:id"

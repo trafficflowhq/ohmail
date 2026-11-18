@@ -14,11 +14,12 @@
  * (`tag_rename`/`tag_delete` via `tagAdmin`), and Delete states the count and that the messages do not move BEFORE it
  * asks — a tag is ohmail's own row.
  */
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
-import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
+import { presentsUnread } from "@ohmail/client-engine";
 import { Button, Kbd, ListPane, ListRows, MessageRow, TAG_HUES, TagDot, TextField } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";

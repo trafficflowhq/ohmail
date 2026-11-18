@@ -1,3 +1,4 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { and, asc, desc, eq, exists, getTableColumns, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn, PgInsertValue } from "drizzle-orm/pg-core";
 import { accountOfMessage, accountOfMailbox, mailboxPass, markPassDone, passMark, readPassProgress, accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, folderQueueOf, flagQueueOf, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock, writeInvitation as writeInvitationDoor, invitationBackfillPage, settleInvitationBackfill, type InvitationBackfillPage, type InvitationWrite } from "@trafficflow/db";
@@ -5,7 +6,7 @@ import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   FolderAttribution,
-  Rule, NativeLocator, EmailAddress,
+  Rule, NativeLocator,
   MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput, RoutingDecisionInput, ApprovalInput, AttachmentMeta,
   ThreadParent, ThreadUpsertInput, ThreadUpsertResult, ThreadMergeInput, KnownSenders, ContactSource,
   InvitationWritten,

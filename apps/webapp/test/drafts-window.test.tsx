@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineDraft } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { DraftsView } from "../app/views/DraftsView";
 import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";

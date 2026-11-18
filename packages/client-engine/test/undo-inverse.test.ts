@@ -1,14 +1,16 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  FolderEntity,
+  MessageStateDTO,
+  MutationKind,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { MemoryMirrorStore } from "../src/store.js";
 import { inverseMutations, UNDO_CLASS } from "../src/undo.js";
 import { mutationEffects } from "../src/mutations.js";
 import {
   MUTATION_KINDS,
-  type EngineMessage,
-  type EngineMutation,
-  type FolderEntity,
-  type MessageStateDTO,
-  type MutationKind,
 } from "../src/types.js";
 
 /**

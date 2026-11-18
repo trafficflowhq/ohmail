@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import {
   arrivalMs,
   conversationKeyOf,
@@ -19,7 +20,7 @@ import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { isHeldFolder } from "@trafficflow/core/destinations";
 import { moveLanding } from "./mutations.js";
 import type { EntityReader } from "./store.js";
-import { FOLDER_OF_VIEW, type EngineMessage, type EngineMutation } from "./types.js";
+import { FOLDER_OF_VIEW } from "./types.js";
 
 /*
  * ONE ROW PER CONVERSATION, ACROSS SECTIONS (owner 2026-09-28). The Ohbox draws a conversation at

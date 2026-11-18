@@ -1,6 +1,6 @@
 import {
   IdempotencyRaceLost, ServiceError, sha256,
-  type CreateRuleBody, type PatchRuleBody, type RuleRemoval, type RuleRequestResult,
+  type RuleRemoval, type RuleRequestResult,
 } from "@trafficflow/services/mail";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { serviceContext } from "../context.js";
@@ -9,7 +9,7 @@ import { canonicalQuery } from "../middleware.js";
 import { answer, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { rules, readBody } from "./shared.js";
-import type { RequestOf, UntrustedBody } from "@ohmail/wire";
+import type { CreateRuleBody, PatchRuleBody, RequestOf, UntrustedBody } from "@ohmail/wire";
 
 /**
  * Rules CRUD. Mutations emit a `rule` change (X-Sync-Seq echoed); all account-scoped (404

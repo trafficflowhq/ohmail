@@ -1,8 +1,7 @@
-import type { CalendarWindow } from "@ohmail/wire";
+import type { CalendarWindow, EngineDraft, EngineMessage } from "@ohmail/wire";
 import { CASCADE_TYPES } from "../mirror-bounds.js";
 import { CALENDAR_WINDOW_DEFAULT, calendarSpanVictims, type CalendarSpan } from "./calendar-span.js";
 import { winningStates } from "../selectors.js";
-import type { EngineDraft, EngineMessage } from "../types.js";
 import { RENDERED_PINS } from "./ceilings.js";
 import type { WakeSignalSource } from "./options.js";
 import { EngineReads } from "./reads.js";

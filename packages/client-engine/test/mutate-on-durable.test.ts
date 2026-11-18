@@ -1,8 +1,9 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import { faultyFactory } from "./helpers/faulty-idb.js";
 import {
-  IndexedDbMirrorStore, OhmailEngine, OUTBOX_TYPE, type EngineMutation,
+  IndexedDbMirrorStore, OhmailEngine, OUTBOX_TYPE,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 

@@ -1,3 +1,4 @@
+import type { WorkflowPattern } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -9,7 +10,7 @@ import {
   type SpendAction, type SpendOutcome, type SpendPort, type Tx,
 } from "@trafficflow/db";
 import {
-  makeOpusProposer, unconfiguredProposer, type AnthropicLike, type LogFields, type Logger, type WorkflowPattern,
+  makeOpusProposer, unconfiguredProposer, type AnthropicLike, type LogFields, type Logger,
   type WorkflowPort,
 } from "@trafficflow/core";
 import { proposalGeneratePass } from "../src/proposal-cron.js";

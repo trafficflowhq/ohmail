@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MessageBody, TagEntity as TagDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, MessageBody, TagDTO, FeedPartition } from "@ohmail/client-engine";
+import type { FeedPartition } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { prepareToday, type TodayOhboxProps } from "./ohbox/_today";
 import { ReadsView } from "../app/views/ReadsView";

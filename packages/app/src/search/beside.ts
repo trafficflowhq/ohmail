@@ -4,8 +4,9 @@
  * book for a person-first question; the calendar's events for the same words; where an address leads. The shell
  * that composes Search provides it. Nothing standing above is a mistake, said at once.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createContext, useContext } from "react";
-import type { AddressBookEntry, EngineMessage } from "@ohmail/client-engine";
+import type { AddressBookEntry } from "@ohmail/client-engine";
 import type { None } from "../host/index.js";
 
 export interface SearchWords {

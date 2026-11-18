@@ -4,8 +4,9 @@
  * decision leaves once and the next sender opens below it. Of the engine it asks only for the open letters' bodies;
  * selecting a sender reads nothing and marks nothing read.
  */
+import type { FailedAtGateDTO, ScreenerSenderDTO } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { senderKey, type FailedAtGateDTO, type ScreenerSenderDTO } from "@ohmail/client-engine";
+import { senderKey } from "@ohmail/client-engine";
 import { useEngineOrNull } from "../engine/context.js";
 import type { KeyBinding } from "../keys/binding.js";
 import type { DecisionDestination, DecisionScope } from "./decision.js";

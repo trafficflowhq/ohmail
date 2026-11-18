@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { act, message, mountShell, press, stubDom, unmountAll, waitFor } from "./_draft-shell.js";
 
 /**

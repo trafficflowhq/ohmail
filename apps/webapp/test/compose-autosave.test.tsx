@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { OhmailEngine, type EngineAdapter, type EngineDraft, type EngineMutation } from "@ohmail/client-engine";
+import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import {
   useComposeAutosave, worthSaving, reopenWouldOverwrite, draftNoteKey, AUTOSAVE_DELAY_MS,

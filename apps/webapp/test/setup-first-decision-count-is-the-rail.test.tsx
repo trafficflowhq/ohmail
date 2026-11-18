@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { NOW, S, act, consentTransport, engineOver, msg, setup, storeWith, teardown, waitFor } from "./_view-shell";
-import type { EngineMessage } from "@ohmail/client-engine";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 

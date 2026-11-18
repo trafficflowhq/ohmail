@@ -4,8 +4,14 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { messageInvitations } from "@trafficflow/db/mail";
 import { materializeMessages } from "@trafficflow/services/mail";
-import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@trafficflow/services/mail";
-import type { MessageInvitationDTO } from "@ohmail/wire";
+import type {
+  MailboxDTO,
+  MessageDTO,
+  MessageInvitationDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+} from "@ohmail/wire";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror } from "../src/cloud-mirror.js";

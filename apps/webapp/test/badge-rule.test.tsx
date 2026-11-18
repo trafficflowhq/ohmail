@@ -11,6 +11,7 @@
  * length, not a third derivation. The phone tabs read the same engine fields
  * (`(tabs)/_layout.tsx#badgeOf`); their own sentence is the mobile parity lane's row.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -19,8 +20,6 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";

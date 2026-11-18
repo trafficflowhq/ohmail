@@ -1,3 +1,4 @@
+import type { EngineDraft, EngineMessage, MutationOutcome, SyncSnapshotPage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   CursorExpiredError,
@@ -8,12 +9,8 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineDraft,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
-  type SyncSnapshotPage,
 } from "../src/index.js";
 
 /**

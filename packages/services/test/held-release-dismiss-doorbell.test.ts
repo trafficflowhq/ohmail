@@ -1,3 +1,4 @@
+import type { SettingsDTO } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -5,7 +6,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { accountSettings, changeLog, mailboxes } from "@trafficflow/db";
 import {
   SyncService, dbFor, dismissHeldRelease, setBlockRemoteImages,
-  type ServiceContext, type SettingsDTO,
+  type ServiceContext,
 } from "../src/index.js";
 
 /**

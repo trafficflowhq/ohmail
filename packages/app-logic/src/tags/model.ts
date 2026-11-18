@@ -3,8 +3,8 @@
  * Rename and Delete. With none (the place's own address, `#/tag`), every tag as a group that shuts and opens, by
  * name. A tag is ohmail's own row: Delete takes it off its letters, which stay where they are.
  */
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
-import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import { newestFirst, usePlaceList, type PlaceList, type PlaceListInput } from "../place-list/place-list.js";
 
 export interface TagsInput extends Omit<PlaceListInput, "rows"> {

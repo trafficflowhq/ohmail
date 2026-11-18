@@ -8,11 +8,11 @@
  * tail and died on the same line while the strip read "Sync failed. Retrying." for the whole
  * session. Measured on the Windows guest against the large rig mailbox (2026-09-21).
  */
+import type { EngineMessage, MutationOutcome, SyncSnapshotPage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, OhmailEngine,
-  type EngineAdapter, type EngineMessage, type MutationOutcome, type SyncChange, type SyncResponse,
-  type SyncSnapshotPage,
+  type EngineAdapter, type SyncChange, type SyncResponse,
 } from "../src/index.js";
 
 const NOW = new Date("2026-09-21T08:00:00.000Z");

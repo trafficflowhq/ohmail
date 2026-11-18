@@ -1,10 +1,11 @@
+import type { EngineMessage, MessageBodyWire, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, OhmailEngine, type EngineAdapter, type EngineMessage, type EntityReader, type MessageBodyWire,
-  type RuleDTO, type SyncChange,
+  MemoryMirrorStore, OhmailEngine, type EngineAdapter, type EntityReader,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { createProjector, listStamp, type ProjectionInputs, type Projected } from "../src/state/world-projection";

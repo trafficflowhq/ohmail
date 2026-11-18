@@ -11,7 +11,6 @@ export interface RefusalEnvelope {
 export type RefusalKind = "read" | "write";
 
 /** The answers to a write that are not a server's verdict on it: offline, or no session to send it in. */
-export type { UnjudgedWriteCode };
 
 /**
  * THE CLOSED SET of codes nobody judged a write with. A write answered with one is kept and asked

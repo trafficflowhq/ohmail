@@ -1,4 +1,5 @@
 /** The slide: how a row leaves the Ohbox's upper groups, and the settled reply that reads the row it answered. */
+import type { EngineMessage } from "@ohmail/wire";
 import {
   useCallback,
   useEffect,
@@ -7,7 +8,6 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
 import type { OhboxListInput, OhboxReplyDone } from "./types.js";
 
 /**

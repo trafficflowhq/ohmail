@@ -10,6 +10,13 @@
  * the route transition closes the editor — and arrives here as an input. Lifted out of
  * `AppShell.tsx` unchanged (ARCH-022).
  */
+import type {
+  ComposeAttachment,
+  EmailAddress,
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+} from "@ohmail/wire";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
 import {
   addressBook,
@@ -21,11 +28,6 @@ import {
   intentOf,
   sendAndDonePlanFor,
   sendingMailboxId,
-  type ComposeAttachment,
-  type EmailAddress,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
   type ForwardAsk,
   type EntityReader,
   type KeptAsNewDraft,

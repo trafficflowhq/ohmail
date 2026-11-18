@@ -3,9 +3,9 @@
  * with its way off, the room under them from the first file on (the pictures' quality and how much is used), and
  * one line over the foot for what the last pick could not do. A drop on the letter is a pick.
  */
+import type { ComposeAttachment } from "@ohmail/wire";
 import type { ReactNode } from "react";
 import { Attach, AttachRoom, Files, FileTile, SendStatus } from "@ohmail/ui/mail";
-import type { ComposeAttachment } from "@ohmail/client-engine";
 import { base64Bytes, useLetterFiles, type LetterCap, type LetterFiles } from "@ohmail/app-logic/write/files";
 import { useText } from "../../text/index.js";
 import { useWriteBeside } from "../above.js";

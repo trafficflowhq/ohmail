@@ -1,7 +1,6 @@
+import type { EngineMutation, ScreenerWaitingItemWire, ScreenerWaitingSenderDTO } from "@ohmail/wire";
 import { isOrganizedFolder } from "@trafficflow/core/destinations";
-import type { ScreenerWaitingItemWire } from "../adapters/adapter.js";
 import { senderKey } from "../selectors.js";
-import type { EngineMutation, ScreenerWaitingSenderDTO } from "../types.js";
 import { EAGER_BODIES_MAX } from "./options.js";
 
 /**

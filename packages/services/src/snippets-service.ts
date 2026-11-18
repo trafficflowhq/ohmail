@@ -1,9 +1,9 @@
+import type { Page, SnippetDTO } from "@ohmail/wire";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { snippets } from "@trafficflow/db";
 import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
-import type { Page, SnippetDTO } from "./dto/types.js";
 
 export interface SnippetBody {
   title: string;

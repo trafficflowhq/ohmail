@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HISTORY_PAGE_ROWS,
@@ -5,7 +6,6 @@ import {
   OhmailEngine,
   StoreTimelineWalker,
   type EngineAdapter,
-  type EngineMessage,
   type ListOlderFn,
   type StoreKeyset,
   type StoreTimeline,

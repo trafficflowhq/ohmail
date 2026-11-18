@@ -1,7 +1,7 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { placingRule, effectForDestination } from "@trafficflow/core/rule-order";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
-import type { RuleDTO } from "@ohmail/client-engine";
 import { actingRules } from "../app/views/rules-standing.js";
 
 // REVIEW-026 probe: which twin the Rules page shows as the sender's rule, against the twin the

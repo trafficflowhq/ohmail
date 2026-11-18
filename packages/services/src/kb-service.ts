@@ -1,3 +1,4 @@
+import type { KbEntryDTO, Page } from "@ohmail/wire";
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { kbEntries, poolKeyOf } from "@trafficflow/db";
 import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext, type Db } from "./context.js";
@@ -7,7 +8,6 @@ import { storeProbe } from "./store-probe.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
 import { SEARCH_QUERY_MAX_CHARS } from "./search-service.js";
-import type { Page, KbEntryDTO } from "./dto/types.js";
 
 /** Default number of KB entries a retrieval returns (RAG top-k). */
 const DEFAULT_K = 5;

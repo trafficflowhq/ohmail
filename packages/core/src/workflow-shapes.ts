@@ -7,10 +7,9 @@
 // code the rules engine and storage gate use, re-exported by `@trafficflow/core/mail` — so
 // `core/dist/ai/` stays, without exception, the private half.
 
-import type { Assert, Complete, ToolName, TriggerKind, WorkflowPattern, WorkflowStep, WorkflowTrigger } from "@ohmail/wire";
+import type { Assert, Complete, ToolName, TriggerKind } from "@ohmail/wire";
 
 /** The step, trigger and pattern shapes travel to clients, so they are declared with the wire's vocabulary. */
-export type { ToolName, TriggerKind, WorkflowPattern, WorkflowStep, WorkflowTrigger };
 
 /** The allowlist, iterated by {@link validateSteps}. Never add `send`/`forward` here. */
 const ALLOWED_TOOL_LIST = ["file_message", "draft_reply", "add_kb_entry"] as const satisfies readonly ToolName[];

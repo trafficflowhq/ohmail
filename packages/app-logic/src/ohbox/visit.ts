@@ -2,9 +2,10 @@
  * The visit: entering a conversation, the cursor moved by the person, the open, and the departures that end a visit
  * (the selection taken away, the view gone, the reader sheet closed).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useRef } from "react";
 import { isOwnSent } from "@ohmail/client-engine";
-import type { EngineMessage, OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
+import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import { recordIn, type Hold } from "./hold.js";
 import type { Suspended } from "./undo.js";
 import type { OhboxListInput } from "./types.js";

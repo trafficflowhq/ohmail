@@ -1,3 +1,4 @@
+import type { WorkflowStep } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -7,7 +8,7 @@ import {
   workflows, workflowRuns, changeLog, threads, type Tx,
 } from "@trafficflow/db";
 import { makeSonnetDrafter, WorkflowExecutor, type AnthropicLike, type WorkflowRunRow } from "@trafficflow/core";
-import type { DraftPort, WorkflowStep } from "@trafficflow/core";
+import type { DraftPort } from "@trafficflow/core";
 
 const NOW = new Date("2026-07-28T12:00:00Z");
 const runner = new WorkflowExecutor();

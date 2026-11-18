@@ -1,5 +1,5 @@
 /** A stream item's sender and stamp, as its row and its sheet print them. */
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 import { headStamp, readerZone } from "@ohmail/app-logic/reader";
 import type { StreamPlace } from "@ohmail/app-logic/streams";
 import { useText, type Text } from "../text/index.js";

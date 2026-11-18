@@ -10,8 +10,8 @@
  * instant. Rendered iff non-null; `undefined` (older build or server), `null` (the ledger says
  * never) and an unparseable instant all render nothing — never "Invalid Date" beside a claim.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useTranslations } from "next-intl";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { displayTime, fullDateTime } from "./format";
 
 export function AwayMark({

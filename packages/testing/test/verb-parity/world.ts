@@ -1,3 +1,4 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
@@ -28,7 +29,7 @@ import { ohboxTidyPass } from "../../../../apps/worker/src/ohbox-tidy.js";
 import { FIXED_NOW, makeDeps, seedMessage, seedScreenerHeld, seedSession, type TestClock } from "../../../api/test/helpers.js";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, OUTBOX_TYPE,
-  type EngineMutation, type FetchLike,
+  type FetchLike,
 } from "@ohmail/client-engine";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════

@@ -1,7 +1,8 @@
 "use client";
 
+import type { EngineMessage, OhmailView } from "@ohmail/wire";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { EngineMessage, ListOlderOutcome, OhmailEngine, OhmailView } from "@ohmail/client-engine";
+import type { ListOlderOutcome, OhmailEngine } from "@ohmail/client-engine";
 
 /**
  * The bottom of a pile, when the device holds only part of the mailbox: "this is your mail" or

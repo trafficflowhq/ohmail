@@ -1,5 +1,6 @@
 /** What a press and a drag on a row stand for: the open, the select, the pick, and the drop's verbs. */
-import type { EngineMessage, OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
+import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import type { DragSource, RailDropTarget } from "../lists/drag-source.js";
 import type { OhboxGroups } from "./groups.js";
 import type { PickSet, PickVerbs } from "./picks.js";

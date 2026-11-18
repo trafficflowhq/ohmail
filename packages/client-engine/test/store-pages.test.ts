@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HISTORY_PAGE_CACHE_ROWS,
@@ -12,9 +13,7 @@ import {
   timelineSegments,
   uuidSuccessor,
   type EngineAdapter,
-  type EngineMessage,
   type ListOlderFn,
-  type MutationOutcome,
   type StoreTimeline,
   type SyncChange,
   type SyncResponse,

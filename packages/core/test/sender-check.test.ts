@@ -1,9 +1,10 @@
+import type { SenderReasonCode } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import {
   CAP_CONFIDENCE, SOFT_CEILING, capSuggestion, claimedIdentity, denyMayRuleTheAddress, identityOfRow, impersonationFiling,
   normalizeSubject,
   registrableDomain, senderCheck, senderCheckAll, senderDomainOf, senderFacts,
-  type CheckedSuggestion, type SenderCheckInput, type SenderReasonCode,
+  type CheckedSuggestion, type SenderCheckInput,
 } from "../src/sender-check.js";
 import { BRANDS } from "../src/brands.js";
 import { isSharedProviderDomain } from "../src/rule-order.js";

@@ -1,10 +1,11 @@
+import type { MailboxDTO } from "@ohmail/wire";
 import { createRequire } from "node:module";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
 import { accounts, mailboxes, messageFailures } from "@trafficflow/db";
-import { ACCOUNT_MAILBOXES_MAX_READ, makeMailboxService, type MailboxDTO } from "@trafficflow/services";
+import { ACCOUNT_MAILBOXES_MAX_READ, makeMailboxService } from "@trafficflow/services";
 import {
   A, B, GOLDEN, LAST_CYCLE_AT, MIN, at, cred, ctxFor, erasing, failure, filing, folder, gapReader, goldenAnswer, heldReader, id,
   inError, organizer, outstandingDrift, seed, seedPlain, settled, svc, theirFirst, theirSecond, theirThird, DAY, type Db,

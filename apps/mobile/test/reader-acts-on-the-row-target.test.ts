@@ -1,8 +1,9 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, OhmailEngine, ohboxRows, triagePiles, type EngineAdapter, type EngineMessage, type SyncChange, type SyncResponse,
+  MemoryMirrorStore, OhmailEngine, ohboxRows, triagePiles, type EngineAdapter, type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 import { createProjector, type ProjectionInputs, type Projected } from "../src/state/world-projection";
 import { closeRoutingSession, openRoutingSession } from "../src/state/held-routing";

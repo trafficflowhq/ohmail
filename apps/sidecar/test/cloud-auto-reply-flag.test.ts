@@ -1,3 +1,11 @@
+import type {
+  EngineMessage,
+  MailboxDTO,
+  MessageDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -5,8 +13,7 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { awayReplies, changeLog } from "@trafficflow/db/mail";
 import { materializeMessages } from "@trafficflow/services/mail";
-import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@trafficflow/services/mail";
-import { ohboxView, type EngineMessage, type EntityReader } from "@ohmail/client-engine";
+import { ohboxView, type EntityReader } from "@ohmail/client-engine";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror, CURSOR_VERSION } from "../src/cloud-mirror.js";

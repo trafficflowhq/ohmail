@@ -42,6 +42,7 @@
  * The derivation itself is not touched here and is not this file's subject — `selectors.ts` owns
  * it and `cross-surface-convergence.test.tsx` owns its agreement across surfaces.
  */
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { shellFrameOf } from "./source-anchor.js";
 import fs from "node:fs";
@@ -54,9 +55,7 @@ import {
   MemoryMirrorStore,
   feedPartition,
   waterlineIdOf,
-  type EngineMessage,
   type FeedPartition,
-  type Folder,
   type SyncChange,
 } from "@ohmail/client-engine";
 

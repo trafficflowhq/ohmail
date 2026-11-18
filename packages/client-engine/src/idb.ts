@@ -1,3 +1,4 @@
+import type { Cursor } from "@ohmail/wire";
 import type { MirrorRecord } from "./apply.js";
 import {
   durableIdbCommit,
@@ -10,7 +11,7 @@ import {
   type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
 } from "./store.js";
 import { OutboxNoticeBus, outboxNoticeChannel, type NoticeChannel } from "./outbox-notices.js";
-import { OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, type Cursor } from "./types.js";
+import { OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE } from "./types.js";
 
 /**
  * WHICH STORE LOST A WRITE, for the notice's log line. The mirror's stable label and not the

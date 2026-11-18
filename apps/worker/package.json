@@ -10,6 +10,7 @@
     "@trafficflow/db": "*",
     "@ohmail/cal-core": "*",
     "@ohmail/cal-providers": "*",
-    "@ohmail/organizer": "*"
+    "@ohmail/organizer": "*",
+    "@ohmail/wire": "*"
   }
 }

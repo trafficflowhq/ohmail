@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { MutationOutcome } from "@ohmail/wire";
 import { act, cleanup, render } from "@testing-library/react";
 import { createElement as h, useContext, useRef, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,7 +7,6 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type MutationOutcome,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import { KeymapContext, useKeymapStore, type KeymapStore } from "@ohmail/app-logic/keys/keymap";

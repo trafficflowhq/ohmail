@@ -2,7 +2,8 @@
  * A MIRROR OF HAND-MADE LETTERS behind an engine that answers the reader and its press seam, recording every
  * mutation and body ask. No test library: the states page draws the reader over it in a browser too.
  */
-import type { EngineMessage, EngineMutation, EntityReader, OhmailEngine } from "@ohmail/client-engine";
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
+import type { EntityReader, OhmailEngine } from "@ohmail/client-engine";
 import { COMPOSER_AT_REST } from "../../support/fake-host.js";
 
 /** A letter, every field a surface reads, the rest from `over`. */

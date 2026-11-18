@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  MutationRejectedError, OhmailEngine, type EngineAdapter, type EngineMutation,
+  MutationRejectedError, OhmailEngine, type EngineAdapter,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { useComposeAutosave, AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";

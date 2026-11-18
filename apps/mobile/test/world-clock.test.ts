@@ -1,6 +1,7 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  MemoryMirrorStore, OhmailEngine, type EngineAdapter, type EngineMessage, type SyncChange, type SyncResponse,
+  MemoryMirrorStore, OhmailEngine, type EngineAdapter, type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 import { createProjector, listStamp, type ProjectionInputs, type Projected } from "../src/state/world-projection";
 import { SCREENING_UNSUPPLIED, type WorldActions } from "../src/state/live";

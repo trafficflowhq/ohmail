@@ -1,8 +1,8 @@
+import type { SyncChange, SyncResponse } from "@ohmail/wire";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
-import type { SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { createCloudMirror as makeCloudMirror } from "../src/cloud-mirror.js";
 import type { CloudAuth } from "../src/cloud-auth.js";

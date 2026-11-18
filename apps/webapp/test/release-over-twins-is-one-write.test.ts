@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type ReleaseIntent, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type ReleaseIntent, type SyncChange } from "@ohmail/client-engine";
 import { releaseCommit, releaseRules } from "@ohmail/app-logic/press/sender-screening";
 
 /**

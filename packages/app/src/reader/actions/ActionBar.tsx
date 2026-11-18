@@ -2,12 +2,12 @@
  * THE ACTION PANEL of the open letter, at the foot of the column, and its More menu. Its buttons carry the names a
  * person and the journeys find them by. The stop of the read rule: what runs under it is not on screen.
  */
+import type { EngineMessage, TagEntity } from "@ohmail/wire";
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Menu, MenuItem } from "@ohmail/ui/base";
 import { ActionPanel, MovePicker, type PanelVerb } from "@ohmail/ui/mail";
 import { useMirror } from "@ohmail/app-logic/reader";
 import { useListVisit } from "@ohmail/app-logic/reading";
-import type { EngineMessage, TagDTO as TagEntity } from "@ohmail/client-engine";
 import { useResurfaceTime } from "../../frame/room.js";
 import { useText } from "../../text/index.js";
 import { useLetterKeys, type PanelMenu } from "../keys.js";

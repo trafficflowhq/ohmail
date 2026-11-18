@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
@@ -10,8 +11,6 @@ import {
   consentPartition,
   pressForecast,
   rulesInPlay,
-  type EngineMessage,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";

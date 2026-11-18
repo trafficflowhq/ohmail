@@ -5,12 +5,12 @@
  * from any known position is reached by UNCACHED walk steps, so a walk never evicts what is on
  * screen, and a page evicted off screen is asked again from its own position on the way back.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { errorClassOf, type OhmailEngine, type ServerSearchFacets, type ServerSearchOutcome } from "./engine.js";
 import {
   HISTORY_PAGE_ROWS, segmentAt, storeInstantOf, storeKeyOf, storeSearchList, timelineSegments,
   type StoreKeyset, type StoreSearchKey, type StoreTimeline, type TimelineSegment,
 } from "./store-pages.js";
-import type { EngineMessage } from "./types.js";
 import type { SearchPhaseVerdict, WindowSearchPhases } from "./search-phases.js";
 
 /** How long a list waits for the store before it says so — Search's ceiling. */

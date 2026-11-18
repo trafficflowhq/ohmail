@@ -1,6 +1,7 @@
+import type { StayedWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { OhmailEngine } from "../src/engine.js";
-import type { EngineAdapter, StayedWire } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * WHY-STAYED ASKS EVERY ROW. `GET /screener/stayed` refuses more than 100 ids (400), so a sheet

@@ -1,4 +1,5 @@
 /** The picks: the Ohbox's multi-select, view-local, the verbs over it, and the keyboard's range. */
+import type { EngineMessage } from "@ohmail/wire";
 import {
   useCallback,
   useEffect,
@@ -9,7 +10,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type { EngineMessage, OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
+import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import type { BulkAction } from "../press/actions.js";
 import type { OhboxListInput, OhboxListModel, PickPanel } from "./types.js";
 

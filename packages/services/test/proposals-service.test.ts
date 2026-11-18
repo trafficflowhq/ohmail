@@ -1,3 +1,4 @@
+import type { WorkflowPattern } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -6,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { ProposalsService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { ServiceError } from "../src/errors.js";
-import type { ProposalAnswer, WorkflowPattern, WorkflowPort } from "@trafficflow/core";
+import type { ProposalAnswer, WorkflowPort } from "@trafficflow/core";
 
 const NOW = new Date("2026-07-28T12:00:00Z");
 const svc = new ProposalsService();

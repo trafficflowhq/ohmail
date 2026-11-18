@@ -4,10 +4,11 @@
  * as a stopped sync; the line says when the mailboxes were last checked and how many letters went
  * to which pile since the person last left the Ohbox. One implementation for web, desktop and phone.
  */
+import type { EngineMessage, ISODateTime, OhmailView } from "@ohmail/wire";
 import type { EntityReader } from "./store.js";
 import { isOwnSent, messagesByDateDesc } from "./selectors.js";
 import { storeInstantOf } from "./store-pages.js";
-import { VIEW_OF_FOLDER, type EngineMessage, type ISODateTime, type OhmailView } from "./types.js";
+import { VIEW_OF_FOLDER } from "./types.js";
 
 /**
  * `view_meta` id of the Ohbox visit mark. Device-local (`putLocal`, seq 0): never on `/sync`, never

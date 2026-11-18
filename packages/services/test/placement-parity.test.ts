@@ -1,3 +1,4 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -10,7 +11,7 @@ import {
   accounts, folderState, mailboxes, messageStates, messages, rules as rulesTbl, senderIsDecidedSql, threads,
 } from "@trafficflow/db";
 import { effectForDestination, standingRule, type Rule } from "@trafficflow/core/mail";
-import { consentIndex, decidedDestination, ohboxView, type RuleDTO } from "@ohmail/client-engine";
+import { consentIndex, decidedDestination, ohboxView } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { MessageService, TriageService } from "../src/index.js";
 import type { ServiceContext } from "../src/context.js";

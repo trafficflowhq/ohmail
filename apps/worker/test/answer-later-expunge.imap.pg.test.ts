@@ -1,3 +1,4 @@
+import type { MessageStateDTO } from "@ohmail/wire";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -10,7 +11,7 @@ import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { SyncService, TriageService, type ServiceContext, dbFor, type Db as ServicesDb } from "@trafficflow/services";
-import { MemoryMirrorStore, triagePiles, type MessageStateDTO } from "@ohmail/client-engine";
+import { MemoryMirrorStore, triagePiles } from "@ohmail/client-engine";
 import { runSyncCycle } from "@ohmail/organizer/sync";
 import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";

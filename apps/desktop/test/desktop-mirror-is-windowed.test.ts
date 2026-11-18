@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -6,8 +7,6 @@ import {
   DEFAULT_STORE_POLICY,
   MemoryMirrorStore,
   OhmailEngine,
-  type EngineMessage,
-  type MutationOutcome,
   type StorePolicy,
   type SyncChange,
   type SyncResponse,

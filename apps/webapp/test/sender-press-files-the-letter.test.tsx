@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, OhmailEngine, mutationEffects,
-  type EngineMessage, type EngineMutation, type Folder, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { ISO, act, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
 import { COMMIT_MS, UNDO_MS } from "@ohmail/app-logic/screener/screener-state";

@@ -1,7 +1,8 @@
+import type { Cursor } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   BaseMirrorStore, LAST_DRAIN_AT_META, MemoryMirrorStore, SNAPSHOT_PREFIX_SEQ_META,
-  type Cursor, type MirrorRecord,
+  type MirrorRecord,
 } from "@ohmail/client-engine";
 
 /**

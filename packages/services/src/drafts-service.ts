@@ -5,13 +5,12 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  DRAFT_BODY_MAX_BYTES, createLogger, draftBodyOverCeiling, utf8ByteLength, type EmailAddress,
+  DRAFT_BODY_MAX_BYTES, createLogger, draftBodyOverCeiling, utf8ByteLength,
 } from "@trafficflow/core/mail";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
-import type { DraftDTO } from "./dto/types.js";
-import type { CreateDraftBody, PatchDraftBody, SendResolution } from "@ohmail/wire";
+import type { CreateDraftBody, DraftDTO, EmailAddress, PatchDraftBody, SendResolution } from "@ohmail/wire";
 import { draftContentRevision } from "./draft-revision.js";
 import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./outbound-html.js";
 
@@ -100,7 +99,6 @@ export const DRAFT_SUBJECT_MAX_CHARS = 8192;
 export const RECIPIENT_NAME_MAX_CHARS = 100;
 
 /** The body of a draft's create and of its patch, and a held send's answer: declared with the wire's vocabulary. */
-export type { CreateDraftBody, PatchDraftBody, SendResolution };
 
 /** A mutation's result: the DTO plus the change_log seq to echo as `X-Sync-Seq`. */
 export interface DraftMutation {

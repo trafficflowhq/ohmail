@@ -1,3 +1,4 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { dbFor } from "../src/context.js";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
@@ -11,7 +12,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import { namesAuthor } from "@trafficflow/core/rule-order";
 import { applicableProfileRule } from "@trafficflow/core/adapters/organizer-profile";
-import { consentIndex, type RuleDTO } from "@ohmail/client-engine";
+import { consentIndex } from "@ohmail/client-engine";
 import { ScreenerService } from "../src/screener-service.js";
 import { RulesService } from "../src/rules-service.js";
 import { ServiceError } from "../src/errors.js";

@@ -5,8 +5,8 @@
  * over mail it did not change; and PHONE-RULE-BRANCH-UNDO-SAYS-NOTHING-TO-UNDO — a Move a later press
  * about the sender replaced said there was nothing to undo while its letter stayed where it moved.
  */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { type EngineMessage, type RuleDTO } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { resetLocaleRegisterForTests } from "../src/i18n/locale";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

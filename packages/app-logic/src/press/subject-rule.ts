@@ -10,17 +10,15 @@
  * conservative — `null` is a good answer and the sheet says so ({@link detectSubjectToken}). Pure:
  * the reader is passed in, never captured — `SubjectRuleSheet` renders, `AppShell` dispatches.
  */
+import type { EngineMessage, EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
 import {
   FOLDER_OF_VIEW,
   retroPassWouldMove,
   retroWalkWouldMove,
   rulesList,
   senderKey,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
   type MutationStatus,
-  type RuleDTO,
   ruleMatchKey,
 } from "@ohmail/client-engine";
 import type { DecisionDestination } from "../screener/decision.js";

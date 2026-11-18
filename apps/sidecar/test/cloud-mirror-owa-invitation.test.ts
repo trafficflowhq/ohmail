@@ -1,9 +1,9 @@
+import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { mailboxes, messageBodies, messages } from "@trafficflow/db/mail";
 import { materializeMessages, messageService } from "@trafficflow/services/mail";
-import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { normalizeMime } from "@trafficflow/core/mail";
 import { owaInvitationStub } from "@ohmail/client-engine";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";

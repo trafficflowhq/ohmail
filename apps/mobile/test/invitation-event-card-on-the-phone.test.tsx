@@ -6,13 +6,14 @@
  * each conversation member carry their events once each, and the reader redraws when the texts
  * land, which is an engine notification that moves no stamp the world derives from.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createElement as h, type ReactNode } from "react";
 import { act } from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryMirrorStore, MutationRejectedError, OhmailEngine, type EngineAdapter, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, MutationRejectedError, OhmailEngine, type EngineAdapter, type SyncChange } from "@ohmail/client-engine";
 import { mount } from "./_rendered-dom";
 import { APPLE, EXCHANGE_ICAL, GOOGLE, HOSTILE_DURATION, TWO_EVENTS, type InviteShape } from "../../../packages/core/test/fixtures/invite-shapes";
 

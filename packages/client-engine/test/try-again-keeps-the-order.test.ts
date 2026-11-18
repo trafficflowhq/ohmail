@@ -14,12 +14,13 @@
  * without its age check → every pressed case red; the waiting press keeping its own backoff → the
  * backoff case red.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_HOLD_CEILING_MS, OUTBOX_MAX_SERVER_FAILURES,
-  OUTBOX_REPLAY_DEADLINE_MS, OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, type EngineMutation,
+  OUTBOX_REPLAY_DEADLINE_MS, OUTBOX_TRY_AGAIN_ENDS_HOLD_MS,
 } from "@ohmail/client-engine";
 
 const NOW = "2026-10-23T09:00:00.000Z";

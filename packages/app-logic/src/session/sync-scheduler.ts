@@ -1,3 +1,4 @@
+import type { MessageBodyWire, MutationAnswer } from "@ohmail/wire";
 import {
   MutationRejectedError,
   type EngineAdapter,
@@ -5,8 +6,6 @@ import {
   type MessageByIdFn,
   type ListTrashFn,
   type StoreTimeline,
-  type MessageBodyWire,
-  type MutationAnswer,
   type WithdrawSendAnswer,
   type OhmailEngine,
   type RestoreFromTrashFn,

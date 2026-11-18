@@ -9,6 +9,7 @@
  * Left alone, on purpose: a live owner's entry, an entry with no owner (an older build's), and every
  * entry when this engine has no locks to ask (a webview without them, the phone's own store).
  */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { beforeAll, describe, expect, it } from "vitest";
 import { IDBFactory, IDBKeyRange as FakeKeyRange } from "fake-indexeddb";
 import {
@@ -18,9 +19,7 @@ import {
   OhmailEngine,
   OUTBOX_TYPE,
   type EngineAdapter,
-  type EngineDraft,
   type EngineLocks,
-  type EngineMutation,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 

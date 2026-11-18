@@ -1,5 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type DecideIntent, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type DecideIntent, type SyncChange } from "@ohmail/client-engine";
 import { planDecideCommit } from "../src/state/live";
 
 /**

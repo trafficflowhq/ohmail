@@ -3,15 +3,13 @@
  * (`_draft-shell.ts`), under the catalogue it reads, with no view. A case presses its doors and reads what reached
  * the wire, the stored buffer and the reports. The Reply Run's setters are no-ops: no run is open here.
  */
+import type { EngineDraft, EngineMessage, EngineMutation } from "@ohmail/wire";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider, useTranslations } from "next-intl";
 import {
   MemoryMirrorStore,
   optionsFromFacts,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type OhmailEngine,
 } from "@ohmail/client-engine";

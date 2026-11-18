@@ -1,3 +1,4 @@
+import type { SyncChange } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import {
   accountSettings, changeLog, mailboxes, messages, routingDecisions,
   storeScreenerSuggestion, SCREENER_SUGGESTION_PROVENANCE,
 } from "@trafficflow/db";
-import { SyncService, dbFor, type ServiceContext, type SyncChange } from "../src/index.js";
+import { SyncService, dbFor, type ServiceContext } from "../src/index.js";
 import { resetScreeningState } from "../src/consent-reset.js";
 
 /**

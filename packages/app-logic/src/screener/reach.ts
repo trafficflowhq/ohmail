@@ -2,7 +2,7 @@
  * HOW WIDE A DECISION REACHES before the person chooses: the row's own scope, as the store answered it, else the
  * sender alone.
  */
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import type { DecisionScope } from "./decision.js";
 

@@ -1,5 +1,6 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { HttpAdapter, MemoryMirrorStore, mutationEffects, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { HttpAdapter, MemoryMirrorStore, mutationEffects, type SyncChange } from "@ohmail/client-engine";
 
 /**
  * THE OVERLAY STATES THE PASS THE SERVER WILL START, AND NEVER ITS END. A create with past mail,

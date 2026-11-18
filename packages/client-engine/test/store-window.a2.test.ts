@@ -1,3 +1,4 @@
+import type { EngineDraft, EngineMessage, MessageStateDTO, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
@@ -7,10 +8,6 @@ import {
   OhmailEngine,
   RENDERED_PINS,
   type EngineAdapter,
-  type EngineDraft,
-  type EngineMessage,
-  type MessageStateDTO,
-  type MutationOutcome,
   type StorePolicy,
   type SyncChange,
   type SyncResponse,

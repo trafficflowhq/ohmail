@@ -26,11 +26,11 @@
  *   · remove `sheetOne` from `NOTICE_CAPTION`                           → census (lexical sweep)
  *   · remove `e.stopPropagation()` on `.sc-notice` in `StreamCard`      → the press case
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { COPY, MessageBody } from "../../../packages/letter-body/src/MessageBody";

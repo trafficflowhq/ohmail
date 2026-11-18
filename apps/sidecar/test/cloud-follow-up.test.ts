@@ -1,10 +1,10 @@
+import type { MessageDTO, SyncChange, SyncResponse, ThreadDTO } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { folderState, mailboxes } from "@trafficflow/db/mail";
-import type { MessageDTO, SyncChange, SyncResponse, ThreadDTO } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
 import { createCloudMirror, FOLLOW_UP_CAP_MS, type CloudMirror } from "../src/cloud-mirror.js";

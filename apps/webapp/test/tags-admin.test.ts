@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { TagEntity as TagDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -7,7 +8,6 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { RailNav, TAG_HUES, ThemeProvider, ToastHost } from "@ohmail/ui";
-import type { TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";
 import { shellFrameOf } from "./source-anchor";

@@ -1,9 +1,9 @@
+import type { RuleDTO, SnapshotResponse, SyncChange, SyncResponse } from "@ohmail/wire";
 import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { changeLog, rules } from "@trafficflow/db/mail";
-import type { RuleDTO, SnapshotResponse, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror, RULES_REFRESH_MIN_GAP_MS } from "../src/cloud-mirror.js";

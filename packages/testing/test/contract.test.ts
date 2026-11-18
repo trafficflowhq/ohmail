@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation, MessageStateDTO, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { apiRoutes, createApp, csrfTokenFor, type ApiDeps } from "@trafficflow/api";
 // THE REAL PASS, not a stand-in for it. The claim below is that what the worker's cycle and the
@@ -19,11 +20,7 @@ import {
   ohboxView,
   screenerSegments,
   triagePiles,
-  type EngineMessage,
-  type EngineMutation,
   type FetchLike,
-  type MessageStateDTO,
-  type RuleDTO,
 } from "@ohmail/client-engine";
 
 /**

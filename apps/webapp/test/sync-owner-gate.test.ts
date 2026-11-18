@@ -18,13 +18,13 @@
  * adapter. `createSyncGate` takes the mirror's name with NO DEFAULT, so a caller that forgets
  * to say syncs nothing rather than everything.
  */
+import type { MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
   type EngineAdapter,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";

@@ -24,11 +24,11 @@
  * the mirror or IndexedDB: closing the app forgets it — the rows' own lifetime.
  */
 
+import type { MessageBody, WithheldMarker } from "@ohmail/wire";
 import { useCallback, useRef, useState } from "react";
 import {
   createSessionBodyDoor, narrowOlderBody,
-  type MessageBody, type OlderBodyOutcome, type OlderBodyWire, type SessionBodyHeld,
-  type WithheldMarker,
+  type OlderBodyOutcome, type OlderBodyWire, type SessionBodyHeld,
 } from "@ohmail/client-engine";
 import { api, ApiError, apiConfigured } from "../api-client";
 

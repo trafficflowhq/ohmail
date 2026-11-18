@@ -10,9 +10,10 @@
  * the world has it; without it the open letter is read, as the reference draws it once opened. The presses a key
  * names in the reading column (`at=`, `hist=`, a menu) are the opener's (`reader-pages.ts`), as a person makes them.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import type { EngineMessage, ResurfacedThreadRow, ThreadMark } from "@ohmail/client-engine";
+import type { ResurfacedThreadRow, ThreadMark } from "@ohmail/client-engine";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
 import { PresentedMirrorContext } from "@ohmail/app-logic/reading";

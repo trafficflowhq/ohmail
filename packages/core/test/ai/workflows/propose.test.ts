@@ -1,10 +1,10 @@
+import type { WorkflowPattern } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   buildProposeParams, deriveProposals, makeOpusProposer, unconfiguredProposer,
   MAX_PROPOSALS_PER_PASS, PROPOSAL_TOOLS, PROPOSE_RESULT_SCHEMA,
-  type WorkflowPattern,
 } from "../../../src/ai/workflows/propose.js";
 import type { AnthropicLike } from "../../../src/ai/classify.js";
 import { ModelRuleRefusal } from "../../../src/model-rules.js";

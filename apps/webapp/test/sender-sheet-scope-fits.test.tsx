@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -5,7 +6,7 @@ import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import { senderScreening } from "@ohmail/app-logic/press/sender-screening";

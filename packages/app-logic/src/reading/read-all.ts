@@ -1,4 +1,5 @@
-import { MARK_SEEN_CHUNK, type EngineMutation } from "@ohmail/client-engine";
+import type { EngineMutation } from "@ohmail/wire";
+import { MARK_SEEN_CHUNK } from "@ohmail/client-engine";
 
 /**
  * `PATCH /messages` accepts at most 200 ids and 413s above that (`packages/api/src/routes/

@@ -20,6 +20,7 @@
  * - ROWS PICKED: `a`, `e`, `b`, `m`, `d`, ⌫ and ⌦ act on the picked set and never on the open letter, whichever row
  *   the walk started from and whichever letter is shown.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { createElement as h, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -33,7 +34,7 @@ import { LANDING_REST_MS } from "@ohmail/app-logic/reading/reader-seen";
 import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import {
   mutationEffects, OhmailEngine,
-  type EngineMessage, type EngineMutation, type MirrorStore, type SyncChange,
+  type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../../messages/en.json";
 import { act, consentTransport, msg, NOW, S, setup, storeWith, teardown, waitFor } from "../_view-shell";

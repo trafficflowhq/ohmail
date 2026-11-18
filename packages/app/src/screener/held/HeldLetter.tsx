@@ -5,8 +5,8 @@
  * body's own Show pictures. A body that failed offers Retry, the one way past a server that refused. Under a letter of
  * Waiting stands the calendar's part for an invitation.
  */
+import type { EmailAddress, EngineMessage } from "@ohmail/wire";
 import { useState } from "react";
-import type { EmailAddress, EngineMessage } from "@ohmail/client-engine";
 import { letterPictures, useLetterBody } from "@ohmail/app-logic/reader";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { RefusalLine } from "@ohmail/ui/base";

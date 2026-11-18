@@ -1,4 +1,5 @@
-import type { EngineMutation, EntityReader, RoutingOpen, RuleDTO } from "@ohmail/client-engine";
+import type { EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
+import type { EntityReader, RoutingOpen } from "@ohmail/client-engine";
 import type { ReleasePressInput } from "./routing-undo.js";
 
 /**

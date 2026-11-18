@@ -3,8 +3,9 @@
 // (INSTANT-ARCH §6.7). A dependency-free core subpath, like `./ics` above; imported for local
 // use AND re-exported below, so this engine's public surface is unchanged while there is
 // exactly one definition of each.
+import type { EngineMutation, WaitingRequestWire, WithdrawSendOutcome } from "@ohmail/wire";
 import { type MirrorFreshness, STALE_RESUME_MS } from "@trafficflow/core/drain-policy";
-import type { CreatedDraftRow, EngineAdapter, WithdrawSendOutcome } from "../adapters/adapter.js";
+import type { CreatedDraftRow, EngineAdapter } from "../adapters/adapter.js";
 import type { KeptDecision } from "../kept-decisions.js";
 import type { MutationEffect } from "../mutations.js";
 import { ObjectUrlLedger } from "../object-urls.js";
@@ -17,7 +18,7 @@ import {
   type StoreTimelineOutcome,
 } from "../store-pages.js";
 import { type EntityReader, MemoryMirrorStore, type MirrorStore, type OutboxNotices } from "../store.js";
-import { type EngineMutation, NAMED_FEED_KINDS, OUTBOX_ABANDONED_TYPE, type WaitingRequestWire } from "../types.js";
+import { NAMED_FEED_KINDS, OUTBOX_ABANDONED_TYPE } from "../types.js";
 import type { AttachmentItem, AttachmentsOutcome } from "./attachment-items.js";
 import type { KeptAsNewDraft, MutationResult, PendingMutation } from "./mutation-views.js";
 import {

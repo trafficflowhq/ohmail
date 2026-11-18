@@ -1,8 +1,9 @@
+import type { ScreenRequestResult } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { mailboxes, organizerRequests } from "@trafficflow/db";
-import { ScreenerService, type ScreenRequestResult } from "../src/index.js";
+import { ScreenerService } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
 /**

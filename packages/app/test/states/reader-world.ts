@@ -5,7 +5,7 @@
  * Ohbox's). Every person and address is invented; the text is plain (no letter's design is here). The account reads
  * on Tuesday 10 November 2026, 10:30, on a clock the page holds there.
  */
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 
 export const NOW = new Date("2026-11-10T10:30:00.000Z");
 

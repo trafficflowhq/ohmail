@@ -6,12 +6,13 @@
  * today's invitation note and event under each letter. Nothing here keeps state of its own, and no file of
  * `packages/app` imports it. It leaves when the composition above the panes is lifted.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createContext, useCallback, useContext, useMemo, type Context } from "react";
 import type { ReaderEntry } from "@ohmail/app/host";
 import { readerEntryFrom, type ReaderParts, type ReaderReply } from "@ohmail/app/reader";
 import { letterBody } from "@ohmail/app/reader/body";
 import { useMirror } from "@ohmail/app-logic/reader";
-import type { EngineMessage, EntityReader } from "@ohmail/client-engine";
+import type { EntityReader } from "@ohmail/client-engine";
 import type { AttachmentsChrome } from "./attachments";
 import { useDrawnBody } from "./body-slice";
 import { InvitationNote } from "./InvitationNote";

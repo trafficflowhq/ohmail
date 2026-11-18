@@ -71,9 +71,6 @@ export interface ConnectAttemptFacts {
   smtpRefused?: string;
 }
 
-/** What a mint hands the browser, declared with the wire's vocabulary. */
-export type { StagedUploadGrantWire };
-
 /**
  * How a host stages attachment bytes out of the request body — a port, optional, and the
  * optionality is the security property. Bytes used to ride the send request base64-encoded,

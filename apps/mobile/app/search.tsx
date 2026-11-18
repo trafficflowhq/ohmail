@@ -7,6 +7,7 @@
  * how fast. An address-shaped query that settles empty offers the address door: All · From them ·
  * To them — the device's rows, then the archive's (`useAddressArchive`), as the web address view.
  */
+import type { EngineMessage as StoreMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactElement } from "react";
 import { TextInput, View } from "react-native";
 import { router } from "expo-router";
@@ -31,7 +32,6 @@ import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { holdReader, holdWhileOpen } from "../src/ui/reader-held";
 import { ReleaseOnReturn } from "../src/ui/more-pane";
 import type { WorldMail } from "../src/state/world";
-import type { StoreMessage } from "../src/state/live";
 
 /** A row of the one list: the device's own, a store slot read at render, or one only the archive holds. */
 type Row = { key: string; device: WorldMail } | { key: string; slot: number } | { key: string; archive: StoreMessage; mail: WorldMail };

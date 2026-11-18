@@ -8,8 +8,9 @@
  * letters to the Screener for good. One line per batch, no toast.
  */
 
+import type { AutoFiledItemWire } from "@ohmail/wire";
 import { useEffect, useReducer, useRef, useState } from "react";
-import type { AutoFiledItemWire, OhmailEngine } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import { durableSet } from "../storage/durable.js";
 import { scopeSuffix, usePinnedScope, type StorageScope } from "../storage/scope.js";
 

@@ -1,5 +1,6 @@
+import type { EngineDraft } from "@ohmail/wire";
 import { useEffect, useState } from "react";
-import type { EngineDraft, OhmailEngine, ScheduleFilesAnswer } from "@ohmail/client-engine";
+import type { OhmailEngine, ScheduleFilesAnswer } from "@ohmail/client-engine";
 
 /** One answer per engine, once one came: a door does not change what it keeps while it runs. */
 const said = new WeakMap<OhmailEngine, ScheduleFilesAnswer>();

@@ -1,5 +1,6 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { FOLDER_OF_VIEW, type EngineMutation } from "../src/types.js";
+import { FOLDER_OF_VIEW } from "../src/types.js";
 import type { StorageDoor } from "../src/durable.js";
 import {
   ROUTING_INTENT_IDS_MAX,

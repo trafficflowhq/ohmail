@@ -1,10 +1,10 @@
+import type { EngineMessage } from "@ohmail/wire";
 import {
   HISTORY_PAGE_ROWS,
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
   type ListOlderFn,
   type StoreKeyset,
   type StoreTimeline,

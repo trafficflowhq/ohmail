@@ -1,9 +1,8 @@
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
-  type EngineMessage,
   type EntityReader,
-  type MessageStateDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { liveOhbox, presentedOf, type WorldView } from "../src/state/live";

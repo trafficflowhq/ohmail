@@ -4,8 +4,8 @@
  * and how wide a decision reaches, then the lines: what ohmail measured, the advice or why there is none, what a
  * whole-domain press also files, and what Screen out and Spam also send. Every line is said before the press.
  */
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import type { RefObject } from "react";
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
 import {
   isSharedDomain,
   PILE_KEY,
