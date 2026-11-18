@@ -641,6 +641,7 @@ export function enforceMirrorOwner(
       forgetStoreCopies(dataDir, "session_revoked", log);
       markRefusalCopyRemoved(dataDir);
     } catch {
+      /* A copy left: said by the removal's own line; the record keeps `revoked` and the next launch returns here. */
       revokedCopyLeft = true;
     }
     log?.("cloud_revoked_copy_removed", {

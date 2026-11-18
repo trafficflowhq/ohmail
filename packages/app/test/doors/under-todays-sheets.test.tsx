@@ -22,20 +22,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createFeed } from "../../src/host/index.js";
 import { TextProvider } from "../../src/text/index.js";
 import { DoorStage } from "../../src/doors/stage/index.js";
-import { ApprovePage } from "../../src/doors/approve/index.js";
-import { AuthorizeDesktopPage } from "../../src/doors/authorize-desktop/index.js";
-import { DeleteAccountPage } from "../../src/doors/delete-account/index.js";
-import { InvitePage } from "../../src/doors/invite/index.js";
-import { JoinPage, type JoinDoor } from "../../src/doors/join/index.js";
-import { LinkDesktopPage } from "../../src/doors/link-desktop/index.js";
-import { NoPagePage } from "../../src/doors/no-page/index.js";
-import { SetupPage } from "../../src/doors/setup/index.js";
-import { SignedOutPage } from "../../src/doors/signed-out/index.js";
-import { SignInPage } from "../../src/doors/sign-in/index.js";
-import { StepUpDialog, type StepUpDoor } from "../../src/doors/step-up/index.js";
-import { SubscribedPage } from "../../src/doors/subscribed/index.js";
-import { VerifyPage } from "../../src/doors/verify/index.js";
 import { WallPage } from "../../src/doors/wall/index.js";
+import { nothing, PAGES } from "./doors-pages.js";
 import doors from "../../messages/doors.en.json" with { type: "json" };
 import doorsDe from "../../messages/doors.de.json" with { type: "json" };
 import mailboxes from "../../messages/mailboxes.en.json" with { type: "json" };
@@ -96,246 +84,6 @@ const ROOMS: readonly [Room, Room, Room] = [
 ];
 /** Where a page must stand whole: the desktop's window, and the unfolded phone held on its side. */
 const WHOLE: readonly Room[] = [ROOMS[2], { name: "foldl", width: 841, height: 673, pointer: "coarse" }];
-
-const nothing = (): void => {};
-const pending = { said: null, act: "Sign out", signingOut: false, again: nothing };
-const answers = { onVerified: nothing, onCancel: nothing, onDiscarded: nothing };
-const stepUp: StepUpDoor = {
-  factors: () => Promise.resolve({ ok: true, factors: { passkey: true, code: true, recovery: true } }),
-  verify: () => Promise.resolve({ ok: false, refusal: { word: "bad_code" } }),
-};
-const blanks = { token: "", code: "", email: "mila@lichtgrat.example", name: "Mila", password: "", otp: "" };
-const press = { busy: false, retryIn: null, refusal: null, discarded: false, signIn: false, factor: false };
-const joinDoor = (): JoinDoor => ({
-  state: { at: "account" },
-  stations: ["account", "verify", "factor", "codes", "plan", "mailbox"],
-  note: "managed-open",
-  invited: false,
-  busy: false,
-  refusal: null,
-  fields: blanks,
-  suggestion: null,
-  pending,
-  type: nothing,
-  redeem: nothing,
-  register: nothing,
-  toInvite: nothing,
-  takeSuggestion: nothing,
-  changeAddress: nothing,
-  signIn: { href: "/login" },
-  resend: nothing,
-  recheck: nothing,
-  addPasskey: nothing,
-  useAuthenticator: nothing,
-  copyKey: nothing,
-  openAuthenticator: nothing,
-  activate: nothing,
-  leaveAuthenticator: nothing,
-  copyCodes: nothing,
-  downloadCodes: nothing,
-  save: nothing,
-  codesDone: nothing,
-  retryCodes: nothing,
-  accountPage: { href: "https://plane.example/manage" },
-  later: { href: "/" },
-  open: { href: "/#/first-run" },
-  retry: nothing,
-  leave: { href: "/" },
-  signInAgain: { href: "/login?next=join" },
-  waitlist: { href: "/#pricing" },
-  demo: { href: "/?demo=1" },
-  slots: { mailbox: () => null, authenticatorQr: () => null },
-});
-
-/** One named state of every door's page: a field, a key hint, a list, a refusal and the small mark among them. */
-const PAGES: Record<string, () => ReactNode> = {
-  "signed-out": () => (
-    <SignedOutPage door={{ state: { at: "busy" }, tryAgain: nothing, signIn: nothing, demo: nothing }} />
-  ),
-  "no-page": () => (
-    <NoPagePage
-      door={{
-        at: "missing",
-        words: { title: "No page here.", note: "Nothing.", home: "Home" },
-        home: nothing,
-      }}
-    />
-  ),
-  "sign-in": () => (
-    <SignInPage
-      door={{
-        state: { at: "password", busy: false, refusal: { word: "bad_credentials" } },
-        note: "managed-open",
-        continues: null,
-        why: null,
-        pending,
-        fields: { email: "", password: "", code: "" },
-        type: nothing,
-        begin: nothing,
-        passkey: nothing,
-        finish: nothing,
-        use: nothing,
-        restart: nothing,
-        join: { href: "/join" },
-        demo: { href: "/?demo=1" },
-      }}
-    />
-  ),
-  verify: () => (
-    <VerifyPage
-      door={{
-        state: {
-          at: "form",
-          asksCode: true,
-          codeHeld: false,
-          busy: false,
-          refusal: doors.verify.refusedLink,
-          passwordRefused: false,
-        },
-        fields: { code: "", password: "" },
-        type: nothing,
-        submit: nothing,
-        signIn: nothing,
-        newLink: nothing,
-        pending,
-      }}
-    />
-  ),
-  setup: () => (
-    <SetupPage
-      door={{
-        state: { at: "form", busy: false, refusal: null, tokenRefused: false },
-        fields: blanks,
-        type: nothing,
-        submit: nothing,
-        retry: nothing,
-        signIn: nothing,
-        copy: () => Promise.resolve(true),
-      }}
-    />
-  ),
-  invite: () => (
-    <InvitePage
-      door={{
-        state: { at: "form", busy: false, refusal: null },
-        fields: blanks,
-        type: nothing,
-        submit: nothing,
-        pending,
-      }}
-    />
-  ),
-  subscribed: () => <SubscribedPage door={{ state: { at: "back" }, open: nothing }} />,
-  join: () => <JoinPage door={joinDoor()} />,
-  "step-up": () => <StepUpDialog door={stepUp} {...answers} />,
-  approve: () => (
-    <ApprovePage
-      door={{
-        state: {
-          at: "ask",
-          asked: {
-            label: "Mila's laptop",
-            platform: "Linux",
-            minutes: 2,
-            network: "n",
-            otherNetwork: false,
-            account: "mila@lichtgrat.example",
-            remaining: 9,
-          },
-          busy: false,
-          retryIn: null,
-          refusal: null,
-          factor: false,
-        },
-        confirm: nothing,
-        deny: nothing,
-        stepUp,
-        factor: answers,
-      }}
-    />
-  ),
-  "authorize-desktop": () => (
-    <AuthorizeDesktopPage
-      door={{
-        state: {
-          at: "ask",
-          client: "tf-macos",
-          address: "m•••@lichtgrat.example",
-          remaining: 9,
-          busy: false,
-          refusal: null,
-          factor: false,
-        },
-        confirm: nothing,
-        signIn: nothing,
-        stepUp,
-        factor: answers,
-      }}
-    />
-  ),
-  "link-desktop": () => (
-    <LinkDesktopPage
-      door={{
-        state: { at: "code", code: ["K7", "QM-42XD"].join(""), remaining: 540, bound: true, ...press },
-        press: nothing,
-        openApp: nothing,
-        signIn: nothing,
-        stepUp,
-        factor: answers,
-      }}
-    />
-  ),
-  "delete-account": () => (
-    <DeleteAccountPage
-      door={{
-        state: {
-          at: "form",
-          email: "mila@lichtgrat.example",
-          subscription: true,
-          typed: "",
-          busy: false,
-          refusal: null,
-          cancelled: false,
-          factor: false,
-        },
-        service: "managed",
-        type: nothing,
-        begin: nothing,
-        back: nothing,
-        home: nothing,
-        signIn: nothing,
-        privacy: nothing,
-        stepUp,
-        factor: answers,
-      }}
-    />
-  ),
-  wall: () => (
-    <WallPage
-      door={{
-        state: {
-          at: "refused",
-          headline: { key: "trialEnded", date: "1 October 2026" },
-          standing: { kind: "stopped", erasure: { kind: "dated", date: "31 October 2026" } },
-          check: "idle",
-          wayBack: { label: "subscribe", hint: "subscribeHint", minting: false, refusal: null },
-          moveOut: { exporting: false, failed: false },
-          deleteHint: "deleteHint",
-          signingOut: false,
-          signOutSaid: null,
-        },
-        wayBack: nothing,
-        checkAgain: nothing,
-        moveOut: nothing,
-        guide: nothing,
-        deleteNow: nothing,
-        signOut: nothing,
-        changePassword: () => {},
-        home: nothing,
-      }}
-    />
-  ),
-};
 
 /** A door's markup at a room, in a language, with the attributes its stage stamped on the root. */
 type Look = { face: "paper" | "ohmarchy"; scheme: "light" | "dark" };
@@ -586,27 +334,12 @@ const SMALLER: readonly Room[] = [
 ];
 
 /*
- * OPEN: the acts the review of round 2 measured outside those windows (REVIEW-ROUND-2.md, ruling d), a room named
- * without a language in both. A page of two columns cannot scroll, so its act cannot be reached at all (setup, the wall,
- * authorize-desktop, the delete page): the kit is asked to fold such a page to one column, which scrolls, where its
- * sentence column is taller than its window (the wall first), and they leave this list in the round that merges that
- * fold. A page of one column scrolls (the sign-in, the email confirmation, the invite, the join): they stay until the
- * studio answers whether a page's foot stays in sight at every size.
+ * OPEN: the acts a person cannot reach inside those windows, a room named without a language in both. Measured live
+ * (`actsUnreached` below), a page of two columns taller than its window folds to one column that scrolls, and a page
+ * of one column scrolls: none stands outside today. Whether a page's foot stays in sight without a scroll at every
+ * size is the studio's question, which this case does not ask (the whole window's case above asks it of its rooms).
  */
-const OPEN_SMALLER: Readonly<Record<string, readonly string[]>> = {
-  setup: [
-    "1100x640",
-    "1024x600",
-    "text 1.25 at 1440x900 de",
-    "text 1.5 at 1440x900",
-    "text 1.25 at 1280x720",
-  ],
-  wall: ["1100x640 de", "1024x600", "text 1.5 at 1440x900", "text 1.25 at 1280x720"],
-  "authorize-desktop": ["1100x640 de", "1024x600 de", "text 1.5 at 1440x900", "text 1.25 at 1280x720"],
-  "sign-in": ["1100x640", "1024x600", "text 1.5 at 1440x900", "text 1.25 at 1280x720"],
-  verify: ["1024x600", "text 1.5 at 1440x900", "text 1.25 at 1280x720"],
-  join: SMALLER.map((room) => room.name),
-};
+const OPEN_SMALLER: Readonly<Record<string, readonly string[]>> = {};
 
 /** The doors whose act stands outside `room` in `locale`, by the OPEN list's rows. */
 const openAt = (
@@ -649,6 +382,83 @@ async function actsOutside(room: Room, locale: "en" | "de"): Promise<string[]> {
 const doorOf = (said: string): string => said.slice(0, said.indexOf(":"));
 
 /*
+ * THE SMALLER WINDOWS ARE MEASURED LIVE: each door's page with its own scripts (`doors-harness.tsx`), as a person meets
+ * it, under every sheet the product page loads. What the kit measures there (a page of two columns taller than its
+ * window folds to one that scrolls) and the delete page's address fitted to its line are drawn, which markup alone
+ * does not show. The act counts as reached when, after every scroll a person has (the document's, and a box of the
+ * page's that scrolls), it stands inside the window; a box that does not scroll is put back where it stood, so an act
+ * below a page that cannot scroll stays outside.
+ */
+let LIVE = "";
+const LIVE_TODAY = (page: string): string =>
+  page
+    .replace("</head>", `<style>${TODAY_CSS}</style></head>`)
+    .replace("<body>", '<body class="mo-canvas app-body today">');
+
+async function actsUnreached(
+  room: Room,
+  locale: "en" | "de",
+  also: Record<string, string> = {},
+): Promise<string[]> {
+  const words = (locale === "de" ? doorsDe : doors) as Words;
+  const outside: string[] = [];
+  for (const door of Object.keys(PAGES)) {
+    const name = INK[door]!(words);
+    const tab = await browser!.newPage({ viewport: { width: room.width, height: room.height } });
+    try {
+      await tab.route("http://doors.test/**", (r) => r.fulfill({ contentType: "text/html", body: LIVE }));
+      const at = new URLSearchParams({ door, lang: locale, pointer: room.pointer, ...also });
+      if (room.zoom) at.set("zoom", String(room.zoom));
+      await tab.goto(`http://doors.test/?${at}`);
+      const act = tab.getByRole("button", { name: new RegExp(`^${escaped(name)}`) }).first();
+      if (
+        !(await act.waitFor({ state: "attached", timeout: 2_000 }).then(
+          () => true,
+          () => false,
+        ))
+      ) {
+        outside.push(`${door}: no "${name}"`);
+        continue;
+      }
+      /* What the page measures as it opens has answered (the delete page's address case waits as long). */
+      await tab.waitForTimeout(300);
+      await act.evaluate((el) => {
+        /* Each axis on its own: a box that hides what runs sideways may still scroll down. */
+        const kept: [Element, number | null, number | null][] = [];
+        for (let box = el.parentElement; box; box = box.parentElement) {
+          const { overflowX, overflowY } = getComputedStyle(box);
+          kept.push([
+            box,
+            overflowY === "hidden" ? box.scrollTop : null,
+            overflowX === "hidden" ? box.scrollLeft : null,
+          ]);
+        }
+        /* The body's overflow is the window's when the root's is visible. */
+        const window_ =
+          getComputedStyle(document.documentElement).overflowY === "visible" &&
+          getComputedStyle(document.body).overflowY === "hidden"
+            ? [scrollX, scrollY]
+            : null;
+        /* To the middle, as far as the page goes: a scroll to the edge leaves the act a part of a pixel over it. */
+        el.scrollIntoView({ block: "center", inline: "nearest" });
+        if (window_) scrollTo(window_[0]!, window_[1]!);
+        for (const [box, top, left] of kept) {
+          if (top !== null) box.scrollTop = top;
+          if (left !== null) box.scrollLeft = left;
+        }
+      });
+      const box = await act.boundingBox({ timeout: 2_000 }).catch(() => null);
+      if (!box) outside.push(`${door}: no "${name}"`);
+      else if (box.x < 0 || box.y < 0 || box.x + box.width > room.width || box.y + box.height > room.height)
+        outside.push(`${door}: "${name}" at [${box.x}, ${box.y}, ${box.width}, ${box.height}]`);
+    } finally {
+      await tab.close();
+    }
+  }
+  return outside;
+}
+
+/*
  * A PAGE STANDS WHOLE ON ITS FIRST SCREEN. The page's body scrolls without a bar, so a button under the window's edge
  * is a button nobody sees: at the desktop's window and the unfolded phone on its side, in both languages, under every
  * sheet the product page loads, each page's one act stands inside the window.
@@ -663,16 +473,37 @@ describe("a door's one act stands inside the window", () => {
 });
 
 /*
- * AND IN THE KIT'S SMALLER WINDOWS: each page's one act inside the window, in both languages, under every sheet the
- * product page loads, but for the OPEN list above, which names exactly what stands outside today.
+ * AND IN THE KIT'S SMALLER WINDOWS: each page's one act reached inside the window, measured live, in both languages,
+ * under every sheet the product page loads, but for the OPEN list above, which names exactly what stands outside today.
  */
 describe("a door's one act stands inside the kit's smaller windows", () => {
+  beforeAll(() => {
+    LIVE = LIVE_TODAY(
+      execFileSync(process.execPath, [join(REPO, "packages/app/test/doors/doors-harness.mjs")], {
+        cwd: REPO,
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+      }),
+    );
+  }, 120_000);
   for (const room of SMALLER)
     for (const locale of ["en", "de"] as const)
       it(`${room.name}, ${locale}`, async () => {
-        const outside = await actsOutside(room, locale);
+        const outside = await actsUnreached(room, locale);
         expect(outside.map(doorOf), outside.join("\n")).toEqual(openAt(OPEN_SMALLER, room, locale));
       }, 240_000);
+
+  /* The measure is not one every act passes: without the kit's fold, a page of two columns taller than its window
+     stays two, neither scrolls, and its act cannot be reached (the setup at the largest Text size; the wall and the
+     desktop's sign-in at the smallest window). */
+  it("CONTROL: the fold taken out, the pages that fold are not reached", async () => {
+    const big = await actsUnreached(SMALLER[4]!, "de", { fold: "off" });
+    expect(big.map(doorOf), big.join("\n")).toContain("setup");
+    const small = await actsUnreached(SMALLER[2]!, "de", { fold: "off" });
+    expect(small.map(doorOf), small.join("\n")).toEqual(
+      expect.arrayContaining(["authorize-desktop", "wall"]),
+    );
+  }, 240_000);
 });
 
 /*

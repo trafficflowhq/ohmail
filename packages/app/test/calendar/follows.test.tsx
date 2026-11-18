@@ -4,7 +4,7 @@
  * list), and says in one line where the host hands in no port.
  */
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type {
   CalendarConnectionRecord,
@@ -280,6 +280,12 @@ describe("the calendar's body", () => {
   });
 
   it("lists in the Agenda beside the Week the days after the week, not only the week's", () => {
+    // The week's own Monday is today: the case reads the week's days and the days after it, whatever the date it runs on.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 16, 9));
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const { engine, port, put } = mirror();
     put("calendar_connection", connection.id, connection);
     put("calendar", studio.id, studio);

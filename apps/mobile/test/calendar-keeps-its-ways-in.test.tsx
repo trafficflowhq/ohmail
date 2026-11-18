@@ -93,6 +93,7 @@ import { MAIL_SURFACE, type ConnectionState } from "../src/net/connection";
 import type { ShellSession } from "../src/net/pairing";
 import { refuse } from "../src/refusal";
 import { ShellScreen } from "../src/shell/ShellScreen";
+import { WakeProvider } from "../src/state/wake";
 
 const settle = () => act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); });
 
@@ -129,7 +130,9 @@ describe("the calendar app before the door's pages are built", () => {
       profile: { id: "row-1", origin: "https://mail.example.test", flavor: "selfhost", accountId: "account-1", pin: null },
       ownerKey: "owner-1", standalone: false,
     } as unknown as ShellSession;
-    const view = mount(h(ShellScreen, { session }));
+    scene.conn = { state: { k: "shell", session }, profiles: [session.profile] };
+    /* The app's root wraps every screen in the wake's provider (app/_layout.tsx); the shell reads its door. */
+    const view = mount(h(WakeProvider, null, h(ShellScreen, { session })));
     await settle();
     expect(scene.bridge, "the screen handed its bridge the acts").not.toBeNull();
     for (const name of ["openServers", "signOut"]) expect(await scene.bridge!.act({ act: name }), name).toEqual({});

@@ -5,7 +5,7 @@
  * organizer session's own launch slot. What must hold: the redeem is reachable only by a ticket; no answer, event or
  * state carries a code, a refresh token or a password; the standalone order, and its slot given back on a throw.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   armConsentPress, forgetOrganizerSessionForTests, organizerDoor, organizerRestrictedSaid, standaloneLaunchGeneration,
   takeConsentPress,
@@ -21,6 +21,16 @@ import { DoorHost, SCAN_REARM_MS, type DoorConnection } from "../src/shell/door-
 import { said } from "../src/shell/door-state";
 import { TICKET_LIFE_MS } from "../src/shell/door-tickets";
 import { bootMigratingLines, type BootMigrating } from "../src/ui/boot-migrating";
+
+/**
+ * The field's check and the parse share one rule today, so no typed address reaches the pairing's own "not a server
+ * address" arm; a case stands a drift between them in: the check lets `letThrough` pass, everything else is real.
+ */
+const drift = vi.hoisted(() => ({ letThrough: null as string | null }));
+vi.mock("../src/net/server-base", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/net/server-base")>();
+  return { ...real, addressProblem: (typed: string) => (typed === drift.letThrough ? null : real.addressProblem(typed)) };
+});
 
 const ORIGIN = "https://appassets.androidplatform.net";
 const LOCAL = "http://sidecar";
@@ -199,6 +209,7 @@ const INPUT = {
 };
 
 afterEach(() => {
+  drift.letThrough = null;
   installPinning(null);
   forgetOrganizerSessionForTests();
 });
@@ -326,6 +337,15 @@ describe("the door's host: pairing", () => {
     const offer = await w.ask("hand", { address: " Mail.Example.Test/ ", token: CODE_TYPED });
     expect(w.conn.probes).toEqual([["https://mail.example.test", null]]);
     expect(offer).toMatchObject({ k: "offers", facts: { address: "https://mail.example.test" } });
+  });
+
+  it("an address the field's check lets through and the parse refuses: the sentence names what was typed", async () => {
+    const w = world();
+    const typed = "https://mail.example.test/pair";
+    drift.letThrough = typed;
+    expect(await w.ask("hand", { address: typed, token: CODE_TYPED }))
+      .toEqual({ k: "refused", said: { code: "pairBadAddress", args: [typed] } });
+    expect(w.conn.probes).toEqual([]);
   });
 
   it("a link the grammar refuses is no code: a newer code's link or one with a query goes to no server", async () => {
