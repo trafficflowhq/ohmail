@@ -473,12 +473,13 @@ describe("a snapshot page costs a constant number of queries", () => {
     // …and the constant is small, and ITEMISED so a future N+1 has to move a number somebody can
     // check: 1 seq high-water + 5 page-1 reads (rules, the read mailboxes' documents, drafts,
     // tags, and the message-less approvals that have no page to ride with) + 1 folders-flag probe
-    // + 2 settings-doorbell reads + 1 keyset page + 1 message read (the row, its folder and triage
+    // + 2 settings-doorbell reads + 3 device-number selects the doorbell carries (the account's
+    // users as a subquery, the devices counted, the live sessions counted) + 1 keyset page + 1 message read (the row, its folder and triage
     // state, tags, away answer and three flags, joined) + 3 batched thread reads + 3 batched CHILD
     // reads (message_states, pending routing_decisions, approvals, each keyed on the page's
-    // message ids) = 17. Every batched read is once per PAGE and never once per row, which is the
+    // message ids) = 20. Every batched read is once per PAGE and never once per row, which is the
     // property this test defends: forty messages in twenty threads cost what one in one costs.
-    expect(one).toBe(17);
+    expect(one).toBe(20);
   }, 120_000);
 
   /** The bytes a limit-1 page reads when its one message sits in a 60-letter conversation. */

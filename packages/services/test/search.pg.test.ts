@@ -552,7 +552,8 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
       await db.execute(sql`delete from account_settings where account_id = ${a.id}`);
       await db.execute(sql`delete from mailboxes where account_id = ${a.id}`);
     }
-  });
+    // Large mailboxes: the teardown deletes what the set-up seeded, on the set-up's budget.
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   /**
    * Relevance: its tier, and a page of the letters 0.30.19 lists, each once (a full one but beside an
