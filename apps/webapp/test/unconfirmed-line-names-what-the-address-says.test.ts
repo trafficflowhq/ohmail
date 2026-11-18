@@ -1,10 +1,11 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTranslator } from "next-intl";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import { messages } from "@trafficflow/db";
 import {
-  HttpAdapter, MemoryMirrorStore, OhmailEngine, screenerSegments, type EngineMessage, type FetchLike,
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, screenerSegments, type FetchLike,
 } from "@ohmail/client-engine";
 import { FIXED_NOW, makeDeps, seedMailbox, seedScreenerHeld, seedSession } from "../../../packages/api/test/helpers.js";
 import en from "../messages/en.json";

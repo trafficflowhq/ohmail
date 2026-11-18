@@ -1,3 +1,4 @@
+import type { EngineMessage, RuleEntity as RuleDTO, ScreenerWaitingWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
@@ -6,7 +7,7 @@ import { accounts, contacts, folderState, mailboxes, messageBodies, messages, ru
 import type { ClassifierPort } from "@trafficflow/core";
 import {
   HttpAdapter, MemoryMirrorStore, consentPartition, presentationReader, screenerSegments, screenerWaitingOf,
-  type EngineMessage, type RuleDTO, type ScreenerWaitingWire, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { ScreenerService } from "../src/screener-service.js";
 import { cutlineCounts } from "../src/consent-cutline.js";

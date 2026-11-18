@@ -9,6 +9,14 @@
  * the last view had open, and the seen batches spend the visit on the way out. The eight effects
  * keep the order they had. Lifted out of `AppShell.tsx` unchanged (ARCH-022).
  */
+import type {
+  EngineMessage,
+  FeedView,
+  Folder,
+  FolderEntity,
+  OhmailView,
+  WaterlineMeta,
+} from "@ohmail/wire";
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { useTranslations } from "next-intl";
 import {
@@ -23,16 +31,10 @@ import {
   waterlineIdOf,
   feedLineUndo,
   type ConsentPartition,
-  type EngineMessage,
   type EntityReader,
-  type FeedView,
-  type Folder,
-  type FolderEntity,
   type OhmailEngine,
-  type OhmailView,
   type TriagePileEntry,
   type TriagePiles,
-  type WaterlineMeta,
 } from "@ohmail/client-engine";
 import type { UndoToastFn } from "@ohmail/app-logic/press/undo-door";
 import { CURSOR_HINT_MS, placeFirstRow, SHELL_CURSOR_VIEWS, useCursorHint, type CursorHost } from "./cursor-placer";

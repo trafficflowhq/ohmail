@@ -1,10 +1,11 @@
+import type { MessageStateDTO } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { ImapFlow } from "imapflow";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  HttpAdapter, MemoryMirrorStore, OhmailEngine, triagePiles, type MessageStateDTO,
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, triagePiles,
 } from "@ohmail/client-engine";
 import { messages } from "@trafficflow/db";
 import { eq } from "drizzle-orm";

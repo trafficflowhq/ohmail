@@ -34,7 +34,7 @@ import type {
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import { usageLines } from "./ai-usage-lines.js";
 import type {
-  AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy, SenderReasonCode,
+  AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy,
   SenderSignals,
 } from "@trafficflow/core/mail";
 import {
@@ -65,9 +65,17 @@ import { LearningService } from "./learning-service.js";
 import { refuseOwnAddressRule, SHARED_PROVIDER_REFUSAL_SENTENCE } from "./rules-service.js";
 import { isSharedProviderDomain, sharedProviderAllowRefusal } from "@trafficflow/core/rule-order";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
-import type { Folder, Page, RuleDTO, ScreenerItem } from "./dto/types.js";
 import type {
-  ScreenBody, ScreenDecisionMailboxes, ScreenDecisionResult, ScreenerPendingDecision, ScreenRequestedMailbox, ScreenRequestResult,
+  Folder,
+  Page,
+  RuleDTO,
+  ScreenBody,
+  ScreenDecisionResult,
+  ScreenerItem,
+  ScreenerPendingDecision,
+  ScreenRequestedMailbox,
+  ScreenRequestResult,
+  SenderReasonCode,
 } from "@ohmail/wire";
 
 /**
@@ -225,7 +233,6 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
 }
 
 /** A Screener decision's body: declared with the wire's vocabulary. */
-export type { ScreenBody };
 
 /** Idempotency handle threaded in by the route; the row is written IN the decide tx. */
 export interface ScreenIdempotency {
@@ -235,7 +242,6 @@ export interface ScreenIdempotency {
 
 
 /** What a decision answers, applied or queued, and where it landed per mailbox: declared with the wire's vocabulary. */
-export type { ScreenRequestedMailbox, ScreenDecisionMailboxes, ScreenDecisionResult, ScreenRequestResult };
 
 /* ── The explicit suggestion purchase ───────────────────────────────────────────────────── */
 
@@ -692,7 +698,6 @@ export interface ScreenerPage extends Page<ScreenerItem> {
 }
 
 /** One entry of {@link ScreenerPage.pendingDecisions}: declared with the wire's vocabulary. */
-export type { ScreenerPendingDecision };
 
 interface ScreenerRow {
   /**

@@ -1,10 +1,10 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   HttpAdapter,
   MAX_CONCURRENT_BODIES,
   MemoryMirrorStore,
   OhmailEngine,
-  type EngineMessage,
   type SyncChange,
 } from "../src/index.js";
 

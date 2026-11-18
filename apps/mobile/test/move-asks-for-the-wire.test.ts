@@ -3,8 +3,8 @@
  * and paid the first-page grace again: 6.1-7.4 s from the tap to `UID MOVE` on the device. The
  * press now rings `POST /sync/pull` once, after its move, which the local door turns into a drain.
  */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { type EngineMessage, type RuleDTO } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

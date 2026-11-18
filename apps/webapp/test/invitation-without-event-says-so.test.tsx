@@ -9,11 +9,11 @@
  * MUTATION-WATCHED (each reddens the case named and no other): the flag forced false → the two
  * "says so" cases; the line rendered unconditionally → the two "says nothing" controls.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { type EngineMessage } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";

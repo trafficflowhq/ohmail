@@ -1,5 +1,5 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { createEngine } from "../app/shell/engine-config.js";
 import { dispatchScreeningChange, movesAtLanding, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 import { screeningShown } from "@ohmail/app-logic/press/press-verdict";

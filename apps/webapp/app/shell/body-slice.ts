@@ -11,8 +11,8 @@
  * draws ONE message with its subscription; {@link useBodyStamp} draws many in a loop.
  */
 
+import type { MessageBody } from "@ohmail/wire";
 import { useCallback, useSyncExternalStore } from "react";
-import type { MessageBody } from "@ohmail/client-engine";
 import { useBodyArrival } from "@ohmail/app-logic/reading/body-arrival";
 import { useEngineOrNull } from "./engine";
 import { useMessageChrome, type BodyTarget } from "./message-chrome";

@@ -1,7 +1,8 @@
+import type { HeldReleaseGroupWire, HeldReleaseWire } from "@ohmail/wire";
 import { describe, expect, it, vi } from "vitest";
 import { OhmailEngine } from "../src/engine.js";
 import { heldReleaseDismissedOf, heldReleaseGroups } from "../src/selectors.js";
-import type { EngineAdapter, HeldReleaseGroupWire, HeldReleaseWire } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 import { CursorExpiredError, type SyncChange } from "../src/types.js";
 
 /**

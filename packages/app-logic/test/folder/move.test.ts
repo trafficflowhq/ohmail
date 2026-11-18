@@ -1,12 +1,6 @@
+import type { EngineMessage, EngineMutation, FolderEntity } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type {
-  EngineMessage,
-  EngineMutation,
-  EntityReader,
-  FolderEntity,
-  MutationRejectedError,
-  PressVerdict,
-} from "@ohmail/client-engine";
+import type { EntityReader, MutationRejectedError, PressVerdict } from "@ohmail/client-engine";
 import {
   folderMoveRefusal,
   foldersToMoveInto,

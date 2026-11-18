@@ -17,6 +17,7 @@
  * mail ground's contexts, which this shell fills (`todays-ground.tsx`); the piles below are the
  * old views' own and leave with them.
  */
+import type { EngineDraft, EngineMessage, Folder, FolderEntity, TagEntity as TagDTO } from "@ohmail/wire";
 import { useMemo, useRef } from "react";
 import {
   NO_WAITING,
@@ -40,15 +41,10 @@ import {
   threadMarksIndex,
   threadSubject,
   triagePiles,
-  type EngineDraft,
-  type EngineMessage,
   type EntityReader,
-  type Folder,
-  type FolderEntity,
   type MailboxScreening,
   type OhboxVisitMeta,
   type OhmailEngine,
-  type TagDTO,
 } from "@ohmail/client-engine";
 import { usePartitionOf } from "@ohmail/app-logic/consent/partition";
 import { shellConsentOptions } from "@ohmail/app-logic/press/consent-options";

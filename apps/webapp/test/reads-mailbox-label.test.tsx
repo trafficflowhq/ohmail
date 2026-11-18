@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MessageBody, TagEntity as TagDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, MessageBody, FeedPartition, TagDTO } from "@ohmail/client-engine";
+import type { FeedPartition } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { KeymapProvider } from "@ohmail/app/keys";

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { act } from "react";
@@ -7,9 +8,6 @@ import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore,
   consentPartition,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";

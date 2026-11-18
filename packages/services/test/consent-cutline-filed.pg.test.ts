@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -8,7 +9,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   MemoryMirrorStore, consentPartition,
-  type EngineMessage, type Folder, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { cutlineCounts } from "../src/consent-cutline.js";
 import { dbFor, type ServiceContext } from "../src/context.js";

@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
   OhmailEngine, MemoryMirrorStore, mutationEffects,
-  type EngineMessage, type EngineMutation, type Folder, type MirrorStore, type SyncChange,
+  type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { screenerIntentsKey } from "@ohmail/app-logic/screener/screener-intents";

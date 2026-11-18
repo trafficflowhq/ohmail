@@ -14,8 +14,9 @@
  * THE WIRE DECIDES WHAT IS ASKED, THE HOST WHAT IS DRAWN: where the host draws no shared control nothing binds the
  * run to the queue, so nothing is priced or bought there, with or without a press.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useMemo } from "react";
-import { autoUnsubscribeConfirms, mirrorSuggestionIdOf, type EngineMessage } from "@ohmail/client-engine";
+import { autoUnsubscribeConfirms, mirrorSuggestionIdOf } from "@ohmail/client-engine";
 import { useConsent } from "../consent/consent-row.js";
 import { usePartition } from "../consent/partition.js";
 import { useDemoMode, useDerivedVersion, useEngine, useResolvedDemoMode } from "../engine/index.js";

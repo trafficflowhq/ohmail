@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -11,7 +12,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { ScreenerService, type ServiceContext } from "@trafficflow/services";
 import {
   MemoryMirrorStore, consentPartition, presentationReader, screenerSegments,
-  type EngineMessage, type Folder, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { cutlineCounts } from "../src/consent-cutline.js";
 

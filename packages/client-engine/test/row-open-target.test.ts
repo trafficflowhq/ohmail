@@ -1,11 +1,10 @@
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   FOLDER_OF_VIEW,
   ohboxRows,
   rowOpenTarget,
-  type EngineMessage,
   type EntityReader,
-  type MessageStateDTO,
 } from "@ohmail/client-engine";
 
 /**

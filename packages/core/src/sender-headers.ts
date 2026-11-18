@@ -9,7 +9,6 @@
 import type { AuthVerdict } from "@ohmail/wire";
 
 /** The authentication evidence about the claimed author; declared with the wire's vocabulary. */
-export type { AuthVerdict };
 
 /**
  * THE VERDICTS ON WHICH THE GATE SCREENS A SENDER IT WOULD OTHERWISE ADMIT — the demote-only member

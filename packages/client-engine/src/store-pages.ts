@@ -5,7 +5,8 @@
  * Pages are held in ONE bounded cache ({@link HISTORY_PAGE_CACHE_ROWS}) and never written into the
  * mirror: a page row has no seq, so no delta could update or remove it there.
  */
-import type { EngineMessage, SyncChange } from "./types.js";
+import type { EngineMessage } from "@ohmail/wire";
+import type { SyncChange } from "./types.js";
 import { filterKey, type ServerSearchFilters } from "./engine/server-wire.js";
 
 /** Rows one store page asks for — the server's own ceiling on `GET /messages`. */

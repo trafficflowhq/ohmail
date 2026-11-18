@@ -23,12 +23,13 @@
  * letter is revoked once nobody holds that letter; and a place that holds a letter draws its list and its file as
  * they land, while the door keeps the letter for it.
  */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { createElement as h, useEffect, useMemo, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineDraft, EngineMutation, OhmailEngine } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import { useConsent, usePartition } from "@ohmail/app-logic/consent";
 import { useConsentRow } from "@ohmail/app-logic/consent/consent-row";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";

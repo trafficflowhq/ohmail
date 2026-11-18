@@ -5,11 +5,12 @@
  * clock. The controls are the reviewer's routes; two engines over ONE IndexedDB disk with
  * ONE injected Web Locks registry, the row's owner read off the disk first.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { beforeAll, describe, expect, it } from "vitest";
 import { IDBFactory, IDBKeyRange as FakeKeyRange } from "fake-indexeddb";
 import {
   IndexedDbMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
-  type EngineLocks, type EngineMutation, type MutationResult,
+  type EngineLocks, type MutationResult,
 } from "@ohmail/client-engine";
 
 const tick = (ms = 5): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });

@@ -1,4 +1,5 @@
-import { isResurfaced, threadOf, type EngineMessage, type EntityReader } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
+import { isResurfaced, threadOf, type EntityReader } from "@ohmail/client-engine";
 
 /**
  * THE CONVERSATION A PANEL SHOWS — read off the PRESENTED mirror, the reader the Ohbox rows come

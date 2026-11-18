@@ -1,4 +1,5 @@
-import type { EngineMessage, OhboxView, ResurfacedThreadRow } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
+import type { OhboxView, ResurfacedThreadRow } from "@ohmail/client-engine";
 
 /**
  * EVERY MESSAGE THE OHBOX CAN SHOW — the list the shell resolves the reading column, the route

@@ -1,10 +1,10 @@
 // The search tier vocabulary, shared with the hosted service — a dependency-free core subpath
 // like the two above. The archive's answer names its tier on the wire, and the local index
 // decides its own by the same rule, so the merged list can put both under one heading.
+import type { EngineMessage, MessageBodyBatchWire, OhmailView, SyncSnapshotPage } from "@ohmail/wire";
 import type { SearchTier } from "@trafficflow/core/search-rank";
 import type { ReadIntent } from "../adapters/adapter.js";
 import type { StoreKeyset, StoreTimelineFn } from "../store-pages.js";
-import type { EngineMessage, MessageBodyBatchWire, OhmailView, SyncSnapshotPage } from "../types.js";
 
 /**
  * WHAT `GET /search` ANSWERS, as much of it as this client reads. The route returns `{ items, facets, total }`.

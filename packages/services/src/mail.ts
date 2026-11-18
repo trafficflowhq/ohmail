@@ -53,8 +53,7 @@ export {
 export { isUuid, requireUuid, requireImapUint32, IMAP_UINT32_MAX } from "./ids.js";
 export {
   ScreenerService, makeScreenerService, SCREENER_FOLDER,
-  type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
-  type ScreenDecisionMailboxes, type ScreenRequestedMailbox, type ScreenRequestResult,
+  type ScreenerDeps, type ScreenIdempotency,
 } from "./screener-service.js";
 export {
   dismissHeldRelease, heldReleaseFingerprint, heldReleaseGroups, heldReleaseSummary,
@@ -75,7 +74,7 @@ export {
 } from "./ohbox-unscreened-service.js";
 export {
   TriageService, triageService,
-  type TriageSetBody, type TriageIdempotency, type ListOptions, type FocusReplyView, type PowerThroughView,
+  type TriageIdempotency, type ListOptions, type FocusReplyView, type PowerThroughView,
 } from "./triage-service.js";
 export {
   ApprovalService, makeApprovalService,
@@ -83,7 +82,7 @@ export {
 } from "./approval-service.js";
 export {
   RulesService, rulesService,
-  type CreateRuleBody, type PatchRuleBody, type RuleMutation, type RuleCreation,
+  type RuleMutation, type RuleCreation,
   // The two halves a delete can answer with. The route names BOTH, because deciding which one it
   // holds by re-reading fields is what let a queued delete be reported as done.
   type RuleRemoval, type RuleRequestResult,
@@ -180,9 +179,9 @@ export {
   // body requests and the server REFUSES an over-long id list rather than truncating it, so the cap
   // is shared rather than copied — a change here cannot leave a client asking for one too many.
   MessageService, messageService, MARK_SEEN_MAX_IDS, BODIES_IDS_MAX,
-  type MessageView, type ListMessagesOptions, type MessagePatchBody,
+  type MessageView, type ListMessagesOptions,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
+  type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
 } from "./message-service.js";
 /* THE READER'S DISPATCH AND ITS MIRROR READ (mail 0094). In the LOCAL barrel because the doors
    that use them are mounted by the desktop engine as well as by the hosted API. */
@@ -208,8 +207,8 @@ export {
   SearchService, searchService, SEARCH_SORTS, isSearchSort, SEARCH_PARTS, isSearchParts,
   SEARCH_QUERY_MAX_CHARS,
   ADDRESS_DIRECTIONS, ADDRESS_DIRECTIONS_SERVED, isAddressSearchDirection,
-  type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort, type SearchParts,
-  type AddressSearchDirection, type AddressSearchOptions, type AddressSearchResult,
+  type SearchOptions, type SearchFilters, type SearchSort, type SearchParts,
+  type AddressSearchDirection, type AddressSearchOptions,
 } from "./search-service.js";
 export { SearchTiming, SEARCH_TIMING_PHASES, type SearchTimingPhase, type SearchTimingFacts } from "./search-timing.js";
 export {
@@ -269,7 +268,7 @@ export {
 } from "./kb-service.js";
 export {
   TagsService, tagsService, RENDERABLE_HUES,
-  type TagBody, type TagHue, type AssignResult,
+  type TagHue, type AssignResult,
 } from "./tags-service.js";
 export {
   FolderOpsService,
@@ -278,7 +277,7 @@ export {
 export {
   DraftsService, draftsService, DRAFT_MAX_RECIPIENTS,
   DRAFT_SUBJECT_MAX_CHARS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
-  type CreateDraftBody, type PatchDraftBody, type DraftMutation, type SendResolution,
+  type DraftMutation,
 } from "./drafts-service.js";
 export {
   DraftingService, draftingService, makeDraftingService, draftWindow, DRAFT_ADMISSION, DRAFT_OWN_TEXT_MAX_CHARS,

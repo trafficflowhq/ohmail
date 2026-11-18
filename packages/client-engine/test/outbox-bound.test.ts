@@ -22,6 +22,7 @@
  * Both halves are asserted here. The offline case (`never abandons`) is not a nice-to-have beside
  * the ceiling; it is the assertion that stops the ceiling from becoming a data-loss feature.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
@@ -35,7 +36,6 @@ import {
   OUTBOX_TYPE,
   CursorExpiredError,
   type EngineAdapter,
-  type EngineMutation,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 

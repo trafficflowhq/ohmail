@@ -1,7 +1,8 @@
+import type { AuthVerdict } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import {
   authVerdictFromHeaders, effectForDestination, evaluateRules,
-  type AuthVerdict, type Rule,
+  type Rule,
 } from "../src/rules.js";
 import type { NormalizedMessage } from "../src/types.js";
 

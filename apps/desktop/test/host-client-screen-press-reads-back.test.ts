@@ -1,7 +1,8 @@
 /** @vitest-environment node */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  HttpAdapter, OhmailEngine, encodeSeqCursor, type EngineMessage, type RuleDTO, type SyncChange,
+  HttpAdapter, OhmailEngine, encodeSeqCursor, type SyncChange,
 } from "@ohmail/client-engine";
 import { BearerManager } from "../../paired-page/src/bearer";
 import { screeningVerdict } from "@ohmail/app-logic/press/press-verdict";

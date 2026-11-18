@@ -1,7 +1,8 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryMirrorStore, OhmailEngine, type EngineMessage, type SyncChange, type SyncResponse } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type SyncChange, type SyncResponse } from "@ohmail/client-engine";
 import { MOBILE_WINDOW } from "../src/engine/boot";
 import { createProjector, type ProjectionInputs } from "../src/state/world-projection";
 import { SCREENING_UNSUPPLIED, type WorldActions } from "../src/state/live";

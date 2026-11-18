@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { EngineDraft } from "@ohmail/client-engine";
 import { openDraftDecision } from "../app/shell/AppShell";
 
 /**

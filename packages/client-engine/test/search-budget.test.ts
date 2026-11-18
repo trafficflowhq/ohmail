@@ -1,6 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { SearchIndex } from "../src/search.js";
-import type { EngineMessage } from "../src/types.js";
 
 /**
  * THE LOCAL INDEX AT A LARGE MAILBOX'S SIZE — a budget, in milliseconds, because that is the unit the

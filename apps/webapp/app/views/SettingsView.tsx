@@ -10,17 +10,15 @@
  * a node (a door out to the browser — erasure is a step-up ceremony no desktop session can satisfy,
  * `DesktopWebSection`); a standalone install passes nothing — no account, no pane, structurally.
  */
+import type { Folder, RuleEntity as RuleDTO, TagEntity as TagDTO } from "@ohmail/wire";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   DEFAULT_CHANNELS,
   channelsAreLive,
-  type Folder,
   type NoticePermission,
   type NotificationChannels,
   type QueuedRuleWrite,
-  type RuleDTO,
-  type TagDTO,
   type WaitingOnOrganizerView,
 } from "@ohmail/client-engine";
 import {

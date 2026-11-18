@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type EngineMessage, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import { planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**

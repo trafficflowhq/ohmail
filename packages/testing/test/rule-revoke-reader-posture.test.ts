@@ -1,8 +1,9 @@
+import type { EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { mailboxes, mailboxProfileMirror, organizerRequests } from "@trafficflow/db";
 import {
   HttpAdapter, OUTBOX_TYPE, OhmailEngine, heldRuleId, heldRuleKey, planScreenCommit, pressRules,
-  type EngineMutation, type RuleDTO, type ScreenIntent,
+  type ScreenIntent,
 } from "@ohmail/client-engine";
 import { verbWorld, type VerbWorld } from "./verb-parity/world.js";
 

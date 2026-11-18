@@ -1,7 +1,8 @@
+import type { ToolName, WorkflowPattern, WorkflowStep, WorkflowTrigger } from "@ohmail/wire";
 import type { AnthropicLike } from "../classify.js";
 import type { AiCallOptions } from "../../ai-call-report.js";
 import {
-  MAX_WORKFLOW_STEPS, type ToolName, type WorkflowStep, type WorkflowTrigger,
+  MAX_WORKFLOW_STEPS,
 } from "../../workflow-shapes.js";
 import { declineOf } from "../../model-declined.js";
 import { DESTINATIONS } from "../../types.js";
@@ -22,8 +23,6 @@ import { requestRulesFor } from "../../model-rules.js";
  * what the transport layer serializes to a client, which is mail-half code, and declaring it here
  * made that path name this module. The redaction allowlist below stays with the serialization it
  * polices. Re-exported so this module's consumers are unaffected by where the shape now lives. */
-export type { WorkflowPattern } from "../../workflow-shapes.js";
-import type { WorkflowPattern } from "../../workflow-shapes.js";
 
 /** The COMPLETE set of keys a {@link WorkflowPattern} may carry (the redaction allowlist). */
 const ALLOWED_PATTERN_KEYS: ReadonlySet<string> = new Set([

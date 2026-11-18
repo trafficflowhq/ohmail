@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, MutationOutcome, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   LANDING_HOLD_MS,
@@ -10,12 +11,8 @@ import {
   retroPassWouldMove,
   retroWalkWouldMove,
   type EngineAdapter,
-  type EngineMessage,
   type EntityReader,
-  type Folder,
-  type MutationOutcome,
   type PressInput,
-  type RuleDTO,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";

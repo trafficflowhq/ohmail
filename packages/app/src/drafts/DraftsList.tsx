@@ -3,7 +3,7 @@
  * Discard (one press, with Undo). A row that holds a send nobody could confirm says so on its row; its two answers
  * stand in the reading column when it is open. Opening a row is the door's: a reply as that reply, else the composer.
  */
-import type { EngineDraft } from "@ohmail/client-engine";
+import type { EngineDraft } from "@ohmail/wire";
 import { heldSentence, isHeld, useDraftsModel, type DraftsModel } from "@ohmail/app-logic/drafts";
 import { Empty, RefusalLine } from "@ohmail/ui/base";
 import { GroupHeading, ListHead, Row, Rows } from "@ohmail/ui/mail";

@@ -1,3 +1,4 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
@@ -8,7 +9,7 @@ import {
 import {
   createLogger, cutFileParts, HTML_TRUNCATION_MARKER, htmlWords, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime,
   prepareHtmlForStorage, recordSentMessage, SendNotSubmitted, SentCopyAppendFailed, spliceFileParts, type SentCopyFilePart,
-  type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundAddress, type OutboundMessage,
+  type AppendedSent, type Logger, type NativeLocator, type OutboundAddress, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";

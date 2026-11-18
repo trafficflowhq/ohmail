@@ -1,3 +1,4 @@
+import type { AuthVerdict } from "@ohmail/wire";
 import { accountOfMessage } from "@trafficflow/db";
 import { dbFor } from "../src/context.js";
 import { describe, expect, it } from "vitest";
@@ -11,7 +12,7 @@ import {
 import { sql } from "drizzle-orm";
 import { checkUncheckedById } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  DEFAULT_OHBOX_POLICY, asAuthVerdict, evaluateRules, type AuthVerdict, type NormalizedMessage,
+  DEFAULT_OHBOX_POLICY, asAuthVerdict, evaluateRules, type NormalizedMessage,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ScreenerService } from "../src/screener-service.js";

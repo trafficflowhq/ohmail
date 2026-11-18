@@ -5,11 +5,12 @@
  * compose lane is held by `sendUnsettledFromLastSession`; the reply lane resumes its key only
  * through the lock record. Counted at the wire: distinct keys and deliveries.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { MutationRejectedError, OhmailEngine, MemoryMirrorStore, type EngineMutation } from "@ohmail/client-engine";
+import { MutationRejectedError, OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 
 (globalThis as unknown as { React: unknown }).React = React;

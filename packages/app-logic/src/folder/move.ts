@@ -9,13 +9,11 @@
  * paints it at once, an organizer elsewhere is waited for, a refusal rolls the paint back and is said, and Undo is the
  * engine's own way back (`inverseMutations`, read before the press), offered only where the server takes one.
  */
+import type { EngineMessage, EngineMutation, FolderEntity } from "@ohmail/wire";
 import {
   inverseMutations,
   movableInto,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type FolderEntity,
   type MutationRejectedError,
   type PressVerdict,
 } from "@ohmail/client-engine";

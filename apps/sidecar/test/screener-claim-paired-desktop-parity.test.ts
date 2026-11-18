@@ -1,9 +1,10 @@
+import type { MailboxDTO, MessageDTO } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, contacts, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
 import { ScreenerService, dbFor, type ServiceContext } from "@trafficflow/services";
-import { materializeMessages, type MailboxDTO, type MessageDTO } from "@trafficflow/services/mail";
+import { materializeMessages } from "@trafficflow/services/mail";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, consentPartition, presentationReader, screenerSegments,
   type FetchLike, type SyncChange,

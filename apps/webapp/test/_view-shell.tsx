@@ -1,11 +1,12 @@
 /** The whole shell over a memory mirror and a fake sync, as reply-survives-its-parent mounts it. */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore, OhmailEngine, mutationEffects,
-  type EngineMessage, type EngineMutation, type MirrorStore, type SyncChange,
+  type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";

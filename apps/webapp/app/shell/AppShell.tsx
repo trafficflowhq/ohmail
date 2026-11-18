@@ -6,6 +6,15 @@
  * the demo ribbon. Every list, count and mutation runs through
  * @ohmail/client-engine — the shell only owns view state.
  */
+import type {
+  ComposeAttachment,
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  OhmailView,
+  TagEntity as TagDTO,
+} from "@ohmail/wire";
 import {
   Suspense,
   createContext,
@@ -32,19 +41,12 @@ import {
   mirrorSuggestionIdOf,
   notifiedSenderName,
   sendAndDonePlanFor,
-  type ComposeAttachment,
   draftBodyKnown,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
   type MutationResult,
   pressVerdict,
   screeningDegrade,
-  type Folder,
-  type OhmailView,
   type SearchHit,
-  type TagDTO,
   autoUnsubscribeConfirms,
   unsubscribeLetterOf,
   rulesShown,

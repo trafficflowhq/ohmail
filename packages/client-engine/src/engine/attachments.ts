@@ -1,9 +1,10 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { calendarPartRank } from "@trafficflow/core/ics";
 import type { ScheduleFilesAnswer } from "../adapters/adapter.js";
 import { attachmentFaultClass } from "../attachment-fault.js";
 import { retypedBlob } from "../bytes-blob.js";
 import { LANE_DROPPED } from "../part-lane.js";
-import { type EngineMessage, MutationRejectedError } from "../types.js";
+import { MutationRejectedError } from "../types.js";
 import { REASK_MAX, wireFailed } from "../wire-reask.js";
 import {
   type AttachmentItem, type AttachmentsOutcome, CALENDAR_TEXT_MAX_BYTES, CALENDAR_TEXT_MAX_PARTS,

@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -9,9 +10,6 @@ import {
   screenerSegments,
   senderKey,
   type ConsentOptions,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 

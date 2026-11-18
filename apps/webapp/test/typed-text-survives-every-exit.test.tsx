@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 20_000 });
@@ -10,8 +11,6 @@ import {
   MutationRejectedError,
   OhmailEngine,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";

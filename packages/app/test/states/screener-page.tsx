@@ -6,9 +6,10 @@
  * `scheme`) and `lang`. With `sec=junk` the shell's Junk window is handed, answering the state the address names. The
  * rail is the frame's fed model; the report after a press is the frame's.
  */
+import type { FailedAtGateDTO, ScreenerSenderDTO } from "@ohmail/wire";
 import { useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import type { FailedAtGateDTO, OhmailEngine, ScreenerSenderDTO } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import { APPLY_PILE_ORDER, type ScreenerState, type SpamRow } from "@ohmail/app-logic/screener";
 import { Frame } from "../../src/frame/Frame.js";
 import { useRailModel } from "../../src/frame/commands.js";

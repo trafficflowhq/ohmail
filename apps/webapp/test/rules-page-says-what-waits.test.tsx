@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import type { RuleDTO, WaitingOnOrganizerView } from "@ohmail/client-engine";
+import type { WaitingOnOrganizerView } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { SettingsView } from "../app/views/SettingsView";

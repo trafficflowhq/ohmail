@@ -5,8 +5,9 @@
  * names, the counts the switch says, the rows, the letter open in the reader's column with its visit, a Resurface
  * row's Done, and the Reply Run over Answer Later. Called once, above both panes.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createContext, useCallback, useContext, useMemo, type Context } from "react";
-import type { EngineMessage, TriagePileEntry, TriagePiles } from "@ohmail/client-engine";
+import type { TriagePileEntry, TriagePiles } from "@ohmail/client-engine";
 import type { MessageAction } from "../press/actions.js";
 import { useReaderVisit, type ReaderMarkSeen, type ThreadReadWiring } from "../reading/reader-seen.js";
 import { useReplyRun, type ReplyRun } from "./reply-run.js";

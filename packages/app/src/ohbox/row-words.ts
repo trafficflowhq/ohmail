@@ -2,7 +2,7 @@
  * WHAT A ROW SAYS, from its letters: who it speaks for, their circles, and what a screen reader hears. Pure: the
  * names come through the shell's words, the voices from the model.
  */
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 import type { RowPerson } from "@ohmail/ui/mail";
 
 /** The first word of a name. A name with no space, or one written "Last, First", stays whole. */

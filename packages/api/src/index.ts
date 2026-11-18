@@ -7,7 +7,7 @@ export type {
   AlertArmHealth, AlertSinkSummary,
   HelloConfig,
   ChangeWakeHub,
-  AttachmentStagingPort, AttachmentStagingFactory, StagedUploadGrantWire,
+  AttachmentStagingPort, AttachmentStagingFactory,
 } from "./deps.js";
 export { DEFAULT_SSE } from "./deps.js";
 /* THE HOSTED HALF OF THE DEPENDENCY SURFACE. Re-exporting from `deps-cloud.js` is what carries

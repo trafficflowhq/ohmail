@@ -6,8 +6,8 @@
  * opens it whole, its Expand and Collapse open and shut it; on a phone's width its control is Read in full and the
  * press opens the letter in the reader. A visit starts with every item shut.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { useStreamModel, type StreamModel } from "@ohmail/app-logic/streams";
 import { Button } from "@ohmail/ui/base";
 import { BlankColumn, GroupHeading, Message, MessageHead, Sheet } from "@ohmail/ui/mail";

@@ -1,4 +1,5 @@
-import { MemoryMirrorStore, type EngineMessage, type Folder, type RuleDTO, type SyncChange } from "../../src/index.js";
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
+import { MemoryMirrorStore, type SyncChange } from "../../src/index.js";
 
 /**
  * THE ONE MATRIX THE PLACEMENT CENSUS DRIVES — term rules, body terms and the resurfaced pin, read

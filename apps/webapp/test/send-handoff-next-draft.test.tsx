@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineDraft, EngineMutation } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import {
   act, message, mountShell, press, replyDraft, replySurface, stubDom, unmountAll, waitFor, type DraftShell,

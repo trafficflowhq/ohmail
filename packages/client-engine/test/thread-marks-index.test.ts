@@ -1,10 +1,10 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   FOLDER_OF_VIEW,
   isOwnOutbound,
   threadMarksIndex,
   threadOf,
-  type EngineMessage,
   type EntityReader,
 } from "@ohmail/client-engine";
 

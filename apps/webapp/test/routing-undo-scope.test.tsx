@@ -5,11 +5,12 @@
  * another account is replayed at that account's launch, and a claim heard on another account's channel withholds
  * that account's own rows.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryMirrorStore, routingIntentsKey, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, routingIntentsKey, type SyncChange } from "@ohmail/client-engine";
 import { createIntentWindows, intentWindowsChannel } from "@ohmail/app-logic/press/intent-windows";
 import { useRoutingUndo, type RoutingUndo } from "@ohmail/app-logic/press/routing-undo";
 import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";

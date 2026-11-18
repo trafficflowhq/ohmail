@@ -1,3 +1,17 @@
+import type {
+  EmailAddress,
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  FolderEntity,
+  MessageStateDTO,
+  RuleEntity as RuleDTO,
+  ScreenerSenderDTO,
+  ScreenerWaitingDTO,
+  TagEntity as TagDTO,
+  WaterlineMeta,
+} from "@ohmail/wire";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { isOrganizedFolder } from "@trafficflow/core/destinations";
 import { replySubject } from "@trafficflow/core/reply-subject";
@@ -12,18 +26,6 @@ import type { EntityReader } from "./store.js";
 import { storeInstantOf } from "./store-pages.js";
 import {
   FOLDER_OF_VIEW,
-  type EmailAddress,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type FolderEntity,
-  type MessageStateDTO,
-  type RuleDTO,
-  type ScreenerSenderDTO,
-  type ScreenerWaitingDTO,
-  type TagDTO,
-  type WaterlineMeta,
   SCREENER_WAITING_TYPE,
   waterlineIdOf,
 } from "./types.js";

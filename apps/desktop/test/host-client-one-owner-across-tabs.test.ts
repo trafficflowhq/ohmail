@@ -4,11 +4,12 @@
  * lock from ONE injected registry; the row's owner is read off the disk first. Here rather than
  * beside the desktop's tests because `fake-indexeddb` is this package's.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { beforeAll, describe, expect, it } from "vitest";
 import { IDBFactory, IDBKeyRange as FakeKeyRange } from "fake-indexeddb";
 import {
   MutationRejectedError, OhmailEngine, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
-  type EngineLocks, type EngineMutation, type MutationResult, type NoticeChannel,
+  type EngineLocks, type MutationResult, type NoticeChannel,
 } from "@ohmail/client-engine";
 
 import { HostOutboxStore } from "../../paired-page/src/outbox-store.js";

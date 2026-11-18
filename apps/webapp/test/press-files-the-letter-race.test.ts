@@ -1,3 +1,10 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  MessageBodyWire,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -13,12 +20,7 @@ import {
   presentationReader,
   pressForecast,
   rulesList,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type Folder,
-  type MessageBodyWire,
-  type RuleDTO,
   type ScreenIntent,
   type SyncChange,
 } from "@ohmail/client-engine";

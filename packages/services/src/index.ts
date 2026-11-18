@@ -62,8 +62,7 @@ export {
   // driven by a test that can occupy the gate a purchase actually uses. Nothing in the product
   // imports either name.
   LaneGate, suggestLaneGate, SUGGEST_ADMISSION, admissionDeadline, pendingKeyTtlMs,
-  type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
-  type ScreenDecisionMailboxes, type ScreenRequestedMailbox, type ScreenRequestResult,
+  type ScreenerDeps, type ScreenIdempotency,
 } from "./screener-service.js";
 export {
   dismissHeldRelease, heldReleaseFingerprint, heldReleaseGroups, heldReleaseSummary,
@@ -84,7 +83,7 @@ export {
 } from "./ohbox-unscreened-service.js";
 export {
   TriageService, triageService,
-  type TriageSetBody, type TriageIdempotency, type ListOptions, type FocusReplyView, type PowerThroughView,
+  type TriageIdempotency, type ListOptions, type FocusReplyView, type PowerThroughView,
 } from "./triage-service.js";
 export {
   ApprovalService, makeApprovalService,
@@ -96,7 +95,7 @@ export {
 } from "./hey-migration.js";
 export {
   RulesService, rulesService,
-  type CreateRuleBody, type PatchRuleBody, type RuleMutation, type RuleCreation,
+  type RuleMutation, type RuleCreation,
   /* Mail 0094 — where a rule edit went, mailbox by mailbox. The panes that render "waiting on
      <machine>" read these, so they are exported rather than left inside the service. */
   type RuleTravel, type RuleRequestSent, type RuleRequestResult, type RuleRemoval,
@@ -178,9 +177,9 @@ export {
 } from "./push-service.js";
 export {
   MessageService, messageService, MARK_SEEN_MAX_IDS,
-  type MessageView, type ListMessagesOptions, type MessagePatchBody,
+  type MessageView, type ListMessagesOptions,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
+  type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
 } from "./message-service.js";
 /* THE READER'S VIEW OF SETTINGS IT DOES NOT OWN (mail 0094) — the mirror row, no dial. */
 export {
@@ -211,8 +210,8 @@ export {
   SearchService, searchService, SEARCH_SORTS, isSearchSort, SEARCH_PARTS, isSearchParts,
   SEARCH_QUERY_MAX_CHARS,
   ADDRESS_DIRECTIONS, ADDRESS_DIRECTIONS_SERVED, isAddressSearchDirection,
-  type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort, type SearchParts,
-  type AddressSearchDirection, type AddressSearchOptions, type AddressSearchResult,
+  type SearchOptions, type SearchFilters, type SearchSort, type SearchParts,
+  type AddressSearchDirection, type AddressSearchOptions,
 } from "./search-service.js";
 export { SearchTiming, SEARCH_TIMING_PHASES, type SearchTimingPhase, type SearchTimingFacts } from "./search-timing.js";
 export {
@@ -273,7 +272,7 @@ export {
 } from "./kb-service.js";
 export {
   TagsService, tagsService, RENDERABLE_HUES,
-  type TagBody, type TagHue, type AssignResult,
+  type TagHue, type AssignResult,
 } from "./tags-service.js";
 export {
   FolderOpsService,
@@ -282,7 +281,7 @@ export {
 export {
   DraftsService, draftsService, DRAFT_MAX_RECIPIENTS,
   DRAFT_SUBJECT_MAX_CHARS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
-  type CreateDraftBody, type PatchDraftBody, type DraftMutation,
+  type DraftMutation,
 } from "./drafts-service.js";
 export {
   DraftingService, draftingService, makeDraftingService, draftWindow, DRAFT_ADMISSION, DRAFT_OWN_TEXT_MAX_CHARS, DRAFT_USAGE_RELEASE,

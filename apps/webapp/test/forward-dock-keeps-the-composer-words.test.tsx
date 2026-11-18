@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -8,7 +9,7 @@ import { attachments, drafts, mailboxCredentials } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineDraft, type FetchLike } from "@ohmail/client-engine";
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type FetchLike } from "@ohmail/client-engine";
 import {
   FIXED_NOW, makeDeps, seedBody, seedMailbox, seedMessage, seedSession, seedThread,
 } from "../../../packages/api/test/helpers.js";

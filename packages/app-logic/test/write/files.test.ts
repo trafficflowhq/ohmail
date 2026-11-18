@@ -2,8 +2,8 @@
  * A LETTER'S FILES, the two commits: a pick admitted against the list as it stands (twins skipped, the ceiling
  * held, in pick order), and a quality move landed over the whole list (shrinks first, grows while they fit).
  */
+import type { ComposeAttachment } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { ComposeAttachment } from "@ohmail/client-engine";
 import { admit, base64Bytes, letterCap, requalified, type Picked } from "../../src/write/files.js";
 
 const file = (filename: string, n: number, fill = "A"): ComposeAttachment => ({

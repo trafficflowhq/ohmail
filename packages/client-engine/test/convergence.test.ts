@@ -1,8 +1,8 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   flattenResponse,
-  type EngineMessage,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";

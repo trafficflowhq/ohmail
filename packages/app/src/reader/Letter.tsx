@@ -2,6 +2,7 @@
  * ONE LETTER OF THE COLUMN: the kit's message sheet around the body the shell hands in. The wrapper carries the read
  * rule's facts; the text stands in its own block; the body's own controls stand in the head and above the text.
  */
+import type { EngineMessage, MessageBody } from "@ohmail/wire";
 import { useCallback, useLayoutEffect, useState } from "react";
 import {
   BlockedImages,
@@ -24,7 +25,6 @@ import { useLiveBody } from "@ohmail/app-logic/reading";
 import { useSessionDead } from "@ohmail/app-logic/session/session-truth";
 import { endOpen } from "@ohmail/app-logic/session/ui-vitals";
 import { useEngineOrNull } from "@ohmail/app-logic/engine";
-import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { useFrame } from "../frame/commands.js";
 import { useSignal } from "../frame/feeds.js";
 import { useMailboxStatus, useMailboxWord, useOwnAddresses } from "../frame/room.js";

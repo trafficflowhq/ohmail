@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -6,7 +7,6 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
   type SyncChange,
   threadOf,
 } from "@ohmail/client-engine";

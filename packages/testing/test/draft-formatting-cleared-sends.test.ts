@@ -1,10 +1,11 @@
+import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { drafts } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
-  HttpAdapter, MemoryMirrorStore, OhmailEngine, withSignature, type EngineDraft, type FetchLike,
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, withSignature, type FetchLike,
 } from "@ohmail/client-engine";
 import { draftEditOf } from "../../../apps/mobile/src/state/live.js";
 import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../api/test/helpers.js";

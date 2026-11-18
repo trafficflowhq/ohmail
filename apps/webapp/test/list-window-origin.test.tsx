@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, ResurfacedThreadRow } from "@ohmail/client-engine";
+import type { ResurfacedThreadRow } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { prepareSeated } from "./ohbox/_today";
 /* The Ohbox as the seated place, its list alone: this file reads no open letter. */

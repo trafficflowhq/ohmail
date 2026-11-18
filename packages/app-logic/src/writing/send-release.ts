@@ -1,9 +1,10 @@
 "use client";
 
+import type { EngineMutation } from "@ohmail/wire";
 import { createContext, useContext } from "react";
 import {
   applySendAndDone, releasePlanAt,
-  type EngineMutation, type EntityReader, type MutationResult, type SendAndDonePlan,
+  type EntityReader, type MutationResult, type SendAndDonePlan,
 } from "@ohmail/client-engine";
 
 /**

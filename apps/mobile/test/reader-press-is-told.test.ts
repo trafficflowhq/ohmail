@@ -11,11 +11,11 @@
  * React Native renderer. TO WATCH IT FAIL: in `state/relay.ts`, make `relayMarkFor` return `null`
  * for an in-flight entry and the waiting cases redden while the refused ones stay green.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

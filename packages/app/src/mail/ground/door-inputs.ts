@@ -16,7 +16,7 @@
  *
  * What a door has to say goes to the frame's one report, in the catalogue's sentences.
  */
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 import { useConsent } from "@ohmail/app-logic/consent";
 import { useEngine } from "@ohmail/app-logic/engine";
 import { syncMayRead } from "@ohmail/app-logic/session/sync-scheduler";

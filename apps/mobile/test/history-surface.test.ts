@@ -19,10 +19,11 @@
  * `liveHistory(raw, world.history)`. There is no renderer in this suite, so the route, the nav
  * entry and the deep-link gate are asserted over their own source.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { FOLDER_OF_VIEW, type EngineMessage, type EntityReader } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, type EntityReader } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import {
   liveHistory,

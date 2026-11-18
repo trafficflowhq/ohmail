@@ -1,3 +1,4 @@
+import type { EngineDraft, EngineMessage, EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
@@ -9,9 +10,6 @@ import {
   OUTBOX_TYPE,
   SqlMirrorStore,
   type EngineAdapter,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";

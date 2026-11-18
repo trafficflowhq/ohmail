@@ -1,5 +1,5 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { EngineMutation } from "@ohmail/client-engine";
 import { isOwnVerb, runOwnVerb, type VerbWords } from "../../src/reader/verbs.js";
 import { markSeenOver } from "../../src/reader/mark-seen.js";
 import { blankOf } from "../../src/reader/blank-model.js";

@@ -1,6 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { SearchIndex } from "../src/search.js";
-import type { EngineMessage } from "../src/types.js";
 
 /**
  * PUNCTUATION IS PART OF THE WORD — the `D-U-N-S` miss, and the two rules that answer it.

@@ -7,12 +7,12 @@
  * between the two columns is the meeting line alone: the list's visit and its blank. One press seam, the room's,
  * lives throughout.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import type { ShellDispatchInput } from "@ohmail/app-logic/press/shell-dispatch";
-import type { EngineMessage, EngineMutation } from "@ohmail/client-engine";
 import { Frame } from "../../src/frame/Frame.js";
 import { OhboxAbove, ohboxPlace } from "../../src/ohbox/index.js";
 import { READER_DOM, scrollerOf } from "../../src/reader/read-dom.js";

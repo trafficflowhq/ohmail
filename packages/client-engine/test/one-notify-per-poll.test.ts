@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   BACKLOG_PUBLISH_PAGES,
@@ -7,8 +8,6 @@ import {
   OUTBOX_TYPE,
   STALE_RESUME_MS,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

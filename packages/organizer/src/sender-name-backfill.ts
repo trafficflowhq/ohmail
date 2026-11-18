@@ -1,3 +1,4 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { messageBodies, messages, recordChanges, type LedgerTx, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -10,7 +11,7 @@ import { dialect } from "@trafficflow/db/dialect";
    the refusal named two dozen extra inputs for four symbols that live in the mail half all along.
    `mail.ts` re-exports `mime.ts` and `log.ts`, which is where all four are. */
 import {
-  parseStoredAddressHeaders, silentLogger, type EmailAddress, type Logger,
+  parseStoredAddressHeaders, silentLogger, type Logger,
 } from "@trafficflow/core/mail";
 
 /* THE SENDER-NAME / RECIPIENTS BACKFILL — DB-only. Three columns went in after the rows that need them:

@@ -1,12 +1,11 @@
 /** @vitest-environment jsdom */
+import type { MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
   type EngineAdapter,
-  type MessageBodyWire,
-  type MutationOutcome,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import {

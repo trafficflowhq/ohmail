@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import {
   compareRanked,
   compoundForms,
@@ -11,7 +12,7 @@ import {
   type SearchTier,
 } from "@trafficflow/core/search-rank";
 import type { EntityReader } from "./store.js";
-import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage } from "./types.js";
+import { folderLeaf, VIEW_OF_FOLDER } from "./types.js";
 
 /**
  * Instant local search over the mirror: field-weighted lexical tokens over

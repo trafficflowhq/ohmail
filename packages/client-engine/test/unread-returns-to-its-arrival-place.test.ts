@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -5,8 +6,6 @@ import {
   ohboxRows,
   ohboxView,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
   type SyncChange,
 } from "@ohmail/client-engine";
 

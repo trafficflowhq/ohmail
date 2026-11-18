@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +13,7 @@ import type {
 import type { LeaseIo, LeasePeekIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
   HttpAdapter, OhmailEngine, consentPartition, presentationReader, screenerSegments,
-  type EngineMessage, type StorePolicy,
+  type StorePolicy,
 } from "@ohmail/client-engine";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";

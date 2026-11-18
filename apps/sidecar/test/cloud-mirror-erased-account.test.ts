@@ -1,10 +1,10 @@
+import type { RuleDTO, SyncChange, SyncResponse, TagDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { accounts, accountSettings, approvals, mailboxes, rules, tags, threads } from "@trafficflow/db/mail";
-import type { RuleDTO, SyncChange, SyncResponse, TagDTO } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror } from "../src/cloud-mirror.js";

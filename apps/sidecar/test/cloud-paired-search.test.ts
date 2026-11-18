@@ -1,7 +1,7 @@
+import type { MessageDTO, SyncChange, SyncResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { MessageDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { HttpAdapter, MemoryMirrorStore, OhmailEngine, StoreSearchWalker } from "@ohmail/client-engine";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
 import type { Tx } from "@trafficflow/db";

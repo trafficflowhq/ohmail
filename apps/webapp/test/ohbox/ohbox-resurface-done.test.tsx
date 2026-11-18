@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -6,7 +7,6 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../../messages/en.json";
 import german from "../../messages/de.json";
 import { pinnedRows } from "../_resurfaced-rows.js";
-import type { EngineMessage } from "@ohmail/client-engine";
 
 /**
  * "DONE" ON A RESURFACED ROW — the release verb's row-level face.

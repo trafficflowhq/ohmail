@@ -8,11 +8,11 @@
  * its own render, so a reader draws with them in the commit in which the seam's state moves. A seam a shell hands
  * over fills a store from a hook, a commit later: that shell composes what it draws from its own seam itself.
  */
+import type { Folder } from "@ohmail/wire";
 import { createContext, useContext, useEffect, useSyncExternalStore, type MutableRefObject } from "react";
 import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import { mailboxLabelKey, mailboxLabelResolver, type MailboxLabelFact } from "@ohmail/app-logic/reader";
 import { ownAddressesOf, type rosterStateOf } from "@ohmail/app-logic/mail-state/mail-state";
-import type { Folder } from "@ohmail/client-engine";
 
 /** What the seam holds back for its Undo, as the presented mirror needs it: deletes and routing presses. */
 export interface RoomHolds {

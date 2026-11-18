@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { THREAD_READ_HOLD_MS, createThreadRead } from "@ohmail/client-engine";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import type { EngineMessage } from "@ohmail/client-engine";
 import {
   EVIDENCE_WINDOW_MS, LANDING_REST_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, createUnreadHold, panelsOf, pressEnters, useReaderVisit,
   useThreadRead, viewOf, type ThreadReadDomOptions,

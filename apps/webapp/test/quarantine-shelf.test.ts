@@ -1,5 +1,5 @@
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
 import type { SpamRow } from "@ohmail/app-logic/screener/screener-state";
 import { quarantineShelf, shelfRowMatches } from "@ohmail/app-logic/press/quarantine-shelf";
 

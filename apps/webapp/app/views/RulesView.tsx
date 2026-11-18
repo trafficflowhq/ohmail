@@ -28,11 +28,12 @@
  * and revoking is two clicks with the second under that sentence — pluralised for bulk, never weakened. A pane of
  * `SettingsView`, its own file so a test imports THIS and a route promotion is one branch.
  */
+import type { Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, ListGroupLabel, SettingsNote, SettingsSection, Switch, TextField, useToast, type ToastOptions } from "@ohmail/ui";
 import { FOLDER_OF_VIEW, PROFILE_RULES_SENT_MAX, REFILE_UNDO_WINDOW_MS, pressVerdict, tallyVerdicts, walkOwed, zonedFields } from "@ohmail/client-engine";
-import type { Folder, PressAnswer, QueuedRuleWrite, RuleDTO, WaitingOnOrganizerView } from "@ohmail/client-engine";
+import type { PressAnswer, QueuedRuleWrite, WaitingOnOrganizerView } from "@ohmail/client-engine";
 import { browserOffline, queuedSentence } from "@ohmail/app-logic/press/queued-sentence";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { usePileNames } from "../shell/decision-copy";

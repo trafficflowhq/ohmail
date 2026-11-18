@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome, SyncSnapshotPage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter,
@@ -7,12 +8,9 @@ import {
   STORE_POLICY_GENERATION_META,
   SNAPSHOT_PREFIX_SEQ_META,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type StorePolicy,
   type SyncChange,
   type SyncResponse,
-  type SyncSnapshotPage,
 } from "../src/index.js";
 
 /**

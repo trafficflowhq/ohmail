@@ -1,10 +1,9 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   BODIES_IDS_MAX,
   MemoryMirrorStore,
   OhmailEngine,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

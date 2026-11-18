@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO, StayedWhy } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { MemoryMirrorStore, type EngineMessage, type Folder, type RuleDTO, type StayedWhy, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { SenderMenu } from "../app/shell/SenderMenu";

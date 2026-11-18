@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 import * as React from "react";
@@ -6,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
   OhmailEngine, MemoryMirrorStore, senderKey, consentPartition, presentationReader,
-  type EngineMessage, type Folder, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import { REASON_CODES, toSuggestion } from "../app/shell/screener-suggest.js";

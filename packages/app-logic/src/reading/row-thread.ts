@@ -8,7 +8,8 @@
  * members otherwise), and that answer WINS wherever it exists — the fixture's number survives
  * only in the demo, which has no mirror thread to count.
  */
-import { heldUnpinned, type EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
+import { heldUnpinned } from "@ohmail/client-engine";
 
 /** What a row is handed: both props, or neither — a count without its words is a silent badge. */
 export interface RowThreadProps {

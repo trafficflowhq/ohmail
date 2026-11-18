@@ -1,10 +1,9 @@
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   OhmailEngine,
   ohboxView,
-  type EngineMessage,
   type EntityReader,
-  type MessageStateDTO,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 

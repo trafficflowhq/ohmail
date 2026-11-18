@@ -3,11 +3,11 @@
  * whole conversation; its swipe verbs acted on the open target alone, where the web's pick of a
  * row is every member. Each verb now takes `memberIds`, sends one mutation per member, says once.
  */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { bracketSpan, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
 import { afterEach, describe, expect, it } from "vitest";
-import { type EngineMessage, type RuleDTO } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

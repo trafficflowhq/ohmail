@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { HOLD_QUIET_MS, StreamCardToggled, StreamShell, type StreamHandle } from "../app/shell/StreamShell";
 import { StreamCardMemo } from "../app/shell/StreamCardMemo";

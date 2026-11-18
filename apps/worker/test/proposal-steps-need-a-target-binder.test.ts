@@ -1,9 +1,10 @@
+import type { WorkflowPattern } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, workflows, workflowRuns, type Tx } from "@trafficflow/db";
-import { deriveProposals, type WorkflowPattern } from "@trafficflow/core";
+import { deriveProposals } from "@trafficflow/core";
 import { workflowTimeScanPass } from "../src/workflow-cron.js";
 
 /**

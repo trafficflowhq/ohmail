@@ -1,5 +1,6 @@
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, heldRuleId, pressRules, type EngineMessage, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, heldRuleId, pressRules, type SyncChange } from "@ohmail/client-engine";
 import { planHeldRouting, planPhoneRouting, releaseRules, routingReversal, type PhoneMoveIntent } from "../src/state/live";
 
 /**

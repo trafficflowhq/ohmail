@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineMutation } from "@ohmail/client-engine";
 import { READER_DOM, scrollerOf } from "../../src/reader/read-dom.js";
 import { freshRecord, letter, mountReader } from "./support/mail.js";
 

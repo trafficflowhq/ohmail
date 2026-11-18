@@ -1,5 +1,6 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { HttpAdapter, type EngineMutation } from "../src/index.js";
+import { HttpAdapter } from "../src/index.js";
 
 // The batch read's PATCH carries both halves the server joins: the open read's flag in the body
 // (without it nothing is stamped) and the press age in the header (without it no per-id floor applies).

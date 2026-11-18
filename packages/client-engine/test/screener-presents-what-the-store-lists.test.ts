@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome, ScreenerWaitingWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   consentPartition,
@@ -7,10 +8,7 @@ import {
   presentationReader,
   screenerSegments,
   type EngineAdapter,
-  type EngineMessage,
   type EntityReader,
-  type MutationOutcome,
-  type ScreenerWaitingWire,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

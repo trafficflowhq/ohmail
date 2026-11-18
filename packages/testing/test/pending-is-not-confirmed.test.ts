@@ -1,10 +1,9 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter,
   OhmailEngine,
   ORGANIZER_REQUEST_SLOW_MS,
-  type EngineMessage,
-  type Folder,
 } from "@ohmail/client-engine";
 
 /**

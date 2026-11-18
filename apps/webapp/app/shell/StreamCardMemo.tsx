@@ -12,9 +12,9 @@
  * The guard is `test/stream-rerender.test.tsx`, driven through `presentationReader`.
  */
 
+import type { EngineMessage, MessageBody } from "@ohmail/wire";
 import { memo, useCallback, useContext, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { StreamCard, StreamArt } from "@ohmail/ui";
 import { senderName, displayTime } from "./format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";

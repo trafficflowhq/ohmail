@@ -5,8 +5,9 @@
  * only mail the pass could move (organized, not set aside, not already there), and answer null
  * for a rule the mirror cannot evaluate.
  */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, mutationEffects, type EngineMessage, type Folder, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, mutationEffects, type SyncChange } from "@ohmail/client-engine";
 import { pileOf, rulePastMail, ruleRetarget, walkedMailboxes } from "../app/shell/rule-past-mail";
 
 const rule = (over: Partial<RuleDTO> = {}): RuleDTO => ({

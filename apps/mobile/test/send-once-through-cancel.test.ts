@@ -37,9 +37,10 @@
  * Each was run, watched red by the assertion named beside it, and restored from a pristine copy
  * proved by `cmp`.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
-import { OUTBOX_TYPE, type EngineMutation, type WithdrawOutcome } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, type WithdrawOutcome } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { queuedCaptionKey } from "../src/engine/send-waits";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";

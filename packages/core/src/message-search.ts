@@ -1,3 +1,4 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { and, desc, eq, inArray, isNull, lt, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import {
   accounts, attachments, messageBodies, messages, messageSearch, type Tx,
@@ -5,7 +6,6 @@ import {
 } from "@trafficflow/db";
 import { dialect, SEARCH_NAMES_MARK, type SearchDocumentParts } from "@trafficflow/db/dialect";
 import { htmlWords } from "./html-text.js";
-import type { EmailAddress } from "./types.js";
 
 /**
  * THE SEARCH DOCUMENT (mail 0125) — what a message is found by, built from the STORE or the parsed

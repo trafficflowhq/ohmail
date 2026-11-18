@@ -1,8 +1,8 @@
 "use client";
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { authScreens } from "@trafficflow/core/sender-headers";
-import type { EngineMessage } from "@ohmail/client-engine";
 
 /**
  * THE IDENTITY FACT AS THE WEB RENDERS IT — off the mirror's copy of `MessageDTO.senderCheck`,

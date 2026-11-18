@@ -1,11 +1,11 @@
+import type { WorkflowPattern, WorkflowStep, WorkflowTrigger } from "@ohmail/wire";
 import { and, eq, isNotNull, or, sql } from "drizzle-orm";
 import {
   messages, rules, learningSignals, workflowProposals, fencedAccountWrite, type Tx,
 } from "@trafficflow/db";
-import type { WorkflowStep, WorkflowTrigger } from "../../workflow-shapes.js";
 import { canonicalDestination, DESTINATIONS } from "../../types.js";
 import type { Logger } from "../../log.js";
-import { deriveProposals, type WorkflowPattern, type WorkflowPort } from "./propose.js";
+import { deriveProposals, type WorkflowPort } from "./propose.js";
 
 // Pattern ASSEMBLY + proposal GENERATION. In CORE (db-coupled, worker-importable — the executor's
 // seam) so the worker's `proposal-cron` and the services `ProposalsService` both delegate here

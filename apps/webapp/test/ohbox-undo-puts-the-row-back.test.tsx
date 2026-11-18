@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,8 +12,6 @@ import {
   OhmailEngine,
   THREAD_READ_HOLD_MS,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";

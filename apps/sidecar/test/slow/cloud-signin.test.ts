@@ -1,12 +1,17 @@
+import type {
+  MessageBodyBatchItem,
+  MessageDTO,
+  Page,
+  SyncChange,
+  SyncResponse,
+  ThreadDTO,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { fixturePassword } from "../../../../test/support/fixture-credentials.js";
 import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type {
-  MessageBodyBatchItem, MessageDTO, Page, SyncChange, SyncResponse, ThreadDTO,
-} from "@trafficflow/services/mail";
 import { hashToken } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../../src/cloud-engine.js";
 import {

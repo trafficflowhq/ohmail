@@ -38,11 +38,12 @@
  * on by default, offered at the gate too: there the rule is a given and the backlog is all that is
  * left to decide.
  */
+import type { Folder, RuleEntity as RuleDTO, StayedWhy } from "@ohmail/wire";
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { useTranslations } from "next-intl";
 import {
-  VIEW_OF_FOLDER, type ConflictGroup, type Folder, type PressForecast, type RuleDTO, type RulesInPlay,
-  type StayedWhy, type UnsubscribeClaim, type UnsubscribeLetter, ruleMatchKey, ruleTwins, twinWinner,
+  VIEW_OF_FOLDER, type ConflictGroup, type PressForecast, type RulesInPlay,
+  type UnsubscribeClaim, type UnsubscribeLetter, ruleMatchKey, ruleTwins, twinWinner,
   unsubscribeClaim,
 } from "@ohmail/client-engine";
 import { canonicalDestination } from "@trafficflow/core/folder-name";

@@ -12,9 +12,9 @@
  * `AttachmentPreview`'s security rule).
  */
 
+import type { ComposeAttachment } from "@ohmail/wire";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ComposeAttachment } from "@ohmail/client-engine";
 import { AttachmentPreview, discard, loadPdfjs, previewKind } from "./AttachmentPreview";
 import { FileMark, type AttachmentItem } from "./AttachmentStrip";
 import type { PdfTask } from "./pdf-port";

@@ -1,7 +1,7 @@
+import type { EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { addressPriorityOver, ruleMatchKey } from "@trafficflow/core/rule-order";
 import { domainOfAddress } from "./consent-cutline.js";
-import type { EngineMutation, RuleDTO } from "./types.js";
 
 /**
  * AN ADDRESS RULE A PERSON WRITES IS NEVER OUTRANKED BY A RULE ON ITS DOMAIN. The router's order

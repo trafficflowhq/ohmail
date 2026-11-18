@@ -16,8 +16,7 @@ import {
   clampLimit, decodeKeysetCursor, decodeListCursor, decodeReturnKeysetCursor, encodeListCursor,
   encodeReturnKeysetCursor,
 } from "./pagination.js";
-import type { MessageDTO, MessageStateDTO, Page, TriageState } from "./dto/types.js";
-import type { TriageSetBody } from "@ohmail/wire";
+import type { MessageDTO, MessageStateDTO, Page, TriageSetBody, TriageState } from "@ohmail/wire";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -28,7 +27,6 @@ export const POWER_THROUGH_FOLD_HOPS = 20;
 const asDb = (tx: Tx): Db => bridgeDb(tx);
 
 /** A triage press's body: declared with the wire's vocabulary. */
-export type { TriageSetBody };
 
 /** Idempotency handle threaded in by the route; the row is written IN the setState tx. */
 export interface TriageIdempotency {

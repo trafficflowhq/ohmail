@@ -18,9 +18,9 @@
  *  · the summary read answers the server's counts, and `null` — never a guess — when the
  *    route refuses or the wire is dead (the confirm's uncounted sentence).
  */
+import type { FolderEntity } from "@ohmail/wire";
 import { describe, expect, it, vi } from "vitest";
 import { sayArg } from "../src/refusal";
-import type { FolderEntity } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { readFolderSummary } from "../src/net/folder-ops";
 import type { ConnectedSession } from "../src/net/pairing";

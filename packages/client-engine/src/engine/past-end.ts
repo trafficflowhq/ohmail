@@ -1,5 +1,6 @@
+import type { EngineMessage, OhmailView } from "@ohmail/wire";
 import { mirrorCoverage } from "../store-pages.js";
-import { type EngineMessage, MutationRejectedError, type OhmailView } from "../types.js";
+import { MutationRejectedError } from "../types.js";
 import { errorClassOf, type FetchMessageOutcome, type ListOlderOutcome, type StoreCoverage } from "./server-wire.js";
 import { EngineTimeline } from "./timeline.js";
 

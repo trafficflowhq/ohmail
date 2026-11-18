@@ -5,8 +5,9 @@
  * save it could not make, and Send went nowhere in silence. And a draft another device SENT while
  * this tab was closed: reopening cleared the words typed here that the row never held.
  */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineDraft, EngineMutation, SyncChange } from "@ohmail/client-engine";
+import type { SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { composeSessionId, handOffComposer, readComposeDraft, readComposeRow, resetComposerForTest } from "@ohmail/app-logic/writing/compose";

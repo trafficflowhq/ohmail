@@ -1,8 +1,8 @@
 import { parseMessageIds } from "./threading.js";
-import { authScreens, type AuthVerdict } from "./sender-headers.js";
+import { authScreens } from "./sender-headers.js";
 import type { IdentityFact } from "./sender-check.js";
 import type { NormalizedMessage, Destination } from "./types.js";
-import type { UnsubscribeHeaderState } from "@ohmail/wire";
+import type { AuthVerdict, UnsubscribeHeaderState } from "@ohmail/wire";
 import {
   compareRules, effectForDestination as effectOfDestination, namesAuthor, personConsentRule, personDomainConsentRule,
   placingRule, ruleMatchKey, type RuleEffect,
@@ -20,7 +20,6 @@ export type { RuleEffect };
 export { compareRules };
 
 /** Defined in the import-free sender-headers leaf, which reads it too; see its docblock. */
-export type { AuthVerdict };
 
 /**
  * `messages.auth_verdict` as this vocabulary, or `null` for "nobody stated one".
@@ -946,7 +945,6 @@ export function oneClickUnsubscribeUri(headers: Readonly<Record<string, unknown>
 }
 
 /** Why {@link oneClickUnsubscribeUri} answered what it answered; declared with the wire's vocabulary. */
-export type { UnsubscribeHeaderState };
 
 /** The state, computed from the same header map and the same refusals. */
 export function unsubscribeHeaderState(

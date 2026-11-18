@@ -9,15 +9,13 @@
  * props because the read column's pane is three components deep inside a view that already takes
  * fifteen.
  */
+import type { ComposeAttachment, EngineMessage, MessageBody } from "@ohmail/wire";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BODY_FETCH_TIMEOUT_MS,
   JUNK_REFILL_BOUND_MS,
   type AddressBookEntry,
-  type ComposeAttachment,
-  type EngineMessage,
   type ForwardAsk,
-  type MessageBody,
 } from "@ohmail/client-engine";
 import type { AttachmentsChrome } from "./attachments";
 import type { SendState, ShowSend } from "@ohmail/app-logic/writing/mail-send";

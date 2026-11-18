@@ -5,8 +5,8 @@
  * answered, and a press that can go through again stays. A route by email is said and declined: ohmail never sends
  * mail for the person. A page on the sender's site is said; this folder draws no link from a letter's headers.
  */
+import type { UnsubscribeHeaderState } from "@ohmail/wire";
 import { useState } from "react";
-import type { UnsubscribeHeaderState } from "@ohmail/client-engine";
 import { Button } from "@ohmail/ui/base";
 import { NONE } from "../../host/index.js";
 import { useText } from "../../text/index.js";

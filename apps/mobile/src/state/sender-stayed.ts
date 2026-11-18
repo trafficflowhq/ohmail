@@ -5,6 +5,7 @@
  * (`GET /screener/stayed`, read through `engine.whyStayed`); this module only says which rows to
  * ask about and groups the answer by place and reason, so the lines count the rows the lists show.
  */
+import type { EngineMessage, EngineMutation, Folder, StayedWhy } from "@ohmail/wire";
 import {
   FOLDER_OF_VIEW,
   canonicalDestination,
@@ -15,12 +16,8 @@ import {
   ruleTwins,
   rulesList,
   twinWinner,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type Folder,
   type MutationResult,
-  type StayedWhy,
 } from "@ohmail/client-engine";
 import type { Destination, Scope } from "./model";
 

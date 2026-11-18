@@ -1,11 +1,10 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   senderActivity,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type StorePolicy,
   type SyncChange,
   type SyncResponse,

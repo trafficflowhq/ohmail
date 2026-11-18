@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MessageBody } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { JUNK_REFILL_BOUND_MS, type EngineMessage, type MessageBody } from "@ohmail/client-engine";
+import { JUNK_REFILL_BOUND_MS } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { StreamCardMemo } from "../app/shell/StreamCardMemo";
 

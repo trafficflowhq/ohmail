@@ -1,3 +1,4 @@
+import type { FolderDTO } from "@ohmail/wire";
 import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -7,7 +8,7 @@ import { changeLog, mailboxes, mailboxFolders, messages } from "@trafficflow/db"
 import {
   MessageService, SyncService, consentSettings, dbFor, mailboxFoldersOff, setFoldersEnabled,
   setMailboxFoldersEnabled, userFolderExclusion,
-  type FolderDTO, type ServiceContext,
+  type ServiceContext,
 } from "../src/index.js";
 import { folderState } from "@trafficflow/db";
 import { isSentFolderPath } from "@trafficflow/core/folder-name";

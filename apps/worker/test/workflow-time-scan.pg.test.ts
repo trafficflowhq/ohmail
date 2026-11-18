@@ -1,3 +1,4 @@
+import type { WorkflowTrigger } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -7,7 +8,6 @@ import { eq } from "drizzle-orm";
 import { workflows, workflowRuns, type Tx } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
-import type { WorkflowTrigger } from "@trafficflow/core";
 import { workflowTimeScanPass, workflowDrainPass, unconfiguredDrafter } from "../src/workflow-cron.js";
 import { pgTestUrl } from "@trafficflow/db/testing";
 

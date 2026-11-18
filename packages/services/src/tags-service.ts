@@ -7,8 +7,7 @@ import {
 import { bridgeTx, claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeTag, tagRowToDTO } from "./dto/materialize.js";
-import type { TagDTO } from "./dto/types.js";
-import type { TagBody } from "@ohmail/wire";
+import type { TagBody, TagDTO } from "@ohmail/wire";
 
 /** Same shim every write service here uses (`approval-service.ts:43`): a `ServiceContext.db`
  *  is a real transaction host, but the union type does not say so. */
@@ -41,7 +40,6 @@ import { MAX_TAG_NAME_CHARS } from "@trafficflow/core/adapters/organizer-profile
 const MAX_NAME = MAX_TAG_NAME_CHARS;
 
 /** A tag's create and patch body: declared with the wire's vocabulary. */
-export type { TagBody };
 
 export interface AssignResult {
   /** The message's full tag id list AFTER the write — what the client renders. */

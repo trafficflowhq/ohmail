@@ -1,15 +1,33 @@
 import type {
-  AutoFiledUndoWire, AutoFiledWire, EngineAdapter, ScreenerWaitingWire, StayedWhy, UnscreenedPileWire, UnscreenedWire,
+  AutoFiledUndoWire,
+  AutoFiledWire,
+  EngineMessage,
+  HeldReleaseGroupDTO,
+  MessageBodyBatchWire,
+  MessageBodyRecord,
+  RuleEntity as RuleDTO,
+  ScreenerWaitingDTO,
+  ScreenerWaitingPageDTO,
+  ScreenerWaitingSenderDTO,
+  ScreenerWaitingWire,
+  StayedWhy,
+  UnscreenedGroupDTO,
+  UnscreenedPileWire,
+  UnscreenedWire,
+  UnsubscribeResult,
+  WithheldMarker,
+} from "@ohmail/wire";
+import type {
+  EngineAdapter,
 } from "../adapters/adapter.js";
 import { consentIndex, decidedDestination, namedByBodyTerm } from "../consent-cutline.js";
 import { relistedBy } from "../kept-decisions.js";
 import { isOwnSent, rulesList, senderKey } from "../selectors.js";
 import {
-  type EngineMessage, FOLDER_OF_VIEW, HELD_RELEASE_TYPE, type HeldReleaseGroupDTO, isProtectedMessage,
-  isWithheldMarker, MAILBOX_TYPE, type MessageBodyBatchWire, type MessageBodyRecord, MutationRejectedError,
-  type RuleDTO, SCREENER_WAITING_PAGE_ID, SCREENER_WAITING_TYPE, type ScreenerWaitingDTO,
-  type ScreenerWaitingPageDTO, type ScreenerWaitingSenderDTO, type SyncChange, UNSCREENED_TYPE,
-  type UnscreenedGroupDTO, type UnsubscribeResult, type WithheldMarker,
+  FOLDER_OF_VIEW, HELD_RELEASE_TYPE, isProtectedMessage,
+  isWithheldMarker, MAILBOX_TYPE, MutationRejectedError,
+  SCREENER_WAITING_PAGE_ID, SCREENER_WAITING_TYPE,
+  type SyncChange, UNSCREENED_TYPE,
 } from "../types.js";
 import {
   BODY_CACHE_MAX, FAILED_BODY_HOLD_MS, HELD_ARRIVALS_MAX, MAX_CONCURRENT_BODIES, PAGE_IS_NOT_CONTENT, sameGone,

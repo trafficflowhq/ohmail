@@ -1,10 +1,11 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   OhmailEngine,
   CALENDAR_TEXT_MAX_BYTES,
   CALENDAR_TEXT_MAX_PARTS,
 } from "../src/engine.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * ── CALENDAR PARTS: FETCHED AUTOMATICALLY, HELD AS TEXT FOR THE EVENT PREVIEW ───────────────

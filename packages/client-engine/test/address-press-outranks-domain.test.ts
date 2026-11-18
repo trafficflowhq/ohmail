@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation, MutationOutcome, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter,
@@ -8,10 +9,6 @@ import {
   presentationReader,
   rulesList,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type MutationOutcome,
-  type RuleDTO,
   type SyncResponse,
 } from "@ohmail/client-engine";
 

@@ -15,8 +15,9 @@
  * marks. Only the place (the ring) is the walk's. The host gives the strip only to the walked row
  * ({@link useWalkedRow}), and a row with a strip draws none of its own squares: one strip per row.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useMemo, useState, useSyncExternalStore } from "react";
-import { isOwnOutbound, type EngineMessage } from "@ohmail/client-engine";
+import { isOwnOutbound } from "@ohmail/client-engine";
 import { ThreadMarksBar, marksKeys } from "./ThreadMarks";
 import type { ThreadWalkChannel, ThreadWalkSnapshot } from "@ohmail/app-logic/reading/thread-walk-channel";
 

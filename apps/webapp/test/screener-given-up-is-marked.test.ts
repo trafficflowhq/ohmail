@@ -13,10 +13,10 @@
  * Mutations: the accessor reading `s.refused` alone → case 4 red; `givenUpRowIds` ignoring
  * `superseded` → case 2 red; matching a decide by its row id alone → case 1's re-minted row red.
  */
+import type { EngineMutation, ScreenerSenderDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_MAX_SERVER_FAILURES,
-  type EngineMutation, type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
 import { givenUpRowIds } from "@ohmail/app-logic/screener/screener-given-up";
 import {

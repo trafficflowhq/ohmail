@@ -16,8 +16,9 @@
  * The corpus is TEST-SIDE synthetic data (this file and its helper never ship): the app
  * itself carries no sample mail — privacy.test.ts holds that half of the ruling.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type EngineMessage, type OhmailEngine } from "@ohmail/client-engine";
+import { type OhmailEngine } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import {
   liveActions,

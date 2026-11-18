@@ -1,6 +1,7 @@
 /** A row's own verbs and words, and what the list hands the reading column for the open letter. */
+import type { EngineMessage } from "@ohmail/wire";
 import { isOwnSent, presentsUnread } from "@ohmail/client-engine";
-import type { EngineMessage, OhboxRow as OhboxRowGroup, ThreadMark } from "@ohmail/client-engine";
+import type { OhboxRow as OhboxRowGroup, ThreadMark } from "@ohmail/client-engine";
 import type { ListVisit } from "../reading/list-meeting.js";
 import type { MessageAction } from "../press/actions.js";
 import type { ScreeningDest } from "../press/sender-screening.js";

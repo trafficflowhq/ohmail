@@ -1,3 +1,4 @@
+import type { AwayResponderDTO } from "@ohmail/wire";
 import { eq } from "drizzle-orm";
 import { awayResponders } from "@trafficflow/db";
 import {
@@ -11,7 +12,6 @@ import {
 import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import type { AwayResponderDTO } from "./dto/types.js";
 import { planAccountFanOut } from "./reader-request.js";
 import {
   fanOutProfileEdit, profileTravelled, type ProfileTravel,

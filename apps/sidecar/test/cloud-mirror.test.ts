@@ -1,3 +1,16 @@
+import type {
+  MailboxDTO,
+  MessageBodyBatchItem,
+  MessageDTO,
+  MessageStateDTO,
+  Page,
+  RuleDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+  TagDTO,
+  ThreadDTO,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,8 +23,7 @@ import {
 } from "@trafficflow/db/mail";
 import { dbFor, syncService } from "@trafficflow/services/mail";
 import type {
-  MailboxDTO, MessageBodyBatchItem, MessageDTO, MessageStateDTO, Page, RuleDTO, ServiceContext, SnapshotResponse,
-  SyncChange, SyncResponse, TagDTO, ThreadDTO,
+  ServiceContext,
 } from "@trafficflow/services/mail";
 import { openLocalDb, type LocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";

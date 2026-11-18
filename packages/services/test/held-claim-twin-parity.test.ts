@@ -1,3 +1,4 @@
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
@@ -6,7 +7,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, contacts, folderState, mailboxes, messageBodies, messages, rules } from "@trafficflow/db";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, consentPartition,
-  type EngineAdapter, type EngineMessage, type RuleDTO, type SyncChange, type SyncResponse,
+  type EngineAdapter, type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 import { screenerRoutesGroup, type ApiDeps } from "@trafficflow/api";
 import { ScreenerService } from "../src/screener-service.js";

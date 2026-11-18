@@ -1,13 +1,10 @@
+import type { EngineMessage, MessageBodyBatchWire, MessageBodyRecord, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   bodyOf,
   type EngineAdapter,
-  type EngineMessage,
-  type MessageBodyBatchWire,
-  type MessageBodyRecord,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

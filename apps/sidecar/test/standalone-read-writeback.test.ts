@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { auditLog, flagState, folderState, messageInstances, messages } from "@trafficflow/db";
-import { HttpAdapter, OhmailEngine, type EngineMessage } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";

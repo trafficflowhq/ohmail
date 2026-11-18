@@ -1,3 +1,4 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter,
@@ -6,7 +7,6 @@ import {
   OhmailEngine,
   OUTBOX_TYPE,
   type EngineAdapter,
-  type EngineMutation,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 

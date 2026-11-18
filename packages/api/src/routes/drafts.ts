@@ -1,7 +1,6 @@
 import {
   ServiceError, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds, readForwardParts,
   requireUuid, parseReaderLocale, parseReaderZone,
-  type CreateDraftBody, type PatchDraftBody, type SendResolution,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { answer, answerBuilt } from "../responses.js";
@@ -9,10 +8,16 @@ import { makeSendAdapter } from "../send-adapter.js";
 import { SEND_KEY_MAX, sendDepsOf, sendKeyOf } from "../send-deps.js";
 import type { Route } from "../router.js";
 import { drafts, schedules, sends, readBody } from "./shared.js";
-import type { RequestOf, SendAttachmentWire, UntrustedBody } from "@ohmail/wire";
+import type {
+  CreateDraftBody,
+  PatchDraftBody,
+  RequestOf,
+  SendAttachmentWire,
+  SendResolution,
+  UntrustedBody,
+} from "@ohmail/wire";
 
 /** One file of a send as the request carries it, declared with the wire's vocabulary beside the send's body. */
-export type { SendAttachmentWire };
 
 /** A parsed value, or `undefined` where the parser refused it. */
 function unlessMalformed<T>(parse: () => T | undefined): T | undefined {

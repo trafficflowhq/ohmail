@@ -1,3 +1,4 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { mailboxes } from "@trafficflow/db";
 import { attachmentStaging, makeSupabaseStagingStorage } from "@trafficflow/db/cloud";
@@ -5,7 +6,7 @@ import { makeAttachmentStagingPort } from "@trafficflow/services";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { FIXED_NOW, makeDeps, seedSession } from "../packages/api/test/helpers.js";
-import { HttpAdapter, MutationRejectedError, type EngineMutation, type FetchLike } from "@ohmail/client-engine";
+import { HttpAdapter, MutationRejectedError, type FetchLike } from "@ohmail/client-engine";
 import { stagingAdmits, stagingUploadSource } from "../apps/webapp/staging-origin.mjs";
 
 /**

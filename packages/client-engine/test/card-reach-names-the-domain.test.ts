@@ -1,5 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, cardReach, type EngineMessage, type SyncChange } from "../src/index.js";
+import { MemoryMirrorStore, cardReach, type SyncChange } from "../src/index.js";
 
 /**
  * WHAT A WHOLE-DOMAIN CARD PRESS FILES, named before it is made: every waiting sender at the domain

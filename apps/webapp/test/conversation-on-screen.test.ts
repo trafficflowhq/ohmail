@@ -1,5 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { EngineMessage, EntityReader } from "@ohmail/client-engine";
+import type { EntityReader } from "@ohmail/client-engine";
 import { conversationOnScreen } from "@ohmail/app-logic/reading/conversation-on-screen";
 
 /**

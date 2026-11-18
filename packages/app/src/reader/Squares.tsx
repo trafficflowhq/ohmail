@@ -4,11 +4,11 @@
  * hides more saying how many; nothing is cut. The room is the column's height beside the letters (the tokens'
  * upright squares), or the head's slots on a phone (the tokens' row of squares).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useMemo, useState } from "react";
 import { ReadSquares, type SquaresRun } from "@ohmail/ui/mail";
 import { squaresWindow } from "@ohmail/ui/squares-window";
 import { squareKindsOf, type ThreadWalk } from "@ohmail/app-logic/reader";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { useText } from "../text/index.js";
 
 interface Fit {

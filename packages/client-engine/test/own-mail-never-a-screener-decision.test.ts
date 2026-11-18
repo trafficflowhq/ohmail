@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -7,8 +8,6 @@ import {
   screenerSegments,
   senderKey,
   type ConsentOptions,
-  type EngineMessage,
-  type Folder,
   type SyncChange,
 } from "@ohmail/client-engine";
 

@@ -5,9 +5,10 @@
  * from-line, subject, chips (routing rationale, tracker shield, tags,
  * add-affordance), body or the protected-OTP block, attachment, actions.
  */
+import type { EngineMessage, OhmailView, TagEntity as TagDTO } from "@ohmail/wire";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useTranslations } from "next-intl";
-import { FOLDER_OF_VIEW, forwardOffered, isProtectedMessage, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, forwardOffered, isProtectedMessage, isResurfaced } from "@ohmail/client-engine";
 import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane, TAG_HUES, cssRect } from "@ohmail/ui";
 import { MessageFiles } from "./MessageFiles";
 import { InvitationNote } from "./InvitationNote";

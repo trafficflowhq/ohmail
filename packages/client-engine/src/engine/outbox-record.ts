@@ -1,9 +1,10 @@
+import type { EngineMutation } from "@ohmail/wire";
 import type { CreatedDraftRow } from "../adapters/adapter.js";
 import { OUTBOX_WITHDRAWN_CODE } from "../adapters/refusal-shape.js";
 import { narrowRead } from "../mark-seen-chunk.js";
 import { asSendAndDoneIntent, type SendAndDonePlan } from "../send-and-done.js";
 import { OUTBOX_PROTOCOL } from "../store.js";
-import { type EngineMutation, MutationRejectedError } from "../types.js";
+import { MutationRejectedError } from "../types.js";
 import type { MutationResult, PendingMutation, WithdrawOutcome } from "./mutation-views.js";
 import { OUTBOX_UNKEYED_CREATE_TTL_MS } from "./options.js";
 

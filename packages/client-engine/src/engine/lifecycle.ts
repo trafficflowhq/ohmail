@@ -1,3 +1,10 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  FeedSinceMeta,
+  MessageBodyRecord,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import { drainPageLimit } from "@trafficflow/core/drain-policy";
 import type { PullRing } from "../adapters/adapter.js";
 import { flattenResponse } from "../apply.js";
@@ -7,8 +14,8 @@ import type { WindowSearchPhases } from "../search-phases.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf } from "../shadow.js";
 import { OUTBOX_PROTOCOL, type OutboxNotice } from "../store.js";
 import {
-  CursorExpiredError, type EngineMessage, type EngineMutation, FEED_SINCE_ID, type FeedSinceMeta,
-  isProtectedMessage, type MessageBodyRecord, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, type RuleDTO,
+  CursorExpiredError, FEED_SINCE_ID,
+  isProtectedMessage, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE,
   SnapshotCursorRefusedError,
 } from "../types.js";
 import { classifyWindowSyncFailure, type WindowSyncFailure } from "../window-sync-failure.js";

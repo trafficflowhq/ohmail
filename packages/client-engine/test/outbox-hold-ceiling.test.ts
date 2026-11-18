@@ -18,12 +18,13 @@
  * an ended write's request not stopped, or stopped after it is queued again → cases 3 and 7 red;
  * a create behind the hold left out of the take-back, or its row left unmarked → case 8 red.
  */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_HOLD_CEILING_MS, OUTBOX_REPLAY_DEADLINE_MS,
-  OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, OUTBOX_TYPE, type EngineDraft, type EngineMutation,
+  OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, OUTBOX_TYPE,
 } from "@ohmail/client-engine";
 
 const NOW = "2026-10-23T09:00:00.000Z";

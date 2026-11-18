@@ -1,3 +1,4 @@
+import type { Page, TrackerEventDTO } from "@ohmail/wire";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { accountSettings, folderState, messages, messageBodies, trackerEvents, type Tx } from "@trafficflow/db";
 import { hostOf, isKnownTracker, isBeaconUrl } from "@trafficflow/core/mail";
@@ -9,7 +10,6 @@ import { isUuid, requireUuid } from "./ids.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
-import type { Page, TrackerEventDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 

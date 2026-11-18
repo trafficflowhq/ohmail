@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, EntityReader } from "@ohmail/client-engine";
+import type { EntityReader } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";

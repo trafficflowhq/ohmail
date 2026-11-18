@@ -7,9 +7,10 @@
  * draws (SUMMARY and LOCATION at 1,000, each CN at 200, an unknown zone's label at 64), and each
  * of the card's lines carries a numberOfLines so the text layout stops early.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createElement as h, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryMirrorStore, OhmailEngine, type EngineAdapter, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type EngineAdapter, type SyncChange } from "@ohmail/client-engine";
 import { mount } from "./_rendered-dom";
 import { icsOversized, type InviteShape, type OversizedSpec } from "../../../packages/core/test/fixtures/invite-shapes";
 

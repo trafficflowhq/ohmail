@@ -8,11 +8,12 @@
  * scratch buffer stays the unsent-text cushion; the row is the record another device opens.
  */
 
+import type { EmailAddress, EngineDraft } from "@ohmail/wire";
 import { useCallback, useEffect, useRef } from "react";
 import { localStorageDoor } from "../storage/durable.js";
 import { usePinnedScope, type StorageScope } from "../storage/scope.js";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
-import type { EmailAddress, EngineDraft, OhmailEngine } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import { AUTOSAVE_DELAY_MS } from "./compose-autosave.js";
 import {
   STORED_CREATES, copyGoes, createLive, dropCopy, landedOf, landingOf, twins, type CreateClaim,

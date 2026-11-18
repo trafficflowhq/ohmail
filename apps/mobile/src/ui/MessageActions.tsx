@@ -8,6 +8,7 @@
  * envelope, Forward always (a `no_forward` message asks once), the read slot holds one of its
  * three faces. The AI drafter is not here — no engine verb, so an absent control, never a dead one.
  */
+import type { StayedWhy, RuleEntity as WorldRule } from "@ohmail/wire";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { ThreadRead } from "./reader-seen";
 import {
@@ -60,7 +61,6 @@ import {
   folderName,
   type ConflictGroup,
   type PressForecast,
-  type WorldRule,
   connectionSaid,
   type FailedSendCopy,
   ruleMatchKey,
@@ -129,7 +129,6 @@ import { sendAgainSentence, type DraftSendAgainRefusal } from "./draft-card";
 import { holdReader, holdWhileOpen } from "./reader-held";
 import { ATTACH_ROW_GAP, attachHintFits, attachHintStyle } from "./attach-hint";
 import { changedElsewhere, failedSendLine } from "./send-failed";
-import type { StayedWhy } from "../state/sender-stayed";
 import { stayedRows } from "./sender-stayed-lines";
 import { useKeyboardLift } from "./keyboard-lift";
 import { conversationUnreadIds } from "./read-slot";

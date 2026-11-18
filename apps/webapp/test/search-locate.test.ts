@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { openTargetFor, type OpenTarget } from "../app/shell/AppShell";
-import type { EngineMessage } from "@ohmail/client-engine";
 /* `openMessage` is read as source below, anchored on its DECLARED NAME. This file's anchor had
    already been re-spelled once when a codemod renamed the hook; the helper is what ends that. */
 import { shellFrameOf, sliceOfDeclaration } from "./source-anchor.js";

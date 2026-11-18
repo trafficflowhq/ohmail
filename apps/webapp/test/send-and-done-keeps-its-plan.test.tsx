@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
@@ -9,7 +10,7 @@ import { NextIntlClientProvider } from "next-intl";
 import {
   MutationRejectedError, OhmailEngine, OUTBOX_BACKOFF_CAP_MS,
   OUTBOX_MAX_SERVER_FAILURES, intentOf, ohboxView, sendAndDonePlanFor,
-  type EngineMessage, type EngineMutation, type MutationResult, type SendAndDonePlan,
+  type MutationResult, type SendAndDonePlan,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";

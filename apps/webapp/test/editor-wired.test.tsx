@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DRAFT_REPLY_COST_CREDITS } from "@ohmail/app-logic/writing/draft-reply";
 import * as React from "react";
@@ -7,7 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
-  HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineMutation, type FetchLike, type MutationResult,
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, type FetchLike, type MutationResult,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../../packages/api/test/helpers.js";

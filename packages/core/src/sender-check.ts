@@ -16,7 +16,6 @@ import type { SenderReasonCode } from "@ohmail/wire";
  */
 
 /** Which fact decided a capped suggestion; declared with the wire's vocabulary. */
-export type { SenderReasonCode };
 
 /**
  * MAY A DENY STORED UNDER THIS REASON STAND AS A RULE ON THE ADDRESS (`routing_decisions.sender_reason`,

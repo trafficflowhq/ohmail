@@ -1,3 +1,4 @@
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -11,7 +12,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   DEFAULT_DORMANCY_DAYS as CLIENT_DORMANCY_DAYS, MemoryMirrorStore, consentPartition,
-  type EngineMessage, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { DEFAULT_DORMANCY_DAYS, cutlineCounts, hasUndecidedActiveSenders } from "../src/consent-cutline.js";
 import { messageRowToDTO } from "../src/dto/materialize.js";

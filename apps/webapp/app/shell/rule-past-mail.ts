@@ -10,9 +10,9 @@
  * a folder counts the ones not already there. `null` is "cannot count here": a header rule and a
  * body term are matched when mail is filed, never against the mirror.
  */
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import {
-  FOLDER_OF_VIEW, canonicalDestination, refileWouldMove, retroWalkWouldMove, walkOwed, type EngineMessage,
-  type EngineMutation, type Folder, type RuleDTO,
+  FOLDER_OF_VIEW, canonicalDestination, refileWouldMove, retroWalkWouldMove, walkOwed,
 } from "@ohmail/client-engine";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { routedRule } from "@ohmail/app-logic/press/sender-audit";

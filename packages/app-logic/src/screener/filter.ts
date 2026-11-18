@@ -3,7 +3,7 @@
  * files to. `hasRealSuggestion` is the one spelling of "there is a suggestion here": the filter, the apply count, the
  * row's accept and Enter all read it, so they cannot disagree.
  */
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 import type { DecisionDestination } from "./decision.js";
 import { APPLY_PILE_ORDER, hasRealSuggestion } from "./screener-state.js";
 

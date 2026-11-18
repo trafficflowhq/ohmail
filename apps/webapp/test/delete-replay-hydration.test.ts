@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTranslator } from "next-intl";
 import {
   HttpAdapter,
   MemoryMirrorStore,
   OhmailEngine,
-  type EngineMessage,
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";

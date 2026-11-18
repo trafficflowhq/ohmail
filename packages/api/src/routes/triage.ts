@@ -1,5 +1,4 @@
-import type { TriageSetBody, TriageState } from "@trafficflow/services/mail";
-import type { RequestOf } from "@ohmail/wire";
+import type { RequestOf, TriageSetBody, TriageState } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
 import { answer, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";

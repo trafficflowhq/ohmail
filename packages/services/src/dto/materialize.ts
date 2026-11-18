@@ -2,7 +2,7 @@ import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type SQ
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import {
   asAuthVerdict, canonicalDestination, capSuggestion, draftBodyOverCeiling, ownedSenderName, resolveOhboxPolicy, senderCheckAll,
-  senderDomainOf, type CheckedSuggestion, type EmailAddress,
+  senderDomainOf, type CheckedSuggestion,
 } from "@trafficflow/core/mail";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { readProfileApplied, subjectHeadingOf } from "@trafficflow/core/adapters/organizer-profile";
@@ -15,15 +15,30 @@ import {
   SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
-import type { MailRecordKind } from "@ohmail/wire";
+import type {
+  ApprovalDTO,
+  DraftDTO,
+  DraftStatus,
+  EmailAddress,
+  Folder,
+  FolderDTO,
+  MailboxProfileDTO,
+  MailRecordKind,
+  MessageDTO,
+  MessageStateDTO,
+  RoutingDecisionDTO,
+  RuleDTO,
+  ScreenerSuggestionDTO,
+  SenderCheckDTO,
+  SensitivityFlags,
+  SettingsDTO,
+  TagDTO,
+  ThreadDTO,
+  TriageState,
+} from "@ohmail/wire";
 import { draftContentRevision } from "../draft-revision.js";
 import { deviceNumbers } from "../device-numbers.js";
 import { bridgeTx, type Db } from "../context.js";
-import type {
-  FolderDTO, SettingsDTO, MailboxProfileDTO,
-  Folder, MessageDTO, MessageStateDTO, ThreadDTO, RoutingDecisionDTO, ApprovalDTO, RuleDTO,
-  DraftDTO, DraftStatus, ScreenerSuggestionDTO, SenderCheckDTO, SensitivityFlags, TriageState, TagDTO,
-} from "./types.js";
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
 

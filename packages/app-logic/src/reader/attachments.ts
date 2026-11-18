@@ -19,9 +19,10 @@
  * the subscription counts notifications rather than reading a version that cannot change.
  */
 
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-  calendarEventsOf, watchWireFailedLists, withoutCalendarBodies, type DistinctCalendarEvent, type EngineMessage,
+  calendarEventsOf, watchWireFailedLists, withoutCalendarBodies, type DistinctCalendarEvent,
   type OhmailEngine, type StagedPreview,
 } from "@ohmail/client-engine";
 import type { AttachmentItem, AttachmentsChrome, DoorAttachmentsView } from "./doors.js";

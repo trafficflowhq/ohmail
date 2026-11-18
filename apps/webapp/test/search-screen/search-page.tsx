@@ -7,6 +7,7 @@
  * reading column are the frame's and the reader's, compared with them; a comparison cuts Search's list out of the
  * reference's picture.
  */
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -14,8 +15,6 @@ import {
   OhmailEngine,
   type AddressBookEntry,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import { useSearchList } from "@ohmail/app-logic/search";

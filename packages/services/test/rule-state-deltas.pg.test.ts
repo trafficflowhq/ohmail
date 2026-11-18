@@ -1,3 +1,4 @@
+import type { RuleDTO, SyncChange } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
@@ -8,7 +9,7 @@ import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { syncService } from "@trafficflow/services";
-import type { ServiceContext, RuleDTO, SyncChange } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 import type { MigrationObservation } from "@trafficflow/core";
 import { learningService } from "../src/learning-service.js";
 import { HeyMigrationService } from "../src/hey-migration.js";

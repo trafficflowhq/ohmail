@@ -5,11 +5,12 @@
  * Every case reads the row's `owner` off the disk first. The server double answers as production
  * does: one reservation per key for ever, a second arrival answered from it with `firstSend`.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { beforeAll, describe, expect, it } from "vitest";
 import { IDBFactory, IDBKeyRange as FakeKeyRange } from "fake-indexeddb";
 import {
   IndexedDbMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
-  type EngineLocks, type EngineMutation, type MutationResult, type NoticeChannel,
+  type EngineLocks, type MutationResult, type NoticeChannel,
 } from "@ohmail/client-engine";
 
 const tick = (ms = 5): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });

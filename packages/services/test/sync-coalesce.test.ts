@@ -1,3 +1,4 @@
+import type { SyncResponse } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -8,7 +9,7 @@ import {
 } from "@trafficflow/db";
 import {
   COALESCE_SCAN_WINDOW, STALE_COALESCE_SPAN, SyncService, dbFor,
-  type ServiceContext, type SyncResponse,
+  type ServiceContext,
 } from "../src/index.js";
 import { ClientMirror, flatten } from "./_apply-harness.js";
 

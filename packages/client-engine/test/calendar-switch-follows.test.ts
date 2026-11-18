@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, NAMED_FEED_KINDS, OhmailEngine, encodeSeqCursor,
-  type EngineAdapter, type MutationOutcome, type SyncChange, type SyncResponse, type SyncSnapshotPage,
+  type EngineAdapter, type SyncChange, type SyncResponse,
 } from "../src/index.js";
-import type { CalendarWindow } from "@ohmail/wire";
+import type { CalendarWindow, MutationOutcome, SyncSnapshotPage } from "@ohmail/wire";
 
 /**
  * THE ENGINE FOLLOWS THE ACCOUNT'S CALENDAR SWITCH. The feed sends calendar records only while the

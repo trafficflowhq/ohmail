@@ -1,3 +1,4 @@
+import type { SnapshotResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { jsonResponse } from "@trafficflow/api";
-import { syncService, type ServiceContext, type SnapshotResponse } from "@trafficflow/services";
+import { syncService, type ServiceContext } from "@trafficflow/services";
 import { MAX_BODY_BYTES } from "../src/frame.js";
 import { SYNC_PAGE_MAX_BYTES } from "@trafficflow/core/transport-frame";
 import { encodeResponse } from "../src/protocol.js";

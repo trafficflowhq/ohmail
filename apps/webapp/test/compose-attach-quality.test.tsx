@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { ComposeAttachment } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -11,7 +12,6 @@ import {
   IMAGE_QUALITY_RULES,
   IMAGE_QUALITY_STORAGE_KEY,
 } from "../app/components/image-quality";
-import type { ComposeAttachment } from "@ohmail/client-engine";
 import { enableDesktopDroppedFiles } from "../app/shell/dropped-files";
 import { restartHold } from "@ohmail/app-logic/doors/app-update";
 import { KeymapProvider } from "@ohmail/app/keys";

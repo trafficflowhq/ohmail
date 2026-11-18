@@ -3,7 +3,8 @@
  * test data, not the design's), on Tuesday 10 November 2026 at 09:30 (the comparison draws in UTC, and so does this world). Each letter says where it lies, so
  * History and an address can name its place, and which tags it carries.
  */
-import type { EngineDraft, EngineMessage, FolderEntity, TagDTO, TrashRowWire } from "@ohmail/client-engine";
+import type { EngineDraft, EngineMessage, FolderEntity, TagEntity as TagDTO } from "@ohmail/wire";
+import type { TrashRowWire } from "@ohmail/client-engine";
 
 export const NOW = new Date("2026-11-10T09:30:00.000Z");
 /** An hour of today. */

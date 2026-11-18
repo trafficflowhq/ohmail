@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useKeyBindings, useKeymap, type BoundKey } from "@ohmail/app-logic/keys";
 import type { ListVisit } from "@ohmail/app-logic/reading";
-import type { EngineMutation } from "@ohmail/client-engine";
 import type { PaneProps, PlaceEntry } from "../../src/frame/contract.js";
 import { readerEntry } from "../../src/reader/index.js";
 import type { Messages } from "../../src/text/index.js";

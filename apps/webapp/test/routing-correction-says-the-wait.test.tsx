@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryMirrorStore, type EngineMessage, type EngineMutation, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import { useRoutingUndo, type RoutingSendResult } from "@ohmail/app-logic/press/routing-undo";
 import type { ScreeningToastKey } from "@ohmail/app-logic/press/sender-screening";
 

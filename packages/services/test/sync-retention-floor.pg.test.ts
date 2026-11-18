@@ -1,3 +1,4 @@
+import type { SyncChange } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -10,7 +11,7 @@ import type { Tx } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { syncService } from "@trafficflow/services";
-import type { ServiceContext, SyncChange } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 import { ClientMirror, flatten } from "./_apply-harness.js";
 
 /**

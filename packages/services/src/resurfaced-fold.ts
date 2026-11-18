@@ -1,3 +1,4 @@
+import type { MessageDTO } from "@ohmail/wire";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { mailboxes, messages } from "@trafficflow/db";
 import { heldOutByFolds, type FoldMember } from "@trafficflow/core/conversation-fold";
@@ -5,7 +6,6 @@ import { isSentFolderOf } from "@trafficflow/core/mail";
 import { isHeldFolder } from "@trafficflow/core/destinations";
 import type { Db } from "./context.js";
 import { materializeMessagesInOrder } from "./dto/materialize.js";
-import type { MessageDTO } from "./dto/types.js";
 
 /**
  * How many members of a page's conversations the fold reads, newest first. A bound, not a

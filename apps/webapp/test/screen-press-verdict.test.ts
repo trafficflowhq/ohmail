@@ -1,14 +1,16 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  MutationOutcome,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   OhmailEngine,
   consentPartition,
   presentationReader,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type MutationOutcome,
-  type RuleDTO,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import { shellConsentOptions } from "@ohmail/app-logic/press/consent-options";

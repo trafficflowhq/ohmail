@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
 /* The finders alone: `./_today.js` loads the shell, which this file loads only once its clock stands (`mountShell`). */
+import type { EngineMessage } from "@ohmail/wire";
 import { headCount, pickedCount } from "./_finders.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { MemoryMirrorStore, OhmailEngine, ohboxView, type EngineMessage, type MirrorRecord, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, ohboxView, type MirrorRecord, type SyncChange } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../../messages/en.json";

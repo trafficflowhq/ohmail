@@ -9,7 +9,8 @@
  * and `attempt` remounts a preview per try. Keys include uidValidity.
  */
 
-import { isWithheldMarker, type UnsubscribeHeaderState, type WithheldMarker } from "./types.js";
+import type { UnsubscribeHeaderState, WithheldMarker } from "@ohmail/wire";
+import { isWithheldMarker } from "./types.js";
 
 /** What one key holds mid-session. Absent from the map ⇒ never asked (the caller's "idle"). */
 export type SessionBodyHeld<Outcome> =

@@ -3,13 +3,8 @@
  * (`replyEnvelopePlan`, `forwardSend`, `resolveReplyFrom`), so the fold, the lines, the From line and Send's gate are
  * one derivation with the wire.
  */
-import {
-  forwardSubject,
-  replySubject,
-  type EngineMessage,
-  type FromOption,
-  type OhmailEngine,
-} from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
+import { forwardSubject, replySubject, type FromOption, type OhmailEngine } from "@ohmail/client-engine";
 import type { MailSend } from "./compose.js";
 import { inlineForwardKey, sendRefusal } from "./mail-send.js";
 import {

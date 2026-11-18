@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,10 +8,6 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import {
   MemoryMirrorStore,
   rulesList,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import baseMessages from "../messages/en.json";

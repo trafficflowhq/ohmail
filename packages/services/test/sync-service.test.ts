@@ -1,3 +1,4 @@
+import type { SyncResponse } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import {
   mailboxes, messages, folderState, messageStates, changeLog, accountSyncState, threads,
   recordChange, type EntityType,
 } from "@trafficflow/db";
-import { SyncService, dbFor, type CalendarFeedPort, type ServiceContext, type SyncResponse } from "../src/index.js";
+import { SyncService, dbFor, type CalendarFeedPort, type ServiceContext } from "../src/index.js";
 import { ServiceError } from "../src/index.js";
 import { ClientMirror, flatten } from "./_apply-harness.js";
 

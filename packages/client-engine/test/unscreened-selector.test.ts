@@ -1,8 +1,9 @@
+import type { EngineMessage, Folder, UnscreenedGroupWire, UnscreenedWire } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OhmailEngine, UNSCREENED_REASK_MS } from "../src/engine.js";
 import { unscreenedGroups, unscreenedTotalIsFloor, unscreenedTotalOf } from "../src/selectors.js";
-import type { EngineAdapter, UnscreenedGroupWire, UnscreenedWire } from "../src/adapters/adapter.js";
-import type { EngineMessage, Folder, SyncChange } from "../src/types.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
+import type { SyncChange } from "../src/types.js";
 
 /**
  * "N MESSAGES FROM SENDERS YOU HAVE NOT DECIDED ABOUT" — WHAT THE CLIENT MAY SAY ABOUT IT.

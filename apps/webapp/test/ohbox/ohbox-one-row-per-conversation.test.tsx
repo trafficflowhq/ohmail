@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,7 +8,6 @@ import {
   conversationKeyOf,
   ohboxView,
   resurfacedThreads,
-  type EngineMessage,
   type OhmailEngine,
 } from "@ohmail/client-engine";
 import { threadedEngine } from "../../../../packages/client-engine/test/fixtures/threaded-demo.js";

@@ -1,7 +1,7 @@
+import type { EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { MemoryMirrorStore } from "../src/store.js";
 import { mutationEffects } from "../src/mutations.js";
-import type { EngineMutation, RuleDTO } from "../src/types.js";
 
 /**
  * THE ENGINE'S OWN REFUSALS FOR A RULE TERM — the third of the three layers (mail 0050/0051).

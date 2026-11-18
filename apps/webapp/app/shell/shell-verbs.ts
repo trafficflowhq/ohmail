@@ -10,6 +10,14 @@
  * `UNDO_CLASS` is read from the engine's table, never restated. Lifted out of `AppShell.tsx`
  * unchanged (ARCH-022).
  */
+import type {
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  OhmailView,
+  RuleEntity as RuleDTO,
+  TagEntity as TagDTO,
+} from "@ohmail/wire";
 import { useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import type { useTranslations } from "next-intl";
 import {
@@ -30,17 +38,11 @@ import {
   pressRules,
   outrankCoveringDomains,
   triageSubjectIds,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type Folder,
   type OhmailEngine,
-  type OhmailView,
   type PressForecast,
-  type RuleDTO,
   type RulesInPlay,
   type StayVerdict,
-  type TagDTO,
 } from "@ohmail/client-engine";
 import { type ToastFn } from "@ohmail/ui";
 import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";

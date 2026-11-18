@@ -259,72 +259,24 @@ export {
   isProtectedMessage,
   encodeSeqCursor,
   decodeSeqCursor,
-  type ChangeOp,
-  type ComposeAttachment,
-  type Cursor,
-  type EmailAddress,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMessageExtras,
-  type EngineMutation,
-  // The runtime census of the union above — what lets the verb-parity harness enumerate
+  // The runtime list of the wire's mutation kinds — what lets the verb-parity harness enumerate
   // every user verb and refuse a new one until its parity is proven (see types.ts).
   MUTATION_KINDS,
-  type MutationKind,
-  type Folder,
-  type ISODateTime,
-  type OhmailView,
-  type ScreenDest,
-  type BodyState,
-  type MessageBody,
   // The closed set behind `MessageBody.withheld` — exported because the surface owes each
   // member its own sentence (the reading pane's per-marker copy), and a surface that cannot
   // name the type re-derives it as string literals that drift.
-  type WithheldMarker,
-  type MessageBodyRecord,
-  type MessageBodyBatchWire,
-  type MessageBodyWire,
-  type MessageStateDTO,
   type MirrorEntityType,
-  type HeldReleaseGroupDTO,
   HELD_RELEASE_TYPE,
   RETIRED_DECIDED_TYPE,
-  type UnscreenedGroupDTO,
   UNSCREENED_TYPE,
   SCREENER_WAITING_TYPE,
   SCREENER_WAITING_PAGE_ID,
-  type ScreenerWaitingDTO,
-  type ScreenerWaitingPageDTO,
-  type ScreenerWaitingSenderDTO,
-  type RuleDTO,
-  type WaitingRequestWire,
-  type WaitingTargetWire,
-  type RuleKeyAddress,
-  type ScreenerHeldMail,
-  type ScreenerSegment,
-  type ScreenerSenderDTO,
-  type FailedAtGateDTO,
-  type ScreenerSuggestionEntity,
-  type MailboxProfileEntity,
   MAILBOX_PROFILE_TYPE,
-  type SensitivityFlags,
   type SyncChange,
   SYNC_ENTITY_TYPES,
   NAMED_FEED_KINDS,
-  type SyncEntityType,
   type SyncResponse,
-  type SyncSnapshotPage,
-  type FolderEntity,
-  type TagDTO,
-  type TriageItemDTO,
   type TriageState,
-  type TriageWireState,
-  type UnsubscribeHeaderState,
-  type UnsubscribeRefusal,
-  type UnsubscribeResult,
-  type WaterlineMeta,
-  type FeedView,
-  type FeedSinceMeta,
   FEED_SINCE_ID,
   waterlineIdOf,
 } from "./types.js";
@@ -669,10 +621,8 @@ export {
 
 // Adapters.
 export type {
-  AttachmentWire, CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams,
-  ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedPileWire,
-  AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire,
-  WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
+  CreatedDraftRow, EngineAdapter, ReadIntent, SyncParams,
+  WithdrawSendAnswer, ScheduleFilesAnswer,
   FetchingStanding, PullRing,
 } from "./adapters/adapter.js";
 export {
@@ -1157,6 +1107,6 @@ export {
   type SelfCheckUnreadable,
 } from "./diagnostics.js";
 // The filing refusal classes every client words, and their narrowing. See `filing-reasons.ts`.
-export { FILING_REFUSAL_REASONS, filingRefusalReason, type FilingRefusalReason } from "./filing-reasons.js";
+export { FILING_REFUSAL_REASONS, filingRefusalReason } from "./filing-reasons.js";
 // The first-import floor's bounded window, read by the web strip and the phone Screener alike.
 export { IMPORT_FLOOR_MAX_MS, importFloorInWindow } from "./import-floor.js";

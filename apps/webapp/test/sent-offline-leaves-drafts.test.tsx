@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
-import { OUTBOX_TYPE, type EngineDraft, type EngineMutation } from "@ohmail/client-engine";
+import { OUTBOX_TYPE } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";

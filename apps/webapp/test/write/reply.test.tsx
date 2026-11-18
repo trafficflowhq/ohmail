@@ -6,10 +6,10 @@
  * until the person does, and a flagged letter is asked about first; offline it is kept and says so; Discard closes
  * it with its Undo.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
-import type { EngineMessage } from "@ohmail/client-engine";
 import en from "../../messages/en.json";
 import { act, message, replyDraft, stubDom } from "../_draft-shell.js";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";

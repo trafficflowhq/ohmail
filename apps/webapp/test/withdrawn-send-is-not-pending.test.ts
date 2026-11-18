@@ -5,9 +5,10 @@
  * branches of the reader — the stamped cache and the plain read — are driven by a real withdrawal.
  * Mutation: the reader's `withdrawn` filter removed → cases 1 and 2 red.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, MutationRejectedError, OhmailEngine, type EngineMutation,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine,
 } from "@ohmail/client-engine";
 import { sendPendingInDurableOutbox } from "@ohmail/app-logic/writing/mail-send";
 

@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { availableParallelism, loadavg } from "node:os";
-import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineMessage } from "@ohmail/client-engine";
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
 import { mountSearch, threadClock, type MountedSearch, type ThreadClock } from "./_search-mount";
 
 /**

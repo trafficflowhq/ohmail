@@ -39,6 +39,7 @@
  * (`compose.attach*`) taking the rendered size as a parameter — they were inline literals holding a
  * hard-coded "3 MB", the exact drift this removes in the one place a user reads a promise.
  */
+import type { ComposeAttachment } from "@ohmail/wire";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, formatFileSize } from "@ohmail/ui";
@@ -46,7 +47,6 @@ import {
   COMPOSE_ATTACH_MAX_TOTAL_BYTES,
   encodableImageType,
   type ComposeAttachCapBinding,
-  type ComposeAttachment,
 } from "@ohmail/client-engine";
 import {
   DEFAULT_IMAGE_QUALITY_LEVEL,

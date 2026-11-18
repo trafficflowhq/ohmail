@@ -1,5 +1,6 @@
 /** THE SQUARES OF A CONVERSATION: one a letter, oldest first. */
-import { isOwnOutbound, isResurfaced, type EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
+import { isOwnOutbound, isResurfaced } from "@ohmail/client-engine";
 
 export type SquareKindOf = "seen" | "unseen" | "own";
 

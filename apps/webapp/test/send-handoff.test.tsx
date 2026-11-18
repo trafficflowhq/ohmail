@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
+import type { EmailAddress, EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { draftsList, type EmailAddress, type EngineDraft, type EngineMutation } from "@ohmail/client-engine";
+import { draftsList } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";

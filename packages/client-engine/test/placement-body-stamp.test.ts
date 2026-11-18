@@ -1,6 +1,7 @@
+import type { EngineMessage, MessageBodyWire, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, OhmailEngine, type EngineMessage, type MessageBodyWire, type RuleDTO, type SyncChange,
+  MemoryMirrorStore, OhmailEngine, type SyncChange,
 } from "../src/index.js";
 
 /**

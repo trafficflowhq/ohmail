@@ -1,8 +1,9 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { changeLog, mailboxes, mailboxProfileMirror, recordMailboxProfileChange, rules } from "@trafficflow/db";
 import {
-  MemoryMirrorStore, consentPartition, type EngineMessage, type SyncChange,
+  MemoryMirrorStore, consentPartition, type SyncChange,
 } from "@ohmail/client-engine";
 import { SyncService, materialize } from "../src/index.js";
 import { applyProfileRead } from "../../organizer/src/profile.js";

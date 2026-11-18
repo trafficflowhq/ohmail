@@ -1,10 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../../messages/en.json";
-import type { EngineMessage } from "@ohmail/client-engine";
 
 /**
  * THE SEATED OHBOX'S KEYS AND ITS KEYBOARD (the Ohbox's own rows of the key table, and the list's part of where the

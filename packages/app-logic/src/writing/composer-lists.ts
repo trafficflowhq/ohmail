@@ -11,12 +11,12 @@
  * - `fallbackMailboxId`: the last-resort sending mailbox. It lists the mailboxes and falls through to the whole
  *   mirror's date order where the account has no seeded mailbox row, so it is never read in a render.
  */
+import type { EngineDraft } from "@ohmail/wire";
 import { useMemo } from "react";
 import {
   NO_WAITING,
   draftsList,
   sendingMailboxId,
-  type EngineDraft,
   type EntityReader,
   type OhmailEngine,
 } from "@ohmail/client-engine";

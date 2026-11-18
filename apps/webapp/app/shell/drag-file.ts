@@ -24,8 +24,9 @@
  * the question is "would this change anything at all", the bulk verbs' own rule.
  */
 
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useRef } from "react";
-import { FOLDER_OF_VIEW, type EngineMessage } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW } from "@ohmail/client-engine";
 import { cssPoint, cssRect } from "@ohmail/ui";
 import type { MoveTarget } from "./MessagePane";
 import { DRAG_SLOP_PX } from "@ohmail/app-logic/lists/drag-slop";

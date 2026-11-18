@@ -19,10 +19,10 @@
  * and a picture's address is minted only while the window may read for its engine's account. A press of Show images
  * made under one scope is never read under another.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Component, Profiler, useEffect, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { useConsent, usePartition } from "@ohmail/app-logic/consent";
 import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
 import { useMailState } from "@ohmail/app-logic/mail-state";

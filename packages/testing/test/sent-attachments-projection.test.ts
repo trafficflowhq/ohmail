@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { messages } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
@@ -10,7 +11,6 @@ import {
   OhmailEngine,
   OPTIMISTIC_SENT_TTL_MS,
   SENT_FORWARD_MAX_PARTS,
-  type EngineMessage,
   type FetchLike,
 } from "@ohmail/client-engine";
 

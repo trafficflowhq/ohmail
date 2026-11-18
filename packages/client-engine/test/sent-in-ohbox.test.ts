@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { managedDomain } from "../../../test/support/fixture-credentials.js";
 import {
@@ -11,9 +12,6 @@ import {
   receiptsByDay,
   screenerSegments,
   type EngineAdapter,
-  type EngineMessage,
-  type Folder,
-  type MutationOutcome,
   type SyncChange,
   type SyncParams,
 } from "@ohmail/client-engine";

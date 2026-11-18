@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
+import type { Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { MemoryMirrorStore, rulesList } from "@ohmail/client-engine";
-import type { Folder, MutationStatus, RuleDTO, SyncChange } from "@ohmail/client-engine";
+import type { MutationStatus, SyncChange } from "@ohmail/client-engine";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import baseMessages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";

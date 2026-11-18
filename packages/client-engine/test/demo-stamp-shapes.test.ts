@@ -25,9 +25,10 @@
  * the day the suite happens to run cannot pass. The strings in `data.ts` are an instant spec now,
  * not display copy, and this is what holds the two apart.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  OhmailEngine, messageDisplayTime, messagesIn, type EngineMessage,
+  OhmailEngine, messageDisplayTime, messagesIn,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 

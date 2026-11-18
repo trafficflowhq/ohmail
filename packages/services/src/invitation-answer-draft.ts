@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { sameAddress } from "@trafficflow/db";
-import type { EmailAddress, OutboundCalendar } from "@trafficflow/core/mail";
-import type { InvitationAnswer } from "@ohmail/wire";
+import type { OutboundCalendar } from "@trafficflow/core/mail";
+import type { EmailAddress, InvitationAnswer } from "@ohmail/wire";
 import { ServiceError } from "./errors.js";
 
 /**

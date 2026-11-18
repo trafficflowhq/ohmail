@@ -4,14 +4,13 @@
  * letters and whose store answers as a case says, the list drawn from its model with the place files' words, beside
  * it what a shell would say. Every store request is written down; a case moves the clock and reads by role and name.
  */
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { act, render, type RenderResult } from "@testing-library/react";
 import { useRef, useState } from "react";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SearchHit,
   type ServerSearchOpts,
   type SyncResponse,

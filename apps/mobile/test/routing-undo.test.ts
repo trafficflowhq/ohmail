@@ -1,11 +1,11 @@
 /* @reads: apps/mobile/src/state/live.ts apps/mobile/src/state/world.tsx */
+import type { EngineMutation } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   routingSubject,
-  type EngineMutation,
   type RoutingIntent,
 } from "@ohmail/client-engine";
 import {

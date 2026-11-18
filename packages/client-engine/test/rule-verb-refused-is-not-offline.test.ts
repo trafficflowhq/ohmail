@@ -1,7 +1,8 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, pressVerdict, rulesAsRun, rulesList,
-  type EngineAdapter, type RuleDTO, type SyncChange,
+  type EngineAdapter, type SyncChange,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 

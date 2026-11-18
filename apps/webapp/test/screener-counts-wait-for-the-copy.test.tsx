@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -10,8 +11,6 @@ import {
   ohboxView,
   presentationReader,
   type EngineAdapter,
-  type EngineMessage,
-  type Folder,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";

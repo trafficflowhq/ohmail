@@ -1,3 +1,4 @@
+import type { ToolName, WorkflowStep } from "@ohmail/wire";
 import { and, asc, eq, inArray, isNull, isNotNull, ne, or, sql } from "drizzle-orm";
 import {
   messages,
@@ -31,7 +32,6 @@ import { plainTextToOutboundBody } from "../../outbound-text.js";
  * engine artifact, and `drafting-service.ts` (which the engine DOES mount) screens through the
  * same function, so the door has to live where both can name it. */
 import { screenModelInput } from "../../sensitive.js";
-import type { ToolName, WorkflowStep } from "../../workflow-shapes.js";
 
 // The gated workflow EXECUTOR — drains a `pending` workflow_run and runs its steps. In CORE at
 // the DB/repo level (the worker imports core+db only): `file_message` reuses the desired-state

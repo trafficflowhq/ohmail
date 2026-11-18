@@ -12,9 +12,10 @@
  * without its key → cases 5 to 7 red; a create waiting at the gate out of the take-back → case 6 red;
  * a write naming a waiting create's row sent or painted → case 7 red.
  */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE, type EngineDraft, type EngineMutation,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE,
 } from "@ohmail/client-engine";
 
 const NOW = "2026-10-23T09:00:00.000Z";

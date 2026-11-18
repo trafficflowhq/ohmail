@@ -1,3 +1,4 @@
+import type { DraftDTO, SnapshotResponse } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -9,7 +10,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { syncService } from "@trafficflow/services";
-import type { DraftDTO, ServiceContext, SnapshotResponse } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 
 /**
  * THE BOOTSTRAP CARRIES A SENT DRAFT'S ROW AND NONE OF ITS TEXT (real Postgres).

@@ -4,11 +4,12 @@
  * fact, carried off the wire, says the generic line. The generic sentence is the web reader's word
  * for word; the stub's name no provider; the German addresses the reader as du.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MemoryMirrorStore, OhmailEngine, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type SyncChange } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import {
   OWA_ORDINARY as ORDINARY, OWA_SETTING_HREF as HREF, OWA_STUB as STUB, OWA_STUB_ONPREM as ONPREM,

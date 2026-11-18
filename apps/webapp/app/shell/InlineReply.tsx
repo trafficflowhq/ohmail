@@ -10,6 +10,7 @@
  * `{inReplyTo, body}` with `body` exactly what was typed (`http-adapter.ts` `mailSend`); no quoted
  * original leaves the account. The draft is an account row (`reply-autosave.ts`), kept locally too.
  */
+import type { ComposeAttachment, EmailAddress, EngineMessage } from "@ohmail/wire";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useTranslations } from "next-intl";
@@ -17,9 +18,6 @@ import { chordKeys, useBinding, useModGlyph } from "@ohmail/app-logic/keys/keyma
 import { replySubject } from "@ohmail/client-engine";
 import type {
   AddressBookEntry,
-  ComposeAttachment,
-  EmailAddress,
-  EngineMessage,
 } from "@ohmail/client-engine";
 import { Button, Kbd, TextField, cssPoint, cssViewport } from "@ohmail/ui";
 import {

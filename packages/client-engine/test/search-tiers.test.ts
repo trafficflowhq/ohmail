@@ -1,7 +1,7 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { SIMILAR_FLOOR } from "@trafficflow/core/search-rank";
 import { SearchIndex } from "../src/search.js";
-import type { EngineMessage } from "../src/types.js";
 
 /**
  * THE RANKING TABLE — one fixed corpus, and every claim the search rule makes, as a row.

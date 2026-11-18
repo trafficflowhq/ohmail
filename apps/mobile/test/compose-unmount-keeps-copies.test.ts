@@ -5,10 +5,10 @@
  * carried copies, so it left `copiesToKeep(copies)` out and the engine wrote the kept draft with an
  * empty Cc and Bcc. The close keep and the unmount keep now build one request; only `quiet` differs.
  */
+import type { EngineDraft } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EngineDraft } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

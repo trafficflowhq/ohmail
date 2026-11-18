@@ -4,10 +4,11 @@
  * over one question's matches, whose first page replaces the device's paint. Neither reads the
  * mirror's window; the mirror only paints first. No engine import here: the world hands them in.
  */
+import type { EngineMessage as StoreMessage } from "@ohmail/wire";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useWorld, type WorldMail } from "./world";
 import {
-  createSessionReask, type AddressDirection, type SessionRenewalDoor, type StoreMessage, type StoreReadSource,
+  createSessionReask, type AddressDirection, type SessionRenewalDoor, type StoreReadSource,
 } from "./live";
 
 /** The phone's Search debounce: 250 ms (the webapp types at 100); the ceiling is the walker's own. */

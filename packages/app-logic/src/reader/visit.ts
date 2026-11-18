@@ -5,7 +5,7 @@
  * column's. Never both: while a list's visit stands, the column's own is given nothing to show, so one record exists
  * per open letter and one dwell reads it once.
  */
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 import { useReaderVisit, type ReaderMarkSeen, type ThreadReadWiring } from "../reading/reader-seen.js";
 
 export interface ColumnVisit {

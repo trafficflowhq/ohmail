@@ -3,13 +3,13 @@
  * typed search sends one blank search while its debounce runs, so the sidecar's hop to a paired
  * account is open when the page leaves. Once per pause, never per key, and only where asked for.
  */
+import type { MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   StoreSearchWalker,
   type EngineAdapter,
-  type MutationOutcome,
   type SyncResponse,
 } from "../src/index.js";
 

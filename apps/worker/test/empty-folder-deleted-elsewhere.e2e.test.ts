@@ -1,3 +1,4 @@
+import type { SyncSnapshotPage } from "@ohmail/wire";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,7 +12,7 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap-types";
 import { SyncService, type ServiceContext } from "@trafficflow/services";
-import { OhmailEngine, type EngineAdapter, type SyncSnapshotPage } from "@ohmail/client-engine";
+import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
 import { runSyncCycle } from "@ohmail/organizer/sync";
 import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";

@@ -10,6 +10,7 @@
  * nine effects keep their source order and every `useKeyBindings` registration keeps its phase
  * and its scope. Lifted out of `AppShell.tsx` unchanged (ARCH-022).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { useTranslations } from "next-intl";
 import {
@@ -18,7 +19,6 @@ import {
   screeningDegrade,
   ohboxUnreadIds,
   sendAndDonePlanFor,
-  type EngineMessage,
   type EntityReader,
   type OhmailEngine,
   type TriagePileEntry,

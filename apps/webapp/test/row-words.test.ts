@@ -1,9 +1,9 @@
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import "./_tz-zurich";
 import { afterAll, describe, expect, it } from "vitest";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider, useTranslations, type AbstractIntlMessages } from "next-intl";
-import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import { FixturesAdapter, DEMO_NOW } from "@ohmail/testing/adapter";
 import { TAG_HUES } from "@ohmail/ui";
 import {

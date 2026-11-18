@@ -1,5 +1,6 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import { routingReversal } from "../src/state/live";
 
 /**

@@ -12,7 +12,8 @@
  * `rule_create` with no second term names the sender's address, or a domain and every row in it.
  * A sliced rule (a subject or body term) decides about some mail of a sender, never the sender.
  */
-import { domainOfAddress, ruleMatchKey, type AbandonedMutation, type ScreenerSenderDTO } from "@ohmail/client-engine";
+import type { ScreenerSenderDTO } from "@ohmail/wire";
+import { domainOfAddress, ruleMatchKey, type AbandonedMutation } from "@ohmail/client-engine";
 
 type Row = Pick<ScreenerSenderDTO, "id" | "from" | "held" | "derived">;
 

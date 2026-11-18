@@ -1,8 +1,9 @@
+import type { EngineDraft, EngineMessage } from "@ohmail/wire";
 import {
   HISTORY_PAGE_ROWS, type StorePage, storePageKey, type StorePageOpts, type StorePageOutcome, type StoreSearchKey,
   storeSearchList, storeSearchPageKey, type StoreTimelineOutcome,
 } from "../store-pages.js";
-import type { EngineDraft, EngineMessage, SyncChange } from "../types.js";
+import type { SyncChange } from "../types.js";
 import { EngineArchive } from "./archive.js";
 import {
   errorClassOf, type ServerSearchOpts, type ServerSearchOutcome, type ServerSearchSort,

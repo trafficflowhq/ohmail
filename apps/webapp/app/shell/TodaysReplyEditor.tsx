@@ -6,7 +6,7 @@
  * conversation's last letter; never both for one letter on screen. It leaves when the new reader writes its reply in
  * a sheet of its own.
  */
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 import { inlineForwardKey } from "@ohmail/app-logic/writing/mail-send";
 import { ForwardAskStrip } from "./ForwardAsk";
 import { InlineReply } from "./InlineReply";

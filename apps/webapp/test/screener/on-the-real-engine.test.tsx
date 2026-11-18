@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useEffect, useMemo, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MemoryMirrorStore, OhmailEngine, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type SyncChange } from "@ohmail/client-engine";
 import { createUndoDoor } from "@ohmail/app-logic/press/undo-door";
 import { useScreenerModel, type ScreenerText, type SuggestionOverlay } from "@ohmail/app-logic/screener";
 import type { Translator } from "@ohmail/app-logic/text/translator";

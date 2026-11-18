@@ -1,12 +1,12 @@
+import type { WorkflowPattern, WorkflowProposalDTO, WorkflowStep, WorkflowTrigger } from "@ohmail/wire";
 import { and, asc, eq } from "drizzle-orm";
 import { workflowProposals, type Tx } from "@trafficflow/db";
 import {
   assembleWorkflowPatterns, generateProposals,
-  type WorkflowPort, type WorkflowPattern, type WorkflowTrigger, type WorkflowStep, type StoredProposal,
+  type WorkflowPort, type StoredProposal,
 } from "@trafficflow/core";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import type { WorkflowProposalDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 

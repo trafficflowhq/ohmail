@@ -17,6 +17,13 @@
  * written and the server had something to say about it.
  */
 
+import type {
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  RuleEntity as RuleDTO,
+  ScreenDest,
+} from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FOLDER_OF_VIEW,
@@ -27,18 +34,13 @@ import {
   planScreenCommit,
   routingIntentsKey,
   routingSubject,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type Folder,
   type JarIntent,
   type MutationRejectedError,
   type MutationStatus,
   type ReleaseIntent,
-  type RuleDTO,
   type RoutingIntent,
   type RoutingOpen,
-  type ScreenDest,
   type ScreenIntent,
   type TabWindows,
 } from "@ohmail/client-engine";

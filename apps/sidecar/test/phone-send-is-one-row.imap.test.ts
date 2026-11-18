@@ -5,13 +5,14 @@
  * a slow one, a slow end of DATA) or the lane GreenMail through a cable; the verdicts are the
  * engine's own store, the ledger the composer reads, and what reached the server.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
-import { isOwnSent, type EngineMessage, type SqlExecutor, type SqlRow, type SqlValue } from "@ohmail/client-engine";
+import { isOwnSent, type SqlExecutor, type SqlRow, type SqlValue } from "@ohmail/client-engine";
 import {
   Cable, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, PORT, SMTP_PORT, SmtpSink,
   bootPhone, cables, deliver, dirs, eventsSince, folderOnServer, open, post, relaunch, seedMailboxId, untilIngested, withServer, type Phone,

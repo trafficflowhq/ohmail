@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import { eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
   HttpAdapter, IndexedDbMirrorStore, MemoryMirrorStore, OhmailEngine, OUTBOX_TYPE,
-  type EngineMessage, type FetchLike, type MirrorStore,
+  type FetchLike, type MirrorStore,
 } from "@ohmail/client-engine";
 import { FIXED_NOW, makeDeps, seedBody, seedMessage, seedSession } from "../../api/test/helpers.js";
 

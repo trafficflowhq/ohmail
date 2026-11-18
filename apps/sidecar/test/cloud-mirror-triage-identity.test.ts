@@ -1,3 +1,12 @@
+import type {
+  MailboxDTO,
+  MessageDTO,
+  MessageStateDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+  ThreadDTO,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,8 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { changeLog, messageStates } from "@trafficflow/db/mail";
 import { dbFor, syncService } from "@trafficflow/services/mail";
 import type {
-  MailboxDTO, MessageDTO, MessageStateDTO, ServiceContext, SnapshotResponse, SyncChange,
-  SyncResponse, ThreadDTO,
+  ServiceContext,
 } from "@trafficflow/services/mail";
 import {
   MemoryMirrorStore, ohboxView, parkedMessageIds, triagePiles,

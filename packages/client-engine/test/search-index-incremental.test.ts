@@ -1,9 +1,10 @@
+import type { EngineMessage, MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { SearchIndex } from "../src/search.js";
 import { OhmailEngine } from "../src/engine.js";
 import { MemoryMirrorStore } from "../src/store.js";
-import type { EngineAdapter, MutationOutcome } from "../src/adapters/adapter.js";
-import type { EngineMessage, MessageBodyWire, SyncChange, SyncResponse } from "../src/types.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
+import type { SyncChange, SyncResponse } from "../src/types.js";
 
 /**
  * SECOND HALF — THE INDEX IS UPDATED, NOT REBUILT.

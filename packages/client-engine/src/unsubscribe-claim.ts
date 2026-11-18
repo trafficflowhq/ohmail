@@ -10,8 +10,8 @@
  * switch off, a door that sends nothing, no mailbox whose provider's word is read
  * ({@link autoUnsubscribeConfirms}), or a press that does not reach the decide route.
  */
+import type { EngineMessage, MessageBodyRecord, UnsubscribeHeaderState } from "@ohmail/wire";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage, MessageBodyRecord, UnsubscribeHeaderState } from "./types.js";
 
 export type UnsubscribeClaim = "sends" | "may_send" | "none";
 

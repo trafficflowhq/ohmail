@@ -1,8 +1,9 @@
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { effectForDestination, evaluateRules, type NormalizedMessage, type Rule } from "@trafficflow/core/mail";
 import {
   MemoryMirrorStore, consentIndex, consentPartition, messagePlacement, ohboxView, presentationReader,
-  pressOutcome, rulesList, stayVerdict, type EngineMessage, type RuleDTO, type SyncChange,
+  pressOutcome, rulesList, stayVerdict, type SyncChange,
 } from "../src/index.js";
 import {
   FOLD_MATRIX, NOW, PLACEMENT_MATRIX, SENDER, foldStore, type PlacementCase,

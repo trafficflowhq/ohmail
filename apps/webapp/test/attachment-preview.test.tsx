@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { ComposeAttachment } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -10,7 +11,6 @@ import { useMessageAttachments } from "../app/shell/attachments.js";
 import { AttachmentPreview, isPreviewable, previewKind } from "../app/components/AttachmentPreview.js";
 import { AttachThumb } from "../app/components/compose-attach-look.js";
 import type { AttachmentItem } from "../app/components/AttachmentStrip.js";
-import type { ComposeAttachment } from "@ohmail/client-engine";
 import { KeymapProvider } from "@ohmail/app/keys";
 
 /**

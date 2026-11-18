@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
+import type { ComposeAttachment } from "@ohmail/wire";
 import { describe, expect, it, beforeEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
-import type { ComposeAttachment } from "@ohmail/client-engine";
 import {
   composePlan,
   readComposeDraft,

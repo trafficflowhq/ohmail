@@ -3,8 +3,9 @@
  * open among them, as any list beside the reader. While the mirror is owed the list says so, never that nothing is
  * there. The server's store answering nothing is said with its way back.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createContext, useContext, useMemo } from "react";
-import { zonedFields, type EngineMessage } from "@ohmail/client-engine";
+import { zonedFields } from "@ohmail/client-engine";
 import { newestFirst, usePlaceList, type PlaceList, type PlaceListInput } from "../place-list/place-list.js";
 import { readerZone } from "../reader/head-model.js";
 

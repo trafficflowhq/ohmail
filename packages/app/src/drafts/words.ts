@@ -1,5 +1,5 @@
 /** What a draft's row says of it, from its fields alone. */
-import type { EngineDraft } from "@ohmail/client-engine";
+import type { EngineDraft } from "@ohmail/wire";
 import { useMemo } from "react";
 import type { DiscardRefusalWhy, DiscardWords } from "@ohmail/app-logic/drafts";
 import { useText, type Text } from "../text/index.js";

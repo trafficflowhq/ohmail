@@ -11,6 +11,7 @@
  * the marker is the whole difference. The pure row walk (`nextRowAfter`) is pinned by unit
  * arms beside the journeys.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -19,8 +20,6 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";

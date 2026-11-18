@@ -1,10 +1,10 @@
+import type { EngineMessage, MessageDTO, SyncChange, SyncResponse, ThreadDTO } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HttpAdapter, OhmailEngine, type EngineMessage } from "@ohmail/client-engine";
-import type { MessageDTO, SyncChange, SyncResponse, ThreadDTO } from "@trafficflow/services/mail";
+import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { createCloudSidecar, type CloudSidecar } from "../../src/cloud-engine.js";
 import { hostedMailbox, mailboxList } from "../fixtures/hosted-mailbox.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "../pglite-budget.js";

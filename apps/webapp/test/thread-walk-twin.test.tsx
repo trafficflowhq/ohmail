@@ -10,11 +10,11 @@
  *
  * The walk is not cut out of `ThreadMarks.tsx` (it leaves whole with `places`); until then this holds the two equal.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useState, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { useThreadWalk, type ThreadWalk } from "@ohmail/app-logic/reader";
 import { scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
 import { ThreadMarks } from "../app/shell/ThreadMarks";

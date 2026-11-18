@@ -1,8 +1,9 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBKeyRange as FakeKeyRange } from "fake-indexeddb";
 import {
   HttpAdapter, IndexedDbMirrorStore, MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_BACKOFF_CAP_MS, OUTBOX_MAX_SERVER_FAILURES,
-  OUTBOX_TYPE, type EngineLocks, type EngineMutation, type MirrorStore, type MutationResult,
+  OUTBOX_TYPE, type EngineLocks, type MirrorStore, type MutationResult,
 } from "@ohmail/client-engine";
 import { WITHDRAW_SEND_TIMEOUT_MS } from "../src/adapters/http-adapter.js";
 

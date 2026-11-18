@@ -8,6 +8,7 @@
  * excluded unless one decides a placement) and shared through context; each list is computed when a screen reads it and kept
  * until what it reads moves. `world.actions` is one object for the app's life.
  */
+import type { FolderEntity, EngineMessage as StoreMessage } from "@ohmail/wire";
 import {
   createContext,
   useCallback,
@@ -116,7 +117,6 @@ import {
   hiddenMessagesReader,
   UNDO_MS,
   type ToastOpts,
-  type FolderEntity,
   type ScreenerRow,
   type AbandonedMutation,
   type QueuedChange,
@@ -159,7 +159,6 @@ import {
   type SessionRenewalDoor,
   type AddressDirection,
   type ServerAddressOutcome,
-  type StoreMessage,
   type StoreSearchWalker,
   type StoreTimelineWalker,
 } from "./live";
@@ -182,8 +181,9 @@ import {
 } from "./held-routing";
 import { worldSeedOf, type WorldSeed } from "./seed-offer";
 
+export type { FolderEntity } from "@ohmail/wire";
 export type {
-  FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
+  MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
   WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag, WorldTagged, WorldDraft, DraftHeldSays,
   DraftSendAgainOutcome, WorldUnscreened,
 } from "./live";

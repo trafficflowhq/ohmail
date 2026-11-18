@@ -1,5 +1,6 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, mutationEffects, pressOverTwins, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, mutationEffects, pressOverTwins, type SyncChange } from "@ohmail/client-engine";
 
 /**
  * THE OVERLAY SAYS WHAT THE SERVER WILL ANSWER ABOUT WHOSE RULE IT IS: a press naming the place makes

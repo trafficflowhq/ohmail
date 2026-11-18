@@ -1,4 +1,4 @@
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
+import type { ScreenerSenderDTO } from "@ohmail/wire";
 
 export interface SpamRow {
   sender: ScreenerSenderDTO;

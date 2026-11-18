@@ -1,3 +1,4 @@
+import type { PatchRuleBody } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -5,7 +6,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, eraseOwedMailbox, mailboxes, organizerRequests, rules, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { MailboxService, RulesService, dbFor, type PatchRuleBody, type ServiceContext } from "@trafficflow/services";
+import { MailboxService, RulesService, dbFor, type ServiceContext } from "@trafficflow/services";
 import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";

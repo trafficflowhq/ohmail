@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, MailboxProfileEntity, RuleEntity as RuleDTO } from "@ohmail/wire";
 import {
   LEGACY_NEWS_FOLDER, canonicalDestination, isOrganizedFolder, retroWalkWouldMove,
 } from "@trafficflow/core/destinations";
@@ -6,7 +7,7 @@ import { recordedSentFolderOf } from "./sent-folders.js";
 import { authScreens } from "@trafficflow/core/sender-headers";
 import { consentIndex, messagePlacement, ruleTerms } from "./consent-cutline.js";
 import type { EntityReader } from "./store.js";
-import { folderLeaf, type EngineMessage, type Folder, type MailboxProfileEntity, type RuleDTO } from "./types.js";
+import { folderLeaf } from "./types.js";
 
 /**
  * A FOLDER THE PERSON MADE: outside the folders ohmail organizes, not this mailbox's Sent, and not a server

@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  MemoryMirrorStore, triagePiles, type EngineMessage, type MessageStateDTO, type SyncChange,
+  MemoryMirrorStore, triagePiles, type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { TriageView } from "../app/views/TriageView";

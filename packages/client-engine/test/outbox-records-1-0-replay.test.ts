@@ -1,3 +1,4 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -11,7 +12,6 @@ import {
   OUTBOX_TYPE,
   SqlMirrorStore,
   type EngineAdapter,
-  type EngineMutation,
   type MirrorStore,
   type SyncResponse,
 } from "@ohmail/client-engine";

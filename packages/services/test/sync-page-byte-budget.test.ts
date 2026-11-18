@@ -1,3 +1,4 @@
+import type { DraftDTO, SnapshotResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -6,7 +7,6 @@ import { PAGE_MAX_ROW_BYTES } from "@trafficflow/core/transport-frame";
 import { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "../src/sync-page-byte-budget.js";
 import { draftRowToDTO, draftRowWithheldDTO } from "../src/dto/materialize.js";
 import { SyncService, dbFor, type ServiceContext } from "../src/index.js";
-import type { DraftDTO, SnapshotResponse } from "../src/dto/types.js";
 
 /**
  * THE BUDGET ITSELF, AND THE ORDINARY PAGE IT MUST LEAVE ALONE.

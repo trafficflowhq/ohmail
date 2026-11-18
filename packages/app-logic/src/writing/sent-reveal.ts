@@ -1,7 +1,8 @@
 "use client";
 
+import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useRef, type RefObject } from "react";
-import { isOwnOutbound, type EngineMessage } from "@ohmail/client-engine";
+import { isOwnOutbound } from "@ohmail/client-engine";
 import { cssRect } from "../geometry/index.js";
 import { SCROLL_KEYS } from "../keys/index.js";
 import { scrollProgrammatically } from "../session/programmatic-scroll.js";

@@ -3,10 +3,10 @@
  * copy holds, and nothing of them leaves here but how many and which ids: the counts are the rail's
  * own, so a notice and the number beside the Ohbox never disagree.
  */
+import type { EngineDraft } from "@ohmail/wire";
 import { ohboxUnreadIds } from "../ohbox-rows.js";
 import { ohboxView, resurfacedThreads, screenerSegments } from "../selectors.js";
 import type { EntityReader } from "../store.js";
-import type { EngineDraft } from "../types.js";
 import type { NoticeDevices, NoticeSample, SendStanding } from "./gate.js";
 
 /** Where an unsent draft stands. Only a send with an appointment waits; one handed back with its failure went wrong. */

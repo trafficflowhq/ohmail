@@ -1,14 +1,12 @@
+import type { EngineDraft, MutationOutcome, SyncSnapshotPage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   draftBodyKnown,
   type EngineAdapter,
-  type EngineDraft,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
-  type SyncSnapshotPage,
 } from "../src/index.js";
 
 /**

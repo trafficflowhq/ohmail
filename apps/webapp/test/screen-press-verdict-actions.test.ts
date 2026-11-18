@@ -1,6 +1,7 @@
+import type { EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { EngineMutation, MutationStatus, RuleDTO, StayVerdict } from "@ohmail/client-engine";
+import type { MutationStatus, StayVerdict } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { moveInBatches, verdictAction, verdictKeyOf } from "@ohmail/app-logic/press/press-verdict";
 import { sliceOfDeclaration } from "./source-anchor";

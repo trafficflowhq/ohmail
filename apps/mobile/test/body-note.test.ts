@@ -1,6 +1,7 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { Copy } from "../src/copy";
-import { MemoryMirrorStore, OhmailEngine, isJunkHuskLeaving, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, isJunkHuskLeaving, type SyncChange } from "@ohmail/client-engine";
 import { junkLeaving, mailboxStatusOf, withheldNote } from "../src/ui/body-note";
 import { liveBody } from "../src/state/live";
 import fs from "node:fs";

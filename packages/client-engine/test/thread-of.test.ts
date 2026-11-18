@@ -1,6 +1,7 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { managedDomain } from "../../../test/support/fixture-credentials.js";
-import { threadOf, type EngineMessage, type EntityReader, type Folder } from "@ohmail/client-engine";
+import { threadOf, type EntityReader } from "@ohmail/client-engine";
 
 /**
  * `threadOf` — the conversation selector behind that change.

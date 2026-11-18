@@ -1,6 +1,7 @@
+import type { ScreenDest } from "@ohmail/wire";
 import { OUTBOX_UNKEYED_CREATE_TTL_MS } from "./engine.js";
 import { senderKey } from "./own-address.js";
-import { FOLDER_OF_VIEW, type ScreenDest } from "./types.js";
+import { FOLDER_OF_VIEW } from "./types.js";
 import type { DurableWrite, StorageDoor } from "./durable.js";
 
 /**

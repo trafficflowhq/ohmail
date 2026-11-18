@@ -13,8 +13,9 @@
  * - a pick still being read holds Send (the screen reads `attaching`) and an app restart;
  * - nothing commits after the screen went away: a discarded letter stays discarded.
  */
+import type { ComposeAttachment } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import type { ComposeAttachment, ImageQualityLevel } from "@ohmail/client-engine";
+import type { ImageQualityLevel } from "@ohmail/client-engine";
 import { holdFilesForRestart } from "../doors/app-update.js";
 import {
   admit,

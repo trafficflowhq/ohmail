@@ -1,3 +1,4 @@
+import type { AuthVerdict } from "@ohmail/wire";
 import { countRealFiles, itipReplyByHeaders, normalizeMime } from "./mime.js";
 import type { PlannedInvitation } from "./invitation-mail.js";
 import type { Logger } from "./log.js";
@@ -11,7 +12,7 @@ import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
   NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, autoReplySuppression,
   dsnVerdict, effectForDestination, evaluateRules, gateAuthor, isDaemonAddress, isDeliveryReportShape, screenerAdmits,
-  unsubscribeHeaderState, type AuthVerdict, type KnownSenders, type OhboxPolicy, type Rule,
+  unsubscribeHeaderState, type KnownSenders, type OhboxPolicy, type Rule,
 } from "./rules.js";
 import {
   claimedIdentity, companyDomainsOf, ownedBrand, registrableDomain, senderDomainOf, type IdentityFact,

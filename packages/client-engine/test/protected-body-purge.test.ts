@@ -1,3 +1,4 @@
+import type { EngineMessage, MessageBodyRecord, MutationOutcome, SensitivityFlags } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -5,10 +6,6 @@ import {
   SearchIndex,
   isProtectedMessage,
   type EngineAdapter,
-  type EngineMessage,
-  type MessageBodyRecord,
-  type MutationOutcome,
-  type SensitivityFlags,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

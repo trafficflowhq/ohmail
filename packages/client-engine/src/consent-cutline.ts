@@ -1,3 +1,10 @@
+import type {
+  EngineMessage,
+  Folder,
+  MailboxProfileEntity,
+  MessageBodyRecord,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import {
   authScreens, counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
 } from "@trafficflow/core/sender-headers";
@@ -14,8 +21,7 @@ import {
   isOwnSent, isResurfaced, messagesByDateDesc, newestHeldBySender, queueCoverage, rulesList, screenerWaitingOf, senderKey,
 } from "./selectors.js";
 import {
-  MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, SENT_IN_HISTORY_TYPE, type EngineMessage,
-  type Folder, type MailboxProfileEntity, type MessageBodyRecord, type RuleDTO,
+  MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, SENT_IN_HISTORY_TYPE,
 } from "./types.js";
 
 /** The router's key for a rule's `match`, for the press modules, which import no rule order. */

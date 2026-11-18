@@ -1,4 +1,5 @@
-import { domainOfAddress, ruleMatchKey, type RuleDTO, type WaitingOnOrganizerView } from "@ohmail/client-engine";
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
+import { domainOfAddress, ruleMatchKey, type WaitingOnOrganizerView } from "@ohmail/client-engine";
 import {
   addressPriorityOver, compareTwins, effectForDestination, sharedProviderAllowRefusal,
 } from "@trafficflow/core/rule-order";

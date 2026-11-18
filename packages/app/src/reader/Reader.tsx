@@ -3,6 +3,7 @@
  * them (along the head on a phone), the action panel at its foot. With nothing open, the blank. The read rule runs
  * here with the column's names; the visit is the list's where the list that opened the letter handed one.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import {
   useCallback,
   useEffect,
@@ -26,7 +27,6 @@ import {
 } from "@ohmail/app-logic/reader";
 import { useListVisit, useThreadRead } from "@ohmail/app-logic/reading";
 import { scrollByHand } from "@ohmail/app-logic/session/programmatic-scroll";
-import type { EngineMessage } from "@ohmail/client-engine";
 import type { PaneProps } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import { useFrame } from "../frame/commands.js";
