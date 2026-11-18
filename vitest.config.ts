@@ -234,6 +234,7 @@ export default defineConfig({
       // What the letter's body takes of the kit, without its base sheets, ABOVE the bare name too.
       { find: "@ohmail/ui/body-parts", replacement: r("./packages/ui/src/body-parts.ts") },
       // The body page bound as a leaf, ABOVE the bare name (the prefix-match reason above): the phone links it.
+      { find: "@ohmail/ui/file-size", replacement: r("./packages/ui/src/format/file-size.ts") },
       { find: "@ohmail/ui/long-text", replacement: r("./packages/ui/src/format/long-text.ts") },
       // The squares' window as a leaf, for the same reason: the phone's MarkSquare links it.
       { find: "@ohmail/ui/squares-window", replacement: r("./packages/ui/src/squares-window.ts") },

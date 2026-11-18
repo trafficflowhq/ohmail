@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatFileSize } from "../src/format/file-size.js";
+import { formatFileSize } from "@ohmail/ui/file-size";
 
 /**
  * ═══ ONE SIZE, SAID ONE WAY ════════════════════════════════════════════════════════════════
