@@ -117,6 +117,45 @@ describe("the places' states, each drawn", () => {
     expect(KEYS.every((k) => sizeOf.has(k))).toBe(true);
   });
 
+  it("keeps a scheduled reply's recipient, label and cancel button readable at enlarged German text size", async () => {
+    const key = "face=ohmarchy&open=draft-nadja&screen=drafts";
+    const page = await browser!.newPage({ viewport: sizeOf.get(key)! });
+    try {
+      await openPlacesPage(page, `${key}&lang=de`);
+      await page.evaluate(() => {
+        document.documentElement.style.zoom = "1.5";
+      });
+      const action = page.getByRole("button", { name: "Versand abbrechen", exact: true });
+      await action.click({ trial: true });
+      const fits = (el: Element) => {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const lines = Array.from(range.getClientRects());
+        for (let box: Element | null = el; box; box = box.parentElement) {
+          const style = getComputedStyle(box);
+          if (style.overflowX === "visible" && style.overflowY === "visible" && box.tagName !== "BUTTON")
+            continue;
+          const b = box.getBoundingClientRect();
+          if (
+            lines.some(
+              (r) =>
+                r.left < b.left - 1 || r.right > b.right + 1 || r.top < b.top - 1 || r.bottom > b.bottom + 1,
+            )
+          )
+            return false;
+        }
+        return lines.length > 0;
+      };
+      const row = page.getByRole("option").filter({ hasText: "An Nadja Lehner" });
+      for (const label of ["An Nadja Lehner", "Antwort"]) {
+        await expect.poll(() => row.getByText(label, { exact: true }).evaluate(fits)).toBe(true);
+      }
+      expect(await action.getByText("Versand abbrechen", { exact: true }).evaluate(fits)).toBe(true);
+    } finally {
+      await page.close();
+    }
+  });
+
   /** Each key in both languages, four pages at a time. */
   async function everyKey(): Promise<Map<string, Record<"en" | "de", { stood: boolean; faults: Fault[] }>>> {
     const out = new Map<string, Record<"en" | "de", { stood: boolean; faults: Fault[] }>>();

@@ -626,6 +626,22 @@
     content: attr(data-label);
   }
 
+  /* Size a standing action after the name and labels. A long action keeps its whole word on each line. */
+  :root[data-touch="0"]
+    .oh-row[data-own]
+    .oh-row-first:has(> .oh-row-labels):not([data-fold-verb])
+    > :is(.oh-row-who, .oh-row-labels) {
+    flex-shrink: 0;
+  }
+  :root[data-touch="0"] .oh-row-slot:has(.oh-row-first[data-fold-verb]) .oh-row-verb[data-own] {
+    width: min-content;
+    height: fit-content;
+    min-height: var(--h-s);
+    margin-left: var(--s2);
+    padding-block: var(--s1);
+    white-space: normal;
+  }
+
   .oh-row-slot > .oh-row-verb[data-own] {
     position: absolute;
     top: 0;
