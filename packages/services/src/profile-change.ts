@@ -1,25 +1,10 @@
+import type { ProfileChangeWire } from "@ohmail/wire";
 import { and, eq, ne } from "drizzle-orm";
 import {
   listProfileRequestsNaming, mailboxes, REFUSAL_VISIBLE_FOR_MS, type OrganizerRequestRow, type Tx,
 } from "@trafficflow/db";
 
-/**
- * WHERE A SETTINGS CHANGE MADE ON A READER WENT — the read a settings pane says its sentence from.
- *
- * On an install that organizes none of the account's live mailboxes, a change to a travelling
- * setting is a `profile.update` per holding install, and the reader's own row is never written.
- * The pane used to say "Saved." at the press and nothing after, so an applied change and one the
- * holder turned away read the same. The state is the NEWEST request per live mailbox: `asked`
- * while any is unanswered, `refused` when one said no within the refusal window, `applied` when
- * every one did. `null` on an install that organizes a mailbox, and when there is nothing to say.
- */
-export interface ProfileChangeWire {
-  state: "asked" | "applied" | "refused";
-  /** The holder that refused, by the name it recorded; `null` otherwise or when it recorded none. */
-  holder: string | null;
-  /** `unreadable`: the holder's build could not read the change. `other`: it turned it away. */
-  refusal: "unreadable" | "other" | null;
-}
+export type { ProfileChangeWire } from "@ohmail/wire";
 
 /** The refusals that mean the holder's build could not read the record, and an unnamed one. */
 const UNREADABLE: ReadonlySet<string | null> = new Set([null, "invalid_payload", "unhandled_kind", "malformed"]);

@@ -30,6 +30,7 @@ import type {
   ScreenerPendingDecision, ScreenRequestResult, StayedWire, UnscreenedGroupWire, UnscreenedPileWire, WaitingRequestWire,
 } from "./screener-answers.js";
 import type { AddressSearchResult, SearchResult } from "./search.js";
+import type { AwayResponderBody, AwayResponderRead, AwayResponderSaveAnswer } from "./rest-only.js";
 import type { AttachmentWire, DraftDTO, DraftWrittenAnswer } from "./drafts.js";
 import type { InvitationAnswerBody, InvitationAnswerResult } from "./invitations.js";
 import type { QueuedAnswer, RuleQueuedAnswer, RuleTravel, WithdrawSendOutcome } from "./act-answers.js";
@@ -142,6 +143,9 @@ type Applied = MessageDTO;
 export interface Routes {
   // ── who the server is ───────────────────────────────────────────────────────
   "GET /hello": { params: None; body: never; answer: HelloAnswer };
+
+  "GET /away-responder": { params: None; body: never; answer: AwayResponderRead };
+  "PUT /away-responder": { params: None; body: AwayResponderBody; answer: AwayResponderSaveAnswer };
 
   // ── the feed ────────────────────────────────────────────────────────────────
   "GET /sync": { params: None; body: never; answer: SyncResponse };

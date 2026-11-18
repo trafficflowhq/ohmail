@@ -62,8 +62,6 @@ export type UnboundCall =
   | "POST /auth/step-up/webauthn/verify"
   | "POST /auth/verify-email"
   | "POST /auth/verify-email/resend"
-  | "GET /away-responder"
-  | "PUT /away-responder"
   | "GET /consent"
   | "GET /consent/reset"
   | "POST /consent/reset"

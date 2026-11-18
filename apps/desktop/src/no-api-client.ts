@@ -9,6 +9,7 @@
  * engine over a pipe; reaching for anything here throws rather than quietly opening a socket.
  */
 
+import type { AnswerOf, AwayResponderEdit, AwayResponderSaveReading } from "@ohmail/wire";
 import type { StorageFacts } from "../../webapp/app/shell/storage-state";
 
 const UNAVAILABLE = "the ohmail Cloud API is not part of this build — the desktop tier talks to its own local engine";
@@ -812,32 +813,24 @@ export const consent: {
     }>;
 } = absent;
 
-export interface AwayResponderWire {
-    enabled: boolean;
-    body: string | null;
-    startsAt: string | null;
-    /** The instant the responder stops; the pane resolves a picked day to the end of it. */
-    endsAt: string | null;
-    audience: "screened_in" | "everyone";
-    throttle: "always" | "per_message" | "per_day" | "per_week";
-    /** Folder names. `ohmail/Screener` is storable only beside `audience: "everyone"`. */
-    piles: ("INBOX" | "ohmail/News" | "ohmail/Receipts" | "ohmail/Screener")[];
-    updatedAt: string | null;
-    change?: ChangeWire;
-}
+type AwayRead = AnswerOf<"GET /away-responder">;
 
-/**
- * The SAVE's answer: the row plus the 202 discriminator. Mirrored here because the shared
- * settings control imports it by name and this module stands in for the real one in both
- * desktop artifacts — see this file's header on keeping the surface in step.
- */
-export interface AwayResponderSaveWire extends AwayResponderWire {
-    pending?: boolean;
+export interface AwayResponderWire {
+    enabled: AwayRead["enabled"];
+    body: AwayRead["body"];
+    startsAt: AwayRead["startsAt"];
+    endsAt: AwayRead["endsAt"];
+    audience: AwayRead["audience"];
+    throttle: AwayRead["throttle"];
+    piles: AwayRead["piles"];
+    updatedAt: AwayRead["updatedAt"];
+    change?: NonNullable<AwayRead["change"]>;
 }
+export type AwayResponderSaveWire = AwayResponderSaveReading;
 
 export const away: {
-    state: () => Promise<AwayResponderWire>;
-    save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>;
+    state: () => Promise<AwayRead>;
+    save: (next: AwayResponderEdit) => Promise<AnswerOf<"PUT /away-responder">>;
 } = absent;
 
 export type AccountAccess = {
