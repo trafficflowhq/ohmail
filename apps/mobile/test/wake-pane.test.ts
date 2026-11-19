@@ -54,6 +54,18 @@ it("reads only the controls and outcome the page displays", async () => {
   });
 });
 
+it.each(["row_remains", "endpoint_refused", "switched_off"])(
+  "preserves the wake outcome with its own message: %s",
+  async (reason) => {
+    const { page, wake } = fixture();
+    wake.state = { k: "off", reason };
+    expect((await page.request("phone.wake", { do: "read" })).wake?.state).toEqual({
+      k: "off",
+      reason,
+    });
+  },
+);
+
 it("offers no selected distributor when the saved app has been removed", async () => {
   const { page, wake, choose, turnOff } = fixture();
   const another = { id: "fixture.other", name: "Other helper", saved: false };
