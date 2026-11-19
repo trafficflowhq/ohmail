@@ -47,7 +47,7 @@ const needsOf = (j: Job) => (Array.isArray(j.needs) ? j.needs : j.needs === unde
 const NO_DOOR: IfContext = {
   "github.event.pull_request.head.repo.full_name": null, "github.head_ref": null, "github.event.pull_request.user.type": null,
   "github.event.pull_request.author_association": null, "github.actor": null, "github.triggering_actor": null,
-  "github.event.pull_request.draft": null,
+  "github.event.pull_request.draft": null, "github.base_ref": null, "github.event.action": null,
 };
 /** A maintainer's own pull request from a branch of this repository, ready unless `draft`. */
 const LANE = (head = "pr/lane-x", draft = false): IfContext => ({
@@ -248,19 +248,20 @@ describe("every job after a platform build follows it, read as GitHub reads the 
 });
 
 /**
- * A BATCH THAT IS A DRAFT BUILDS NO PLATFORM, AND MARKING IT READY BUILDS THEM ALL.
+ * PLATFORM BUILDS FOR DRAFT BATCHES AND READY MARKS.
  *
  * A batch's pull request can land its members on its own build run while it is a draft: the engine pair takes minutes,
  * the platform builds most of an hour, and those follow on the branch once the members are in. So `changes` reads the
  * draft flag on the batch's arm and nowhere else, and the three workflows start on `ready_for_review`, so that a batch
- * marked ready still builds every platform, the APK and the self-host smoke. Read as GitHub starts each run
+ * marked ready into main still builds every platform, the APK and the self-host smoke. On next the ready mark
+ * of a maintainer's batch retains just the two required engine jobs. Read as GitHub starts each run
  * (`startsOn`) and its jobs (`runJobs`), against each file as it was without the flag and the trigger:
  *   · a draft batch's opening, push or reopening runs build.yml's engine pair alone, what every draft runs;
- *   · marking any pull request ready runs the jobs its ready push runs; none of the three started on it before;
+ *   · marking any pull request ready into main runs the jobs its ready push runs; none of the three started on it before;
  *   · every other event and kind of pull request runs exactly the jobs it ran before.
  */
-describe("a batch that is a draft builds no platform, and marking it ready builds them", () => {
-  const TERM = " && !(startsWith(github.head_ref, 'pr/batch-') && github.event.pull_request.draft != true)";
+describe("platform builds for draft batches and ready pull requests", () => {
+  const TERM = " && !(startsWith(github.head_ref, 'pr/batch-') && (github.repository != 'trafficflowhq/ohmail' || github.base_ref != 'next' || github.event.action != 'ready_for_review') && github.event.pull_request.draft != true)";
   const OLD = " && !startsWith(github.head_ref, 'pr/batch-')";
   const TYPES = "\n    types: [opened, synchronize, reopened, ready_for_review]\n";
   const TEXTS: Record<string, string> = { "build.yml": BUILD, "android.yml": ANDROID, "selfhost-smoke.yml": SELFHOST };
@@ -286,7 +287,7 @@ describe("a batch that is a draft builds no platform, and marking it ready build
       "github.event.pull_request.user.type": "Bot", "github.event.pull_request.author_association": "NONE", "github.actor": "dependabot[bot]", "github.triggering_actor": "dependabot[bot]" }],
   ];
   const prEvent = (action: string, draft: boolean, kind: IfContext): RunEvent =>
-    ({ event: "pull_request", action, ref: "refs/pull/7/merge", ctx: at("pull_request", "refs/pull/7/merge", { ...kind, "github.event.pull_request.draft": draft }) });
+    ({ event: "pull_request", action, ref: "refs/pull/7/merge", ctx: at("pull_request", "refs/pull/7/merge", { "github.base_ref": "main", "github.event.action": action, ...kind, "github.event.pull_request.draft": draft }) });
   /** Every row: its label, the event, and whether it is a draft batch's push. */
   const ROWS: Array<[string, RunEvent, boolean]> = [
     ...KINDS.flatMap(([kind, ctx]) => ["opened", "synchronize", "reopened"].flatMap((action) => [true, false].map((draft) =>
@@ -333,7 +334,7 @@ describe("a batch that is a draft builds no platform, and marking it ready build
     }
   });
 
-  it("marking a pull request ready runs, in each file, the jobs its ready push runs; none of the three started on it before", () => {
+  it("marking a pull request into main ready runs the jobs its ready push runs; none of the three started on it before", () => {
     for (const [kind, ctx] of KINDS) for (const [file, t] of Object.entries(TEXTS)) {
       const ready = prEvent("ready_for_review", false, ctx);
       expect(jobsOn(BEFORE[file]!, ready), `${file}: ${kind}, as it was`).toBe("no run");
@@ -341,6 +342,28 @@ describe("a batch that is a draft builds no platform, and marking it ready build
     }
     expect(jobsOn(BUILD, prEvent("ready_for_review", false, BATCH)), "the batch marked ready").toEqual(ALL_BUILD);
     expect(jobsOn(BUILD, prEvent("ready_for_review", false, LANE())), "a maintainer's other pull request marked ready").toEqual(ENGINE_PAIR);
+  });
+
+  it("marking a maintainer batch ready on next starts only the two required engine jobs", () => {
+    const nextBatch = { ...BATCH, "github.base_ref": "next" };
+    const jobs = (action: string, context: IfContext) => {
+      const event = prEvent(action, false, context);
+      return [jobsOn(BUILD, event), jobsOn(ANDROID, event), jobsOn(SELFHOST, event)];
+    };
+    const full = [ALL_BUILD, ["apk", "changes"], ["boot-smoke", "changes"]];
+    for (const role of ["OWNER", "MEMBER", "COLLABORATOR"]) {
+      expect(jobs("ready_for_review", { ...nextBatch, "github.event.pull_request.author_association": role }), role).toEqual([ENGINE_PAIR, [], []]);
+    }
+    for (const action of ["opened", "synchronize", "reopened"]) expect(jobs(action, nextBatch), action).toEqual(full);
+    for (const context of [
+      { ...nextBatch, "github.base_ref": "main" },
+      { ...nextBatch, "github.head_ref": "pr/release-0307-bump" },
+      { ...nextBatch, "github.event.pull_request.head.repo.full_name": "someone/ohmail" },
+      { ...nextBatch, "github.event.pull_request.author_association": "CONTRIBUTOR" },
+      { ...nextBatch, "github.event.pull_request.user.type": "Bot" },
+      { ...nextBatch, "github.actor": "builder[bot]" },
+      { ...nextBatch, "github.triggering_actor": "builder[bot]" },
+    ]) expect(jobs("ready_for_review", context)).toEqual(full);
   });
 
   it("each reading is watched failing", () => {

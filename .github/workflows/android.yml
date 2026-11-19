@@ -96,7 +96,7 @@ on:
   push:
     tags: ["android-v*"]
   pull_request:
-    # ready_for_review too, as build.yml's: a batch builds the APK only once it is not a draft (`changes` below).
+    # The ready mark of a maintainer's batch into next follows build.yml and skips hosted packaging.
     types: [opened, synchronize, reopened, ready_for_review]
   # Kept beside build.yml's for when `main` takes a merge queue; a merge group builds no APK.
   merge_group:
@@ -119,8 +119,7 @@ jobs:
   # ── which pull requests need the APK ────────────────────────────────────────────────────
   # A maintainer's pull request builds no APK: GitHub's hosted runners are the organisation's one pool
   # (build.yml's `changes` says who counts as a maintainer, and why). On a FULL-BUILD pull request (the
-  # batch `pr/batch-*` once it is not a draft, the release bump `pr/release-<NNNN>-bump`, a fork's or a
-  # bot's) the APK is built
+  # non-draft batch outside a maintainer's ready mark into next, the release bump, a fork's or a bot's) the APK is built
   # when the pull request changes something the phone's build reads: apps/mobile, the engine it bundles
   # and that engine's packages, the install, the patches, the build scripts, this workflow and the
   # scripts it runs. Which paths those are is `.github/scripts/pr-build-scope.sh`'s to say. The nightly
@@ -129,7 +128,7 @@ jobs:
   # otherwise, and on a pull request builds whenever this job ran and did not succeed.
   changes:
     name: android · changes · does this pull request need the APK
-    if: ${{ github.repository == 'trafficflowhq/ohmail' && github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !(startsWith(github.head_ref, 'pr/batch-') && github.event.pull_request.draft != true) && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
+    if: ${{ github.repository == 'trafficflowhq/ohmail' && github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !(startsWith(github.head_ref, 'pr/batch-') && (github.repository != 'trafficflowhq/ohmail' || github.base_ref != 'next' || github.event.action != 'ready_for_review') && github.event.pull_request.draft != true) && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:

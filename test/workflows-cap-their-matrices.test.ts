@@ -136,13 +136,13 @@ describe("the hosted jobs each event starts", () => {
       "github.actor": "a-maintainer", "github.triggering_actor": "a-maintainer", "github.head_ref": pr ? "pr/lane-x" : "",
       "github.event.pull_request.head.repo.full_name": pr ? "trafficflowhq/ohmail" : null,
       "github.event.pull_request.user.type": pr ? "User" : null, "github.event.pull_request.author_association": pr ? "OWNER" : null,
-      "github.event.pull_request.draft": null, "github.event.action": null, "github.event.release.tag_name": null, "inputs.verify_only": null,
+      "github.event.pull_request.draft": null, "github.base_ref": pr ? "main" : null, "github.event.action": null, "github.event.release.tag_name": null, "inputs.verify_only": null,
       "needs.changes.outputs.desktop": "true", "needs.changes.outputs.android": "true", "needs.changes.outputs.selfhost": "true",
       "needs.version.outputs.promote_public": "yes", ...PLAN, ...extra,
     };
   };
   const hosted = (event: string, ref: string, more: Partial<RunEvent> = {}, extra: IfContext = {}, wfs = WORKFLOWS) =>
-    hostedJobs(wfs, { event, ref, ctx: at(event, ref, extra), ...more });
+    hostedJobs(wfs, { event, ref, ctx: at(event, ref, { "github.event.action": more.action ?? null, ...extra }), ...more });
   /** One push of a pull request: its pull_request run and its pull_request_target run. */
   const push = (extra: IfContext = {}, wfs = WORKFLOWS) =>
     [...hosted("pull_request", "refs/pull/7/merge", {}, extra, wfs), ...hosted("pull_request_target", "refs/heads/main", {}, extra, wfs)];
@@ -167,7 +167,11 @@ describe("the hosted jobs each event starts", () => {
   /** A pull request marked ready: its pull_request run and its pull_request_target run, both on ready_for_review. */
   const markedReady = (extra: IfContext = {}, wfs = WORKFLOWS) => [
     ...hosted("pull_request", "refs/pull/7/merge", { action: "ready_for_review" }, { ...extra, "github.event.pull_request.draft": false }, wfs),
-    ...hosted("pull_request_target", "refs/heads/main", { action: "ready_for_review" }, { ...extra, "github.event.pull_request.draft": false }, wfs)];
+    ...hosted("pull_request_target", `refs/heads/${extra["github.base_ref"] ?? "main"}`, { action: "ready_for_review" }, { ...extra, "github.event.pull_request.draft": false }, wfs)];
+
+  it("marking a maintainer batch ready on next keeps its test and packaging work off hosted machines", () => {
+    expect(markedReady({ ...BATCH, "github.base_ref": "next" })).toEqual(QUICK);
+  });
 
   it("an ordinary maintainer pull request: 2 hosted jobs, dco and guard", () => {
     expect(push()).toEqual(QUICK);
@@ -192,7 +196,7 @@ describe("the hosted jobs each event starts", () => {
     expect(push({ "github.head_ref": "pr/release-0307-bump", "github.event.pull_request.draft": true }), "the release bump as a draft").toEqual(FULL);
   });
 
-  it("a pull request marked ready: what its ready push starts; an ordinary one 2, the batch 14, a fork's 25", () => {
+  it("a pull request into main marked ready: an ordinary one 2, the batch 14, a fork's 25", () => {
     expect(markedReady()).toEqual(QUICK);
     expect(markedReady(BATCH)).toEqual(FULL);
     expect(markedReady(FORK)).toEqual(push(FORK));
@@ -270,7 +274,7 @@ describe("the hosted jobs each event starts", () => {
       expect(JSON.stringify(wfs), `the planting changed nothing: ${from}`).not.toBe(JSON.stringify(WORKFLOWS));
       return wfs;
     };
-    expect(push(BATCH, planted(" && !(startsWith(github.head_ref, 'pr/batch-') && github.event.pull_request.draft != true)", "")), "the batch clause dropped").toEqual(QUICK);
+    expect(push(BATCH, planted(" && !(startsWith(github.head_ref, 'pr/batch-') && (github.repository != 'trafficflowhq/ohmail' || github.base_ref != 'next' || github.event.action != 'ready_for_review') && github.event.pull_request.draft != true)", "")), "the batch clause dropped").toEqual(QUICK);
     expect(push({ ...BATCH, "github.event.pull_request.draft": true }, planted(" && github.event.pull_request.draft != true)", ")")), "the draft flag dropped").toEqual(FULL);
     expect(markedReady(BATCH, planted("    types: [opened, synchronize, reopened, ready_for_review]\n", "", "build.yml")), "build.yml's ready_for_review dropped")
       .toEqual([...FULL.slice(0, 2), ...FULL.slice(10)]);
