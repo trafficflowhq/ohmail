@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse, TYPE, type MessageFormatElement } from "@formatjs/icu-messageformat-parser";
 import { createTranslator } from "next-intl";
 import {
   DEFAULT_LOCALE, LOCALES, fillFrom, isAppLocale, normalizeLocale,
@@ -57,34 +58,19 @@ function leaves(tree: Tree, prefix = ""): Map<string, string> {
   return out;
 }
 
-/** The plural/select branch keywords. A `{` preceded by one of these opens a BODY, not an argument. */
-const BRANCH_KEY = /(?:=\d+|zero|one|two|few|many|other|true|false)\s*$/;
-
-/**
- * THE ICU ARGUMENTS A MESSAGE REQUIRES.
- *
- * Written here rather than taken from `@formatjs/icu-messageformat-parser`, which is a transitive
- * dependency of the intl package and not one this app declares — a test that reaches for an
- * undeclared package fails on a clean install rather than on a real defect.
- *
- * ── THE ONE AMBIGUITY, AND HOW IT IS RESOLVED ──────────────────────────────────────────────────
- *
- * `{count}` (a simple argument) and `one {sender}` (a plural branch whose whole body is one word)
- * are the same three characters to a scanner. They are told apart by what comes BEFORE the brace: a
- * branch body's `{` always follows a branch keyword. `screener.suggest.autoWhat` is the real message
- * this matters for — `{count, plural, one {sender} other {# senders}}` — and without the guard its
- * English side reads as requiring an argument named `sender`, which no caller passes and no
- * translation could preserve.
- */
+/** ICU values from every branch. Rich-text callbacks have their own parity check. */
 function icuArgs(message: string): string[] {
   const names = new Set<string>();
-  for (let i = 0; i < message.length; i++) {
-    if (message[i] !== "{") continue;
-    if (BRANCH_KEY.test(message.slice(Math.max(0, i - 8), i))) continue;
-    const rest = message.slice(i + 1);
-    const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(,|\})/.exec(rest);
-    if (m) names.add(m[1]!);
+  function visit(elements: MessageFormatElement[]): void {
+    for (const element of elements) {
+      if (element.type === TYPE.literal || element.type === TYPE.pound || element.type === TYPE.tag) continue;
+      names.add(element.value);
+      if (element.type === TYPE.select || element.type === TYPE.plural) {
+        for (const option of Object.values(element.options)) visit(option.value);
+      }
+    }
   }
+  visit(parse(message, { ignoreTag: true }));
   return [...names].sort();
 }
 
@@ -149,16 +135,42 @@ describe("the message catalogues", () => {
         broken.push(`${key}: unbalanced braces`);
         continue;
       }
-      const wanted = icuArgs(english);
-      const got = icuArgs(german);
-      if (wanted.join(",") !== got.join(",")) {
-        argMismatch.push(`${key}: en needs [${wanted.join(", ")}], de needs [${got.join(", ")}]`);
+      try {
+        const wanted = icuArgs(english);
+        const got = icuArgs(german);
+        if (wanted.join(",") !== got.join(",")) {
+          argMismatch.push(`${key}: en needs [${wanted.join(", ")}], de needs [${got.join(", ")}]`);
+        }
+      } catch (error) {
+        broken.push(`${key}: ${String(error)}`);
       }
     }
 
     expect(broken, `these messages are malformed:\n  ${broken.join("\n  ")}`).toEqual([]);
     expect(argMismatch, `argument drift — a missing one renders a sentence with a hole in it:\n  ${argMismatch.join("\n  ")}`)
       .toEqual([]);
+  });
+
+  it("finds required arguments inside branches without counting their literal text", () => {
+    const english = "{day, select, 0 {Sunday} other {{count, plural, =0 {None} other {{name}: #}}}}";
+    const german = "{day, select, 0 {Sonntag} other {{count, plural, =0 {Keine} other {#}}}}";
+
+    expect(icuArgs(english)).toEqual(["count", "day", "name"]);
+    expect(icuArgs(german)).toEqual(["count", "day"]);
+  });
+
+  it("renders calendar reminder dates with and without a time in both languages", () => {
+    const cases = [
+      { locale: "en", dow: 0, dom: 4, month: 1, date: "Sun 4 Jan" },
+      { locale: "en", dow: 6, dom: 5, month: 12, date: "Sat 5 Dec" },
+      { locale: "de", dow: 0, dom: 4, month: 1, date: "So., 4. Jan." },
+      { locale: "de", dow: 6, dom: 5, month: 12, date: "Sa., 5. Dez." },
+    ];
+    for (const { locale, dow, dom, month, date } of cases) {
+      const t = createTranslator({ locale, messages: read(locale) as never, namespace: "frame.systemNotice" });
+      expect(t("dayDate" as never, { dow, dom, month } as never)).toBe(date);
+      expect(t("whenDate" as never, { dow, dom, month, time: "09:05" } as never)).toBe(`${date}, 09:05`);
+    }
   });
 
   it("every German message with a plural actually FORMATS, in German, for one and for many", () => {

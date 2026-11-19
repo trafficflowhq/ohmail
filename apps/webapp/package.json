@@ -23,5 +23,8 @@
     "@ohmail/ui": "*",
     "@ohmail/wire": "*",
     "@trafficflow/core": "*"
+  },
+  "devDependencies": {
+    "@formatjs/icu-messageformat-parser": "2.11.4"
   }
 }

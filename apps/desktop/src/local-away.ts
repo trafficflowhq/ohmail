@@ -9,9 +9,9 @@
  * (account, message). `awayDoorFor` names WHICH door; refusals rethrow to the shared control.
  */
 
+import type { AnswerOf, AwayResponderEdit, AwayResponderSaveReading, OnlyNamesOf, RequestOf } from "@ohmail/wire";
 import { bridgeFetch } from "./bridge-fetch.js";
 import type { AwayTransport } from "../../webapp/app/shell/AwayResponderRow";
-import type { AwayResponderSaveWire, AwayResponderWire } from "../../webapp/app/api-client";
 
 /**
  * The hosted route, addressed root-relative like every path in this window. Exported because
@@ -24,6 +24,9 @@ import type { AwayResponderSaveWire, AwayResponderWire } from "../../webapp/app/
  */
 export const AWAY_PATH = "/away-responder";
 
+type AwayRead = AnswerOf<`GET ${typeof AWAY_PATH}`>;
+type AwayBody = RequestOf<`PUT ${typeof AWAY_PATH}`>;
+
 /** The engine's own sentence for a refusal, or the status line when it composed none. */
 async function refusal(res: Response): Promise<Error> {
   let said: string | undefined;
@@ -35,9 +38,9 @@ async function refusal(res: Response): Promise<Error> {
   return new Error(said ?? `the mail engine answered ${res.status}`);
 }
 
-async function wireOf(res: Response): Promise<AwayResponderWire> {
+async function wireOf(res: Response): Promise<AwayRead> {
   if (!res.ok) throw await refusal(res);
-  return (await res.json()) as AwayResponderWire;
+  return (await res.json()) as AwayRead;
 }
 
 /**
@@ -46,9 +49,9 @@ async function wireOf(res: Response): Promise<AwayResponderWire> {
  * rather than cast away, because the shared control decides its sentence on it — dropped, the pane
  * says "Saved." over the values it just put back.
  */
-async function saveWireOf(res: Response): Promise<AwayResponderSaveWire> {
+async function saveWireOf(res: Response): Promise<AwayResponderSaveReading> {
   if (!res.ok) throw await refusal(res);
-  return (await res.json()) as AwayResponderSaveWire;
+  return (await res.json()) as AwayResponderSaveReading;
 }
 
 /**
@@ -57,14 +60,14 @@ async function saveWireOf(res: Response): Promise<AwayResponderSaveWire> {
  * A constant rather than a factory: it holds no state, and one object per module means the shell's
  * `useAwayNotice` sees a stable identity across renders.
  */
-export const awayOverBridge: AwayTransport = {
+export const awayOverBridge = {
   state: async () => wireOf(await bridgeFetch(AWAY_PATH)),
-  save: async (next) =>
+  save: async (next: AwayResponderEdit) =>
     saveWireOf(
       await bridgeFetch(AWAY_PATH, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(next),
+        body: JSON.stringify(next satisfies AwayBody & OnlyNamesOf<typeof next, AwayBody>),
       }),
     ),
-};
+} satisfies AwayTransport;

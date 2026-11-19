@@ -15,7 +15,7 @@ import type { Assert, Complete, RouteName, UnboundCall } from "@ohmail/wire";
 
 /** The routes whose request and answer both sides take from the wire. */
 export const WIRE_ROUTES = [
-  "GET /attachments/:id", "POST /attachments/staging",
+  "GET /attachments/:id", "POST /attachments/staging", "GET /away-responder", "PUT /away-responder",
   "PATCH /calendar/calendars/:id", "GET /calendar/connect", "POST /calendar/connections", "DELETE /calendar/connections/:id",
   "POST /calendar/connections/:id/check", "POST /calendar/connections/:id/sign-in",
   "GET /calendar/settings", "PATCH /calendar/settings",
@@ -53,7 +53,7 @@ export const UNBOUND_CALLS = [
   "POST /auth/refresh/logout", "POST /auth/register", "POST /auth/reuse-sweeps/ack", "GET /auth/session",
   "POST /auth/step-up/recovery-code", "POST /auth/step-up/totp", "POST /auth/step-up/webauthn/options",
   "POST /auth/step-up/webauthn/verify", "POST /auth/verify-email", "POST /auth/verify-email/resend",
-  "GET /away-responder", "PUT /away-responder", "GET /consent", "GET /consent/reset", "POST /consent/reset",
+  "GET /consent", "GET /consent/reset", "POST /consent/reset",
   "GET /consent/seed", "POST /consent/seed", "PATCH /consent/settings", "GET /devices", "DELETE /devices/:id",
   "POST /devices/revoke-web-sessions", "GET /events", "GET /folders/:id/summary", "GET /health", "GET /img",
   "GET /mailboxes", "POST /mailboxes", "DELETE /mailboxes/:id", "GET /mailboxes/:id", "PATCH /mailboxes/:id",

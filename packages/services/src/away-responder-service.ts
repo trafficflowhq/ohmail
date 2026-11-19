@@ -1,4 +1,4 @@
-import type { AwayResponderDTO } from "@ohmail/wire";
+import type { AwayResponderBody, AwayResponderDTO } from "@ohmail/wire";
 import { eq } from "drizzle-orm";
 import { awayResponders } from "@trafficflow/db";
 import {
@@ -30,38 +30,13 @@ const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
  * `pending` is the discriminator the route switches its status code on (202); `travel` says which
  * mailbox got which outcome and is absent when nothing left this install.
  */
-export interface AwayResponderPut {
-  responder: AwayResponderDTO;
-  pending?: true;
-  travel?: ProfileTravel;
-}
+export type AwayResponderPut =
+  | { responder: AwayResponderDTO; pending?: never; travel?: ProfileTravel }
+  | { responder: AwayResponderDTO; pending: true; travel: ProfileTravel };
 
 const log = createLogger({ service: "away-responder-service" });
 
-export interface AwayResponderBody {
-  enabled?: boolean;
-  /**
-   * ACCEPTED AND IGNORED, for exactly one release. The responder is reply-only now, so there is no
-   * subject to store — but a 0.13 client (a browser tab that has not reloaded, a desktop on the
-   * hosted door that has not updated) still PUTs one, and this endpoint is a FULL REPLACE.
-   * Refusing the field would 400 that client's every save, including the save that turns the
-   * responder OFF — which is the one save nobody may be prevented from making. So it is read,
-   * counted in the log, and dropped. Removed in 0.15 together with the column.
-   */
-  subject?: string | null;
-  body?: string | null;
-  startsAt?: string | null;
-  endsAt?: string | null;
-  audience?: string | null;
-  throttle?: string | null;
-  /**
-   * WHICH PILES GET A REPLY — folder names, `['INBOX']` when omitted (mail 0096).
-   *
-   * `string[]` and not `AwayPile[]`: this is request input, so it is whatever a client sent, and
-   * {@link AwayResponderService.validPiles} is what turns it into members.
-   */
-  piles?: string[] | null;
-}
+export type { AwayResponderBody } from "@ohmail/wire";
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
 

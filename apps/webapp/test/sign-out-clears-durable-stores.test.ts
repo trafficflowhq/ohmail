@@ -9,10 +9,11 @@ import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGAC
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
 } from "@ohmail/app-logic/writing/mail-send";
-import { NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/shell/notification-settings";
+import { CALENDAR_NOTICES_KEY, NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/shell/notification-settings";
 import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
+import { STORED_KEYS, type StoredKeyRow } from "../../../packages/client-engine/src/stored-keys";
 import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
 import { TOLD_DEVICES_PREFIX } from "@ohmail/app-logic/notices/use-notices";
@@ -640,13 +641,16 @@ describe("sign-out clears the durable decision stores", () => {
   /**
    * THE CENSUS — the guard that stops the NEXT store being forgotten.
    *
-   * Every `ohmail.*` localStorage key literal in the app is either swept by sign-out or named in
-   * `SURVIVES_SIGN_OUT` with a reason. A new key is a deliberate decision either way; what is not
-   * allowed is a new key that nobody decided about, which is exactly how five of these were left
-   * behind.
+   * Every `ohmail.*` localStorage key literal in the app has a documented sign-out decision.
    */
   it("every localStorage key in the app is either swept or deliberately exempt", () => {
     const undecided: string[] = [];
+    const project = resolve(APP, "../../..");
+    const calendarPreference = STORED_KEYS.find((row: StoredKeyRow) =>
+      row.key === CALENDAR_NOTICES_KEY && row.family === undefined && row.store === "localStorage" &&
+      row.owner === "web" && row.words === false && row.erased === "never" && row.mark === "kept" &&
+      row.holds.includes("on this device"),
+    );
     const files = [
       ...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : []), ...(existsSync(APP_PARTS) ? walk(APP_PARTS) : []),
       ...(existsSync(LOGIC) ? walk(LOGIC) : []), ...(existsSync(BODY) ? walk(BODY) : []),
@@ -663,12 +667,15 @@ describe("sign-out clears the durable decision stores", () => {
         const swept = SWEPT.some((p) => key.startsWith(p) || p.startsWith(key));
         const exempt = [...SURVIVES_SIGN_OUT, ...SWEPT_ELSEWHERE]
           .some((e) => key.startsWith(e) || e.startsWith(key));
-        if (!swept && !exempt) undecided.push(`${file}: ${key}`);
+        const keepsCalendarChoice = key === CALENDAR_NOTICES_KEY && calendarPreference?.at.some(
+          (path) => resolve(project, path) === resolve(file),
+        );
+        if (!swept && !exempt && !keepsCalendarChoice) undecided.push(`${file}: ${key}`);
       }
     }
     expect(
       [...new Set(undecided)].sort(),
-      "a new localStorage key must be swept by sign-out or listed in SURVIVES_SIGN_OUT with its reason",
+      "a localStorage key must be swept by sign-out or have a documented reason to survive",
     ).toEqual([]);
   });
 });

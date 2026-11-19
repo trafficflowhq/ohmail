@@ -34,7 +34,7 @@ const atTag: IfContext = {
   "github.event_name": "push", "github.ref": "refs/tags/v1.2.3", "github.repository": "trafficflowhq/ohmail",
   "needs.changes.outputs.desktop": "", "github.event.pull_request.head.repo.full_name": null, "github.head_ref": "",
   "github.event.pull_request.user.type": null, "github.event.pull_request.author_association": null,
-  "github.actor": "a-maintainer", "github.triggering_actor": "a-maintainer", "github.event.pull_request.draft": null,
+  "github.actor": "a-maintainer", "github.triggering_actor": "a-maintainer", "github.event.pull_request.draft": null, "github.base_ref": null, "github.event.action": null,
 };
 
 describe("build.yml runs at the version tag", () => {

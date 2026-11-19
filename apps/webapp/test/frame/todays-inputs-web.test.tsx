@@ -75,6 +75,8 @@ describe("the web's host, read back as today's inputs", () => {
     const { away } = await import("../../app/api-client");
     const { browserNotificationHost } = await import("../../app/shell/notification-settings");
     const { browserNoticePage, webNoticeEmitter } = await import("../../app/shell/notice-emitter");
+    const { forgetOwner, markSignedOutPending, readOwner, rememberOwner } =
+      await import("@ohmail/app-logic/storage/owner-cookie");
     const { liveBodyOverApi, SEND_SURFACE } = await import("../../app/(product)/mailbox/web-supplies");
     expect(inputs.consentTransport).toBe(CLOUD_CONSENT);
     expect(inputs.profileImportTransport).toBe(HOSTED);
@@ -88,8 +90,21 @@ describe("the web's host, read back as today's inputs", () => {
     const pageEmitter = webNoticeEmitter(browserNoticePage, () => { throw new Error("nothing is drawn here"); });
     expect(inputs.notificationHost).toEqual({
       ...browserNotificationHost,
+      liveNoticeScope: readOwner,
       emitter: { ...pageEmitter, post: expect.any(Function), takeBack: expect.any(Function) },
     });
+    // The same host can still be mounted after another tab switches accounts or signs out.
+    const liveNoticeScope = inputs.notificationHost?.liveNoticeScope;
+    try {
+      rememberOwner("acct-1");
+      expect(liveNoticeScope?.()).toBe("acct-1");
+      rememberOwner("acct-2");
+      expect(liveNoticeScope?.()).toBe("acct-2");
+      markSignedOutPending();
+      expect(liveNoticeScope?.()).toBeNull();
+    } finally {
+      forgetOwner();
+    }
     expect(inputs.liveBodyWire).toBe(liveBodyOverApi);
     expect(inputs.mailboxFacts).toBe(mailboxFacts);
     // What `CloudShell` passed: the managed service, its ceiling, Help with the confirmed account, no picture fetcher.
