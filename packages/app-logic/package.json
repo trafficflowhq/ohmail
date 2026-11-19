@@ -766,6 +766,12 @@
       "node": "./dist/phone/said.js",
       "default": "./src/phone/said.ts"
     },
+    "./phone/wake": {
+      "types": "./src/phone/wake.ts",
+      "ohmail-source": "./src/phone/wake.ts",
+      "node": "./dist/phone/wake.js",
+      "default": "./src/phone/wake.ts"
+    },
     "./phone/stop-and-remove": {
       "types": "./src/phone/stop-and-remove.ts",
       "ohmail-source": "./src/phone/stop-and-remove.ts",

@@ -15,6 +15,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { noticeChoicesOf, type NoticeChoices } from "@ohmail/client-engine";
+import { answerWakePane } from "../src/shell/wake-pane";
 import { BridgeRefused } from "../web/src/bridge";
 import { wakeTeller, wakeWanted } from "../web/src/notices";
 import { pageOver, phone } from "./helpers/notice-phone";
@@ -27,6 +28,9 @@ const calls = vi.hoisted(() => ({
   forgotten: [] as Array<{ profile: string; id: string | null }>,
   chosen: [] as Array<string | null>,
   saved: "dist.example" as string | null,
+  distributorInstalled: true,
+  anotherDistributorInstalled: false,
+  permissionRequests: 0,
   conn: { state: { k: "idle" } as { k: string; session?: unknown }, profiles: [{ id: "p-a" }] as unknown[], syncNow: () => Promise.resolve() },
   nextId: 0,
   /** Held registrations, to be answered by the case: one in the air while the page speaks. */
@@ -52,9 +56,12 @@ vi.mock("../src/net/push", () => ({
 }));
 vi.mock("../src/net/unified-push", () => ({
   chooseDistributor: (id: string | null) => { calls.chosen.push(id); calls.saved = id; },
-  listDistributors: () => [{ id: "dist.example", label: "A distributor" }],
+  listDistributors: () => [
+    ...(calls.distributorInstalled ? [{ id: "dist.example", name: "A distributor", saved: calls.saved === "dist.example" }] : []),
+    ...(calls.anotherDistributorInstalled ? [{ id: "other.example", name: "Another distributor", saved: calls.saved === "other.example" }] : []),
+  ],
   onWake: () => () => {},
-  requestNotificationPermission: async () => "granted",
+  requestNotificationPermission: async () => { calls.permissionRequests += 1; return "granted"; },
   savedDistributor: () => calls.saved,
   unifiedPushDistributor: () => ({ available: () => true, register: async () => null, unregister: async () => {} }),
 }));
@@ -108,6 +115,9 @@ beforeEach(() => {
   calls.lives.length = 0;
   calls.hold = false;
   calls.saved = "dist.example";
+  calls.distributorInstalled = true;
+  calls.anotherDistributorInstalled = false;
+  calls.permissionRequests = 0;
   calls.nextId = 0;
 });
 afterEach(async () => {
@@ -154,6 +164,19 @@ describe("the wake registration on a phone follows the page's two switches", () 
     expect(wake.state).toEqual({ k: "off", reason: "switched_off" });
   });
 
+  it("declines a distributor removed after it was shown without saving or requesting permission", async () => {
+    calls.saved = null;
+    await mount({ k: "shell", session: A });
+    expect(wake.choices.map(({ id }) => id)).toEqual(["dist.example"]);
+    calls.distributorInstalled = false;
+    await act(async () => { wake.choose("dist.example"); });
+    await settled();
+    expect(wake.choices).toEqual([]);
+    expect(calls.chosen).toEqual([]);
+    expect(calls.permissionRequests).toBe(0);
+    expect(calls.registered).toEqual([]);
+  });
+
   it("a registration in the air when the page says no is taken down once it lands", async () => {
     await mount({ k: "shell", session: A });
     calls.hold = true;
@@ -178,8 +201,24 @@ describe("the wake registration on a phone follows the page's two switches", () 
     // The person switches to another pairing: what A's page said is not about B.
     await move({ k: "shell", session: B });
     expect(calls.registered, "B was registered on A's page's word").toEqual(["p-a"]);
+    expect(wake.state).toEqual({ k: "no_distributor" });
     await say("p-b", true);
     expect(calls.registered).toEqual(["p-a", "p-b"]);
+  });
+
+  it("does not start an outgoing pairing's queued distributor choice after a switch", async () => {
+    await mount({ k: "shell", session: A });
+    calls.hold = true;
+    await say("p-a", true);
+    expect(calls.held).toHaveLength(1);
+    await act(async () => { wake.choose("dist.example"); });
+    await move({ k: "shell", session: B });
+    await say("p-b", true);
+    calls.hold = false;
+    await act(async () => { calls.held.splice(0).forEach((answer) => answer()); });
+    await settled();
+    expect(calls.registered.filter((profile) => profile === "p-a")).toHaveLength(1);
+    expect(calls.registered.at(-1)).toBe("p-b");
   });
 
   it("a session that is no shell's has no page and registers as it always has", async () => {
@@ -207,6 +246,30 @@ describe("the wake registration on a phone follows the page's two switches", () 
     expect(calls.forgotten).toEqual([]);
     expect(wake.state).toEqual({ k: "no_distributor" });
   });
+});
+
+it("reopens New mail with the apps still installed and leaves the saved choice alone", async () => {
+  await mount({ k: "shell", session: A });
+  await say("p-a", true);
+  const page = () => pageOver(phone().deps, undefined, undefined, (request) =>
+    answerWakePane(request, wake, wake.session, "android"),
+  );
+  await act(async () => {
+    expect((await page().request("phone.wake", { do: "read" })).wake?.chosen).toBe("dist.example");
+  });
+  calls.distributorInstalled = false;
+  calls.anotherDistributorInstalled = true;
+
+  await act(async () => {
+    const { wake: reopened } = await page().request("phone.wake", { do: "read" });
+    expect(reopened).toMatchObject({
+      chosen: null, choices: [{ id: "other.example" }], state: { k: "no_distributor" },
+    });
+  });
+  expect(calls.saved).toBe("dist.example");
+  expect(calls.chosen).toEqual([]);
+  expect(calls.permissionRequests).toBe(0);
+  expect(calls.registered).toEqual(["p-a"]);
 });
 
 describe("the page says whether the wake is wanted, over the bridge", () => {

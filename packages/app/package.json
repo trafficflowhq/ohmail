@@ -424,6 +424,12 @@
       "node": "./dist/phone-door/index.js",
       "default": "./src/phone-door/index.ts"
     },
+    "./phone-settings/new-mail": {
+      "types": "./src/phone-settings/new-mail/NewMailPane.tsx",
+      "ohmail-source": "./src/phone-settings/new-mail/NewMailPane.tsx",
+      "node": "./dist/phone-settings/new-mail/NewMailPane.js",
+      "default": "./src/phone-settings/new-mail/NewMailPane.tsx"
+    },
     "./servers": {
       "types": "./src/servers/index.ts",
       "ohmail-source": "./src/servers/index.ts",
