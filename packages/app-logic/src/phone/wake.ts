@@ -22,6 +22,18 @@ export interface WakePaneState {
   readonly busy: boolean;
 }
 
+/** Only outcomes with their own message cross the phone bridge unchanged. */
+export function wakeDisplayOffReason(reason: string) {
+  switch (reason) {
+    case "row_remains":
+    case "endpoint_refused":
+    case "switched_off":
+      return reason;
+    default:
+      return "failed";
+  }
+}
+
 export function wakeSentenceKey(state: WakeDisplayState, os: string): WakeSentenceKey {
   switch (state.k) {
     case "no_distributor":
@@ -33,14 +45,14 @@ export function wakeSentenceKey(state: WakeDisplayState, os: string): WakeSenten
     case "on":
       return "on";
     case "off":
-      switch (state.reason) {
+      switch (wakeDisplayOffReason(state.reason)) {
         case "row_remains":
           return "rowRemains";
         case "endpoint_refused":
           return "refused";
         case "switched_off":
           return "switchedOff";
-        default:
+        case "failed":
           return "failed";
       }
   }
