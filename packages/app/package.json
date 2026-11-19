@@ -436,6 +436,12 @@
       "node": "./dist/servers/index.js",
       "default": "./src/servers/index.ts"
     },
+    "./phone-settings/your-name": {
+      "types": "./src/phone-settings/your-name/YourNameSheet.tsx",
+      "ohmail-source": "./src/phone-settings/your-name/YourNameSheet.tsx",
+      "node": "./dist/phone-settings/your-name/YourNameSheet.js",
+      "default": "./src/phone-settings/your-name/YourNameSheet.tsx"
+    },
     "./touch": {
       "types": "./src/touch/index.ts",
       "ohmail-source": "./src/touch/index.ts",

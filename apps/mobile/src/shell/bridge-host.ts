@@ -6,7 +6,7 @@
  */
 import { BridgeEnd, type Ran } from "./bridge-end";
 import {
-  readRequest, type Kind, type NoteWhat, type Refused, type Request, type Requests, type ShellAct,
+  readRequest, type Kind, type NoteWhat, type PhoneNameRequest, type Refused, type Request, type Requests, type ShellAct,
   type ShellApp, type ShellConfig, type ShellEvent, type SwitchPlace, type WakePaneRequest,
 } from "./bridge-kinds";
 import type { HttpDoor } from "./http-door";
@@ -34,6 +34,7 @@ export interface BridgeHostDeps {
   readonly count?: (what: string) => void;
   /** The app this page runs in; the guard judges a switch's place by it, and with none refuses every place. */
   readonly app?: ShellApp;
+  readonly name?: (request: PhoneNameRequest, signal: AbortSignal) => Promise<Answer<"phone.name">>;
   /** The switch to the other app, native's whole; until a build wires it, every switch kind is not ready. */
   readonly switch?: SwitchDoor;
 }
@@ -64,6 +65,7 @@ export class BridgeHost {
       cancel: (r) => (this.end.cancel(r.of), {}),
       act: (r) => this.deps.act(r),
       "phone.wake": (r) => this.deps.wake?.(r) ?? NOT_READY,
+      "phone.name": (r, signal) => this.deps.name?.(r, signal) ?? NOT_READY,
       linkAskOpen: async (r) => ({ opened: await this.deps.openHeld(r.token) }),
       answer: (r) => (this.end.settle(r.askId, r.what === "back" ? { took: r.took } : { unsent: r.unsent }), {}),
       // The keeper's kinds are answered by the native module itself and never reach this thread.
