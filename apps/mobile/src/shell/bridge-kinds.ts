@@ -179,6 +179,16 @@ export type ShellAct =
    */
   | { readonly act: "wake.want"; readonly wanted: boolean };
 
+export type PhoneNameRequest =
+  | { readonly do: "read" }
+  | { readonly do: "save"; readonly mailboxId: string; readonly name: string | null };
+
+export interface PhoneNameRow {
+  readonly id: string;
+  readonly address: string;
+  readonly name: string | null;
+}
+
 /**
  * What native was asked to keep under a word it refused: SHA-256 over the word's UTF-16 code units, each low byte
  * first, as lowercase hex; `null` for a removal.
@@ -230,6 +240,10 @@ export interface Requests {
   readonly "phone.wake": {
     readonly ask: WakePaneRequest;
     readonly answer: { readonly wake?: WakePaneState };
+  };
+  readonly "phone.name": {
+    readonly ask: PhoneNameRequest;
+    readonly answer: { readonly rows?: readonly PhoneNameRow[]; readonly name?: string | null };
   };
   /** A link the web view's own navigation asked to open, held natively by its token. */
   readonly linkAskOpen: { readonly ask: { readonly token: string }; readonly answer: { readonly opened: boolean } };
@@ -444,6 +458,15 @@ const isWakePaneRequest = (m: Record<string, unknown>, app: ShellApp | null): bo
     Object.prototype.hasOwnProperty.call(m, "distributor") && isStr(m.distributor, 256) && m.distributor.length > 0;
 };
 
+const NAME_READ_KEYS = new Set(["id", "epoch", "kind", "do"]);
+const NAME_SAVE_KEYS = new Set([...NAME_READ_KEYS, "mailboxId", "name"]);
+function isPhoneNameRequest(m: Record<string, unknown>, app: ShellApp | null): boolean {
+  if (app !== "ohmail") return false;
+  if (m.do === "read") return Object.keys(m).every((key) => NAME_READ_KEYS.has(key));
+  return m.do === "save" && isStr(m.mailboxId, 256) && m.mailboxId !== "" &&
+    (m.name === null || isStr(m.name)) && Object.keys(m).every((key) => NAME_SAVE_KEYS.has(key));
+}
+
 /** Root-relative, and nothing a URL parser could read as another place. */
 export function isRootRelative(path: unknown): path is string {
   if (typeof path !== "string" || path.length === 0 || path.length > PATH_MAX) return false;
@@ -481,6 +504,7 @@ const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>, app: ShellApp
   act: (m) => member(ACTS, m.act) && (m.act !== "chrome" || m.scheme === "light" || m.scheme === "dark") &&
     (m.act !== "notices.post" || isNoticePost(m)) && (m.act !== "wake.want" || isWakeWant(m)),
   "phone.wake": isWakePaneRequest,
+  "phone.name": isPhoneNameRequest,
   linkAskOpen: (m) => isStr(m.token, 128),
   answer: (m) => isId(m.askId) &&
     ((m.what === "back" && typeof m.took === "boolean") || (m.what === "unsent" && isId(m.unsent))),
