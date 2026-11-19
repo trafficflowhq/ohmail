@@ -27,9 +27,11 @@ export type AwaySave =
   | { kind: "asked"; row: AwayRow }
   | { kind: "refused"; status: number | null };
 
-type ReadAway = Untrusted<AnswerOf<"GET /away-responder">>;
-type SavedAway = Untrusted<AnswerOf<"PUT /away-responder">>;
-type AwayRequest = RequestOf<"PUT /away-responder">;
+const AWAY_PATH = "/away-responder";
+
+type ReadAway = Untrusted<AnswerOf<`GET ${typeof AWAY_PATH}`>>;
+type SavedAway = Untrusted<AnswerOf<`PUT ${typeof AWAY_PATH}`>>;
+type AwayRequest = RequestOf<`PUT ${typeof AWAY_PATH}`>;
 
 function rowOf(body: ReadAway): AwayRow {
   return {
@@ -58,7 +60,7 @@ export async function readAwayAnswer(
   session: ConnectedSession,
 ): Promise<{ row: AwayRow; refused: AwayRefusal | null } | null> {
   try {
-    const res = await session.fetch(`${requestBase(session)}/away-responder`, { method: "GET" });
+    const res = await session.fetch(`${requestBase(session)}${AWAY_PATH}`, { method: "GET" });
     if (res.status !== 200) return null;
     const body = (await res.json()) as ReadAway;
     return { row: rowOf(body), refused: refusalOf(body) };
@@ -80,7 +82,7 @@ export async function saveAway(session: ConnectedSession, next: AwayRow): Promis
   const { updatedAt: _serverOwns, ...put } = next;
   const body: AwayRequest & OnlyNamesOf<typeof put, AwayRequest> = put;
   try {
-    const res = await session.fetch(`${requestBase(session)}/away-responder`, {
+    const res = await session.fetch(`${requestBase(session)}${AWAY_PATH}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
