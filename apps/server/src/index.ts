@@ -40,10 +40,9 @@ import { mintFirstRunSetupToken, printSetupToken } from "./setup-token.js";
  *  · **Listen last.** The first request a proxy health-check sends finds a fully provisioned,
  *    fully composed host or no host at all — never a half-booted one.
  *
- * SIGTERM → `server.close()` (stop accepting; in-flight requests finish), open sockets — which
- * on this host means SSE streams — destroyed after a short grace, then the wake hub's LISTEN
- * released, then the pool. The order matters: streams die before the hub so no wake fires into
- * a torn-down fan-out, and the pool goes last because everything above it may still be writing.
+ * On SIGTERM the listener stops accepting and active event streams end. Ordinary requests
+ * have a short grace to finish. After the listener and clocks settle, the wake hub releases
+ * its LISTEN and then the pool closes.
  */
 
 /** How long in-flight requests get after SIGTERM before their sockets are destroyed. */
@@ -146,10 +145,12 @@ async function main(): Promise<void> {
   if (door.door === "external") {
     logger.info("external_door_configured", { configVar: "OHMAIL_TLS_TERMINATOR", effective, proxyPeerFrom: PROXY_PEER_HEADER });
   }
+  const eventStreamShutdown = new AbortController();
   const server = makeHttpServer(program.dispatch, {
     bodyMaxBytes: cfg.bodyMaxBytes,
     headersTimeoutMs: cfg.headersTimeoutMs,
     requestTimeoutMs: cfg.requestTimeoutMs,
+    eventStreamShutdown: eventStreamShutdown.signal,
     trustedProxies,
     ...(door.door === "external" ? { proxyPeerHeader: PROXY_PEER_HEADER } : {}),
     onForwardingNote: (n) => {
@@ -190,9 +191,9 @@ async function main(): Promise<void> {
         logger.info("shutdown_complete", {});
       })();
     });
-    // `close()` waits for in-flight responses, and an SSE stream is in-flight for minutes by
-    // design — so after the grace the remaining sockets are destroyed. EventSource clients read
-    // that as an ordinary reconnect against a host that is going away.
+    // End streams cleanly so EventSource can reconnect. The remaining sockets still
+    // have the same grace to finish.
+    eventStreamShutdown.abort();
     const t = setTimeout(() => { server.closeAllConnections(); }, SHUTDOWN_GRACE_MS);
     t.unref();
   };
