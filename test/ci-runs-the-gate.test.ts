@@ -69,6 +69,19 @@ describe("CI actually runs the gate", () => {
   });
 });
 
+it("uses the project guest's browser libraries and verifies Chromium starts", () => {
+  const chromium = jobText("suite")
+    .split("      - name: Install Chromium for the layout tests\n")[1]
+    ?.split("\n      - name:")[0];
+  expect(chromium).toContain("BROWSER_RUNNER_ENVIRONMENT: ${{ runner.environment }}");
+  const [project, hosted] = chromium?.split("\n          else\n") ?? [];
+  expect(project).toContain('if [ "$BROWSER_RUNNER_ENVIRONMENT" = self-hosted ]; then');
+  expect(project).toContain("./node_modules/.bin/playwright install chromium");
+  expect(project).not.toContain("--with-deps");
+  expect(project).toContain("await chromium.launch()");
+  expect(hosted?.split("\n          fi")[0]).toBe("            npx playwright install --with-deps chromium");
+});
+
 /* The web build's own check: next build exits 0 over a missing export, and the web bundle ships it undefined. */
 const CHECK = publicPath("github/scripts/webapp-build-check.mjs");
 const check = () => import(pathToFileURL(CHECK).href) as Promise<{

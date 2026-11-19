@@ -123,6 +123,9 @@ async function seedLargeAccount(): Promise<string> {
       select id, ${id}::uuid, ${mailboxId}::uuid, 'h', 'large:' || id, 'Note', sender,
              ${at}::timestamptz, ${at}::timestamptz, ${at}::timestamptz, false, '{"folder":"INBOX","ref":"1:1"}'::jsonb
         from large_seed`;
+    // This shared test database may last have counted a nearly empty messages table.
+    // Its folder-state foreign key now looks up all 80,000 newly inserted letters.
+    await tx`analyze messages`;
     enteringSetup("folder state insertion");
     await tx`
       insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
