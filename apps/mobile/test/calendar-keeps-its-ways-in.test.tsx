@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
 /**
- * THE CALENDAR APP KEEPS ITS WAYS IN until the door's pages are built. That app carries no screens and is always the
- * shell (`mail-surface.ts`), so a route to the door before the page it lands on exists would leave it on an empty
- * stage: no way to pair, no list of servers, nothing after a sign-out. Each route moves to the door with the pull
- * request that fills its page: the gate's welcome has (the ways in); until then its list and connect in flight, and
- * the shell page's two acts that open the list, reach what they reached before the door. Rendered in the calendar
- * app, as its switch module names it.
+ * THE CALENDAR APP KEEPS ITS WAYS IN on the door's pages. That app carries no screens and is always the shell
+ * (`mail-surface.ts`), so a route to the door before the page it lands on exists would leave it on an empty stage: no
+ * way to pair, no list of servers, nothing after a sign-out. Each route moved to the door with the pull request that
+ * filled its page: the gate's welcome with the ways in; its list, a connect in flight and the shell page's two acts
+ * that open the list with the list. A connect that upgrades the phone's store keeps its own screen, which counts the
+ * upgrade, until the last pull request. Rendered in the calendar app, as its switch module names it.
  */
 import { act, createElement as h } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -92,6 +92,7 @@ import { Gated } from "../src/ui/Gated";
 import { MAIL_SURFACE, type ConnectionState } from "../src/net/connection";
 import type { ShellSession } from "../src/net/pairing";
 import { refuse } from "../src/refusal";
+import { takeDoorAsk } from "../src/shell/door-at";
 import { ShellScreen } from "../src/shell/ShellScreen";
 import { WakeProvider } from "../src/state/wake";
 
@@ -105,8 +106,8 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("the calendar app before the door's pages are built", () => {
-  it("is the shell, and its gate sends it to the welcome, its list of servers and the connect's own screen", () => {
+describe("the calendar app on the door's pages", () => {
+  it("is the shell, and its gate sends it to the door for the welcome, its list of servers and a connect in flight", () => {
     expect(MAIL_SURFACE, "the calendar app carries no screens").toBe("shell");
     const reached = (state: ConnectionState, paired: number): string | undefined => {
       scene.conn = { state, profiles: Array.from({ length: paired }, (_, i) => ({ id: `row-${i}` })) };
@@ -120,12 +121,13 @@ describe("the calendar app before the door's pages are built", () => {
       paired: reached({ k: "idle" }, 1),
       refused: reached({ k: "refused", reason: refuse("pairEnded") }, 1),
       connecting: reached({ k: "connecting", origin: "https://mail.example.test" }, 1),
+      upgrading: reached({ k: "connecting", origin: "https://mail.example.test", migrating: { applied: 3, pending: 12, fresh: false, since: 1 } } as ConnectionState, 1),
     }).toEqual({
-      nothingPaired: "/door", paired: "/servers", refused: "/servers", connecting: "the connect's own screen",
+      nothingPaired: "/door", paired: "/door", refused: "/door", connecting: "/door", upgrading: "the connect's own screen",
     });
   });
 
-  it("its shell page's two acts that open the list of servers push the list, as before the door", async () => {
+  it("its shell page's two acts that open the list of servers push the door, and ask it to open at the list", async () => {
     const session = {
       profile: { id: "row-1", origin: "https://mail.example.test", flavor: "selfhost", accountId: "account-1", pin: null },
       ownerKey: "owner-1", standalone: false,
@@ -135,8 +137,13 @@ describe("the calendar app before the door's pages are built", () => {
     const view = mount(h(WakeProvider, null, h(ShellScreen, { session })));
     await settle();
     expect(scene.bridge, "the screen handed its bridge the acts").not.toBeNull();
-    for (const name of ["openServers", "signOut"]) expect(await scene.bridge!.act({ act: name }), name).toEqual({});
-    expect(scene.pushed).toEqual(["/servers", "/servers"]);
+    const asked: unknown[] = [];
+    for (const name of ["openServers", "signOut"]) {
+      expect(await scene.bridge!.act({ act: name }), name).toEqual({});
+      asked.push(takeDoorAsk());
+    }
+    expect(scene.pushed).toEqual(["/door", "/door"]);
+    expect(asked).toEqual(["servers", "servers"]);
     view.unmount();
   });
 });

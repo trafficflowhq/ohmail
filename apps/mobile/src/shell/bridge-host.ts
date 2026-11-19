@@ -7,7 +7,7 @@
 import { BridgeEnd, type Ran } from "./bridge-end";
 import {
   readRequest, type Kind, type NoteWhat, type Refused, type Request, type Requests, type ShellAct,
-  type ShellApp, type ShellConfig, type ShellEvent, type SwitchPlace,
+  type ShellApp, type ShellConfig, type ShellEvent, type SwitchPlace, type WakePaneRequest,
 } from "./bridge-kinds";
 import type { HttpDoor } from "./http-door";
 import type { PageMessage } from "./shell-port";
@@ -19,6 +19,7 @@ export interface BridgeHostDeps {
   readonly config: () => ShellConfig | null;
   readonly http: HttpDoor;
   readonly act: (act: ShellAct) => Promise<Requests["act"]["answer"] | { readonly refused: Refused }>;
+  readonly wake?: (request: WakePaneRequest) => Answer<"phone.wake">;
   readonly openHeld: (token: string) => Promise<boolean>;
   /** The page drew its first frame here; the place it is in now. */
   readonly ready: (place: string) => void;
@@ -62,6 +63,7 @@ export class BridgeHost {
       http: (r, signal) => this.deps.http.request(r, signal),
       cancel: (r) => (this.end.cancel(r.of), {}),
       act: (r) => this.deps.act(r),
+      "phone.wake": (r) => this.deps.wake?.(r) ?? NOT_READY,
       linkAskOpen: async (r) => ({ opened: await this.deps.openHeld(r.token) }),
       answer: (r) => (this.end.settle(r.askId, r.what === "back" ? { took: r.took } : { unsent: r.unsent }), {}),
       // The keeper's kinds are answered by the native module itself and never reach this thread.

@@ -22,6 +22,8 @@ export interface SettingLineProps {
   toggle?: { on: boolean; onChange?: (on: boolean) => void };
   /** A press anywhere on the line beside its control: what the control does (a slot opens its menu). */
   onPress?: () => void;
+  /** Use the visible label as the button for a line whose primary action is `onPress`. */
+  activateLabel?: boolean;
   /** Nothing on it can be changed now: its switch is disabled, a press on the line does nothing, the line is dimmed. A control handed in is disabled by its owner. */
   off?: boolean;
   /** It hangs on the line above it: set in. */
@@ -43,8 +45,24 @@ const CONTROL = "button, a, input, select, textarea, label, .oh-over";
  * height is the rhythm. To a screen reader it is a group named by its label alone.
  */
 export function SettingLine(props: SettingLineProps) {
-  const { label, icon, lead, tag, info, value, figure, toggle, onPress, off, sub, narrow, children } = props;
+  const {
+    label,
+    icon,
+    lead,
+    tag,
+    info,
+    value,
+    figure,
+    toggle,
+    onPress,
+    activateLabel,
+    off,
+    sub,
+    narrow,
+    children,
+  } = props;
   const labelId = useId();
+  const labelPress = activateLabel && !toggle ? onPress : undefined;
   const pressable = Boolean(toggle || onPress);
   const press = pressable
     ? (event: MouseEvent<HTMLDivElement>) => {
@@ -70,9 +88,21 @@ export function SettingLine(props: SettingLineProps) {
       <span className="oh-settingline-name">
         {lead}
         {icon ? <Icon name={icon} size={20} /> : null}
-        <span className="oh-settingline-label" id={labelId}>
-          {label}
-        </span>
+        {labelPress ? (
+          <button
+            type="button"
+            className="oh-settingline-label"
+            id={labelId}
+            disabled={off}
+            onClick={labelPress}
+          >
+            {label}
+          </button>
+        ) : (
+          <span className="oh-settingline-label" id={labelId}>
+            {label}
+          </span>
+        )}
         {tag ? <Tag>{tag}</Tag> : null}
         {info}
       </span>

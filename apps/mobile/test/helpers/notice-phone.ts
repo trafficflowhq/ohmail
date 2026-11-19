@@ -5,7 +5,7 @@
  */
 import { noticeDoor, type NoticeDoorDeps } from "../../src/notices/notice-door";
 import type { NoticesNative } from "../../src/notices/notices-port";
-import { BridgeHost } from "../../src/shell/bridge-host";
+import { BridgeHost, type BridgeHostDeps } from "../../src/shell/bridge-host";
 import { createBridge, type Bridge } from "../../web/src/bridge";
 import type { PagePort } from "../../web/src/port";
 
@@ -40,6 +40,7 @@ export function phone(over: Partial<NoticeDoorDeps> = {}) {
  */
 export function pageOver(
   deps: NoticeDoorDeps, origin = "https://appassets.androidplatform.net", wake: (wanted: boolean) => void = () => {},
+  wakePane?: BridgeHostDeps["wake"],
 ): Bridge {
   const door = noticeDoor(deps);
   const toPage = new Set<(text: string) => void>();
@@ -58,6 +59,7 @@ export function pageOver(
     note: () => {},
     oldCopy: { page: async () => ({ refused: "notReady" as const }), done: async () => ({ refused: "notReady" as const }) },
     app: deps.app,
+    ...(wakePane ? { wake: wakePane } : {}),
   });
   host.begin("e1");
   const port: PagePort = {

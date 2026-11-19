@@ -15,6 +15,14 @@ import type { SaidRefusal } from "./contract.js";
 import { useDoorWords } from "./namespace.js";
 import type { StepProps } from "./states.js";
 
+const ADDRESS_REFUSALS = new Set([
+  "pairBadAddress",
+  "baseAddressMissing",
+  "baseNotAnAddress",
+  "baseCleartext",
+  "baseNeedsTheCode",
+]);
+
 export function Hand({ door, seed, to, back }: StepProps): ReactNode {
   const { t, say } = useDoorWords();
   const [address, setAddress] = useState(seed.address ?? "");
@@ -39,7 +47,7 @@ export function Hand({ door, seed, to, back }: StepProps): ReactNode {
       else setRefused(handed.said);
     });
   };
-  const addressRefused = refused?.code === "pairBadAddress";
+  const addressRefused = refused != null && ADDRESS_REFUSALS.has(refused.code);
   return (
     <DoorForm onSubmit={press}>
       <Page

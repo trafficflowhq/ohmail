@@ -49,7 +49,7 @@ export const PAGE_NAMESPACES = ["frame", "mailboxes"];
  * reads on the purpose `standalone` (the provider table's words, the mailboxes' own). A page of the door adds the
  * namespaces it reads here, in the same change.
  */
-export const DOOR_NAMESPACES = ["phoneDoor", "phoneRefusal", "providerPicker", "mailboxes"];
+export const DOOR_NAMESPACES = ["phoneDoor", "phoneRefusal", "servers", "providerPicker", "mailboxes"];
 /** The module the build makes of the page's sentences from the catalogue's place files; it answers web/src's `./catalogue`. */
 const CATALOGUE_MODULE = "ohmail-shell:catalogue";
 

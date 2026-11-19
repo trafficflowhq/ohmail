@@ -8,13 +8,13 @@
  * carries them, and over the ways in drawn on the page's real door: the one place where the page meets the bridge.
  * There, too, no press leads to a page the door does not draw.
  */
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { createElement as h, useSyncExternalStore } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectForm, type ConnectResult } from "@ohmail/app/mailboxes/connect";
 import { NONE } from "@ohmail/app/host";
 import { TextProvider } from "@ohmail/app/text";
-import { providerById } from "@ohmail/app-logic/mailboxes/connect/providers";
+import { authHintPreset, providerById } from "@ohmail/app-logic/mailboxes/connect/providers";
 import { NO_DETAILS } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import { secretOf } from "@ohmail/app-logic/mailboxes/connect/secret";
 import { senderNameOf } from "@ohmail/app-logic/mailboxes/connect/sender-name";
@@ -135,6 +135,17 @@ describe("the phone's connect wire", () => {
     expect(await wire.connect(input(), "seed")).toEqual(nothing);
   });
 
+  it("carries the provider's hint on the four refused sign-ins whose sentence names the provider, and none on any other refusal", async () => {
+    const codes = ["standaloneAuthAppOnly", "standaloneAuthInvalid", "standaloneAuthWebLogin", "standaloneAuthImapDisabled", "standaloneSignInRefused"];
+    const wire = phoneConnectWire(doorOf(codes.map((code) => ({ ok: false, code, field: null, args: [] }))).door);
+    const hints: unknown[] = [];
+    for (const _code of codes) {
+      const answered = await wire.connect(input(), "seed");
+      hints.push(answered.ok ? "opened" : answered.refusal.details.authHint);
+    }
+    expect(hints).toEqual(["app_password_required", "invalid", "web_login", "imap_disabled", null]);
+  });
+
   it("never throws and never reads a refused open as an accepted one: a bridge that refuses, a deadline, an answer that names no mailbox, a body with no sealed password", async () => {
     const nothing = { ok: false, refusal: { status: 0, code: null, message: "", details: NO_DETAILS } };
     const { door, asked } = doorOf([
@@ -207,7 +218,15 @@ function native(answer: (request: DoorRequest) => object) {
       };
     },
   };
-  return { port, posted, requests, refused, tell: (event: object) => take(JSON.stringify({ ...event, epoch: EPOCH })) };
+  return {
+    port,
+    posted,
+    requests,
+    refused,
+    tell: (event: object) => take(JSON.stringify({ ...event, epoch: EPOCH })),
+    /** An event as it crossed, its epoch its own. */
+    raw: (event: object) => take(JSON.stringify(event)),
+  };
 }
 
 /** Everything written to a sink, as text; and every call that must never happen. */
@@ -360,6 +379,41 @@ describe("a mailbox's password on the door's page", () => {
     expect(JSON.stringify([door.state.read(), door.route.read(), door.config])).not.toContain("MARKER");
     clean(href);
   });
+
+  it("draws the app password's help under a refused sign-in about the password, as on every other purpose, and none under any other refusal", async () => {
+    const answers: Open["answer"][] = [
+      { ok: false, code: "standaloneAuthAppOnly", field: null, args: [] },
+      { ok: false, code: "standaloneAuthWebLogin", field: null, args: [] },
+      { ok: false, code: "standaloneAuthInvalid", field: null, args: [] },
+      { ok: false, code: "standaloneSignInRefused", field: null, args: [] },
+      { ok: false, code: "standaloneAuthImapDisabled", field: null, args: [] },
+    ];
+    const n = native((request) => (request.kind === "open" ? answers.shift()! : {}));
+    const door = doorHandle(createDoorBridge(n.port, EPOCH), CONFIG);
+    render(
+      h(TextProvider, {
+        locale: "en",
+        messages: WORDS as never,
+        timeZone: "UTC",
+        children: h(ConnectForm, { ask: { purpose: { kind: "standalone" }, onDone: () => {} }, door: phoneConnectWire(door), factor: NONE }),
+      }),
+    );
+    type(F.addressLabel, ADDRESS);
+    press(P.otherLabel);
+    type(F.imapHost, "mail.lichtgrat.example");
+    type(F.smtpHost, "smtp.lichtgrat.example");
+    type(F.passwordLabel, MARKER);
+    const help = P[`help_${authHintPreset().id}` as keyof typeof P];
+    const drawn: boolean[] = [];
+    for (const _answer of [...answers]) {
+      press(F.connect);
+      await settle();
+      expect(screen.getByRole("alert")).toBeTruthy();
+      drawn.push(screen.queryByRole("link", { name: (name) => name.startsWith(help) }) !== null);
+    }
+    expect(drawn).toEqual([true, false, true, false, false]);
+    expect(n.requests.map((request) => request.kind)).toEqual(["open", "open", "open", "open", "open"]);
+  });
 });
 
 describe("a typed pairing code and a pasted link on the door's page", () => {
@@ -431,6 +485,58 @@ function Stage({ door }: { readonly door: DoorHandle }) {
   const Page = pages[route];
   return Page === NONE ? null : h(Page, { door });
 }
+
+describe("the list of servers on the door's page", () => {
+  it("after a forget of the open pairing draws no row of it: the next state holds none, a late state of an ended page is dropped, nothing was kept", async () => {
+    const open = { id: "row-1", kind: "server" as const, address: "https://mail.lichtgrat.example", account: "account-1", open: true, needsPair: false };
+    const other = { id: "row-2", kind: "computer" as const, address: "https://192.168.1.24:47800", account: "account-2", open: false, needsPair: false };
+    const live = { ...CONFIG.state, session: "live" as const, openId: open.id, paired: [open, other] };
+    const n = native((request) => (request.kind === "forget" ? { k: "gone", after: null } : {}));
+    const door = doorHandle(createDoorBridge(n.port, EPOCH), { ...CONFIG, at: "servers", state: live });
+    const href = window.location.href;
+    render(h(TextProvider, { locale: "en", messages: WORDS as never, timeZone: "UTC", children: h(Stage, { door }) }));
+    const row = () => screen.queryByRole("group", { name: open.address });
+    expect(row()).not.toBeNull();
+    fireEvent.click(within(row()!).getByRole("button", { name: phone.servers.forget }));
+    await settle();
+    // Native's next state: the forget took the row out of the list, and the page draws the list it is told.
+    act(() => n.tell({ type: "state", state: { ...CONFIG.state, paired: [other] } }));
+    expect(row()).toBeNull();
+    // A state the page that ended was told late, the row in it, crosses with that page's epoch and is dropped.
+    act(() => n.raw({ type: "state", epoch: "e-door-0", state: live }));
+    await settle();
+    expect(row()).toBeNull();
+    expect(screen.getByRole("group", { name: other.address })).toBeTruthy();
+    expect(n.refused).toEqual([]);
+    expect(n.requests.map((request) => [request.kind, request.ask])).toEqual([["forget", { id: open.id, anyway: false }]]);
+    expect(JSON.stringify([door.state.read(), door.route.read()])).not.toContain(open.address);
+    clean(href);
+  });
+
+  it("opens the ways in at the step each way names, and that step's Back comes back to the list", async () => {
+    const n = native(() => ({}));
+    const door = doorHandle(createDoorBridge(n.port, EPOCH), { ...CONFIG, at: "servers" });
+    const href = window.location.href;
+    render(h(TextProvider, { locale: "en", messages: WORDS as never, timeZone: "UTC", children: h(Stage, { door }) }));
+    const ways = phone.servers.ways;
+    const drawn: Record<string, () => boolean> = {
+      [ways.server.name]: () => screen.queryByRole("textbox", { name: WAYS.server.label }) !== null,
+      [ways.computer.name]: () => (document.body.textContent ?? "").includes(WAYS.computer.say.replace(/\.$/, "")),
+      [ways.standalone.name]: () => (document.body.textContent ?? "").includes(WAYS.terms.say.replace(/\.$/, "")),
+    };
+    for (const [way, isDrawn] of Object.entries(drawn)) {
+      fireEvent.click(screen.getByText(way));
+      await settle();
+      expect([door.route.read(), isDrawn()], way).toEqual(["welcome", true]);
+      pressWay(WAYS.back);
+      await settle();
+      expect([door.route.read(), screen.queryByText(way) !== null], way).toEqual(["servers", true]);
+    }
+    expect(n.refused).toEqual([]);
+    expect(n.requests).toEqual([]);
+    clean(href);
+  });
+});
 
 describe("the ways in on the door's page", () => {
   it("lead to no page the door does not draw: a press on Servers at the first screen leaves a page on the stage", async () => {

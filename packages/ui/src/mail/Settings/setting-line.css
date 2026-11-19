@@ -35,6 +35,23 @@
     min-width: 0;
   }
 
+  .oh-settingline-label[type="button"] {
+    appearance: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-align: start;
+    overflow-wrap: inherit;
+    cursor: inherit;
+  }
+
+  .oh-settingline-label[type="button"]:focus-visible {
+    outline: var(--oh-focus) solid var(--focus);
+  }
+
   .oh-settingline-value {
     display: flex;
     align-items: center;

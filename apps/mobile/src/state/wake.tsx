@@ -24,16 +24,20 @@ import {
  */
 
 export interface Wake {
+  /** The live connection whose outcome this provider is showing. */
+  session: WakeSession | null;
   /** The single fact the pane renders its sentence from. */
   state: WakeState;
   /** Distributors installed on this phone. EMPTY on iOS and on a phone with none. */
   choices: DistributorChoice[];
   /** Which one is chosen, or null. */
   chosen: string | null;
+  /** Read the device's current choices and saved preference. */
+  readDevice(): Pick<Wake, "choices" | "chosen">;
   /** True while a registration attempt is in flight — the pane disables the rows. */
   busy: boolean;
-  /** Choose a distributor and register with the active profile's server. */
-  choose(id: string): void;
+  /** Choose an installed distributor and register with the active profile's server. */
+  choose(id: string): boolean;
   /** Turn it off: drop the server registration, then forget the distributor. */
   turnOff(): void;
   /**
@@ -46,6 +50,7 @@ export interface Wake {
 }
 
 const WakeContext = createContext<Wake | null>(null);
+const NO_WAKE: WakeState = { k: "no_distributor" };
 
 /**
  * Read the wake state. Throws outside the provider rather than answering a plausible default:
@@ -77,7 +82,11 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     (keeper.current ??= new LiveInstanceKeeper(noticesNative())).see(signedInOf(conn.state));
   }, [conn.state]);
 
-  const [state, setState] = useState<WakeState>({ k: "no_distributor" });
+  const [outcome, setOutcome] = useState<{ session: WakeSession | null; state: WakeState }>({ session: null, state: NO_WAKE });
+  const state = outcome.session === session ? outcome.state : NO_WAKE;
+  const setState = useCallback((state: WakeState, forSession = session) => {
+    setOutcome({ session: forSession, state });
+  }, [session]);
   const [choices, setChoices] = useState<DistributorChoice[]>([]);
   const [chosen, setChosen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -147,9 +156,12 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /** Re-read the device's own answer. Cheap, synchronous, and the source of truth for the list. */
-  const readDevice = useCallback((): void => {
-    setChoices(listDistributors());
-    setChosen(savedDistributor());
+  const readDevice = useCallback(() => {
+    const choices = listDistributors();
+    const chosen = savedDistributor();
+    setChoices(choices);
+    setChosen(chosen);
+    return { choices, chosen };
   }, []);
 
   /**
@@ -160,7 +172,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
    * longer exists.
    */
   const attempt = useCallback(async (mounted: () => boolean): Promise<void> => {
-    if (!session) return;
+    if (!session || !mounted() || liveSession.current !== session) return;
     // Not wanted, or not said yet: nothing is registered, whoever asked (a launch, a switch of pairing, a
     // distributor chosen on the Servers pane). The sentence says why only once the page has said no.
     if (!mayStand()) {
@@ -172,7 +184,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     // The generation this attempt belongs to, captured BEFORE the await. Anything that lands after
     // the session changed is a superseded completion and is dropped, state and id together.
     const mine = generation.current;
-    const fresh = (): boolean => mounted() && generation.current === mine;
+    const fresh = (): boolean => mounted() && generation.current === mine && liveSession.current === session;
     setBusy(true);
     try {
       const next = await registerWake(session, unifiedPushDistributor());
@@ -231,7 +243,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     } finally {
       if (fresh()) setBusy(false);
     }
-  }, [session, mayStand]);
+  }, [session, mayStand, setState]);
 
   /**
    * On mount, and whenever the live session changes: read the device, then register if a
@@ -265,7 +277,10 @@ export function WakeProvider({ children }: { children: ReactNode }) {
       void serialize(() => owedDrop(previous, previousId));
     }
     // Another pairing's page has said nothing yet; what the page of the one left said is not about this one.
-    if (previous !== session) pageWants.current = null;
+    if (previous !== session) {
+      pageWants.current = null;
+      setBusy(false);
+    }
     liveSession.current = session;
     readDevice();
     if (!session) {
@@ -275,7 +290,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     if (savedDistributor() !== null) void serialize(() => attempt(mounted));
     else setState({ k: "no_distributor" });
     return () => { alive = false; };
-  }, [session, attempt, readDevice, owedDrop, serialize]);
+  }, [session, attempt, readDevice, owedDrop, serialize, setState]);
 
   /**
    * Nothing is paired any more, so nothing may be registered. Forgetting the last server takes
@@ -299,8 +314,8 @@ export function WakeProvider({ children }: { children: ReactNode }) {
      */
     chooseDistributor(null);
     readDevice();
-    setState({ k: "no_distributor" });
-  }, [nothingPaired, readDevice, serialize]);
+    setOutcome({ session: null, state: NO_WAKE });
+  }, [nothingPaired, readDevice]);
 
   /**
    * A delivered wake means one thing: pull. This subscription is the reason the whole module
@@ -339,7 +354,11 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   const attemptRef = useRef(attempt);
   attemptRef.current = attempt;
 
-  const choose = useCallback((id: string): void => {
+  const choose = useCallback((id: string): boolean => {
+    if (!listDistributors().some((choice) => choice.id === id)) {
+      readDevice();
+      return false;
+    }
     chooseDistributor(id);
     // Opting into wakes is the moment to ask for the notification permission the KILLED-APP notice
     // needs (Android 13+ starts it denied). Fire-and-forget: a denial is fine — the wake still syncs
@@ -357,6 +376,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     // remove the very row the server just handed back (it dedupes on the endpoint, so the id is
     // often the SAME one).
     void serialize(() => attempt(() => true));
+    return true;
   }, [attempt, readDevice, serialize]);
 
   const turnOff = useCallback((): void => {
@@ -387,7 +407,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     chooseDistributor(null);
     readDevice();
     setState({ k: "no_distributor" });
-  }, [session, readDevice, serialize]);
+  }, [session, readDevice, serialize, setState]);
 
   const want = useCallback((profileId: string, wanted: boolean): void => {
     const on = liveSession.current;
@@ -410,13 +430,13 @@ export function WakeProvider({ children }: { children: ReactNode }) {
       subscriptionId.current = null;
       const dropped = await forgetWake(on, unifiedPushDistributor(), id, nativeServerProfiles());
       if (liveSession.current === on && pageWants.current === false) {
-        setState({ k: "off", reason: dropped.ok ? "switched_off" : "row_remains" });
+        setState({ k: "off", reason: dropped.ok ? "switched_off" : "row_remains" }, on);
       }
     });
-  }, [serialize]);
+  }, [serialize, setState]);
 
   return (
-    <WakeContext.Provider value={{ state, choices, chosen, busy, choose, turnOff, want }}>
+    <WakeContext.Provider value={{ session, state, choices, chosen, readDevice, busy, choose, turnOff, want }}>
       {children}
     </WakeContext.Provider>
   );

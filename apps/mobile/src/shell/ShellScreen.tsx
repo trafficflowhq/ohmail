@@ -27,12 +27,14 @@ import { networkNow, onNetworkChange } from "../net/network-door";
 import { noticeDoor, noticeKindsHere } from "../notices/notice-door";
 import { noticesNative } from "../notices/notices-native";
 import { useWake } from "../state/wake";
+import { answerWakePane, wakePaneState } from "./wake-pane";
 import { Txt } from "../ui/base";
 import { usePosture } from "../ui/posture";
 import { nativePosture } from "../ui/posture/posture-native";
 import { buildCommit } from "../build-info";
 import { appRelease } from "../net/app-release";
 import { BridgeHost } from "./bridge-host";
+import { askDoorAt } from "./door-at";
 import type { FoldReading, NoticePermission, SafeInsets, ShellConfig } from "./bridge-kinds";
 import { HttpDoor } from "./http-door";
 import { KEPT_FAMILIES } from "./kept-families";
@@ -69,10 +71,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     standing.current = session;
     return () => { standing.current = null; };
   }, [session]);
-  /* The wake's own door for what the page says of its switches, read at each act: it is the provider's newest. */
+  /* The native wake provider's latest state and controls, read at each request. */
   const wake = useWake();
-  const wantWake = useRef(wake.want);
-  wantWake.current = wake.want;
+  const wakeNow = useRef(wake);
+  wakeNow.current = wake;
+  const os = Platform.OS === "ios" ? "ios" : "android";
   const drawnRef = useRef(false);
   const [scope, setScope] = useState<string | null>(null);
   const [drawn, setDrawn] = useState(false);
@@ -175,10 +178,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       http,
       act: async (a) => {
         switch (a.act) {
-          // The sign-out's ceremony, with its confirmations and its outcomes, stands on the Servers pane.
+          // The sign-out's ceremony, with its confirmations and its outcomes, stands on the door's list of servers.
           case "openServers":
           case "signOut":
-            router.push("/servers");
+            askDoorAt("servers");
+            router.push("/door");
             return {};
           case "notifications.permission":
             return { permission: (permission.current = await noticePermission(nativeNotificationPermission())) };
@@ -197,10 +201,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
           // What the page's two switches say of the wake, for this session's pairing while it is the one
           // that stands: the registration is kept or taken down by it (`state/wake.tsx`).
           case "wake.want":
-            if (standing.current === session) wantWake.current(session.profile.id, a.wanted);
+            if (standing.current === session) wakeNow.current.want(session.profile.id, a.wanted);
             return {};
         }
       },
+      wake: (request) => answerWakePane(request, wakeNow.current, standing.current === session ? session : null, os),
       openHeld: async (token) => (await view.current?.openHeld(token)) ?? false,
       ready: (place) => {
         lastPlace.current = place;
@@ -233,7 +238,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     });
     return bridge;
     // The host is one per session and scope: a new scope is a new page.
-  }, [session, scope, notices]);
+  }, [session, scope, notices, os]);
+
+  useEffect(() => {
+    if (APP.app === "ohmail" && wake.session === session) host.send({ type: "wakePane", wake: wakePaneState(wake, os) });
+  }, [host, os, session, wake]);
 
   /* The facts, as they change: each one an event to the page that is open now. */
   useEffect(() => {

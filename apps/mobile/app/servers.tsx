@@ -18,7 +18,7 @@ import { organizerSettingsLeftOnlyHere } from "../src/engine/organizer-session";
 import {
   stopAndRemoveAsks, stopAndRemoveKept, stopAndRemoveLines, stopAndRemoveVerb, type StopAndRemoveAsk,
 } from "../src/ui/standalone-form";
-import { useConnection } from "../src/net/connection";
+import { MAIL_SURFACE, useConnection } from "../src/net/connection";
 import { isPairEnded } from "../src/net/session-death";
 import { gateFor } from "../src/state/gate";
 import type { ServerProfile } from "../src/state/servers";
@@ -28,6 +28,9 @@ import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { Doors } from "../src/ui/Doors";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
+
+/** The first screen, as the gate opens it: under the shell the door's ways in, else today's welcome. */
+const FIRST_SCREEN = MAIL_SURFACE === "shell" ? "/door" : "/welcome";
 
 export default function ServersScreen({ inPane = false }: { inPane?: boolean }) {
   return (
@@ -68,14 +71,14 @@ function ServersBody({ inPane }: { inPane: boolean }) {
       return;
     }
     if (held) {
-      router.replace("/welcome");
+      router.replace(FIRST_SCREEN);
       return;
     }
     if (router.canGoBack()) {
       router.back();
       return;
     }
-    router.replace(verdict.to === "welcome" ? "/welcome" : "/");
+    router.replace(verdict.to === "welcome" ? FIRST_SCREEN : "/");
   };
   const ownBack = held || !router.canGoBack();
   const leaveRef = useRef(leave);
@@ -276,7 +279,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
       onForgetFailed(outcome.reason);
       return;
     }
-    if (wasLast) router.replace("/welcome");
+    if (wasLast) router.replace(FIRST_SCREEN);
   };
   /* ── THIS PHONE'S OWN MAILBOX ASKS FIRST WHILE THE STORE HOLDS WHAT NO SERVER HAS ────────
      The forget deletes the whole store: an unsent draft is on no server, and settings waiting for
