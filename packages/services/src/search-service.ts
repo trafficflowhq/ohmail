@@ -902,7 +902,9 @@ export class SearchService {
   private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL, spare?: SQL, stream?: FolderStream): SQL {
     const cut = arm.ranked ? window : k;
     const rankOf = (b: Branch): SQL => (arm.ranked ? b.rank : sql`0`);
-    const indexed = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${rankOf(b)} as rank
+    // Carry the exclusion answer from the same document read. Refused rows still count toward the cut.
+    const keeps = (b: Branch): SQL => b.after ?? sql`true`;
+    const indexed = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${rankOf(b)} as rank, ${keeps(b)} as kept
       ${this.from} where ${SearchService.docWhere(where, b)} and ${b.pred}
       order by m.date desc nulls last, m.id desc limit ${cut})`;
     // UNDER A FOLDER a branch whose words have more than a few matches ({@link FOLDER_INDEX_CUTS}, `bl`) and are
@@ -910,24 +912,24 @@ export class SearchService {
     // walks the folder's letters (`bw`); short of its cut where that walk stopped at its bound, it reads its index.
     const read = (b: Branch): SQL => {
       if (stream === undefined || b.raw === undefined || b.keyRead === undefined) return indexed(b);
-      const doc = sql`select ${rankOf(b)} as rank from message_search s where s.message_id = w.id and ${b.pred}`;
+      const doc = sql`select ${rankOf(b)} as rank, ${keeps(b)} as kept from message_search s where s.message_id = w.id and ${b.pred}`;
       const walked = sql`(select v from bp) and ((select count(*) from bw) >= ${cut} or not ${stream.cut})`;
       return sql`(with bl as materialized (select ${SearchService.fewMatches([sql`${b.keyRead} and ${b.raw}`], FOLDER_INDEX_CUTS * k)} as v),
         bp as materialized (select count(*) >= ${Math.ceil(cut / SEARCH_EXCLUSION_WALK_FACTOR)} as v
           from (select id from ${stream.rows} where not (select v from bl) limit ${k}) w where exists (${doc} limit 1 offset 0)),
-        bw as materialized (select w.id as id, w.date as date, h.rank as rank from (select id, date from ${stream.rows} where (select v from bp)) w
+        bw as materialized (select w.id as id, w.date as date, h.rank as rank, h.kept from (select id, date from ${stream.rows} where (select v from bp)) w
           cross join lateral (${doc} offset 0) h limit ${cut})
-        select id, date, rank from bw where ${walked}
+        select id, date, rank, kept from bw where ${walked}
         union all
-        select id, date, rank from ${indexed(b)} r where not (${walked}))`;
+        select id, date, rank, kept from ${indexed(b)} r where not (${walked}))`;
     };
     const capped = SearchService.capped(arm);
     // A branch held to `after` keeps its cut rows that pass; a full cut says the arm is cut (`x`). A
     // row that fails stays as a row with no id, so the flag outlives every row.
     const branch = (b: Branch): SQL => (b.after !== undefined
-      ? sql`(select case when ${this.keeps(b.after, sql`c.id`)} then c.id end as id, c.date, c.rank, c.x
+      ? sql`(select case when c.kept then c.id end as id, c.date, c.rank, c.x
           from (select r.*, case when count(*) over () >= ${cut} then 1 else 0 end as x from ${read(b)} r) c)`
-      : capped ? sql`(select r.*, 0 as x from ${read(b)} r)` : read(b));
+      : capped ? sql`(select r.id, r.date, r.rank, 0 as x from ${read(b)} r)` : read(b));
     const merged = arm.local && walk ? this.localRead(where, arm, k, cut, walk)
       : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo, k, arm.letters, stream)
       // Under a folder the text arm walks the folder's letters too: no index serves the folder.

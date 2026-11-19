@@ -966,6 +966,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
    * mailbox with the matrix's recent layouts planted in it.
    */
   const HELD_READS: ReadonlyArray<readonly [string, number]> = [
+    ["{0} {2} -{1}", 40_000],
     ["ginanas -{1}", 44_000], ["{200} -{1}", 40_300], ["gikena -{1}", 40_500], ["barir -{1}", 41_700], ["sonan -{1}", 36_900],
   ];
   it("a word or a part of one beside an excluded word reads at most what its page read before the gate", async () => {
