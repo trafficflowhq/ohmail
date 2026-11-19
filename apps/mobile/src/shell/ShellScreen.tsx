@@ -37,6 +37,7 @@ import { BridgeHost } from "./bridge-host";
 import { askDoorAt } from "./door-at";
 import type { FoldReading, NoticePermission, SafeInsets, ShellConfig } from "./bridge-kinds";
 import { HttpDoor } from "./http-door";
+import { answerPhoneName } from "./phone-name";
 import { KEPT_FAMILIES } from "./kept-families";
 import { scopeOf } from "./scope";
 import { Sentence } from "./Sentence";
@@ -165,6 +166,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       post: (epoch, text) => void view.current?.post(epoch, text),
       config,
       app: APP.app,
+      name: (request, signal) => answerPhoneName(request, session, () => scope !== null && standing.current === session, signal),
       switch: {
         read: async () => ({ other: otherOf(switcher) }),
         open: async (to) => {
