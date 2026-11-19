@@ -132,6 +132,9 @@ async function seedLargeAccount(): Promise<string> {
       select id, ${id}::uuid, 'INBOX', 'INBOX', 'external', 'reconciled', false from large_seed`;
     enteringSetup("seed commit");
   });
+  // The offer now joins against every newly placed letter in this mailbox.
+  enteringSetup("folder state statistics");
+  await client`analyze folder_state`;
   return id;
 }
 
