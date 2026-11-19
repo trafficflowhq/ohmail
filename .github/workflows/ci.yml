@@ -253,7 +253,26 @@ jobs:
         run: node scripts/apply-patches.mjs apply
 
       - name: Install Chromium for the layout tests
-        run: npx playwright install --with-deps chromium
+        env:
+          BROWSER_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          if [ "$BROWSER_RUNNER_ENVIRONMENT" = self-hosted ]; then
+            # The pinned project guest already supplies Chromium's system libraries.
+            ./node_modules/.bin/playwright install chromium
+            node --input-type=module <<'JS'
+          import { chromium } from "playwright";
+          const browser = await chromium.launch();
+          try {
+            const page = await browser.newPage();
+            await page.setContent("<title>Chromium startup</title>");
+          } finally {
+            await browser.close();
+          }
+          JS
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       # Paper's UI face names Inter, and the geometry arms that sit near a threshold were measured in it
       # (apps/webapp/test/_measured-font.ts); without it they skip by name instead of measuring.
