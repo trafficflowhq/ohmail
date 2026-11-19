@@ -247,6 +247,7 @@
         "noKey": "This server has not set up a signing key, so it cannot send wake notifications this phone would accept. Whoever runs it can generate one. Mail still arrives when you open the app or pull to refresh.",
         "refused": "Your distributor’s address was refused by the server, so wake notifications are off. Mail still arrives when you open the app or pull to refresh.",
         "failed": "Wake notifications could not be set up. Mail still arrives when you open the app or pull to refresh.",
+        "switchedOff": "Notifications for new mail are switched off on this phone, so nothing wakes ohmail while it is closed. Mail still arrives when you open the app or pull to refresh.",
         "rowRemains": "Wake notifications are off on this phone. Your server would not remove the registration, so it may keep trying the old address for a while. Try again, or revoke this device from the server’s Devices list."
       },
       "distributor": "Push distributor",

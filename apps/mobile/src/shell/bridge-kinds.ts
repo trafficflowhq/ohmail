@@ -22,7 +22,7 @@
  * The facts that cross have the bridge's own shapes below, not an import of the host contract: the
  * contract's door reaches the kit, which the app's own program (Expo's lib) does not type. The page
  * holds each shape equal to the contract's (`web/src/signals.ts`), so the two cannot drift. This
- * file imports nothing but the switch's place (`../switch/place`), which imports nothing.
+ * file's only runtime import is the switch's place (`../switch/place`), which imports nothing.
  *
  * THE SWITCH BETWEEN THE TWO APPS crosses as three closed kinds and one event, and none of them carries an address,
  * an account, a code or the other app's sign-in: the page asks whether the other app is here, asks native to open
@@ -33,6 +33,7 @@
  * notice shows from its own string resources ({@link readNotice}).
  */
 import { isSwitchPlace, type SwitchPlace } from "../switch/place";
+import type { WakePaneState } from "@ohmail/app-logic/phone/wake";
 
 /** The permission to post notices, as the system reads it. */
 export type NoticePermission = "granted" | "denied" | "default" | "unsupported";
@@ -184,6 +185,10 @@ export type ShellAct =
  */
 export type WordDigest = string | null;
 
+export type WakePaneRequest =
+  | { readonly do: "read" | "off" }
+  | { readonly do: "choose"; readonly distributor: string };
+
 /** One row of the queue the keeper holds, as the store persists it: a type, an id, its record. */
 export interface KeptRow {
   readonly type: string;
@@ -221,6 +226,10 @@ export interface Requests {
       readonly permission?: NoticePermission; readonly backup?: "excluded" | "included" | "unknown";
       readonly notice?: NoticePosted;
     };
+  };
+  readonly "phone.wake": {
+    readonly ask: WakePaneRequest;
+    readonly answer: { readonly wake?: WakePaneState };
   };
   /** A link the web view's own navigation asked to open, held natively by its token. */
   readonly linkAskOpen: { readonly ask: { readonly token: string }; readonly answer: { readonly opened: boolean } };
@@ -316,6 +325,7 @@ export type ShellEvent =
   | { readonly type: "keyboard"; readonly reading: KeyboardReading }
   | { readonly type: "network"; readonly online: boolean }
   | { readonly type: "wake"; readonly why: "foreground" | "push" }
+  | { readonly type: "wakePane"; readonly wake: WakePaneState }
   | { readonly type: "linkIn"; readonly target: LinkInTarget }
   | { readonly type: "ask"; readonly askId: number; readonly what: "back" | "unsent" }
   | { readonly type: "linkAsk"; readonly token: string; readonly url: string }
@@ -425,6 +435,15 @@ const isWakeWant = (m: Record<string, unknown>): boolean =>
   Reflect.ownKeys(m).every((key) => typeof key === "string" && WANT_KEYS.has(key)) &&
   Object.prototype.hasOwnProperty.call(m, "wanted") && (m.wanted === true || m.wanted === false);
 
+const WAKE_PANE_KEYS = ["id", "epoch", "kind", "do"];
+const isWakePaneRequest = (m: Record<string, unknown>, app: ShellApp | null): boolean => {
+  if (app !== "ohmail" || !WAKE_PANE_KEYS.every((key) => Object.prototype.hasOwnProperty.call(m, key))) return false;
+  const size = Reflect.ownKeys(m).length;
+  if (m.do === "read" || m.do === "off") return size === WAKE_PANE_KEYS.length;
+  return m.do === "choose" && size === WAKE_PANE_KEYS.length + 1 &&
+    Object.prototype.hasOwnProperty.call(m, "distributor") && isStr(m.distributor, 256) && m.distributor.length > 0;
+};
+
 /** Root-relative, and nothing a URL parser could read as another place. */
 export function isRootRelative(path: unknown): path is string {
   if (typeof path !== "string" || path.length === 0 || path.length > PATH_MAX) return false;
@@ -461,6 +480,7 @@ const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>, app: ShellApp
   cancel: (m) => isId(m.of),
   act: (m) => member(ACTS, m.act) && (m.act !== "chrome" || m.scheme === "light" || m.scheme === "dark") &&
     (m.act !== "notices.post" || isNoticePost(m)) && (m.act !== "wake.want" || isWakeWant(m)),
+  "phone.wake": isWakePaneRequest,
   linkAskOpen: (m) => isStr(m.token, 128),
   answer: (m) => isId(m.askId) &&
     ((m.what === "back" && typeof m.took === "boolean") || (m.what === "unsent" && isId(m.unsent))),

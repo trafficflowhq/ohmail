@@ -247,6 +247,7 @@
         "noKey": "Dieser Server hat keinen Signaturschlüssel eingerichtet und kann daher keine Weckrufe senden, die dieses Handy annehmen würde. Wer ihn betreibt, kann einen erzeugen. Mails kommen weiterhin an, wenn du die App öffnest oder zum Aktualisieren ziehst.",
         "refused": "Der Server hat die Adresse deines Verteilers abgelehnt, Weckrufe sind deshalb aus. Mails kommen weiterhin an, wenn du die App öffnest oder zum Aktualisieren ziehst.",
         "failed": "Weckrufe konnten nicht eingerichtet werden. Mails kommen weiterhin an, wenn du die App öffnest oder zum Aktualisieren ziehst.",
+        "switchedOff": "Benachrichtigungen für neue Mail sind auf diesem Handy ausgeschaltet, deshalb weckt nichts ohmail, solange die App geschlossen ist. Mails kommen weiterhin an, wenn du die App öffnest oder zum Aktualisieren ziehst.",
         "rowRemains": "Weckrufe sind auf diesem Handy aus. Dein Server wollte die Registrierung nicht entfernen und versucht die alte Adresse womöglich noch eine Weile. Versuch es nochmal, oder widerrufe dieses Gerät in der Geräteliste des Servers."
       },
       "distributor": "Push-Verteiler",
