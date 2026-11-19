@@ -26,6 +26,8 @@ export interface AdapterOptions {
   bodyMaxBytes: number;
   headersTimeoutMs: number;
   requestTimeoutMs: number;
+  /** The process's planned stop. Active event streams finish through their request signal. */
+  eventStreamShutdown?: AbortSignal;
   /**
    * How often node sweeps connections for the two timeouts above. Node's default is 30 s, which
    * is also the FLOOR on how late a timeout can fire — production leaves it unset; the adapter
@@ -452,5 +454,20 @@ async function serve(
     await response.body?.cancel().catch(() => { /* released */ });
     return;
   }
-  await writeWebResponse(res, response);
+  const shutdown = opts.eventStreamShutdown;
+  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (!shutdown || mediaType !== "text/event-stream") {
+    return writeWebResponse(res, response);
+  }
+
+  // The route already closes its stream on request abort. The writer can then finish
+  // the HTTP response normally, including the final chunk.
+  const finish = () => left.abort();
+  if (shutdown.aborted) finish();
+  else shutdown.addEventListener("abort", finish, { once: true });
+  try {
+    await writeWebResponse(res, response);
+  } finally {
+    shutdown.removeEventListener("abort", finish);
+  }
 }
