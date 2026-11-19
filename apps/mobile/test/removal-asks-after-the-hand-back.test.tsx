@@ -26,7 +26,11 @@ vi.mock("expo-router", () => ({
   useIsFocused: () => true,
   Stack: { Screen: () => null },
 }));
-vi.mock("../src/net/connection", () => ({ useConnection: () => scene.conn }));
+vi.mock("../src/net/connection", () => ({
+  // These cases exercise the native screens, including the return to Welcome.
+  MAIL_SURFACE: "screens" satisfies typeof import("../src/net/connection").MAIL_SURFACE,
+  useConnection: () => scene.conn,
+}));
 vi.mock("../src/theme", () => ({ useTheme: () => ({ c: { accent: "#000", ink2: "#000" }, radius: { dot: 1 } }) }));
 vi.mock("../src/ui/base", () => {
   const div = (p: { children?: ReactNode }) => h("div", null, p.children);
