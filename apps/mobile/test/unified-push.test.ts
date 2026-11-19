@@ -229,8 +229,10 @@ describe("the wake listener's lifetime is the APP's, not a screen's", () => {
     // The generation is captured BEFORE the await, not read after it — reading it after would
     // compare the new value to itself and never fire.
     expect(src).toMatch(/const mine = generation\.current;[\s\S]*?await registerWake/);
-    // Every write is gated on `fresh()`, which is mounted AND same-generation.
-    expect(src).toMatch(/const fresh = \(\): boolean => mounted\(\) && generation\.current === mine;/);
+    // Every write requires a mounted attempt, its original generation and the same live session.
+    expect(src).toMatch(
+      /const fresh = \(\): boolean => mounted\(\) && generation\.current === mine && liveSession\.current === session;/,
+    );
     /**
      * ── THE SUPERSEDED ARM, CHECKED BY WHAT IT MAY NOT DO ────────────────────────────────
      *
