@@ -410,8 +410,29 @@ describe("the door's answer is the verdict", () => {
   };
 
   it("a 204 ends it", async () => {
+    const { calendarChoicesOf } = await import("@ohmail/client-engine");
+    const { forgetOwner, readOwner, rememberOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
+    const { composeDraftKey, EMPTY_COMPOSE, writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+    const { CALENDAR_NOTICES_KEY, readCalendarNotices } = await import("../app/shell/notification-settings");
+    const draftKey = composeDraftKey(ACCOUNT);
+    const choices = { cal_alert: true, showTitles: false, summaryAt: 570 };
+    writeComposeDraft({ ...EMPTY_COMPOSE, body: "An unfinished draft" }, ACCOUNT);
+    expect(localStorage.getItem(draftKey)).toContain("An unfinished draft");
+    localStorage.setItem(CALENDAR_NOTICES_KEY, JSON.stringify(choices));
+
     expect(await signOutAnswered("ok")).toEqual(ENDED);
     expect(mockLogout).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(draftKey)).toBeNull();
+
+    try {
+      rememberOwner("another-account");
+      expect(readOwner()).toBe("another-account");
+      const retained = readCalendarNotices();
+      expect(retained).toEqual(choices);
+      expect(calendarChoicesOf(retained, { ohcalPhone: false })).toMatchObject(choices);
+    } finally {
+      forgetOwner();
+    }
   });
 
   it("the tab's late-answer watch notes go with the session, every account's", async () => {
