@@ -137,7 +137,7 @@ async function mount(props: {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const engine = await engineWith([held("m1", "one@example.test", 9)]);
 
   function Probe(): React.ReactElement {

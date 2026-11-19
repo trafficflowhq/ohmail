@@ -56,11 +56,11 @@ export interface MarksView {
   readonly card: ReactNode;
 }
 
-export function useMarks(handle: EditorHandle | null, editable: boolean): MarksView {
+export function useMarks(handle: EditorHandle | null, editable: boolean, initiallyShown = true): MarksView {
   const t = useText("write");
   const marks = handle !== null && handle.marks !== "none" ? handle.marks : null;
   const active = useActive(marks);
-  const [shown, setShown] = useState(true);
+  const [shown, setShown] = useState(initiallyShown);
   const [asking, setAsking] = useState(false);
   useEffect(() => {
     if (!editable) setAsking(false);
@@ -105,17 +105,19 @@ export function useMarks(handle: EditorHandle | null, editable: boolean): MarksV
         marks={marks}
         onClose={() => {
           setAsking(false);
-          handle?.focus();
+          handle?.focus({ preventScroll: true });
         }}
       />
     ) : null,
   };
 }
 
-/** The link's address, asked in a card: Apply sets it, an empty address or Remove takes it off. */
+/** The link's address, asked in a card: Apply sets it, an empty address or Remove (over a link) takes it off. */
 function LinkCard({ marks, onClose }: { marks: EditorMarks; onClose: () => void }) {
   const t = useText("write");
   const [href, setHref] = useState(() => marks.link.read() ?? "");
+  /* Remove is offered only where a link stands at the caret: elsewhere it would be a press that does nothing. */
+  const [linked] = useState(() => marks.link.read() !== null);
   const [refused, setRefused] = useState(false);
   const apply = (value: string | null): void => {
     if (marks.link.set(value) === "refused") setRefused(true);
@@ -140,9 +142,11 @@ function LinkCard({ marks, onClose }: { marks: EditorMarks; onClose: () => void 
             setRefused(false);
           }}
         />
-        <Button kind="quiet" size="s" onPress={() => apply(null)}>
-          {t("link.remove")}
-        </Button>
+        {linked ? (
+          <Button kind="quiet" size="s" onPress={() => apply(null)}>
+            {t("link.remove")}
+          </Button>
+        ) : null}
         <Button kind="ink" size="s" onPress={() => apply(href)}>
           {t("link.apply")}
         </Button>

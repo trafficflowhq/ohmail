@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useRef } from "react";
 import { cssPoint, cssRect } from "../geometry/index.js";
-import { isTypingTarget } from "../keys/keymap.js";
+import { isTypingTarget, KEY_WRITING } from "../keys/keymap.js";
 import { documentHidden } from "../session/document-hidden.js";
 import {
   STREAM_REST_MS,
@@ -25,9 +25,8 @@ const HAND_KEYS = new Set([" ", "PageDown", "PageUp"]);
 /** A jump to an end has rested once the scroller has not moved for this long (the web stream's `LANDING_QUIET_MS`). */
 export const STREAM_LANDING_QUIET_MS = 150;
 
-/** A key that carries the scroller to an end: End, Home, Ctrl or Cmd with an arrow; never in a field. */
+/** A key that carries the scroller to an end: End, Home, Ctrl or Cmd with an arrow. */
 function jumpsToAnEnd(e: KeyboardEvent): boolean {
-  if (isTypingTarget(e.target)) return false;
   const arrow = e.key === "ArrowDown" || e.key === "ArrowUp";
   return e.key === "End" || e.key === "Home" || ((e.metaKey || e.ctrlKey) && arrow);
 }
@@ -45,6 +44,8 @@ export interface StreamReadDomOptions {
   readonly scroller: HTMLElement | null;
   /** The stream's order, top to bottom. */
   readonly order: readonly string[];
+  /** The selected card of this visit, where the stream has one. */
+  readonly openId?: string | null;
   readonly factsOf: (id: string) => StreamItemFacts | null;
   /** Write these ids read now. */
   readonly write: (ids: readonly string[]) => void;
@@ -58,7 +59,9 @@ export interface StreamReadDomOptions {
 
 export interface StreamReadDom {
   /** A press in the stream or on a row, an arrow, `j` or `k`. */
-  enter(): void;
+  enter(letter?: string): void;
+  /** The app moved the stream: its scroll is no hand's, and it drives nothing. */
+  moved(): void;
   keepUnread(id: string): void;
   /** What the leave commits from. */
   leaveState(): StreamLeaveState;
@@ -141,6 +144,43 @@ function flightOf(flag: { current: boolean }, landed: () => void) {
   };
 }
 
+function listenToTouch(
+  el: HTMLElement,
+  rule: StreamReadRule,
+  now: () => number,
+  still: (by: StreamHand) => void,
+) {
+  let touchFrom: { x: number; y: number } | null = null;
+  const onTouchStart = (e: TouchEvent): void => {
+    const t = e.touches[0];
+    touchFrom = t ? cssPoint(t) : null;
+    rule.touchDown(now());
+  };
+  const onTouchMove = (e: TouchEvent): void => {
+    rule.hand("touch", now(), true);
+    const t = e.touches[0];
+    if (!t || !touchFrom) return;
+    /* The finger's travel in CSS px, as the slop is: under the Text size a viewport read is off by its zoom. */
+    const at = cssPoint(t);
+    const dy = Math.abs(at.y - touchFrom.y);
+    if (dy > TOUCH_SLOP_PX && dy > Math.abs(at.x - touchFrom.x)) still("touch");
+  };
+  const onTouchEnd = (): void => {
+    touchFrom = null;
+    rule.touchUp(now());
+  };
+  el.addEventListener("touchstart", onTouchStart, { passive: true });
+  el.addEventListener("touchmove", onTouchMove, { passive: true });
+  el.addEventListener("touchend", onTouchEnd, { passive: true });
+  el.addEventListener("touchcancel", onTouchEnd, { passive: true });
+  return () => {
+    el.removeEventListener("touchstart", onTouchStart);
+    el.removeEventListener("touchmove", onTouchMove);
+    el.removeEventListener("touchend", onTouchEnd);
+    el.removeEventListener("touchcancel", onTouchEnd);
+  };
+}
+
 export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
   const ruleRef = useRef<StreamReadRule | null>(null);
   ruleRef.current ??= createStreamReadRule();
@@ -148,6 +188,10 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
   const opts = useRef(o);
   opts.current = o;
   const bottomRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (o.openId !== undefined) rule.selectionChanged(o.openId);
+  }, [o.openId, rule]);
+  const arm = useRef<(() => void) | null>(null);
   const flyingRef = useRef(false);
   const now = (): number => (opts.current.now ?? (() => performance.now()))();
 
@@ -155,7 +199,6 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
     const el = o.scroller;
     if (!el) return;
     let restTimer: ReturnType<typeof setTimeout> | undefined;
-    let touchFrom: { x: number; y: number } | null = null;
     const measure = (): StreamLook => measureStream(el, opts.current.factsOf, now());
     const write = (ids: readonly string[]): void => {
       if (ids.length > 0) opts.current.write(ids);
@@ -165,12 +208,13 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
       if (documentHidden()) return;
       const l = measure();
       bottomRef.current = bottomOf(l);
-      write(rule.rest(l, (opts.current.restingId ?? restingAt)(l)));
+      write(rule.rest(l, (opts.current.restingId ?? restingAt)(l), opts.current.openId));
     };
     const armRest = (): void => {
       clearTimeout(restTimer);
       restTimer = setTimeout(rest, STREAM_REST_MS);
     };
+    arm.current = armRest;
     const onScroll = (): void => {
       flight.moved();
       const l = measure();
@@ -187,29 +231,15 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
       rule.hand("wheel", now());
       if (e.deltaY !== 0) still("wheel");
     };
-    const onTouchStart = (e: TouchEvent): void => {
-      const t = e.touches[0];
-      touchFrom = t ? cssPoint(t) : null;
-      rule.hand("touch", now(), true);
-    };
-    const onTouchMove = (e: TouchEvent): void => {
-      rule.hand("touch", now(), true);
-      const t = e.touches[0];
-      if (!t || !touchFrom) return;
-      /* The finger's travel in CSS px, as the slop is: under the Text size a viewport read is off by its zoom. */
-      const at = cssPoint(t);
-      const dy = Math.abs(at.y - touchFrom.y);
-      if (dy > TOUCH_SLOP_PX && dy > Math.abs(at.x - touchFrom.x)) still("touch");
-    };
-    const onTouchEnd = (): void => {
-      touchFrom = null;
-      rule.hand("touch", now(), false);
-    };
     const onKey = (e: KeyboardEvent): void => {
+      if (
+        e.defaultPrevented || isTypingTarget(e.target) ||
+        (e.target instanceof Element && e.target.closest(`[${KEY_WRITING}]`) !== null)
+      ) return;
       if (jumpsToAnEnd(e)) {
-        /* It drives the stream, and its scroll is no hand's: nothing it carries past is read. */
+        /* A scroll key drives the stream and the leave, and its scroll is no hand's: nothing it carries past is read. */
         flight.start();
-        rule.enter(now());
+        rule.scrollKey(now());
         return;
       }
       if (!HAND_KEYS.has(e.key)) return;
@@ -218,42 +248,44 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     el.addEventListener("wheel", onWheel, { passive: true });
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: true });
-    el.addEventListener("touchend", onTouchEnd, { passive: true });
-    el.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    const stopTouch = listenToTouch(el, rule, now, still);
     el.addEventListener("keydown", onKey);
     /* What stands in view at the opening is seen; nothing is read by it. */
     const first = measure();
     bottomRef.current = bottomOf(first);
     rule.look(first, !documentHidden(), false);
     return () => {
+      arm.current = null;
       clearTimeout(restTimer);
       flight.stop();
       el.removeEventListener("scroll", onScroll);
       el.removeEventListener("wheel", onWheel);
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove", onTouchMove);
-      el.removeEventListener("touchend", onTouchEnd);
-      el.removeEventListener("touchcancel", onTouchEnd);
+      stopTouch();
       el.removeEventListener("keydown", onKey);
     };
     /* The options are read through the ref; a new scroller is listened on afresh. */
   }, [o.scroller, rule]);
 
-  const enter = useCallback(() => {
-    rule.enter(now());
+  const enter = useCallback(
+    (letter?: string) => {
+      rule.enter(now(), letter);
+      if (letter !== undefined) arm.current?.();
+    },
+    [rule],
+  );
+  const moved = useCallback(() => {
+    rule.appMoved(now());
   }, [rule]);
   const keepUnread = useCallback((id: string) => rule.keepUnread(id), [rule]);
   const leaveState = useCallback((): StreamLeaveState => {
     const newest = opts.current.order.find((id) => rule.shown(id)) ?? null;
     return {
-      drove: rule.driven,
+      drove: rule.handDrove,
       newestSeenId: newest,
       bottomVisibleId: bottomRef.current,
       read: (id) => rule.read(id),
     };
   }, [rule]);
   const flying = useCallback(() => flyingRef.current, []);
-  return { enter, keepUnread, leaveState, flying, rule };
+  return { enter, moved, keepUnread, leaveState, flying, rule };
 }

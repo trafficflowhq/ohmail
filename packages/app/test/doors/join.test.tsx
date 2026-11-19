@@ -398,12 +398,17 @@ describe("the second factor", () => {
 
   it("the authenticator: its picture, its key in groups, Copy and the app on this device", () => {
     const key = "JBSWY3DPEHPK3PXP";
+    const manualKey = key.match(/.{4}/g)!.join(" ");
     const { acts } = draw({ at: "factor", authenticator: { key, copied: null } });
     expect(screen.getByRole("img", { name: J.totpQrAria })).toBeTruthy();
-    expect(document.body.textContent).toContain(key.match(/.{4}/g)!.join(" "));
+    expect(screen.getByRole("code").textContent === manualKey).toBe(true);
     fireEvent.click(button(J.totpCopy));
     fireEvent.click(button(J.totpOpenApp));
     expect([acts.copyKey.mock.calls.length, acts.openAuthenticator.mock.calls.length]).toEqual([1, 1]);
+    cleanup();
+    draw({ at: "factor", authenticator: { key, copied: null } }, {}, de, "de");
+    expect(screen.getByRole("code").textContent === manualKey).toBe(true);
+    expect(button(de.join.totpCopy)).toBeTruthy();
     cleanup();
     draw({ at: "factor", authenticator: { key: "K", copied: "failed" } });
     expect(screen.getByRole("status").textContent).toBe(J.totpCopyFailed);

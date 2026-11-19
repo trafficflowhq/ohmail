@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NO_DETAILS } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import { secretOf } from "@ohmail/app-logic/mailboxes/connect/secret";
 import type { MailboxId } from "@ohmail/app-logic/mailboxes/connect/types";
 import { NONE } from "@ohmail/app/host";
@@ -215,6 +216,21 @@ describe("it never rejects, and a refusal is read field by field", () => {
     expect(r.refusal.status).toBe(403);
     expect(r.refusal.code).toBe("step_up_required");
     expect(JSON.stringify(r.refusal)).not.toContain("anything sent");
+  });
+
+  it("a refusal of organize here whose sentence repeats the password is its status and code alone", async () => {
+    const { wire, member, ApiError } = await web();
+    const marker = "zq-pane-MARKER-7Kd";
+    mockThrow = new ApiError(400, "organize_refused", `The mail server would not take ${marker} for this mailbox.`);
+    const r = await member(wire.organizeHere)(ID, { password: secretOf(marker) });
+    expect(r).toEqual({
+      ok: false,
+      refusal: { status: 400, code: "organize_refused", message: "", details: NO_DETAILS },
+    });
+    /* A sentence that repeats nothing sent is the server's own, as ever. */
+    mockThrow = new ApiError(400, "organize_refused", "The mail server would not take it.");
+    const said = await member(wire.organizeHere)(ID, { password: secretOf(marker) });
+    expect(said.ok ? null : said.refusal.message).toBe("The mail server would not take it.");
   });
 
   it("a throw that is no server's answer is a refusal too, never a rejection", async () => {

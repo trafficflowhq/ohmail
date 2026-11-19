@@ -7,7 +7,7 @@
  * narrowed at this seam (`toMailboxRow`); one whose id is none is dropped. Cloud-only, like the rest of this folder.
  */
 import { refusalOf } from "@ohmail/app-logic/mailboxes/connect/refusal";
-import { reveal } from "@ohmail/app-logic/mailboxes/connect/secret";
+import { echoes, reveal, type Secret } from "@ohmail/app-logic/mailboxes/connect/secret";
 import { mailboxIdOfAnswer } from "@ohmail/app-logic/mailboxes/connect/subject";
 import type { Answered, MailboxId, Refusal } from "@ohmail/app-logic/mailboxes/connect/types";
 import type {
@@ -19,17 +19,22 @@ import { toMailboxFacts } from "./mailbox-facts";
 
 const SENTENCE_MAX = 600;
 
-/** What a call threw, as a refusal: the typed fields, and the sentence the shipped pane said for it. */
-function refusalOfThrown(thrown: unknown): Refusal {
-  const read = refusalOf(thrown);
-  return { ...read, message: messageOf(thrown).slice(0, SENTENCE_MAX) };
+/**
+ * What a call threw, as a refusal: the typed fields, and the sentence the shipped pane said for it. `pass`: the
+ * password the call carried; a sentence that repeats it is not taken, asked whole before the cut (`refusalOf`).
+ */
+function refusalOfThrown(thrown: unknown, pass?: Secret): Refusal {
+  const repeats = pass === undefined ? undefined : (text: string): boolean => echoes(pass, text);
+  const read = refusalOf(thrown, repeats);
+  const said = messageOf(thrown);
+  return { ...read, message: repeats?.(said) === true ? "" : said.slice(0, SENTENCE_MAX) };
 }
 
-async function answered<T>(call: () => Promise<T>): Promise<Answered<T>> {
+async function answered<T>(call: () => Promise<T>, pass?: Secret): Promise<Answered<T>> {
   try {
     return { ok: true, value: await call() };
   } catch (thrown) {
-    return { ok: false, refusal: refusalOfThrown(thrown) };
+    return { ok: false, refusal: refusalOfThrown(thrown, pass) };
   }
 }
 
@@ -38,8 +43,8 @@ const NOT_AN_ID: Answered<never> = Object.freeze({
   ok: false,
   refusal: Object.freeze({ ...refusalOf(null), message: "" }),
 });
-const byId = <T>(id: MailboxId, call: () => Promise<T>): Promise<Answered<T>> =>
-  mailboxIdOfAnswer(id) === null ? Promise.resolve(NOT_AN_ID) : answered(call);
+const byId = <T>(id: MailboxId, call: () => Promise<T>, pass?: Secret): Promise<Answered<T>> =>
+  mailboxIdOfAnswer(id) === null ? Promise.resolve(NOT_AN_ID) : answered(call, pass);
 
 /** One row of the server's list, narrowed for the pane; `null` where its id is none. */
 export function toMailboxRow(m: MailboxDTO): MailboxRow | null {
@@ -93,13 +98,17 @@ export function webMailboxesWire(): MailboxesWire {
         return { state: p.state, holders: p.holders.map((h) => ({ ...h })), unreadable: p.unreadable };
       }),
     organizeHere: (id, { password }) =>
-      byId(id, async () => {
-        // The pane sends what the shipped pane sent (no body: the hosted door reads it as a take-over); a password
-        // rides only where one was typed.
-        const body = password === undefined ? ([] as const) : ([{ imap: { pass: reveal(password) } }] as const);
-        const r = await mailboxApi.organize(id, ...body);
-        return { outcome: r.outcome };
-      }),
+      byId(
+        id,
+        async () => {
+          // The pane sends what the shipped pane sent (no body: the hosted door reads it as a take-over); a password
+          // rides only where one was typed.
+          const body = password === undefined ? ([] as const) : ([{ imap: { pass: reveal(password) } }] as const);
+          const r = await mailboxApi.organize(id, ...body);
+          return { outcome: r.outcome };
+        },
+        password,
+      ),
     stopOrganizing: (id) => byId(id, async () => ({ outcome: (await mailboxApi.release(id)).outcome })),
     dismissForwardingNotice: (id) =>
       byId(id, async () => {

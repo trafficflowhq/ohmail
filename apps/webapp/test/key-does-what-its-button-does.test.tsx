@@ -24,6 +24,8 @@ process.env.NEXT_PUBLIC_API_BASE = "/api";
 };
 Element.prototype.scrollTo ??= function scrollTo() {};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
+/* jsdom runs no animation: the frame's report leaves by one (`Element.animate`), as the frame's own tests stand it. */
+Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -202,8 +204,10 @@ describe("the census — every bar-twinned key the sheet lists, pressed in each 
      bound to nothing and then to a binding that raises a strip. A probe that cannot read the
      first as dead would pass every view for nothing. */
   it("the planted control: the probe reads a key bound to nothing as dead, and a live one as live", async () => {
-    const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
-    const { KeymapProvider } = await import("@ohmail/app/keys");
+    const { KeymapContext, useKeyBindings, useKeymapStore } = await import("@ohmail/app-logic/keys/keymap");
+    /* The frame's own registry: one store under its context, as `OwnKeys` of the frame mounts it. */
+    const Registry = ({ children }: { children: React.ReactNode }): React.ReactElement =>
+      h(KeymapContext.Provider, { value: useKeymapStore() }, children);
     function Surface({ live }: { live: boolean }): React.ReactElement {
       const [open, setOpen] = React.useState(false);
       useKeyBindings([{ chord: "m", group: "message", label: "Move to another place", run: () => { if (live) setOpen(true); } }]);
@@ -214,7 +218,7 @@ describe("the census — every bar-twinned key the sheet lists, pressed in each 
       host = document.createElement("div");
       document.body.appendChild(host);
       root = createRoot(host);
-      await act(async () => { root!.render(h(KeymapProvider, { children: h(Surface, { live }) })); });
+      await act(async () => { root!.render(h(Registry, { children: h(Surface, { live }) })); });
       await settle();
       await key("m");
       expect(stripShown("m"), `planted live=${live}`).toBe(live);
@@ -381,15 +385,19 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
       /* The head states the count in its Mark all read's name, and draws none once nothing is unread (the design's
          head: studio PARITY 2.1, no "n unread" beside the title; `screens/ohbox.js`, Mark all read only while
          something is unread): no control naming a count is a count of nought. */
-      const unread = () => [...(host!.querySelector(".view-ohbox")?.querySelectorAll("button") ?? [])]
+      /* The Ohbox's list: the frame's list section, found by its name (`ohbox/_finders.ts`); its Undo the capsule's
+         or, at the seated place, the frame's report's press. */
+      const { reportPress, seatedList } = await import("./ohbox/_finders.js");
+      const unread = () => [...(seatedList(host!)?.querySelectorAll("button") ?? [])]
         .map((b) => b.getAttribute("aria-label") ?? "").join(" ").match(/(\d+) unread/)?.[1] ?? "0";
       await tick(500);
       const before = unread();
       expect(Number(before), "the Ohbox shows no unread").toBeGreaterThan(0);
-      await click([...document.querySelectorAll<HTMLButtonElement>(".view-ohbox button")].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null);
+      await click([...(seatedList(host!)?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null);
       await tick(500);
       expect(unread()).toBe("0");
-      if (via === "the button") await click(undoCapsule());
+      const undoPress = () => undoCapsule() ?? ((reportPress()?.textContent ?? "").trim().startsWith("Undo") ? reportPress() : null);
+      if (via === "the button") await click(undoPress());
       if (via === "z past the window") await tick(7000);
       if (via !== "the button") await key("z");
       await tick(500);
@@ -426,8 +434,10 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
      its own: its Undo raised through the door is live under z, raised beside it is dead. A probe
      that cannot read the second as a miss would pass every press above for nothing. */
   it("the planted control: z reads an offer raised beside the door as dead, and one at the door as live", async () => {
-    const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
-    const { KeymapProvider } = await import("@ohmail/app/keys");
+    const { KeymapContext, useKeyBindings, useKeymapStore } = await import("@ohmail/app-logic/keys/keymap");
+    /* The frame's own registry: one store under its context, as `OwnKeys` of the frame mounts it. */
+    const Registry = ({ children }: { children: React.ReactNode }): React.ReactElement =>
+      h(KeymapContext.Provider, { value: useKeymapStore() }, children);
     const { createUndoDoor } = await import("@ohmail/app-logic/press/undo-door");
     const { useToast } = await import("@ohmail/ui");
     let commits = 0;
@@ -450,7 +460,7 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
       document.body.appendChild(host);
       root = createRoot(host);
       await act(async () => {
-        root!.render(h(ToastHost, { children: h(KeymapProvider, { children: h(Surface, { atDoor }) }) }));
+        root!.render(h(ToastHost, { children: h(Registry, { children: h(Surface, { atDoor }) }) }));
       });
       await settle();
       await tick(1200);
@@ -778,10 +788,13 @@ describe("the sheet's delete keys, Reply to everyone and Send in the views that 
   it("⇧R on a letter from one person opens the reply to that person", async () => {
     await mountShell("#/ohbox");
     await key("j");
-    expect(barButton("Reply all"), "the control: this letter has nobody else on it").toBeUndefined();
-    expect(host!.querySelector(".reply[data-reply-for]")).toBeNull();
+    /* The seated reader draws the letter the cursor opened once its body has come: the control below reads a bar. */
+    await tick(500);
+    const { barVerb, replyEditor } = await import("./ohbox/_finders.js");
+    expect(barVerb(host!, "Reply all") ?? undefined, "the control: this letter has nobody else on it").toBeUndefined();
+    expect(replyEditor(host!)).toBeNull();
     await key("R", { shiftKey: true });
-    expect(host!.querySelector(".reply[data-reply-for]"), "⇧R opened nothing").toBeTruthy();
+    expect(replyEditor(host!), "⇧R opened nothing").toBeTruthy();
   });
 
   it("the sheet names Ctrl+Enter for what it does outside the Reply Run", async () => {

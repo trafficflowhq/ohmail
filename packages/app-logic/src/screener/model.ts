@@ -13,6 +13,7 @@ import type { UndoToastFn } from "../press/undo-door.js";
 import type { DecisionDestination } from "./decision.js";
 import {
   useScreenerState,
+  type DecisionVerdict,
   type PendingDecision,
   type ScreenerState,
   type ScreenerText,
@@ -41,6 +42,8 @@ export interface ScreenerModelInput {
   readonly ownAddresses: readonly string[] | null;
   /** The pressed rows the lists show at a place, read at the call. */
   readonly shownAt: (subject: readonly EngineMessage[], dest: DecisionDestination) => string[];
+  /** How the lists explain a confirmed decision, or null for a fixture with no account presentation. */
+  readonly decisionVerdict: DecisionVerdict | null;
   /** Where Allow, Not spam and back to Waiting hold their rule change for the undo window; null offers no Undo. */
   readonly releaseWindow: ScreenerReleaseWindow | null;
 }
@@ -60,5 +63,6 @@ export function useScreenerModel(input: ScreenerModelInput): ScreenerState {
     input.ownAddresses ?? undefined,
     input.shownAt,
     input.releaseWindow ?? undefined,
+    input.decisionVerdict ?? undefined,
   );
 }

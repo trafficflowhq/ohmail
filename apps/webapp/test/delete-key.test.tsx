@@ -3,13 +3,12 @@ import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { cleanup } from "@testing-library/react";
 import type { EntityReader } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { ShortcutSheet } from "../app/shell/ShortcutSheet";
+import { mountFrameKeys } from "./_ohbox-1-frame-keys.js";
 import { readerMoveRefusal, rosterStateOf, type RosterState } from "@ohmail/app-logic/mail-state/mail-state";
 import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
 import {
@@ -67,6 +66,7 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 async function unmount(): Promise<void> {
+  cleanup();
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
   root = null;
@@ -97,15 +97,18 @@ const message = (over: Partial<EngineMessage> = {}): EngineMessage => ({
   ...over,
 } as unknown as EngineMessage);
 
-/** Mount the REAL registry over the REAL binding factory. Nothing here is a stand-in. */
+/**
+ * Mount the REAL registry over the REAL binding factory, inside the new shell's frame: the frame's own key registry,
+ * the one every seated place declares its keys in. Nothing here is a stand-in. (The `?` sheet's case moved to
+ * `delete-key-sheet.test.tsx`: the key sheet is an over of Search's mount.)
+ */
 async function mountKeys(opts: {
   focused?: EngineMessage | null;
   canDelete?: boolean;
-  sheetOpen?: boolean;
   run: (m: EngineMessage) => void;
 }): Promise<void> {
   await unmount();
-  function Shell(): React.ReactNode {
+  function Place(): React.ReactNode {
     useKeyBindings(
       deleteKeyBindings({
         focused: opts.focused === undefined ? message() : opts.focused,
@@ -115,17 +118,9 @@ async function mountKeys(opts: {
       }),
       "global",
     );
-    return h(ShortcutSheet, { open: opts.sheetOpen ?? false, onClose: () => {} });
+    return null;
   }
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en, timeZone: "UTC", now: new Date("2026-09-04T09:00:00.000Z"),
-      children: h(KeymapProvider, { children: h(Shell) }),
-    }));
-  });
+  mountFrameKeys(() => h(Place));
 }
 
 describe("the keys", () => {
@@ -180,14 +175,6 @@ describe("the keys", () => {
     await mountKeys({ run: (m) => filed.push(m.id) });
     await press("Delete");
     expect(filed, "the control").toEqual(["m1"]);
-  });
-
-  it("the `?` sheet lists it ONCE, with both keycaps", async () => {
-    await mountKeys({ sheetOpen: true, run: () => {} });
-    const rows = [...host!.querySelectorAll("li")]
-      .filter((li) => li.textContent?.includes(en.shortcuts.deleteKey));
-    expect(rows).toHaveLength(1);
-    expect([...rows[0]!.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["⌫", "⌦"]);
   });
 
   /**

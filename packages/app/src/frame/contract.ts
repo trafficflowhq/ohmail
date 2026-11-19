@@ -4,7 +4,7 @@
  * no screen present, so a screen task builds on it before the frame's parts exist.
  */
 import type { ComponentType, ReactNode } from "react";
-import type { IconName, NoticeAct } from "@ohmail/ui/base";
+import type { IconName } from "@ohmail/ui/base";
 import type { ToastFn } from "@ohmail/app-logic/press";
 import type {
   Appearance,
@@ -18,8 +18,8 @@ import type {
   WindowFacts,
 } from "../host/index.js";
 import type { OverId } from "./over-contract.js";
-
 export type { Appearance, Pointer, Posture, WindowFacts };
+export * from "./notice-contract.js";
 export * from "./over-contract.js";
 
 export const PLACE_IDS = [
@@ -43,8 +43,31 @@ export const PLACE_IDS = [
 export type PlaceId = (typeof PLACE_IDS)[number];
 export const STAGE_IDS = ["firstRun"] as const;
 export type StageId = (typeof STAGE_IDS)[number];
-export const RAIL_GROUPS = ["main", "later", "more", "tags", "folders"] as const;
+/** The rail's groups, in the order the rail draws them: the Screener stands in a group of its own. */
+export const RAIL_GROUPS = ["main", "screener", "later", "tags", "folders", "more"] as const;
 export type RailGroupId = (typeof RAIL_GROUPS)[number];
+/**
+ * THE RAIL'S ORDER of the places, taken from the simulation's rail: in its group, in the dock and behind More a
+ * place stands where this list has it, whatever order a host's record names its places in.
+ */
+export const RAIL_ORDER: readonly PlaceId[] = [
+  "ohbox",
+  "news",
+  "receipts",
+  "screener",
+  "later",
+  "parked",
+  "resurface",
+  "tags",
+  "folder",
+  "history",
+  "search",
+  "drafts",
+  "trash",
+  "address",
+  "write",
+  "settings",
+];
 
 /** The place a person is in: one object. The shell's address door carries it; a feature never reads the address. */
 export interface Route {
@@ -80,8 +103,32 @@ export interface PlaceRail {
   readonly icon: IconName;
   /** A key in the place's namespace. */
   readonly label: string;
+  /**
+   * The keys that go there, as they are printed. Where they are `g` and one more key ("g o"), the frame binds them
+   * to the place for its life, and no two places of a host may print the same. Any other key ("/") is printed here
+   * and bound by whoever owns it.
+   */
   readonly keyHint?: string;
+  /**
+   * A key in the `shortcuts` namespace: what the keys do, as the key sheet lists them ("Go to the Ohbox"). Left out,
+   * the sheet lists the place by its own label.
+   */
+  readonly keyLabel?: string;
+  /** The key also stands at rest in the face that prints keys on its controls (Search's `/`). */
+  readonly keyStands?: true;
   readonly useCount?: () => { readonly count: string; readonly hot: boolean } | null;
+  /** A letter dropped here files so (`move:reads`, `later`): the list runs its own verb (`rail-drag.ts`). None: no drop. */
+  readonly drop?: import("@ohmail/app-logic/lists/drag-source").PileDropAction;
+}
+/**
+ * A rail group a place draws itself: a line that folds and what stands under it (the tags; the folders). The frame
+ * draws `Body` in that group, after the group's entries, wherever the whole rail stands: at the side and behind More,
+ * never in the dock. `Body` draws with the kit's rail entries, reads `useFrame()` and the ground, and keeps what it
+ * keeps (a fold shut or open) itself.
+ */
+export interface PlaceRailGroup {
+  readonly group: RailGroupId;
+  readonly Body: ComponentType;
 }
 /**
  * A place's panes. `List` draws on the frame's list sheet beside a rail or an upright dock (a sheet never lies
@@ -104,25 +151,25 @@ export type PlacePanes =
       readonly Above?: ComponentType<{ readonly children: ReactNode }>;
       /**
        * The place keeps its open letter over a walk to another place and back: the frame remembers the last letter
-       * open here for the frame's life and opens it again when a `go` to this place names none, at two columns only,
-       * never on one. `open(null)` forgets it. It is never stored, and never carried into another scope.
+       * open here (by the place's own word, where it has one) for the frame's life and opens it again when a `go` to
+       * this place names none, at two columns only, never on one. A `go` that says `open: null` asks for the list
+       * alone. Closing the letter forgets it, by `open(null)` or by an address that names none. It is never stored,
+       * and never carried into another scope.
        */
       readonly keepsOpen?: true;
     }
   | {
       readonly kind: "wide";
       readonly Wide: ComponentType<PaneProps>;
-      /**
-       * This body is mounted with the frame and stays mounted, hidden and inert, while a place of another body is on
-       * screen. At most one entry's body in a host's `places` is kept.
-       */
-      readonly kept?: true;
     };
 /** A place's registration. Places with one `body` share one mounted instance (today's views: "today"). */
 export interface PlaceEntry {
   readonly id: AnyPlaceId;
   readonly body: string;
+  /** Its entry in the rail, or null: a place the rail names by no entry. */
   readonly rail: PlaceRail | null;
+  /** The rail group it draws itself, where it draws one ({@link PlaceRailGroup}). */
+  readonly railGroup?: PlaceRailGroup;
   readonly panes: PlacePanes;
 }
 export interface StageEntry {
@@ -146,10 +193,8 @@ export interface ColumnsProps {
   /** The list has the keys: the face that rings the column with the keyboard rings the list's sheet. */
   readonly listKeys: boolean;
   readonly reading: ReactNode;
-  /** A wide pane on screen whose body is not kept. */
+  /** A wide pane on screen. */
   readonly wide: ReactNode | null;
-  /** The kept body's pane, drawn at one position whether it is on screen or hidden; null where no body is kept. */
-  readonly kept: { readonly pane: ReactNode; readonly shown: boolean } | null;
   /** What the place on screen stands above both of its columns, with the body it is mounted for; null where none. */
   readonly above: {
     readonly Above: ComponentType<{ readonly children: ReactNode }>;
@@ -167,67 +212,7 @@ export interface StageProps {
   readonly label: string;
   readonly children: ReactNode;
 }
-export interface RailEntryModel {
-  readonly id: string;
-  /** The place the entry stands for where its id is not the place's (today's News is fed as `reads`). */
-  readonly place?: PlaceId;
-  readonly kind: "place" | "sub" | "fold" | "tool";
-  readonly label: string;
-  readonly icon?: IconName;
-  readonly hue?: number;
-  readonly count?: string;
-  readonly countHot?: boolean;
-  readonly keyHint?: string;
-  /** The key also stands at rest in the face that prints keys on its controls (Search's `/`). */
-  readonly keyStands?: boolean;
-  /** Its key in `aria-keyshortcuts`' own spelling ("/", "Shift+F"): said to a screen reader on the entry. */
-  readonly shortcut?: string;
-  readonly current?: boolean;
-  readonly expanded?: boolean;
-  readonly depth?: number;
-  readonly title?: string;
-  readonly onPress: () => void;
-}
-export interface RailModel {
-  readonly groups: readonly {
-    readonly id: string;
-    readonly entries: readonly RailEntryModel[];
-    readonly node?: ReactNode;
-  }[];
-  readonly write: {
-    readonly label: string;
-    readonly keyHint?: string;
-    /** Its key in `aria-keyshortcuts`' own spelling ("c"): said to a screen reader on the way to write. */
-    readonly shortcut?: string;
-    readonly onPress: () => void;
-  } | null;
-  /** The account's line in the rail's foot; null while nobody is known, and the line is withheld. */
-  readonly account: {
-    readonly name: string;
-    readonly address: string;
-    readonly note: string;
-    readonly title: string;
-    readonly onPress: () => void;
-  } | null;
-  readonly pull: {
-    readonly label: string;
-    readonly keyHint?: string;
-    readonly busy: boolean;
-    readonly onPress: () => void;
-  } | null;
-  /** The quiet tools at the end of the account's line (the command palette, the light and dark switch), as given. */
-  readonly tools?: readonly {
-    readonly icon: IconName;
-    /** Its name, with its key where it has one: "Command palette · Ctrl K". */
-    readonly label: string;
-    readonly onPress?: () => void;
-  }[];
-  /**
-   * The classes a shell's own key model finds the rail by while it feeds it (today's views: `rail open`). The rail
-   * then stands in a box that carries them and draws nothing.
-   */
-  readonly mark?: string;
-}
+export type { RailEntryModel, RailFootModel, RailModel } from "./rail-model.js";
 
 /**
  * THE ONE ORDER of the notice slot. Lower stands in front. Taken from the simulation's table; the kinds
@@ -276,23 +261,25 @@ export const NOTICE_RANK = {
   behind: 90,
   firstSync: 91,
   filing: 92,
+  mailLinks: 94, // *
   desktopOffer: 95, // *
 } as const;
 export type NoticeKind = keyof typeof NOTICE_RANK;
-export interface FrameNotice {
-  readonly kind: NoticeKind;
-  /** Where one kind stands more than once (one per mailbox): what tells them apart. */
-  readonly id?: string;
-  readonly title: string;
-  readonly hot?: boolean;
-  readonly line?: string;
-  readonly acts?: readonly [NoticeAct] | readonly [NoticeAct, NoticeAct];
+
+/**
+ * How a place is gone to, beside where. `entered`: the letter it names is opened as ENTERED (a hit a person chose),
+ * taken once by the place that lists it (`useEntered`); never in the address, so a reload, Back or a stored link
+ * reads nothing. `replace`: the address is replaced, not pushed, and Back does not come back to the one it replaced.
+ */
+export interface GoHow {
+  readonly entered?: true;
+  readonly replace?: true;
 }
 
 /** The few named commands between features. Nothing else crosses a feature's border. */
 export interface FrameCommands {
-  go(to: RouteTarget): void;
-  open(letter: string | null): void;
+  go(to: RouteTarget, how?: GoHow): void;
+  open(letter: string | null, how?: "replace"): void;
   write(draft?: LinkedDraft): void;
   rail(open: boolean): void;
   /** A body that stands over the app (a stage not yet registered) holds the frame inert. */
@@ -391,6 +378,7 @@ export interface FrameCommands {
    * a mail place it goes to the calendar's place with the event's day. It does nothing where the switch is absent.
    */
   event(ref: EventRef | null): void;
+  switchProduct(to: Product): void;
 }
 export interface FrameApi {
   /** The product the route stands in. */

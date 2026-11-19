@@ -6,7 +6,9 @@
  */
 import type { CalendarAct } from "@ohmail/wire";
 import type { CalendarPort, CalendarVerdict } from "./port.js";
-import { REFUSAL_KEYS, TAKEN_KEYS, type CalendarSentenceKey } from "./sentences.js";
+import { FAULT_KEYS, REFUSAL_KEYS, TAKEN_KEYS, type CalendarSentenceKey } from "./sentences.js";
+
+const REFUSED = { ...FAULT_KEYS, ...REFUSAL_KEYS };
 
 export interface Heard {
   readonly key: string;
@@ -17,7 +19,7 @@ export interface Heard {
 
 export function sentenceOf(act: CalendarAct, verdict: CalendarVerdict | null): CalendarSentenceKey | null {
   if (verdict === null) return null;
-  return verdict.kind === "taken" ? TAKEN_KEYS[act.kind] : REFUSAL_KEYS[verdict.word];
+  return verdict.kind === "taken" ? TAKEN_KEYS[act.kind] : REFUSED[verdict.word];
 }
 
 export async function pressAndHear(

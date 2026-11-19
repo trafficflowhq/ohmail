@@ -346,7 +346,7 @@ describe("StreamCard — the clamp tells the truth about what it is clamping", (
 
 async function mountReads(engine: OhmailEngine): Promise<void> {
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
 
   function Host(): React.ReactElement {
     const [v, setV] = React.useState(0);
@@ -469,7 +469,7 @@ async function mountScreener(engine: OhmailEngine): Promise<void> {
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
 
   function Host(): React.ReactElement {
     const [v, setV] = React.useState(0);

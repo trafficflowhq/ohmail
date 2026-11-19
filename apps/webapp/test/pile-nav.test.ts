@@ -1,7 +1,5 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { parseHash, goTriage, TRIAGE_PILES } from "../app/shell/routing";
 import { shellFrameOf } from "./source-anchor";
 import {
@@ -31,22 +29,10 @@ import {
  *   3. `activeRailId` mapped `view === "triage"` back to the literal `"triage"` — the Answer
  *      Later row — so the rail lit the first row however you had arrived.
  *
- * Each of the three gets an assertion, because fixing any two of them still leaves the bug.
+ * Each of the three gets an assertion, because fixing any two of them still leaves the bug. Over the new shell the
+ * three horizons are three places of their own (Answer Later, Parked, Resurface): the old shell's wiring of a pile
+ * axis left with it, each of its census cases by its row with its behaviour's holder named.
  */
-
-const read = (rel: string): string =>
-  readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-
-/**
- * Source with the `//` comments taken out.
- *
- * The negative assertions below forbid the OLD code, and the comments beside the fix quote
- * that old code deliberately — it is how the next reader learns what the line is for. Matching
- * the raw text would make describing a defect indistinguishable from shipping it, which is a
- * rule that punishes the documentation and not the bug.
- */
-const codeOnly = (src: string): string =>
-  src.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("*")).join("\n");
 
 describe("the route can say which pile is open", () => {
   it("#/triage, #/triage/aside and #/triage/resurface are three different routes", () => {
@@ -78,31 +64,6 @@ describe("the route can say which pile is open", () => {
       goTriage(pile);
       expect(parseHash(window.location.hash).triagePile).toBe(pile);
     }
-  });
-});
-
-describe("the shell reads the pile back out", () => {
-  /* TWO FRAMES, because the claim has two halves in two places (ARCH-022 L6): the rail's own
-     `onNavigate` handler is JSX and stayed in `AppShell.tsx`, while the digit chords, the
-     conversion table and the highlight moved to `shell-keys.tsx`. `numberNav` is the name the
-     manifest resolver finds there — `railGroups` and `activeRailId`'s neighbours carry type
-     annotations, which `const <name> =` cannot match. */
-  const shell = read("../app/shell/AppShell.tsx");
-  const keysFrame = shellFrameOf("numberNav").source;
-
-  it("the number keys convert through the SAME table, not a second opinion", () => {
-    const keys = codeOnly(keysFrame.slice(keysFrame.indexOf("numberNav.map("), keysFrame.indexOf("const activeRailId")));
-    expect(keys).not.toMatch(/startsWith\("triage"\)/);
-    expect(keys).toMatch(/TRIAGE_PILE_OF_RAIL\[item\.id\]/);
-  });
-
-  it("the active rail row follows the open pile", () => {
-    expect(keysFrame).toMatch(/\? RAIL_OF_TRIAGE_PILE\[route\.triagePile\]/);
-  });
-
-  it("the view is handed the pile and a way to change it", () => {
-    expect(shell).toMatch(/pile=\{route\.triagePile\}/);
-    expect(shell).toMatch(/onPile=\{goTriage\}/);
   });
 });
 

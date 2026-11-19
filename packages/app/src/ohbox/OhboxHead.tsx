@@ -6,6 +6,7 @@ import { useRef, useState, type ReactNode } from "react";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { sharedNotOrganizedWhy } from "@ohmail/app-logic/mail-state/mail-state";
 import { Button, Menu, MenuItem } from "@ohmail/ui/base";
+import { ProductSwitch } from "../frame/ProductSwitch.js";
 import { Doorbell, ListHead } from "@ohmail/ui/mail";
 import type { LayoutPlan } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
@@ -44,6 +45,7 @@ export function OhboxHead({
         hot={model.mayState && unread > 0}
         aside={
           <>
+            {plan.rail === "dock" ? <ProductSwitch kind="round" /> : null}
             <OhboxDoor model={model} beside={beside} />
             {markAll !== null && plan.pointer !== "coarse" ? (
               <Button kind="quiet" size="s" onPress={markAll} label={all("aria", { count: unread })}>
@@ -155,8 +157,6 @@ function OhboxDoor({ model, beside }: { model: OhboxListModel; beside: OhboxBesi
     <Doorbell
       count={beside.doorbell.count.toLocaleString(locale)}
       label={t("doorbellAria", { count: beside.doorbell.count })}
-      keyHint="g s"
-      keyShown={beside.keysShown}
       onPress={beside.go.screener}
     />
   );

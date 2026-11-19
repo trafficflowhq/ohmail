@@ -19,8 +19,6 @@ import {
 } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { prepareToday } from "./ohbox/_today";
-const OhboxView = await prepareToday();
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
 import { FolderView } from "../app/views/FolderView";
@@ -33,9 +31,9 @@ import { TagView } from "../app/views/TagView";
 import { ScreenerView } from "../app/views/ScreenerView";
 import { useScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import { useScreenerText } from "../app/shell/screener-text";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { WithListGone } from "./_list-gone";
-import { ESTIMATED_ROW_PX, MEASURED_FULL_RANGE_MAX_ROWS } from "@ohmail/app-logic/lists/list-window";
+import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
 import { settleFirstPaint } from "./_first-paint.js";
 import { FIXTURE_NOW, storeFixture, storeRows } from "./_store-fixture";
 
@@ -237,16 +235,6 @@ async function engineOver(rows: EngineMessage[], extra: Partial<EngineAdapter> =
   return new OhmailEngine({ adapter, store, now: () => NOW });
 }
 
-const ohbox = (fresh: EngineMessage[], earlier: EngineMessage[]) => (
-  <OhboxView owed={false} demo={false} newForYou={fresh} previouslySeen={earlier}
-    tags={tags} now={NOW} selectedId={null} onSelect={none} onEnterReader={none}
-    onMarkSeen={none} readerId={null} readSetFor={(id: string) => [id]} doorbellInitials={[]} doorbellCount={0} settled
-    onDoorbell={none} onAction={none} onAddTag={none}
-    bulk={{ run: () => true, tag: none, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => true }}
-    older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: none }}
-  />
-);
-
 const body = () => ({ text: "body", state: "snippet", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }) as never;
 
 const news = (partition: FeedPartition, aiChip: { afterId: string } | null = null) => (
@@ -274,20 +262,8 @@ const rule = (i: number): RuleDTO => ({
 // ── the cases ───────────────────────────────────────────────────────────────────────────────
 
 describe("a windowed list announces its true size and every row's true position", () => {
-  it(`premise: ${N} rows is past the measured floor, so every list below is a window`, () => {
-    expect(N).toBeGreaterThan(MEASURED_FULL_RANGE_MAX_ROWS);
-  });
-
-  it("the Ohbox, one group of 600", async () => {
-    const m = await mount(ohbox([], range(0, N)));
-    expectHeard(await walk(m.host, m.scroller, N + 1), { "Earlier": N }, (_, k) => indexOfKey(k) + 1);
-  });
-
-  it("the Ohbox, two groups: each listbox says its own group's size, the labels are no items", async () => {
-    const m = await mount(ohbox(range(0, 100, { unread: true }), range(100, N - 100)));
-    expectHeard(await walk(m.host, m.scroller, N + 2), { "New": 100, "Earlier": N - 100 },
-      (label, k) => (label === "New" ? indexOfKey(k) + 1 : indexOfKey(k) - 100 + 1));
-  });
+  /* The premise and the Ohbox's two cases moved to `ohbox/list-window-set-size-ohbox.test.tsx` (share ohbox-2): the
+     Ohbox's own list, drawn from its model. Every case below still asserts its own window (`expectHeard`'s first line). */
 
   it("News, 600 above no line", async () => {
     const all = range(0, N);

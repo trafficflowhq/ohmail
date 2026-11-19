@@ -55,8 +55,10 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       scope: facts.scope,
       // A hosted account stands behind a phone paired to a server; a desktop's door and the phone's own engine have none.
       account: setting === "managed" || setting === "selfHosted" ? facts.accountId : null,
+      accountAddress: null,
       signOut: own ? NONE : has.signOut,
       recover: has.frame.recover,
+      today: NONE,
     },
     reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
     wires: {
@@ -96,7 +98,13 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       calendar: has.frame.calendar,
     },
     device: {
-      build: { surface: "phone", version: facts.build.version, commit: facts.build.commit, mailtoLeaves: true },
+      build: {
+        surface: "phone",
+        version: facts.build.version,
+        commit: facts.build.commit,
+        mailtoLeaves: true,
+        desktopDownload: null,
+      },
       notifications: has.notifications,
       badge: NONE,
       language: NONE,

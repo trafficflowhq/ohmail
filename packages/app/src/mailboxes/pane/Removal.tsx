@@ -1,19 +1,18 @@
-import { useId, type ReactNode } from "react";
-import { Button, Field, RadioLines, RefusalLine } from "@ohmail/ui/base";
+import type { ReactNode } from "react";
+import { Dialog, Field, RadioLines } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import type { RowProps } from "./Row.js";
 import { useSay } from "./say.js";
 
 /**
- * THE REMOVAL'S CONFIRMATION, in place: what the server does, said as consequences rather than "are you sure"; what
- * happens to ohmail's copy, the person's choice; the address typed for an erasure, never filled in; the safe answer
- * first. A refusal is said here, with what was typed kept. The press is tried first and asks the second factor only
- * on the server's refusal.
+ * THE REMOVAL'S CONFIRMATION, as the kit's dialog over the window: what the server does, said as consequences rather
+ * than "are you sure"; what happens to ohmail's copy, the person's choice; the address typed for an erasure, never
+ * filled in; the safe answer has the keys. A refusal is said in it, with what was typed kept. The press is tried
+ * first and asks the second factor only on the server's refusal; Escape and the scrim are Keep it.
  */
-export function Removal(props: RowProps): ReactNode {
+export function Removal(props: Pick<RowProps, "model" | "verbs">): ReactNode {
   const { model, verbs } = props;
   const say = useSay();
-  const heading = useId();
   const removing = model.removal.removing;
   if (removing === null) return null;
   const { erase, typed, address } = removing;
@@ -35,10 +34,19 @@ export function Removal(props: RowProps): ReactNode {
             : say({ key: "probe_unknown" });
   const working = mine && gate.at === "trying";
   return (
-    <div className="mbx-row-lines" role="alertdialog" aria-labelledby={heading}>
-      <h3 className="oh-text" id={heading}>
-        {say({ key: "removeTitle", values: { address } })}
-      </h3>
+    <Dialog
+      open
+      onClose={model.removal.close}
+      title={say({ key: "removeTitle", values: { address } })}
+      keysOn="cancel"
+      confirm={{
+        label: say({ key: erase ? "removeEraseConfirm" : "removeConfirm" }),
+        onPress: model.removal.confirm,
+        disabled: working || (erase && typed.trim() === ""),
+      }}
+      cancel={{ label: say({ key: "removeCancel" }) }}
+      {...(said !== null ? { said: { line: said, refused: true } } : {})}
+    >
       <SettingNote>{say({ key: "removeStops" })}</SettingNote>
       <SettingNote>{say({ key: "removeMailSafe" })}</SettingNote>
       <SettingNote>{say({ key: "removeCredential" })}</SettingNote>
@@ -67,15 +75,6 @@ export function Removal(props: RowProps): ReactNode {
         </>
       ) : null}
       <SettingNote>{say({ key: "removeReconnect" })}</SettingNote>
-      {said !== null ? <RefusalLine alert>{said}</RefusalLine> : null}
-      <div className="mbx-pane-acts">
-        <Button kind="two" onPress={model.removal.close}>
-          {say({ key: "removeCancel" })}
-        </Button>
-        <Button disabled={working || (erase && typed.trim() === "")} onPress={model.removal.confirm}>
-          {say({ key: erase ? "removeEraseConfirm" : "removeConfirm" })}
-        </Button>
-      </div>
-    </div>
+    </Dialog>
   );
 }

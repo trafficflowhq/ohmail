@@ -15,6 +15,7 @@ import {
 import { Menu, MenuItem } from "@ohmail/ui/base";
 import type { Point } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
+import { useNoAdvice } from "../contract.js";
 import { whoOf } from "./Sentence.js";
 
 export function PlaceMenu({
@@ -32,7 +33,7 @@ export function PlaceMenu({
   card: boolean;
 }) {
   const t = useText("screener");
-  const words = suggestionWords(sender);
+  const words = suggestionWords(sender, useNoAdvice());
   return (
     <Menu
       open={open}

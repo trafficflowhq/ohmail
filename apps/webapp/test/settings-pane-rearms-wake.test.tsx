@@ -147,6 +147,14 @@ const enabledNow = (): unknown => {
 };
 
 describe("the Settings door and the previous reader's registration", () => {
+  it("says notifications only work while open when closed-window wakes are unavailable", async () => {
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    await renderPane("notifications", hostAnswering("unsupported"));
+
+    expect(host.textContent).toContain("This browser can show notifications only while ohmail is open.");
+    expect(enabledNow()).toBe(false);
+  });
+
   it("OPENING SETTINGS ON ANOTHER TAB does not arm the worker over a row that is not ours", async () => {
     /*
      * Step 3, and deliberately on the GENERAL pane: the effect is in the view body, so the

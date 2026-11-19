@@ -8,7 +8,7 @@ import {
   SYNC_BODY_TIMEOUT_MS,
   type StorePolicy,
 } from "@ohmail/client-engine";
-import { FixturesAdapter } from "@ohmail/testing/adapter";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import { ERASED_DECLARATION, erasedAwareFetch } from "@ohmail/app-logic/session/account-erased";
 import { clientDeclaration } from "./client-declaration";
 import { RELOAD_REMEDY, updateAwareFetch } from "./update-answer";
@@ -16,6 +16,9 @@ import { createSyncGate, registerSyncGate, type WakeStreamLike } from "@ohmail/a
 import { sessionFetch, sessionMayAsk } from "@ohmail/app-logic/session/session-truth";
 import { webLane, type ResumeLane } from "@ohmail/app-logic/session/resume-lane";
 import { stagingAdmits, stagingUploadSource } from "../../staging-origin.mjs";
+
+/** The demo's frozen day: the fixtures' world is dated around it, and the demo's host says it is today. */
+export const DEMO_DAY: Date = DEMO_NOW;
 
 /**
  * The engine decision, extracted so it can be TESTED rather than described. Inside `engine.tsx` (a `"use client"`

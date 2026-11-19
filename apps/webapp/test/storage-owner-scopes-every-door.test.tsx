@@ -35,7 +35,7 @@ import { clearReadingAlong, readingAlong, readingAlongKey, setReadingAlong } fro
 import {
   imageQualityKeyFor, legacyImageShrinkKeyFor, readImageQualityLevel, writeImageQualityLevel,
 } from "../app/components/image-quality";
-import { seedNotNowKey } from "../app/shell/seed-offer";
+import { seedNotNowKey } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 /** The claims below are sends still in flight: owed, the one state a record resumes in. */

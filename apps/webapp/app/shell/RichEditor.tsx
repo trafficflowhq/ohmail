@@ -8,7 +8,7 @@ import { EXTENSIONS, escapeUnlessTaken, linksIn } from "@ohmail/app/write/editor
 import { applyCode, applyList, applyQuote } from "@ohmail/app/write/editor/commands";
 import { PasteAsLines, readParagraphsAsLines } from "./rich-editor-paste";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { dropCarriesFiles } from "./dropped-files";
+import { dropCarriesFiles } from "@ohmail/app-logic/write/dropped-files";
 import { LinkPopover } from "./LinkPopover";
 import { linkHref, useRenderedLinks } from "@ohmail/letter-body/links";
 import {

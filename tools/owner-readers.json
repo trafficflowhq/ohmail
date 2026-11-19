@@ -88,17 +88,5 @@
   "markerNameSpellers": {
     "reason": "Where the session marker's cookie name is spelled as its source and as its record, and nothing more: the server's cookie module writes and clears the marker, and the registry of stored keys names every key a device holds. Neither reads whose storage a browser keeps, and neither may import a lookup.",
     "files": ["packages/api/src/cookies.ts", "packages/client-engine/src/stored-keys.ts"]
-  },
-  "todaysScopeReaders": {
-    "reason": "The parts drawn deep inside today's views that keep a look per account read the scope of the shell they are drawn in; they leave with today's views. A place in packages/app reads useFrame().host.session.scope instead.",
-    "files": [
-      "apps/webapp/app/components/ComposeAttach.tsx",
-      "apps/webapp/app/letter-body/MessageBody.tsx",
-      "apps/webapp/app/shell/AfterVerbRow.tsx",
-      "apps/webapp/app/shell/ImageQualityRow.tsx",
-      "apps/webapp/app/shell/TodaysOhboxAbove.tsx",
-      "apps/webapp/app/views/SearchView.tsx",
-      "apps/webapp/app/views/SettingsView.tsx"
-    ]
   }
 }

@@ -12,6 +12,16 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* Keep the first heading a step inside the phone's paper. */
+.ob-scroll[data-phone] > .oh-sheet {
+  padding-top: var(--s1);
+}
+
+/* At the end, the last action must scroll clear of the dock and the device's bottom inset. */
+.ob-list:not(:has(> .ob-foot)) .ob-scroll[data-phone] > .oh-sheet {
+  padding-bottom: calc(var(--h-xl) + var(--s6) + max(var(--s4), var(--oh-inset-foot)));
+}
+
 /* The selection's bar floats over the list's foot, a step above the sheet's edge, the rows running on under it; the
    list's end keeps room for it so its last row can come out from under. */
 .ob-foot {

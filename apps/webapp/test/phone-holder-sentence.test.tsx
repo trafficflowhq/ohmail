@@ -13,9 +13,10 @@ import {
   PHONE_HOLDER_WHY_KEY, filingElsewhereKey, holderSentence, phoneHolder, phoneHolderKey,
 } from "@ohmail/app-logic/reading/reader-holder";
 import { holderFingerprint, readingAlong, setReadingAlong, clearReadingAlong } from "@ohmail/app-logic/reading/reading-along";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import { mountStage, stageRow } from "./_first-run-stage.js";
 
 /**
  * ═══ A PHONE HOLDS THE MAILBOX AND NO SURFACE SAID SO ═══════════════════════════════════════
@@ -132,7 +133,8 @@ describe("the one derivation", () => {
  */
 describe("nowhere else composes the phone's words", () => {
   const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-  const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "packages/letter-body/src", "packages/app-logic/src", "apps/desktop/src"];
+  /* The new shell's surfaces (the first run's stage, the ground's notices, the reader) are under `packages/app/src`. */
+  const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "packages/app/src", "packages/letter-body/src", "packages/app-logic/src", "apps/desktop/src"];
   const DERIVATION = "packages/app-logic/src/reading/reader-holder.ts";
 
   const walk = (dir: string, out: string[] = []): string[] => {
@@ -392,17 +394,20 @@ describe("SURFACE 1 — the rail says a phone is a phone", () => {
   });
 
   it("reading along here silences the strip, and a different holder brings it back", async () => {
+    // A read-along choice is saved under the signed-in account's storage scope.
+    setStorageOwner("acct-reads-along");
     const who = { kind: "local", name: "omarchy", stopped: false };
     const said = await rail(heldBy(who));
     expect(railTitle(said)).toBe(ts.filingElsewhereLocalHow!.replace("{name}", "omarchy"));
-    setReadingAlong("mbx-1", { ...who, since: null }, null);
+    setReadingAlong("mbx-1", { ...who, since: null }, "acct-reads-along");
     const quiet = await rail(heldBy(who));
     expect(railTitle(quiet), "the strip went on saying it after the press")
       .not.toBe(ts.filingElsewhereLocalHow!.replace("{name}", "omarchy"));
     /* A DIFFERENT INSTALL MAY NEVER BE HIDDEN by an intention about the last one. */
     const other = await rail(heldBy({ kind: "local", name: "someone else", stopped: false }));
     expect(railTitle(other)).toBe(ts.filingElsewhereLocalHow!.replace("{name}", "someone else"));
-    clearReadingAlong("mbx-1", null);
+    clearReadingAlong("mbx-1", "acct-reads-along");
+    resetStorageOwnerForTest();
   });
 });
 
@@ -424,26 +429,6 @@ const holder = (kind: string, name: string): OnboardingMailbox => ({
   organizerState: "held",
 });
 
-const onboardingFacts = (mailbox: OnboardingMailbox): OnboardingFacts => ({
-  door: "local",
-  mailbox,
-  account: { onboardingCompletedAt: null },
-  ai: "unset",
-  queuedSenders: 0,
-});
-
-const HOST: FirstRunHost = {
-  door: "local",
-  ai: "unset",
-  probe: async () => ({ host: "h", user: "u", folders: 1 }),
-  connect: async () => ({ id: "mb-1" }),
-  organize: async () => "stored",
-  complete: async () => { /* the summary's own verb */ },
-  setAiEnabled: async () => { /* answered */ },
-  probeReason: () => null,
-  probeMessage: () => null,
-};
-
 interface FirstRunHarness {
   el: HTMLElement;
   press: (label: string) => Promise<void>;
@@ -451,65 +436,27 @@ interface FirstRunHarness {
   heading: () => string;
 }
 
+/* The first run as the new shell's stage (today's `FirstRun.tsx` left with today's shell), at the address that opens
+   it, over the one row the case names; the holder's date as the seat feeds it, a real date, so the dated arms are
+   reachable and the phone arm cannot pass merely because there was no date to print. */
 async function firstRun(mailbox: OnboardingMailbox): Promise<FirstRunHarness> {
-  const { FirstRun } = await import("../app/shell/FirstRun.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-
-  const Stage = () => {
-    const [, bump] = React.useState(0);
-    return h(FirstRun as never, {
-      host: HOST,
-      facts: onboardingFacts(mailbox),
-      onRefresh: () => bump((n) => n + 1),
-      onLeave: () => { /* left */ },
-      pull: { screened: 0, history: 0, mirrorCount: 0 },
-      decide: null,
-      mailboxId: "mb-1",
-      /* Derived the way `AppShell` derives it: a real instant, so the dated arms are reachable
-         and the phone arm cannot pass merely because there was no date to print. */
-      organizedSince: "30 Aug 2026",
-    } as never);
+  /* Today's stage was the hosted web's: ohmail Cloud is the managed service there, and is said as itself. */
+  const stage = await mountStage({ rows: [stageRow({ ...mailbox, holderSince: "30 Aug 2026" })], service: "managed" });
+  const choice = { here: t.elsewhereChoiceHere!, read: t.elsewhereChoiceRead! };
+  return {
+    el: stage.el,
+    press: stage.press,
+    pick: (value) => stage.pick(choice[value]),
+    heading: stage.heading,
   };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider as never, { children: h(Stage, null) } as never),
-    }));
-  });
-
-  const press = async (label: string) => {
-    const button = [...el.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith(label));
-    if (!button) {
-      throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
-        + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
-    }
-    await act(async () => {
-      button.click();
-      for (let i = 0; i < 12; i++) await Promise.resolve();
-    });
-  };
-
-  const pick = async (value: "here" | "read") => {
-    const radios = [...el.querySelectorAll("input[type=radio]")] as HTMLInputElement[];
-    const radio = radios.find((i) => i.value === value);
-    if (!radio) throw new Error(`no ${JSON.stringify(value)} option`);
-    await act(async () => { radio.click(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
-  };
-
-  return { el, press, pick, heading: () => (el.querySelector("h1")?.textContent ?? "").trim() };
 }
 
 const t = (messages as unknown as { onboarding: Record<string, string> }).onboarding;
 
-/** The banner's own description, by equality — `toContain` cannot separate these sentences. */
+/** The banner's own description, by equality — `toContain` cannot separate these sentences. (The claim question's
+    holder line is the kit's note under the holder's own line: the step's one note.) */
 const bannerSaid = (el: HTMLElement): string =>
-  (el.querySelector(".set-banner .lab span")?.textContent ?? "").trim();
+  (el.querySelector(".oh-settingnote")?.textContent ?? "").trim();
 
 describe("SURFACE 2 — the claim question's banner", () => {
   it("a phone holder gets the phone sentence, never the local one about 'this computer'", async () => {
@@ -555,10 +502,12 @@ describe("SURFACE 3 — the reader summary's holder row", () => {
      position is asserted here so a row inserted above cannot move every case onto another
      sentence and leave them all still passing. */
   const rowSaid = (el: HTMLElement): string => {
-    const rows = el.querySelectorAll(".ob-done .set-row");
-    expect((rows[0]?.querySelector(".lab b")?.textContent ?? "").trim(),
+    /* The summary's rows are the kit's lines, each with its note under it: what it reads, then who holds it. */
+    const notes = [...el.querySelectorAll(".oh-settingnote")];
+    const first = notes[0]?.previousElementSibling;
+    expect((first?.textContent ?? "").trim(),
       "the summary's rows moved — the holder row is no longer second").toBe(t.doneReaderReads);
-    return (rows[1]?.querySelector(".lab span")?.textContent ?? "").trim();
+    return (notes[1]?.textContent ?? "").trim();
   };
 
   it("a phone holder gets the phone sentence here too, from the same derivation", async () => {

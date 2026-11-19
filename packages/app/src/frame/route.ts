@@ -38,6 +38,7 @@ const LISTS_LETTERS: ReadonlySet<string> = new Set<PlaceId>([
   "news",
   "receipts",
   "history",
+  "drafts",
   "search",
   "tags",
   "folder",
@@ -205,7 +206,7 @@ const CALENDAR_PRODUCT_HEAD = "cal";
 const CALENDAR_BY_HEAD: ReadonlyMap<string, CalendarPlaceId> = new Map(
   (Object.entries(CALENDAR_ADDRESS) as [CalendarPlaceId, string][]).map(([place, head]) => [head, place]),
 );
-const CALENDAR_PANELS: ReadonlySet<string> = new Set(CALENDAR_PANEL_IDS);
+const CALENDAR_PANELS: ReadonlySet<string> = new Set([...CALENDAR_PANEL_IDS, "new"]);
 const DAY_SHAPE = /^(\d{4})-(\d{2})-(\d{2})$/;
 /** The tail segment before an open event. */
 const EVENT_MARK = "e";

@@ -57,6 +57,10 @@ export interface Element {
   kind: Kind;
   app: string | null;
   reference: string | null;
+  /** A signed-in host may draw this control inside a different wrapper than the inventory entry. */
+  matchedApp?: string;
+  /** The content-bearing child inside a painted card, when the app separates those elements. */
+  contentChild?: string;
   /** Its place is read from this element's corner on both sides, so a shift of the whole counts once, there. */
   in?: string;
   /** A count: its digits are each world's mail, so its words are not compared, and its width only at equal length. */
@@ -103,6 +107,7 @@ export function differ(
   app: Readings,
   reference: Readings,
   box: number,
+  sameMail = false,
 ): Row[] {
   const rows: Row[] = [];
   const row = (element: string, property: string, a: unknown, r: unknown) =>
@@ -127,9 +132,9 @@ export function differ(
       r = { ...r, x: Number(r.x) - Number(rIn.x), y: Number(r.y) - Number(rIn.y) };
     }
     const count = el.count ? el : el.beside ? elements.find((e) => e.name === el.beside) : undefined;
-    const digitsDiffer = !!count && lengthOf(app[count.name]) !== lengthOf(reference[count.name]);
+    const digitsDiffer = !sameMail && !!count && lengthOf(app[count.name]) !== lengthOf(reference[count.name]);
     for (const property of COMPARED[el.kind]) {
-      if (el.count && property === "text") continue;
+      if (!sameMail && el.count && property === "text") continue;
       if (digitsDiffer && (property === "w" || (el.count && property === "x"))) continue;
       const av = a[property];
       const rv = r[property];

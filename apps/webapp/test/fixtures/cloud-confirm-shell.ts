@@ -482,9 +482,9 @@ export const showsEnded = (el: HTMLElement): boolean =>
 export const showsUnconfirmed = (el: HTMLElement): boolean =>
   textOf(el).includes(messages.session.unconfirmedTitle);
 
-/** The mailbox itself. `AppShell`'s root node, which `isSameNode` comparisons hang off. */
+/** The mailbox itself: the frame's root node, which `isSameNode` comparisons hang off. */
 export const shellRoot = (el: HTMLElement): HTMLElement | null =>
-  el.querySelector<HTMLElement>(".today");
+  el.querySelector<HTMLElement>(".fr-root");
 
 /** The blocking overlay's node, `SessionEnded`'s markup — present only at `unconfirmed`. */
 export const overlay = (el: HTMLElement): HTMLElement | null =>

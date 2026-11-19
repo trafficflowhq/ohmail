@@ -304,6 +304,12 @@
       "node": "./dist/lists/pile-note.js",
       "default": "./src/lists/pile-note.ts"
     },
+    "./lists/place-live": {
+      "types": "./src/lists/place-live.ts",
+      "ohmail-source": "./src/lists/place-live.ts",
+      "node": "./dist/lists/place-live.js",
+      "default": "./src/lists/place-live.ts"
+    },
     "./lists/stream-landing-read": {
       "types": "./src/lists/stream-landing-read.ts",
       "ohmail-source": "./src/lists/stream-landing-read.ts",
@@ -351,6 +357,12 @@
       "ohmail-source": "./src/mail-state/address-key.ts",
       "node": "./dist/mail-state/address-key.js",
       "default": "./src/mail-state/address-key.ts"
+    },
+    "./mail-state/connection-reason": {
+      "types": "./src/mail-state/connection-reason.ts",
+      "ohmail-source": "./src/mail-state/connection-reason.ts",
+      "node": "./dist/mail-state/connection-reason.js",
+      "default": "./src/mail-state/connection-reason.ts"
     },
     "./mail-state/mail-state": {
       "types": "./src/mail-state/mail-state.ts",
@@ -538,11 +550,29 @@
       "node": "./dist/mailboxes/first-run/answers.js",
       "default": "./src/mailboxes/first-run/answers.ts"
     },
+    "./mailboxes/first-run/decision-asked": {
+      "types": "./src/mailboxes/first-run/decision-asked.ts",
+      "ohmail-source": "./src/mailboxes/first-run/decision-asked.ts",
+      "node": "./dist/mailboxes/first-run/decision-asked.js",
+      "default": "./src/mailboxes/first-run/decision-asked.ts"
+    },
+    "./mailboxes/first-run/decision-reopen": {
+      "types": "./src/mailboxes/first-run/decision-reopen.ts",
+      "ohmail-source": "./src/mailboxes/first-run/decision-reopen.ts",
+      "node": "./dist/mailboxes/first-run/decision-reopen.js",
+      "default": "./src/mailboxes/first-run/decision-reopen.ts"
+    },
     "./mailboxes/first-run/ground": {
       "types": "./src/mailboxes/first-run/ground.ts",
       "ohmail-source": "./src/mailboxes/first-run/ground.ts",
       "node": "./dist/mailboxes/first-run/ground.js",
       "default": "./src/mailboxes/first-run/ground.ts"
+    },
+    "./mailboxes/first-run/live": {
+      "types": "./src/mailboxes/first-run/live.ts",
+      "ohmail-source": "./src/mailboxes/first-run/live.ts",
+      "node": "./dist/mailboxes/first-run/live.js",
+      "default": "./src/mailboxes/first-run/live.ts"
     },
     "./mailboxes/first-run/pull-rate": {
       "types": "./src/mailboxes/first-run/pull-rate.ts",
@@ -657,6 +687,12 @@
       "ohmail-source": "./src/mailboxes/pane/lines.ts",
       "node": "./dist/mailboxes/pane/lines.js",
       "default": "./src/mailboxes/pane/lines.ts"
+    },
+    "./mailboxes/pane/notices": {
+      "types": "./src/mailboxes/pane/notices.ts",
+      "ohmail-source": "./src/mailboxes/pane/notices.ts",
+      "node": "./dist/mailboxes/pane/notices.js",
+      "default": "./src/mailboxes/pane/notices.ts"
     },
     "./mailboxes/pane/organizer": {
       "types": "./src/mailboxes/pane/organizer.ts",
@@ -1066,6 +1102,12 @@
       "node": "./dist/screener/index.js",
       "default": "./src/screener/index.ts"
     },
+    "./screener/ai-refusal-copy": {
+      "types": "./src/screener/ai-refusal-copy.ts",
+      "ohmail-source": "./src/screener/ai-refusal-copy.ts",
+      "node": "./dist/screener/ai-refusal-copy.js",
+      "default": "./src/screener/ai-refusal-copy.ts"
+    },
     "./screener/decision": {
       "types": "./src/screener/decision.ts",
       "ohmail-source": "./src/screener/decision.ts",
@@ -1143,6 +1185,12 @@
       "ohmail-source": "./src/search/index.ts",
       "node": "./dist/search/index.js",
       "default": "./src/search/index.ts"
+    },
+    "./search/open-target": {
+      "types": "./src/search/open-target.ts",
+      "ohmail-source": "./src/search/open-target.ts",
+      "node": "./dist/search/open-target.js",
+      "default": "./src/search/open-target.ts"
     },
     "./session": {
       "types": "./src/session/index.ts",
@@ -1228,6 +1276,12 @@
       "node": "./dist/session/programmatic-scroll.js",
       "default": "./src/session/programmatic-scroll.ts"
     },
+    "./session/pull-new-mail": {
+      "types": "./src/session/pull-new-mail.ts",
+      "ohmail-source": "./src/session/pull-new-mail.ts",
+      "node": "./dist/session/pull-new-mail.js",
+      "default": "./src/session/pull-new-mail.ts"
+    },
     "./session/resume-lane": {
       "types": "./src/session/resume-lane.ts",
       "ohmail-source": "./src/session/resume-lane.ts",
@@ -1281,6 +1335,12 @@
       "ohmail-source": "./src/storage/cookie-jar.ts",
       "node": "./dist/storage/cookie-jar.js",
       "default": "./src/storage/cookie-jar.ts"
+    },
+    "./storage/durability-lost": {
+      "types": "./src/storage/durability-lost.ts",
+      "ohmail-source": "./src/storage/durability-lost.ts",
+      "node": "./dist/storage/durability-lost.js",
+      "default": "./src/storage/durability-lost.ts"
     },
     "./storage/durable": {
       "types": "./src/storage/durable.ts",
@@ -1372,6 +1432,12 @@
       "node": "./dist/touch/row-swipe.js",
       "default": "./src/touch/row-swipe.ts"
     },
+    "./write/dropped-files": {
+      "types": "./src/write/dropped-files.ts",
+      "ohmail-source": "./src/write/dropped-files.ts",
+      "node": "./dist/write/dropped-files.js",
+      "default": "./src/write/dropped-files.ts"
+    },
     "./write/files": {
       "types": "./src/write/files.ts",
       "ohmail-source": "./src/write/files.ts",
@@ -1395,6 +1461,12 @@
       "ohmail-source": "./src/writing/index.ts",
       "node": "./dist/writing/index.js",
       "default": "./src/writing/index.ts"
+    },
+    "./writing/answer": {
+      "types": "./src/writing/answer.ts",
+      "ohmail-source": "./src/writing/answer.ts",
+      "node": "./dist/writing/answer.js",
+      "default": "./src/writing/answer.ts"
     },
     "./writing/compose": {
       "types": "./src/writing/compose.ts",

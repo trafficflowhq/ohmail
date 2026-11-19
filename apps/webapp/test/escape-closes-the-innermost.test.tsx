@@ -21,7 +21,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
-const { KeymapProvider } = await import("@ohmail/app/keys");
+const { KeymapProvider } = await import("../../../test/support/keymap-provider");
 
 let roots: Root[] = [];
 let foreign: Array<() => void> = [];

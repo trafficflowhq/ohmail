@@ -39,7 +39,7 @@ import {
   type HttpResponse,
   type Precondition,
 } from "../request/index.js";
-import { alreadyHolds } from "../write-compare.js";
+import { alreadyHolds, sameAudience } from "../write-compare.js";
 import { recordOf } from "./convert.js";
 import { graphBaseOf } from "./graph.js";
 import { graphAuthorization, type MicrosoftDeps } from "./reader.js";
@@ -192,13 +192,18 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     notes: boolean,
     signal: AbortSignal,
   ): Promise<Precondition | Refusal> {
-    if (sendableTag(target.version) && !notes) return { kind: "unchanged", tag: target.version };
+    if (!target.audience && sendableTag(target.version) && !notes) return { kind: "unchanged", tag: target.version };
     const now = await read(token, id, signal);
     if ("ok" in now) return now;
     if (now.status !== 200) return refusalOf(now, "event_gone");
     const held = itemOf(now);
     if (held === null || held.item === null || held.item.kind !== "upsert") return refused("version_unknown");
     if (held.item.version !== target.version) return refused("version_stale");
+    if (target.audience) {
+      const raw = held.raw.attendees;
+      const count = Array.isArray(raw) ? raw.length : raw === undefined ? 0 : -1;
+      if (held.raw["attendees@odata.nextLink"] !== undefined || !sameAudience(target.audience, held.item.event, count)) return refused("version_stale");
+    }
     if (notes && isRecord(held.raw.body) && String(held.raw.body.contentType).toLowerCase() === "html")
       return refused("field_unwritable");
     const tag = typeof held.raw["@odata.etag"] === "string" ? held.raw["@odata.etag"] : "";

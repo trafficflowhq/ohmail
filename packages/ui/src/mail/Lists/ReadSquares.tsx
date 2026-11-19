@@ -1,4 +1,11 @@
-import { useLayoutEffect, useRef, type CSSProperties, type MouseEvent } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import { cssRect, type CssRect } from "../../base/ui-zoom.js";
 import { animate } from "../../motion/motion.js";
 import "./read-squares.css";
@@ -29,13 +36,65 @@ export interface ReadSquaresProps {
   run?: SquaresRun;
   /** A press on a square: the conversation opens on that message. */
   onJump?: (index: number) => void;
+  /**
+   * Each square's name, said to a screen reader ("Anna Roth, Mon 08:00"). With `onJump` the squares are then one
+   * roving set the keyboard walks: one tab stop, on the reader's square; the arrows, Home and End move it; Enter or
+   * Space opens that message. Without names they stay a picture the pointer presses.
+   */
+  names?: readonly string[];
+  /** The keys moved onto a square (a run then pulls a square beyond it over: `squaresWindow`'s `focus`). */
+  onFocusSquare?: (index: number) => void;
+}
+
+const BACK = new Set(["ArrowLeft", "ArrowUp"]);
+const ON = new Set(["ArrowRight", "ArrowDown"]);
+
+/** The roving tab stop of the squares, and their keys: it rests on the reader's square until the keys move it. */
+function useSquareKeys(count: number, here: number | undefined, on: boolean, props: ReadSquaresProps) {
+  const [stop, setStop] = useState<number | null>(null);
+  const [was, setWas] = useState(here);
+  if (was !== here) {
+    setWas(here);
+    setStop(null);
+  }
+  const at = Math.min(stop ?? here ?? 0, Math.max(count - 1, 0));
+  const keys = (event: KeyboardEvent<HTMLElement>) => {
+    const slot = (event.target as HTMLElement).closest<HTMLElement>("[data-square]");
+    if (!on || !slot) return;
+    const from = Number(slot.dataset.square);
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      props.onJump?.(from);
+      return;
+    }
+    const to = BACK.has(event.key)
+      ? Math.max(from - 1, 0)
+      : ON.has(event.key)
+        ? Math.min(from + 1, count - 1)
+        : event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? count - 1
+            : null;
+    if (to === null) return;
+    event.preventDefault();
+    if (to === from) return;
+    setStop(to);
+    slot.parentElement?.querySelector<HTMLElement>(`[data-square="${to}"]`)?.focus({ preventScroll: true });
+    props.onFocusSquare?.(to);
+  };
+  return { at, keys };
 }
 
 /**
  * How far a conversation is read, and where the reader is in it. Longer than its room, a run of the
  * squares stands and each edge that hides more says how many; nothing is ever cut.
  */
-export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSquaresProps) {
+export function ReadSquares(props: ReadSquaresProps) {
+  const { squares, here, axis, label, run, onJump, names } = props;
+  /* A control the keyboard stops on only where a press goes somewhere and each square can be named. */
+  const walks = Boolean(onJump && names);
+  const { at, keys } = useSquareKeys(squares.length, here, walks, props);
   const before = run ? run.from : 0;
   const after = run ? squares.length - run.to : 0;
   const long = before > 0 || after > 0;
@@ -78,6 +137,7 @@ export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSqu
       data-press={onJump ? "" : undefined}
       style={room}
       onClick={jump}
+      onKeyDown={walks ? keys : undefined}
     >
       <i className="oh-readsquares-more" data-on={before ? "" : undefined} aria-hidden="true">
         {before ? `+${before}` : null}
@@ -87,7 +147,10 @@ export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSqu
         return (
           <i
             key={index}
-            className="oh-readsquares-slot"
+            className={walks ? "oh-control oh-readsquares-slot" : "oh-readsquares-slot"}
+            role={walks ? "button" : undefined}
+            aria-label={walks ? names![index] : undefined}
+            tabIndex={walks ? (index === at ? 0 : -1) : undefined}
             data-kind={kind}
             data-square={index}
             data-here={index === here ? "" : undefined}

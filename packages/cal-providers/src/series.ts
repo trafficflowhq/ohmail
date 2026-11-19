@@ -419,6 +419,33 @@ export function spelledAs(p: Property, name: string): boolean {
   return head.startsWith(name) && !/^[A-Z0-9-]/.test(head.slice(name.length));
 }
 
+/** A whole-day personal series whose metadata can be changed under each of the three scopes. */
+export function personalSeriesOf(text: string | null): boolean {
+  if (text === null) return false;
+  const read = readCalendar(text, DEFAULT_LIMITS);
+  if (!read.ok || read.dropped.length || read.calendar.events.length !== 1) return false;
+  const [event] = read.calendar.events;
+  if (
+    !event ||
+    event.recurrenceId ||
+    event.status === "CANCELLED" ||
+    event.start?.kind !== "date" ||
+    event.end?.kind !== "date"
+  )
+    return false;
+  if (
+    event.rules.length !== 1 ||
+    !event.rules[0]?.rule ||
+    !/^FREQ=(DAILY|WEEKLY)(;(COUNT=[1-9]\d*|UNTIL=\d{8}))?$/.test(event.rules[0].text)
+  )
+    return false;
+  return !event.component.properties.some((p) =>
+    ["ATTENDEE", "ORGANIZER", "EXRULE", "RDATE", "EXDATE", "RECURRENCE-ID"].some((name) =>
+      spelledAs(p, name),
+    ),
+  );
+}
+
 /** Is this line one the calendar core's reader takes under `name` (its name that word in any case, and nothing else)? */
 const readAs = (p: Property, name: string): boolean => p.name !== "" && p.name.toUpperCase() === name;
 

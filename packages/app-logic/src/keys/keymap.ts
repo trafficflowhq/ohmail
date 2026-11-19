@@ -45,6 +45,12 @@ export const BINDING_GROUPS: BindingGroup[] = ["navigate", "message", "screener"
 export type CursorPlacer = (label: string) => boolean;
 
 /**
+ * How long a placer's sentence stands. Shorter than a report's own time: it carries nothing to press, and the
+ * second press is meant to follow it at once.
+ */
+export const CURSOR_HINT_MS = 2400;
+
+/**
  * WHICH LAYER A PLACER SPEAKS FOR — the placer's half of {@link BindingScope}, and for the same
  * reason: `view` beats `global`, whatever the component tree says. A view that holds its own list
  * cursor mounts BELOW the shell, so React runs its effect FIRST and the shell's claim is always

@@ -65,9 +65,9 @@ import {
   looksLikeWithheldFileDrag,
   takeDroppedFiles,
   type DroppedSource,
-} from "../shell/dropped-files";
+} from "@ohmail/app-logic/write/dropped-files";
 import { activeFormatLocale } from "../shell/locale";
-import { useTodaysScope } from "../shell/todays-scope";
+import { useScopeHere } from "@ohmail/app/frame";
 import { AttachThumb, ComposeAttachPreview, useImageUrls, type ComposeLookEntry } from "./compose-attach-look";
 
 /**
@@ -337,7 +337,7 @@ export function ComposeAttach({
   const levelRef = useRef<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
   /* Whose preference the dial edits: the scope of the shell it is drawn in. Drawn in none, the dial shows the default
      and stores nothing. */
-  const scope = useTodaysScope();
+  const scope = useScopeHere();
   useEffect(() => {
     if (scope === null) return;
     const stored = readImageQualityLevel(scope);

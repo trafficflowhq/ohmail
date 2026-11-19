@@ -12,7 +12,6 @@ import {
 import { ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { COMMIT_MS, UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
-import { createDeleteUndo } from "@ohmail/app-logic/press/delete-undo";
 
 /**
  * THE DECISION'S UNDO OUTLIVES THE SUGGESTION SUMMARY — the tester's re-read on a fake server.
@@ -129,7 +128,7 @@ async function mount(engine: OhmailEngine, autoSuggest: boolean): Promise<void> 
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   function Probe(): React.ReactElement {
     const toast = useToast();
     const [v, setV] = React.useState(0);
@@ -313,28 +312,5 @@ describe("an Undo whose window closed early is withdrawn, never left above its o
     expect(decides(), "committed at once").toHaveLength(1);
     expect(undoCapsule(), "a dead Undo is not left on screen").toBeNull();
   });
-
-  it("the delete window withdraws its Undo when it is flushed or undone from the keyboard", () => {
-    const signals: AbortSignal[] = [];
-    let n = 0;
-    const queue = createDeleteUndo({
-      scope: null,
-      mutate: async () => ({ status: "confirmed" }) as never,
-      toast: (_m, o) => { if (o?.signal) signals.push(o.signal); },
-      copy: {
-        deleted: "Deleted.", undo: "Undo", undone: "Kept.", failed: "Refused.", noUndo: "No undo.",
-      },
-      onHeld: () => {},
-      refusal: () => null,
-      pressId: () => `press-${++n}`,
-    });
-    expect(queue.remove({ id: "m1", mailboxId: "mb1" })).toBe(true);
-    expect(signals, "the premise: the press offered an Undo under a signal").toHaveLength(1);
-    expect(signals[0]!.aborted).toBe(false);
-    queue.flush();
-    expect(signals[0]!.aborted, "flushed early: the capsule is withdrawn").toBe(true);
-    queue.remove({ id: "m2", mailboxId: "mb1" });
-    queue.undo("m2");
-    expect(signals[1]!.aborted, "undone from the keyboard: the capsule's Undo is spent").toBe(true);
-  });
+  // The delete window's case moved word for word to `delete-undo-withdrawn.test.ts` (the ground's press seam).
 });

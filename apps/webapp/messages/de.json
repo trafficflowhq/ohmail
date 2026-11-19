@@ -545,6 +545,7 @@
     "search": "Suche",
     "settings": "Einstellungen",
     "mailboxes": "Postfächer",
+    "mailboxCount": "{count, plural, one {1 Postfach} other {# Postfächer}}",
     "ariaMain": "Hauptnavigation",
     "ohboxTitle": "{unread, number} ungelesen",
     "readsTitle": "{count, plural, =0 {Nichts Neues} one {# neue} other {# neue}} seit deinem letzten Besuch",
@@ -554,7 +555,7 @@
     "draftsTitle": "{count, plural, one {1 Entwurf} other {# Entwürfe}}",
     "getDesktop": "ohmail für den Desktop holen",
     "getDesktopDismiss": "Ausblenden",
-    "getDesktopOpen": "Herunterladen"
+    "getDesktopOpen": "Holen"
   },
   "ohbox": {
     "title": "Ohbox",
@@ -1975,6 +1976,7 @@
     "notifyUnsupported": "Dieses Gerät hat keine Benachrichtigungszentrale, es gibt hier also nichts zu senden.",
     "notifyOsHeld": "Dieser Schalter entscheidet, ob ohmail deinen Computer bittet, eine Meldung anzuzeigen. Ob sie dann erscheint, entscheidet dein Computer — das änderst du in den Systemeinstellungen und nicht hier.",
     "notifyClosedBody": "Neue Mail.",
+    "notifyWakeUnsupported": "Dieser Browser kann Benachrichtigungen nur anzeigen, solange ohmail geöffnet ist.",
     "notifyNoServerKey": "Dieser Server hat keinen Signaturschlüssel eingerichtet und kann diesen Browser daher nicht wecken. Die Schalter oben gelten weiterhin, solange ohmail geöffnet ist.",
     "notifyRowRemains": "Dieser Browser wird nicht mehr geweckt, aber der Server hat noch eine Registrierung dafür. Sie wird beim nächsten Ausschalten entfernt.",
     "notifyNotRegistered": "Dieser Browser konnte gerade nicht für Weckrufe registriert werden. Es wird beim nächsten Öffnen dieser Einstellungen erneut versucht.",
@@ -2233,6 +2235,7 @@
   "reader": {
     "gone": "Diese Nachricht wurde anderswo verschoben oder gelöscht.",
     "goneTrash": "Im Papierkorb nachsehen",
+    "trashAsk": "In den Papierkorb verschieben",
     "goneShort": "Anderswo verschoben oder gelöscht",
     "hint": "zum Zurückgehen",
     "back": "Zurück",
@@ -2259,6 +2262,7 @@
       "replyAll": "Allen antworten",
       "markUnread": "Als ungelesen markieren",
       "markRead": "Als gelesen markieren",
+      "markReadCount": "{count, plural, one {1 ungelesene Nachricht} other {# ungelesene Nachrichten}} als gelesen markieren",
       "more": "Mehr",
       "aside": "Parken",
       "later": "Später",
@@ -2375,6 +2379,7 @@
     "moreRecipientsAriaFolder": "Alle Empfänger und den Ablageort dieser Nachricht anzeigen",
     "contactAria": "Optionen für {who}",
     "copyAddress": "Adresse kopieren",
+    "addressOpen": "Alles von und an diese Adresse",
     "write": "Schreiben",
     "screenerSettings": "Screener-Einstellungen",
     "expand": "Nachricht von {sender} lesen",
@@ -3490,6 +3495,9 @@
     "noticeRowUnknown": "eine andere ohmail-Installation",
     "noticeRowStopped": "{name} · gestoppt",
     "noticeRowStoppedUnknown": "gestoppt",
+    "noticeMailboxRow": "{address} · {holder}",
+    "noticeOtherMailboxes": "{count, plural, one {# weiteres Postfach} other {# weitere Postfächer}}",
+    "noticeMailboxList": "{list}.",
     "noticeDismiss": "Ausblenden",
     "noticeOpenMailboxes": "Postfächer",
     "noticeDismissOffline": "Nicht ausgeblendet — du bist offline.",
@@ -3613,6 +3621,7 @@
     "rail_pull": "Erster Durchlauf",
     "rail_decide": "Erste Entscheidung",
     "rail_done": "Fertig",
+    "railSaid": "Schritt {n} von {total}, {phase}",
     "cancel": "Einrichtung abbrechen",
     "restart": "Von vorn",
     "back": "Zurück",
@@ -5867,6 +5876,10 @@
     "byHandLabel": "Schlüssel"
   },
   "accountOwn": {
+    "signedInLabel": "Angemeldet als",
+    "managed": "ohmail Cloud",
+    "self": "Dein eigener Server",
+    "ownComputer": "Dieser Computer",
     "signedIn": "Angemeldet",
     "thisBrowser": "Dieser Browser",
     "changeLabel": "Passwort",
@@ -5965,6 +5978,11 @@
     "elsewhere": "Eine andere Installation organisiert dieses Postfach jetzt. Es wurde nichts geändert."
   },
   "frame": {
+    "products": {
+      "label": "Mail oder Kalender",
+      "mail": "Mail",
+      "cal": "Kalender"
+    },
     "landmark": {
       "places": "Orte",
       "fedRail": "Hauptnavigation",
@@ -5986,7 +6004,8 @@
     },
     "notice": {
       "more": "{count} weitere",
-      "moreName": "{count, plural, one {# weiterer Hinweis} other {# weitere Hinweise}}"
+      "moreName": "{count, plural, one {# weiterer Hinweis} other {# weitere Hinweise}}",
+      "moreClose": "Schließen"
     },
     "systemNotice": {
       "ohboxTitle": "Neue Mail",
@@ -6558,7 +6577,48 @@
     "coming": "Demnächst mit {name}"
   },
   "calendar": {
+    "edit": {
+      "whichEvents": "Welche Termine ändern sich?",
+      "thisEvent": "Dieser Termin",
+      "following": "Dieser und folgende",
+      "allEvents": "Alle Termine",
+      "tell": "{guests} benachrichtigen",
+      "others": "{count, plural, one {# weitere Person} other {# weitere Personen}}",
+      "tells": "Dein Kalender sendet ihnen die Änderung für „{title}“.",
+      "sendUpdate": "Änderung senden",
+      "cancel": "Abbrechen",
+      "action": "Bearbeiten",
+      "event": "Termin bearbeiten",
+      "keepMine": "Meine behalten",
+      "keepTheirs": "Andere behalten",
+      "discard": "Änderungen verwerfen"
+    },
+    "create": {
+      "title": "Neuer Termin",
+      "name": "Termintitel",
+      "date": "Datum",
+      "to": "Ende",
+      "toWord": "bis",
+      "allDay": "Ganztägig",
+      "calendar": "Kalender",
+      "choose": "Kalender wählen",
+      "busy": "Beschäftigt",
+      "private": "Privat",
+      "place": "Ort",
+      "notes": "Notizen",
+      "add": "Hinzufügen",
+      "noCalendar": "Wähle einen Kalender, in dem du Termine anlegen kannst.",
+      "from": "Beginn"
+    },
     "landmark": "Kalender",
+    "closeEvent": "Schließen",
+    "places": "Kalendernavigation",
+    "invitations": "Einladungen",
+    "fromMail": "Aus E-Mails",
+    "more": "Mehr",
+    "people": "Personen",
+    "atTime": "{day}, {time}",
+    "interval": "{first} – {last}",
     "unreadable": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
     "noZone": "Der Kalender kann nicht gezeichnet werden: Dieses Gerät kennt seine Zeitzone nicht.",
     "notHere": "Dieser Teil des Kalenders ist noch nicht da.",
@@ -6679,6 +6739,7 @@
       "itWasSent": "Sie wurde gesendet — ausblenden"
     },
     "letter": "Neue Nachricht",
+    "back": "Ohbox",
     "foot": "Formatierung und Dateien",
     "text": "Nachricht",
     "placeholder": "Schreib deine Nachricht",
@@ -6690,6 +6751,8 @@
     "subjectPlaceholder": "Betreff",
     "remove": "{name} entfernen",
     "refused": "Keine Adresse: {list}",
+    "suggestions": "Adressvorschläge",
+    "wroteToYou": "hat dir geschrieben",
     "verbs": "Senden oder verwerfen",
     "send": "Senden",
     "discard": "Verwerfen",
@@ -6824,6 +6887,7 @@
       }
     },
     "draft": {
+      "placeholder": "Schreib deine Nachricht oder Stichworte für einen Entwurf",
       "verb": "Antwort entwerfen",
       "again": "Erneut entwerfen",
       "running": "Wird entworfen …",

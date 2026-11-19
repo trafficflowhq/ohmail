@@ -42,7 +42,7 @@ export interface StreamScrollOptions {
   readonly contentKey: unknown;
   /** The view's cursor: one this stream did not announce itself was put there by the person, and is held. */
   readonly cursor?: string | null;
-  readonly onCurrentChange: (id: string) => void;
+  readonly onCurrentChange: (id: string, byHand?: boolean) => void;
   /** The view's order over the whole pile (`-1` for an id it does not hold). */
   readonly pileIndexOf?: (id: string) => number;
   readonly seam?: StreamScrollSeam;

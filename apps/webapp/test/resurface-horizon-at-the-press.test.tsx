@@ -2,10 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { setActiveFormatZone } from "../app/shell/locale";
 import { useDayClock } from "@ohmail/app-logic/session/day-clock";
+import { bookedIn, mountResurface, openResurface, zoneIs, type ResurfaceWorld } from "./_reader-2-resurface.js";
 
 /**
  * ═══ "TOMORROW" IS TOMORROW AT THE PRESS, NEVER AT THE MOUNT ════════════════════════════════
@@ -30,8 +30,9 @@ import { useDayClock } from "@ohmail/app-logic/session/day-clock";
  *
  * ── HOW TO WATCH IT FAIL ────────────────────────────────────────────────────────────────────
  *
- *  · In `MessagePane`, mint the horizon at RENDER again — `pick(() => tomorrowAt(nowAt(), …))`
- *    → `pick(() => tomorrow)` — and cases 1 and 2 go red on the booked day.
+ *  · In the reader's chooser (`packages/app/src/reader/actions/ResurfaceMenu.tsx`), mint the horizon at
+ *    RENDER again — `dated(() => resurfaceHorizonsIn(new Date(), at, zone).tomorrow)` → `dated(() => tomorrow)`
+ *    — and cases 1 and 2 go red on the booked day. (Cases 1 to 4 run over the new reader's chooser.)
  *  · In `day-clock.ts`, make the watch always re-read (drop the day comparison) and case 4's
  *    same-day arm goes red; make it never re-read and the midnight arm goes red.
  */
@@ -69,20 +70,8 @@ function readerDay(iso: string): string {
   }).format(new Date(iso));
 }
 
-const MESSAGE: Record<string, unknown> = {
-  id: "m1", accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-  subject: "subj", from: { name: "Andi", address: "andi@ex.example" }, to: [], cc: [],
-  date: "2026-09-12T09:00:00.000Z", folder: "INBOX", snippet: "snip",
-  unread: false, hasAttachments: false, attachmentCount: 0,
-  sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-  triage: null, labels: [], remoteContent: "none", updatedAt: "2026-09-12T09:00:00.000Z",
-};
-
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-let log: string[] = [];
-/** The clock the chrome hands the strip — the shell's own `nowAt`, under the test's control. */
-let clock = LATE;
 
 async function unmount(): Promise<void> {
   if (root) await act(async () => { root!.unmount(); });
@@ -91,72 +80,39 @@ async function unmount(): Promise<void> {
   host = null;
 }
 
+/**
+ * The new reader's chooser, its letter open, the clock under the test's control: the platform's `Date` is faked
+ * (nothing else), so a press reads the instant the case sets, and the reader reads its zone off the platform.
+ */
+let world: ResurfaceWorld = { log: [] };
+let undoZone: () => void = () => {};
 async function mountBar(): Promise<void> {
-  await unmount();
-  const { MessageActionBar } = await import("../app/shell/MessagePane.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  const chrome: Record<string, unknown> = {
-    ownAddresses: [],
-    replyTo: null,
-    replyBody: { text: "", html: "" },
-    onReplyBody: () => {},
-    closeReply: () => {},
-    sendReply: () => {},
-    replySendState: () => ({ phase: "idle" }),
-    openSenderMenu: () => {},
-    conversationOf: () => [],
-    bodyOf: (m: Record<string, unknown>) => ({
-      text: m.snippet as string, state: "snippet", html: null,
-      loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
-    }),
-    hydrateBody: () => {},
-    hydrateThread: () => {},
-    resurfaceTime: null,
-    // THE SEAM UNDER TEST: the shell's press-time clock, asked rather than captured.
-    nowAt: () => clock,
-  };
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: ZONE, now: LATE,
-        children: h(MessageChromeProvider as never, {
-          value: chrome,
-          children: h(MessageActionBar as never, {
-            // The MOUNT value, deliberately stale by the time anything is pressed — this is
-            // exactly the value the defect used.
-            message: MESSAGE, now: LATE, onAction: (a: string) => log.push(a),
-          } as never),
-        } as never),
-      }),
-    );
-  });
+  world = mountResurface();
 }
 
-const byText = (text: string): HTMLElement => {
-  const found = [...host!.querySelectorAll("button")]
-    .filter((b) => (b.textContent ?? "").trim().startsWith(text));
-  expect(found, `expected exactly one button starting "${text}"`).toHaveLength(1);
-  return found[0] as HTMLElement;
-};
-
 async function openStrip(): Promise<void> {
-  await act(async () => { byText("Resurface").click(); });
+  await act(async () => { openResurface(); });
+}
+
+async function press(name: RegExp): Promise<void> {
+  await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name })); });
 }
 
 /** The instant the strip dispatched, off the one `resurface:` action it raised. */
 function booked(): string {
-  const line = log.find((l) => l.startsWith("resurface:"));
+  const line = bookedIn(world.log);
   expect(line, "the strip dispatched no dated resurface").toBeTruthy();
-  return line!.slice("resurface:".length);
+  return line!;
+}
+
+/** The clock the reader reads at the press. */
+function clockIs(at: Date): void {
+  vi.setSystemTime(at);
 }
 
 beforeEach(() => {
   setActiveFormatZone(ZONE);
-  log = [];
-  clock = LATE;
+  world = { log: [] };
 });
 
 afterEach(async () => {
@@ -166,40 +122,51 @@ afterEach(async () => {
 });
 
 describe("the horizon is minted from the clock at the press", () => {
+  beforeEach(() => {
+    undoZone = zoneIs(ZONE);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    clockIs(LATE);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    undoZone();
+  });
+
   it("mounted at 23:59 and pressed at 05:01, Tomorrow is the NEW tomorrow", async () => {
     await mountBar();
     await openStrip();
     // The day turns while the strip stands open — nothing re-mounts, nothing re-renders. Past
     // the small hours, because until 05:00 "Tomorrow" is the coming morning, the 13th.
-    clock = NEXT_MORNING;
-    await act(async () => { byText("Tomorrow").click(); });
+    clockIs(NEXT_MORNING);
+    await press(/^Tomorrow/);
     expect(readerDay(booked()), "the booking came from the day the app was opened on")
       .toBe("2026-09-14");
   });
 
   it("Next week moves with it", async () => {
-    clock = SUNDAY_SMALL_HOURS;
+    clockIs(SUNDAY_SMALL_HOURS);
     await mountBar();
     await openStrip();
-    clock = MONDAY_EARLY;
-    await act(async () => { byText("Next week").click(); });
+    clockIs(MONDAY_EARLY);
+    await press(/^Next week/);
     // Pressed on the Monday, "next week" is the Monday after — never the one this press is on.
     expect(readerDay(booked()), "the horizon came from the Sunday the strip opened on")
       .toBe("2026-09-21");
   });
 
   it("…and from the Sunday it would have been the 14th (the pair's other side)", async () => {
-    clock = SUNDAY_SMALL_HOURS;
+    clockIs(SUNDAY_SMALL_HOURS);
     await mountBar();
     await openStrip();
-    await act(async () => { byText("Next week").click(); });
+    await press(/^Next week/);
     expect(readerDay(booked())).toBe("2026-09-14");
   });
 
   it("a press inside the same day is unchanged (the positive control)", async () => {
     await mountBar();
     await openStrip();
-    await act(async () => { byText("Tomorrow").click(); });
+    await press(/^Tomorrow/);
     expect(readerDay(booked())).toBe("2026-09-13");
   });
 });

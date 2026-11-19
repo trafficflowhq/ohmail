@@ -1,13 +1,10 @@
 /** @vitest-environment jsdom */
 /**
- * THE ROOM, WHERE NO READER TURNS IT ON. Under a shell that hands its own seam the room is on at every place the frame
- * draws but the body that shell keeps: a seated place that names no reader presses through the handed seam, and the
- * room mounts none of its own. And the mailbox facts have one reader in a frame: a part above the panes that holds
- * them hands them to the room, which then reads the host never. And a host that hands nothing above the panes and no
- * reader has no seam at all: nothing there can press.
+ * THE ROOM, WHERE NO READER TURNS IT ON. The mailbox facts have one reader in a frame: a part above the panes that
+ * holds them hands them to the room, which then reads the host never. And a host that hands nothing above the panes
+ * and no reader has no seam at all: nothing there can press.
  *
- * The press seam's hook is counted where the frame's room calls it. The shell of these cases calls the real one
- * itself, uncounted, as the old shell does.
+ * The press seam's hook is counted where the frame's room calls it.
  */
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useCallback, useState, type ReactNode } from "react";
@@ -20,7 +17,6 @@ import {
   useOwnAddresses,
   usePress,
   useRoomFacts,
-  useRoomHandOver,
   useRoomHolds,
 } from "../../src/frame/room.js";
 import { TextProvider } from "../../src/text/index.js";
@@ -49,10 +45,6 @@ vi.mock("@ohmail/app-logic/press/shell-dispatch", async (load) => {
     },
   };
 });
-const { useShellDispatch: theShellsOwn } = await vi.importActual<
-  typeof import("@ohmail/app-logic/press/shell-dispatch")
->("@ohmail/app-logic/press/shell-dispatch");
-
 const SCOPE = "acct-1";
 
 /** A seated place that names no reader: it presses through the frame's seam, and reads what the room holds. */
@@ -76,7 +68,7 @@ const SEATED: PlaceEntry = {
   panes: { kind: "wide", Wide: Seated },
 };
 
-/** The body the old shell keeps: what a press through the room answers there. */
+/** A place's body that says what a press through the room answers there. */
 function Kept({ route }: PaneProps) {
   let pressed = "the room's seam";
   try {
@@ -86,34 +78,6 @@ function Kept({ route }: PaneProps) {
   }
   return <p>{`today at ${route.place}: ${pressed}`}</p>;
 }
-const KEPT: PlaceEntry = {
-  id: "ohbox",
-  body: "today",
-  rail: null,
-  panes: { kind: "wide", Wide: Kept, kept: true },
-};
-
-/** The old shell, as far as the room meets it: it calls the press seam's hook itself and hands the room that seam. */
-function shellOver(mail: FakeMail) {
-  function Shell({ children }: { children: ReactNode }) {
-    const seam = theShellsOwn({
-      engine: mail.engine,
-      reader: mail.engine.read(),
-      toast: () => undefined,
-      t: (key) => key,
-      placeLabel: (folder) => folder,
-      demo: false,
-      refreshFacts: () => undefined,
-      scope: SCOPE,
-    });
-    /* The shell sets its own roster. It has no probe here: the wire is the authority, and a delete is not refused. */
-    seam.rosterRef.current = { kind: "absent" };
-    useRoomHandOver({ seam, rows: null, resurface: { stored: null, store: null } });
-    return <>{children}</>;
-  }
-  return Object.assign(Shell, { handsSeam: true as const });
-}
-
 function framed(input: Partial<FakeHostInput> & Pick<FakeHostInput, "engine">) {
   const { host } = fakeHost({ service: "self", scope: SCOPE, ...input });
   return (
@@ -134,30 +98,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-});
-
-describe("a seated place that names no reader, under a shell that hands its seam", () => {
-  it("presses through the handed seam: the press is held, that seam's journal holds it once, and the room mounts none", () => {
-    const mail = fakeMail([letter("m1")]);
-    const address = fakeAddress("#/search");
-    render(
-      framed({
-        engine: mail.engine,
-        places: { ohbox: KEPT, search: SEATED },
-        above: shellOver(mail),
-        address,
-      }),
-    );
-    expect(screen.getByText("seated at search: held none; own nobody")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Delete m1" }));
-    expect(screen.getByText("seated at search: held m1; own nobody")).toBeTruthy();
-    expect(takeDeleteIntents(Date.now(), SCOPE).map((pressed) => pressed.messageIds)).toEqual([["m1"]]);
-    expect(own, "the room called the press seam's hook itself").toEqual({ mounts: 0, live: 0 });
-    /* Over the body that shell keeps the room stays off: its views press through the shell's seam themselves. */
-    visit(address, "#/ohbox");
-    expect(screen.getByText("today at ohbox: usePress: no room is on here")).toBeTruthy();
-    expect(own).toEqual({ mounts: 0, live: 0 });
-  });
 });
 
 /** What the part above holds of the mailbox facts, as a test moves it. */
@@ -238,25 +178,6 @@ describe("the mailbox facts have one reader in a frame", () => {
     expect(host.times).toBe(1);
   });
 
-  it("in a room whose seam a shell hands, a part that hands facts is refused: they come with the hand-over", () => {
-    function Hands({ children }: { children: ReactNode }) {
-      useRoomFacts({ rows: null, refresh: () => undefined });
-      return <>{children}</>;
-    }
-    const mail = fakeMail([letter("m1")]);
-    const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(() =>
-      render(
-        framed({
-          engine: mail.engine,
-          places: { search: SEATED },
-          above: Object.assign(Hands, { handsSeam: true as const }),
-          address: fakeAddress("#/search"),
-        }),
-      ),
-    ).toThrow("useRoomFacts: this room's seam is handed, and its facts with it");
-    quiet.mockRestore();
-  });
 });
 
 describe("a host that hands nothing above the panes and no reader", () => {
@@ -312,16 +233,8 @@ describe("a host that hands nothing above the panes and no reader", () => {
     expect(screen.getByText("today at ohbox: usePress: no room is on here")).toBeTruthy();
   });
 
-  it("refuses a seam handed over and facts handed in: its record names nobody who could", () => {
+  it("refuses facts handed in: its record names nobody who could", () => {
     const mail = fakeMail([letter("m1")]);
-    function HandsOver() {
-      useRoomHandOver({
-        seam: {} as ReturnType<typeof usePress>,
-        rows: null,
-        resurface: { stored: null, store: null },
-      });
-      return null;
-    }
     function HandsFacts() {
       useRoomFacts({ rows: null, refresh: () => undefined });
       return null;
@@ -329,18 +242,20 @@ describe("a host that hands nothing above the panes and no reader", () => {
     const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
     for (const [Wide, refusal] of [
       [
-        HandsOver,
-        "useRoomHandOver: this room has no seam: its host hands nothing above the panes and no reader",
-      ],
-      [
         HandsFacts,
         "useRoomFacts: this room has no seam: its host hands nothing above the panes and no reader",
       ],
     ] as const) {
       const place: PlaceEntry = { id: "ohbox", body: "plain", rail: null, panes: { kind: "wide", Wide } };
-      expect(() =>
-        render(bare({ engine: mail.engine, places: { ohbox: place }, address: fakeAddress("#/ohbox") })),
-      ).toThrow(refusal);
+      /* The refusal is a throw in the place's render: the frame's boundary takes it to the place's pane and reports it
+         (`place-boundary.tsx`), so the refusal is read where it is reported. */
+      quiet.mockClear();
+      render(bare({ engine: mail.engine, places: { ohbox: place }, address: fakeAddress("#/ohbox") }));
+      const refused = quiet.mock.calls.filter(
+        (call: unknown[]) =>
+          call[0] === "[view] render failed" && (call[2] as Error | undefined)?.message === refusal,
+      );
+      expect(refused.length, refusal).toBeGreaterThan(0);
       cleanup();
     }
     quiet.mockRestore();

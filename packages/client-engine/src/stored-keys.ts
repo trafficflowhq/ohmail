@@ -446,7 +446,7 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.desktopCtaDismissed", store: "localStorage", owner: "web",
-    at: ["apps/webapp/app/shell/todays-feeds.tsx"],
+    at: ["packages/app-logic/src/storage/persisted-ui.ts"],
     holds: "that the desktop prompt was dismissed",
     words: false, erased: "never", mark: "kept",
   },

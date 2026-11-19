@@ -9,6 +9,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { QUEUED_HOLDER, queuedByOrganizer } from "../../../packages/client-engine/test/fixtures/press-answers.js";
+import { cursorRow, pickedRows } from "./ohbox/_finders.js";
 
 /**
  * ═══ A QUEUED ANSWER IS SAID AS QUEUED, AND NEVER COUNTED AS LANDED ═════════════════════════
@@ -70,6 +71,8 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* The frame's report animates its way out (the kit's motion): jsdom has no Web Animations. */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -106,7 +109,7 @@ afterEach(async () => {
 });
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -146,7 +149,8 @@ const said = (needle: string): boolean =>
 
 async function cursorOnFirstRow(): Promise<string> {
   await key("j");
-  const id = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")?.dataset.id;
+  /* The row the keys are on (today's `.row.sel`): the seated list's cursor row, or its open row. */
+  const id = cursorRow(host!)?.dataset.id;
   expect(id, "`j` put the cursor on no row").toBeTruthy();
   return id!;
 }
@@ -186,7 +190,7 @@ describe("a set: the sentence counts the whole press", () => {
     await cursorOnFirstRow();
     await key("ArrowDown", { shiftKey: true });
     await waitFor(
-      () => host!.querySelectorAll(".view-ohbox :is(.row.picked, [role=option][data-picked]), .view-ohbox :is(.row, [role=option])[aria-selected='true']").length > 0,
+      () => pickedRows(host!).length > 0,
       "nothing was picked",
     );
     recording = true;
@@ -204,7 +208,7 @@ describe("a set: the sentence counts the whole press", () => {
     await cursorOnFirstRow();
     await key("ArrowDown", { shiftKey: true });
     await waitFor(
-      () => host!.querySelectorAll(".view-ohbox :is(.row.picked, [role=option][data-picked]), .view-ohbox :is(.row, [role=option])[aria-selected='true']").length > 0,
+      () => pickedRows(host!).length > 0,
       "nothing was picked",
     );
     sent = [];

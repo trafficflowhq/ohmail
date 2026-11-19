@@ -1,9 +1,7 @@
-/**
- * TWO DESIGNS ON ONE PAGE, IN A REAL BROWSER. Today's sheets and the new design's both write the same seven names on
- * `:root`, with different meanings: `--float` is a colour to today's views and a shadow to the frame. The two seam
- * sheets declare each meaning again under its own root, so it holds whatever order the sheets load in and whatever
- * `:root` resolves to. jsdom has no cascade; Chromium does. Read in the four looks, with today's sheets loaded last.
- */
+/** The frame keeps its token values when the host also loads the original document styles. */
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ListHead } from "@ohmail/ui/mail";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -17,7 +15,6 @@ const css = (p: string): string => readFileSync(resolve(process.cwd(), p), "utf8
 const NEW = ["packages/tokens/src/design/tokens.css", "packages/ui/src/base/base.css", "packages/app/src/frame/seam.generated.css"];
 const TODAY = [
   "packages/tokens/src/tokens.css", "packages/tokens/src/faces.css", "packages/tokens/src/ohmarchy.css",
-  "apps/webapp/app/shell/today-tokens.generated.css",
 ];
 const LOOKS = [
   { face: "paper", theme: "light" }, { face: "paper", theme: "dark" },
@@ -32,12 +29,17 @@ describe("the seam between today's views and the frame", () => {
   for (const look of LOOKS) {
     it(`${look.face}, ${look.theme}: --float is a colour inside .today and a shadow inside .oh-root`, async () => {
       const page = await browser!.newPage();
-      const sheets = [...NEW, ...TODAY].map(css).join("\n");
-      await page.setContent(`<!doctype html><html data-face="${look.face}" data-theme="${look.theme}" data-scheme="${look.theme}"><head><style>${sheets}</style></head>
-        <body class="today"><div class="oh-root"><i id="frame"></i><div class="today"><i id="views"></i></div></div></body></html>`);
-      const read = (id: string) => page.$eval(`#${id}`, (el) => getComputedStyle(el).getPropertyValue("--float").trim());
-      const frame = await read("frame");
-      const views = await read("views");
+      const documentFor = (sheets: readonly string[], body: string) =>
+        `<!doctype html><html data-face="${look.face}" data-theme="${look.theme}" data-scheme="${look.theme}"><head><style>${sheets.map(css).join("\n")}</style></head><body class="today">${body}</body></html>`;
+      const value = () => page.locator("#sample").evaluate((el) => getComputedStyle(el).getPropertyValue("--float").trim());
+      await page.setContent(documentFor(TODAY, '<i id="sample"></i>'));
+      const views = await value();
+      const frameMarkup = '<div class="oh-root"><i id="sample"></i></div>';
+      await page.setContent(documentFor(NEW, frameMarkup));
+      const expectedFrame = await value();
+      await page.setContent(documentFor([...NEW, ...TODAY], frameMarkup));
+      const frame = await value();
+      expect(frame).toBe(expectedFrame);
       await page.close();
       // A shadow has an offset and a blur; a colour is one value.
       expect(frame, "the frame's --float is not a shadow").toMatch(/px/);
@@ -47,19 +49,16 @@ describe("the seam between today's views and the frame", () => {
   }
 });
 
-/**
- * TODAY'S VIEWS NAME THEIR PLACE AT EVERY WIDTH. Under 1024px `app.css` hid each view's own heading because the old top
- * bar carried the name; inside the frame, which has no top bar, the adapter's sheet shows it again. Read on a phone's
- * and a fold's width with the sheets the product page loads.
- */
+/** The list header the mail place renders stays visible on the phone, fold and desktop. */
 describe("a view's own heading inside the frame", () => {
-  const SHEETS = ["packages/ui/src/composites/list-pane.css", "apps/webapp/app/app.css", "apps/webapp/app/shell/today.css"];
+  const sheets = [...NEW, ...TODAY, "packages/ui/src/mail/Lists/list-head.css", "apps/webapp/app/app.css"];
+  const header = renderToStaticMarkup(createElement(ListHead, { title: "Trash" }));
   for (const [width, height] of [[390, 844], [719, 781], [1440, 900]] as const) {
     it(`stands on screen at ${width} by ${height}`, async () => {
       const page = await browser!.newPage({ viewport: { width, height } });
-      await page.setContent(`<!doctype html><html><head><style>${SHEETS.map(css).join("\n")}</style></head>
-        <body class="today"><div class="fr-wide"><div class="today"><div class="stage"><section class="view view-trash">
-        <div class="vhead"><h1>Trash</h1></div></section></div></div></div></body></html>`);
+      await page.setContent(`<!doctype html><html><head><style>${sheets.map(css).join("\n")}</style></head>
+        <body class="mo-canvas app-body today"><div class="oh-root"><div class="fr-columns"><section class="fr-list">
+        ${header}</section></div></div></body></html>`);
       const visible = await page.getByRole("heading", { name: "Trash" }).isVisible();
       await page.close();
       expect(visible, "no name of the place on screen").toBe(true);

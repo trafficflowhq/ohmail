@@ -5,6 +5,8 @@ import "./seg.css";
 export interface SegOption<V extends string> {
   value: V;
   label: string;
+  /** Spoken label where the choice and its count are printed separately. */
+  ariaLabel?: string;
   /** How many stand behind this choice. Zero shows nothing. */
   count?: number | string;
 }
@@ -51,6 +53,7 @@ export function Seg<V extends string>({ label, options, value, onChange, fit }: 
           key={option.value}
           type="button"
           className="oh-control oh-seg-item"
+          aria-label={option.ariaLabel}
           aria-pressed={option.value === value}
           onClick={() => onChange?.(option.value)}
         >

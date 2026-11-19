@@ -187,7 +187,7 @@ function commit(id: string): void {
 async function mountReceipts(rows: Row[], opts: { jump?: string } = {}): Promise<void> {
   await unmount();
   const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   live = rows.map((r) => ({ ...r }));
   cur = null;
   jumpTo = opts.jump ?? null;
@@ -238,7 +238,7 @@ async function mountReceipts(rows: Row[], opts: { jump?: string } = {}): Promise
 async function mountReads(rows: Row[], opts: { jump?: string } = {}): Promise<void> {
   await unmount();
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   live = rows.map((r) => ({ ...r }));
   cur = null;
   jumpTo = opts.jump ?? null;

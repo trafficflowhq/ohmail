@@ -1,9 +1,10 @@
 /**
  * THE CALENDAR'S ALERTS, AS THE PAGE MAKES THEM: one for each occurrence near now and each of its alarms the ringing
- * rule lets ring (`ringingLeads`), made by the one maker (`aheadAlert`). Nothing here decides whether an event rings:
- * no status, answer, held-back, shown or method is read in this file. What is decided here is where an occurrence's
- * start stands on the clock: a time in a zone at its moment, a clock with no zone and a whole day on the reader's own
- * clock, a whole day from its midnight. A start in a zone this device does not know cannot be placed, and rings nothing.
+ * rule lets ring (`ringingLeads`), made by the one maker (`aheadAlert`). A busy-only calendar supplies occupied
+ * time, so its retained events stay out of this calculation. For the events that remain, the ringing rule checks
+ * status, answer, visibility and alarm method. This calculation places an occurrence's start on the clock:
+ * a time in a zone at its moment, a clock with no zone and a whole day on the reader's own clock, a whole day
+ * from its midnight. A start in an unknown zone cannot be placed.
  *
  * Pure: the presented events (the person's waiting writes laid over), the calendars, the reader's zone and its rules,
  * and now are handed in.
@@ -79,7 +80,7 @@ export function alertsAhead(input: AheadInput): NoticeAhead[] {
   if (today === null) return [];
   const { shown } = occurrencesIn({
     events: input.events,
-    calendars: input.calendars,
+    calendars: input.calendars.filter((calendar) => calendar.access !== "busy"),
     query: {
       from: addDays(today.day, -1),
       to: addDays(today.day, AHEAD_DAYS + Math.ceil(NOTICE_LEAD_MAX_MIN / 1440)),

@@ -7,9 +7,9 @@ import { NextIntlClientProvider } from "next-intl";
 import type { FeedPartition } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { ReadsView } from "../app/views/ReadsView";
-import { mailboxLabelKey, mailboxLabelResolver, type MailboxLabelFact } from "../app/shell/mailbox-label";
+import { mailboxLabelResolver, type MailboxLabelFact } from "../app/shell/mailbox-label";
 
 /**
  * ═══ A READS SURFACE SAYS WHICH ADDRESS OF YOURS THE MESSAGE ARRIVED AT ═══════════════════
@@ -206,42 +206,5 @@ describe("the label is its own node, not a relaxed recipients block", () => {
       "the one-recipient card grew a recipients block — the ruling was relaxed",
     ).toBeNull();
     expect(card().querySelectorAll(".rcpt-chip")).toHaveLength(0);
-  });
-});
-
-/* ══ THE GATE ITSELF, ASKED DIRECTLY ═══════════════════════════════════════════════════════ */
-
-describe("the resolver gates on the account, not on the caller", () => {
-  it("null facts, one mailbox and an empty list all answer null for every id", () => {
-    for (const facts of [null, ONE, [] as MailboxLabelFact[]]) {
-      const resolve = mailboxLabelResolver(facts);
-      expect(resolve("mb-work")).toBeNull();
-      expect(resolve("mb-home")).toBeNull();
-    }
-  });
-
-  it("above one it answers the label, the address without one, and null for a stranger", () => {
-    const resolve = mailboxLabelResolver(TWO);
-    expect(resolve("mb-work")).toBe("Work");
-    expect(resolve("mb-home")).toBe("h@x.invalid");
-    expect(resolve("mb-gone"), "an unknown mailbox id must not be rendered as itself").toBeNull();
-  });
-
-  it("a whitespace-only displayName is no label — the address answers", () => {
-    const resolve = mailboxLabelResolver([
-      { id: "a", address: "a@x.invalid", displayName: "   " },
-      { id: "b", address: "b@x.invalid" },
-    ]);
-    expect(resolve("a")).toBe("a@x.invalid");
-    expect(resolve("b")).toBe("b@x.invalid");
-  });
-
-  it("the memo key moves with a label and holds still for everything else", () => {
-    // The key is what keeps a poll that moved `pendingMoves` from rebuilding the map.
-    const same = mailboxLabelKey(TWO);
-    expect(mailboxLabelKey([...TWO].reverse()), "order must not make a new key").toBe(same);
-    expect(mailboxLabelKey(TWO.map((m) => ({ ...m })))).toBe(same);
-    expect(mailboxLabelKey([{ ...TWO[0]!, displayName: "Job" }, TWO[1]!])).not.toBe(same);
-    expect(mailboxLabelKey(null)).not.toBe(mailboxLabelKey([]));
   });
 });

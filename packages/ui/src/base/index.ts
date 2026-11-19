@@ -57,6 +57,8 @@ export { Avatar } from "./Primitives/Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Primitives/Avatar.js";
 export { Faces } from "./Primitives/Faces.js";
 export type { FacesProps } from "./Primitives/Faces.js";
+export { AddressText } from "./Primitives/AddressText.js";
+export type { AddressTextProps } from "./Primitives/AddressText.js";
 export { Sign } from "./Primitives/Sign.js";
 export type { SignProps } from "./Primitives/Sign.js";
 export { avatarHue, hueStyle } from "./Primitives/hue.js";

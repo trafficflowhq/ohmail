@@ -276,7 +276,9 @@ describe("Download all saves the list it was pressed over", () => {
     await mount([...conversation(1, 2, 10), inbox("o1", 1), rule(2)]);
     await goHash("#/ohbox/m/c2", 2_000);
     await queueASweep();
-    const all = [...document.querySelectorAll<HTMLButtonElement>(".att-strip button.att-all")];
+    /* The letter's files' own Download all, by its name (the reader's catalogue: `attachments.downloadAll`). */
+    const all = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .filter((b) => (b.getAttribute("aria-label") ?? (b.textContent ?? "").trim()) === "Download all");
     expect(all, "the Ohbox shows no Download all").toHaveLength(1);
     await act(async () => { all[0]!.click(); });
     await tick(30_000);

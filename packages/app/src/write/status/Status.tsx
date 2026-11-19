@@ -3,7 +3,7 @@
  * offline sentence while the browser is offline and the letter waits, and the two answers for a send nobody can
  * confirm. Nothing here decides whether a letter may go: Send's state is the composition's.
  */
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { SendStatus } from "@ohmail/ui/mail";
 import { SENDING_LONG_MS, type SendState } from "@ohmail/app-logic/writing/mail-send";
 import { useText } from "../../text/index.js";
@@ -27,6 +27,22 @@ export function sendLineAt(
 const sendingLong = (send: SendState): boolean =>
   send.since !== undefined && Date.now() - send.since >= SENDING_LONG_MS;
 
+/**
+ * A send still going when it crosses the threshold is drawn again then, so the line says it is still sending without
+ * waiting for anything else to draw it (the long line is read from the send's own stamp at each draw).
+ */
+function useSendingLongDrawn(send: SendState): void {
+  const [, redraw] = useState(0);
+  const since = send.since;
+  useEffect(() => {
+    if (since === undefined) return undefined;
+    const left = since + SENDING_LONG_MS - Date.now();
+    if (left <= 0) return undefined;
+    const timer = setTimeout(() => redraw((n) => n + 1), left);
+    return () => clearTimeout(timer);
+  }, [since]);
+}
+
 export function Status({
   at,
   send,
@@ -49,6 +65,7 @@ export function Status({
 }) {
   const t = useText("write");
   const beside = useWriteBeside();
+  useSendingLongDrawn(send);
   const where = sendLineAt(send, held, locked, beside);
   if (where === null || (at !== "one" && at !== where)) return null;
   if (locked !== null) return <SendStatus place="top">{locked}</SendStatus>;

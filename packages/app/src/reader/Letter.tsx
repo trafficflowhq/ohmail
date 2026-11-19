@@ -10,6 +10,7 @@ import {
   LetterViews,
   Message,
   MessageHead,
+  type MessageClip,
   TextNotKept,
 } from "@ohmail/ui/mail";
 import {
@@ -62,6 +63,7 @@ const whole = (p: { name: string | null; address: string }): string =>
 
 export interface LetterViewProps {
   readonly message: EngineMessage;
+  readonly clip?: MessageClip;
   /** The letter the column opened at: its text on screen ends the open's measure. */
   readonly opened: boolean;
   /** Unread as the column presents it. */
@@ -75,10 +77,13 @@ export interface LetterViewProps {
   /** The head is narrow: its stamp prints the day and the month, the full form on a press. */
   readonly narrow?: boolean;
   readonly onPerson: (person: ContactOf) => void;
+  /** The name whose card stands open (its `slot`), or null. */
+  readonly card?: string | null;
 }
 
 export function Letter({
   message,
+  clip,
   opened,
   unread,
   look,
@@ -86,6 +91,7 @@ export function Letter({
   presented,
   narrow,
   onPerson,
+  card,
 }: LetterViewProps) {
   const t = useText("reader");
   const tm = useText("message");
@@ -134,11 +140,14 @@ export function Letter({
     <div
       className="rd-letter"
       data-conv-id={message.id}
+      aria-current={opened ? "true" : undefined}
       data-unseen={message.unread ? "" : undefined}
       data-body-ready={letterReady(message, body) ? "" : undefined}
     >
       {look === "tint" && unread ? <span className="oh-vh">{tm("rowUnread")}</span> : null}
       <Message
+        clip={clip}
+        subject={clip ? message.subject || undefined : undefined}
         head={
           <LetterHead
             message={message}
@@ -147,6 +156,7 @@ export function Letter({
             copy={copy}
             narrow={narrow ?? false}
             onPerson={onPerson}
+            card={card ?? null}
           />
         }
         unread={look === "tint" && unread}
@@ -192,6 +202,7 @@ function LetterHead({
   copy,
   narrow,
   onPerson,
+  card,
 }: {
   message: EngineMessage;
   unread: boolean;
@@ -199,6 +210,7 @@ function LetterHead({
   copy: string | null;
   narrow: boolean;
   onPerson: (person: ContactOf) => void;
+  card: string | null;
 }) {
   const t = useText("reader");
   const tm = useText("message");
@@ -211,21 +223,22 @@ function LetterHead({
   const [details, setDetails] = useState(false);
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const person = useCallback(
-    (p: { name: string | null; address: string }) => (anchor: HTMLElement) =>
-      onPerson({ name: nameOf(p), address: p.address, anchor }),
+    (p: { name: string | null; address: string }, slot: string) => (anchor: HTMLElement) =>
+      onPerson({ name: nameOf(p), address: p.address, anchor, slot }),
     [onPerson],
   );
   const mine = (address: string): boolean => own.some((a) => a.toLowerCase() === address.toLowerCase());
   const groups = [
-    { word: t("head.to"), people: message.to },
-    { word: t("head.cc"), people: message.cc },
+    { word: t("head.to"), people: message.to, slot: "to" },
+    { word: t("head.cc"), people: message.cc, slot: "cc" },
   ]
     .filter((g) => g.people.length > 0)
     .map((g) => ({
       word: g.word,
-      people: g.people.map((p) => ({
+      people: g.people.map((p, i) => ({
         name: mine(p.address) ? t("head.you") : nameOf(p),
-        onPress: person(p),
+        expanded: card === `${message.id} ${g.slot} ${i}`,
+        onPress: person(p, `${message.id} ${g.slot} ${i}`),
       })),
     }));
   const stamp = headStamp(stampOf(message), new Date(), readerZone(), locale, {
@@ -251,7 +264,8 @@ function LetterHead({
           name: nameOf(message.from),
           address: message.from.address,
           printed: mine(message.from.address) ? t("head.youSender") : undefined,
-          onPress: person(message.from),
+          expanded: card === `${message.id} from`,
+          onPress: person(message.from, `${message.id} from`),
         }}
         unread={unread}
         note={
@@ -270,6 +284,7 @@ function LetterHead({
           when: full ? stamp.full : narrow ? stamp.short : stamp.when,
           full,
           title: full ? stamp.when : stamp.full,
+          at: stampOf(message) ?? undefined,
           onPress: () => setFull((f) => !f),
         }}
         to={groups}
@@ -339,8 +354,9 @@ function TextState({
   if (key === "withheldJunkLoading") return <TextNotKept kind="fine" line={tb(key)} live />;
   const words = KEPT[key];
   const emptied = key === "withheld";
-  /* Emptied in a mailbox ohmail no longer reads: its text does not come back, and nothing loads it. */
-  const removed = emptied && status === "removed";
+  /* Emptied in a mailbox ohmail no longer reads (the mailbox facts say `disabled`): its text does not come back, and
+     nothing loads it. */
+  const removed = emptied && status === "disabled";
   return (
     <TextNotKept
       kind="kept"

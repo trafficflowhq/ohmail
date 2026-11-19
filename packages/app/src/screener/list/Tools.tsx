@@ -107,6 +107,7 @@ function Suggest({ suggest }: { suggest: ScreenerSuggest }) {
         size="s"
         opens="menu"
         expanded={c.phase !== "closed"}
+        disabled={c.phase === "running"}
         ref={at}
         onPress={() => (c.phase === "closed" ? (again ? c.openAgain() : c.open()) : c.cancel())}
       >
@@ -134,7 +135,13 @@ function Suggest({ suggest }: { suggest: ScreenerSuggest }) {
               }))}
               onChange={(size) => c.choose(Number(size))}
             />
-            <Button kind="ink" size="s" disabled={c.phase !== "ready"} onPress={c.confirm}>
+            {/* Nothing is bought without a price the person saw: no quote, or a set priced at zero, leaves it dead. */}
+            <Button
+              kind="ink"
+              size="s"
+              disabled={c.phase !== "ready" || c.quote === null || c.quote.senders === 0}
+              onPress={c.confirm}
+            >
               {again ? t("suggest.confirmAgain", { n }) : t("suggest.confirm", { n })}
             </Button>
             <Button kind="quiet" size="s" onPress={c.cancel}>

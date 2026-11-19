@@ -1,17 +1,14 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { act } from "@testing-library/react";
 import {
   MemoryMirrorStore,
   OhmailEngine,
-  ohboxView,
   type EngineAdapter,
   type SyncChange,
 } from "@ohmail/client-engine";
-import messages from "../../messages/en.json";
+import { mountSeat, settleSeat, unmountSeat } from "../_ohbox-1-seat.js";
 
 /**
  * MARK UNREAD PUTS A ROW BACK WHERE IT ARRIVED, ON THE SURFACE THAT PRESSED IT. The
@@ -21,16 +18,14 @@ import messages from "../../messages/en.json";
  * `OhboxView` led its session order with every explicit unread. Driven here through a real engine
  * the way a paired desktop runs it (a relay answering with no rows, the echo on the next drain), the
  * view's own `u`, and the props the shell derives from `ohboxView`.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's Ohbox view handed `ohboxView`'s lists
+ * (`./_today.js`, which leaves with today's shell) to the Ohbox's own seat over the same real engine
+ * (`../_ohbox-1-seat.tsx`, in the demo's world: an engine with no consent behind it, its mail not partitioned): the
+ * seat derives its lists from the engine itself, the letter a step names is the seat's address, and `u` is the seat's
+ * own key. Expectations untouched.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function setViewport(): void {
   (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
@@ -105,31 +100,24 @@ function pairedAdapter(): EngineAdapter {
   } as unknown as EngineAdapter;
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-const writes: Promise<unknown>[] = [];
+let host: HTMLElement | null = null;
+/** The seat's address, once it stands. */
+let visit: ((next: string) => void) | null = null;
 
+/**
+ * The surface over the engine as it is NOW, with `selectedId` the letter open (the seat's address names it) or none.
+ * The first call stands the seat; a later one only moves its address, and the seat re-reads the engine itself.
+ */
 async function render(engine: OhmailEngine, selectedId: string | null): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareToday();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const box = ohboxView(engine.read(), engine.openRowHeld());
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: NOW,
-    children: h(KeymapProvider as never, { children: h(OhboxView as never, {
-      owed: false, demo: false, settled: true,
-      older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-      newForYou: box.newForYou, previouslySeen: box.previouslySeen,
-      tags: [], now: NOW,
-      selectedId, onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: (ids: string[], unread: boolean) => {
-        writes.push(engine.mutate({ kind: "mark_seen", messageIds: ids, unread }));
-      },
-      bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-    } as never) } as never),
-  });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
+  if (host === null) {
+    const seated = mountSeat(engine, { demo: true, first: selectedId === null ? "#/ohbox" : `#/ohbox/m/${selectedId}` });
+    host = seated.container;
+    visit = seated.address.visit;
+  } else {
+    await act(async () => { visit!(selectedId === null ? "#/ohbox" : `#/ohbox/m/${selectedId}`); });
+  }
+  await settleSeat();
+  await settleSeat();
 }
 
 async function press(key: string): Promise<void> {
@@ -146,9 +134,9 @@ function idsInGroup(label: string): string[] {
 
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 400)); });
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove(); root = null; host = null; writes.length = 0; echo.held = false;
+afterEach(() => {
+  unmountSeat();
+  host = null; visit = null; echo.held = false;
 });
 
 /** The tester's steps on `id`: open it out of New, read it while open, move on, re-open it. */
@@ -191,7 +179,7 @@ describe("Mark unread on the surface that pressed it: the row is at its arrival 
 
       echo.held = true;
       await press("u");
-      await Promise.all(writes);
+      await settleSeat();               // the seat's write through the engine (today's harness awaited its promise)
       await render(engine, id);
       expect(idsInGroup("New"), "at once, on the overlay").toEqual(ARRIVAL_ORDER);
 

@@ -414,7 +414,7 @@ describe("ReadingHead", () => {
         mailbox="Studio"
       />,
     );
-    expect(screen.getByRole("heading", { level: 1, name: "Glaze order #2291" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "Glaze order #2291" })).toBeTruthy();
     expect(screen.getByText("Giulia Ferrari, Ben Arnold")).toBeTruthy();
     expect(screen.getByText("Studio")).toBeTruthy();
   });
@@ -511,7 +511,7 @@ describe("ReadingHead, a sentence that is the control", () => {
 
   it("keeps the conversation's head as it was: a subject is the heading, and who is in it stands under it", () => {
     render(<ReadingHead subject="Glaze order #2291" names="Giulia Ferrari" people={[]} />);
-    expect(screen.getByRole("heading", { level: 1, name: "Glaze order #2291" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "Glaze order #2291" })).toBeTruthy();
     expect(screen.getByText("Giulia Ferrari")).toBeTruthy();
   });
 });

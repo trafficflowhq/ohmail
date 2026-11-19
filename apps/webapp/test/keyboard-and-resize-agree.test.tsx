@@ -3,7 +3,7 @@ import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { flushSync } from "react-dom";
+import { screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore,
@@ -48,6 +48,9 @@ const answers = (q: string): boolean => {
 async function setWidth(w: number): Promise<void> {
   width = w;
   await act(async () => {
+    /* The new shell's frame reads the window's width and hears its resize, as a browser moves both. */
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: w });
+    window.dispatchEvent(new Event("resize"));
     for (const m of mqls) {
       const now = answers(m.media);
       if (now === m.matches) continue;
@@ -117,7 +120,8 @@ const address = (id: string): string => `p${id}@example.invalid`;
 const msg = (id: string): EngineMessage => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
-  to: [], date: `2026-09-03T0${9 - Number(id.slice(1))}:00:00.000Z`, unread: true,
+  /* A letter as the mirror hands it whole: its labels and Cc stand (empty), as the reader reads them. */
+  to: [], cc: [], labels: [], date: `2026-09-03T0${9 - Number(id.slice(1))}:00:00.000Z`, unread: true,
   updatedAt: "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -206,11 +210,13 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
   throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
 }
 
-const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id ?? "");
+/* The Ohbox's rows by role, each named by its letter's subject ("Subject m1"). */
+const idOf = (el: Element): string => /Subject (m\d)/.exec(el.getAttribute("aria-label") ?? "")?.[1] ?? "";
+const options = (el: ParentNode = document): HTMLElement[] => [...el.querySelectorAll<HTMLElement>('[role="option"]')];
+const rowIds = (_el: HTMLElement): string[] => options().map(idOf).filter((id) => id !== "");
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(["m1", "m2", "m3", "m4"]));
   const container = document.createElement("div");
@@ -254,27 +260,29 @@ async function enter(): Promise<void> {
   await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
 }
 
-const sheet = (el: HTMLElement): Element | null => el.querySelector(".reader");
-const selRow = (el: HTMLElement): string | null =>
-  el.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])[data-id]")?.dataset.id ?? null;
-const focusedRow = (): string | null =>
-  (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(":is(.row, [role=option])[data-id]")?.dataset.id ?? null;
-/** The subject the reading column shows, or null when it rests. */
-const columnSubject = (el: HTMLElement): string | null => {
-  const col = el.querySelector(".view-ohbox .read-col");
-  const m = /Subject (m\d)/.exec(col?.textContent ?? "");
-  return m ? m[1]! : null;
+/* The open letter by role and name: the frame's reading region ("Open message"), its heading the letter's subject.
+   At one column it stands over the list (today's sheet); beside the list at two (today's column). */
+const readingRegion = (): HTMLElement | null => document.querySelector<HTMLElement>(`[role="region"][aria-label="${messages.reader.pane}"]`);
+const subjectIn = (region: HTMLElement | null): string | null => {
+  const heading = [...(region?.querySelectorAll<HTMLElement>('h1, h2, h3, [role="heading"]') ?? [])]
+    .map((n) => /^Subject (m\d)$/.exec(n.textContent?.trim() ?? "")?.[1]).find((id) => id !== undefined);
+  return heading ?? null;
 };
-const earlierIds = (el: HTMLElement): string[] => {
-  const rows = [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")];
-  const line = [...el.querySelectorAll<HTMLElement>(".view-ohbox *")]
-    .find((n) => n.children.length === 0 && n.textContent?.trim() === "Earlier");
-  const group = el.querySelector<HTMLElement>('.view-ohbox [role="listbox"][aria-label="Earlier"]');
-  if (group) return [...group.querySelectorAll<HTMLElement>('[role="option"][data-id]')].map((r) => r.dataset.id ?? "");
-  if (!line) return [];
-  return rows
-    .filter((r) => (line.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
-    .map((r) => r.dataset.id ?? "");
+const sheet = (_el: HTMLElement): Element | null => (width <= 699.98 ? readingRegion() : null);
+/** The row the list marks as the one the keys are on. */
+const selRow = (_el: HTMLElement): string | null => {
+  const marked = options().filter((o) => o.getAttribute("aria-selected") === "true");
+  return marked.length === 1 ? idOf(marked[0]!) : null;
+};
+const focusedRow = (): string | null => {
+  const row = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[role="option"]');
+  return row ? idOf(row) : null;
+};
+/** The subject the reading column shows, or null when it rests. */
+const columnSubject = (_el: HTMLElement): string | null => (width > 699.98 ? subjectIn(readingRegion()) : null);
+const earlierIds = (_el: HTMLElement): string[] => {
+  const group = document.querySelector<HTMLElement>(`[role="listbox"][aria-label="Earlier"]`);
+  return group ? options(group).map(idOf) : [];
 };
 const settle = async (ms = 400): Promise<void> => {
   await act(async () => { await new Promise((r) => setTimeout(r, ms)); });
@@ -340,63 +348,40 @@ describe("a resize keeps the open letter, the cursor and the list one state", ()
   }, 20_000);
 });
 
-/**
- * A BROWSER RUNS MICROTASKS BETWEEN TWO LISTENERS of a key the person typed, so React commits the
- * first listener's update — and runs its effects — before the second listener is called. jsdom
- * dispatches from script and never does; this wraps every `document` keydown listener so pending
- * sync work flushes after each, as it does in the browser. Removal is mapped through the wrap.
- */
-function checkpointBetweenListeners(): () => void {
-  const add = document.addEventListener;
-  const remove = document.removeEventListener;
-  const wraps = new WeakMap<EventListener, EventListener>();
-  const wrap = (l: EventListener): EventListener => {
-    let w = wraps.get(l);
-    if (!w) {
-      w = function (this: unknown, e: Event) {
-        try { l.call(this, e); } finally { flushSync(() => {}); }
-      };
-      wraps.set(l, w);
-    }
-    return w;
-  };
-  document.addEventListener = function (this: Document, type: string, l: unknown, o?: unknown) {
-    const real = type === "keydown" && typeof l === "function" ? wrap(l as EventListener) : l;
-    return add.call(this, type, real as EventListener, o as AddEventListenerOptions);
-  } as typeof document.addEventListener;
-  document.removeEventListener = function (this: Document, type: string, l: unknown, o?: unknown) {
-    const real = typeof l === "function" ? (wraps.get(l as EventListener) ?? l) : l;
-    return remove.call(this, type, real as EventListener, o as EventListenerOptions);
-  } as typeof document.removeEventListener;
-  return () => { document.addEventListener = add; document.removeEventListener = remove; };
-}
-
-/** A key as the person types it: dispatched outside `act`, so React schedules as a browser would. */
+/** A key typed wherever focus is, including inside the open help. */
 async function typed(k: string, init: KeyboardEventInit = {}): Promise<void> {
-  document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+  await act(async () => {
+    (document.activeElement ?? document.body).dispatchEvent(
+      new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
+    );
+  });
   await settle(60);
 }
 
-const sheetUp = (): boolean => document.querySelector(".ks") !== null;
+const sheetUp = () => screen.queryByRole("dialog", { name: messages.shortcuts.title }) !== null;
 
 describe("the ? sheet closes when a key does its job behind it", () => {
-  let restore: (() => void) | null = null;
-  afterEach(() => { restore?.(); restore = null; });
-
   it("? then j: the cursor moves and the sheet closes", async () => {
     await setWidth(1880);
-    restore = checkpointBetweenListeners();
     const container = await shell();
+    const list = container.querySelector<HTMLElement>(".ob-scroll")!;
+    await act(async () => { list.focus(); });
+    expect(document.activeElement).toBe(list);
+    expect(selRow(container)).toBeNull();
     await typed("?", { shiftKey: true });
     expect(sheetUp(), "? opened no sheet").toBe(true);
+
+    // Keyboard help consumes its dismissing key. The next key works in the returned list.
     await typed("j");
-    expect(selRow(container), "j behind the sheet moved no cursor").toBe("m1");
-    expect(sheetUp(), "the sheet stayed open over the list j just moved").toBe(false);
+    expect(sheetUp(), "j did not dismiss keyboard help").toBe(false);
+    expect(document.activeElement).toBe(list);
+    expect(selRow(container), "dismissing help moved the cursor").toBeNull();
+    await typed("j");
+    expect(selRow(container), "the first j back in the list moves once").toBe("m1");
   });
 
   it("control: ? still opens it, and ? then / closes it", async () => {
     await setWidth(1880);
-    restore = checkpointBetweenListeners();
     await shell();
     await typed("?", { shiftKey: true });
     expect(sheetUp(), "? opened no sheet").toBe(true);

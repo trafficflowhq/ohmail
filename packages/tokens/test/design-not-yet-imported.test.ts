@@ -52,14 +52,6 @@ const FRAME_MEETS = [
   "apps/paired-page/src/HostGate.tsx",
   "apps/webapp/app/(product)/demo/DemoShell.tsx",
   "apps/webapp/app/(product)/mailbox/CloudShell.tsx",
-  "apps/webapp/app/shell/AppShell.tsx",
-  "apps/webapp/app/shell/TodaysOhbox.tsx",
-  "apps/webapp/app/shell/TodaysOhboxAbove.tsx",
-  "apps/webapp/app/shell/reader-parts.tsx",
-  "apps/webapp/app/shell/shell-open-state.ts",
-  "apps/webapp/app/shell/todays-feeds.tsx",
-  "apps/webapp/app/shell/todays-places.ts",
-  "apps/webapp/app/shell/todays-supplies.ts",
 ];
 
 /**
@@ -111,7 +103,7 @@ const DOOR_MEETS = [
   `${PRODUCT}/mailbox/WallRoute.tsx`,
 ];
 const MAY_MEET = [...FRAME_MEETS, ...DOOR_MEETS].sort();
-/** The two seam sheets: the frame's meanings under `.oh-root`, today's under `.today`. */
+/** The frame sheet is required. The retired adapter sheet must never be reintroduced by a host. */
 const SEAM_SHEETS = [/^packages\/app\/src\/frame\/seam\.generated\.css$/, /^apps\/webapp\/app\/shell\/today-tokens\.generated\.css$/];
 
 type Files = Map<string, string>;
@@ -226,9 +218,10 @@ describe("the old stylesheets and the new meet only where listed", () => {
   });
 
   it("a listed module that reaches the new design no longer is found, so the list falls", () => {
-    const files = planted({ "apps/webapp/app/shell/todays-places.ts": "export {};\n" });
+    const file = `${PRODUCT}/mailbox/CloudShell.tsx`;
+    const files = planted({ [file]: "export {};\n" });
     const both = reachBoth(files);
-    expect(MAY_MEET.filter((file) => !both.includes(file))).toContain("apps/webapp/app/shell/todays-places.ts");
+    expect(MAY_MEET.filter((file) => !both.includes(file))).toContain(file);
   });
 });
 
@@ -239,20 +232,24 @@ describe("where they meet, the seam is loaded", () => {
       return SEAM_ROOTS.filter((root) => !reached.has(root));
     });
 
-  it("every page and window that mounts today's views in the frame reaches both seam sheets", () => {
-    expect(without(tree)).toEqual([[], []]);
+  it("every mail page and window loads the frame sheet and leaves the retired adapter sheet out", () => {
+    expect(without(tree)).toEqual([[], SEAM_ROOTS]);
   });
 
-  it("a shell that stops loading today's seam sheet is found on every root", () => {
-    const shell = "apps/webapp/app/shell/TodaysFrame.tsx";
-    const files = planted({ [shell]: tree.get(shell)!.replace('import "./today-tokens.generated.css";', "") });
-    expect(without(files)).toEqual([[], SEAM_ROOTS]);
+  it("detects a retired adapter sheet reintroduced by the actual frame", () => {
+    const frame = "packages/app/src/frame/Frame.tsx";
+    const retired = "apps/webapp/app/shell/today-tokens.generated.css";
+    const files = planted({
+      [retired]: ".today { --float: red; }",
+      [frame]: `${tree.get(frame)!}\nimport "../../../../${retired}";\n`,
+    });
+    expect(without(files)[1]).toEqual([]);
   });
 
   it("a frame that stops loading its own is found on every root but the mailbox's, where the wall's stage loads it too", () => {
     const frame = "packages/app/src/frame/Frame.tsx";
     const files = planted({ [frame]: tree.get(frame)!.replace('import "./seam.generated.css";', "") });
-    expect(without(files)).toEqual([SEAM_ROOTS.filter((root) => root !== `${PRODUCT}/mailbox/page.tsx`), []]);
+    expect(without(files)).toEqual([SEAM_ROOTS.filter((root) => root !== `${PRODUCT}/mailbox/page.tsx`), SEAM_ROOTS]);
   });
 });
 

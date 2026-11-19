@@ -1,24 +1,25 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { act as rtlAct, cleanup, screen, within } from "@testing-library/react";
 import { OhmailEngine, threadOf, type EngineAdapter } from "@ohmail/client-engine";
+import { useMessageAttachments } from "@ohmail/app-logic/reader/attachments";
+import { DoorsContext, useDoors } from "@ohmail/app-logic/reader/doors";
 import { desktopFileShell, enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
-import { useMessageAttachments } from "../../webapp/app/shell/attachments.js";
-import { MessageChromeProvider } from "../../webapp/app/shell/message-chrome.js";
-import { MessageFiles } from "../../webapp/app/shell/MessageFiles.js";
-import { AttachmentPreview } from "../../webapp/app/components/AttachmentPreview.js";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { readerEntryFrom, type ReaderParts } from "../../../packages/app/src/reader/index.js";
+import { bodyDouble, letter, mountLetters } from "../../webapp/test/_reader-1-letters.js";
 
 /**
  * THE DESKTOP OPENS AN ATTACHMENT IN THE PREVIEW THE WEB SHOWS, AND DOWNLOAD SAVES IT.
  *
  * Owner-reported: on the desktop a press on a PDF saved it into Downloads where the web opens its
- * preview. The window armed (`enableDesktopAttachments`), a shell that records every command, the
- * strip as every reading pane renders it (`MessageFiles`) and the overlay as `AppShell` mounts it.
+ * preview. The window armed (`enableDesktopAttachments`), a shell that records every command, and the new
+ * reader as the window hands it (`browser-mail.tsx`'s `BROWSER_READER`: the ground's file door, and the window's one
+ * look at a file's bytes, {@link WINDOW_LOOK}) under the file door the mail ground stands, made over the window's
+ * file shell as the ground makes it (`desktopFileShell()`, the desktop host's `saveFile`). The reply is not handed:
+ * Write's stands over the ground's composer, which no case here presses.
+ * Re-pointed (share reader-1) from today's `MessageFiles` and `AppShell`'s overlay: a file's tile is found by its
+ * name, the preview is the dialog, its Download, pager and pages by role and name.
  * A PDF and a picture open the preview; the strip's corner control and the preview's Download save
  * through the shell; a zip and an SVG still save on the press; Esc closes and lets go of what the
  * shell staged. A save from the preview leaves what it shows alone, as the web's download does: the
@@ -67,7 +68,7 @@ for (const [name, read] of [
 (HTMLCanvasElement.prototype as unknown as { getContext: () => null }).getContext = () => null;
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+const act = rtlAct as unknown as (cb: () => Promise<void> | void) => Promise<void>;
 const h = React.createElement;
 
 const PDF = "0b5e8d3c-1f2a-4c3b-9d8e-7f6a5b4c3d01";
@@ -111,42 +112,44 @@ function engineOverFakeAdapter(): OhmailEngine {
   return new OhmailEngine({ adapter });
 }
 
-/** The reading pane's strip and `AppShell`'s overlay mount, over one engine. */
-function Desktop({ engine }: { engine: OhmailEngine }) {
-  const attachments = useMessageAttachments(engine, "m1", { shell: desktopFileShell(),
-    conversationOf: (id: string) => threadOf(engine.read(), id),
-    onDownloadAllFailed: () => {},
-    onSavedToDownloads: (count) => said.push({ saved: count }),
-    onSaveRefused: (why, count) => said.push({ refused: [why, count] }),
-  });
-  const [previewFor, setPreviewFor] = useState<{ messageId: string; attachmentId: string } | null>(null);
-  const chrome = {
-    attachments,
-    openAttachmentPreview: (messageId: string, attachmentId: string) => setPreviewFor({ messageId, attachmentId }),
-    conversationOf: () => [],
-  };
-  const overlay = (() => {
-    if (!previewFor || !attachments) return null;
-    const view = attachments.itemsOf(previewFor.messageId, { includeInlineParts: true });
-    const previewItems = view.state === "ready" ? view.items : [];
-    if (previewItems.length === 0) return null;
-    return h(AttachmentPreview, {
-      key: previewFor.messageId,
-      items: previewItems,
-      activeId: previewFor.attachmentId,
-      onActiveIdChange: (id: string) => setPreviewFor({ messageId: previewFor.messageId, attachmentId: id }),
-      ensure: (aid: string, opts?: { retry?: boolean }) => attachments.ensure(previewFor.messageId, aid, opts),
-      blobOf: (aid: string) => attachments.blobOf(previewFor.messageId, aid),
-      onDownload: (aid: string) => attachments.open(previewFor.messageId, aid),
-      onClose: () => setPreviewFor(null),
-      onRelease: () => attachments.releasePreviews(previewFor.messageId),
+/** The file door the mail ground stands above the panes, over the window's file shell; no picture door. */
+function doorsAbove(engine: OhmailEngine) {
+  return function DoorsAbove({ children }: { readonly children: React.ReactNode }) {
+    const files = useMessageAttachments(engine, "m1", {
+      shell: desktopFileShell(),
+      conversationOf: (id: string) => threadOf(engine.read(), id),
+      onDownloadAllFailed: () => {},
+      onSavedToDownloads: (count) => said.push({ saved: count }),
+      onSaveRefused: (why, count) => said.push({ refused: [why, count] }),
     });
-  })();
-  return h(MessageChromeProvider as never, { value: chrome }, h(MessageFiles, { messageId: "m1" }), overlay);
+    const doors = React.useMemo(() => ({ files, pictures: undefined }), [files]);
+    return h(DoorsContext.Provider, { value: doors }, children);
+  };
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+/**
+ * The look at a file's bytes the desktop window hands its reader: `BROWSER_READER`'s (`browser-mail.tsx:28`), which
+ * is NONE ("a press on a file saves it, until the reader's own part draws the look"): STOP 10 of share reader-1.
+ * Where the window hands a look, this is it.
+ */
+const WINDOW_LOOK: ReaderParts["look"] = "none";
+
+/** The reader the window hands, over the ground's file door. */
+const { body } = bodyDouble();
+const WINDOW_READER = readerEntryFrom(
+  (): ReaderParts => ({
+    body,
+    files: useDoors().files ?? "none",
+    pictures: "none",
+    look: WINDOW_LOOK,
+    sentCopy: "none",
+    reply: "none",
+    invitation: "none",
+  }),
+);
+
+/** The letter that carries the four files. */
+const letterWithAttachments = letter("m1", { hasAttachments: true, attachmentCount: 4, unread: false });
 
 beforeEach(() => {
   invoked = [];
@@ -168,10 +171,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  if (root) await act(async () => root!.unmount());
-  host?.remove();
-  root = null;
-  host = null;
+  cleanup();
   delete shell.__TAURI_INTERNALS__;
   vi.restoreAllMocks();
 });
@@ -191,24 +191,29 @@ async function until(done: () => boolean, ms = 8_000): Promise<void> {
 vi.setConfig({ testTimeout: 15_000 });
 
 async function mount(): Promise<void> {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => root!.render(h(KeymapProvider, null, h(Desktop, { engine: engineOverFakeAdapter() }))));
+  mountLetters({ letters: [letterWithAttachments], open: "m1", host: { reader: WINDOW_READER, above: doorsAbove(engineOverFakeAdapter()) } });
   await settle();
-  expect(host.querySelectorAll("button.att-tile"), "the strip never drew the four files").toHaveLength(4);
+  for (const f of FILES) expect(tileControls(f.filename), `the letter never drew ${f.filename}`).not.toHaveLength(0);
 }
 
-const tile = (name: string) => host!.querySelector<HTMLButtonElement>(`button.att-tile[title$="${name}"]`);
-const corner = (name: string) => host!.querySelector<HTMLButtonElement>(`button.att-side[aria-label="Download ${name}"]`);
-const dialog = () => document.querySelector('[role="dialog"]');
-const previewDownload = () =>
-  [...document.querySelectorAll<HTMLButtonElement>(".ap-head button.ap-btn")].find((b) => b.textContent?.includes("Download")) ?? null;
+/** A file's controls on its tile, in their order: the tile's own press first, its corner Download last. */
+const tileControls = (name: string): HTMLButtonElement[] =>
+  screen
+    .queryAllByRole("button", { name: new RegExp(`${name.replace(".", "\\.")}$`) })
+    .filter((b) => b.closest('[role="dialog"]') === null) as HTMLButtonElement[];
+const tile = (name: string): HTMLButtonElement | null => tileControls(name)[0] ?? null;
+const corner = (name: string): HTMLButtonElement | null =>
+  tileControls(name).filter((b) => b.getAttribute("aria-label") === `Download ${name}`).at(-1) ?? null;
+const dialog = () => screen.queryByRole("dialog");
+const previewDownload = (): HTMLButtonElement | null =>
+  (dialog() === null ? null : within(dialog()!).queryAllByRole("button", { name: /^Download/ })[0] ?? null) as HTMLButtonElement | null;
 const saves = () => invoked.filter((i) => i.command === "save_attachment");
-const pageLine = () => (document.querySelector(".ap-meta")?.textContent ?? "").match(/\d+ \/ \d+/)?.[0] ?? null;
-const nextPage = () => document.querySelector<HTMLButtonElement>('.ap-pager button[aria-label="Next page"]');
-const previewSays = () => document.querySelector(".ap-content")?.textContent ?? "";
-const canvas = () => document.querySelector("canvas.ap-canvas");
+const pageLine = () => (dialog()?.textContent ?? "").match(/\d+ \/ \d+/)?.[0] ?? null;
+const nextPage = (): HTMLButtonElement | null =>
+  (dialog() === null ? null : within(dialog()!).queryByRole("button", { name: "Next page" })) as HTMLButtonElement | null;
+const previewSays = () => dialog()?.textContent ?? "";
+const canvas = () => dialog()?.querySelector("canvas") ?? null;
+const picture = () => dialog()?.querySelector("img") ?? null;
 
 async function press(el: HTMLElement | null): Promise<void> {
   expect(el, "the control is not on screen").not.toBeNull();
@@ -242,9 +247,9 @@ describe("on the desktop, a PDF opens in the preview the web shows", () => {
     expect(fetched).toEqual([PDF]);
     expect(saves()).toEqual([]);
     expect(invoked.filter((i) => i.command === "stage_attachment_preview"), "a PDF was staged on disk").toEqual([]);
-    await until(() => document.querySelector("canvas.ap-canvas") !== null);
+    await until(() => canvas() !== null);
     expect(pdfLoads).toHaveBeenCalledTimes(1);
-    expect(document.querySelector("canvas.ap-canvas"), "the PDF never reached the canvas").not.toBeNull();
+    expect(canvas(), "the PDF never reached the canvas").not.toBeNull();
   });
 
   it("the PDF tile's corner Download saves it through the shell, once, by id and name", async () => {
@@ -320,14 +325,14 @@ describe("a save from the preview leaves what it shows alone, as the web's downl
     await mount();
     await press(tile("Photo.png"));
     await press(previewDownload());
-    expect(document.querySelector("img.ap-img"), "the save took the picture off the screen").not.toBeNull();
+    expect(picture(), "the save took the picture off the screen").not.toBeNull();
     await act(async () => save.resolve(null));
     await settle();
     save = holdSave();
     await press(previewDownload());
     await act(async () => save.reject({ status: 404, code: "not_found", message: "gone", retryable: true }));
     await settle();
-    expect(document.querySelector("img.ap-img")?.getAttribute("src")).toBe(`attachment-preview://localhost/${STAGED}`);
+    expect(picture()?.getAttribute("src")).toBe(`attachment-preview://localhost/${STAGED}`);
     expect(invoked.filter((i) => i.command === "stage_attachment_preview"), "the picture was staged again").toHaveLength(1);
     expect(said).toEqual([{ saved: 1 }, { refused: ["not-saved", 1] }]);
   });
@@ -352,7 +357,7 @@ describe("the rest of the desktop's attachment presses, unchanged", () => {
     expect(dialog()).not.toBeNull();
     expect(invoked).toEqual([{ command: "stage_attachment_preview", payload: { attachmentId: PNG, mimeType: "image/png" } }]);
     expect(fetched, "a picture's bytes were fetched into the window").toEqual([]);
-    expect(document.querySelector("img.ap-img")?.getAttribute("src")).toBe(`attachment-preview://localhost/${STAGED}`);
+    expect(picture()?.getAttribute("src")).toBe(`attachment-preview://localhost/${STAGED}`);
   });
 
   it("the preview's own Download saves the picture on screen through the shell", async () => {
@@ -384,23 +389,5 @@ describe("the rest of the desktop's attachment presses, unchanged", () => {
     expect(invoked.filter((i) => i.command === "release_attachment_preview")).toEqual([
       { command: "release_attachment_preview", payload: { token: STAGED } },
     ]);
-  });
-});
-
-describe("AppShell mounts the overlay this file copies", () => {
-  it("with the seam's ensure, blobOf, open as its Download, and the release", () => {
-    let shellSource: string;
-    try {
-      shellSource = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    } catch {
-      shellSource = readFileSync(resolve(process.cwd(), "../webapp/app/shell/AppShell.tsx"), "utf8");
-    }
-    const from = shellSource.indexOf("<AttachmentPreview");
-    expect(from, "AppShell no longer mounts <AttachmentPreview>").toBeGreaterThan(-1);
-    const mountBlock = shellSource.slice(from, shellSource.indexOf("/>", from));
-    expect(mountBlock).toMatch(/ensure=\{\(aid, opts\) => attachments\.ensure\(previewFor\.messageId, aid, opts\)\}/);
-    expect(mountBlock).toMatch(/blobOf=\{\(aid\) => attachments\.blobOf\(previewFor\.messageId, aid\)\}/);
-    expect(mountBlock).toMatch(/onDownload=\{\(aid\) => attachments\.open\(previewFor\.messageId, aid\)\}/);
-    expect(mountBlock).toMatch(/onRelease=\{\(\) => attachments\.releasePreviews\(previewFor\.messageId\)\}/);
   });
 });

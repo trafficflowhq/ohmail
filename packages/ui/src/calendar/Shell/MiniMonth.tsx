@@ -2,6 +2,7 @@ import type { MouseEventHandler } from "react";
 import { Button } from "../../base/Primitives/Button.js";
 import { Dot } from "../../base/Primitives/Dot.js";
 import { WeekNumber } from "../Grids/WeekNumber.js";
+import { useDayKeys } from "./day-keys.js";
 import "./mini-month.css";
 
 export interface MiniMonthDay {
@@ -47,11 +48,14 @@ export interface MiniMonthProps {
   onDayPress?: (id: string) => void;
   /** A press on a week's number, by its row from 0. */
   onWeekPress?: (row: number) => void;
+  /** The keys go to the day that holds them as it is drawn: a picker in a menu. Not where a finger is used. */
+  takesKeys?: boolean;
 }
 
 /**
  * A month to find a day in. A day with something is marked by a bold date alone; today and the
  * picked day carry their disc; only the week on screen is banded. It has no colour but hot.
+ * Its days are one stop of Tab, walked by the keys (`day-keys.ts`).
  */
 export function MiniMonth({
   head,
@@ -61,7 +65,11 @@ export function MiniMonth({
   weekNumbers,
   onDayPress,
   onWeekPress,
+  takesKeys,
 }: MiniMonthProps) {
+  const { grid, before, after, stopId, hold, keys } = useDayKeys(days, size, takesKeys, onDayPress);
+  const weeks = Array.from({ length: Math.ceil(days.length / 7) }, (_, r) => days.slice(r * 7, r * 7 + 7));
+
   return (
     <div className="oh-mini" data-size={size === "rail" ? undefined : size}>
       {head ? (
@@ -83,35 +91,59 @@ export function MiniMonth({
               <Dot kind={head.hot ? "hot" : "ink"} />
             </span>
           )}
-          <Button kind="quiet" size="s" icon="back" label={head.before.label} onPress={head.before.onPress} />
-          <Button kind="quiet" size="s" icon="fwd" label={head.after.label} onPress={head.after.onPress} />
+          <Button
+            ref={before}
+            kind="quiet"
+            size="s"
+            icon="back"
+            label={head.before.label}
+            onPress={head.before.onPress}
+          />
+          <Button
+            ref={after}
+            kind="quiet"
+            size="s"
+            icon="fwd"
+            label={head.after.label}
+            onPress={head.after.onPress}
+          />
         </div>
       ) : null}
       <div className="oh-mini-grid">
-        {weekdays.map((letter, i) => (
-          <span key={i} className="oh-mini-wd" aria-hidden>
-            {letter}
-          </span>
-        ))}
-        {days.map((d) => (
-          <button
-            key={d.id}
-            type="button"
-            className="oh-control oh-mini-day"
-            data-out={d.outside ? "" : undefined}
-            data-off={d.disabled ? "" : undefined}
-            disabled={d.disabled}
-            data-today={d.today ? "" : undefined}
-            data-picked={d.picked && !d.today ? "" : undefined}
-            data-busy={d.busy ? "" : undefined}
-            data-band={d.band}
-            aria-label={d.label}
-            aria-current={d.today ? "date" : undefined}
-            onClick={onDayPress ? () => onDayPress(d.id) : undefined}
-          >
-            <span className="oh-mini-disc">{d.number}</span>
-          </button>
-        ))}
+        {/* The grid, its weeks and its cells are said, and laid out by the grid around them. */}
+        <div ref={grid} className="oh-mini-days" role="grid" aria-label={head?.title} onKeyDown={keys}>
+          {weekdays.map((letter, i) => (
+            <span key={i} className="oh-mini-wd" aria-hidden>
+              {letter}
+            </span>
+          ))}
+          {weeks.map((week, r) => (
+            <div key={r} className="oh-mini-days" role="row">
+              {week.map((d) => (
+                <span key={d.id} className="oh-mini-days" role="gridcell">
+                  <button
+                    type="button"
+                    className="oh-control oh-mini-day"
+                    data-out={d.outside ? "" : undefined}
+                    data-off={d.disabled ? "" : undefined}
+                    disabled={d.disabled}
+                    data-today={d.today ? "" : undefined}
+                    data-picked={d.picked && !d.today ? "" : undefined}
+                    data-busy={d.busy ? "" : undefined}
+                    data-band={d.band}
+                    aria-label={d.label}
+                    aria-current={d.today ? "date" : undefined}
+                    tabIndex={d.id === stopId ? 0 : -1}
+                    onFocus={() => hold(d.id)}
+                    onClick={onDayPress ? () => onDayPress(d.id) : undefined}
+                  >
+                    <span className="oh-mini-disc">{d.number}</span>
+                  </button>
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
         {weekNumbers?.map((w, row) =>
           w ? (
             <WeekNumber

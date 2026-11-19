@@ -2,6 +2,7 @@
   "reader": {
     "gone": "Diese Nachricht wurde anderswo verschoben oder gelöscht.",
     "goneTrash": "Im Papierkorb nachsehen",
+    "trashAsk": "In den Papierkorb verschieben",
     "goneShort": "Anderswo verschoben oder gelöscht",
     "hint": "zum Zurückgehen",
     "back": "Zurück",
@@ -28,6 +29,7 @@
       "replyAll": "Allen antworten",
       "markUnread": "Als ungelesen markieren",
       "markRead": "Als gelesen markieren",
+      "markReadCount": "{count, plural, one {1 ungelesene Nachricht} other {# ungelesene Nachrichten}} als gelesen markieren",
       "more": "Mehr",
       "aside": "Parken",
       "later": "Später",
@@ -144,6 +146,7 @@
     "moreRecipientsAriaFolder": "Alle Empfänger und den Ablageort dieser Nachricht anzeigen",
     "contactAria": "Optionen für {who}",
     "copyAddress": "Adresse kopieren",
+    "addressOpen": "Alles von und an diese Adresse",
     "write": "Schreiben",
     "screenerSettings": "Screener-Einstellungen",
     "expand": "Nachricht von {sender} lesen",

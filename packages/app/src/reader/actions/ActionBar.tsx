@@ -4,17 +4,20 @@
  */
 import type { EngineMessage, TagEntity } from "@ohmail/wire";
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Menu, MenuItem } from "@ohmail/ui/base";
+import { Dialog, Menu, MenuItem } from "@ohmail/ui/base";
 import { ActionPanel, MovePicker, type PanelVerb } from "@ohmail/ui/mail";
+import type { ReplyRunState } from "@ohmail/app-logic/piles";
 import { useMirror } from "@ohmail/app-logic/reader";
 import { useListVisit } from "@ohmail/app-logic/reading";
 import { useResurfaceTime } from "../../frame/room.js";
 import { useText } from "../../text/index.js";
-import { useLetterKeys, type PanelMenu } from "../keys.js";
+import { isCardDeleteKey, REPLY_KEY, useCardKeys, useLetterKeys, type PanelMenu } from "../keys.js";
+import { useReplyVerbs } from "../parts.js";
+import { ReplyPanel } from "./ReplyRun.js";
 import { ResurfaceMenu } from "./ResurfaceMenu.js";
 import { useVerbs, type Verbs } from "./use-verbs.js";
 
-type Open = "more" | "resurface" | "tag" | "move" | null;
+type Open = PanelMenu | "tag" | "confirmDelete" | null;
 
 /** The room the panel stands in: the upright foldable and the phone keep some verbs behind More. */
 export type PanelRoom = "desktop" | "fold" | "foldl" | "phone";
@@ -39,6 +42,7 @@ function panelVerbs(
   tagged: boolean,
   toggle: (which: Exclude<Open, null>) => (at: HTMLElement) => void,
   room: PanelRoom,
+  hasKeys: boolean,
 ): Placed[] {
   const { act, readSlot, filed } = verbs;
   const compact = room === "phone" || room === "fold";
@@ -60,7 +64,8 @@ function panelVerbs(
       kind: "ink",
       rank: 0,
       wordOrder: 3,
-      keyHint: "r",
+      keyHint: REPLY_KEY,
+      shortcut: hasKeys ? REPLY_KEY : undefined,
       onPress: () => act("reply"),
     },
     ...(verbs.replyAll
@@ -113,6 +118,11 @@ function panelVerbs(
           {
             id: "read",
             label: t(`verb.${readSlot}`),
+            /* Over a conversation the press marks every unread letter of it: the slot's name says how many. */
+            name:
+              readSlot === "markRead" && verbs.readCount > 1
+                ? t("verb.markReadCount", { count: verbs.readCount })
+                : undefined,
             icon: readSlot === "markRead" ? ("read" as const) : ("unread" as const),
             apart: true,
             rank: 0,
@@ -132,14 +142,18 @@ export function ActionBar({
   verbs,
   room = "desktop",
   keys,
+  card,
   reply,
+  run = null,
 }: {
   verbs: Verbs;
   room?: PanelRoom;
   /** The letter the panel acts on, where the column has the keyboard: its verbs are bound by key too. */
   keys?: EngineMessage | null;
+  card?: { letter: EngineMessage; keysHere: boolean };
   /** An open reply's verbs (`write`'s), shown in the letter's place: one panel for the column. Null: the letter's. */
   reply: readonly PanelVerb[] | null;
+  run?: ReplyRunState | null;
 }) {
   const t = useText("reader");
   const tm = useText("message");
@@ -147,7 +161,7 @@ export function ActionBar({
   const [menu, setMenu] = useState<Open>(null);
   /* What did not fit the panel: offered first behind More, in the panel's order. */
   const [folded, setFolded] = useState<readonly string[]>([]);
-  const more = menu === "more";
+  const more = menu === "more" || menu === "cardDelete";
   /* The control a menu comes out of: the verb's button last pressed, or More's for a verb pressed inside More. */
   const pressed = useRef<HTMLElement | null>(null);
   const toggle = (which: Exclude<Open, null>) => (at: HTMLElement) => {
@@ -158,11 +172,15 @@ export function ActionBar({
   /* The panel's wrapper: the read rule's stop (`data-read-stop`). */
   const stop = useRef<HTMLDivElement | null>(null);
   const { act } = verbs;
+  const file = (): void => {
+    close();
+    act("delete");
+  };
   /* The account's resurface hour and its writer, as the shell handed them to the room. */
   const hour = useResurfaceTime();
   const { mirror } = useMirror();
   const tags = verbs.tag === null ? [] : (mirror?.list<TagEntity>("tag") ?? []);
-  const all = panelVerbs(t, tm, verbs, tags.length > 0, toggle, room);
+  const all = panelVerbs(t, tm, verbs, tags.length > 0, toggle, room, keys != null);
   const items = all.filter((v) => !v.behind);
   /* Behind More, in the panel's order: what stands there in this room and what folded; Move before the read slot. */
   const behind = all.filter((v) => v.behind || folded.includes(v.id));
@@ -175,12 +193,16 @@ export function ActionBar({
     pressed.current = own ?? root?.querySelector<HTMLElement>("[data-more]") ?? null;
     setMenu((m) => (m === which ? null : which));
   };
+  useCardKeys(
+    card?.keysHere === true && reply === null,
+    card ? { letter: card.letter, verbs, menu: byKey } : null,
+  );
   useLetterKeys(keys != null, keys == null ? null : { letter: keys, verbs, menu: byKey });
   useKeyboardBack(reply !== null, stop);
   return (
     <div className="rd-stop" data-read-stop="" ref={stop}>
-      {reply !== null ? (
-        <ActionPanel label={t("panel")} items={reply} />
+      {run !== null || reply !== null ? (
+        <ReplyPanel run={run} reply={reply} />
       ) : (
         <ActionPanel
           label={t("panel")}
@@ -221,7 +243,20 @@ export function ActionBar({
           act(`move:${id as (typeof verbs.moves)[number]}`);
         }}
       />
-      <Menu open={more} onClose={close} anchor={pressed} label={t("verb.more")} up right>
+      <Menu
+        open={more}
+        onClose={close}
+        anchor={pressed}
+        label={t("verb.more")}
+        up
+        right
+        onKey={(e) => {
+          if (menu !== "cardDelete" || !isCardDeleteKey(e.nativeEvent)) return false;
+          e.preventDefault();
+          file();
+          return true;
+        }}
+      >
         {beforeRead.map((v) => (
           <BehindMore key={v.id} verb={v} close={close} more={pressed} />
         ))}
@@ -233,17 +268,40 @@ export function ActionBar({
         {read.map((v) => (
           <BehindMore key={v.id} verb={v} close={close} more={pressed} />
         ))}
-        <MenuItem
-          icon="trash"
-          onPress={() => {
-            close();
-            act("delete");
-          }}
-        >
+        <DraftReplyItem draft={verbs.draft} close={close} />
+        <MenuItem icon="trash" onPress={card ? () => setMenu("confirmDelete") : file}>
           {t("verb.delete")}
         </MenuItem>
       </Menu>
+      {card ? (
+        <Dialog
+          open={menu === "confirmDelete"}
+          onClose={close}
+          title={t("trashAsk")}
+          hot
+          kind="delete"
+          confirm={{ label: t("verb.move"), onPress: file, keyHint: "↵" }}
+          cancel={{ label: t("resurface.cancel"), keyHint: "Esc" }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/** Draft reply behind More, where a drafter stands: the reply opened on the letter and the drafter asked. */
+function DraftReplyItem({ draft, close }: { draft: (() => void) | null; close: () => void }) {
+  const t = useText("reader");
+  if (draft === null) return null;
+  return (
+    <MenuItem
+      icon="spark"
+      onPress={() => {
+        close();
+        draft();
+      }}
+    >
+      {t("verb.draftReply")}
+    </MenuItem>
   );
 }
 
@@ -278,13 +336,22 @@ function BehindMore({
  * The panel for one letter where a list draws it in place: the list's visit where it handed one, else the reader's
  * runners through the room's seam. With neither (no visit, and a place whose room is off) nothing is drawn.
  */
-export function LetterActions({ messageId }: { messageId: string }) {
+export function LetterActions({
+  messageId,
+  keysHere,
+  markUnread,
+}: {
+  messageId: string;
+  keysHere: boolean;
+  markUnread?: (id: string) => void;
+}) {
   const { mirror } = useMirror();
   const message = mirror?.get<EngineMessage>("message", messageId) ?? null;
   const visit = useListVisit(messageId);
-  const verbs = useVerbs(message, visit, null);
+  const verbs = useVerbs(message, visit, markUnread ? { onMarkUnread: markUnread } : null);
+  const reply = useReplyVerbs(messageId);
   if (message === null || verbs.idle) return null;
-  return <ActionBar verbs={verbs} reply={null} />;
+  return <ActionBar key={messageId} verbs={verbs} card={{ letter: message, keysHere }} reply={reply} />;
 }
 
 /**
@@ -304,6 +371,7 @@ function useKeyboardBack(replying: boolean, stop: RefObject<HTMLDivElement | nul
     const verb =
       panel.querySelector<HTMLButtonElement>('button[data-id="reply"]:not([hidden])') ??
       panel.querySelector<HTMLButtonElement>("button:not([hidden])");
-    verb?.focus();
+    /* No scroll of the column: scroll-to-read would count one under a resting pointer as the person's. */
+    verb?.focus({ preventScroll: true });
   }, [replying, stop]);
 }

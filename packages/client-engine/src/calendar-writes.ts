@@ -15,7 +15,7 @@
  * its event until the person acts on the event again.
  */
 import type {
-  CalendarAct, CalendarEventAct, CalendarEventRecord, CalendarReason, CalendarWriteAnswer, CalendarWriteFault,
+  CalendarAct, CalendarEventAct, CalendarEventRecord, CalendarReason, CalendarSettingsWire, CalendarWriteAnswer, CalendarWriteFault,
 } from "@ohmail/wire";
 import { CalendarActKeys, eventsWithWrites, type DeviceAct, type EventWithWrites } from "./calendar-acts.js";
 import type { MirrorStore } from "./store.js";
@@ -43,6 +43,11 @@ export interface CalendarWriteTransport {
   retryCalendarWrite(writeId: string, key: string): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
   /** `DELETE /calendar/writes/:id`. */
   dismissCalendarWrite(writeId: string, key: string): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
+}
+
+/** The account-bound operations a host needs to offer the calendar. */
+export interface CalendarHostTransport extends CalendarWriteTransport {
+  calendarSettings(): Promise<CalendarSettingsWire>;
 }
 
 const isRecord = (v: unknown): v is CalendarOutboxRecord =>

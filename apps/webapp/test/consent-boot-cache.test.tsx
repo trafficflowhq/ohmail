@@ -13,7 +13,7 @@ import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-eng
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import { createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
-import { useShellDerivations, type ShellDerivationsInput } from "../app/shell/shell-derivations";
+import { usePartitionOf, type PartitionInput } from "@ohmail/app-logic/consent/partition";
 import { CLOUD_CONSENT } from "../app/(product)/mailbox/consent-over-api";
 import { CONSENT_BOOT_SCOPE, useConsentState, type ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { DEMO_STORAGE_OWNER, resetStorageOwnerForTest, setDemoStorage, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
@@ -541,19 +541,19 @@ describe("the remembered own addresses are the mount's mirror's account's", () =
     };
     const first = await namedFor(FIRST);
     const second = await namedFor(SECOND);
-    const input = (engine: OhmailEngine): ShellDerivationsInput => ({
+    /* The one derivation of the partition (the mail ground's, which the old shell's derivations called): what the
+       ground hands it above the panes, the facts of `GET /mailboxes` not answered yet. */
+    const input = (engine: OhmailEngine): PartitionInput => ({
       engine, reader: engine.read(), derived: 1, demo: false, resolvedDemo: false,
-      now: new Date(ISO), facts: null, seedOwed: false,
+      now: new Date(ISO), facts: null,
       consent: {
         known: true, standalone: false, dormancyDays: 60, screeningBaselineAt: null, screeningScope: "all_time",
-        foldersEnabled: false, folderMailboxesOff: {},
+        foldersEnabled: false,
       },
-      route: { view: "screener" as ShellDerivationsInput["route"]["view"], folderId: null },
-      trashWire: undefined, deleting: { held: new Set() }, restoring: { held: new Set() }, routing: { places: new Map() },
     });
     let own: string[] = [];
     function Probe({ engine }: { engine: OhmailEngine }): null {
-      own = useShellDerivations(input(engine)).ownAddresses;
+      own = usePartitionOf(input(engine)).ownAddresses;
       return null;
     }
     const container = document.createElement("div");

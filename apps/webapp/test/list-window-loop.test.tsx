@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * THE RECEIPTS "APPLICATION ERROR" — the windowed list must not measure its own leading row and

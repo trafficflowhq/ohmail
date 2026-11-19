@@ -207,11 +207,15 @@ async function mount(managed?: boolean): Promise<{ container: HTMLElement; engin
     adapter: createSyncGate(null).guard(new HttpAdapter({ baseUrl: "/api" })),
   });
   const { EngineProvider } = await import("../app/shell/engine");
-  const { PullNewMail, usePullNewMail } = await import("../app/shell/PullNewMail");
+  const { PullNewMail } = await import("../app/shell/PullNewMail");
+  /* The hook moved to the behaviour package: bound here as a shell binds it, over the capsule and the web's words. */
+  const { usePullNewMail } = await import("@ohmail/app-logic/session/pull-new-mail");
+  const { useToast } = await import("@ohmail/ui");
+  const { useTranslations } = await import("next-intl");
   const { ManagedServiceContext } = await import("@ohmail/app-logic/doors/managed-service");
 
   function Harness(): React.ReactElement {
-    const binding = usePullNewMail(probe);
+    const binding = usePullNewMail(probe, useToast(), useTranslations("sync") as unknown as (key: string) => string);
     return h(React.Fragment, null,
       h(PullNewMail, { variant: "rail", binding, key: "r" }),
       h(PullNewMail, { variant: "topbar", binding, key: "t" }),

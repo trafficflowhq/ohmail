@@ -1,4 +1,5 @@
 import type { EngineStatus } from "../src/bridge-fetch.js";
+import { CLOUD_URL } from "../src/doors.js";
 
 /**
  * THE WINDOW'S PIPE, RECORDED. The desktop's window cannot run in a browser: every call it makes
@@ -68,7 +69,7 @@ export function plantShell(status: EngineStatus, engine: (req: Request) => Promi
 /** The four doors of the desktop, as the engine's status tells them apart. */
 export const DOORS: Record<"D-l" | "D-m" | "D-s" | "D-p", (mailbox: { id: string; address: string }) => EngineStatus> = {
   "D-l": (m) => ({ state: "serving", mode: "local", address: m.address, mailboxId: m.id, baseUrl: "http://sidecar", credentialState: "ready" }),
-  "D-m": (m) => ({ state: "serving", mode: "cloud", address: m.address, mailboxId: m.id, baseUrl: "http://sidecar", cloudUrl: "https://ohmail.app", credentialState: "ready" }),
+  "D-m": (m) => ({ state: "serving", mode: "cloud", address: m.address, mailboxId: m.id, baseUrl: "http://sidecar", cloudUrl: CLOUD_URL, credentialState: "ready" }),
   "D-s": (m) => ({ state: "serving", mode: "cloud", address: m.address, mailboxId: m.id, baseUrl: "http://sidecar", cloudUrl: "https://mail.lichtgrat.example", credentialState: "ready" }),
   "D-p": (m) => ({ state: "serving", mode: "cloud", flavor: "desktop-host", address: m.address, mailboxId: m.id, baseUrl: "http://sidecar", cloudUrl: "https://kestrel.tail1234.ts.net", credentialState: "ready" }),
 };

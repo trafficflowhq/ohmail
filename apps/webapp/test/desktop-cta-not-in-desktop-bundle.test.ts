@@ -3,16 +3,10 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { build, type Plugin } from "esbuild";
 
-/**
- * The browser's "Get ohmail for desktop" prompt links to the latest release page. The desktop
- * window bundle compiles this shell too, and build.yml's inspection of the shipped binary fails
- * on any first-party address other than its named endpoints (vehicle #426). The prompt never
- * shows in the desktop app, so its address must fold out of the desktop build
- * (`NEXT_PUBLIC_DESKTOP` defined "1", as apps/desktop/vite.config.ts does) and stay in the web one.
- * Measured on an in-memory minified build of AppShell, never on the source.
- */
-
-const ENTRY = resolve(__dirname, "../app/shell/AppShell.tsx");
+/** The signed-in browser offers the latest release. The native entry must omit that
+ * address from its shipped bundle, including any lazily loaded app modules. */
+const WEB_ENTRY = resolve(__dirname, "../app/(product)/mailbox/CloudShell.tsx");
+const DESKTOP_ENTRY = resolve(__dirname, "../../desktop/src/main.tsx");
 const RELEASE_PAGE = "github.com/trafficflowhq/ohmail/releases/latest";
 
 /** The app's own relative graph; every package stays external (as in first-load-defers-editor). */
@@ -35,7 +29,7 @@ const appGraph: Plugin = {
 
 async function bundleText(desktop: boolean): Promise<string> {
   const out = await build({
-    entryPoints: [ENTRY],
+    entryPoints: [desktop ? DESKTOP_ENTRY : WEB_ENTRY],
     bundle: true,
     splitting: true,
     format: "esm",

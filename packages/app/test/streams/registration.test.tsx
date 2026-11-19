@@ -5,6 +5,7 @@ import { newsPlace } from "../../src/news/index.js";
 import { receiptsPlace } from "../../src/receipts/index.js";
 import { laterPlace, parkedPlace, resurfacePlace } from "../../src/piles/index.js";
 import { fakeWindow } from "../support/fake-window.js";
+import { hitAt } from "./registered-world.js";
 import { letter, mountPiles, mountStream, pilesOf, said, streamInput } from "./world.js";
 
 afterEach(cleanup);
@@ -129,10 +130,20 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
   });
 
   it("mounts Receipts alone, with the way to older receipts in Search at its end", () => {
-    const { address } = mountStream({ place: "receipts", input: streamInput(LETTERS, said()) });
+    const { address } = mountStream({
+      place: "receipts",
+      input: streamInput(LETTERS, said()),
+      search: hitAt("receipts", "n1"),
+    });
     const stream = screen.getByRole("region", { name: "Receipts stream" });
     fireEvent.click(within(stream).getByRole("button", { name: "Older in Search" }));
     expect(address.read()).toMatch(/^#\/search/);
+  });
+
+  it("offers older receipts only when the host mounts Search", () => {
+    mountStream({ place: "receipts", input: streamInput(LETTERS, said()) });
+    const stream = screen.getByRole("region", { name: "Receipts stream" });
+    expect(within(stream).queryByRole("button", { name: "Older in Search" })).toBeNull();
   });
 
   it("an empty stream says All read in its reading column, as the reference draws it, in both languages", () => {

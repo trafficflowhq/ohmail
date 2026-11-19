@@ -220,6 +220,41 @@ export class PlaywrightPerson implements Person {
     }
   }
 
+  async kept(marks: RegExp): Promise<Record<string, string[]>> {
+    const all = await this.page.evaluate(() =>
+      Object.fromEntries(Object.keys(localStorage).sort().map((k) => [k, localStorage.getItem(k) ?? ""])));
+    const global = new RegExp(marks.source, marks.flags.includes("g") ? marks.flags : `${marks.flags}g`);
+    return Object.fromEntries(Object.entries(all).map(([k, v]) => [k, [...new Set(v.match(global) ?? [])].sort()]));
+  }
+
+  async keep(key: string, value: string): Promise<void> {
+    /* Another tab of this browser, on the install's name and on no page of the app (the API's answer to a hello), so
+       nothing of the app runs there: it writes the entry and closes, as the tab that left it did. */
+    const other = await this.context.newPage();
+    try {
+      await other.goto(`${this.origin}/api/hello`, { waitUntil: "commit" });
+      await other.evaluate(([k, v]) => localStorage.setItem(k!, v!), [key, value]);
+    } finally {
+      await other.close();
+    }
+  }
+
+  async shows(words: string): Promise<boolean> {
+    return (await this.page.evaluate(() => document.body.innerText)).includes(words);
+  }
+
+  /** Set by the bench that opened this window with its clock driven (`person({ clock: "driven" })`). */
+  driven = false;
+  async later(ms: number): Promise<void> {
+    if (!this.driven) throw new Error("this window's clock is not driven: open the person with { clock: \"driven\" }");
+    await this.page.clock.runFor(ms);
+  }
+
+  /** The jar this window shares, signed in as an account by the bench's own five cookies (`web.ts`). */
+  async jarNames(cookies: Parameters<BrowserContext["addCookies"]>[0]): Promise<void> {
+    await this.context.addCookies(cookies);
+  }
+
   /** A browser page has no native doors. */
   async native(act: NativeActId): Promise<void> {
     throw new Error(`this bench has no native doors: ${act} is a phone's or a desktop window's`);

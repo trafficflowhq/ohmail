@@ -3,7 +3,7 @@
  * element by element, value by value, at the eight looks (README.md). One command, from the repository's root:
  *
  *   REAL_MEASURE_STUDIO=<the studio's checkout> node --import tsx test/compare/real/measure.mts
- *     [--ref <tag or commit>] [--subjects frame,ohbox] [--looks 1440-paper-light,390-paper-dark] [--out <dir>]
+ *     [--state matched] [--ref <tag or commit>] [--subjects frame,ohbox] [--looks 1440-paper-light,390-paper-dark] [--out <dir>]
  *
  * Without a reference it says so in one line and ends SKIPPED (exit 0). Otherwise it writes into `--out`
  * (`build/real-measure/`): rows.tsv (every difference, with the task that removes it or UNDECLARED), gone.tsv,
@@ -18,7 +18,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { asDeclared, differ, isPhone, lookParams, LOOKS, verdict, type Declared, type Element, type Look, type Readings, type Row } from "./rows.js";
-import { SUBJECTS, type PageName, type Subject } from "./subjects.js";
+import { contentInsets, mailChanges, readWorld, type World } from "./matched.js";
+import { SUBJECTS, taggedRail, type PageName, type Subject } from "./subjects.js";
 
 const ROOT = process.cwd();
 const HERE = resolve(ROOT, "test/compare/real");
@@ -36,6 +37,12 @@ function args(argv: string[]): Record<string, string> {
 }
 
 const a = args(process.argv.slice(2));
+const matched = a.state === "matched";
+const tags = a.tags ?? "expanded";
+if (!["expanded", "collapsed", "initial"].includes(tags) || (a.tags && !matched)) {
+  throw new Error("--tags takes expanded, collapsed or initial in the matched state");
+}
+if (a.state && !matched) throw new Error("The optional --state must be matched");
 const studio = a.studio ?? process.env.REAL_MEASURE_STUDIO ?? "";
 if (!studio) {
   /* As the comparison does: COMPARE_REQUIRE_REFERENCE=1 turns the skip into a failure. */
@@ -52,9 +59,10 @@ const pick = <T extends { name?: string; id?: string }>(all: readonly T[], list:
     return found;
   });
 };
-const subjects = pick(SUBJECTS, a.subjects, "subject");
+const subjects = pick(SUBJECTS, a.subjects, "subject").map((s) => matched
+  ? { ...s, page: "web" as const, reference: s.reference + "&cal=0" + (tags === "initial" || s.id === "frame-web" ? "" : "&tagsopen=1") } : s);
 const looks = pick(LOOKS, a.looks, "look");
-const out = resolve(ROOT, a.out ?? "build/real-measure");
+const out = resolve(ROOT, a.out ?? (matched ? "build/real-measure-matched" : "build/real-measure"));
 const tolerance = JSON.parse(readFileSync(resolve(ROOT, "test/compare/tolerance.json"), "utf8")) as {
   box: number;
   settle: { quietMs: number; withinMs: number };
@@ -96,7 +104,7 @@ async function bundle(page: PageName, into: string): Promise<{ js: string; css: 
     alias: { "next-intl": join(ROOT, "apps/webapp/test/editor-feel/intl-shim.mjs") },
     loader: { ".json": "json", ".css": "css", ".woff2": "dataurl", ".woff": "dataurl", ".svg": "dataurl", ".png": "dataurl", ".webp": "dataurl" },
     banner: { js: "window.process = window.process || { env: {} };" },
-    define: { "process.env.NODE_ENV": '"production"', "process.env.NEXT_PUBLIC_API_BASE": "undefined" },
+    define: { "process.env.NODE_ENV": '"production"', "process.env.NEXT_PUBLIC_API_BASE": page === "web" ? JSON.stringify("/api") : "undefined" },
     logLevel: "warning",
   });
   return { js: readFileSync(join(into, `${page}.js`), "utf8"), css: readFileSync(join(into, `${page}.css`), "utf8") };
@@ -110,8 +118,43 @@ async function context(browser: Browser, look: Look) {
   });
 }
 
+const ACCOUNT = "measure-account";
+const SIGNED_MAILBOX = "measure-mailbox";
+const READY_AT = "2026-11-17T09:00:00.000Z";
+
+function mailbox(id: string, address: string) {
+  return {
+    id, address, provider: "imap", status: "connected",
+    organizerRole: "organizer", organizedBy: null, organizerState: null,
+    organizerEventAt: null, organizerEventSeenAt: null, organizeConsentedAt: READY_AT,
+    lastSyncAt: READY_AT, initialImportCompletedAt: READY_AT, createdAt: READY_AT,
+    errorCode: null, disabledReason: null, syncBlockedReason: null, syncBlockedSince: null,
+  };
+}
+
+/** The signed-in web subjects' local API, including the selected mailbox's saved signature. */
+const WEB_READS: Record<string, object> = {
+  "/api/hello": { features: { pairing: false, draftReply: true } },
+  "/api/mailboxes": { items: [
+    mailbox(SIGNED_MAILBOX, "writer@example.invalid"),
+    mailbox("measure-second-mailbox", "workshop@example.invalid"),
+  ] },
+  "/api/consent": {
+    seedConfirmedAt: READY_AT, screeningResetAt: null, dormancyDays: 60,
+    counts: { decidedSenders: 0, activeUndecidedSenders: 0, dormantUndecidedSenders: 0 },
+    signatures: { [SIGNED_MAILBOX]: "Avery Reed\nWorkshop correspondence" },
+  },
+  "/api/sync": {
+    changes: { creates: [], updates: [], moves: [], deletes: [] },
+    cursor: "c1", hasMore: false, serverTime: READY_AT,
+  },
+  "/api/billing/subscription": { plan: "solo", status: "active", aiEnabled: true },
+  "/api/account/ai": { enabled: true, draftReply: true },
+  "/api/organizer-requests": { items: [] },
+};
+
 /** The product at the subject's place, in the look's face and scheme as a person's device stores them. */
-async function openApp(browser: Browser, look: Look, s: Subject, page$: { js: string; css: string }): Promise<Page> {
+async function openApp(browser: Browser, look: Look, s: Subject, page$: { js: string; css: string }, world?: World): Promise<Page> {
   const ctx = await context(browser, look);
   await ctx.addInitScript(([face, scheme]) => {
     try {
@@ -121,9 +164,42 @@ async function openApp(browser: Browser, look: Look, s: Subject, page$: { js: st
       /* A page without storage draws its defaults, and the readings say so. */
     }
   }, [look.face, look.scheme]);
+  if (s.page === "web") {
+    await ctx.addCookies([
+      { name: "tf_owner", value: ACCOUNT, url: APP_ORIGIN },
+      { name: "tf_resume", value: "1", url: APP_ORIGIN },
+    ]);
+  }
+  const responses: Record<string, object> = world ? {
+    ...WEB_READS,
+    "/api/mailboxes": { items: world.mailboxes.map((m, index) => ({
+      ...mailbox(m.id, m.address), displayName: index === 0 ? world.account.displayName : null,
+      createdAt: new Date(Date.parse(world.now) + index).toISOString(),
+    })) },
+    "/api/screener": {
+      items: world.waiting.map((w) => ({ messageId: w.id, sender: w.from, mailboxId: world.mailboxes[0]?.id, subject: w.subject, date: world.now })),
+      total: world.waiting.length, nextCursor: null, pendingDecisions: [],
+    },
+    "/api/consent": { ...WEB_READS["/api/consent"], signatures: Object.fromEntries(world.mailboxes.map((m) => [m.id, m.signature ?? ""])) },
+    "/api/sync": mailChanges(world, ACCOUNT),
+  } : WEB_READS;
   const page = await ctx.newPage();
   await page.route(`${APP_ORIGIN}/**`, (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (s.page === "web" && path === "/api/auth/session") {
+      return route.fulfill({ json: { scope: "full", user: {
+        accountId: ACCOUNT, userId: "measure-user", displayName: world?.account.displayName ?? "Fictional reader",
+        email: world?.account.signIn ?? "reader@example.invalid", emailVerified: true,
+        twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: true },
+      } } });
+    }
+    if (s.page === "web") {
+      if (path === "/auth/refresh") return route.fulfill({ status: 204 });
+      if (route.request().method() === "GET" && Object.hasOwn(responses, path)) {
+        return route.fulfill({ json: responses[path] });
+      }
+    }
+    if (path.startsWith("/api/")) return route.fulfill({ status: 404, json: {} });
     if (path.endsWith(".js")) return route.fulfill({ contentType: "application/javascript", body: page$.js });
     if (path.endsWith(".css")) return route.fulfill({ contentType: "text/css", body: page$.css });
     return route.fulfill({
@@ -134,6 +210,20 @@ async function openApp(browser: Browser, look: Look, s: Subject, page$: { js: st
     });
   });
   await page.goto(`${APP_ORIGIN}${PAGES[s.page].path}${s.route}`);
+  if (world && s.id !== "frame-web") {
+    const offer = page.getByRole("status").filter({ has: page.getByText("Get ohmail for desktop", { exact: true }) });
+    await offer.getByRole("button", { name: "Dismiss", exact: true }).click();
+  }
+  if (world && s.id !== "frame-web" && tags !== "initial" && !isPhone(look)) {
+    const fold = page.locator("nav.oh-rail").getByRole("button", { name: "Tags", exact: true });
+    if (await fold.getAttribute("aria-expanded") !== "true") await fold.click();
+    if (tags === "collapsed") await fold.click();
+    // Revisit with the choice the person just saved. The initial state makes no such press.
+    await page.reload();
+    await page.locator("nav.oh-rail").getByRole("button", {
+      name: "Tags", expanded: tags === "expanded", exact: true,
+    }).waitFor();
+  }
   if (s.page === "demo") {
     /* The demo's own ribbon: the product's pages have none. Dismissed as a person dismisses it. */
     await page.locator(".demo-ribbon button").first().click({ timeout: 5000 }).catch(() => undefined);
@@ -157,6 +247,10 @@ async function openReference(browser: Browser, look: Look, s: Subject, base: str
     await ctx.close();
     throw new Error(`the reference did not draw ${s.reference} bare`);
   });
+  if (matched && s.id !== "frame-web" && tags === "collapsed" && !isPhone(look)) {
+    await page.locator("#rail .rscroll").getByRole("button", { name: "Tags", expanded: true, exact: true }).click();
+    if (s.route === "#/ohbox") await page.locator("#reader").click({ position: { x: 4, y: 4 } });
+  }
   return page;
 }
 
@@ -168,13 +262,17 @@ async function readSide(page: Page, elements: readonly Element[], side: "app" | 
   const readings: Readings = {};
   for (const [i, el] of elements.entries()) {
     const mark = `e${i}`;
-    const found = await page.evaluate(markElement, [el[side], mark] as [string | null, string]);
+    const finder = matched && side === "app" ? el.matchedApp ?? el.app : el[side];
+    const found = await page.evaluate(markElement, [finder, mark] as [string | null, string]);
     if (found === "threw") threw.add(`finder of ${el.name} threw on the ${side}`);
     if (found !== true) {
       readings[el.name] = null;
       continue;
     }
     const reading = await page.evaluate(readElement, [mark, el.kind] as [string, "box" | "text" | "icon"]);
+    if (reading && matched && el.contentChild) {
+      reading.padding = await page.evaluate(contentInsets, [mark, side === "app" ? el.contentChild : null] as [string, string | null]);
+    }
     if (reading && el.kind === "text") {
       const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
       const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: `[data-real-measure="${mark}"]` });
@@ -222,15 +320,13 @@ try {
       const saved: Record<string, unknown> = {};
       for (const group of groups.values()) {
         const first = group[0]!;
-        const app = await openApp(browser, look, first, pages.get(first.page)!);
         const reference = await openReference(browser, look, first, server.base).catch((e: Error) => {
           faults.push(`${look.name} ${group.map((s) => s.id).join(", ")}: ${e.message}`);
           return null;
         });
-        if (!reference) {
-          await app.context().close();
-          continue;
-        }
+        if (!reference) continue;
+        const world = matched ? await readWorld(reference) : undefined;
+        const app = await openApp(browser, look, first, pages.get(first.page)!, world);
         for (const s of group) {
           /* A finder that threw is answered "threw", which the wait would take for an element found: it is a fault. */
           const ready = async (page: Page, expr: string, side: string): Promise<boolean> =>
@@ -239,18 +335,22 @@ try {
               () => (faults.push(`${look.name} ${s.id}: the ${side} never drew ${expr}`), false),
             );
           if (!(await ready(app, s.ready.app, "app")) || !(await ready(reference, s.ready.reference, "reference"))) continue;
-          const list = isPhone(look) ? s.phone : s.desk;
+          const list = isPhone(look) ? s.phone
+            : world && s.id === "frame" ? [...s.desk, ...taggedRail(world.tagCatalog)] : s.desk;
           const threw = new Set<string>();
           const A = await readStill(app, list, "app", threw);
           const R = await readStill(reference, list, "reference", threw);
           for (const line of threw) faults.push(`${look.name} ${s.id}: ${line}`);
           if (!A.still || !R.still) faults.push(`${look.name} ${s.id}: the ${A.still ? "reference" : "app"} did not stand still`);
-          rows.push(...differ({ look: look.name, subject: s.id }, list, A.readings, R.readings, tolerance.box));
+          rows.push(...differ({ look: look.name, subject: s.id }, list, A.readings, R.readings, tolerance.box, matched));
           measured.push({ subject: s.id, look: look.name });
           const none = neither.get(s.id) ?? new Set<string>();
           for (const el of list) if (!A.readings[el.name] && !R.readings[el.name]) none.add(el.name);
           neither.set(s.id, none);
-          saved[s.id] = { app: A.readings, reference: R.readings };
+          saved[s.id] = {
+            ...(world && { input: { mailboxes: world.mailboxes.length, unread: world.unread, waiting: world.waiting.length, conversations: world.threads.length, drafts: world.drafts.length } }),
+            app: A.readings, reference: R.readings,
+          };
         }
         saved[`faces ${first.page}`] = { app: await app.evaluate(facesDeclared), reference: await reference.evaluate(facesDeclared) };
         await app.context().close();
@@ -267,7 +367,9 @@ try {
   rmSync(work, { recursive: true, force: true });
 }
 
-const v = verdict(rows, declared, measured);
+// The stored declarations describe the inventory's sample account. Its expected differences
+// must never excuse a changed word, missing control or layout difference in the matched states.
+const v = verdict(rows, matched ? [] : declared, measured);
 const task = new Map(v.declared.map((r) => [JSON.stringify([r.look, r.subject, r.element, r.property]), r.removedBy]));
 const tsv = (list: string[][]): string => list.map((l) => l.join("\t")).join("\n") + "\n";
 writeFileSync(join(out, "rows.tsv"), tsv([["look", "subject", "element", "property", "app", "reference", "removedBy"],

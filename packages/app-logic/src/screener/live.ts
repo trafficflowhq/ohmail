@@ -22,7 +22,7 @@ import { usePartition } from "../consent/partition.js";
 import { useDemoMode, useDerivedVersion, useEngine, useResolvedDemoMode } from "../engine/index.js";
 import { useMailState } from "../mail-state/mail-state-binding.js";
 import { screenerMode } from "../mail-state/mail-state.js";
-import { screeningShown } from "../press/press-verdict.js";
+import { screeningShown, screeningVerdict } from "../press/press-verdict.js";
 import { postureRefusal, rulesPostureOf } from "../press/rules-posture.js";
 import { autoUnsubscribeDoor } from "../press/sender-screening.js";
 import type { ShellDispatch } from "../press/shell-dispatch.js";
@@ -32,7 +32,8 @@ import type { Translator } from "../text/translator.js";
 import type { DecisionDestination } from "./decision.js";
 import { useJunkPileKey, useJunkWindow, type JunkWindowControl, type JunkWire } from "./junk-window.js";
 import { useScreenerModel } from "./model.js";
-import type { ScreenerState, ScreenerText } from "./screener-state.js";
+import type { SuggestStanding } from "./no-suggestion.js";
+import type { DecisionVerdict, ScreenerState, ScreenerText } from "./screener-state.js";
 import {
   useScreenerSuggestions,
   type AutoOptInControl,
@@ -56,6 +57,11 @@ export interface ScreenerLiveInput {
   readonly suggestWire: SuggestWire | "none";
   /** Whether this host draws the shared suggestion control. Where it does not, nothing is priced or bought. */
   readonly suggestControl: boolean;
+  /**
+   * Whether this host buys the batch nobody pressed for, where the account's own row says so. Where it does not,
+   * the row is not read for it: a suggestion is bought on a press of the control and never otherwise.
+   */
+  readonly unpressed: boolean;
 }
 
 /** What a mounted frame holds of the Screener: its one model, and what runs beside it. */
@@ -70,6 +76,10 @@ export interface ScreenerLive {
   readonly suggest: SuggestBatchControl | null;
   /** The opt-in's quote, bound to this render's unsuggested senders; null over none or on the invented mailbox. */
   readonly autoOptIn: AutoOptInControl | null;
+  /** The refusal the run last met, standing until a later run contradicts it; null: none. */
+  readonly standing: SuggestStanding | null;
+  /** The senders the run is buying now, by sender key. */
+  readonly inFlight: ReadonlySet<string>;
 }
 
 export function useScreenerLive({
@@ -81,6 +91,7 @@ export function useScreenerLive({
   junkWire,
   suggestWire,
   suggestControl,
+  unpressed,
 }: ScreenerLiveInput): ScreenerLive {
   const engine = useEngine();
   const version = useDerivedVersion();
@@ -118,16 +129,23 @@ export function useScreenerLive({
       firstImportDoneAt,
     }),
   );
+  const decisionVerdict: DecisionVerdict = useStableCallback((origin, decision, retro) => {
+    if (engine !== origin) return null;
+    if (invented || !consent.known || role.mode !== "organizer") return { key: "none" };
+    return screeningVerdict(engine.verbRead(), decision.id, decision.from.address, decision.dest, decision.scope, {
+      consent, now: new Date(), ownAddresses, firstImportDoneAt, retro,
+    });
+  });
   /* THE SUGGESTION RUN, once: what was bought is read when the Screener comes on screen, and a batch is bought
-     without a press only for an account whose own row says so. Over none it asks nothing. */
+     without a press only for an account whose own row says so, on a host that buys such a batch. Over none it asks
+     nothing. */
   const suggestText = useMemo(() => ({ screener: text.screener, aiRefusal }), [text.screener, aiRefusal]);
-  const mirrorSuggestionOf = useMemo(
-    () => (address: string) => mirrorSuggestionIdOf(engine.read(), address),
-    [engine],
+  const mirrorSuggestionOf = useStableCallback((address: string) =>
+    mirrorSuggestionIdOf(engine.read(), address),
   );
   const run = useScreenerSuggestions({
     active: !invented && at.screener,
-    autoSuggest: consent.autoSuggest,
+    autoSuggest: unpressed && consent.autoSuggest,
     toast: press.undoToast,
     text: suggestText,
     wire: suggestWire,
@@ -147,6 +165,7 @@ export function useScreenerLive({
     outstanding: run.outstandingDecisions,
     ownAddresses,
     shownAt,
+    decisionVerdict,
     releaseWindow: press.screenerRelease ?? null,
   });
   const junk = useJunkHere(
@@ -170,6 +189,8 @@ export function useScreenerLive({
       )
     : null;
   return {
+    standing: run.standing,
+    inFlight: run.inFlight,
     model,
     junk,
     suggest,

@@ -274,7 +274,7 @@ describe("ONE resolver: the three doors read the same enum", () => {
 describe("a sentence rendered as the server's is the server's", () => {
   it("a CODED server refusal lends its words", async () => {
     const { ApiError } = await import("../app/api-client.js");
-    const { clientRefusalKey, disarmsAutoSuggest } = await import("../app/shell/screener-suggest.js");
+    const { clientRefusalKey, disarmsAutoSuggest } = await import("@ohmail/app-logic/screener/screener-suggest");
     const err = new ApiError(409, "ai_disabled", "managed AI is switched off", undefined, { coded: true });
     expect(clientRefusalKey(err)).toBeNull();
     expect(disarmsAutoSuggest(err)).toBe(true);
@@ -282,7 +282,7 @@ describe("a sentence rendered as the server's is the server's", () => {
 
   it("an UNCODED client refusal gets this client's own key, one per owner state", async () => {
     const { ApiError } = await import("../app/api-client.js");
-    const { clientRefusalKey } = await import("../app/shell/screener-suggest.js");
+    const { clientRefusalKey } = await import("@ohmail/app-logic/screener/screener-suggest");
     const pairs = [
       ["owner_absent", "suggest.refusedOwnerAbsent"],
       ["owner_signed_out", "suggest.refusedOwnerSignedOut"],
@@ -299,14 +299,14 @@ describe("a sentence rendered as the server's is the server's", () => {
 
   it("a client refusal does not disarm the automatic pass; a non-ApiError still does", async () => {
     const { ApiError } = await import("../app/api-client.js");
-    const { disarmsAutoSuggest } = await import("../app/shell/screener-suggest.js");
+    const { disarmsAutoSuggest } = await import("@ohmail/app-logic/screener/screener-suggest");
     expect(disarmsAutoSuggest(new ApiError(0, "owner_absent", "x", undefined, { coded: false }))).toBe(false);
     // The desktop bridge throws its own class off a real wire — unchanged.
     expect(disarmsAutoSuggest(new Error("bridge said no"))).toBe(true);
   });
 
   it("the mark is read off the refusal itself, whatever class carries it", async () => {
-    const { clientRefusalKey, disarmsAutoSuggest } = await import("../app/shell/screener-suggest.js");
+    const { clientRefusalKey, disarmsAutoSuggest } = await import("@ohmail/app-logic/screener/screener-suggest");
     // What the server client stamps on a refusal it made itself, carried by a class this file never sees.
     const made = Object.assign(new Error("raw english"), { status: 0, code: "owner_absent", wire: { coded: false } });
     expect(clientRefusalKey(made)).toBe("suggest.refusedOwnerAbsent");

@@ -37,7 +37,21 @@ export function QuestionBeforeAct({
   cancel,
 }: QuestionBeforeActProps) {
   return (
-    <Menu open={open} onClose={onClose} anchor={anchor} label={question} kind="ask">
+    <Menu
+      open={open}
+      onClose={onClose}
+      anchor={anchor}
+      label={question}
+      kind="ask"
+      onKey={(event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return false;
+        const scope = scopes?.find((choice) => choice.keyHint === event.key);
+        if (!scope?.onPress) return false;
+        event.preventDefault();
+        scope.onPress();
+        return true;
+      }}
+    >
       <div className="oh-ask">
         <p className="oh-text oh-display oh-ask-question">
           <EndDot kind="ink">{question}</EndDot>

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readMounted } from "../../tools/lib/mounted.mjs";
 import { leavesWithTheSwitch, readOldTestsTree } from "../../tools/lib/old-tests-tree.mjs";
-import { hostEntries, importsOf, makeGraph, makeResolver } from "../../tools/lib/reach.mjs";
+import {
+  checkHostShellImports,
+  hostEntries,
+  importsOf,
+  makeGraph,
+  makeResolver,
+} from "../../tools/lib/reach.mjs";
 import { casesOf, splitKey } from "../../tools/lib/test-cases.mjs";
 
 // The folder's name is spelled apart here, so that this file names no part of today's shell itself.
@@ -71,6 +77,17 @@ describe("a case's name, read from the file as text", () => {
     expect(names(text)).toEqual(["the case", "the next"]);
   });
 
+  it("reads no case in a call with no argument: a function of the file's own named test", () => {
+    const text = [
+      "async function until(test: () => boolean) {",
+      "  if (test()) return;",
+      "  while (!(await test())) await tick();",
+      "}",
+      'it("the case", () => {});',
+    ].join("\n");
+    expect(names(text)).toEqual(["the case"]);
+  });
+
   it("knows a browser runner's describe and its hooks", () => {
     const text = [
       'test.describe("the page", () => {',
@@ -129,6 +146,25 @@ describe("what the mail entry mounts, read from the tree", () => {
       "settings",
       "stage:firstRun",
     ]);
+  });
+
+  it("reads the panes record a name is made from by a function of the same file, as the mail's panes.ts hands it", () => {
+    const read = mountedIn({
+      "packages/app/src/mail/panes.ts": [
+        "function panesOf(parts) {",
+        "  return {",
+        "    general: NONE,",
+        "    account: parts.account === NONE ? NONE : accountPane(parts.account),",
+        "  };",
+        "}",
+        "export function mailSettings(parts) {",
+        "  const panes = panesOf(parts);",
+        "  return { ...settingsPlace(panes, useBeside), rail: RAIL };",
+        "}",
+      ].join("\n"),
+    });
+    expect(read.refusals).toEqual([]);
+    expect([...read.mounted].sort()).toEqual(["pane:account", "settings"]);
   });
 
   it("counts an entry that hands none as not mounted, and a stage typed as none at its binding", () => {
@@ -311,5 +347,41 @@ describe("the scope, read from the tree by the ruling's words", () => {
       expect(leavesWithTheSwitch(rel), rel).toBe(true);
     for (const rel of [`${SHELL}/locale.ts`, `${SHELL}/engine.tsx`, "packages/app/src/frame/Frame.tsx"])
       expect(leavesWithTheSwitch(rel), rel).toBe(false);
+  });
+});
+
+describe("the shell files a host can still import", () => {
+  const web = "apps/webapp/app/page.tsx";
+  const desktop = "apps/desktop/src/main.tsx";
+  const allowed = `${SHELL}/locale.ts`;
+  const old = `${SHELL}/AppShell.tsx`;
+  const view = `${VIEWS}/FolderView.tsx`;
+
+  function check(webSource: string, kept = [allowed], before = [allowed]) {
+    const sources = {
+      [web]: webSource,
+      [desktop]: 'import "../../../apps/webapp/app/shell/locale.js"',
+      [allowed]: "",
+      [old]: "",
+      [view]: "",
+    };
+    return checkHostShellImports({ ...tree(sources), manifests: {} }, kept, before);
+  }
+
+  it("permits retained helpers and type-only references", () => {
+    expect(check('import "./shell/locale.js"; import type { Row } from "./views/FolderView.js"')).toEqual([]);
+  });
+
+  it("names the entry that reaches an old view or a shell file outside the retained list", () => {
+    const failures = check(
+      'import "./shell/AppShell.js"; const load = () => import("./views/FolderView.js")',
+    );
+    expect(failures).toHaveLength(2);
+    expect(failures).toContain(`host shell: ${web} reaches ${old}`);
+    expect(failures).toContain(`host shell: ${web} reaches ${view}`);
+  });
+
+  it("refuses to grow the retained list, even for an unused helper", () => {
+    expect(check("", [allowed, old])).toContain(`host shell: ${old} was added to the retained list`);
   });
 });

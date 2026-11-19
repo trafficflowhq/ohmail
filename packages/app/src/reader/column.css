@@ -15,6 +15,12 @@
   margin-top: var(--s4);
 }
 
+/* The reply's writing surface draws no box of its own: the reply's sheet stands where the kit lays the column's
+   sheets. */
+.rd-reply {
+  display: contents;
+}
+
 /* The panel's wrapper is an item of the kit's foot: it may shrink to the foot, so the panel folds its verbs to the
    reading width instead of running past it. */
 .rd-stop {
@@ -41,4 +47,13 @@
   color: var(--ink);
   font: inherit;
   font-variant-numeric: tabular-nums;
+}
+/* Reply Run's count stays with the subject at the top of the reading column. */
+.rd-reply-run {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+  padding: var(--s3) var(--s4);
+  color: var(--ink2);
+  font-size: var(--t-meta);
 }

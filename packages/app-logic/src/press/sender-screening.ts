@@ -500,12 +500,14 @@ export function planScreeningChange(
   scope: ScreeningScope = "sender",
   makeRule = true,
   applyRetro = RETRO_DEFAULT_ON,
+  gate: "decide" | "leave" = "decide",
 ): ScreeningPlan {
   const wanted = FOLDER_OF_VIEW[dest];
   const subject = s.scopes[scope];
   const mutations: PlanMutation[] = [];
   const movedByDecide = new Set<string>();
-  const promoted = subject.waiting && subject.representativeId != null;
+  const representative = gate === "decide" && subject.waiting ? subject.representativeId : null;
+  const promoted = representative !== null;
 
   /**
    * The rule ladder, before the moves — the durable half lands first, so an interrupted sequence leaves a rule with
@@ -530,11 +532,11 @@ export function planScreeningChange(
   }
   mutations.push(...ruleMutations);
 
-  if (subject.waiting && subject.representativeId) {
+  if (representative) {
     const decision = DECISION_OF_DEST[dest];
     mutations.push({
       kind: "screener_decide",
-      senderId: subject.representativeId,
+      senderId: representative,
       decision,
       scope,
       // The past-mail answer travels with the decision, because the rule the decide promotes is

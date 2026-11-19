@@ -17,7 +17,6 @@ import {
   sendLocksKey,
   type HoldMirror,
 } from "@ohmail/app-logic/writing/send-lock";
-import { sliceOfDeclaration } from "./source-anchor";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 
@@ -56,17 +55,6 @@ const NONE_OWED = (): boolean => false;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-/* The send and draft verbs moved to `shell-compose.ts` (ARCH-022); the JSX and the `chrome` memo
-   that hand them to the surfaces stayed in the shell frame, so both are read. */
-const SHELL = readFileSync(
-  resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"),
-  "utf8",
-);
-const FRAME = readFileSync(
-  resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"),
-  "utf8",
-);
 
 const draft = (over: Partial<EngineDraft> = {}): EngineDraft => ({
   id: "d1",
@@ -267,119 +255,7 @@ describe("a held row offers the two answers a reader can actually give", () => {
 });
 
 describe("the shell asks about the hold BEFORE it opens a reply", () => {
-  /**
-   * ══ THE CENTRAL STRUCTURAL GUARD ═══════════════════════════════════════════════════════
-   *
-   * Mutation: move `const parked = hold.kind !== "free";` and its `holdOf` read back below the
-   * `if (parent …)` block in `AppShell.openDraftWithBody`. Real failure text:
-   *   AssertionError: openDraftWithBody's reply arm runs before the hold is known — a held reply
-   *   opens in the inline editor with Send live: expected -1 to be greater than -1
-   *
-   * `openDraftWithBody` and not `openDraft`: opening a draft is two steps now — `openDraft`
-   * decides whether the text is in hand and fetches it when it is not, and this is the door it
-   * hands a known body to. The hold order is a property of the door, and slicing the wrong
-   * declaration reads as the order being gone.
-   */
-  it("the hold is read above the reply arm, and the arm refuses a parked row", () => {
-    const openDraft = sliceOfDeclaration(SHELL, "openDraftWithBody");
-    const holdRead = openDraft.indexOf("const parked = hold.kind !== \"free\";");
-    const replyArm = openDraft.indexOf("if (parent");
-
-    expect(holdRead, "openDraftWithBody no longer computes a hold at all").toBeGreaterThan(-1);
-    expect(replyArm, "openDraftWithBody no longer has a reply arm to guard").toBeGreaterThan(-1);
-    expect(
-      replyArm,
-      "openDraftWithBody's reply arm runs before the hold is known — a held reply opens in the inline "
-      + "editor with Send live, which is a second copy of a message that may already have been "
-      + "delivered",
-    ).toBeGreaterThan(holdRead);
-
-    // And the arm actually CONSULTS it: the order alone would be satisfied by a read nobody uses.
-    expect(
-      openDraft.slice(replyArm, replyArm + 40),
-      "the reply arm does not consult the hold it now runs after",
-    ).toMatch(/if \(parent && !parked\)/);
-  });
-
-  /**
-   * The verbs' only write is the engine mutation, and the shell's callback carries the outcome
-   * through unchanged. Structural, because the callback lives in a component no test mounts.
-   */
-  it("the shell dispatches draft_resolve with the outcome it was handed", () => {
-    expect(
-      SHELL,
-      "the shell no longer dispatches the resolution verb, so the surface's two buttons write "
-      + "nothing",
-    ).toMatch(/engine\.mutate\(\{ kind: "draft_resolve", draftId, outcome \}\)/);
-    expect(
-      FRAME,
-      "the resolution is wired to something other than the Drafts view's own prop",
-    ).toMatch(/onResolve=\{resolveHeldSend\}/);
-  });
-  /**
-   * ── AND THE PRESS INSIDE THE EDITOR, WHICH THE HOISTED READ DOES NOT COVER ────────────────
-   *
-   * `openDraft` is one door onto a held reply. The other is the message itself: open the
-   * conversation and its inline editor is there, with no draft row in its mutation and a scratch
-   * buffer that carries none. So the press asked the predicate about `null`, got `free`, and the
-   * adapter made a second row and sent under a fresh key — while the first row sat at
-   * `unverified` and Drafts said so. The shell knows the row; it hands it to the press.
-   *
-   * Mutation: drop `heldRow: heldReplyRow(messageId)` from `sendReply`'s `withDone`. Real failure
-   * text: AssertionError: sendReply presses without naming the reply's own row, so the hold at
-   * that door is asked about nothing
-   */
-  it("sendReply hands the reply's unconfirmed row to the press", () => {
-    const sendReply = sliceOfDeclaration(SHELL, "sendReply");
-    expect(
-      sendReply,
-      "sendReply presses without naming the reply's own row, so the hold at that door is asked "
-      + "about nothing and a second copy goes out under a fresh key",
-    ).toMatch(/withDone\(\{\s*heldRow: heldReplyRow\(messageId\)[,\s}]/);
-    /* By the DECLARED NAME and no hook — `anchor-census.test.ts`'s rule: a census that locates a
-       declaration by its memoization hook is one a codemod turns into a silent -1. */
-    expect(
-      SHELL,
-      "the shell no longer derives the reply's unconfirmed row, so nothing can name it",
-    ).toContain("const heldReplyRow");
-    /* THE ROW IS THE HELD ONE, not simply the first reply draft: an ordinary draft cannot be
-       held, and offering the reader "did this arrive?" about it is a question about a send
-       nobody attempted. */
-    expect(
-      sliceOfDeclaration(SHELL, "heldReplyRow"),
-      "heldReplyRow stopped narrowing to a row past `draft`",
-    ).toMatch(/d\.status !== "draft"/);
-  });
-
-  /**
-   * The editor's own reading of the hold, and the two verbs that follow from it. Structural for
-   * the shell half; the DOM and the refusal are driven in `mail-send-states.test.ts`.
-   *
-   * Mutation: put `replySendState: mailSend.stateOf` back. Real failure text:
-   *   AssertionError: the reply editor reads the durable record alone …
-   */
-  it("the editor's send state carries the row's witness, and its verbs the shell's resolve", () => {
-    expect(
-      FRAME,
-      "the reply editor reads the durable record alone — a record a sweep, the seven-day age "
-      + "limit or another device leaves it without, which is the state the field report was in",
-    ).toMatch(/replySendState: replySendState,/);
-    expect(
-      sliceOfDeclaration(SHELL, "replySendState"),
-      "the reply's send state stopped projecting the hold onto the row",
-    ).toMatch(/heldRowUnverified\(/);
-    expect(
-      FRAME,
-      "the reply editor is handed no way to answer for a held send, so the door the reader "
-      + "actually opens is a dead end again",
-    ).toMatch(/onResolve: resolveHeldSend/);
-    /* AND THE COMPOSER, which holds its row in storage rather than in the drafts list — the
-       prop is JSX, so it is asked of the shell frame. */
-    expect(
-      FRAME,
-      "the composer is handed no way to answer for the send it is holding",
-    ).toMatch(/const row = readComposeRow\(scope\);\n\s*return row === null \? null : \{ draftId: row, onResolve: resolveHeldSend \};/);
-  });
+  // Its four cases over the shell's composition moved to `drafts-resolve-held-shell.test.ts`.
 
   /**
    * ONE component on EVERY door, so the words and the outcomes cannot fall apart.
@@ -481,36 +357,6 @@ describe("the server's answer spends this browser's record too", () => {
     ).toBe("free");
   });
 
-  /**
-   * The shell's half, structural for the reason every other AppShell pin here is: the callback
-   * lives in a component no test mounts.
-   *
-   * Mutation: delete the `resolvedRows.current.has(draftId)` guard. Real failure text:
-   *   AssertionError: the resolution releases the durable record on every answer …
-   */
-  it("the shell releases through the one door, once, and only on a confirmed answer", () => {
-    const body = sliceOfDeclaration(SHELL, "resolveHeldSend");
-    expect(
-      body,
-      "the resolution leaves this browser's record standing, so the row it just freed is still "
-      + "parked here",
-    ).toMatch(/releaseSendLockForRow\(/);
-    expect(
-      body,
-      "the resolution releases the durable record on every answer, including a refusal and a "
-      + "late repeat — see the case above for what that costs",
-    ).toMatch(/if \(resolvedRows\.current\.has\(draftId\)\) return;/);
-    expect(
-      /* CALLS, not mentions — a comment naming the function is not a second door. */
-      (body.match(/releaseSendLock\w*\(/g) ?? []).length,
-      "a second release path appeared beside the one door",
-    ).toBe(1);
-    /* A send that may STILL BE RUNNING is refused by name, and "it failed" is not what to say
-       about "not yet". */
-    expect(
-      body,
-      "the still-running refusal is reported as a failure, so a person is told the answer did "
-      + "not reach the server when it did",
-    ).toMatch(/send_still_running/);
-  });
+  // "the shell releases through the one door, once, and only on a confirmed answer" moved to
+  // `drafts-resolve-held-shell.test.ts`.
 });

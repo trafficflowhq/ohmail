@@ -366,7 +366,7 @@ describe("Discard of a draft whose send waits cancels that send first", () => {
     const s = await shell.mountShell("#/drafts", [shell.message("m1")], [letter as never]);
     await waiting(s);
     await discard(s);
-    expect({ discards: discards(s), listed: s.el.querySelector(`.draft-row[data-id="${D}"]`) != null, why: s.el.querySelector(".draft-refusal")?.textContent })
+    expect({ discards: discards(s), listed: s.el.querySelector(`[role=option][data-id="${D}"]`) != null, why: s.el.querySelector(`.dr-row[data-id="${D}"] [role=alert]`)?.textContent })
       .toEqual({ discards: 0, listed: true, why: drafts.discardCancelUnknown });
   }, 60_000);
 
@@ -379,7 +379,7 @@ describe("Discard of a draft whose send waits cancels that send first", () => {
     void s.engine.flushPending().catch(() => undefined);
     await shell.waitFor(() => sends(s) === 2, "the retry on the wire");
     await discard(s);
-    expect({ discards: discards(s), why: s.el.querySelector(".draft-refusal")?.textContent }).toEqual({ discards: 0, why: drafts.discardStillSending });
+    expect({ discards: discards(s), why: s.el.querySelector(`.dr-row[data-id="${D}"] [role=alert]`)?.textContent }).toEqual({ discards: 0, why: drafts.discardStillSending });
     await shell.act(async () => { s.sendGate.wait = null; release(); });
   }, 60_000);
 

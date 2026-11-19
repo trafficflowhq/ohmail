@@ -5,7 +5,7 @@
  * refused confirm keeps the review and every tick, says why above the list, and one press tries again. Each press
  * carries a key of its own, so a retry is told from a second press. It writes rules and moves nothing.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { refusalOfThrown } from "../connect/thrown.js";
 import { seedReviewOf, type SeedCandidate, type SeedReviewRead } from "./answers.js";
 
@@ -15,7 +15,11 @@ export interface SeedReviewWireLike {
 }
 
 export interface SeedReviewInput {
-  readonly wire: SeedReviewWireLike;
+  /**
+   * The host's wire, or `null` while the review is not owed: nothing is read, and the review rests at its start (the
+   * next wire handed in reads afresh, as a review mounted anew did).
+   */
+  readonly wire: SeedReviewWireLike | null;
   /** The consent event landed: the caller reads the world again. */
   onDone(): void;
   /** Found nobody to decide about. Given: the review draws nothing and hands back; absent, it says so. */
@@ -62,11 +66,19 @@ export interface SeedReview {
   confirm(): void;
 }
 
+const LOADING: SeedPhase = { at: "loading" };
+
 export function useSeedReview({ wire, onDone, onNothingToDecide }: SeedReviewInput): SeedReview {
-  const [phase, setPhase] = useState<SeedPhase>({ at: "loading" });
+  const [phase, setPhase] = useState<SeedPhase>(LOADING);
   const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
   const [filter, setFilter] = useState("");
   useEffect(() => {
+    if (wire === null) {
+      setPhase(LOADING);
+      setChecked((s) => (s.size === 0 ? s : new Set()));
+      setFilter("");
+      return;
+    }
     let live = true;
     wire.read().then(
       (answer) => {
@@ -103,7 +115,7 @@ export function useSeedReview({ wire, onDone, onNothingToDecide }: SeedReviewInp
   }, [review, filter]);
   const actionable = useMemo(() => shown.filter((c) => !c.alreadyDecided), [shown]);
   const confirm = useCallback(() => {
-    if (review === null || phase.at !== "ready") return;
+    if (wire === null || review === null || phase.at !== "ready") return;
     setPhase({ at: "confirming", review });
     wire.confirm([...checked], { idempotencyKey: newKey() }).then(onDone, (thrown: unknown) => {
       /* THE REVIEW AND THE TICKS SURVIVE: the retry sends the same curated list the refused press did. */
@@ -138,4 +150,15 @@ export function useSeedReview({ wire, onDone, onNothingToDecide }: SeedReviewInp
       }),
     confirm,
   };
+}
+
+/**
+ * The frame's one sent-mail review, read where its offer is worked out and provided once by whoever reads it: the
+ * stage draws this one, so the read the stage waited on is never made twice.
+ */
+export const SeedReviewContext = createContext<SeedReview | null>(null);
+
+/** The frame's sent-mail review, or `null` where nobody provides one. */
+export function useSeedReviewHere(): SeedReview | null {
+  return useContext(SeedReviewContext);
 }

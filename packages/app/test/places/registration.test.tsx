@@ -27,9 +27,10 @@ import { trashPlace, TrashAbove } from "../../src/trash/index.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, fakeWindow } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
+import { unseated } from "../support/unseated.js";
 import { fakeMail } from "../reader/support/fake-mail.js";
 import { wideWindow } from "../ohbox/setup.js";
-import { at, draft, msg, stamp, WORDS } from "./lists-world.js";
+import { at, draft, msg, NO_HIT, stamp, walkAt, WORDS } from "./lists-world.js";
 
 const mail: EngineMessage[] = [
   msg({
@@ -46,7 +47,17 @@ const folder = { id: "f1", name: "Workshops", mailboxId: "mb", mailbox: "mb" } a
 
 function useSeat() {
   const [openId, open] = useState<string | null>(null);
-  return { openId, open, markSeen: () => true, act: () => {}, stamp, settled: true, owed: false };
+  return {
+    openId,
+    open,
+    markSeen: () => true,
+    act: () => {},
+    entered: NO_HIT,
+    ...walkAt(),
+    stamp,
+    settled: true,
+    owed: false,
+  };
 }
 
 /** Each place's Above, its model over plain rows, as a seat would stand it. */
@@ -138,10 +149,10 @@ const ABOVE: Record<string, (props: { children: ReactNode }) => ReactNode> = {
 };
 
 const ENTRIES: readonly [PlaceEntry, string, string][] = [
-  [historyPlace, "#/history", "History"],
-  [tagsPlace, "#/tag/t1", "Tags"],
-  [folderPlace, "#/folder/f1", "Workshops"],
-  [addressPlace, "#/address/petra%40ex.example", "Petra Wyss"],
+  [unseated(historyPlace), "#/history", "History"],
+  [unseated(tagsPlace), "#/tag/t1", "Tags"],
+  [unseated(folderPlace), "#/folder/f1", "Workshops"],
+  [unseated(addressPlace), "#/address/petra%40ex.example", "Petra Wyss"],
   [draftsPlace, "#/drafts", "Drafts"],
   [trashPlace, "#/trash", "Trash"],
 ];
@@ -199,7 +210,7 @@ describe("the list places, each alone in the frame", () => {
     }
     expect(ENTRIES.map(([e]) => [e.id, e.rail?.group ?? null])).toEqual([
       ["history", "more"],
-      ["tags", "tags"],
+      ["tags", null],
       ["folder", null],
       ["address", null],
       ["drafts", "more"],

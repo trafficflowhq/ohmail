@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { KeymapProvider as KeymapProviderRaw } from "@ohmail/app/keys";
+import { KeymapProvider as KeymapProviderRaw } from "../../../test/support/keymap-provider";
 import { WithListGone } from "./_list-gone";
 import { TrashView } from "../app/views/TrashView";
 import type { TrashPage } from "@ohmail/app-logic/lists/trash-page";

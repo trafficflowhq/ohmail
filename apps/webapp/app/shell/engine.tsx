@@ -168,7 +168,7 @@ export function EngineProvider({
    * request that left as A could be re-judged as B. A prop, not an import: `app/shell/**` ships
    * in the desktop program, which has no session client. Absent on the desktop and the demo.
    */
-  onConfirmed?: (accountId: string) => void;
+  onConfirmed?: (accountId: string, address?: string) => void;
   /**
    * The page's word for the first frame (`page.tsx`): `wait` when the edge did not ask the API whose session this is,
    * or when no word arrived. A remembered mirror then opens but is not DRAWN until the check names that account, or
@@ -376,6 +376,10 @@ export function EngineProvider({
           return;
         }
         const owner = outcome.accountId;
+        const confirm = () => {
+          if (outcome.address === undefined) onConfirmed?.(owner);
+          else onConfirmed?.(owner, outcome.address);
+        };
         /**
          * A confirmed owner disproves a held session death — and the latch must be told,
          * because the death store is module state and a sign-in is a client-side navigation.
@@ -411,7 +415,7 @@ export function EngineProvider({
             confirmSyncOwner(warm.engine, owner);
             // AFTER the comparison and the cancellation check above: the client is bound to the account
             // this tab has decided it is for, not to whatever the last resolver happened to see.
-            onConfirmed?.(owner);
+            confirm();
           }
           setBinding(
             owner === warm.owner
@@ -425,7 +429,7 @@ export function EngineProvider({
         // binding, for the same first-tick reason as the warm arm above.
         const built = createEngine(false, undefined, owner);
         confirmSyncOwner(built, owner);
-        onConfirmed?.(owner);
+        confirm();
         setBinding({ status: "ready", demo: false, engine: built });
       })
       .catch((err: unknown) => {

@@ -4,7 +4,7 @@
  * same page as the frame and are unlayered, so a class name they style that the frame also draws is styled twice:
  * the frame's notice bar once took the name of the Reply Run's 1.5 px progress bar and drew as an empty grey band on
  * a phone. Every class the frame draws, at every size, with its rail sheet and its stage open, is styled by none of
- * them. The adapter's own sheet (`today.css`) addresses the frame on purpose and is not one of them.
+ * them.
  */
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { readdirSync, readFileSync } from "node:fs";
@@ -22,7 +22,7 @@ const REPO = resolve(__dirname, "../../../..");
 /** Where today's sheets live. */
 const TODAYS_TREES = ["packages/ui/src", "apps/webapp/app", "apps/desktop/src", "apps/paired-page/src"];
 /** The new kit's own sheets, and the adapter's sheet that places today's views inside the frame. */
-const NOT_TODAYS = new Set(["packages/ui/src/base/base.css", "apps/webapp/app/shell/today.css"]);
+const NOT_TODAYS = new Set(["packages/ui/src/base/base.css"]);
 
 function sheetsUnder(dir: string): string[] {
   return readdirSync(join(REPO, dir), { withFileTypes: true }).flatMap((entry) => {

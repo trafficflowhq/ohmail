@@ -2,7 +2,7 @@ import type { EmailAddress } from "@ohmail/wire";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
-  attachments, CERT_CODES, contacts, drafts, isSafeMailboxErrorDetail, mailboxes, messageBodies, messages, outboundSends,
+  accountSyncState, attachments, CERT_CODES, contacts, drafts, isSafeMailboxErrorDetail, mailboxes, messageBodies, messages, outboundSends,
   outboundSendFingerprints, outboundSentCopies, readAccountErasedAt, reclaimSpace, recordChange,
   SERVER_UNAVAILABLE_RESPONSE_CODES, threads, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
@@ -1079,6 +1079,8 @@ export interface SendResult {
   providerMessageId: string | null;
   draftId: string;
   seq: number | null;
+  /** At this committed account sequence the reservation's draft was still sent. A replay emits no change of its own. */
+  sentDraftThrough?: number;
   /**
    * WHOSE SEND THIS ANSWER IS ABOUT, when it is not this request's — see {@link FirstSendFacts}.
    * Present only where a reservation this key already held answered, which is exactly the state
@@ -2968,6 +2970,14 @@ export class SendService {
     return held ?? null;
   }
 
+  /** Read both facts in one snapshot. A newer sending attempt must never inherit an older key's delivery. */
+  private async sentDraftThrough(ctx: ServiceContext, draftId: string): Promise<number | undefined> {
+    const [row] = await asTx(ctx).select({ through: accountSyncState.nextSeq }).from(drafts)
+      .innerJoin(accountSyncState, eq(accountSyncState.accountId, drafts.accountId))
+      .where(and(eq(drafts.accountId, ctx.accountId), eq(drafts.id, draftId), eq(drafts.status, "sent")));
+    return row ? Number(row.through) : undefined;
+  }
+
   /** A press about a draft already sent is answered from its delivery, as a settled key's replay is. */
   private async answerSentDraft(ctx: ServiceContext, draftId: string): Promise<SendResult> {
     const [s] = await asTx(ctx).select({
@@ -2980,6 +2990,7 @@ export class SendService {
       .limit(1);
     return {
       status: "sent", providerMessageId: s?.providerMessageId ?? null, draftId, seq: null,
+      sentDraftThrough: await this.sentDraftThrough(ctx, draftId),
       firstSend: firstSendFacts("sent", s?.sentAt ?? s?.createdAt ?? ctx.now()),
     };
   }
@@ -3795,10 +3806,11 @@ export class SendService {
        * own stamp is the fallback, on the same reasoning the duplicate refusal states at length.
        */
       // A Send again whose own submission may have delivered it: this key sent it, not an earlier one.
+      const deliveredId = draftOfTerminalAttempt(row);
       const ownAgain = row.retryRefusal === EARLIER_UNVERIFIED && !SENT_NOTHING.has(row.offerState);
       return {
         status: "sent", providerMessageId: row.providerMessageId,
-        draftId: draftOfTerminalAttempt(row), seq: null,
+        draftId: deliveredId, seq: null, sentDraftThrough: await this.sentDraftThrough(ctx, deliveredId),
         ...(ownAgain ? {} : { firstSend: firstSendFacts("sent", row.sentAt ?? row.createdAt) }),
       };
     }

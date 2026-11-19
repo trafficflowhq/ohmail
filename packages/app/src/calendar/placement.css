@@ -15,6 +15,7 @@
   min-width: 0;
 }
 .cal-body-view {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 2;

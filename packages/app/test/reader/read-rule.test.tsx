@@ -167,4 +167,17 @@ describe("the read rule in the reader", () => {
     // The list's look: the sheet is washed, and a hidden word says it is unread.
     expect(screen.getByText("Unread")).toBeTruthy();
   });
+
+  it("a link opened under a list that has not listed its letter yet is a preview: nothing turns read until the person reads it", () => {
+    /* A folder before the consent answer is known, an address before its index answers: the list stands and has no
+       visit of the letter the address names. */
+    const { mail } = mountReader({
+      letters: [letter("m1")],
+      open: "m1",
+      meeting: { blank: null, visit: null },
+    });
+    layOut({ m1: ON_SCREEN });
+    pass(900);
+    expect(reads(mail.mutations), "a link read the letter").toEqual([]);
+  });
 });

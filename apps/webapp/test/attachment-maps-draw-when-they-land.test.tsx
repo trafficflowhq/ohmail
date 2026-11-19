@@ -134,7 +134,8 @@ describe("a letter's picture and invitation are drawn the moment their bytes lan
   it("the embedded picture, in the reader", async () => {
     parts = "picture";
     await mountWithTheLetter();
-    await goHash(`#/history/m/${LETTER}`);
+    /* The reader is the subject: it is read where the new shell mounts it, the Ohbox (History is not mounted yet). */
+    await goHash(`#/ohbox/m/${LETTER}`);
     // The letter's own picture, in the frame or the prose: the strip's thumbnail shares its URL.
     const drawn = (): boolean =>
       [...document.querySelectorAll("iframe")].some((f) => (f.getAttribute("srcdoc") ?? "").includes(DRAWN))

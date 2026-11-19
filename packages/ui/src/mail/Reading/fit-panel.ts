@@ -27,7 +27,8 @@ export function fitPanel(wrap: HTMLElement): string[] {
   const shown = (verb: HTMLElement) => !verb.hidden;
   const worded = (verb: HTMLElement) => verb.dataset.short === undefined;
   const signed = (verb: HTMLElement) => verb.dataset.signed !== undefined;
-  const over = () => bar.scrollWidth > wrap.clientWidth + 1;
+  /* Over by a whole pixel is over: the two widths are the browser's own rounding of each, so a part of a pixel is not. */
+  const over = () => bar.scrollWidth > wrap.clientWidth;
 
   for (let guard = 32; guard > 0 && over(); guard--) {
     const early = verbs.find((v) => shown(v) && v.dataset.wordFirst !== undefined && worded(v));

@@ -61,7 +61,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -70,7 +70,7 @@ async function mountShell(): Promise<void> {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
       children: h(ThemeProvider, {
         storageKey: null,
-        children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+        children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
       }),
     }));
   });

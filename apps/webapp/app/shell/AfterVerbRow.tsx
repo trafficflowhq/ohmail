@@ -18,13 +18,13 @@ import {
   readAfterVerb,
   writeAfterVerb,
 } from "@ohmail/app-logic/press/after-verb";
-import { useTodaysScope } from "./todays-scope";
+import { useScopeHere } from "@ohmail/app/frame";
 
 export function AfterVerbRow() {
   const t = useTranslations("settings");
   const [choice, setChoice] = useState<AfterVerbChoice>(DEFAULT_AFTER_VERB);
   /* The scope of the shell this row is drawn in; drawn in none, it shows the default and stores nothing. */
-  const scope = useTodaysScope();
+  const scope = useScopeHere();
 
   useEffect(() => {
     if (scope !== null) setChoice(readAfterVerb(scope));

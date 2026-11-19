@@ -47,7 +47,29 @@ export type Zone = "rail" | "list" | "reader" | "none";
  */
 export const READER_SCROLL_STEP = 48;
 
-const RAIL = ".rail";
+/**
+ * WHERE THE RAIL STANDS, said by the shell that draws it (`setRailZone`). `rail` is every box whose focus is the rail
+ * zone; `current` the entry of the place on screen inside it; `up` the rail put up over the app (it holds the keys
+ * while it stands). `side` says whether a rail stands at the side at this width: where none does, a step toward the
+ * rail puts the whole rail up. Left unsaid, the zone walk reads today's shell's rail, its drawer by the window's width.
+ */
+export interface RailZone {
+  readonly rail: string;
+  readonly current: string;
+  readonly up: string;
+  readonly side: boolean;
+}
+const TODAYS_RAIL = { rail: ".rail", current: ".ritem.on", up: ".rail.open" } as const;
+let railZone: RailZone | null = null;
+const RAIL = (): string => railZone?.rail ?? TODAYS_RAIL.rail;
+const RAIL_UP = (): string => railZone?.up ?? TODAYS_RAIL.up;
+const RAIL_CURRENT = (): string => railZone?.current ?? TODAYS_RAIL.current;
+
+/** The shell says where its rail stands, or `null` when it leaves. */
+export function setRailZone(zone: RailZone | null): void {
+  railZone = zone;
+  refresh();
+}
 
 /* ── the derived zone, as an external store ──────────────────────────────────────────────
    Module-level rather than context so the views (which declare bindings) and any future
@@ -56,6 +78,8 @@ const RAIL = ".rail";
    open-message selector; exactly one view is mounted at a time, so a plain slot is the
    honest shape and a registry of them would imply a concurrency that cannot occur. */
 let readerGeography: string | null = null;
+/* Where the mounted view's walk back to the list lands (its `listFocusSelector`). */
+let listGeography = ".view .row.sel";
 let zone: Zone = "list";
 const subscribers = new Set<() => void>();
 
@@ -67,15 +91,24 @@ const subscribers = new Set<() => void>();
  * the surfaces UNDER the sheet keep a dispatch-time gate (`noReaderOverlay`) — every other
  * rail/list key is already declared inert by the zone itself.
  */
-const READER_OVERLAY = ".reader";
+let readerSheet: string | null = null;
+const READER_OVERLAY = (): string => readerSheet ?? ".reader";
+/**
+ * The frame says where its sheet stands (the letter over the list at one column: its scroller), or `null` when it
+ * leaves; left unsaid, the walk reads today's shell's `.reader`. Said as the rail's place is (`setRailZone`).
+ */
+export function setReaderSheet(selector: string | null): void {
+  readerSheet = selector;
+  refresh();
+}
 function noReaderOverlay(): boolean {
-  return typeof document === "undefined" || document.querySelector(READER_OVERLAY) == null;
+  return typeof document === "undefined" || queryVisible(READER_OVERLAY()) == null;
 }
 
 function computeZone(): Zone {
   if (typeof document === "undefined") return "list";
   const el = document.activeElement;
-  const sheet = document.querySelector(READER_OVERLAY);
+  const sheet = queryVisible(READER_OVERLAY());
   if (sheet) {
     // The sheet owns the screen — unless something is layered ABOVE it. Document order is
     // half the layering truth: the shell renders every higher surface (screening panels,
@@ -95,13 +128,13 @@ function computeZone(): Zone {
     // guard is the drawer's own open state, not a layout read — in classic the full-screen
     // sheet covers the ≡ and this state is not reachable by pointer, and if focus is ever
     // IN an open drawer, the drawer is what the keys should serve there too.
-    if (el.closest(RAIL) && document.querySelector(`${RAIL}.open`) != null) return "rail";
+    if (el.closest(RAIL()) && queryVisible(RAIL_UP()) != null) return "rail";
     const pos = sheet.compareDocumentPosition(el);
     if ((pos & Node.DOCUMENT_POSITION_PRECEDING) !== 0) return "reader";
     return el.closest('[role="dialog"], [role="alertdialog"], [role="menu"]') ? "none" : "reader";
   }
   if (!(el instanceof Element) || el === document.body) return "list";
-  if (el.closest(RAIL)) return "rail";
+  if (el.closest(RAIL())) return "rail";
   if (readerGeography && el.closest(readerGeography)) return "reader";
   return "list";
 }
@@ -116,9 +149,11 @@ function computeZone(): Zone {
  * allowed exactly where the rail is on screen.
  */
 function railHidden(): boolean {
-  if (typeof window === "undefined" || !window.matchMedia) return false;
-  if (!railLayout().drawer) return false;
-  return document.querySelector(`${RAIL}.open`) == null;
+  if (railZone === null) {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    if (!railLayout().drawer) return false;
+  } else if (railZone.side) return false;
+  return queryVisible(RAIL_UP()) == null;
 }
 
 /**
@@ -131,6 +166,17 @@ function railHidden(): boolean {
 let railSummon: (() => void) | null = null;
 export function setRailSummon(fn: (() => void) | null): void {
   railSummon = fn;
+}
+
+/**
+ * THE LETTER BESIDE THE LIST: the frame's close while a letter stands open beside its list (two columns). Escape from
+ * the list closes it before it walks on to the rail; the place's own Escape (a picked set) and the walk back from the
+ * letter come first, as today's shell had them. A module-level seam the frame registers, as the summon above.
+ */
+let besideClose: (() => void) | null = null;
+export function setBesideClose(close: (() => void) | null): void {
+  besideClose = close;
+  for (const notify of subscribers) notify();
 }
 
 function refresh(): void {
@@ -214,7 +260,7 @@ export function ZoneCursor(): null {
 
 /** Focusable rail rows, in visual order. Collapsed groups are skipped by focus refusal. */
 function railItems(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>(`${RAIL} button:not([disabled])`)];
+  return [...document.querySelectorAll<HTMLElement>(`:is(${RAIL()}) button:not([disabled])`)];
 }
 
 function tryFocus(el: HTMLElement | null | undefined): boolean {
@@ -235,9 +281,9 @@ function tryFocus(el: HTMLElement | null | undefined): boolean {
  */
 function focusRailWhenOpen(tries = 12): void {
   const attempt = (): void => {
-    const open = document.querySelector<HTMLElement>(`${RAIL}.open`);
+    const open = queryVisible<HTMLElement>(RAIL_UP());
     if (open) {
-      if (tryFocus(open.querySelector<HTMLElement>(".ritem.on"))) return;
+      if (tryFocus(open.querySelector<HTMLElement>(RAIL_CURRENT()))) return;
       for (const el of open.querySelectorAll<HTMLElement>("button:not([disabled])")) {
         if (tryFocus(el)) return;
       }
@@ -258,7 +304,7 @@ function enterRail(): void {
     }
     return;
   }
-  const active = document.querySelector<HTMLElement>(`${RAIL} .ritem.on`);
+  const active = document.querySelector<HTMLElement>(`:is(${RAIL()}) ${RAIL_CURRENT()}`);
   if (tryFocus(active)) return;
   for (const el of railItems()) if (tryFocus(el)) return;
 }
@@ -270,9 +316,26 @@ function enterRail(): void {
  * the list zone by derivation; focus anywhere but the rail is the person's own and stays.
  */
 export function leaveRailAfterGoTo(): void {
-  if (typeof document === "undefined") return;
+  inRail()?.blur();
+}
+
+/** What holds the keys, where that is in the rail. */
+function inRail(): HTMLElement | null {
+  if (typeof document === "undefined") return null;
   const el = document.activeElement;
-  if (el instanceof HTMLElement && el.closest(RAIL)) el.blur();
+  return el instanceof HTMLElement && el.closest(RAIL()) ? el : null;
+}
+
+/**
+ * THE KEYS LEAVE THE RAIL WITH IT: a rail taken down while it held the keys hands them to the mounted list's row (the
+ * place where the walk back to the list lands), else to the page, which is the list zone by derivation. Focus
+ * anywhere but the rail is the person's own and stays.
+ */
+export function leaveRail(): void {
+  const el = inRail();
+  if (el === null) return;
+  if (tryFocus(queryVisible<HTMLElement>(listGeography))) return;
+  el.blur();
 }
 
 /** ↑/↓ inside the rail: the next row that accepts focus, so a closed group is no stop. */
@@ -353,6 +416,13 @@ export function useZoneNav(t: Translator, cfg: ZoneNavConfig = {}): void {
 
   /* The mounted view owns the reader geography for as long as it is mounted. */
   const readerSelector = cfg.reader?.selector ?? null;
+  const listSelector = cfg.listFocusSelector ?? ".view .row.sel";
+  useEffect(() => {
+    listGeography = listSelector;
+    return () => {
+      listGeography = ".view .row.sel";
+    };
+  }, [listSelector]);
   useEffect(() => {
     readerGeography = readerSelector;
     refresh();
@@ -425,7 +495,7 @@ export function useZoneNav(t: Translator, cfg: ZoneNavConfig = {}): void {
     // "reader" wherever focus sits, and the thing to scroll is the sheet — never a column
     // standing `display:none` behind it. With no sheet, the zone can only be "reader"
     // through the view's own geography, and its declared scroller is the target.
-    const sheet = document.querySelector<HTMLElement>(READER_OVERLAY);
+    const sheet = queryVisible<HTMLElement>(READER_OVERLAY());
     const r = latest.current.reader;
     const el =
       sheet ?? (r ? queryVisible<HTMLElement>(r.scrollSelector ?? r.selector) : null);
@@ -512,6 +582,13 @@ export function useZoneNav(t: Translator, cfg: ZoneNavConfig = {}): void {
       },
       {
         chord: "Escape",
+        group: "app",
+        label: t("escape"),
+        disabled: z !== "list" || besideClose === null,
+        run: () => besideClose?.(),
+      },
+      {
+        chord: "Escape",
         group: "navigate",
         label: t("zoneMenu"),
         disabled: z !== "list",
@@ -553,7 +630,7 @@ export function useZoneNav(t: Translator, cfg: ZoneNavConfig = {}): void {
       if (e.target instanceof Element && e.target.closest(".thread-marks")) return false;
       if (!isTypingTarget(e.target)) return true;
       const el = e.target as HTMLElement;
-      return document.querySelector(READER_OVERLAY) != null && !el.closest(READER_OVERLAY);
+      return queryVisible(READER_OVERLAY()) != null && !el.closest(READER_OVERLAY());
     };
     bindings.push(
       {

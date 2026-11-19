@@ -14,13 +14,13 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import {
-  otherOrganizerOf, readerMoveRefusal, screenerMode, type ScreenerRole,
+  otherOrganizerOf, screenerMode, type ScreenerRole,
 } from "@ohmail/app-logic/mail-state/mail-state";
 import { postureRefusal, rulesPostureOf } from "@ohmail/app-logic/press/rules-posture";
 import { ScreenerView } from "../app/views/ScreenerView";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
@@ -248,26 +248,6 @@ describe("the screened and spam previews' reader note", () => {
       expect(text).toContain(named(en.screener.moveBarWhy));
     });
   }
-});
-
-describe("the message verbs' refusal (readerMoveRefusal)", () => {
-  const say = (cat: typeof en) => ({
-    named: (name: string) => cat.screener.readerMoveRefused.replace("{name}", name),
-    unknown: () => cat.screener.readerMoveRefusedUnknown,
-    nobody: () => cat.screener.readerMoveRefusedNobody,
-  });
-
-  it("a holder that stopped: nothing organizes it, en and de", () => {
-    const roster = { kind: "known" as const, rows: [STOPPED_ROW] };
-    expect(readerMoveRefusal(roster, ["mb"], say(en))).toBe(en.screener.readerMoveRefusedNobody);
-    expect(readerMoveRefusal(roster, ["mb"], say(de as typeof en))).toBe(de.screener.readerMoveRefusedNobody);
-  });
-
-  it("CONTROL: a holder that still renews is named, and a pending roster names nobody", () => {
-    expect(readerMoveRefusal({ kind: "known", rows: [LIVE_ROW] }, ["mb"], say(en)))
-      .toBe(named(en.screener.readerMoveRefused));
-    expect(readerMoveRefusal({ kind: "pending" }, ["mb"], say(en))).toBe(en.screener.readerMoveRefusedUnknown);
-  });
 });
 
 describe("the sender sheet's organizer line", () => {

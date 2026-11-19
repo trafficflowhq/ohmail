@@ -13,6 +13,7 @@ export * from "./open-conversation.js";
 export * from "./press-words.js";
 export * from "./resurface-times.js";
 export * from "./squares-model.js";
+export * from "./store-letter.js";
 export * from "./thread-walk.js";
 export * from "./verbs.js";
 export * from "./visit.js";

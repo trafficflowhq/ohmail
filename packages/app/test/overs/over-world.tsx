@@ -1,8 +1,7 @@
-/** A frame with both overs handed, under the keyboard registry, whose one place draws what a case gives it. */
+/** A frame with both overs handed, whose one place draws what a case gives it; the frame stands its own key registry. */
 import { render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { Frame } from "../../src/frame/Frame.js";
-import { KeymapProvider } from "../../src/keys/index.js";
 import { keySheetOver } from "../../src/keys/sheet/index.js";
 import { paletteOver } from "../../src/palette/index.js";
 import { TextProvider } from "../../src/text/index.js";
@@ -26,9 +25,7 @@ export function mountOvers(body: () => ReactNode) {
       messages={{ ...FRAME_WORDS.en, palette: searchEn.palette, shortcuts: searchEn.shortcuts }}
       timeZone="Europe/Zurich"
     >
-      <KeymapProvider>
-        <Frame host={made.host} />
-      </KeymapProvider>
+      <Frame host={made.host} />
     </TextProvider>,
   );
 }

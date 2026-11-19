@@ -4,14 +4,13 @@
  * and offers nothing. Where the answer waits, and why a write was not saved, are said from the row itself.
  */
 import { Button, Tag } from "@ohmail/ui/base";
-import { AgendaRow, AnswerSwitch, EventCard, type CalendarTone } from "@ohmail/ui/calendar";
+import { AgendaRow, EventCard, type CalendarTone } from "@ohmail/ui/calendar";
 import { FAULT_KEYS, REFUSAL_KEYS } from "@ohmail/app-logic/calendar";
 import type { InvitationAnswer, InvitationRow } from "@ohmail/app-logic/calendar/invitations";
 import { useLocale, useText } from "../text/index.js";
 import { whenOf } from "./words.js";
 
-const ANSWERS: readonly InvitationAnswer[] = ["accepted", "tentative", "declined"];
-const isAnswer = (a: string): a is InvitationAnswer => (ANSWERS as readonly string[]).includes(a);
+import { AnswerChoices, isAnswer } from "./AnswerChoices.js";
 
 export interface InvitationItemProps {
   readonly row: InvitationRow;
@@ -42,14 +41,7 @@ export function InvitationItem(p: InvitationItemProps) {
   const given = isAnswer(row.answer) ? row.answer : null;
   const answers =
     !row.cancelled && !row.viewOnly && p.open ? (
-      <AnswerSwitch
-        label={t("answer.label")}
-        answers={{
-          options: ANSWERS.map((a) => ({ value: a, label: t(`answer.${a}`) })),
-          value: given,
-          onChange: (v: string) => isAnswer(v) && v !== given && p.onAnswer(v),
-        }}
-      />
+      <AnswerChoices answer={row.answer} onAnswer={p.onAnswer} />
     ) : undefined;
   const after =
     row.waiting !== null ? e(`waiting.${row.waiting}`) : row.cancelled ? t("cancelled") : row.organizer;

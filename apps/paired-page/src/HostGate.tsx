@@ -1,8 +1,8 @@
 /**
  * THE HOST-CLIENT GATE — which of two things this browser is looking at. Either it holds a
  * pairing (a refresh token the BearerManager found), and the answer is the mail client — the
- * SAME `AppShell` the desktop window and app.ohmail.app render, over the shared `HttpAdapter`
- * in bearer mode — or it does not, and the answer is the pairing landing, which is also where
+ * SAME frame over the mail ground the desktop window and app.ohmail.app mount, over the shared
+ * `HttpAdapter` in bearer mode — or it does not, and the answer is the pairing landing, which is also where
  * a session that DIES mid-use lands: rendering mail past a revocation would be a mailbox that
  * silently stopped being live. `baseUrl: ""` (root-relative on the served origin); the
  * `headers` seam injects Authorization; the `fetch` is the manager's, with its single 401
@@ -22,15 +22,18 @@
  * hosted constant, under-selling the door.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { NONE, type FeatureEntry, type HostContract } from "@ohmail/app/host";
+import { NONE, type FeatureEntry, type HostContract, type HostLanguage } from "@ohmail/app/host";
+import {
+  browserMailParts,
+  browserOpenLink,
+  MailFrame,
+  useBrowserMail,
+} from "../../webapp/app/shell/browser-mail";
 import { EngineProvider } from "../../webapp/app/shell/engine";
 import { browserNotificationHost } from "../../webapp/app/shell/notification-settings";
 import { ScreeningSection } from "../../webapp/app/shell/ScreeningSection";
-import { TodaysFrame } from "../../webapp/app/shell/TodaysFrame";
-import { NO_TODAYS } from "../../webapp/app/shell/todays-inputs";
-import { useTodaysSupplies } from "../../webapp/app/shell/todays-supplies";
 import { dropLocalStorageKeys, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "@ohmail/app-logic/writing/compose";
 import {
@@ -48,7 +51,7 @@ import { scopeMayMount, setStorageOwner } from "@ohmail/app-logic/storage";
 import { BearerManager, type SignOutOutcome } from "./bearer.js";
 import { HostAccountPane } from "./HostAccountPane.js";
 import { createHostClientEngine } from "./host-engine.js";
-import { pairedHost } from "./host.js";
+import { languageOf, pairedAccountDoor, pairedHost } from "./host.js";
 import { discardHostOutbox, type HostOutboxDiscard } from "./outbox-store.js";
 import { PairScreen } from "./PairScreen.js";
 import {
@@ -130,7 +133,27 @@ function reportDiscard(verdict: HostOutboxDiscard): void {
 /** How the CURRENT unpaired state came about, for the landing: ended at the computer, or signed out here. */
 type Ended = { kind: "revoked" } | { kind: "signed-out"; outcome: SignOutOutcome | null };
 
-export function HostGate({ bearer }: { bearer: BearerManager }) {
+/** The pairing's own sign-out, stood around the frame for the Account section's door. */
+const PairingSignOut = createContext<(() => Promise<void>) | null>(null);
+
+/** The page's door of the Account section, the sign-out alone: one door for the page's life. */
+function usePairedAccountDoor() {
+  const signOut = useContext(PairingSignOut);
+  const door = useMemo(() => (signOut === null ? null : pairedAccountDoor(signOut)), [signOut]);
+  if (door === null) throw new Error("usePairedAccountDoor: no pairing stands above (PairingSignOut)");
+  return door;
+}
+
+export const PAIRED_PANE_PARTS = {
+  mailboxes: NONE, // what only this page hands Settings' sections: no Mailboxes, the Account section's sign-out
+  account: { useDoor: usePairedAccountDoor, password: NONE },
+} as const;
+
+/** What only this page hands the mail: a browser host's reader, no part of a stage, and that one door. */
+const PAIRED_MAIL_PARTS = browserMailParts(PAIRED_PANE_PARTS);
+
+/** `language`: the window's own language controls, read by the page's root; absent or null where none stand. */
+export function HostGate({ bearer, language }: { bearer: BearerManager; language?: HostLanguage | null }) {
   const [paired, setPaired] = useState(bearer.paired());
   /** `null` until the session ends in this page; the landing says which way it ended. */
   const [ended, setEnded] = useState<Ended | null>(null);
@@ -305,25 +328,30 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
      * never mounts for one commit over scope A's engine.
      */
     <EngineProvider key={scope} demo={false} engine={engine}>
-      <PairedFrame engine={engine} scope={scope} has={has} />
+      <PairingSignOut.Provider value={signOut}>
+        <PairedFrame engine={engine} scope={scope} has={has} controls={language ?? null} />
+      </PairingSignOut.Provider>
     </EngineProvider>
   );
 }
 
-type PairedHas = Omit<Parameters<typeof pairedHost>[2], "notifications" | "frame">;
+type PairedHas = Omit<Parameters<typeof pairedHost>[2], "notifications" | "frame" | "language" | "openLink">;
 
 /** The frame over this page's host, held to one record while its parts stand. */
 function PairedFrame({
   engine,
   scope,
   has,
+  controls,
 }: {
   engine: HostContract["engine"];
   scope: string;
   has: PairedHas;
+  controls: HostLanguage | null;
 }) {
-  /* What every browser shell hands the frame: made where the frame mounts, under the page's theme. */
-  const frame = useTodaysSupplies(NONE);
+  /* What every browser host hands the frame for mail: made where the frame mounts, under the page's theme. */
+  const frame = useBrowserMail(NONE, PAIRED_MAIL_PARTS);
+  const language = useMemo(() => languageOf(controls), [controls]);
   const { signOut, mailboxes, wires, features } = has;
   const host = useMemo(
     () =>
@@ -336,6 +364,8 @@ function PairedFrame({
           wires,
           features,
           notifications: browserNotificationHost,
+          language,
+          openLink: browserOpenLink,
           frame,
         },
       ),
@@ -352,10 +382,11 @@ function PairedFrame({
       wires.trash,
       wires.draftReply,
       features,
+      language,
       frame,
     ],
   );
-  return <TodaysFrame host={host} todays={NO_TODAYS} />;
+  return <MailFrame host={host} />;
 }
 
 /** The page's own sentence for a browser that refused the outbox's database, with its one answer. */

@@ -52,7 +52,13 @@ export function calendarPortOf(parts: PortParts): CalendarPort {
   const keep = async (key: string, call: () => Promise<Answered>): Promise<Answered> => {
     try {
       const answered = await call();
-      verdicts.set(key, { kind: "taken", write: answered.answer.write });
+      const write = answered.answer.write;
+      verdicts.set(
+        key,
+        write?.state === "refused"
+          ? { kind: "refused", word: write.reason ?? "unknown", details: write }
+          : { kind: "taken", write },
+      );
       return answered;
     } catch (err) {
       if (err instanceof MutationRejectedError && !err.retryable)

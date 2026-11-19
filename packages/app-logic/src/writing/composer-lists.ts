@@ -16,10 +16,12 @@ import { useMemo } from "react";
 import {
   NO_WAITING,
   draftsList,
+  scheduledSendsList,
   sendingMailboxId,
   type EntityReader,
   type OhmailEngine,
 } from "@ohmail/client-engine";
+import { useDerivedVersion, useEngine } from "../engine/context.js";
 import type { MailboxEntity } from "./composer-types.js";
 
 export interface ComposerLists {
@@ -49,4 +51,18 @@ export function useComposerLists(engine: OhmailEngine, reader: EntityReader, der
     );
   }, [reader, derived, waiting]);
   return useMemo(() => ({ mailboxes, drafts, fallbackMailboxId }), [mailboxes, drafts, fallbackMailboxId]);
+}
+
+/** The appointment and queued-send rows beside the composer, read only while Drafts or Write is visible. */
+export function useDraftSendLists() {
+  const engine = useEngine();
+  const reader = engine.read();
+  const derived = useDerivedVersion();
+  const scheduled = useMemo(() => at(derived, scheduledSendsList(reader)), [reader, derived]);
+  const sends = engine.waitingSends?.() ?? NO_WAITING;
+  const waiting = useMemo(
+    () => new Set(sends.flatMap((w) => (w.draftId === null ? [] : [w.draftId]))),
+    [sends],
+  );
+  return { scheduled, waiting };
 }

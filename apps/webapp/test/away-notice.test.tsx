@@ -7,6 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { AWAY_ANSWERABLE_PILES, AWAY_PILE_VIEW, type AwayPile } from "@trafficflow/core/away-scope";
 import { PANE_IDS } from "../app/views/SettingsView";
+import { engineOver, storeWith } from "./_view-shell";
 
 /**
  * THE AWAY RESPONDER'S OHBOX NOTICE — the tell for the one state in which this product sends
@@ -124,63 +125,55 @@ function installFetch(): void {
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+let engine: ReturnType<typeof engineOver>;
+const FirstInList = React.createContext<React.ReactNode>(null);
 
-function ohboxProps(): Record<string, unknown> {
+vi.mock("../../../packages/app/src/ohbox/OhboxAbove", async (load) => {
+  const real = await load<typeof import("../../../packages/app/src/ohbox/OhboxAbove")>();
   return {
-    demo: false, settled: true,
-    older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-    resurfacedRows: [],
-    newForYou: [{
-      id: "m1", accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-      subject: "subj", from: { name: "s", address: "s@ex.example" }, to: [], cc: [],
-      date: "2026-08-02T09:00:00.000Z", folder: "INBOX", snippet: "snip",
-      unread: true, hasAttachments: false, attachmentCount: 0,
-      sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-      triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
-    }],
-    previouslySeen: [], replyDone: null,
-    tags: [], now: NOW,
-    selectedId: null, onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-    onMarkSeen: () => {},
-    bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-    doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
+    ...real,
+    OhboxAbove(props: React.ComponentProps<typeof real.OhboxAbove>) {
+      const first = React.useContext(FirstInList);
+      return h(real.OhboxAbove, { ...props, beside: { ...props.beside, first } });
+    },
   };
-}
+});
 
 /**
- * Mount the REAL view over the REAL hook, wired exactly as `AppShell` wires them: the shell
- * holds the state (`useAwayNotice`), the view gets a node or `undefined`, and the settings
- * row — when this probe includes it — reports through the same `update` echo.
+ * Put the responder hook's notice in the Ohbox's live first slot. The settings row, when
+ * this fixture includes it, reports saves through the same hook.
  */
 async function mount(opts: { active: boolean; withRow?: boolean }): Promise<void> {
-  const OhboxView = await (await import("./ohbox/_today.js")).prepareToday();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { MailShell } = await import("./_mail-shell");
   const { AwayNotice, useAwayNotice } = await import("../app/shell/AwayNotice.js");
   const { AwayResponderRow } = await import("../app/shell/AwayResponderRow.js");
 
   function Probe(): React.ReactElement {
     const awayNotice = useAwayNotice(opts.active);
-    return h("div", null,
-      h(OhboxView as never, {
-    settled: true, owed: false,
-        ...ohboxProps(),
-        standingNotice: !opts.active || !awayNotice.on
-          ? undefined
-          : h(AwayNotice, {
-            audience: awayNotice.audience,
-            throttle: awayNotice.throttle,
-            piles: awayNotice.piles,
-          }),
-      } as never),
+    const first = opts.active && awayNotice.on
+      ? h(AwayNotice, {
+        audience: awayNotice.audience,
+        throttle: awayNotice.throttle,
+        piles: awayNotice.piles,
+      })
+      : null;
+    return h(FirstInList.Provider, { value: first },
+      h(MailShell, { engine }),
       opts.withRow ? h(AwayResponderRow as never, { onChanged: awayNotice.update } as never) : null,
     );
   }
 
   const el = h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now: NOW,
-    children: h(KeymapProvider as never, { children: h(Probe) } as never),
+    children: h(Probe),
   });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
+  if (!root) {
+    engine = engineOver(await storeWith([]));
+    window.location.hash = "#/ohbox";
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  }
   await act(async () => { root!.render(el); });
   /*
    * TWO macrotasks, not one, and the second is not belt-and-braces.

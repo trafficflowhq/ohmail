@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { parseIcsEvent } from "@trafficflow/core/ics";
 import { IcsEventCard, formatWhen } from "../app/components/IcsEventCard";
-import { AttachmentStrip, type AttachmentItem, type AttachmentsView } from "../app/components/AttachmentStrip";
+import type { AttachmentItem } from "../app/components/AttachmentStrip";
 import { calendarEventsOf } from "@ohmail/client-engine";
 import { HOSTILE_DURATION } from "../../../packages/core/test/fixtures/invite-shapes";
 import { MessageEvents } from "../app/shell/MessageEvents";
@@ -25,7 +25,8 @@ import { fileURLToPath } from "node:url";
  * inert characters, and a crafted ORGANIZER must never become a link.
  *
  * The block-level tests pin the degradation: a calendar part whose text does not parse draws no
- * card, and the strip keeps every calendar part as its plain tile.
+ * card. That the letter's files keep every calendar part as its plain tile is held over the new
+ * reader's files (`ics-attachment-tile.test.tsx`).
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -254,7 +255,7 @@ describe("the time forms the parser distinguishes render distinctly", () => {
   });
 });
 
-/* ── MessageEvents: the card where the text parses, nothing otherwise; the strip keeps the tile ── */
+/* ── MessageEvents: the card where the text parses, nothing otherwise ── */
 
 /** The events block over a message whose list and texts are these, through the real `calendarEventsOf`. */
 function eventsWith(items: AttachmentItem[], textOf: (id: string) => string | undefined) {
@@ -268,11 +269,6 @@ function eventsWith(items: AttachmentItem[], textOf: (id: string) => string | un
   };
   const attachments = { eventsOf: (id: string) => calendarEventsOf(engine as never, id), hold: () => () => {} };
   return h(MessageChromeProvider as never, { value: { attachments }, children: h(MessageEvents, { messageId: "m1" }) } as never);
-}
-
-function stripWith(items: AttachmentItem[]) {
-  const view: AttachmentsView = { state: "ready", items };
-  return h(AttachmentStrip, { items: view, onOpen: () => {}, onDownloadAll: () => {}, downloadingAll: false });
 }
 
 const calItem = (over: Partial<AttachmentItem> = {}): AttachmentItem => ({
@@ -289,13 +285,6 @@ describe("the event block draws where the text parses, and degrades honestly", (
     const el = await render(eventsWith([calItem()], () => REQUEST_ICS));
     expect(el.querySelector(".msg-events .ics-card")).not.toBeNull();
     expect(el.querySelectorAll("a, button"), "the card is text only").toHaveLength(0);
-  });
-
-  it("the strip keeps the calendar part as a plain tile with its Save", async () => {
-    const el = await render(stripWith([calItem()]));
-    expect(el.querySelector(".ics-card")).toBeNull();
-    expect(el.querySelector(".att-tile")).not.toBeNull();
-    expect(el.textContent).toContain("invite.ics");
   });
 
   it("MALFORMED ics draws no card, never a broken one", async () => {

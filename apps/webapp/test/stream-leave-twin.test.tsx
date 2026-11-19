@@ -112,7 +112,7 @@ const state = (s: Omit<StreamLeaveState, "read"> & { reads: string[] }): StreamL
 });
 
 async function mount(view: "reads" | "receipts", commits: unknown[]): Promise<void> {
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const onLeaveSeen = (c: unknown) => commits.push(c);
   const common = {
     settled: true,

@@ -8,6 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
+import { menuItem, moreButton, openLetter, reportPress, reportSays } from "./ohbox/_finders.js";
 
 /**
  * MOVE, FILE AND JUNK CAN BE TAKEN BACK — driven through the whole shell, counted at the adapter.
@@ -25,6 +26,22 @@ process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 (globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
   escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
+};
+/*
+ * The frame's report animates its way in and out (the kit's motion), and jsdom has no Web Animations and no token
+ * sheet: the kit's recipe for this case (K7-2, `r2-kit-asks-7`): the fade is given its length on the report (the
+ * paper fade, `--d-hush`), and an animation ends by this file's own clock, so a report whose window has ended is
+ * still in the tree through its fade and takes a press there, as in a browser (the late Undo below).
+ */
+document.head.append(Object.assign(document.createElement("style"), { textContent: ".oh-report{--d-hush:700ms}" }));
+Element.prototype.animate = function (_frames: Keyframe[] | PropertyIndexedKeyframes | null, timing?: number | KeyframeAnimationOptions) {
+  let end: ReturnType<typeof setTimeout> | undefined;
+  return {
+    cancel: () => clearTimeout(end),
+    addEventListener: (_event: string, done: () => void) => {
+      end = setTimeout(done, (timing as KeyframeAnimationOptions).duration as number);
+    },
+  } as unknown as Animation;
 };
 
 const h = React.createElement;
@@ -54,7 +71,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -83,9 +100,9 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
 };
 
-const toastText = (): string => (host!.querySelector(".toast")?.textContent ?? "").trim();
-const undoButton = (): HTMLButtonElement | null =>
-  host!.querySelector<HTMLButtonElement>(".toast .toast-act");
+/** What the press answered, and its Undo: the frame's report at a seated place (today's shell's toast). */
+const toastText = (): string => reportSays();
+const undoButton = (): HTMLButtonElement | null => reportPress();
 
 const buttonStarting = (label: string): HTMLButtonElement | undefined =>
   [...host!.querySelectorAll<HTMLButtonElement>("button")]
@@ -102,10 +119,16 @@ const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 /** Anything that writes where a sender's mail goes from now on. */
 const routing = () => sent.filter((m) => m.kind.startsWith("rule_") || m.kind === "screener_decide");
 
-/** Press Move on the focused row and pick a destination. */
+/**
+ * Press Move on the focused row and pick a destination. The new Ohbox draws a walked-to row's letter in no column
+ * until it is entered, and its reader keeps Move in More (FOR-S3-TO-S8 point 63 (d)): Enter opens the focused row,
+ * then More, Move, and the place by its name (today's bar wrote "→ News").
+ */
 async function moveFocusedTo(place: string): Promise<void> {
-  await click(buttonStarting("Move"));
-  await click(buttonStarting(`→ ${place}`));
+  if (openLetter(document) === null) { await key("Enter"); await flush(); }
+  await click(moreButton(document) ?? undefined);
+  await click((menuItem("Move") as HTMLButtonElement | null) ?? undefined);
+  await click((menuItem(place) as HTMLButtonElement | null) ?? undefined);
 }
 
 /** Close the routing window — the REAL constant, on the fake clock this file installs. */

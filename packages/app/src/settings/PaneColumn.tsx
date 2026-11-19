@@ -2,7 +2,7 @@ import { Button } from "@ohmail/ui/base";
 import { SettingsHead, Sheet } from "@ohmail/ui/mail";
 import type { LayoutPlan } from "../frame/contract.js";
 import { useText } from "../text/index.js";
-import type { PaneSummary, SettingsPane } from "./contract.js";
+import type { PaneSheet, PaneSummary, SettingsPane } from "./contract.js";
 import { usePaneName } from "./label.js";
 
 export interface PaneColumnProps {
@@ -23,9 +23,10 @@ function Column({
   const t = useText("settings");
   const name = usePaneName();
   const { Body } = pane;
-  return (
+  const sheet: PaneSheet = (body, foot) => (
     <Sheet
       kind="reading"
+      foot={foot}
       label={t("title")}
       focused={keysHere}
       top={
@@ -37,8 +38,13 @@ function Column({
       }
       head={<SettingsHead title={name(pane)} hot={summary?.hot} count={summary?.count} />}
     >
-      <Body plan={plan} keysHere={keysHere} />
+      {body}
     </Sheet>
+  );
+  return pane.hasFoot ? (
+    <Body plan={plan} keysHere={keysHere} sheet={sheet} />
+  ) : (
+    sheet(<Body plan={plan} keysHere={keysHere} />)
   );
 }
 

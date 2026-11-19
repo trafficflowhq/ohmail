@@ -31,7 +31,8 @@ const c = (id: string, role: AriaRole, key: CatalogueKey | null, more: Partial<C
 const entries: Array<[string, Control]> = [
   // The frame.
   c("content", "main", null, { nameFrom: "none" }),
-  c("rail", "navigation", "rail.ariaMain"),
+  // The rail is the frame's own, drawn from the places' registrations: its landmark is the frame's word.
+  c("rail", "navigation", "frame.landmark.places"),
   c("rail-compose", "button", "rail.compose", { within: "rail" }),
   c("rail-ohbox", "button", "rail.ohbox", { within: "rail", counted: true }),
   c("rail-reads", "button", "rail.reads", { within: "rail", counted: true }),
@@ -73,12 +74,15 @@ const entries: Array<[string, Control]> = [
   c("show-original", "button", "mailBody.design", { within: "content" }),
   c("show-as-text", "button", "mailBody.plain", { within: "content" }),
   c("reply-send", "button", "reply.send", { within: "reader" }),
+  c("reply-body", "textbox", "reply.editorAria", { within: "reader" }),
 
   // Compose.
-  c("compose-to", "combobox", "compose.to", { within: "content" }),
-  c("compose-subject", "textbox", "compose.subject", { within: "content" }),
-  c("compose-body", "textbox", "compose.editorAria", { within: "content" }),
-  c("compose-send", "button", "compose.send", { within: "content" }),
+  // Write's letter: its people and its subject as the kit's Write names them (`write.to`, `write.subject`).
+  c("compose-to", "combobox", "write.to", { within: "content" }),
+  c("compose-subject", "textbox", "write.subject", { within: "content" }),
+  // Write's letter names its text as the kit's Write draws it (`write.text`).
+  c("compose-body", "textbox", "write.text", { within: "content" }),
+  c("compose-send", "button", "write.send", { within: "content" }),
   c("compose-cancel", "button", "compose.cancel", { within: "content" }),
   c("compose-bold", "button", "compose.rte.bold", { within: "content" }),
 

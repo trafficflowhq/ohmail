@@ -22,7 +22,7 @@ import "../../webapp/app/app.css";
 // After app.css, the standalone entry's reason: this window stamps data-layout pre-paint
 // too, so the Zero ladder must reach the hosted door's shell as well.
 import "../../webapp/app/zero-layout.css";
-import { DesktopLocale } from "../../desktop/src/DesktopLocale.js";
+import { DesktopLocale, useAppLocale } from "../../desktop/src/DesktopLocale.js";
 import { stampColumns } from "@ohmail/app-logic/lists/column-store";
 import { stampFrameAttributes } from "@ohmail/app/frame/boot";
 import { applyTextSize, readTextSize } from "../../webapp/app/shell/text-size";
@@ -97,12 +97,17 @@ if (!root) throw new Error("ohmail host client: #root is missing from index.html
 /** ONE manager per page — the credential's single owner; the gate and the engine both read it. */
 const bearer = new BearerManager();
 
+/** The page's gate, handed the language's controls the window's own provider stands. */
+function Gate() {
+  return <HostGate bearer={bearer} language={useAppLocale()} />;
+}
+
 createRoot(root).render(
   <StrictMode>
     <DesktopLocale>
       <ThemeProvider storageKey="ohmail.theme" faces storage={THEME_DOOR}>
         <ToastHost>
-          <HostGate bearer={bearer} />
+          <Gate />
         </ToastHost>
       </ThemeProvider>
     </DesktopLocale>

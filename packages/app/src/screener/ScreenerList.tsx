@@ -1,12 +1,20 @@
 /**
  * THE SCREENER'S LIST: its head with the three sections, the rows, what an empty section says, and Show more senders.
- * It reads the one model from `ScreenerAbove` and never makes one; its keys stand while it has them. On one column
- * the open sender stands over the list.
+ * It reads the one model from `ScreenerAbove` and never makes one; its keys stand while it has them, and the
+ * keyboard's zones are declared here: the arrows walk the senders as `j` and `k` do, and the list has no reading zone
+ * (a sender is decided, not read). On one column the open sender stands over the list.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
-import { useJunkView, useScreenerView, type ScreenerState } from "@ohmail/app-logic/screener";
-import { useFrame, useSelectionBar } from "../frame/commands.js";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
+import {
+  screenerListSteps,
+  useJunkView,
+  useScreenerView,
+  viewSender,
+  type ScreenerState,
+} from "@ohmail/app-logic/screener";
+import { useEntered, useFrame, useSelectionBar } from "../frame/commands.js";
 import type { PaneProps } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import {
@@ -29,6 +37,7 @@ import { JunkLetter } from "./held/JunkLetter.js";
 import type { ScreenerJunkItem } from "./ports.js";
 import { Failed } from "./sender/Failed.js";
 import { Sender } from "./sender/Sender.js";
+import { useText } from "../text/index.js";
 import { useKeyWords } from "./words.js";
 import "./screener.css";
 
@@ -75,6 +84,18 @@ export function ScreenerList({ route, plan, keysHere }: PaneProps) {
     words,
     oneColumn,
   });
+  const entered = useEntered();
+  useEffect(() => {
+    const id = entered.letter;
+    if (id === null || junkOn) return;
+    const row = view.rows
+      .map(viewSender)
+      .find((sender) => sender.id === id || sender.held.some((letter) => letter.id === id));
+    if (row) {
+      view.select(row.id, null, id);
+      entered.taken();
+    }
+  }, [entered, view, junkOn]);
   const junkView = useJunkView({
     active: junkOn,
     rows: junk === NONE ? NO_JUNK : junk.visible,
@@ -86,7 +107,9 @@ export function ScreenerList({ route, plan, keysHere }: PaneProps) {
     undo: beside.undo,
     oneColumn,
   });
-  useOptionalKeyBindings(keysHere ? (junkOn ? junkView.keys : view.keys) : []);
+  const walked = junkOn ? junkView : view;
+  useOptionalKeyBindings(keysHere ? walked.keys : []);
+  useZoneNav(useText("shortcuts"), { list: screenerListSteps(words, walked.step) });
   /* The queue's first page is asked again when the Screener opens, once: the model makes this function anew on
      every draw. */
   const reread = useRef(model.rereadWaiting);

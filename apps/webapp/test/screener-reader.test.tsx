@@ -17,7 +17,7 @@ import de from "../messages/de.json";
 import { screenerIntentsKey, type ScreenerIntent } from "@ohmail/app-logic/screener/screener-intents";
 import { screenerMode, type ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
 import { ScreenerView } from "../app/views/ScreenerView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**

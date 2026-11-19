@@ -13,18 +13,16 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import { FirstRun } from "../app/shell/FirstRun";
 import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { FocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { KEY_PEEK, pageModal } from "@ohmail/app-logic/session/modal-gate";
 import { revealInScroller } from "@ohmail/app-logic/lists/list-window";
 import { writeReplyDraft } from "@ohmail/app-logic/writing/mail-send";
 import { stubThreadLayout } from "./fixtures/thread-layout";
 import { parseRichValue } from "@ohmail/app-logic/writing/rich-text";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { cursorRow as seatedCursorRow, ohboxRow, ohboxRows } from "./ohbox/_finders";
+import { mountSetupOverPlace, SETUP } from "./_ohbox-1-first-run";
+import { cleanup } from "@testing-library/react";
 
 /**
  * ═══ THE KEYS REACH WHAT IS IN FRONT ═══════════════════════════════════════════════════════════
@@ -58,7 +56,10 @@ function stub(target: object, prop: string, desc: PropertyDescriptor): void {
   saved.push([target, prop, Object.getOwnPropertyDescriptor(target, prop)]);
   Object.defineProperty(target, prop, { configurable: true, ...desc });
 }
-const isList = (el: Element): boolean => el.matches(".view-ohbox .ob-scroll");
+/* The seated Ohbox's list scroller: the box that holds its rows in the frame's list section (found by the box, as
+   `ohbox/_finders.ts` finds the reading sheet's scrolling box, until the kit hands it out). */
+const LIST_SCROLLER = 'section[aria-label="Messages"] .ob-scroll';
+const isList = (el: Element): boolean => el.matches(LIST_SCROLLER);
 function layOut(): void {
   stub(window, "innerHeight", { value: 900 });
   stub(HTMLElement.prototype, "scrollTop", {
@@ -73,9 +74,9 @@ function layOut(): void {
   stub(Element.prototype, "getBoundingClientRect", {
     value(this: Element) {
       if (isList(this)) return rect(LIST_TOP, LIST_H);
-      const list = this.closest(".view-ohbox .ob-scroll");
-      if (list && this.matches(":is(.row, [role=option])[data-id]")) {
-        const at = [...list.querySelectorAll(":is(.row, [role=option])[data-id]")].indexOf(this);
+      const list = this.closest(LIST_SCROLLER);
+      if (list && this.matches("[role=option][data-id]")) {
+        const at = [...list.querySelectorAll("[role=option][data-id]")].indexOf(this);
         return rect(LIST_TOP + at * ROW_H - list.scrollTop, ROW_H);
       }
       return rect(0, 0);
@@ -114,6 +115,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  cleanup();
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
   document.body.innerHTML = "";
@@ -134,6 +136,8 @@ const msg = (id: string, n: number): EngineMessage => ({
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
   to: [], date: new Date(Date.UTC(2026, 8, 3, 9, 0) - n * 60_000).toISOString(), unread: true,
   updatedAt: "2026-09-03T09:00:00.000Z",
+  /* Made whole for the new reader, which reads a letter's tags and copies (today's read past their absence). */
+  cc: [], labels: [], snippet: `the words of ${id}`, hasAttachments: false, attachmentCount: 0,
 } as unknown as EngineMessage);
 
 async function storeWith(ids: string[]): Promise<MirrorStore> {
@@ -218,12 +222,11 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 }
 
 const IDS = Array.from({ length: 12 }, (_, i) => `m${i + 1}`);
-const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id ?? "");
+const rowIds = (el: HTMLElement): string[] => ohboxRows(el).map((r) => r.dataset.id ?? "");
 
 let engineNow: OhmailEngine | null = null;
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(IDS));
   engineNow = engine;
@@ -236,7 +239,7 @@ async function shell(): Promise<HTMLElement> {
       locale: "en", messages, timeZone: "UTC", now: NOW,
       children: h(ThemeProvider, {
         children: h(ToastHost, {
-          children: h(AppShell as never, {
+          children: h(MailShell as never, {
             demo: false, engine, consentTransport, mailboxFacts: async () => ORGANIZER_ROSTER,
           } as never),
         }),
@@ -264,10 +267,10 @@ const keyAtRoot = async (k: string): Promise<void> => {
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
 };
 
-const unseen = (el: HTMLElement, id: string): boolean =>
-  el.querySelector<HTMLElement>(`.view-ohbox :is(.row, [role=option])[data-id="${id}"]`)?.dataset.unseen === "1";
-const list = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>(".view-ohbox .ob-scroll")!;
-const cursorRow = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])[data-id]");
+/** The row's unread mark: `data-unread` on the seated row (today's row said it as `data-unseen`). */
+const unseen = (el: HTMLElement, id: string): boolean => ohboxRow(el, id)?.hasAttribute("data-unread") === true;
+const list = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>(LIST_SCROLLER)!;
+const cursorRow = (el: HTMLElement): HTMLElement | null => seatedCursorRow(el);
 /** Where the cursor row stands against the list's visible box. */
 function cursorPlace(el: HTMLElement): { id: string | null; top: number; bottom: number; scrollTop: number; onScreen: boolean } {
   const row = cursorRow(el);
@@ -371,19 +374,14 @@ describe("revealInScroller — the arithmetic, on its own", () => {
   });
 });
 
-/* ══ R32-06 ══════════════════════════════════════════════════════════════════════════════════ */
+/* ══ R32-06 ══════════════════════════════════════════════════════════════════════════════════
+   RE-POINTED (share ohbox-1): today's `FirstRun` dialog under today's key provider gave way to THE FIRST RUN AS THE
+   NEW FRAME's STAGE (`_ohbox-1-first-run.tsx`: the frame's own key registry and focus rule, the stage the first run
+   hands it, a mailbox another install organizes), over the same list behind it: ↵ opens the row under the cursor,
+   `j` moves it, a global letter and a binding that answers a modal beside them. The stage is a page modal
+   (`role="dialog"`, `aria-modal`), found by role; its words are the first run's own catalogue's, the same sentences. */
 
-const ob = messages.onboarding;
-const PEEKED: OnboardingMailbox = {
-  organizerRole: "reader",
-  organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-08-30T09:00:00.000Z" },
-  organizerState: "held",
-  organizeConsentedAt: null,
-  initialImportCompletedAt: null,
-};
-const facts: OnboardingFacts = {
-  door: "local", mailbox: PEEKED, account: { onboardingCompletedAt: null }, ai: "unset", queuedSenders: 0,
-};
+const ob = SETUP;
 
 /** The list behind the dialog: ↵ opens the row under the cursor, `j` moves it — the Ohbox's own shape. */
 function Behind({ opened, moved }: { opened: () => void; moved: () => void }) {
@@ -411,61 +409,30 @@ const flush = async (): Promise<void> => {
 
 async function setup(opts: { open?: boolean } = {}) {
   const counts = { opened: 0, moved: 0, answered: 0, behind: 0, completed: 0 };
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  const host: FirstRunHost = {
-    door: "local", ai: facts.ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async () => "stored",
-    complete: async () => { counts.completed += 1; },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
+  const el = document.body;
+  const made = mountSetupOverPlace(() => [
+    h(Behind, { key: "b", opened: () => { counts.opened += 1; }, moved: () => { counts.moved += 1; } }),
+    h(Globals, { key: "g", answered: () => { counts.answered += 1; }, behind: () => { counts.behind += 1; } }),
+  ], { open: opts.open ?? true });
+  Object.defineProperty(counts, "completed", { get: made.completed, enumerable: true });
+  /* Setup opened over the list, as its address opens it; it is never closed by a case here. */
   const render = async (open: boolean) => {
-    await act(async () => {
-      root.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
-        children: h(KeymapProvider, {
-          children: [
-            h(FocusFollows, { key: "ff" }),
-            h(Behind, { key: "b", opened: () => { counts.opened += 1; }, moved: () => { counts.moved += 1; } }),
-            h(Globals, { key: "g", answered: () => { counts.answered += 1; }, behind: () => { counts.behind += 1; } }),
-            open ? h(FirstRun, {
-              key: "fr", host, facts, onRefresh: () => {}, onLeave: () => {},
-              pull: { screened: 0, history: 0, pulled: 0 }, decide: null,
-              mailboxId: "mb-1", organizedSince: "30 Aug 2026",
-            }) : null,
-          ],
-        }),
-      }));
-    });
+    if (open) await made.setupAt();
     await flush();
   };
-  await render(opts.open ?? true);
+  await flush();
   return { el, counts, render };
 }
 
 /** The same page with a plain page modal in front of it: `aria-modal`, and no modal gate taken. */
 async function pageModalOnly() {
   const counts = { opened: 0, moved: 0, answered: 0, behind: 0 };
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  await act(async () => {
-    root.render(h(KeymapProvider, {
-      children: [
-        h(FocusFollows, { key: "ff" }),
-        h(Behind, { key: "b", opened: () => { counts.opened += 1; }, moved: () => { counts.moved += 1; } }),
-        h(Globals, { key: "g", answered: () => { counts.answered += 1; }, behind: () => { counts.behind += 1; } }),
-        h("div", { key: "pm", role: "dialog", "aria-modal": "true" }, h("button", { type: "button" }, "OK")),
-      ],
-    }));
-  });
+  const el = document.body;
+  mountSetupOverPlace(() => [
+    h(Behind, { key: "b", opened: () => { counts.opened += 1; }, moved: () => { counts.moved += 1; } }),
+    h(Globals, { key: "g", answered: () => { counts.answered += 1; }, behind: () => { counts.behind += 1; } }),
+    h("div", { key: "pm", role: "dialog", "aria-modal": "true" }, h("button", { type: "button" }, "OK")),
+  ], { open: false });
   await flush();
   return { el, counts };
 }
@@ -476,7 +443,8 @@ const button = (el: HTMLElement, label: string): HTMLButtonElement => {
   return b;
 };
 const heading = (el: HTMLElement): string => (el.querySelector("h1")?.textContent ?? "").trim();
-const card = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>('.ob-card[aria-modal="true"]')!;
+/** Setup's dialog: the stage, a page modal, by its role. */
+const card = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]')!;
 
 /** ↵ as a browser delivers it: keydown at the focused element, then a focused button's activation. */
 async function enter(): Promise<void> {
@@ -502,7 +470,8 @@ describe("R32-06: while setup stands, no key reaches the list behind it", () => 
 
   it("a step taken with focus fallen to the page root: focus returns inside, ↵ opens ohmail, the letter behind stays shut", async () => {
     const s = await setup();
-    const read = [...s.el.querySelectorAll<HTMLInputElement>("input[type=radio]")].find((i) => i.value === "read");
+    /* "Just read it here": the step's choice by its name (today's was a radio of value "read"). */
+    const read = [...s.el.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent ?? "").trim().startsWith(ob.elsewhereChoiceRead));
     await act(async () => { read!.click(); });
     /* The browser's half of a disabled or swapped button: focus leaves it for the page root, and
        the step changes after that, with no focused node removed for anybody to answer. */

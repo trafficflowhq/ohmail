@@ -5,8 +5,6 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../../messages/en.json";
-import german from "../../messages/de.json";
-import { pinnedRows } from "../_resurfaced-rows.js";
 
 /**
  * "DONE" ON A RESURFACED ROW — the release verb's row-level face.
@@ -66,45 +64,9 @@ function msg(m: Row): EngineMessage {
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-/** What the view asked the shell to do — the `onAction` seam. */
+/** What the view asked the shell to do — the `onAction` seam. (The Ohbox's two cases, Done on a pinned row, moved to
+ * `ohbox-resurface-done-seat.test.tsx`, over the Ohbox's own list.) */
 let dispatched: Array<[string, string]> = [];
-/** And the batched seam Done uses over a conversation — `bulk.run`. */
-let bulkRuns: Array<[string, string[]]> = [];
-
-async function mountOhbox(rows: Row[], locale: "en" | "de" = "en"): Promise<void> {
-  setViewport();
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const el = h(NextIntlClientProvider, {
-    locale, messages: locale === "de" ? german : messages, timeZone: "UTC",
-    now: new Date("2026-08-02T09:00:00.000Z"),
-    children: h(KeymapProvider as never, { children: h(OhboxView as never, {
-    owed: false,
-      demo: false, settled: true,
-      older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-      resurfacedRows: pinnedRows(rows.filter((r) => r.pinned).map(msg)),
-      newForYou: rows.filter((r) => !r.pinned && r.unread).map(msg),
-      previouslySeen: rows.filter((r) => !r.pinned && !r.unread).map(msg),
-      replyDone: null,
-      tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
-      selectedId: null,
-      onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: () => {},
-      bulk: {
-        run: (a: string, ids: string[]) => { bulkRuns.push([a, ids]); return true; },
-        tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {},
-      },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {},
-      onAction: (a: string, m: { id: string }) => { dispatched.push([a, m.id]); },
-      onAddTag: () => {},
-      onMarkAllRead: () => {},
-    } as never) } as never),
-  });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => { root!.render(el); });
-}
 
 async function mountTriage(
   pile: "reply" | "aside" | "resurface",
@@ -112,7 +74,7 @@ async function mountTriage(
 ): Promise<void> {
   setViewport();
   const { TriageView } = await import("../../app/views/TriageView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../../test/support/keymap-provider");
   const { WithListGone } = await import("../_list-gone.js");
   const byId = new Map(entries.map((e) => [e.id, msg({ id: e.id, unread: true })]));
   const list = entries.map((e) => ({
@@ -147,7 +109,6 @@ afterEach(async () => {
   host?.remove();
   host = null;
   dispatched = [];
-  bulkRuns = [];
 });
 
 /** The Done control standing beside the row that carries `id`, or null. */
@@ -166,48 +127,6 @@ const click = async (el: Element | null): Promise<void> => {
     el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
 };
-
-describe("the pinned row carries Done — and only the pinned row", () => {
-
-  /**
-   * MOVED DELIBERATELY (FEAT-020): the Resurfaced block is one row per CONVERSATION, so Done is a
-   * release over the row's pinned members and goes through the batched `bulk.run("done", ids)`
-   * seam, not the per-message `onAction`. What the test defends is unchanged — the press acts on
-   * THIS row and no other — and it now also says how many ids that is.
-   */
-  it("releases THIS row and no other — the second pin, not the first", async () => {
-    await mountOhbox([
-      { id: "pin-a", unread: true, pinned: true },
-      { id: "pin-b", unread: true, pinned: true },
-    ]);
-    await click(doneBeside("pin-b"));
-    // One call, the row's own ids. A control that pressed `⇧I` instead would act on the
-    // SELECTED message — with nothing selected, on nothing at all.
-    expect(bulkRuns).toEqual([["done", ["pin-b"]]]);
-    expect(dispatched).toEqual([]);
-  });
-
-  /**
-   * THE POINT OF THE FOLD, as data. MUTATION WATCHED: pass `[g.openTarget.id]` instead of the
-   * row's pinned members in `doneForRow` and this reads one id — the conversation comes straight
-   * back with two of its three pins still standing.
-   */
-  it("a conversation releases every member carrying a pin, in one press", async () => {
-    await mountOhbox([
-      { id: "c-1", unread: true, pinned: true, threadId: "T" },
-      { id: "c-2", unread: true, pinned: true, threadId: "T" },
-      { id: "c-3", unread: true, pinned: true, threadId: "T" },
-    ]);
-    const done = host!.querySelectorAll("[role=listbox] button");
-    expect(done, "three pins in one conversation are ONE row").toHaveLength(1);
-    await click(done[0]!);
-    expect(bulkRuns).toHaveLength(1);
-    expect(bulkRuns[0]![0]).toBe("done");
-    expect([...bulkRuns[0]![1]].sort()).toEqual(["c-1", "c-2", "c-3"]);
-  });
-
-
-});
 
 describe("the Resurface pile's rows carry the same verb, read for a scheduled row", () => {
   it("a scheduled row offers Done and dispatches `resurface_done` for its message", async () => {

@@ -8,7 +8,7 @@ import * as scan from "../../../scripts/lib/source-scan.mjs";
 /* The declaration's own slice, by NAME. `anchor-census.test.ts` refuses a literal that names a
    declaration by the hook it is declared with, and correctly: such a literal goes green against
    an EMPTY slice the moment the declaration is reworded. This throws `anchor not found`. */
-import { shellFrameOf, sliceOfDeclaration } from "./source-anchor";
+import { sliceOfDeclaration } from "./source-anchor";
 
 /**
  * ═══ THE SHELL'S ACTION HANDLERS DISPATCH THROUGH THE SEAM, AND NOTHING ELSE ════════════════
@@ -51,20 +51,11 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
   ["app-logic/writing/mail-send.ts", 1,
    "a settled reply's one after-effect — clearing the answered message's Answer Later. Nothing is "
    + "claimed about it: the sentence the person reads is the send's own"],
-  ["shell/AppShell.tsx", 0,
-   "none left: the last one, the subject rule's move half, went with the verbs (ARCH-022). The "
-   + "row is KEPT at zero so a dispatch written back beside the JSX is refused by this count"],
-  ["shell/shell-verbs.ts", 1,
-   "the subject rule's move half, whose sentence comes from the awaited RULE — the same one, "
-   + "moved out of `AppShell.tsx` with the screening and tag verbs (ARCH-022)"],
   ["app-logic/writing/shell-compose.ts", 6,
    "the six draft verbs, five of which read `res.status` and speak from it — the five moved out of "
    + "`AppShell.tsx` with the compose and draft verbs (ARCH-022), and `sendAgain`, whose answer is "
    + "the message opening with Send live on `confirmed` and a named toast on anything else; it "
    + "raises no success sentence a discarded verdict could stand over"],
-  ["shell/shell-open-state.ts", 3,
-   "the three seen-batchers, which are glance marks with no sentence to make false — the same "
-   + "three, moved out of `AppShell.tsx` with the open state (ARCH-022)"],
   ["shell/folder-verbs.ts", 1,
    "the folder-op notice's dismissal: it raises no sentence at all, and its three siblings in the "
    + "same object already speak only on `rolled_back`"],
@@ -78,11 +69,9 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
 /**
  * THE TOTAL, PINNED APART FROM THE ROWS. A shell module split hands a count from one row to
  * another, and both rows move together while the sum quietly grows — which is a new bare dispatch
- * arriving under cover of a refactor. Nineteen is the reading (the plain reply's pin spend went,
- * SEND-IS-NOT-DONE; a landed create's copy came); a row that falls hands its share
- * to a named row, never to nobody.
+ * arriving under cover of a refactor. The remaining fifteen calls belong to surviving files.
  */
-const REMAINDER_TOTAL = 19;
+const REMAINDER_TOTAL = 15;
 
 function tsFiles(dir: string): string[] {
   const out: string[] = [];
@@ -109,22 +98,51 @@ describe("the shell's dispatch seam", () => {
    * The handlers a press reaches the engine through, named one by one. `moveToPlace` and
    * `planMoveToPlace` are here too: they dispatch through `dispatchScreeningChange`, which awaits
    * its own outcome, and a bare dispatch appearing in them would be the same defect.
+   *
+   * The frame mounts these handlers: a seat's press reaches the engine through the
+   * verbs of `packages/app-logic/src/press/` (`useListVerbs` and the functions of `VerbContext` it calls) and the
+   * reader's `markSeenOver`; today's shell frames leave with it. `markSeen` is `markSeenOver` there, and the list
+   * verbs' three handlers hand their work to `runMessageAction`, `runBulkAction` and `screenBulk`, read here too.
    */
   const HANDLERS = [
-    "markSeen", "toggleTag", "bulkToggleTag", "createTag", "createTagAlone", "renameTag",
-    "deleteTag", "recolorTag", "planMoveToPlace", "moveToPlace", "onMessageAction",
-    "onBulkAction", "onBulkScreen",
+    "markSeenOver", "toggleTag", "bulkToggleTag", "planMoveToPlace", "moveToPlace", "onMessageAction",
+    "onBulkAction", "onBulkScreen", "runMessageAction", "runBulkAction", "screenBulk",
   ] as const;
+  /**
+   * TODAY's TAG VERBS THAT THE NEW TREE DOES NOT HAVE YET: creating a tag from the rail and renaming,
+   * recolouring and deleting one in the Tags pane. The mount that writes one writes it in the press
+   * folder and moves its name into HANDLERS: the case below refuses one that stands there unread.
+   */
+  const NOT_IN_THE_NEW_TREE_YET = ["createTag", "createTagAlone", "renameTag", "deleteTag", "recolorTag"] as const;
+  const REPO_ROOT = join(HERE, "..", "..", "..");
+  const PRESS_FILES = [
+    ...tsFiles(join(LOGIC, "press")),
+    join(LOGIC, "reader", "mark-seen.ts"),
+  ];
+  /** WHICH FILE OF THE NEW PRESS DECLARES `name`: zero hits and two are both refusals, as the manifest's were. */
+  function pressFrameOf(name: string): { path: string; source: string } {
+    const hits = PRESS_FILES.map((path) => ({ path, source: readFileSync(path, "utf8") }))
+      .filter(({ source }) => source.includes(`const ${name} =`) || source.includes(`function ${name}(`));
+    if (hits.length === 0) throw new Error(`anchor not found: ${name} in the press of the new shell`);
+    if (hits.length > 1) {
+      throw new Error(`anchor is ambiguous: ${name} is declared in ${hits.map((h) => relative(REPO_ROOT, h.path)).join(" and ")}`);
+    }
+    return hits[0]!;
+  }
 
   it("has no bare `void engine.mutate(` in the shell's action handlers", () => {
+    const written = NOT_IN_THE_NEW_TREE_YET.filter((name) =>
+      PRESS_FILES.some((path) => {
+        const source = readFileSync(path, "utf8");
+        return source.includes(`const ${name} =`) || source.includes(`function ${name}(`);
+      }));
+    expect(written, "a tag verb now stands in the press: move its name into HANDLERS").toEqual([]);
     const offenders: string[] = [];
     for (const name of HANDLERS) {
-      /* THE FRAME THAT DECLARES IT, from the manifest: the handlers sit in more than one shell
-         frame since ARCH-022 (`markSeen` is the open state's), and `shellFrameOf` refuses both
-         zero hits and two — a handler read off the wrong frame is the defect, not a pass.
-         THROWS when a handler is renamed rather than measuring nothing — the whole reason this
-         is a slice by name and not an index into the file. */
-      const blanked = scan.withoutCommentsAndLiterals(shellFrameOf(name).source);
+      /* THE FILE THAT DECLARES IT, by name across the press: `pressFrameOf` refuses both zero hits and two — a
+         handler read off the wrong file is the defect, not a pass. THROWS when a handler is renamed rather than
+         measuring nothing — the whole reason this is a slice by name and not an index into the file. */
+      const blanked = scan.withoutCommentsAndLiterals(pressFrameOf(name).source);
       const slice = sliceOfDeclaration(blanked, name);
       const hits = slice.split(NEEDLE).length - 1;
       if (hits > 0) offenders.push(`${name}: ${hits}`);
@@ -153,12 +171,8 @@ describe("the shell's dispatch seam", () => {
       + "of it went missing, or a row was raised without another falling").toBe(REMAINDER_TOTAL);
   });
 
-  /**
-   * ONE SEAM PER FRAME (RULING-MEETING-LINE, one seam): the seam's hook is called by the old shell and by the frame's room,
-   * which never stand together (`frame/one-seam.test.tsx` walks it), and by no other file. A third caller would be a
-   * second Undo door and a second replay of the stored delete intents. The hook's own declaration is not a call.
-   */
-  it("calls `useShellDispatch(` in the old shell and the frame's room, and nowhere else", () => {
+  /** A second caller would install a second Undo window and replay the same durable intents. */
+  it("calls the press seam in the frame's room and nowhere else", () => {
     const REPO = join(HERE, "..", "..", "..");
     const roots = [APP, LOGIC, BODY, VIEWS, join(REPO, "apps", "desktop", "src"), join(REPO, "apps", "paired-page", "src")];
     const callers = new Set<string>();
@@ -169,7 +183,7 @@ describe("the shell's dispatch seam", () => {
         callers.add(relative(REPO, file).split("\\").join("/"));
       }
     }
-    expect([...callers].sort(), "a press seam called outside the old shell and the frame's room")
-      .toEqual(["apps/webapp/app/shell/AppShell.tsx", "packages/app/src/frame/room.tsx"]);
+    expect([...callers].sort(), "a press seam called outside the frame's room")
+      .toEqual(["packages/app/src/frame/room.tsx"]);
   });
 });

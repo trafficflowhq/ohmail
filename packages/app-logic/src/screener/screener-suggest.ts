@@ -11,7 +11,8 @@
  * same press twice covers the same senders.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useStableCallback } from "../press/stable-callback.js";
 import { senderKey } from "@ohmail/client-engine";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import type { ToastFn } from "../press/report.js";
@@ -216,7 +217,7 @@ export interface AutoOptInControl {
   /** Unsuggested senders waiting right now. The batch is the first {@link batchSize} of them. */
   available: number;
   /** `running` never occurs: this control buys nothing. */
-  phase: SuggestPhase;
+  phase: Exclude<SuggestPhase, "running">;
   /** The SERVER's quote for the next batch. Null until the dry run answers — and no price, no consent. */
   quote: { senders: number; credits: number } | null;
   /** One translated sentence about the current state, or null. */
@@ -573,16 +574,16 @@ export function useScreenerSuggestions(opts: {
   /** The standing as last written, for the access read below, which must not close over state. */
   const standingNow = useRef<SuggestStanding | null>(null);
   /** The ONE writer: this hook's rows, and the host's when the rows are somebody else's. */
-  const writeStanding = useCallback((next: SuggestStanding | null) => {
+  const writeStanding = useStableCallback((next: SuggestStanding | null) => {
     standingNow.current = next;
     setStanding(next);
     link.current.publishStanding?.(next);
-  }, []);
+  });
   /** See {@link ScreenerSuggestions.absorbStanding}: written here, never published back. */
-  const absorbStanding = useCallback((next: SuggestStanding | null) => {
+  const absorbStanding = useStableCallback((next: SuggestStanding | null) => {
     standingNow.current = next;
     setStanding(next);
-  }, []);
+  });
   /** See {@link ScreenerSuggestions.outstandingDecisions} — read off the one page fetch below. */
   const [outstanding, setOutstanding] = useState<readonly PendingDecision[]>([]);
   /**
@@ -599,7 +600,7 @@ export function useScreenerSuggestions(opts: {
    * pressable button under the wrong number.
    */
   const [optIn, setOptIn] = useState<{
-    phase: SuggestPhase;
+    phase: AutoOptInControl["phase"];
     quote: { senders: number; credits: number } | null;
     notice: string | null;
   }>({ phase: "closed", quote: null, notice: null });
@@ -737,7 +738,7 @@ export function useScreenerSuggestions(opts: {
    * has a fact to state that no code here carries.
    */
   const tAi = opts.text.aiRefusal;
-  const whyFor = useCallback((err: unknown, fallback: string): string => {
+  const whyFor = useStableCallback((err: unknown, fallback: string): string => {
     const key = aiRefusalKey(err);
     if (key !== null) return tAi(key);
     // A refusal this client produced has no server voice to borrow — see {@link clientRefusalKey}.
@@ -745,7 +746,7 @@ export function useScreenerSuggestions(opts: {
     const here = clientRefusalKey(err);
     if (here !== null) return notify.current.t(here);
     return link.current.wire.messageFor(err, fallback);
-  }, [tAi]);
+  });
   /** Held for the effect below, which may not read a `useCallback` that changes every render. */
   const say = useRef(whyFor);
   say.current = whyFor;
@@ -790,7 +791,7 @@ export function useScreenerSuggestions(opts: {
     };
   }, [refused, writeStanding]);
 
-  const merge = useCallback(
+  const merge = useStableCallback(
     (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => {
       if (rows.length === 0) return;
       // OUT TO THE HOST'S OVERLAY FIRST, when there is one. Absent on every surface that owns its
@@ -804,9 +805,7 @@ export function useScreenerSuggestions(opts: {
         }
         return next;
       });
-    },
-    [],
-  );
+    });
 
   /**
    * Read what has already been bought — on EVERY Screener activation and once per queue GAIN.
@@ -818,7 +817,7 @@ export function useScreenerSuggestions(opts: {
    * catch happens seconds after the row appears. ONE page: the server's queue is `date desc`
    * like the list on screen, so a page covers the front of both.
    */
-  const readStored = useCallback(
+  const readStored = useStableCallback(
     async (alive: () => boolean): Promise<void> => {
       if (!alive()) return;
       io.current.lastHydrateAt = Date.now();
@@ -869,9 +868,7 @@ export function useScreenerSuggestions(opts: {
         // free (`charged: 0`). So both outcomes release the gate; only the ordering is bought.
         if (alive()) setHydrateSettled(true);
       }
-    },
-    [merge],
-  );
+    });
 
   /**
    * THE ACTIVATION READ — the catch-up. It runs the moment the Screener comes on screen, on the
@@ -1195,6 +1192,8 @@ export function useScreenerSuggestions(opts: {
         price(n, target, mode);
       },
       cancel: () => {
+        // A CONFIRMED PURCHASE IS NOT CANCELLED: what it was charged for is drawn and said when it answers.
+        if (phase === "running") return;
         io.current.run++;
         setPhase("closed");
         setQuote(null);
@@ -1211,16 +1210,18 @@ export function useScreenerSuggestions(opts: {
        * ONE idempotency key PER CHUNK — a retry replays that chunk's answer, a re-press re-buys only
        * chunks that never landed (landed ones answer `duplicate`, cost 0); a shared key would make
        * chunk 2 replay chunk 1's response. `run` is captured once and checked per chunk on arrival —
-       * a second press aborts the loop, and it is never re-bumped inside it (self-cancellation moved
-       * inside one purchase). Chips land incrementally; a stopped or thrown chunk halts the loop, the
-       * summary names what actually charged, spend never exceeds the quote.
+       * a newer price aborts the loop (a cancel does not: what was charged is kept), and it is never
+       * re-bumped inside it (self-cancellation moved inside one purchase). Chips land incrementally; a
+       * stopped or thrown chunk halts the loop, the summary names what actually charged, spend never
+       * exceeds the quote.
        */
       confirm: () => {
         // THE SET THE OPEN LADDER QUOTED, whichever it is. Sliced from `target` and not from
         // `addresses`, or a confirmed re-ask would buy the front of the buy list — a purchase over
         // senders the price on screen never covered.
         const set = target.slice(0, chosen);
-        if (set.length === 0 || phase === "running") return;
+        // NO PRICE, NO PURCHASE, whichever surface pressed: only a set with a whole quote of at least one sender.
+        if (set.length === 0 || phase !== "ready" || quote === null || quote.senders === 0) return;
         const run = ++io.current.run;
         const total = set.length;
         setPhase("running");

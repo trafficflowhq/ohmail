@@ -17,7 +17,7 @@ import {
 import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
 import { ContactCard } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
-import { useScreener } from "../contract.js";
+import { useNoAdvice, useScreener } from "../contract.js";
 import { whoOf } from "./Sentence.js";
 
 export function Card({
@@ -37,7 +37,7 @@ export function Card({
   const may = choosing && !refused(role);
   const shared = isSharedDomain(sender.from.address);
   const scope = shared ? "sender" : view.scopeOf(sender);
-  const proposed = suggestionWords(sender).dest;
+  const proposed = suggestionWords(sender, useNoAdvice()).dest;
   return (
     <ContactCard
       open={view.shown === "card"}

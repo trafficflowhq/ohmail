@@ -1,11 +1,9 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../../messages/en.json";
-import { pinnedRows } from "../_resurfaced-rows.js";
+import { act } from "@testing-library/react";
+import { fakeMail } from "../../../../packages/app/test/reader/support/fake-mail.js";
+import { admitting, mountSeat, unmountSeat } from "../_ohbox-1-seat.js";
 
 /**
  * j AND k ARE ONE GESTURE IN TWO DIRECTIONS.
@@ -41,16 +39,12 @@ import { pinnedRows } from "../_resurfaced-rows.js";
  * The fixture is asserted before it is used. A grouped list that failed to fold, or a session
  * order that placed the rows differently, would make every claim below true of a list nobody
  * has.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's harness (`./_today.js` `prepareSeated`, handed
+ * cut lists, under today's `KeymapProvider`) to the Ohbox's own seat over the mail ground (`../_ohbox-1-seat.tsx`):
+ * the same six letters are its engine's rows (the pin a `resurfaced` claim on its letter, as `pinnedRows` stamps it),
+ * and the seat binds the keys. Every expectation is as it stood.
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 /** The desktop layout: no width query matches, so a click selects rather than opens. */
 function setViewport(): void {
@@ -75,40 +69,23 @@ function msg(m: Row): EngineMessage {
   } as unknown as EngineMessage;
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
 
 interface Props { resurfaced?: Row[]; newForYou: Row[]; previouslySeen?: Row[] }
 
+/** A pinned letter, as `pinnedRows` stamps it: a `resurfaced` claim on the message itself. */
+const pinned = (m: EngineMessage): EngineMessage =>
+  ({ ...m, triage: { messageId: m.id, state: "resurfaced", bubbleUpAt: null, setAt: m.date, updatedAt: m.date } }) as unknown as EngineMessage;
+
 async function render(props: Props): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  function Wrapper(): React.ReactElement {
-    const [sel, setSel] = React.useState<string | null>(null);
-    return h(OhboxView as never, {
-    owed: false,
-      demo: false, settled: true,
-      older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-      resurfacedRows: pinnedRows((props.resurfaced ?? []).map(msg)),
-      newForYou: props.newForYou.map(msg),
-      previouslySeen: (props.previouslySeen ?? []).map(msg),
-      replyDone: null,
-      threadSubject: (threadId: string) => (threadId === "T" ? "Webshop" : threadId === "P" ? "Invoices" : null),
-      tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
-      onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: () => {},
-      bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-      selectedId: sel,
-      onSelect: (id: string) => setSel(id),
-    } as never);
-  }
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-    children: h(KeymapProvider as never, { children: h(Wrapper) } as never),
-  });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
+  const letters = [
+    ...(props.resurfaced ?? []).map(msg).map(pinned),
+    ...props.newForYou.map(msg),
+    ...(props.previouslySeen ?? []).map(msg),
+  ];
+  const mail = fakeMail(letters, [], {}, admitting(letters.map((m) => m.from.address)));
+  host = mountSeat(mail.engine).container;
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
 const key = async (k: string): Promise<void> => {
@@ -125,10 +102,8 @@ const rows = (): string[] =>
 const cursor = (): string | null =>
   host!.querySelector<HTMLElement>("[role=option][data-id][data-open]")?.dataset.id ?? null;
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
+afterEach(() => {
+  unmountSeat();
   host = null;
 });
 

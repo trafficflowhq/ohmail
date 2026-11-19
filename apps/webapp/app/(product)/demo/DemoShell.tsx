@@ -6,21 +6,35 @@
  * the frame mount after hydration.
  */
 import { useMemo, useSyncExternalStore } from "react";
-import { NONE } from "@ohmail/app/host";
+import { NONE, type HostDevice } from "@ohmail/app/host";
+import { browserMailParts, MailFrame, useBrowserMail } from "../../shell/browser-mail";
 import { EngineProvider, useEngine } from "../../shell/engine";
-import { TodaysFrame } from "../../shell/TodaysFrame";
-import { NO_TODAYS } from "../../shell/todays-inputs";
-import { useTodaysSupplies } from "../../shell/todays-supplies";
+import { useAppLocale } from "../../shell/LocaleContext";
 import { demoHost, type DemoSays } from "./host";
+
+/**
+ * What the demo hands of its own: a browser host's reader, and nothing else. The invented world has no door to a second
+ * factor and no account to sign out of, so no part of a stage and no section's door.
+ */
+const DEMO_MAIL_PARTS = browserMailParts({ mailboxes: NONE, account: NONE });
 
 const noSubscription = () => () => {};
 
-/** The demo's frame over the engine it stands on: every wire, read and feature `none`. */
+/** The demo's frame over the engine it stands on, with the mail ground: every wire, read and feature `none`. */
 export function DemoFrame({ says }: { says: DemoSays }) {
   const engine = useEngine();
-  const frame = useTodaysSupplies(NONE);
-  const host = useMemo(() => demoHost(engine, frame, says), [engine, frame, says]);
-  return <TodaysFrame host={host} todays={NO_TODAYS} />;
+  const frame = useBrowserMail(NONE, DEMO_MAIL_PARTS);
+  /* The language's controls the page wraps around the demo, as the host contract takes them. */
+  const controls = useAppLocale();
+  const drawnLocale = controls?.locale;
+  const adoptLocale = controls?.adoptLocale;
+  const language = useMemo(
+    (): HostDevice["language"] =>
+      drawnLocale === undefined || adoptLocale === undefined ? NONE : { locale: drawnLocale, adoptLocale },
+    [drawnLocale, adoptLocale],
+  );
+  const host = useMemo(() => demoHost(engine, frame, says, language), [engine, frame, says, language]);
+  return <MailFrame host={host} />;
 }
 
 export function DemoShell({ serverDemo, says }: { serverDemo: boolean; says: DemoSays }) {

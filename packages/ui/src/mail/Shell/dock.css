@@ -25,6 +25,7 @@
   .oh-dock-places {
     flex: 1 1 auto;
     display: flex;
+    gap: 0;
     align-items: center;
     justify-content: space-between;
     min-width: 0;

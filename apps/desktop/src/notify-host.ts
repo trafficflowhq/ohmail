@@ -19,7 +19,7 @@
  * not stubbed: no push subscription, no server to hold one — this shell is woken by its own
  * engine; a do-nothing stub would be a promise the type makes and the surface breaks.
  */
-import type { NotificationHost } from "../../webapp/app/shell/notification-settings";
+import { noticeChoicesVersion, storedNoticeChoices, type NotificationHost } from "../../webapp/app/shell/notification-settings";
 import { desktopEmitter } from "./notice-emitter.js";
 
 export const desktopNotificationHost: NotificationHost = {
@@ -35,4 +35,7 @@ export const desktopNotificationHost: NotificationHost = {
   osHoldsPermission: true,
   /** The window hands the shell a kind and its numbers; the shell words and shows it (`notice-emitter.ts`). */
   emitter: desktopEmitter,
+  /** The switches are the window's own stored ones, read before every notice (the header). */
+  choices: storedNoticeChoices,
+  choicesVersion: noticeChoicesVersion,
 };

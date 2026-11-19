@@ -11,6 +11,17 @@ export interface NoticeStore {
   post(feed: string, notices: readonly FrameNotice[]): void;
   read(): readonly SlotNotice[];
   subscribe(changed: () => void): () => void;
+  /** The more a notice's last answer opened, as that notice says it now; null when none is open or it has left. */
+  readMore(): ShownMore | null;
+  /** Closes the more that stands. */
+  closeMore(): void;
+}
+
+/** A notice's more as the dialog draws it: the notice's sentence and line, and its rows. */
+export interface ShownMore {
+  readonly title: string;
+  readonly line?: string;
+  readonly rows: readonly string[];
 }
 
 /** A notice's name in the slot: its kind, and its own id where one kind stands more than once. */
@@ -20,7 +31,7 @@ export const noticeId = (notice: FrameNotice): string =>
 /** What the slot draws of a notice, without its callbacks: two equal faces draw the same. */
 function face(notices: readonly FrameNotice[]): string {
   return JSON.stringify(
-    notices.map((n) => [n.kind, n.id, n.title, n.hot, n.line, n.acts?.map((act) => act.label)]),
+    notices.map((n) => [n.kind, n.id, n.title, n.hot, n.line, n.acts?.map((act) => act.label), n.more]),
   );
 }
 
@@ -29,6 +40,24 @@ export function createNoticeStore(): NoticeStore {
   const faces = new Map<string, string>();
   const told = new Set<() => void>();
   let snapshot: readonly SlotNotice[] = [];
+  /* The notice whose more is open, by its name in the slot, and what the dialog draws of it now. */
+  let moreOf: string | null = null;
+  let more: ShownMore | null = null;
+  const tell = () => {
+    for (const changed of [...told]) changed();
+  };
+  /* What the dialog draws: the open notice as it stands now; a notice that left closes it. */
+  const readOpen = (): ShownMore | null => {
+    const notice = [...latest.values()].flat().find((n) => noticeId(n) === moreOf);
+    if (!notice?.more) return null;
+    const next = { title: notice.title, line: notice.line, rows: notice.more.rows };
+    return more !== null && JSON.stringify(more) === JSON.stringify(next) ? more : next;
+  };
+  const openMore = (id: string) => () => {
+    moreOf = id;
+    more = readOpen();
+    tell();
+  };
 
   const press = (feed: string, at: number, act: number) => () =>
     latest.get(feed)?.[at]?.acts?.[act]?.onPress();
@@ -38,11 +67,17 @@ export function createNoticeStore(): NoticeStore {
     title: notice.title,
     hot: notice.hot,
     line: notice.line,
-    acts: notice.acts?.map((act, i): NoticeAct => ({
+    acts: answers(feed, notice, at),
+  });
+  /* Its answers as the slot presses them; its more, where it hands one, the last. */
+  const answers = (feed: string, notice: FrameNotice, at: number): SlotNotice["acts"] => {
+    const acts = (notice.acts ?? []).map((act, i): NoticeAct => ({
       label: act.label,
       onPress: press(feed, at, i),
-    })) as SlotNotice["acts"],
-  });
+    }));
+    if (notice.more) acts.push({ label: notice.more.label, onPress: openMore(noticeId(notice)) });
+    return acts.length ? (acts as unknown as SlotNotice["acts"]) : undefined;
+  };
 
   return {
     post(feed, notices) {
@@ -53,9 +88,18 @@ export function createNoticeStore(): NoticeStore {
       if (notices.length) faces.set(feed, now);
       else faces.delete(feed);
       snapshot = [...latest].flatMap(([name, list]) => list.map((notice, at) => slotted(name, notice, at)));
-      for (const tell of [...told]) tell();
+      more = readOpen();
+      if (more === null) moreOf = null;
+      tell();
     },
     read: () => snapshot,
+    readMore: () => more,
+    closeMore() {
+      if (moreOf === null) return;
+      moreOf = null;
+      more = null;
+      tell();
+    },
     subscribe(changed) {
       told.add(changed);
       return () => told.delete(changed);

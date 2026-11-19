@@ -5,7 +5,7 @@
  */
 import type { ComposeAttachment } from "@ohmail/wire";
 import type { ReactNode } from "react";
-import { Attach, AttachRoom, Files, FileTile, SendStatus } from "@ohmail/ui/mail";
+import { Attach, AttachRoom, Files, FileTile, SendStatus, type ComposerProps } from "@ohmail/ui/mail";
 import { base64Bytes, useLetterFiles, type LetterCap, type LetterFiles } from "@ohmail/app-logic/write/files";
 import { useText } from "../../text/index.js";
 import { useWriteBeside } from "../above.js";
@@ -22,6 +22,7 @@ export interface FilesView {
   readonly note: string | null;
   /** A drop on the letter. */
   readonly onFiles: ((files: File[]) => void) | undefined;
+  readonly heldDrop: ComposerProps["heldDrop"];
 }
 
 export function useFiles({
@@ -30,6 +31,7 @@ export function useFiles({
   cap,
   locked,
   forward,
+  letterEpochNow,
 }: {
   list: readonly ComposeAttachment[];
   onList: (next: ComposeAttachment[]) => void;
@@ -37,10 +39,12 @@ export function useFiles({
   locked: boolean;
   /** A forward: the ceiling names the person's own files. */
   forward: boolean;
+  letterEpochNow?: () => number;
 }): FilesView {
   const t = useText("write");
   const beside = useWriteBeside();
-  const model = useLetterFiles({ list, onList, cap: cap.bytes, pictures: beside.pictures });
+  const { pickFile } = beside;
+  const model = useLetterFiles({ list, onList, cap: cap.bytes, pictures: beside.pictures, letterEpochNow });
   const total = beside.size(cap.bytes);
   const { notes } = model;
   const said: string[] = [];
@@ -58,6 +62,7 @@ export function useFiles({
     model,
     attach: (
       <Attach
+        key={letterEpochNow?.()}
         label={forward ? t("files.attachForward", { size: total }) : t("files.attach", { size: total })}
         disabled={locked}
         onFiles={pick}
@@ -101,6 +106,16 @@ export function useFiles({
       ),
     note: said.length > 0 ? said.join(" ") : null,
     onFiles: locked ? undefined : (files) => pick(files),
+    heldDrop:
+      locked || pickFile === undefined || pickFile === "none"
+        ? undefined
+        : {
+            looksLikeDrag: pickFile.looksLikeDrag,
+            matchesDrop: pickFile.matchesDrop,
+            receive: () => {
+              void model.add(() => pickFile.take());
+            },
+          },
   };
 }
 

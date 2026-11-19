@@ -1,13 +1,9 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
+import { act, cleanup } from "@testing-library/react";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * SETUP OFFERS AI ONLY WHERE A MODEL CAN ANSWER.
@@ -16,63 +12,44 @@ import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
  * server with the operator's Anthropic key", the press switched AI on, and every Suggest then
  * answered 503. The self-host door now offers "Yes" only when the server says it has a model; with
  * none, the step says so and the answer it stores is "no". Cloud and the desktop are unchanged.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the re-run is the new frame's first-run stage at
+ * `#/first-run/again` (`_first-run-stage.tsx`), the mailbox the ground's row, the stored window the
+ * ground's `screening`, its words the stage's catalogue; a choice is the AI step's radio by its text. Every
+ * expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const t = messages.onboarding;
+const t = O;
 
 /** A re-run of setup on an organized mailbox whose account switch rests ON, the default. */
-const facts = (door: "cloud" | "selfhost"): OnboardingFacts => ({
-  door,
-  mailbox: {
-    organizerRole: "organizer", organizedBy: null, organizerState: null,
-    organizeConsentedAt: "2026-03-01T10:00:00.000Z", initialImportCompletedAt: "2026-03-01T11:00:00.000Z",
-  },
-  account: { onboardingCompletedAt: "2026-03-01T11:30:00.000Z" },
-  ai: "on",
-  queuedSenders: 0,
-} as OnboardingFacts);
+const row = (): FirstRunRow => ({
+  id: id("mb-1"), address: "me@example.invalid",
+  organizerRole: "organizer", organizedBy: null, organizerState: null,
+  organizeConsentedAt: "2026-03-01T10:00:00.000Z", initialImportCompletedAt: "2026-03-01T11:00:00.000Z",
+}) as FirstRunRow;
 
-const roots: Root[] = [];
 afterEach(() => {
-  for (const r of roots.splice(0)) r.unmount();
+  cleanup();
   document.body.innerHTML = "";
 });
 
 async function atTheAiStep(door: "cloud" | "selfhost", selfhostAi?: boolean) {
   const writes: boolean[] = [];
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  const host: FirstRunHost = {
+  const st = await mountStage({
+    rows: [row()],
+    at: "#/first-run/again?mailbox=mb-1",
     door,
-    ai: "on",
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async () => "stored",
-    complete: async () => { /* leaves */ },
-    setAiEnabled: async (on: boolean) => { writes.push(on); },
-    probeReason: () => null,
-    probeMessage: () => null,
-    ...(selfhostAi === undefined ? {} : { selfhostAi }),
-  } as FirstRunHost;
-  const Stage = () => {
-    const [, bump] = React.useState(0);
-    return h(FirstRun, {
-      host, facts: facts(door), onRefresh: () => bump((n) => n + 1), onLeave: () => { /* back to the app */ },
-      pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: "mb-1", rerun: true,
-      screening: { dormancyDays: 365, scope: "window" as const },
-    });
-  };
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
-    }));
+    account: { onboardingCompletedAt: "2026-03-01T11:30:00.000Z" },
+    screening: { dormancyDays: 365, scope: "window" as const },
+    verbs: {
+      ai: "on",
+      organize: async () => "stored",
+      complete: async () => { /* leaves */ },
+      setAiEnabled: async (on: boolean) => { writes.push(on); },
+      ...(selfhostAi === undefined ? {} : { selfhostAi }),
+    },
   });
+  const el = st.el;
   const press = async (label: string) => {
     const button = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
     expect(button, `no button labelled ${label}`).toBeTruthy();
@@ -81,7 +58,7 @@ async function atTheAiStep(door: "cloud" | "selfhost", selfhostAi?: boolean) {
   await press(t.continue);
   await press(t.agree);
   expect((el.querySelector("h1")?.textContent ?? "").trim()).toBe(t.aiTitle);
-  const choices = () => [...el.querySelectorAll('[role="radiogroup"] label')].map((r) => (r.textContent ?? "").trim());
+  const choices = () => [...el.querySelectorAll("[role=radio]")].map((r) => (r.textContent ?? "").trim());
   return { el, press, writes, choices };
 }
 

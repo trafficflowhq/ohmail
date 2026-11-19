@@ -6,7 +6,7 @@
  * answer is no: a write is refused before it is ever sent twice over another's change.
  */
 import { formatRRule, momentOrUtc, type CalEvent, type EventTime, type ZoneSource } from "@ohmail/cal-core";
-import type { EventChange } from "./port.js";
+import type { EventChange, WriteTarget } from "./port.js";
 
 const blank = (v: string | null | undefined): string | null =>
   v === undefined || v === null || v === "" ? null : v;
@@ -75,4 +75,20 @@ export function alreadyHolds(change: EventChange, event: CalEvent, zones: ZoneSo
       return false;
   }
   return true;
+}
+
+
+/** Check the addresses the provider will notify, including any attendee its reader could not represent. */
+export function sameAudience(expected: NonNullable<WriteTarget["audience"]>, event: CalEvent, count: number): boolean {
+  if (event.status === "CANCELLED" || event.recurrenceId || event.rules.length || event.added.length || event.excluded.length) return false;
+  if (event.organizer && !event.organizer.email) return false;
+  const organizer = event.organizer?.email ?? null;
+  if (new Set(expected.guests).size !== expected.guests.length) return false;
+  if (organizer !== expected.organizer || event.attendees.length !== count) return false;
+  const guests = new Set<string>();
+  for (const person of event.attendees) {
+    if (person.email === null) return false;
+    if (person.email !== organizer) guests.add(person.email);
+  }
+  return guests.size === expected.guests.length && expected.guests.every((address) => guests.has(address));
 }

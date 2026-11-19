@@ -15,10 +15,12 @@ export interface BlankColumnProps {
 export function BlankColumn({ children, hot, below }: BlankColumnProps) {
   return (
     <div className="oh-blankcolumn">
-      <p className="oh-text oh-display oh-blankcolumn-label">
-        <EndDot kind={hot ? "hot" : "ink"}>{children}</EndDot>
-      </p>
-      {below}
+      <div className="oh-blankcolumn-content">
+        <p className="oh-text oh-display oh-blankcolumn-label">
+          <EndDot kind={hot ? "hot" : "ink"}>{children}</EndDot>
+        </p>
+        {below}
+      </div>
     </div>
   );
 }

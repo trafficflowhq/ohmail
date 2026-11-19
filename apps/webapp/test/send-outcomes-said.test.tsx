@@ -9,7 +9,7 @@ import { settleEditor } from "./_first-paint.js";
 import { readComposeDraft } from "@ohmail/app-logic/writing/compose";
 import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import {
-  act, message, mountShell, NOW, press, replyDraft, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
+  act, message, mountShell, NOW, press, replyDraft, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
 
 /** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
@@ -39,15 +39,38 @@ beforeEach(() => {
 afterEach(async () => { await unmountAll(); resetStorageOwnerForTest(); });
 
 const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind === "mail_send");
-const replySend = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-    .find((b) => (b.textContent ?? "").startsWith("Send"));
-const composeSend = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
-    .find((b) => (b.textContent ?? "").trim().startsWith("Send") && !/later/i.test(b.textContent ?? ""));
-const held = (): HTMLElement | null => document.querySelector<HTMLElement>(".toast-held");
+
+/*
+ * THE NEW SHELL's PARTS, by role and name: the open letter is the region "Open message" (Write's reply drawn in it,
+ * its words the textbox "Reply body", a forward's "Forward body"; its verbs the toolbar "Actions"); a new letter is the
+ * region "New message" (its verbs the toolbar "Send or discard"); the line under an editor is its status paragraph;
+ * an ending said where no editor shows it is the frame's one report slot, its way back the button "Open".
+ */
+const openRegion = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]');
+const composeRegion = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="region"][aria-label="New message"]');
+const named = (root: ParentNode | null | undefined, sel: string, name: string): HTMLButtonElement | undefined =>
+  [...(root?.querySelectorAll<HTMLButtonElement>(sel) ?? [])].find((b) => b.getAttribute("aria-label") === name);
+const replySurface = (_el?: HTMLElement): HTMLElement | null =>
+  openRegion()?.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"]') ?? null;
+const forwardSurface = (): HTMLElement | null =>
+  openRegion()?.querySelector<HTMLElement>('[role="textbox"][aria-label="Forward body"]') ?? null;
+const replySend = (_el?: HTMLElement): HTMLButtonElement | undefined =>
+  named(openRegion(), '[role="toolbar"][aria-label="Actions"] button', "Send");
+const composeSend = (_el?: HTMLElement): HTMLButtonElement | undefined =>
+  named(composeRegion(), '[role="toolbar"][aria-label="Send or discard"] button', "Send");
+const composeField = (name: string): HTMLInputElement | null =>
+  composeRegion()?.querySelector<HTMLInputElement>(`input[aria-label="${name}"], textarea[aria-label="${name}"]`) ?? null;
+const composeBody = (): HTMLElement | null =>
+  composeRegion()?.querySelector<HTMLElement>('[role="textbox"][aria-label="Message"]') ?? null;
+/** The line under an editor (the reply's in the open letter, or the new letter's). */
+const lineUnder = (region: HTMLElement | null): HTMLElement | null => region?.querySelector<HTMLElement>('p[role="status"]') ?? null;
+const held = (): HTMLElement | null => document.querySelector<HTMLElement>('.fr-report [role="status"]');
+const openAct = (): HTMLButtonElement | null =>
+  [...(held()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => (b.textContent ?? "").trim() === "Open") ?? null;
 const notSentToast = (): boolean => /Not sent/.test(held()?.textContent ?? "");
-const toasts = (): string => [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+const toasts = (): string => [...document.querySelectorAll('.fr-report [role="status"]')].map((n) => n.textContent ?? "").join(" | ");
+const row = (el: HTMLElement, id: string): HTMLElement | null =>
+  el.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id='${id}']`);
 const online = async (): Promise<void> => { await act(async () => { window.dispatchEvent(new Event("online")); }); };
 const rounds = async (n: number): Promise<void> => {
   for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
@@ -61,8 +84,8 @@ async function key(k: string): Promise<void> {
 }
 
 async function replyOpen(s: DraftShell, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
+  await waitFor(() => row(s.el, "m1") != null, "the row");
+  await press(row(s.el, "m1"), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
   await act(async () => { typeInto(replySurface(s.el)!, words); });
@@ -92,7 +115,7 @@ describe("a send that ends Not sent", () => {
     await waitFor(() => (held()?.textContent ?? "").includes(en.compose.statusUnreachable), "the Not sent toast");
 
     s.refuseSend.on = false;
-    await press(held()!.querySelector(".toast-act"), "Open");
+    await press(openAct(), "Open");
     await waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the composer back");
     expect(composeSend(s.el)?.disabled, "Send is not live").toBe(false);
     // Opened is not sent: its Drafts row keeps the line until the letter goes or is discarded.
@@ -105,7 +128,7 @@ describe("a send that ends Not sent", () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
     await replyOpen(s, "See you on Thursday");
     await act(async () => { replySend(s.el)!.click(); });
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m2']"), "the next row");
+    await press(row(s.el, "m2"), "the next row");
     await waitFor(() => toasts().includes(en.reply.toastSent), "the sent toast");
     expect(notSentToast(), "a delivered send was said as Not sent").toBe(false);
   }, 30_000);
@@ -117,8 +140,11 @@ describe("a send past the draft limit", () => {
     await replyOpen(s, "See you on Thursday");
     Object.assign(s.refuseSend, { on: true, code: "draft_too_large", status: 413 });
     await act(async () => { replySend(s.el)!.click(); });
-    await waitFor(() => s.el.querySelector(".reply .send-status.error") != null, "the refusal under the editor");
-    const line = s.el.querySelector(".reply .send-status.error")!.textContent ?? "";
+    // A send leaves its editor at the press; its answer is said where the person is: under the editor while it
+    // stands, else in the frame's report.
+    const refusal = (): string => lineUnder(openRegion())?.textContent || held()?.textContent || "";
+    await waitFor(() => /^Not sent/.test(refusal()), "the refusal under the editor");
+    const line = refusal();
     expect(line).toMatch(/^Not sent\. It's too long to send — the limit is /);
     expect(line).not.toMatch(/kept|Try again/);
   }, 30_000);
@@ -126,13 +152,13 @@ describe("a send past the draft limit", () => {
   it("4 — the reply editor says the limit while typing, and a press sends nothing", async () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
     await replyOpen(s, "a".repeat(DRAFT_BODY_MAX_BYTES + 1));
-    await waitFor(() => (s.el.querySelector(".reply")?.textContent ?? "").includes("Too long to save"), "the limit while typing");
+    await waitFor(() => (openRegion()?.textContent ?? "").includes("Too long to save"), "the limit while typing");
     const button = replySend(s.el)!;
     expect({ disabled: button.disabled, dimmed: button.getAttribute("aria-disabled") }).toEqual({ disabled: false, dimmed: "true" });
     await act(async () => { button.click(); });
     await rounds(6);
     expect(sends(s), "an over-limit press reached the wire").toHaveLength(0);
-    expect(s.el.querySelector(".reply")?.textContent ?? "").toContain("Too long to send");
+    expect(openRegion()?.textContent ?? "").toContain("Too long to send");
 
     // Control: shortened, it goes.
     await act(async () => { typeInto(replySurface(s.el)!, "Short now"); });
@@ -144,9 +170,12 @@ describe("a send past the draft limit", () => {
 /* ── review round 1 (PR #185): what the notice's Open brings back, at every width ─────────── */
 
 const sheetEditor = (): string | null => document.querySelector(".reader .msg .rte-surface")?.textContent ?? null;
-const forwardDock = (s: DraftShell): HTMLElement | null => s.el.querySelector<HTMLElement>(".reply[data-reply-for]");
-async function setInput(input: HTMLInputElement, value: string): Promise<void> {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+/** The forward drawn in the open letter: its region while its words stand in it. */
+const forwardDock = (_s: DraftShell): HTMLElement | null => (forwardSurface() ? openRegion() : null);
+async function setInput(input: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+  // A field's own value setter: Write's Subject is a textarea, the people fields are inputs.
+  const proto = input instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value")!.set!;
   await act(async () => { setter.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
 }
 function setHidden(hidden: boolean): void {
@@ -162,18 +191,25 @@ const toDrafts = async (): Promise<void> => {
   await act(async () => { window.location.hash = "#/drafts"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
 };
 
+/** The letter's way back to its list, over one column: the reading section's button named for the list. */
+const sheetBack = (): HTMLButtonElement | null =>
+  [...document.querySelectorAll<HTMLButtonElement>('section[aria-label="Reading"] button')]
+    .find((b) => (b.getAttribute("aria-label") ?? b.textContent ?? "").trim() === "Ohbox") ?? null;
+
 /** At a phone width: tap the row (the sheet opens over the hidden column), reply there. */
 async function sheetReply(s: DraftShell, id: string, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
-  await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), "tap the row");
-  await waitFor(() => document.querySelector(".reader .msg-subject") != null, "the sheet");
+  await waitFor(() => row(s.el, id) != null, "the row");
+  await press(row(s.el, id), "tap the row");
+  await waitFor(() => document.querySelector(".fr-frame[data-letter]") != null && openRegion() != null, "the sheet");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
   await act(async () => { typeInto(replySurface(s.el)!, words); });
 }
 
 describe("at a phone width, where the reading column is hidden", () => {
-  beforeEach(() => { stubDom({ narrow: true }); });
+  // The frame's plan reads the window's own width, as a phone hands it.
+  beforeEach(() => { stubDom({ narrow: true }); Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 }); });
+  afterEach(() => { Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 }); });
 
   it("5 — a reply sent from the sheet and the sheet closed: the ending is said, not left in the hidden column", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
@@ -181,8 +217,8 @@ describe("at a phone width, where the reading column is hidden", () => {
     Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424, retryableFirst: 1 });
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => sends(s).length === 1, "the send on the wire");
-    await press(document.querySelector(".reader .reader-close"), "the sheet's back control");
-    await waitFor(() => document.querySelector(".reader") == null, "the sheet closed");
+    await press(sheetBack(), "the sheet's back control");
+    await waitFor(() => document.querySelector(".fr-frame[data-letter]") == null, "the sheet closed");
     await online();
     await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
   }, 30_000);
@@ -194,12 +230,12 @@ describe("at a phone width, where the reading column is hidden", () => {
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => sends(s).length === 1, "the send on the wire");
     await press(document.querySelector(".reader .reader-close"), "the sheet's back control");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m2']"), "tap the next letter");
+    await press(row(s.el, "m2"), "tap the next letter");
     await waitFor(() => document.querySelector(".reader .msg-subject")?.textContent === "Subject m2", "the sheet on m2");
     await online();
     await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
     s.refuseSend.on = false;
-    await press(held()!.querySelector(".toast-act"), "Open");
+    await press(openAct(), "Open");
     await waitFor(() => (sheetEditor() ?? "").includes("See you on Thursday"), "the reply in the sheet");
     expect(document.querySelector(".reader .msg-subject")?.textContent).toBe("Subject m1");
     // Nothing of the open is left pending: the next view opens no sheet over itself.
@@ -212,32 +248,32 @@ describe("at a phone width, where the reading column is hidden", () => {
 
 /** A forward on m1 refused retryably once, then a letter past the limit written in the composer. */
 async function forwardThenLetter(s: DraftShell): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
+  await waitFor(() => row(s.el, "m1") != null, "the row");
+  await press(row(s.el, "m1"), "the row");
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "F", shiftKey: true, bubbles: true, cancelable: true }));
   });
   await settleEditor();
   await waitFor(() => forwardDock(s) != null, "the forward dock");
-  await setInput(forwardDock(s)!.querySelector<HTMLInputElement>(".rcp-input")!, "friend@example.invalid, ");
-  await act(async () => { typeInto(forwardDock(s)!.querySelector<HTMLElement>(".rte-surface")! as never, "FORWARD NOTE"); });
+  await setInput(forwardDock(s)!.querySelector<HTMLInputElement>('input[aria-label="To"]')!, "friend@example.invalid, ");
+  await act(async () => { typeInto(forwardSurface()! as never, "FORWARD NOTE"); });
   await settleEditor();
   Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424, retryableFirst: 1 });
   await act(async () => { replySend(s.el)!.click(); });
   await waitFor(() => sends(s).length === 1, "the forward on the wire");
   await key("c");
-  await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
-  await setInput(s.el.querySelector<HTMLInputElement>("#compose-to")!, "lena@example.invalid, ");
-  await setInput(s.el.querySelector<HTMLInputElement>("#compose-subject")!, "LETTER B");
-  await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "B".repeat(DRAFT_BODY_MAX_BYTES + 50)); });
+  await waitFor(() => composeBody() != null, "the composer");
+  await setInput(composeField("To")!, "lena@example.invalid, ");
+  await setInput(composeField("Subject")!, "LETTER B");
+  await act(async () => { typeInto(composeBody()! as never, "B".repeat(DRAFT_BODY_MAX_BYTES + 50)); });
   await settleEditor();
 }
 
 describe("Open never puts older words over the ones refused", () => {
   it("7 — a reply refused for its length while away: Open brings back the refused words, not the row's older ones", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-reply", "m1", "older words")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "row m1");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "row m1");
+    await waitFor(() => row(s.el, "m1") != null, "row m1");
+    await press(row(s.el, "m1"), "row m1");
     await key("r");
     await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("older words"), "the editor seeded from the row");
     let release!: () => void;
@@ -246,13 +282,13 @@ describe("Open never puts older words over the ones refused", () => {
     await act(async () => { typeInto(replySurface(s.el)!, "my newer words"); });
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => sends(s).length === 1, "the send on the wire");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m2']"), "row m2");
+    await press(row(s.el, "m2"), "row m2");
     await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
     await act(async () => { release(); });
     await waitFor(() => /Not sent/.test(held()?.textContent ?? ""), "the Not sent toast");
     s.refuseSend.on = false;
     s.sendGate.wait = null;
-    await press(held()!.querySelector(".toast-act"), "Open");
+    await press(openAct(), "Open");
     await waitFor(() => replySurface(s.el) != null, "the reply editor back");
     await rounds(6);
     expect(replySurface(s.el)!.textContent).toContain("my newer words");
@@ -264,7 +300,7 @@ describe("Open never puts older words over the ones refused", () => {
     await online();
     await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
     s.refuseSend.on = false;
-    await press(held()!.querySelector(".toast-act"), "Open");
+    await press(openAct(), "Open");
     await waitFor(() => (forwardDock(s)?.textContent ?? "").includes("FORWARD NOTE"), "the forward's own dock");
     expect(readComposeDraft(storageOwner())?.subject, "the letter in the composer").toBe("LETTER B");
   }, 60_000);
@@ -278,10 +314,10 @@ describe("Open never puts older words over the ones refused", () => {
     s.remote.push({ type: "message", op: "delete", id: "m1", seq: 0, updatedAt: NOW.toISOString(), entity: null } as unknown as SyncChange);
     await act(async () => { await s.engine.syncOnce().catch(() => undefined); });
     s.refuseSend.on = false;
-    await press(held()!.querySelector(".toast-act"), "Open");
+    await press(openAct(), "Open");
     await waitFor(() => toasts().includes(en.compose.notSentOpenBlocked), "the refusal in words");
     expect(readComposeDraft(storageOwner())?.subject, "the letter in the composer").toBe("LETTER B");
-    expect(s.el.querySelector<HTMLInputElement>("#compose-subject")?.value).toBe("LETTER B");
+    expect(composeField("Subject")?.value).toBe("LETTER B");
   }, 60_000);
 });
 
@@ -293,21 +329,21 @@ describe("every ending stays reachable until it is acted on", () => {
     let release!: () => void;
     s.sendGate.wait = new Promise<void>((r) => { release = r; });
     for (const [id, words] of [["m1", "First reply"], ["m2", "Second reply"]] as const) {
-      await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), `row ${id}`);
+      await press(row(s.el, id), `row ${id}`);
       await key("r");
       await waitFor(() => replySurface(s.el) != null, `the reply on ${id}`);
       await act(async () => { typeInto(replySurface(s.el)!, words); });
       await act(async () => { replySend(s.el)!.click(); });
       await rounds(4);
     }
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m3']"), "row m3");
+    await press(row(s.el, "m3"), "row m3");
     await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
     return release;
   }
 
   it("10 — two endings while the window is hidden: both are said on return, and Drafts marks both", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
+    await waitFor(() => row(s.el, "m1") != null, "the rows");
     const release = await twoRepliesFailing(s);
     await visibility(true);
     await act(async () => { release(); });
@@ -315,25 +351,43 @@ describe("every ending stays reachable until it is acted on", () => {
     expect(held(), "nothing is said to a hidden window").toBeNull();
     await visibility(false);
     await waitFor(() => /2 messages weren't sent/.test(held()?.textContent ?? ""), "one notice naming both");
-    await press(held()!.querySelector(".toast-act"), "Open");
+    await press(openAct(), "Open");
     await waitFor(() => window.location.hash === "#/drafts", "Drafts");
     await waitFor(() => draftNotes(s).filter((n) => n === en.reply.statusUnreachable).length === 2, "both rows say Not sent");
   }, 60_000);
 
   it("11 — two endings in a visible window: the second does not take the first away", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
+    await waitFor(() => row(s.el, "m1") != null, "the rows");
     const release = await twoRepliesFailing(s);
     await act(async () => { release(); });
     await waitFor(() => /2 messages weren't sent/.test(held()?.textContent ?? ""), "one notice naming both");
   }, 60_000);
 
+  it("the report opens an unsent reply and keeps the other warning when Drafts is unavailable", async () => {
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
+    const release = await twoRepliesFailing(s);
+    await act(async () => { release(); });
+    await waitFor(() => /2 messages weren't sent/.test(held()?.textContent ?? ""), "the report counting both failures");
+    await press(openAct(), "Open from the report");
+    const words = ["First reply", "Second reply"];
+    await waitFor(() => words.some((text) => replySurface(s.el)?.textContent?.includes(text)), "the reported reply back");
+    const remaining = words.find((text) => !replySurface(s.el)?.textContent?.includes(text));
+    const notice = () => document.querySelector<HTMLElement>('.fr-railnotice [role="status"], .fr-noticebar [role="status"]');
+    await waitFor(() => notice()?.textContent?.includes(en.reply.statusUnreachable) === true, "the other failure remains on the notice line");
+    const openNotice = [...(notice()?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "Open");
+    await press(openNotice ?? null, "Open the remaining reply");
+    await waitFor(() => remaining !== undefined && replySurface(s.el)?.textContent?.includes(remaining) === true, "the other reply back");
+    expect(sends(s)).toHaveLength(2);
+    expect(window.location.hash).toMatch(/^#\/ohbox/);
+  }, 60_000);
+
   it("13 — an ending already opened is not counted into the next one", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
+    await waitFor(() => row(s.el, "m1") != null, "the rows");
     Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424 });
     for (const [id, words] of [["m1", "First reply"], ["m2", "Second reply"]] as const) {
-      await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), `row ${id}`);
+      await press(row(s.el, id), `row ${id}`);
       await key("r");
       await waitFor(() => replySurface(s.el) != null, `the reply on ${id}`);
       await act(async () => { typeInto(replySurface(s.el)!, words); });
@@ -341,12 +395,12 @@ describe("every ending stays reachable until it is acted on", () => {
       s.sendGate.wait = new Promise<void>((r) => { release = r; });
       await act(async () => { replySend(s.el)!.click(); });
       await rounds(4);
-      await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m3']"), "row m3");
+      await press(row(s.el, "m3"), "row m3");
       await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
       await act(async () => { release(); });
       await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), `the Not sent toast for ${id}`);
       if (id === "m1") {
-        await press(held()!.querySelector(".toast-act"), "Open");
+        await press(openAct(), "Open");
         await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("First reply"), "the first reply back");
       }
     }
@@ -355,14 +409,14 @@ describe("every ending stays reachable until it is acted on", () => {
 
   it("12 — an Undo toast over the ending: the Drafts row still says it was not sent", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
+    await waitFor(() => row(s.el, "m1") != null, "the rows");
     Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424 });
     let release!: () => void;
     s.sendGate.wait = new Promise<void>((r) => { release = r; });
     await replyOpen(s, "First reply");
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => sends(s).length === 1, "the send on the wire");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m3']"), "row m3");
+    await press(row(s.el, "m3"), "row m3");
     await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
     await act(async () => { release(); });
     await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
@@ -390,18 +444,18 @@ const settledNotice = async (): Promise<string> => { await rounds(8); return hel
  * `first`, then m2 `second`. Hidden: both end while the window is hidden, and it shows again after.
  */
 async function twoEndings(s: DraftShell, first: Answer, second: Answer, hidden: boolean): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
+  await waitFor(() => row(s.el, "m1") != null, "the rows");
   const gates: Array<() => void> = [];
   for (const [id, words] of [["m1", "First reply"], ["m2", "Second reply"]] as const) {
     s.sendGate.wait = new Promise<void>((r) => { gates.push(r); });
-    await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), `row ${id}`);
+    await press(row(s.el, id), `row ${id}`);
     await key("r");
     await waitFor(() => replySurface(s.el) != null, `the reply on ${id}`);
     await act(async () => { typeInto(replySurface(s.el)!, words); });
     await act(async () => { replySend(s.el)!.click(); });
     await rounds(4);
   }
-  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m3']"), "row m3");
+  await press(row(s.el, "m3"), "row m3");
   await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
   if (hidden) await visibility(true);
   answer(s, first);
@@ -432,7 +486,7 @@ describe("an ending that may have gone is never counted as not sent", () => {
       expect(said).toContain(en.reply.statusUnverified);
       expect(said).not.toMatch(notSentCount);
       // Open goes to the reply that may have gone, with its words, never to a count of rows.
-      await press(held()!.querySelector(".toast-act"), "Open");
+      await press(openAct(), "Open");
       await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("First reply"), "the unverified reply opened");
       await toDrafts();
       await waitFor(() => draftNotes(s).includes(en.reply.statusUnreachable), "the unreachable one marked in Drafts");
@@ -483,16 +537,16 @@ describe("a signature that takes the text past the limit", () => {
   it("18 — the reply editor: the press and the chord name the limit in place, and nothing goes", async () => {
     const s = await mountShell("#/ohbox", [message("m1")], [], { signatures: { mb1: SIG } });
     await replyOpen(s, "a".repeat(IN_BAND));
-    await waitFor(() => (s.el.querySelector(".reply")?.textContent ?? "").includes(SIG), "the signature block");
+    await waitFor(() => (openRegion()?.textContent ?? "").includes(SIG), "the signature block");
     const button = replySend(s.el)!;
     expect(button.getAttribute("aria-disabled"), "the typed text alone fits, so Send is live").toBeNull();
     await act(async () => { button.click(); });
-    await waitFor(() => s.el.querySelector(".reply .send-status.error") != null, "the refusal under the editor");
-    expect(s.el.querySelector(".reply .send-status.error")!.textContent).toMatch(/^Not sent\. It's too long to send — the limit is /);
+    await waitFor(() => /^Not sent/.test(lineUnder(openRegion())?.textContent ?? ""), "the refusal under the editor");
+    expect(lineUnder(openRegion())!.textContent).toMatch(/^Not sent\. It's too long to send — the limit is /);
     await chordSend(replySurface(s.el)!);
     await rounds(6);
     expect(sends(s), "a press past the limit reached the wire").toHaveLength(0);
-    expect(s.el.querySelector(".reply .send-status.error")?.textContent ?? "").toMatch(/too long to send/);
+    expect(lineUnder(openRegion())?.textContent ?? "").toMatch(/too long to send/);
 
     // Control: shortened out of the band, the next press sends, the signature on the wire.
     await act(async () => { typeInto(replySurface(s.el)!, "Short now"); });
@@ -504,21 +558,21 @@ describe("a signature that takes the text past the limit", () => {
   it("19 — the composer: the press and the chord name the limit in place, and nothing goes", async () => {
     const s = await mountShell("#/ohbox", [message("m1")], [], { signatures: { mb1: SIG } });
     await key("c");
-    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
-    await setInput(s.el.querySelector<HTMLInputElement>("#compose-to")!, "lena@example.invalid, ");
-    await setInput(s.el.querySelector<HTMLInputElement>("#compose-subject")!, "LETTER IN THE BAND");
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "B".repeat(IN_BAND)); });
+    await waitFor(() => composeBody() != null, "the composer");
+    await setInput(composeField("To")!, "lena@example.invalid, ");
+    await setInput(composeField("Subject")!, "LETTER IN THE BAND");
+    await act(async () => { typeInto(composeBody()! as never, "B".repeat(IN_BAND)); });
     await settleEditor();
-    await waitFor(() => (s.el.querySelector(".view-compose")?.textContent ?? "").includes(SIG), "the signature block");
+    await waitFor(() => (composeRegion()?.textContent ?? "").includes(SIG), "the signature block");
     const button = composeSend(s.el)!;
     expect(button.getAttribute("aria-disabled"), "the typed text alone fits, so Send is live").toBeNull();
     await act(async () => { button.click(); });
-    await waitFor(() => s.el.querySelector(".view-compose .send-status.error") != null, "the refusal in the composer");
-    expect(s.el.querySelector(".view-compose .send-status.error")!.textContent).toMatch(/^Not sent\. It's too long to send — the limit is /);
-    await chordSend(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")!);
+    await waitFor(() => /^Not sent/.test(lineUnder(composeRegion())?.textContent ?? ""), "the refusal in the composer");
+    expect(lineUnder(composeRegion())!.textContent).toMatch(/^Not sent\. It's too long to send — the limit is /);
+    await chordSend(composeBody()!);
     await rounds(6);
     expect(sends(s), "a press past the limit reached the wire").toHaveLength(0);
-    expect(s.el.querySelector(".view-compose")).not.toBeNull();
+    expect(composeRegion()).not.toBeNull();
   }, 60_000);
 });
 

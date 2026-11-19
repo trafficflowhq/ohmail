@@ -97,6 +97,16 @@ async function held(id: string) {
 }
 
 describe("Microsoft's writer, at the double", () => {
+  it("does not notify different attendees after the pending change is rebased", async () => {
+    const made = await writer.create(signedIn(), studio, { key: { hex: KEY }, event: draft() }, never);
+    const item = made.ok ? made.items[0] : null;
+    if (item?.kind !== "upsert") throw new Error("missing test event");
+    const target = { id: item.id, version: item.version, text: null, occurrence: null,
+      audience: { organizer: "studio@example.invalid", guests: ["clay@example.invalid"] } };
+    expect(word(await writer.change(signedIn(), studio, target, { summary: "Moved firing" }, never))).toBe("version_stale");
+    expect(sent.some((r) => r.method === "PATCH")).toBe(false);
+  });
+
   it("makes a new event under a transactionId from the write's key; the same key again hands the first event back: ONE event", async () => {
     const first = await writer.create(signedIn(), studio, { key: { hex: KEY }, event: draft() }, never);
     const again = await writer.create(signedIn(), studio, { key: { hex: KEY }, event: draft() }, never);

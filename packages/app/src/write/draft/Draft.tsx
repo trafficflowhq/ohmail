@@ -107,6 +107,8 @@ export function useDraftOffer(messageId: string): DraftOffer | null {
         title={title}
         cost={cost}
         busy={drafting || waiting}
+        /* Another letter's draft is being written: this one cannot be pressed until it lands, and says so. */
+        disabled={waiting}
         onPress={() => (ownWords ? fromText(messageId, madeOf, made) : control.press(messageId, made))}
       />
     ),

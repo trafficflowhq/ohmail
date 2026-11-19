@@ -1,8 +1,9 @@
 /**
  * The conversation's squares: beside the letters, or along the head on a phone. A press lands on that letter. A
  * conversation longer than the room stands a run of its squares around the one the reader is on, each edge that
- * hides more saying how many; nothing is cut. The room is the column's height beside the letters (the tokens'
- * upright squares), or the head's slots on a phone (the tokens' row of squares).
+ * hides more saying how many; nothing is cut. The room is the studio's share of the column's height beside the
+ * letters (the tokens' upright squares), handed to the capsule so the run stands inside it, or the bar's slots on a
+ * phone (the tokens' row of squares).
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useMemo, useState } from "react";
@@ -26,9 +27,23 @@ function useFit(axis: "column" | "head", column: HTMLElement | null): Fit | null
     const read = (): void => {
       const cs = win.getComputedStyle(column.ownerDocument.documentElement);
       const px = (name: string): number => parseFloat(cs.getPropertyValue(name));
+      /* The column's room is the studio's (`sqLayout`): the column's height less the capsule's own padding, on a
+         desktop at most a little over half of it, and never less than five squares and a count. The capsule is
+         handed that room, so the run fitted to it stands inside it. */
+      const pitchY = px("--sq-y") + px("--sq-y-gap");
+      const countY = px("--sq-more-y");
+      const tall = column.clientHeight;
+      const desktop = column.ownerDocument.documentElement.dataset.device === "desktop";
       const next =
         axis === "column"
-          ? { room: column.clientHeight, pitch: px("--sq-y") + px("--sq-y-gap"), count: px("--sq-more-y") }
+          ? {
+              room: Math.max(
+                5 * pitchY + countY,
+                Math.min(tall - 2 * (px("--s2") || 0) - 4, desktop ? tall * 0.56 : tall),
+              ),
+              pitch: pitchY,
+              count: countY,
+            }
           : {
               room: px("--sq-slots") * (px("--sq") + px("--sq-gap")) + px("--sq-more"),
               pitch: px("--sq") + px("--sq-gap"),
@@ -76,8 +91,8 @@ export function Squares({
   const run: SquaresRun | undefined = useMemo(() => {
     if (fit === null || n * fit.pitch <= fit.room) return undefined;
     const w = squaresWindow({ n, current, room: fit.room, pitch: fit.pitch, count: fit.count });
-    return { from: w.from, to: w.to, scale: w.scale };
-  }, [fit, n, current]);
+    return { from: w.from, to: w.to, scale: w.scale, ...(axis === "column" ? { room: fit.room } : {}) };
+  }, [fit, n, current, axis]);
   return (
     <ReadSquares
       squares={kinds}

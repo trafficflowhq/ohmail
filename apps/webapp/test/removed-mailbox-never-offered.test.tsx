@@ -8,7 +8,8 @@ import messages from "../messages/en.json";
 import { NOW, S, act, consentTransport, engineOver, msg, setup, storeWith, teardown, waitFor } from "./_view-shell";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import { mailboxLabelResolver } from "../app/shell/mailbox-label";
+import { mailboxLabelResolver } from "@ohmail/app-logic/reader";
+import { resetDecisionAskedForTests } from "@ohmail/app-logic/mailboxes/first-run/decision-asked";
 
 /**
  * A REMOVED MAILBOX IS NEVER OFFERED. A removal leaves a `disabled` row that `GET /mailboxes` keeps
@@ -16,6 +17,14 @@ import { mailboxLabelResolver } from "../app/shell/mailbox-label";
  * run's subject, the connect form's holder and the per-mailbox folder switches count live mailboxes
  * only; the delivered-to chip and the rail's headings count addresses, so a removed mailbox of
  * another address keeps its name. Each sweep case has a control with two live ones.
+ *
+ * RE-POINTED IN PART (the switch's older tests, sorted once): setup's four cases and the delivered-to pair run over
+ * the shell the hosts mount (`launchOverTheNewShell`: the tests' door `_mail-shell.tsx`, the frame over the mail
+ * ground). The stage is the frame's modal dialog, its heading its level-1 sentence, its presses its buttons. The
+ * delivered-to chip is the reading head's mailbox word in the new reader (`ReadingHead`'s `mailbox`: "the mailbox it
+ * is in, as a word, where there are several"), read as the head's line under the subject. The label's rule is read
+ * where the reader keeps it (`@ohmail/app-logic/reader`). Every expectation is as it stood. The rail's headings and
+ * Settings → Folders still wait for their places' mounts (their rows WAITS) and stay over today's shell (`launch`).
  */
 
 const h = React.createElement;
@@ -87,48 +96,91 @@ async function launch(
   return container;
 }
 
-const heading = (): string => (document.querySelector(".ob-stage h1")?.textContent ?? "").trim();
+/** The same launch over the shell the hosts mount. */
+async function launchOverTheNewShell(
+  roster: MailboxFacts[], hash: string, withStage: boolean,
+  trees: SyncChange[] = TWO_TREES, more: Parameters<typeof msg>[] = [],
+): Promise<HTMLElement> {
+  const { MailShell } = await import("./_mail-shell.js");
+  const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+  const s = await storeWith(
+    [msg("m1", { mailboxId: A.id, subject: "Hello there" }), ...more.map((a) => msg(...a))],
+    trees,
+  );
+  const engine = engineOver(s);
+  S.store = s; S.engine = engine;
+  window.location.hash = hash;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  S.roots.push(root);
+  await act(async () => {
+    root.render(h(NextIntlClientProvider, {
+      locale: "en", messages, timeZone: "UTC", now: NOW,
+      children: h(ThemeProvider, { children: h(ToastHost, {
+        children: h(MailShell as never, {
+          demo: false, engine, consentTransport, mailboxFacts: async () => roster,
+          ...(withStage ? { firstRun: host() } : {}),
+        } as never),
+      }) }),
+    }));
+  });
+  return container;
+}
+
+/** The stage: the frame's modal dialog. */
+const STAGE = "[role=dialog][aria-modal=true]";
+const heading = (): string => (document.querySelector(`${STAGE} h1`)?.textContent ?? "").trim();
 const settle = async (n = 30): Promise<void> => {
   for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
 };
 const stageButtons = (): string[] =>
-  [...document.querySelectorAll(".ob-stage button")].map((b) => (b.textContent ?? "").trim());
-const deliveredTo = (el: HTMLElement): string[] =>
+  [...document.querySelectorAll(`${STAGE} button`)].map((b) => (b.textContent ?? "").trim());
+/** The open letter's head (its subject the level-1 heading) and its line under it that names the mailbox it is in:
+    one word, or nothing. */
+const deliveredTo = (el: HTMLElement, letter = "Hello there"): string[] => {
+  const subject = [...el.querySelectorAll("header h1")].find((n) => (n.textContent ?? "").trim() === letter);
+  const head = subject?.closest("header");
+  if (!head || !subject) return [];
+  const line = (head.textContent ?? "").replace(subject.textContent ?? "", "").trim();
+  return line === "" ? [] : [line];
+};
+/** Today's chip, for the cases that still wait over today's shell. */
+const deliveredToToday = (el: HTMLElement): string[] =>
   [...el.querySelectorAll<HTMLElement>("[title]")].map((n) => n.title).filter((x) => x.startsWith("Delivered to "));
 
-beforeEach(async () => {
+beforeEach(() => {
   setup();
-  const { resetDecisionAskedForTests } = await import("../app/shell/decision-reopen.js");
   resetDecisionAskedForTests();
 });
 afterEach(teardown);
 
 describe("setup offers live mailboxes only", () => {
   it("the chooser lists each live mailbox once, and a press names the live row", async () => {
-    await launch([...GONE_A, A, GONE_B, B], "#/first-run/again", true);
+    await launchOverTheNewShell([...GONE_A, A, GONE_B, B], "#/first-run/again", true);
     await waitFor(() => heading() === t.chooseTitle, "the chooser");
     const offered = stageButtons().filter((x) => x.includes("@"));
     expect(offered, "a removed copy was offered beside the live one").toEqual([A.address, B.address]);
-    const press = [...document.querySelectorAll<HTMLButtonElement>(".ob-stage button")].find((b) => b.textContent === A.address)!;
+    const press = [...document.querySelectorAll<HTMLButtonElement>(`${STAGE} button`)].find((b) => (b.textContent ?? "").trim() === A.address)!;
     await act(async () => { press.click(); });
     await waitFor(() => window.location.hash.includes(`mailbox=${A.id}`), "the run on the live row");
   });
 
   it("one live mailbox beside its removed copies is no choice: the run is about it", async () => {
-    await launch([...GONE_A, A], "#/first-run/again", true);
+    await launchOverTheNewShell([...GONE_A, A], "#/first-run/again", true);
     await settle();
     expect(heading(), "removed copies made a chooser").not.toBe(t.chooseTitle);
     expect(stageButtons().filter((x) => x === A.address)).toEqual([]);
   });
 
   it("a run naming a removed copy is the vanished screen, not a run to a dead end", async () => {
-    await launch([...GONE_A, A], `#/first-run/again?mailbox=${GONE_A[0]!.id}`, true);
+    await launchOverTheNewShell([...GONE_A, A], `#/first-run/again?mailbox=${GONE_A[0]!.id}`, true);
     await settle(60);
     expect(heading()).toBe(t.vanishedTitle);
   });
 
   it("the connect form does not name a removed mailbox's holder", async () => {
-    await launch([...GONE_A], "#/first-run/add", true);
+    await launchOverTheNewShell([...GONE_A], "#/first-run/add", true);
     await waitFor(() => heading() !== "", "the connect form");
     expect(document.body.textContent).not.toContain(t.doorReader);
   });
@@ -136,14 +188,14 @@ describe("setup offers live mailboxes only", () => {
 
 describe("the shell counts live mailboxes only", () => {
   it("no delivered-to chip on a one-mailbox account with removed copies", async () => {
-    const el = await launch([...GONE_A, A], `#/ohbox/m/m1`, false);
+    const el = await launchOverTheNewShell([...GONE_A, A], `#/ohbox/m/m1`, false);
     await waitFor(() => (el.textContent ?? "").includes("Hello there"), "the message");
     await settle();
     expect(deliveredTo(el)).toEqual([]);
   });
 
   it("CONTROL — two live mailboxes do carry the chip", async () => {
-    const el = await launch([A, B], `#/ohbox/m/m1`, false);
+    const el = await launchOverTheNewShell([A, B], `#/ohbox/m/m1`, false);
     await waitFor(() => deliveredTo(el).length > 0, "the delivered-to chip");
   });
 
@@ -166,7 +218,7 @@ describe("the shell counts live mailboxes only", () => {
     await waitFor(() => (el.textContent ?? "").includes("Kept letter"), "the kept message");
     await waitFor(() => el.querySelectorAll(".rmblab").length === 2, "the mailbox headings");
     expect([...el.querySelectorAll(".rmblab")].map((n) => n.textContent)).toEqual([A.address, GONE_C.address]);
-    await waitFor(() => deliveredTo(el).includes(`Delivered to ${GONE_C.address}`), "the removed mailbox's chip");
+    await waitFor(() => deliveredToToday(el).includes(`Delivered to ${GONE_C.address}`), "the removed mailbox's chip");
   });
 });
 

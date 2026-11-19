@@ -36,8 +36,9 @@ export interface RailEntryProps {
   /** The key also stands at rest in the face that prints keys on its controls. */
   keyStands?: boolean;
   /**
-   * Its digit. Handed in while the keys are in the rail: it stands in place of the key, and is said to a screen
-   * reader as a key that goes there, beside `shortcut`.
+   * Its digit: drawn whenever it is handed, and shown by the rail's sheet in place of the key only while the keys are
+   * within the rail (nothing is drawn again as they move in or out). Said to a screen reader as a key that goes there,
+   * beside `shortcut`.
    */
   digit?: string;
   /** The place you are in. */
@@ -112,6 +113,7 @@ export function RailEntry(props: RailEntryProps) {
       data-kind={kind}
       data-quiet={props.quiet ? "" : undefined}
       data-cursor={props.cursor ? "" : undefined}
+      data-digit={digit ? "" : undefined}
       data-drop={props.drop}
       aria-current={current ? "page" : undefined}
       aria-expanded={folds ? Boolean(expanded) : undefined}
@@ -143,10 +145,13 @@ export function RailEntry(props: RailEntryProps) {
         {props.hint ? <small className="oh-railentry-hint">{props.hint}</small> : null}
       </span>
       {digit ? (
-        <KeyHint shown unsaid>
-          {digit}
-        </KeyHint>
-      ) : keyHint && (props.keyShown || props.keyStands) ? (
+        <span className="oh-railentry-digit">
+          <KeyHint shown unsaid>
+            {digit}
+          </KeyHint>
+        </span>
+      ) : null}
+      {keyHint && (props.keyShown || props.keyStands) ? (
         <span className="oh-railentry-key" data-stands={props.keyShown ? undefined : ""}>
           <KeyHint shown unsaid>
             {keyHint}

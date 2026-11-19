@@ -65,11 +65,11 @@ async function unmount(): Promise<void> {
 }
 
 /** The module a mount imports, so the warm-up loads exactly it. */
-const shellModule = () => import("./_todays-shell.js");
+const shellModule = () => import("./_mail-shell.js");
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await shellModule();
+  const { MailShell: AppShell } = await shellModule();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

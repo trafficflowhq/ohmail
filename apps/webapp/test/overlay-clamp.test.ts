@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   OVERLAY_EDGE,
-  OVERLAY_GAP,
   OVERLAY_MIN_HEIGHT,
   clampOverlay,
-  clampOverlayX,
 } from "../app/shell/overlay-clamp";
 
 /**
@@ -20,30 +18,20 @@ import {
  * `clampOverlay` is the pure statement of the fix; `overlay-viewport.test.tsx` holds the wiring
  * (the components actually applying it). The numeric cases below are the sweep's MEASURED
  * geometry, not invented values, so a regression fails on the exact scenario that was filed.
+ *
+ * SORTED (share ohbox-2, the switch's older tests): `clampOverlay` is today's shell's (`app/shell/overlay-clamp.ts`),
+ * which no host's entry reaches any more; the sheets stand on the kit's Menu (`placeMenu`, `menu.css`). The cases whose
+ * promise the kit's own cases state are retired, each holder named where it stood; the four left (a sheet taller than
+ * either side of its anchor stands whole, slid up; a sheet taller than the window takes its band and scrolls inside; a
+ * point with no edges stands whole; the cap never a slit) are stated by no kit case: their rows are GAP:kit.
  */
 
 describe("clampOverlay — the three placements", () => {
-  it("opens below the anchor when the whole sheet fits there", () => {
-    // A short sheet high in the viewport: the placement every caller expects, unchanged.
-    const fit = clampOverlay({ y: 108, anchorTop: 80, anchorBottom: 100 }, 190, 900);
-    expect(fit.top).toBe(100 + OVERLAY_GAP);
-    // The cap is ALWAYS viewport-bound, even when the sheet fits — a confirm opening later
-    // grows into a scroll, never off-screen.
-    expect(fit.top + fit.maxHeight).toBeLessThanOrEqual(900 - OVERLAY_EDGE);
-  });
-
-  it("the measured popover: 583px anchored at 630/654 in a 900px viewport FLIPS above", () => {
-    // The sweep's numbers (VWR-1): a 583px popover whose downward placement started at 662 —
-    // everything from "Reads" down was off-screen. Above the anchor there is room for the
-    // whole sheet, so it flips: bottom edge resting on the anchor's top, fully visible.
-    const fit = clampOverlay({ y: 662, anchorTop: 630, anchorBottom: 654 }, 583, 900);
-    expect(fit.top).toBe(630 - OVERLAY_GAP - 583);
-    expect(fit.top).toBeGreaterThanOrEqual(OVERLAY_EDGE);
-    // The whole sheet is on-screen — nothing below the fold.
-    expect(fit.top + 583).toBeLessThanOrEqual(900 - OVERLAY_EDGE);
-    expect(583).toBeLessThanOrEqual(fit.maxHeight);
-  });
-
+  /* "opens below the anchor when the whole sheet fits there" RETIRED (share ohbox-2): the sheets stand on the kit's
+     Menu now; the same promise is held by `packages/ui/test/base/overlays.test.tsx`, "where a menu stands" > "under its anchor, 8 away, at the
+     anchor's left edge". */
+  /* "the measured popover: 583px anchored at 630/654 in a 900px viewport FLIPS above" RETIRED (share ohbox-2): held by
+     `packages/ui/test/base/overlays.test.tsx`, "where a menu stands" > "upwards where it would leave the stage below and there is more room above". */
   it("TRI-F1's measured sheet: 599px with no room on either side stands WHOLE, slid up over its anchor", () => {
     // The ⋯ → Screening path at 1440×900: the sheet is taller than the space below AND above
     // its anchor, and the viewport holds it with room to spare. It used to take the roomier
@@ -81,40 +69,13 @@ describe("clampOverlay — the three placements", () => {
     expect(fit.top + 599).toBeLessThanOrEqual(900 - OVERLAY_EDGE);
   });
 
-  it("the phone viewport (390×844): a sheet opened low is fully reachable", () => {
-    const fit = clampOverlay({ y: 708, anchorTop: 680, anchorBottom: 700 }, 583, 844);
-    expect(fit.top).toBeGreaterThanOrEqual(OVERLAY_EDGE);
-    expect(fit.top + Math.min(583, fit.maxHeight)).toBeLessThanOrEqual(844 - OVERLAY_EDGE);
-  });
+  /* "the phone viewport (390×844): a sheet opened low is fully reachable" RETIRED (share ohbox-2): held by
+     `packages/ui/test/base/overlays.test.tsx`, "where a menu stands" > "never nearer than 8 to the stage's edge". */
 });
 
 describe("clampOverlay — the unconditional edges", () => {
-  it("never places any part of the sheet off-screen, across a sweep of real geometries", () => {
-    // The invariant stated as a sweep rather than cases: for every anchor position, sheet
-    // height and viewport that can hold OVERLAY_MIN_HEIGHT at all, the rendered box —
-    // min(natural, cap) tall — starts at or below the top edge inset and ends at or above
-    // the bottom one. This is the line that goes red if the final clamp is deleted.
-    const viewports = [844, 900, 391, 1080];
-    const heights = [80, 190, 583, 599, 1400];
-    for (const viewport of viewports) {
-      for (const natural of heights) {
-        for (let aTop = 0; aTop + 24 <= viewport; aTop += 97) {
-          const fit = clampOverlay(
-            { y: aTop + 24 + OVERLAY_GAP, anchorTop: aTop, anchorBottom: aTop + 24 },
-            natural,
-            viewport,
-          );
-          const rendered = Math.min(natural, fit.maxHeight);
-          expect(fit.top, `top edge at anchor ${aTop} in ${viewport}`).toBeGreaterThanOrEqual(OVERLAY_EDGE);
-          expect(
-            fit.top + rendered,
-            `bottom edge at anchor ${aTop}, natural ${natural}, viewport ${viewport}`,
-          ).toBeLessThanOrEqual(viewport - OVERLAY_EDGE);
-        }
-      }
-    }
-  });
-
+  /* "never places any part of the sheet off-screen, across a sweep of real geometries" RETIRED (share ohbox-2): held by
+     `packages/ui/test/base/overlays.test.tsx`, "where a menu stands" > "never nearer than 8 to the stage's edge". */
   it("the cap never collapses below the usable minimum, even mid-anchor on a 240px viewport", () => {
     // A short landscape keyboard-up viewport with the anchor mid-screen: both sides offer less
     // than the minimum. The floor wins — the sheet may then cover its anchor, which is the
@@ -127,15 +88,9 @@ describe("clampOverlay — the unconditional edges", () => {
   });
 });
 
-describe("clampOverlayX — the horizontal half, against the measured width", () => {
-  it("pulls a right-flush anchor back on-screen for the sheet's REAL 252px, not the 240 guess", () => {
-    // `placePicker` clamps x for its own 240px estimate; the sender sheet is 252px wide, so an
-    // anchor at the right edge clipped 12px of it. The clamp against the measured width holds.
-    const x = clampOverlayX(1440 - 240 - OVERLAY_EDGE, 252, 1440);
-    expect(x + 252).toBeLessThanOrEqual(1440 - OVERLAY_EDGE);
-  });
-
-  it("never pushes the box past the left inset", () => {
-    expect(clampOverlayX(-40, 252, 390)).toBe(OVERLAY_EDGE);
-  });
-});
+/* The horizontal half (`clampOverlayX`): both its cases retired (share ohbox-2), their holders named below. */
+/* "pulls a right-flush anchor back on-screen for the sheet's REAL 252px, not the 240 guess" RETIRED (share ohbox-2):
+     held by `packages/ui/test/base/overlays.test.tsx`, "where a menu stands" > "never nearer than 8 to the stage's edge" (a point at the right edge pulled
+     back by the menu's own width). */
+/* "never pushes the box past the left inset" RETIRED (share ohbox-2): held by `packages/ui/test/base/overlays.test.tsx`, "where a menu stands" >
+     "never nearer than 8 to the stage's edge" (an anchor at the left edge kept 8 in). */

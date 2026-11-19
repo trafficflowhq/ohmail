@@ -6,7 +6,7 @@
  * A pane's task exports one `SettingsPane` from its own folder, usually through `paneOf` (`./facts.ts`), and
  * imports nothing else of Settings. The record of all panes is total: a forgotten id does not compile.
  */
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import type { IconName } from "@ohmail/ui/base";
 import type { LayoutPlan } from "../frame/contract.js";
 import type { HostContract, None } from "../host/index.js";
@@ -51,7 +51,12 @@ export interface PaneBodyProps {
   readonly plan: LayoutPlan;
   /** The pane's column has the keys. */
   readonly keysHere: boolean;
+  /** Provided to a section that owns a toolbar, so its model draws the content and footer together. */
+  readonly sheet?: PaneSheet;
 }
+
+/** Places a section’s scrolling content and its current toolbar in the same reading column. */
+export type PaneSheet = (body: ReactNode, foot?: ReactNode) => ReactNode;
 
 export interface SettingsPane {
   readonly id: PaneId;
@@ -62,6 +67,8 @@ export interface SettingsPane {
   /** Whether the menu lists it, from the host's answers alone. */
   readonly listed: (host: HostContract) => boolean;
   readonly Body: ComponentType<PaneBodyProps>;
+  /** This section places its own toolbar in the reading column. */
+  readonly hasFoot?: boolean;
   /** Only what is in memory; never a server read for the menu. */
   readonly useSummary?: () => PaneSummary | null;
 }

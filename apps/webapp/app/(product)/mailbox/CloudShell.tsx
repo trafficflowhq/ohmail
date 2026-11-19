@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { Spinner } from "@ohmail/ui";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
@@ -8,11 +8,11 @@ import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "@ohmail/app-logic/doors/app-update";
 import { startBuildWatch } from "@ohmail/app-logic/doors/build-watch";
 import { reviveStandingDown } from "@ohmail/app-logic/session/sync-scheduler";
+import { isCalendarFragment } from "@ohmail/app/frame";
+import { MailFrame, useBrowserMail } from "../../shell/browser-mail";
 import { EngineProvider, useEngine, useResolvedDemoMode, useResolvedDemoModeFrom } from "../../shell/engine";
-import { TodaysFrame } from "../../shell/TodaysFrame";
-import { NO_TODAYS } from "../../shell/todays-inputs";
-import { useTodaysSupplies } from "../../shell/todays-supplies";
 import { DemoFrame, DemoShell } from "../demo/DemoShell";
+import { WEB_MAIL_PARTS } from "./mail-parts";
 import { SEND_SURFACE, useWebHost, webRecover, type WebWords } from "./web-supplies";
 import {
   apiOwnerBinding, bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
@@ -64,6 +64,9 @@ const DEMO_SAYS = {
   sendCeiling: SEND_SURFACE === undefined ? "strict" : SEND_SURFACE === null ? "mailbox" : SEND_SURFACE,
 } as const;
 
+/** Only the mail frame uses the address returned alongside its normal session check. */
+const resolveMailOwner = () => resolveOwnerOutcome({ includeAddress: true });
+
 /** The account this tab is for, confirmed or pending: the doors' when the jar names nobody. */
 function tabAccount(): string | null {
   const b = apiOwnerBinding();
@@ -105,12 +108,12 @@ export function CloudShell({ demo, drawMail }: {
   /** This tab's session was revoked from another device: the mail goes, no scrim, and the copy with it. */
   const revokedHere = useRevokedHere(resolvedDemo, tabAccount);
   /** The server-confirmed account, for the Help & contact pane's diagnostics block. */
-  const [accountId, setAccountId] = useState<string | null>(null);
-  const onConfirmed = useCallback((accountId: string) => {
+  const [account, setAccount] = useState<{ id: string; address: string | null } | null>(null);
+  const onConfirmed = useCallback((accountId: string, address?: string) => {
     // A sign-out pending on this jar: the tab is leaving, and nothing is bound for this answer.
     if (!listenFor(accountId)) return;
     bindApiOwner(accountId);
-    setAccountId(accountId);
+    setAccount({ id: accountId, address: address ?? null });
   }, [listenFor]);
   /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left
@@ -218,7 +221,7 @@ export function CloudShell({ demo, drawMail }: {
    * `useCallback`: an imported function already has a stable identity, which is all
    * `EngineProvider`'s effect needs.
    */
-  const resolveOwner = resolveOwnerOutcome;
+  const resolveOwner = resolveMailOwner;
 
   /**
    * A named shell is never a public surface. The account boundary's one nullable state meant both "no
@@ -294,7 +297,7 @@ export function CloudShell({ demo, drawMail }: {
 
   const words: WebWords = {
     server, invites: userInvites, subscriptionPage: manageOffered, withdrawManage, storageBlock: storageOffered,
-    account: accountId, firstRun, mailboxFacts, resolve: resolveOwner, confirmed: onConfirmed,
+    account: account?.id ?? null, accountAddress: account?.address ?? null, firstRun, mailboxFacts, resolve: resolveOwner, confirmed: onConfirmed,
   };
   return (
     <AccountLocale>
@@ -308,9 +311,9 @@ export function CloudShell({ demo, drawMail }: {
 }
 
 /**
- * THE WEB'S FRAME, inside its engine: the host built from what the page learned, and today's views in it. Where the
- * engine it stands on is the demo's (the mode changed after mount), the demo's host, so no hosted wire ever reaches
- * the invented world.
+ * THE WEB'S FRAME, inside its engine: the host built from what the page learned, and the mail's places in it over
+ * the mail ground. Where the engine it stands on is the demo's (the mode changed after mount), the demo's host, so
+ * no hosted wire ever reaches the invented world.
  */
 function WebFrame({ words }: { words: WebWords }) {
   const demoNow = useResolvedDemoMode();
@@ -318,16 +321,16 @@ function WebFrame({ words }: { words: WebWords }) {
   return <SignedInFrame words={words} />;
 }
 
-function SignedInFrame({ words: given }: { words: WebWords }) {
+function SignedInFrame({ words }: { words: WebWords }) {
   const engine = useEngine();
-  const frame = useTodaysSupplies(webRecover);
-  /* The words are memoized on their parts: an entry render with nothing changed hands the frame the same host. */
-  const words = useMemo(() => given, [
-    given.server, given.invites, given.subscriptionPage, given.withdrawManage, given.storageBlock, given.account,
-    given.firstRun, given.mailboxFacts, given.resolve, given.confirmed,
-  ]);
+  /* What every browser host hands the frame for mail: the places, the stages and the ground, over this page's own
+     parts, the look of the theme it stands under and its two ways back. */
+  const frame = useBrowserMail(webRecover, WEB_MAIL_PARTS);
   const host = useWebHost(engine, words, frame);
-  return <TodaysFrame host={host} todays={NO_TODAYS} />;
+  // Keep an incoming Calendar link while the handshake and this mirror's sign-in are being confirmed.
+  if (isCalendarFragment(frame.address.read()) &&
+      (words.server.calendar === null || (words.server.calendar === true && words.account === null))) return <WaitGate />;
+  return <MailFrame host={host} />;
 }
 
 const noSubscription = () => () => {};

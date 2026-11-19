@@ -85,6 +85,8 @@ beforeEach(() => {
   });
   (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
   const el = Element.prototype as unknown as Record<string, () => void>;
+  // jsdom draws no animation: the frame's report leaves through `animate`.
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
@@ -129,6 +131,9 @@ const msg = (id: string): EngineMessage => ({
   // A third person on the thread: what reply-all reaches and a plain reply does not.
   cc: [{ address: THIRD, name: "Third" }],
   date: "2026-09-16T08:29:00.000Z", unread: false,
+  /* A letter's tags, as every mirror row carries them: the reader's head reads the list (made whole by the older
+     tests' sorting, share write-1, as the door's own fixture carries it). */
+  labels: [],
   updatedAt: "2026-09-16T08:29:00.000Z",
 } as unknown as EngineMessage);
 
@@ -249,8 +254,13 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
   throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
 }
 
+/*
+ * THE NEW SHELL's PARTS, by role and name (re-pointed from today's classes by the older tests' sorting, share
+ * write-1): the Ohbox's rows are the options of the list "Messages"; the open letter is the region "Open message",
+ * the reply's words its textbox "Reply body"; keys go where the keys are (the focused row, the reply's text).
+ */
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id ?? "");
+  [...el.querySelectorAll<HTMLElement>('section[aria-label="Messages"] [role=option][data-id]')].map((r) => r.dataset.id ?? "");
 
 async function shell(ids: string[] = ["m1"], seed?: (s: MirrorStore) => Promise<void>): Promise<HTMLElement> {
   const s = await storeWith(ids);
@@ -264,6 +274,10 @@ async function shellOver(s: MirrorStore): Promise<HTMLElement> {
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   store = s;
   engine = engineOver(store);
+  /* The window's width, as the new frame's plan reads it (made whole by the older tests' sorting, share write-1:
+     today's shell read only the media query). */
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: mobile ? 390 : 1024 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: mobile ? 844 : 768 });
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -287,7 +301,7 @@ async function shellOver(s: MirrorStore): Promise<HTMLElement> {
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document).dispatchEvent(
       new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
     );
   });
@@ -297,17 +311,19 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
 
 /** Open a NAMED row — `j` stops at whatever the list orders first, which is not the subject. */
 async function openRow(el: HTMLElement, id: string): Promise<void> {
-  const row = el.querySelector<HTMLElement>(`.view-ohbox :is(.row, [role=option])[data-id="${id}"]`);
+  const row = el.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id="${id}"]`);
   if (!row) throw new Error(`no row for ${id}`);
   await act(async () => {
     row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
+  await settleEditor();
 }
 
 const editorSurface = (el: HTMLElement): HTMLElement | null =>
-  el.querySelector<HTMLElement>(".read-col .msg .rte-surface, .reader .msg .rte-surface");
+  el.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]')
+    ?.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"]') ?? null;
 
 const laneBody = (): string | null => window.localStorage.getItem(replyDraftKey("m1", LANES_OWNER));
 const laneMeta = (): string | null => window.localStorage.getItem(replyMetaKey("m1", LANES_OWNER));
@@ -315,8 +331,8 @@ const laneMeta = (): string | null => window.localStorage.getItem(replyMetaKey("
 /** Open the reader on m1, open the reply, and type `text` into it. */
 async function replyInProgress(text: string): Promise<HTMLElement> {
   const container = await shell();
-  await key("j");
-  await key("Enter");
+  // The letter opened by its row (re-pointed: today's `j` then Enter walked the list to it).
+  await openRow(container, "m1");
   await key("r");
   const surface = editorSurface(container);
   expect(surface, "the reply editor never mounted").not.toBeNull();
@@ -335,8 +351,15 @@ async function tombstoneParent(): Promise<void> {
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
 }
 
-const GONE = "This message was moved or deleted elsewhere.";
-const paneText = (el: HTMLElement, sel: string): string => el.querySelector(sel)?.textContent ?? "";
+/* The reader's own words for a letter another client took away (`reader.goneShort`), where today's pane said "This
+   message was moved or deleted elsewhere." (re-pointed by the older tests' sorting, share write-1, as the lists'
+   builder read it: the claim, that the column SAYS the letter left, is untouched). */
+const GONE = "Moved or deleted elsewhere";
+const paneText = (el: ParentNode, sel: string): string => el.querySelector(sel)?.textContent ?? "";
+/** The open letter, the phone's sheet or the column's letter: the region "Open message". */
+const OPEN = '[role="region"][aria-label="Open message"]';
+/** The reading column beside the Ohbox's list: the section "Reading" (a region by its name). */
+const COLUMN = 'section[aria-label="Reading"]';
 const draftSaves = (): Array<Extract<EngineMutation, { kind: "draft_save" }>> =>
   sent.filter((m): m is Extract<EngineMutation, { kind: "draft_save" }> => m.kind === "draft_save");
 
@@ -517,8 +540,7 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
 
   it("a reply-all promoted while open keeps the reply-all audience", async () => {
     const container = await shell();
-    await key("j");
-    await key("Enter");
+    await openRow(container, "m1");
     await key("R", { shiftKey: true });
     const surface = editorSurface(container);
     expect(surface, "the reply editor never mounted").not.toBeNull();
@@ -618,9 +640,16 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
 /* A REPLY DRAFT THE PERSON DISCARDED stays discarded: Cancel keeps the dock's words, and when the row
    they were saved to was deleted elsewhere, the parent's delete must not save them as a new draft. */
 describe("a reply whose draft was deleted elsewhere is not saved again when its parent goes", () => {
-  const cancelButton = (el: HTMLElement): HTMLButtonElement | undefined =>
-    [...el.querySelectorAll<HTMLButtonElement>("button")]
-      .find((b) => b.textContent?.trim() === "Cancel" && b.parentElement?.querySelector(".reply-hint") !== null);
+  /** Today's Cancel of the dock is the reply's leave key in its text over Write (Escape: `closeReply`, which keeps
+   *  the words), pressed where the keys are. */
+  const leaveDock = async (el: HTMLElement): Promise<void> => {
+    const text = editorSurface(el);
+    expect(text, "no reply open to leave").not.toBeNull();
+    await act(async () => {
+      text!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await settleEditor();
+  };
   const draftGone = (id: string): SyncChange => {
     serverGone.add(id);
     return { type: "draft", op: "delete", id, seq: ++seq, updatedAt: NOW.toISOString(), entity: null } as unknown as SyncChange;
@@ -639,9 +668,7 @@ describe("a reply whose draft was deleted elsewhere is not saved again when its 
     const container = await replyInProgress(text);
     await waitFor(() => draftSaves().length === 1, "the reply's own draft on the account", 6000);
     const rowId = store!.list<{ id: string }>("draft")[0]!.id;
-    const cancel = cancelButton(container);
-    expect(cancel, "no Cancel in the dock").toBeDefined();
-    await act(async () => { cancel!.click(); });
+    await leaveDock(container);
     await waitFor(() => editorSurface(container) === null, "the dock closed");
     for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
     return { container, rowId };
@@ -879,12 +906,12 @@ describe("a message another mail client took away SAYS SO", () => {
     mobile = true;
     const container = await shell(["m1", "m2"]);
     await openRow(container, "m1");
-    expect(container.querySelector(".reader"), "no reader sheet at 390px").not.toBeNull();
+    expect(container.querySelector(OPEN), "no reader sheet at 390px").not.toBeNull();
 
     await tombstoneParent();
 
-    expect(paneText(container, ".reader")).toContain(GONE);
-    const link = [...container.querySelectorAll<HTMLElement>(".reader button")]
+    expect(paneText(container, OPEN)).toContain(GONE);
+    const link = [...container.querySelectorAll<HTMLElement>(`${OPEN} button`)]
       .find((b) => (b.textContent ?? "").includes("Look in Trash"));
     expect(link, "no way to follow the message").toBeDefined();
     await act(async () => { link!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
@@ -895,25 +922,27 @@ describe("a message another mail client took away SAYS SO", () => {
     mobile = true;
     const container = await shell(["m1", "m2"]);
     await tombstoneParent();
-    expect(paneText(container, ".reader")).not.toContain(GONE);
+    expect(paneText(container, OPEN)).not.toContain(GONE);
     expect(paneText(document.body, "body")).not.toContain(GONE);
   });
 
   it("the OHBOX READING COLUMN says it — the surface at desktop width", async () => {
     const container = await shell(["m1", "m2"]);
     await openRow(container, "m1");
-    expect(container.querySelector(".read-col .msg"), "no message in the column").not.toBeNull();
+    expect(container.querySelector(`${COLUMN} ${OPEN}`), "no message in the column").not.toBeNull();
 
     await tombstoneParent();
 
-    expect(paneText(container, ".read-col")).toContain(GONE);
+    expect(paneText(container, COLUMN)).toContain(GONE);
   });
 
   it("NEGATIVE ARM: a column nobody opened anything in keeps its resting panel", async () => {
     const container = await shell(["m1", "m2"]);
     await tombstoneParent();
-    expect(paneText(container, ".read-col")).not.toContain(GONE);
+    expect(paneText(container, COLUMN)).not.toContain(GONE);
     // The resting panel is what stands there instead — the state this notice must not replace.
-    expect(paneText(container, ".read-col")).toContain("Nothing open.");
+    /* RULING-JOIN J-3 (PARITY L19, declared): the resting column says the studio's blank, how many wait ("All read":
+       every letter left here is read), where today's said "Nothing open."; the column still rests, which is the claim. */
+    expect(paneText(container, COLUMN)).toContain("All read");
   });
 });

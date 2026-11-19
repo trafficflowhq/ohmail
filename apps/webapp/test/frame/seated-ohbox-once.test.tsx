@@ -4,7 +4,8 @@
  * shell as a host mounts it: the hosts' own places hand the Ohbox's entry, and the composition above the panes feeds
  * it. Leaving for News and coming back mounts the model once again, and News's list is the one it was (the kept
  * pile, not built again). And the rail's number at the seated Ohbox is the old shell's fed one: the count today's
- * rail said.
+ * rail said. (What every web host was handed through today's adapter left with it: the mail's own supplies say what a
+ * browser host hands, in `packages/app/test/mail/supplies.test.tsx`.)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import messages from "../../messages/en.json";
@@ -55,32 +56,6 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await unmountAll();
-});
-
-describe("what every web host is handed", () => {
-  it("the Ohbox is its own entry, fed from above its two columns; every other place is one of today's; the reader is the shell's", async () => {
-    const { todaysPlaces, isTodays } = await import("../../app/shell/todays-places");
-    const { todaysReader } = await import("../../app/shell/reader-parts");
-    const { useTodaysSupplies } = await import("../../app/shell/todays-supplies");
-    const { renderHook } = await import("@testing-library/react");
-    const { NONE } = await import("@ohmail/app/host");
-    const places = todaysPlaces();
-    const { ohbox, ...others } = places;
-    expect(ohbox, "the Ohbox's own entry").toMatchObject({
-      id: "ohbox", body: "ohbox", panes: { kind: "columns", Reading: "reader" },
-    });
-    expect(ohbox !== NONE && ohbox.panes.kind === "columns" && typeof ohbox.panes.Above, "what the composition feeds it stands above its columns").toBe("function");
-    expect(isTodays(ohbox), "a seated place is none of today's").toBe(false);
-    expect(Object.values(others).map((place) => (place === NONE ? "none" : place.body)), "every other place is today's body").toEqual(
-      Object.values(others).map(() => "today"),
-    );
-    expect(Object.values(others).every((place) => isTodays(place)), "and reads as one of today's").toBe(true);
-    expect(isTodays(NONE), "a place a host hands none of is none of today's").toBe(false);
-    const { result, unmount } = renderHook(() => useTodaysSupplies(NONE));
-    expect(result.current.reader, "the supplies hand the shell's reader").toBe(todaysReader);
-    expect(result.current.reader, "and it is not none").not.toBe(NONE);
-    unmount();
-  });
 });
 
 describe("the seated Ohbox stands once", () => {

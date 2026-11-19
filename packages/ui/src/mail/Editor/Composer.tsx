@@ -4,6 +4,7 @@ import {
   useState,
   type DragEvent,
   type ReactNode,
+  type Ref,
   type RefObject,
   type SyntheticEvent,
 } from "react";
@@ -12,8 +13,11 @@ import "./composer.css";
 import { ComposerMarks, type ComposerMarksProps } from "./ComposerMarks.js";
 
 export interface ComposerProps {
-  /** The sheet's name for a screen reader: "New message", "Reply to Giulia Ferrari". */
-  label: string;
+  /**
+   * The sheet's name for a screen reader: "Reply to Giulia Ferrari". Left out where the sheet around it already names
+   * the letter (a new message in its own sheet): then it is no landmark of its own, and the letter is named once.
+   */
+  label?: string;
   /** A reply: one more sheet at the end of its conversation. */
   reply?: boolean;
   /** What happened to this draft, over its lines: a SendStatus. */
@@ -83,6 +87,14 @@ export interface ComposerProps {
   dropping?: boolean;
   /** Files were let go over the letter. */
   onFiles?: (files: File[]) => void;
+  /** A host can supply the files withheld from the normal File list. */
+  heldDrop?: {
+    readonly looksLikeDrag: (transfer: DataTransfer) => boolean;
+    readonly matchesDrop: (transfer: DataTransfer) => boolean;
+    readonly receive: () => void;
+  };
+  /** The sheet itself: where the app finds a field of the letter to hand the keys to, or brings the sheet into view. */
+  ref?: Ref<HTMLElement>;
 }
 
 const carriesFiles = (e: DragEvent): boolean => [...e.dataTransfer.types].includes("Files");
@@ -106,24 +118,29 @@ export function Composer(props: ComposerProps) {
     note,
     foot,
     onFiles,
+    heldDrop,
   } = props;
   const [over, setOver] = useState(false);
+  const canDrop = (e: DragEvent): boolean => carriesFiles(e) || heldDrop?.looksLikeDrag(e.dataTransfer) === true;
   const drop = onFiles
     ? {
-        onDragEnter: (e: DragEvent) => carriesFiles(e) && setOver(true),
-        onDragOver: (e: DragEvent) => carriesFiles(e) && e.preventDefault(),
+        onDragEnter: (e: DragEvent) => canDrop(e) && setOver(true),
+        onDragOver: (e: DragEvent) => canDrop(e) && e.preventDefault(),
         onDragLeave: (e: DragEvent<HTMLElement>) =>
           e.currentTarget.contains(e.relatedTarget as Node | null) || setOver(false),
         onDrop: (e: DragEvent) => {
-          if (!carriesFiles(e)) return;
+          const files = carriesFiles(e);
+          if (!files && heldDrop?.matchesDrop(e.dataTransfer) !== true) return;
           e.preventDefault();
           setOver(false);
-          onFiles([...e.dataTransfer.files]);
+          if (files) onFiles([...e.dataTransfer.files]);
+          else heldDrop?.receive();
         },
       }
     : {};
   return (
     <section
+      ref={props.ref}
       className="oh-composer"
       aria-label={label}
       aria-busy={props.drafting || undefined}

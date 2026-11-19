@@ -156,8 +156,10 @@ describe("the frame", () => {
   it("on a phone's width shows the list alone, and the open letter over it", () => {
     const { address } = mount({ window: fakeWindow("phone") });
     expect(screen.queryByRole("region", { name: "Reading" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Reading" })).toBeNull();
     act(() => address.visit("#/ohbox/m/a1"));
-    expect(screen.getByRole("region", { name: "Reading" }).textContent).toBe("reading a1");
+    /* Over the list it covers, the letter is a modal dialog (point 67). */
+    expect(screen.getByRole("dialog", { name: "Reading" }).textContent).toBe("reading a1");
     expect(screen.getByText("the list of ohbox")).toBeTruthy();
   });
 
@@ -165,7 +167,7 @@ describe("the frame", () => {
     const { address } = mount({ window: fakeWindow("phone") });
     expect(screen.getByRole("navigation", { name: "Places" })).toBeTruthy();
     act(() => address.visit("#/ohbox/m/a1"));
-    expect(screen.getByRole("region", { name: "Reading" }).textContent).toBe("reading a1");
+    expect(screen.getByRole("dialog", { name: "Reading" }).textContent).toBe("reading a1");
     expect(
       screen.queryByRole("navigation", { name: "Places" }),
       "the dock stands over the letter",
@@ -196,9 +198,11 @@ describe("the frame", () => {
       seen.list.length = 0;
       seen.reading.length = 0;
       mount({ window: fakeWindow(room), address: fakeAddress("#/compose") }, { ohbox, write });
-      expect(screen.getByRole("region", { name: "Reading" }).textContent, room).toBe(
-        "a letter being written",
-      );
+      /* On a phone the column stands over the list: a modal dialog (point 67); beside it, a region. */
+      expect(
+        screen.getByRole(room === "phone" ? "dialog" : "region", { name: "Reading" }).textContent,
+        room,
+      ).toBe("a letter being written");
       expect(seen.reading.at(-1), room).toBe(true);
       expect(seen.list.at(-1) ?? false, room).toBe(false);
       if (room === "phone")

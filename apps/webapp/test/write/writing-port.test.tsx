@@ -10,7 +10,7 @@ import { screen } from "@testing-library/react";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import type { SendState } from "@ohmail/app-logic/writing/mail-send";
 import en from "../../messages/en.json";
-import { fileSize } from "@ohmail/app/mail/ground";
+import { fileSize } from "../../../../packages/app/src/mail/ground/writing-words.js";
 import { writingOf, writeBesideOf, SEND_LATER_FLOOR_MS } from "@ohmail/app-logic/writing/writing-of";
 import { act, stubDom } from "../_draft-shell.js";
 import { letter } from "../_handoff-steps.js";
@@ -38,7 +38,7 @@ describe("writingOf", () => {
   it("hands the record through and derives the send, the hold and the signatures as the old mount does", async () => {
     const row = letter("d-a", "Plans for Friday", "Shall we meet at noon?");
     const w = await mountWriting({ drafts: [row] });
-    const ctx = { engine: w.engine, scope: "acc-1", replyTo: null, options: [], consent: KNOWN, drafts: [row], noCredits: false, t };
+    const ctx = { engine: w.engine, scope: "acc-1", replyTo: null, options: [], consent: KNOWN, drafts: [row], noCredits: false, t, presented: w.engine.read() };
     const before = writingOf(w.now(), ctx);
     expect(before.composeSend.phase).toBe("idle");
     expect(before.composeHeld).toBeNull();
@@ -58,7 +58,7 @@ describe("writingOf", () => {
 
   it("reads the session of its scope and never mints one: after the account's keys are swept it writes none", async () => {
     const w = await mountWriting();
-    const ctx = { engine: w.engine, scope: "acc-1", replyTo: null, options: [], consent: KNOWN, drafts: [], noCredits: false, t };
+    const ctx = { engine: w.engine, scope: "acc-1", replyTo: null, options: [], consent: KNOWN, drafts: [], noCredits: false, t, presented: w.engine.read() };
     const keysOf = (): string[] => Object.keys(window.localStorage).filter((key) => key.includes("acc-1"));
     /* The account's keys swept while the composition stands; then the composition is read, as each render reads it. */
     for (const key of keysOf()) window.localStorage.removeItem(key);

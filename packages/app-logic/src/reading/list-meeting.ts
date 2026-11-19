@@ -4,7 +4,8 @@
  * list says what it holds. One object for any list, so the column never reads a list's own model.
  */
 import { createContext, useContext, type Context } from "react";
-import type { MessageAction } from "../press/actions.js";
+import type { EngineMessage } from "@ohmail/wire";
+import type { MessageAction, MoveTarget } from "../press/actions.js";
 import type { ThreadReadWiring } from "./reader-seen.js";
 
 export interface ListStep {
@@ -53,3 +54,7 @@ export function useListBlank(): ListBlank | null | undefined {
   const meeting = useContext(ListMeetingContext);
   return meeting === null ? undefined : meeting.blank;
 }
+
+/** A place that presents its own reading cards supplies their Move through the same filing path as a list. */
+export type ListMove = (message: EngineMessage, place: MoveTarget) => void;
+export const ListMoveContext = createContext<ListMove | null>(null);

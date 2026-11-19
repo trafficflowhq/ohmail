@@ -3,11 +3,18 @@
  * the Screener stands in, and the two contexts its panes read. Nothing here draws; it compiles with no pane present,
  * so the calendar's link and the failure states build on it first.
  */
+import type { AutoOptInControl } from "@ohmail/app-logic/screener/screener-suggest";
 import type { UnsubscribeResult } from "@ohmail/wire";
 import { createContext, useContext, useSyncExternalStore, type ComponentType } from "react";
 import type { NotOrganizingYet } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ScreenerFacts, ScreenerState, ScreenerView } from "@ohmail/app-logic/screener";
-import type { None } from "../host/index.js";
+import {
+  NO_RUN,
+  type NoAdvice,
+  type ScreenerFacts,
+  type ScreenerState,
+  type ScreenerView,
+} from "@ohmail/app-logic/screener";
+import { NONE, type None } from "../host/index.js";
 import type { HeldParts, ScreenerJunk, ScreenerSuggest } from "./ports.js";
 
 /** The three sections. With a Junk port handed, the third draws the provider's Junk folder instead of Spam. */
@@ -35,6 +42,8 @@ export interface ScreenerBeside {
   readonly junk: ScreenerJunk | None;
   /** The suggestion run; `none` draws no control and spends nothing. */
   readonly suggest: ScreenerSuggest | None;
+  /** The same running queue prices the next automatic batch shown in Settings. */
+  readonly autoOptIn?: AutoOptInControl | null;
   /**
    * The one-click unsubscribe of a kept-out sender's letter, sent by the server on the person's press; `none` offers
    * no press. A refusal comes back as a throw carrying its code.
@@ -110,6 +119,15 @@ export function useScreener(): ScreenerState {
 /** What the shell handed beside the model. Throws where no `ScreenerAbove` stands. */
 export function useScreenerBeside(): ScreenerBeside {
   return useAbove().beside;
+}
+
+/**
+ * What the suggestion run knows about senders it has no advice for (a standing refusal, who it is buying for now);
+ * `NO_RUN` where no run stands: nothing refuses and nothing is coming.
+ */
+export function useNoAdvice(): NoAdvice {
+  const { suggest } = useAbove().beside;
+  return suggest === NONE ? NO_RUN : suggest.noAdvice;
 }
 
 /** The list's view as the reading column reads it: null while no list stands. */

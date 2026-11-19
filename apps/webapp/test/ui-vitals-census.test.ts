@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { shellFrameOf, sliceOfDeclaration } from "./source-anchor";
 import {
@@ -36,6 +36,20 @@ function read(path: string): string {
   return readFileSync(resolve(ROOT, path), "utf8");
 }
 
+/** Every source file of the new shell (`packages/app/src`), its comments stripped, as one text. */
+function appTree(): string {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+      const at = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(at);
+      else if (/\.tsx?$/.test(e.name)) out.push(read(at).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1"));
+    }
+  };
+  walk("packages/app/src");
+  return out.join("\n");
+}
+
 /** The call, not the name: `beginSwitch()` and never `beginSwitch` in a comment or an import. */
 function callsIn(body: string, fn: string): number {
   return [...body.matchAll(new RegExp(`(?<![\\w.])${fn}\\s*\\(`, "g"))].length;
@@ -60,14 +74,19 @@ describe("every navigation starts the switch mark", () => {
     });
   }
 
+  /* Read where a letter is opened now: the Ohbox's open (`app-logic/ohbox/live-open.ts`), its press on a row and its
+     entering at one column, each of which names the letter it opens. */
   it("reflectMessage starts the open mark, and closing a reading starts nothing", () => {
-    const body = sliceOfDeclaration(routing, "reflectMessage");
-    expect(callsIn(body, "beginOpen")).toBe(1);
-    // The guard is what keeps a CLOSE (`messageId === null`) from opening a mark nothing ends.
-    expect(body).toMatch(/messageId !== null && messageId !== route\.messageId/);
+    const body = read("packages/app-logic/src/ohbox/live-open.ts");
+    const opens = callsIn(body, "beginOpen");
+    expect(opens, "no open starts the open mark").toBeGreaterThan(0);
+    // The guard is what keeps a CLOSE (no letter named) from opening a mark nothing ends: every start is under it.
+    const guarded = [...body.matchAll(
+      /if \((?:id !== null && id !== args\.route\.open|messageId !== args\.route\.open)\) \{\s*beginOpen\(/g,
+    )].length;
+    expect(guarded, "an open mark started without naming another letter").toBe(opens);
     // …and a close abandons the open in flight, which would otherwise expire as a timeout.
-    expect(callsIn(body, "abandonOpen")).toBe(1);
-    expect(body).toMatch(/else if \(messageId === null\) abandonOpen\(\)/);
+    expect(body).toMatch(/if \(open === null\) abandonOpen\(\)/);
   });
 });
 
@@ -116,10 +135,11 @@ describe("the marks that end", () => {
   });
 
   it("the message pane ends the open mark on a terminal body state", () => {
-    const pane = read("apps/webapp/app/shell/MessagePane.tsx");
+    /* The letter the reader draws is where its text lands now (`packages/app/src/reader/Letter.tsx`). */
+    const pane = read("packages/app/src/reader/Letter.tsx");
     expect(callsIn(pane, "endOpen")).toBe(1);
     // Not on `loading`/`snippet`: ending there would report the spinner as the mail.
-    expect(pane).toMatch(/body\.state !== "snippet" && body\.state !== "loading"/);
+    expect(pane).toMatch(/body\.state === "snippet" \|\| body\.state === "loading"\) return/);
   });
 
   it("the search view ends the search mark when its first results exist", () => {
@@ -130,7 +150,9 @@ describe("the marks that end", () => {
 
 describe("the startup marks", () => {
   it("the shell mounts the instrument and marks a usable list", () => {
-    const shell = read("apps/webapp/app/shell/AppShell.tsx");
+    /* The new shell's whole tree (`packages/app/src`): the ground's boot mounts the instrument; a search press is
+       Search's, whose over is not mounted yet. */
+    const shell = appTree();
     expect(callsIn(shell, "useUiVitals")).toBe(1);
     expect(shell).toMatch(/markStartup\("listUsable"\)/);
     expect(callsIn(shell, "beginSearch")).toBe(1);
@@ -143,7 +165,7 @@ describe("the startup marks", () => {
    * wait. The needle is the CONDITION, not a comment: reword the docblock and this still holds.
    */
   it("marks a usable list from the mirror's own rows and not from the sync posture", () => {
-    const shell = read("apps/webapp/app/shell/AppShell.tsx");
+    const shell = read("packages/app/src/mail/ground/boot-marks.ts");
     const at = shell.indexOf('markStartup("listUsable")');
     expect(at, "the mark must exist to be judged").toBeGreaterThan(-1);
     const line = shell.slice(shell.lastIndexOf("\n", at) + 1, shell.indexOf("\n", at));

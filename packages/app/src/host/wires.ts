@@ -20,7 +20,7 @@ import type {
 import type { None } from "./contract.js";
 import type {
   AutoFiled, AutoFiledPutBack, AwayDraft, AwaySaved, AwayState, ConnectAllowance, ConsentReadFailure, ConsentState,
-  DraftReplyRead, FirstRunCount, FirstRunMailbox, FirstRunOrganizeIntent, FirstRunOrganized, FirstRunProbed,
+  DraftReplyRead, FirstRunCount, FirstRunOrganizeIntent, FirstRunOrganized,
   FirstRunStepUp, FolderSummary, JunkFound, JunkPage, JunkRescued, JunkSweep, MailboxErased, MailboxRow,
   OrganizeAnswer, OrganizerPeek, OwnModelAutoSuggest, ProfileImportApplied, ProfileImportCandidate,
   ProfileImportStatus, ReleaseAnswer, ScreenerPage, ScreenerSuggested, ScreeningChange, ScreeningPreference,
@@ -159,8 +159,6 @@ export interface DraftReplyWire {
  */
 export interface FirstRunWire {
   ai: "unset" | "off" | "on-unconfigured" | "on";
-  probe(input: FirstRunMailbox): Promise<FirstRunProbed>;
-  connect(input: FirstRunMailbox, mode: "seed" | "add"): Promise<{ id: string }>;
   organize(mailboxId: string, body: {
     imap?: { pass: string };
     screening?: { dormancyDays?: number; scope?: "window" | "all_time" };
@@ -172,7 +170,6 @@ export interface FirstRunWire {
   complete: () => Promise<void>;
   setAiEnabled?: (enabled: boolean) => Promise<void>;
   forgetMailbox?: (mailboxId: string) => Promise<void>;
-  probeReason: (err: unknown) => string | null;
   probeMessage: (err: unknown) => string | null;
   probeLocalServer?: (err: unknown) => boolean;
   localServerWait?: boolean;
@@ -258,6 +255,8 @@ export interface ConnectWire {
   signIn: ProviderSignInWire | None;
   /** A server on this computer may take minutes to answer a test: the form says so while it waits. */
   readonly localServerWait: boolean;
+  /** The door accepts a manual incoming server without an outgoing one. */
+  readonly incomingOnly?: true;
 }
 
 /**

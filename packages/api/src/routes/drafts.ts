@@ -377,11 +377,12 @@ export const draftsRoutes: Route[] = [
       switch (result.status) {
         case "sent":
           // `firstSend` RIDES WHEN THE SERVICE STATES IT, and only then: it means this key was
-          // already settled and this request delivered nothing. Absent on an ordinary send, so
-          // the shape every installed client parses today is byte-identical to what it was.
+          // already settled and this request delivered nothing. The reservation names the draft
+          // that went, even when the request named a different one.
           return answer<"POST /drafts/:id/send">()(
             {
-              status: "sent", providerMessageId: result.providerMessageId,
+              status: "sent", providerMessageId: result.providerMessageId, sentDraftId: result.draftId,
+              ...(result.sentDraftThrough === undefined ? {} : { sentDraftThrough: result.sentDraftThrough }),
               ...(result.firstSend ? { firstSend: result.firstSend } : {}),
               ...(result.sentCopy ? { sentCopy: result.sentCopy } : {}),
               ...(result.sentCopyReason ? { sentCopyReason: result.sentCopyReason } : {}),

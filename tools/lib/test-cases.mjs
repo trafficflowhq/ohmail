@@ -97,6 +97,9 @@ export function casesOf(text) {
     if (!call) continue;
     const close = closeOf(code, call.open);
     if (close < 0) continue;
+    // A call with no argument is no case nor describe of any runner: a function of the file's own named `test`
+    // (a helper's condition, `if (test()) return;`), never a title.
+    if (!code.slice(call.open + 1, close).trim()) continue;
     calls.push({ ...call, at: match.index, close, title: titleOf(code, text, call.open, close) });
   }
   const inside = (outer, inner) => outer.open < inner.at && inner.at < outer.close;

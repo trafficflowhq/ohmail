@@ -144,7 +144,7 @@ async function mount(only?: string[]): Promise<{ latest: () => ScreenerState }> 
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const world = only ? WORLD.filter((w) => only.includes(w.address)) : WORLD;
   const engine = await engineWith(
     world.map((w, i) => held(`m${i}`, w.address, 9 + (i % 12))),

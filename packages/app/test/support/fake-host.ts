@@ -117,8 +117,10 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       state: input.state ?? NONE,
       scope: input.scope,
       account: input.account ?? null,
+      accountAddress: null,
       signOut: NONE,
       recover: input.recover ?? NONE,
+      today: NONE,
     },
     reads: { mailboxes: input.mailboxes ?? NONE, copyAge: NONE, access: NONE },
     wires: {
@@ -137,7 +139,7 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       calendar: input.calendar ?? NONE,
     },
     device: {
-      build: { surface: "web", version: null, commit: null, mailtoLeaves: false },
+      build: { surface: "web", version: null, commit: null, mailtoLeaves: false, desktopDownload: null },
       notifications: NONE,
       badge: NONE,
       language: NONE,
@@ -172,7 +174,8 @@ export function fakeHost(input: FakeHostInput): FakeHost {
 
 /**
  * What the frame's room reads of an engine when it mounts its press seam with nothing pressed and nothing left in the
- * journal: it listens for changes, reads the mirror's version and asks whether there is a trash. A test whose engine
+ * journal: it listens for changes, reads the mirror's version and asks whether there is a trash (and, where a ground
+ * stands, the rail's foot asks whether there is a ring to the worker). A test whose engine
  * is a stand-in of its own spreads these under it where its host hands a ground above the panes or a reader: there the
  * room's own seam stands for the frame's life. A host that hands neither has no seam, and its engine is read never.
  */
@@ -189,6 +192,8 @@ export const SEAM_AT_REST: Readonly<Record<string, unknown>> = {
       },
     ),
   trashAvailable: () => false,
+  /* The rail's foot, which the ground feeds, asks whether there is a ring to the worker: none. */
+  pullAvailable: () => false,
 };
 
 /** Nothing queued, in flight or kept as new, and no late answer: one object each, as an engine at rest hands back. */

@@ -211,7 +211,7 @@ function wrap(children: React.ReactNode, KeymapProvider: unknown): React.ReactNo
 async function mountReads(rows: Row[], opts: { jump?: string } = {}): Promise<void> {
   await unmount();
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const node = h(ReadsView as never, {
     settled: true, owed: false,
     partition: { waterline: null, fresh: rows.map((r) => msg(r, "ohmail/News")), seen: [] },
@@ -235,7 +235,7 @@ async function mountReceipts(
 ): Promise<void> {
   await unmount();
   const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const node = h(ReceiptsView as never, {
     settled: true, owed: false,
     messages: rows.map((r) => msg(r, "ohmail/Receipts")),
@@ -295,7 +295,7 @@ let setUnreadLive: (id: string, unread: boolean) => void = () => {};
 async function mountReadsLive(rows: Row[], jump: string | null, { full = false, enters = false } = {}): Promise<void> {
   await unmount();
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   pileSize = rows.length;
   let cur: string | null = null;
   let jumpTo: string | null = jump;
@@ -1440,7 +1440,7 @@ async function mountAnswering(view: "reads" | "receipts"): Promise<void> {
   await unmount();
   const { ReadsView } = await import("../app/views/ReadsView.js");
   const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
   answer = { replyTo: null, phases: {}, curs: [] };
   const body = (m: { snippet: string }) => ({

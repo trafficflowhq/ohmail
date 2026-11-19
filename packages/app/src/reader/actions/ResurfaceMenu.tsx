@@ -165,7 +165,7 @@ export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: Res
   );
 }
 
-/** Pick a date: a month to find the day in, floored at the first day the time is still ahead. */
+/** Pick a date: a month to find the day in, floored at the first day the time is still ahead; the keys open on that day. */
 function PickDay({
   open,
   onClose,
@@ -200,8 +200,11 @@ function PickDay({
     number: String(c.number),
     label: horizonFull(dayAtIn(c.id, at, zone), zone, locale),
     today: c.id === today,
-    outside: !c.inMonth || c.id < floor,
+    outside: !c.inMonth,
+    /* A day before the floor books a moment already past: the kit's unavailable day, said so and answering no press. */
+    disabled: c.id < floor,
   }));
+  const shownMonth = `${shown.year}-${pad(shown.month)}`;
   const step = (by: number) => () =>
     setShown((s) => {
       const m = s.month - 1 + by;
@@ -210,11 +213,16 @@ function PickDay({
   return (
     <Menu open={open} onClose={onClose} anchor={anchor} label={t("resurface.pick")} up>
       <MiniMonth
+        takesKeys
         size="widget"
         head={{
           title: t("resurface.month", { month: noon(`${shown.year}-${pad(shown.month)}-15`) }),
-          hot: today.slice(0, 7) === `${shown.year}-${pad(shown.month)}`,
-          before: { label: t("resurface.prevMonth"), onPress: step(-1) },
+          hot: today.slice(0, 7) === shownMonth,
+          /* No way back into a month that holds no day that can still be booked: today's picker had none either. */
+          before: {
+            label: t("resurface.prevMonth"),
+            onPress: shownMonth > floor.slice(0, 7) ? step(-1) : undefined,
+          },
           after: { label: t("resurface.nextMonth"), onPress: step(1) },
         }}
         weekdays={cells.slice(0, 7).map((c) => t("resurface.weekday", { day: noon(c.id) }))}

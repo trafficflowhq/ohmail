@@ -1,6 +1,11 @@
 /**
- * THE SCREENER AS A PLACE OF THE FRAME: its rail entry (how many first-time senders wait, said only once the queue
- * has settled), its list, and its own reading column.
+ * THE SCREENER AS A PLACE OF THE FRAME: its rail entry in the group of its own (how many first-time senders wait,
+ * said only once the queue has settled), its list, and its own reading column.
+ *
+ * IT NAMES NO SEAT ABOVE ITS COLUMNS: what the Screener holds must outlive the place (a decision's window, its Undo,
+ * what was bought, the Junk folder's page, the sender open in each section), so it stands in the mail ground for the
+ * frame's life (`mail/ground/ScreenerMount.tsx` over `useScreenerLive`), and the panes read it there. So does the
+ * count: it reads that one model, which the ground stands whether or not the Screener is on screen.
  */
 import type { PlaceEntry } from "../frame/contract.js";
 import { useScreener } from "./contract.js";
@@ -17,6 +22,13 @@ function useWaitingCount(): { count: string; hot: boolean } | null {
 export const screenerPlace: PlaceEntry = {
   id: "screener",
   body: "screener",
-  rail: { group: "main", icon: "screener", label: "title", keyHint: "g s", useCount: useWaitingCount },
+  rail: {
+    group: "screener",
+    icon: "screener",
+    label: "title",
+    keyHint: "g s",
+    keyLabel: "goScreener",
+    useCount: useWaitingCount,
+  },
   panes: { kind: "columns", List: ScreenerList, Reading: ScreenerReading },
 };

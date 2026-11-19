@@ -10,7 +10,6 @@ import {
   useOwnAddresses,
   usePress,
   useResurfaceTime,
-  useRoomHandOver,
   useRoomHolds,
 } from "../../src/frame/room.js";
 import type { PaneProps, PlaceEntry } from "../../src/frame/contract.js";
@@ -300,7 +299,7 @@ describe("the reader in the frame", () => {
     }
   });
 
-  it("the panel drawn in place on a place whose room is off: a list's visit runs it, and with none nothing is drawn", () => {
+  it("the panel drawn in place on a place where no room is on: a list's visit runs it, and with none nothing is drawn", () => {
     const mail = fakeMail([letter("m1"), letter("m2")]);
     const entry = readerEntry({
       body: bodyDouble().body,
@@ -344,24 +343,19 @@ describe("the reader in the frame", () => {
         </ListMeetingContext.Provider>
       );
     }
-    /* A room is off in one place alone: over the body the old shell keeps, under the seam that shell hands. */
+    /* No room is on where the host hands nothing above the panes and no reader: the place draws the panel itself. */
     const STREAM: PlaceEntry = {
       id: "news",
       body: "news",
       rail: null,
-      panes: { kind: "wide", Wide: Stream, kept: true },
+      panes: { kind: "wide", Wide: Stream },
     };
-    const shell = Object.assign(({ children }: { children: ReactNode }) => <>{children}</>, {
-      handsSeam: true as const,
-    });
     const { host } = fakeHost({
       engine: mail.engine,
       service: "self",
       scope: "acct-1",
       places: { news: STREAM },
-      reader: entry,
       address: fakeAddress("#/reads"),
-      above: shell,
     });
     render(
       <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
@@ -379,139 +373,5 @@ describe("the reader in the frame", () => {
   it("the room stands over the bare fake host: words it does not hold are nobody's fault", () => {
     expect(() => mountReader({ letters: [letter("m1")], open: null })).not.toThrow();
     expect(live.seams).toBe(1);
-  });
-});
-
-/**
- * A SHELL THAT STANDS ABOVE THE PANES HANDS THE ROOM ITS OWN SEAM. The room then mounts none: on a reader's place the
- * reader presses through the shell's seam, and the room's stores hold what the shell handed.
- */
-describe("the room under a shell that hands its own seam", () => {
-  /** The shell's seam, as far as these cases read it: what it holds back, and what a press and `z` reach. */
-  function seamOf() {
-    const remove = vi.fn();
-    const runArmedUndo = vi.fn(() => true);
-    const seam = {
-      deleting: { held: new Set(["m-held"]), remove },
-      routing: { places: new Map([["m-moved", "Archive"]]) },
-      runArmedUndo,
-    } as unknown as ShellDispatch;
-    return { seam, remove, runArmedUndo };
-  }
-  const ROWS = [
-    { id: "mb-1", address: "lena@example.invalid", status: "active" },
-    { id: "mb-2", address: "office@example.invalid", status: "active" },
-  ];
-  const store = vi.fn(async () => undefined);
-  function Reader() {
-    const press = usePress();
-    const { held, places } = useRoomHolds();
-    const own = useOwnAddresses();
-    const word = useMailboxWord();
-    const hour = useResurfaceTime();
-    return (
-      <div>
-        <button type="button" onClick={() => press.deleting.remove({ id: "m1", mailboxId: "mb-1" })}>
-          Delete
-        </button>
-        <button type="button" onClick={() => void hour.store?.("08:15")}>
-          Keep the hour
-        </button>
-        <p>{`held ${[...held].join()}; moved ${[...places.keys()].join()}`}</p>
-        <p>{`own ${own.join()}; in ${word("mb-1", "short") ?? "one mailbox"}; back at ${hour.stored ?? "its own hour"}`}</p>
-      </div>
-    );
-  }
-  function under(above: (props: { children: ReactNode }) => ReactNode, reading = Reader) {
-    const mail = fakeMail([letter("m1")]);
-    const { host } = fakeHost({
-      engine: mail.engine,
-      service: "self",
-      scope: "acct-1",
-      places: { ohbox: READER_PLACE },
-      reader: { Reading: reading, Actions: () => null },
-      address: fakeAddress("#/ohbox/m/m1"),
-      above: Object.assign(above, { handsSeam: true as const }),
-    });
-    return render(
-      <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
-        <Frame host={host} />
-      </TextProvider>,
-    );
-  }
-
-  it("mounts no seam of its own: the reader presses through the handed one, and the stores hold what was handed", () => {
-    const { seam, remove } = seamOf();
-    function Shell({ children }: { children: ReactNode }) {
-      useRoomHandOver({ seam, rows: ROWS as never, resurface: { stored: "07:30", store } });
-      return <>{children}</>;
-    }
-    under(Shell);
-    expect(live.seams, "the room called the press seam's hook itself").toBe(0);
-    expect(screen.getByText("held m-held; moved m-moved")).toBeTruthy();
-    expect(
-      screen.getByText("own lena@example.invalid,office@example.invalid; in lena; back at 07:30"),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(remove.mock.calls).toEqual([[{ id: "m1", mailboxId: "mb-1" }]]);
-    fireEvent.click(screen.getByRole("button", { name: "Keep the hour" }));
-    expect(store.mock.calls).toEqual([["08:15"]]);
-  });
-
-  it("binds no key: z is the shell's, and the handed seam's Undo is not run by the room", () => {
-    const { seam, runArmedUndo } = seamOf();
-    function Shell({ children }: { children: ReactNode }) {
-      useRoomHandOver({ seam, rows: null, resurface: { stored: null, store: null } });
-      return <>{children}</>;
-    }
-    under(Shell);
-    fireEvent.keyDown(window, { key: "z" });
-    fireEvent.keyDown(document.body, { key: "z" });
-    expect(runArmedUndo).not.toHaveBeenCalled();
-    expect(screen.getByText("own ; in one mailbox; back at its own hour")).toBeTruthy();
-  });
-
-  it("with nothing handed a press throws, and no seam is made in its place", () => {
-    const said: string[] = [];
-    function Reads() {
-      const press = usePress();
-      try {
-        void press.deleting;
-        said.push("a seam");
-      } catch (err) {
-        said.push((err as Error).message);
-      }
-      return <p>the reader</p>;
-    }
-    under(({ children }) => <>{children}</>, Reads);
-    expect(screen.getByText("the reader")).toBeTruthy();
-    expect(new Set(said)).toEqual(new Set(["usePress: the room's seam is not mounted"]));
-    expect(live.seams).toBe(0);
-  });
-
-  it("a hand-over into a room that mounts its own seam is refused: two seams would stand", () => {
-    const { seam } = seamOf();
-    function Hands() {
-      useRoomHandOver({ seam, rows: null, resurface: { stored: null, store: null } });
-      return <p>handed</p>;
-    }
-    const mail = fakeMail([letter("m1")]);
-    const { host } = fakeHost({
-      engine: mail.engine,
-      service: "self",
-      scope: "acct-1",
-      places: { ohbox: READER_PLACE },
-      reader: { Reading: Hands, Actions: () => null },
-      address: fakeAddress("#/ohbox/m/m1"),
-    });
-    const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(() =>
-      render(
-        <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
-          <Frame host={host} />
-        </TextProvider>,
-      ),
-    ).toThrow("useRoomHandOver: this room mounts its own seam");
-    quiet.mockRestore();
   });
 });

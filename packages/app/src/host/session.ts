@@ -31,6 +31,8 @@ export interface HostSession {
    * account stands behind this shell, and until the answer has come.
    */
   readonly account: string | null;
+  /** Present when the same confirmed session also supplied its address. */
+  readonly accountAddress: string | null;
   /**
    * The way back to a live session: sign in again, or reload the window. `none` withholds the control, and the frame
    * says in words to start ohmail again.
@@ -38,4 +40,9 @@ export interface HostSession {
   readonly recover: ((how: "signIn" | "reload") => void) | None;
   /** Ends the session. No input today: it lives inside the panes each mount hands in. */
   readonly signOut: (() => Promise<void>) | None;
+  /**
+   * The day the host says it is: the demo's frozen day, which its invented letters are dated around. `none` on every
+   * real host: the clock is the device's. The ground reads it for the day clock and for every dated sentence it makes.
+   */
+  readonly today: Date | None;
 }

@@ -12,11 +12,13 @@ import type { CalendarEventView } from "./view.js";
 
 /** An event as every view takes it: the time grid's face, and the words Search finds it by. */
 export interface CalendarEventFace extends CalendarEventView {
+  readonly recordId: string;
   readonly people: readonly string[];
   readonly notes: string | null;
 }
 
 export interface FaceWords {
+  readonly busy: () => string;
   readonly waitingDevice: string;
   readonly waitingProvider: string;
   readonly notSaved: string;
@@ -38,6 +40,28 @@ export function faceOf(
   /* A changed day is named by the key our server stored, never by one worked out again here. */
   const key = o.occurrence.source === "override" ? o.record.recurrenceId : o.key;
   const id = key === null ? o.record.id : `${event}@${key}`;
+  const time = {
+    id,
+    recordId: o.record.id,
+    start: o.occurrence.start,
+    end: o.occurrence.end,
+    tone: hueOf(o.calendar.color),
+    ref: { event, occurrence: key, day: o.day },
+  };
+  if (o.calendar.access === "busy") {
+    return {
+      ...time,
+      title: words.busy(),
+      state: "plain",
+      repeats: null,
+      viewOnly: true,
+      waits: false,
+      status: null,
+      second: null,
+      people: [],
+      notes: null,
+    };
+  }
   const { waiting, refusal } = o.writes;
   const status =
     refusal !== null
@@ -52,18 +76,14 @@ export function faceOf(
     ...o.record.invitees.map((i) => i.name ?? i.address),
   ];
   return {
-    id,
-    start: o.occurrence.start,
-    end: o.occurrence.end,
+    ...time,
     title: o.record.title,
-    tone: hueOf(o.calendar.color),
     state: stateOf(o),
     repeats: o.occurrence.source === "override" ? "apart" : o.occurrence.source === "rule" ? "series" : null,
     viewOnly: viewOnlyOf(o.calendar, connections.get(o.calendar.connectionId)),
     waits: o.record.myAnswer === "none",
     status,
     second: o.record.place,
-    ref: { event, occurrence: key, day: o.day },
     people,
     notes: o.record.notes,
   };

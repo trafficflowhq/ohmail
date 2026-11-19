@@ -1,4 +1,16 @@
 /* A stream place's own layout: where its parts stand. Every look is the kit's; the list stands in `ListColumn`. */
+/* The stream's measured hold compensates for cards and editors changing height above the reader. */
+.oh-sheet-scroll:has(.st-item) {
+  overflow-anchor: none;
+}
+
 .st-item {
   display: block;
+}
+
+.st-pile-note {
+  display: grid;
+  gap: var(--s2);
+  justify-items: start;
+  padding: var(--s2) var(--s3) var(--s3) var(--flush);
 }

@@ -1703,6 +1703,8 @@ export function useMailSend(
    * Absent: nothing moves.
    */
   markOf?: (key: string) => unknown,
+  /** Keep recoverable failures on the notice line even when the report was the only surface showing an ending. */
+  keepUnshownFailures = false,
 ): MailSendApi {
   const { t, scheduleLabel } = text;
   const [states, setStates] = useState<Record<string, SendState>>({});
@@ -1802,6 +1804,19 @@ export function useMailSend(
     lane: string; m: MailSend | undefined; ended: SendState; left?: RefusedRow; held?: ComposeHeld;
   }>());
   const endedSeq = useRef(0);
+  const noteEnding = useCallback((
+    lane: string, m: MailSend | undefined, ended: SendState, left: RefusedRow | undefined,
+    held: ComposeHeld | undefined, canTakeLine: boolean,
+  ): boolean => {
+    if (ended.phase === "idle") return false;
+    const line = canTakeLine && lineSeenNow();
+    const keep = keepUnshownFailures && ended.phase === "failed" && ended.code !== "draft_changed" && left !== undefined;
+    if (!line && !keep) return false;
+    endedSeq.current += 1;
+    endedLine.current.set(`${lane}#${endedSeq.current}`, { lane, m, ended, ...(left ? { left } : {}), ...(held ? { held } : {}) });
+    bumpLine();
+    return line;
+  }, [keepUnshownFailures, lineSeenNow, bumpLine]);
   /**
    * A PRESS OF THIS LANE ENDS WHAT THE LINE STOOD ON FOR THE SAME MESSAGE — every ending of a reply's
    * or a forward's lane (the lane is the message), and of the compose lane only the endings of the
@@ -2235,15 +2250,9 @@ export function useMailSend(
           const shown = shownNow(key) && about;
           /* Said on the foot line when no editor shows the lane and a line is seen; the toast stays
              the fallback for a shell with no line, or one the reader sheet covers. */
-          const line = handedOff.current.has(key) && !shown && lineSeenNow() && next.phase !== "idle";
-          if (line) {
-            endedSeq.current += 1;
-            endedLine.current.set(`${key}#${endedSeq.current}`, {
-              lane: key, m: pressed.current.get(key) ?? m, ended: next,
-              ...(left ? { left } : {}), ...(key === COMPOSE_SEND_KEY ? { held } : {}),
-            });
-            bumpLine();
-          }
+          const line = !shown && noteEnding(
+            key, pressed.current.get(key) ?? m, next, left, key === COMPOSE_SEND_KEY ? held : undefined, handedOff.current.has(key),
+          );
           outcomeRef.current?.(key, m, false, next.phase, { ...(left ? { left } : {}), ended: next, shown, ...(line ? { line } : {}) });
         }
         setPhase(key, next);
@@ -2270,7 +2279,7 @@ export function useMailSend(
        * claimed, because the intent is out there under it and a second press would be a second delivery.
        */
     },
-    [settle, setPhase, toast, t, releaseEnded, shownNow, lineSeenNow, bumpLine],
+    [settle, setPhase, toast, t, releaseEnded, shownNow, noteEnding],
   );
 
   /**
@@ -2500,12 +2509,7 @@ export function useMailSend(
    */
   const reportRestored = (lane: string, ended: SendState, left: RefusedRow | undefined, held: ComposeHeld | undefined): void => {
     const shown = shownHolding(lane, held);
-    const line = !shown && lineSeenNow() && ended.phase !== "idle";
-    if (line) {
-      endedSeq.current += 1;
-      endedLine.current.set(`${lane}#${endedSeq.current}`, { lane, m: undefined, ended, ...(left ? { left } : {}), ...(held ? { held } : {}) });
-      bumpLine();
-    }
+    const line = !shown && noteEnding(lane, undefined, ended, left, held, true);
     outcomeRef.current?.(
       lane, { kind: "mail_send" } as unknown as MailSend, false, ended.phase,
       ended.phase === "idle" ? (left ? { left } : undefined)

@@ -16,7 +16,7 @@ export function PlainEditor(props: EditorProps) {
   useEffect(() => {
     onHandle({
       marks: "none",
-      focus: () => box.current?.focus(),
+      focus: () => box.current?.focus({ preventScroll: true }),
       insert: (text, how) => {
         const el = box.current;
         if (el === null) return;
@@ -30,7 +30,7 @@ export function PlainEditor(props: EditorProps) {
     return () => onHandle(null);
   }, [onHandle]);
   useEffect(() => {
-    if (focusAtMount) box.current?.focus();
+    if (focusAtMount) box.current?.focus({ preventScroll: true });
   }, [focusAtMount]);
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {

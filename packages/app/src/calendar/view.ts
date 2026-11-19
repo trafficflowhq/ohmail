@@ -16,6 +16,7 @@ export interface CalendarEventView extends GridEvent {
 
 /** The settings a view draws by; until the account's settings answer: no week numbers, no second zone, the whole day. */
 export interface CalendarViewSettings {
+  readonly newEventsCalendarId?: string | null;
   /** The week's first day, Monday 0 to Sunday 6. */
   readonly weekStart: number;
   readonly weekNumbers: boolean;

@@ -339,5 +339,5 @@ export function useConnectionNotice(
   if (kind === null || notice === null) return null;
   const gated = kind === "firstSync" && title !== null ? { ...notice, title } : notice;
   const answers = actsOf(kind, input, t, acts, said?.href ?? null);
-  return answers ? { ...gated, acts: answers } : gated;
+  return answers ? { ...gated, acts: answers, more: undefined } : gated;
 }

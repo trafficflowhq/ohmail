@@ -17,7 +17,7 @@ import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
 import { AddressView, archiveRowsBelong, nameFor } from "../app/views/AddressView";
 import { addressHref } from "../app/shell/address-view";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 import { ContactPopover } from "../app/shell/ContactPopover";

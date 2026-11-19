@@ -12,7 +12,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * ENTER ASKS THE STORE AT ONCE (SEARCH-DEBOUNCE). Typing waits the 100 ms debounce so a request goes

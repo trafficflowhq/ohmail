@@ -480,6 +480,8 @@ export class FixturesAdapter implements EngineAdapter {
       ...(m.kind === "draft_save" && m.draftId === null && effects[0]
         ? { entityId: effects[0].id }
         : {}),
+      ...(m.kind === "mail_send" && !m.sendAt && effects[0]?.type === "draft"
+        ? { sentDraftId: effects[0].id } : {}),
       /**
        * THE MINTED Message-ID OF A SEND, because a demo that cannot show sent mail is not showing the product. `POST
        * /drafts/:id/send` answers `{status:"sent", providerMessageId}` and the engine turns that into the optimistic

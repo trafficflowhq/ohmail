@@ -1,5 +1,8 @@
-import type { NoticePermission } from "@ohmail/client-engine";
+import type { NoticeChoices, NoticePermission } from "@ohmail/client-engine";
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
+import type { FileShell } from "@ohmail/app-logic/reader/attachments";
+import type { DroppedFile } from "@ohmail/app-logic/write/files";
+import type { AppLocale } from "@ohmail/app-logic/text/locale";
 import type { None } from "./contract.js";
 import type { Signal } from "./signals.js";
 
@@ -13,11 +16,19 @@ export interface DeviceBuild {
   readonly commit: string | null;
   /** Whether a `mailto:` link leaves the app. */
   readonly mailtoLeaves: boolean;
+  /** The desktop download address offered by the signed-in web host, where available. */
+  readonly desktopDownload: string | null;
 }
 
 /** What syncing this device's push registration answers. */
 export type PushSyncOutcome =
-  | "subscribed" | "unsubscribed" | "unchanged" | "no_server_key" | "unsupported" | "row_remains" | "not_registered";
+  | "subscribed"
+  | "unsubscribed"
+  | "unchanged"
+  | "no_server_key"
+  | "unsupported"
+  | "row_remains"
+  | "not_registered";
 
 /** The permission, the ask, and the wake registration. The shell's `NotificationHost`. */
 export interface DeviceNotifications {
@@ -35,6 +46,37 @@ export interface DeviceNotifications {
    * draws none; the Notifications pane then offers no switch for a kind.
    */
   readonly emitter: HostNoticeEmitter | None;
+  /**
+   * THE PERSON'S CHOICES ON THIS DEVICE, as the notices' gate reads them: the switches this surface stores, read
+   * by the shell from its own store at each settle of the copy, so a switch pressed a moment ago counts. Never held
+   * by the caller. Absent: this surface stores no switch, and its emitter is handed nothing to draw.
+   */
+  choices?: () => NoticeChoices;
+  /** Moves when this device's choices change, even while the mail copy stands still. */
+  choicesVersion?: Signal<number>;
+  /**
+   * THE WAKE REGISTRATION'S BOOT DOOR, where this shell registers one: bring it back to what the stored switches
+   * ask for, once per sign-in, with the words the worker may draw where it keeps none (`body`). Sign-out drops this
+   * device's registration and keeps the switches; without this door a person who signs back in sees every switch
+   * on over no registration. Never throws; bounded by the shell. Absent: nothing is registered here to put back.
+   */
+  reconcile?: (body: string) => Promise<PushSyncOutcome | null>;
+  /**
+   * THE WORKER'S WORDS ALONE, in the account's language once it is adopted. A RELABEL, NEVER A RECONCILE: what is
+   * stored of "may draw" is kept byte for byte and never worked out again from the switches, or a previous person's
+   * surviving registration would be armed again on a shared device. Absent exactly where `reconcile` is.
+   */
+  relabel?: (title: string, body: string) => Promise<void>;
+}
+
+/**
+ * THE LANGUAGE'S CONTROLS, as the shell wraps them around the frame: the language being drawn, and the adoption of
+ * the account's language at start. An adoption moves what is drawn and NEVER writes the account back (a write there
+ * would PATCH the value it just read, on every boot); what an adoption may move is the shell's to decide.
+ */
+export interface HostLanguage {
+  readonly locale: AppLocale;
+  readonly adoptLocale: (next: AppLocale) => Promise<void>;
 }
 
 export type Pointer = "fine" | "coarse";
@@ -59,15 +101,21 @@ export interface Appearance {
 }
 /** The address bar, owned by the shell. The frame reads and writes the fragment through it, never `location`. */
 export interface HostAddress {
+  /** The current pane holds a leave while a draft differs from its saved value. */
+  holdLeave(ask: (leave: () => void) => void, at: string): () => void;
+  /** Ask before a route command changes any state. Discard resumes that same command once. */
+  heldBefore(next: string, resume: () => void): boolean;
   read(): string;
-  write(next: string, how: "push" | "replace"): void;
+  /** Whether the reader was explicitly closed in this history entry. */
+  readerClosed?(): boolean;
+  write(next: string, how: "push" | "replace", reader?: "closed"): void;
   subscribe(changed: () => void): () => void;
 }
 
 /**
  * The platform's verbs and facts.
  *
- * Eight keys are `none` in every shell for now: no mount hands them in today, each does the thing
+ * Five keys are `none` in every shell for now: no mount hands them in today, each does the thing
  * by hand beside the shell or inside a pane of its own. A key gets its verb's type in the change
  * that wires it, and every shell answers it then.
  */
@@ -77,14 +125,33 @@ export interface HostDevice {
   readonly notifications: DeviceNotifications | None;
   /** The unread count on the app's icon. Replaces `onUnread`. */
   readonly badge: ((unread: number) => void) | None;
-  /** Setting the language, and taking the account's at start. Today a context each mount wraps around the shell. */
-  readonly language: None;
-  /** Opening a link outside the app. */
-  readonly openLink: None;
-  /** Picking a file to attach. */
-  readonly pickFile: None;
-  /** Saving a file out of the app. */
-  readonly saveFile: None;
+  /**
+   * Setting the language, and taking the account's at start: the controls each shell wraps around the frame (on the
+   * web, the desktop and the paired page, the locale context of their own). `none`: the language is not this shell's
+   * to move (the phone's is its own).
+   */
+  readonly language: HostLanguage | None;
+  /**
+   * THE WAY TO AN ADDRESS THE APP ITSELF MAKES (the page of an update, the desktop app's download, a help page):
+   * called inside the person's own press, it opens that address outside the app and returns. Never a letter's link:
+   * those leave through the reader's own door. `none`: this shell cannot lead out, and an act that would is not
+   * offered there.
+   */
+  readonly openLink: ((href: string) => void) | None;
+  /** The files a system drop withheld from the browser's File list. */
+  readonly pickFile:
+    | {
+        readonly looksLikeDrag: (transfer: DataTransfer) => boolean;
+        readonly matchesDrop: (transfer: DataTransfer) => boolean;
+        readonly take: () => Promise<readonly DroppedFile[] | null>;
+      }
+    | None;
+  /**
+   * The shell that saves a letter's file by its id and stages it for the look at it, where the window has one (the
+   * desktop's, while its window is armed). `none`: a browser, which saves from the address it fetched and looks at
+   * the bytes it holds.
+   */
+  readonly saveFile: FileShell | None;
   /** Asking whether this is the default mail app, and asking to become it. */
   readonly defaultMail: None;
   /** The fragment of the address bar. Never `none`: every shell has one. */

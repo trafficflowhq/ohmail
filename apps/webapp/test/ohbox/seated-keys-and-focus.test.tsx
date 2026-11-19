@@ -1,14 +1,12 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage } from "@ohmail/wire";
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../../messages/en.json";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, message, mountShell, stubDom, unmountAll, type DraftShell } from "../_draft-shell.js";
 
 /**
  * THE SEATED OHBOX'S KEYS AND ITS KEYBOARD (the Ohbox's own rows of the key table, and the list's part of where the
- * keyboard stands). The Ohbox seated in the frame, `TodaysOhboxAbove` above its two columns, fed by the composition's one feed:
+ * keyboard stands). The Ohbox seated in the frame, over the new shell's test door (`mountShell`: the frame over the
+ * mail ground over the web's own parts):
  *
  * 1. Its key table, read out of the registry (what the `?` sheet is drawn from), with nothing open, with a letter open,
  *    and with a row picked, is the base's row for row, for every row the Ohbox's model and its zone walk bind (the
@@ -18,100 +16,66 @@ import messages from "../../messages/en.json";
  * 4. Focus follows the cursor while it stands on a row; a verb that takes the focused row leaves the keyboard on the
  *    row the cursor went to, never on the page.
  *
- * The reading column is empty here (the host hands no reader): what the reader binds and where it takes the keyboard
- * is the reader's own case at the join.
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's harness (`./_today.js` `prepareSeated` under
+ * today's `KeymapProvider`, both leaving with today's shell) to the new shell's door; the table is read where the
+ * frame stands its own registry (its zone cursor, as `frame/seated-keys.test.tsx` reads it); what a verb ran is read
+ * off the wire (`sent`), where the old harness counted its `bulk.run`. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const table = vi.hoisted(() => ({ rows: [] as string[] }));
+/* What the new shell BINDS: the frame's own key registry, read where the frame mounts it. */
+vi.mock("@ohmail/app-logic/keys", async (load) => {
+  const real = await load<typeof import("@ohmail/app-logic/keys")>();
+  return {
+    ...real,
+    ZoneCursor: () => {
+      table.rows = real.useKeymap().bindings.map(
+        (b) => `${b.chord}|${b.label}|${b.disabled ? `off${b.disabledReason ? `:${b.disabledReason}` : ""}` : "on"}`,
+      );
+      return real.ZoneCursor();
+    },
+  };
+});
 
-/** A wide window: no width query matches, so the frame draws both columns. */
+/** A wide window: no width query matches, and the frame's plan reads a desktop's width: it draws both columns. */
 function wide(): void {
-  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
-    ({
-      matches: false, media: query, onchange: null,
-      addListener() {}, removeListener() {},
-      addEventListener() {}, removeEventListener() {},
-      dispatchEvent() { return false; },
-    }) as unknown as MediaQueryList;
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1440 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 900 });
 }
 
 const at = (hour: number): string => `2026-08-02T${String(hour).padStart(2, "0")}:00:00.000Z`;
+/** An unread letter of the door's admitted sender, at its hour (the list draws the newest first). */
 function msg(id: string, hour: number): EngineMessage {
-  return {
-    id, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `subj-${id}`, from: { name: `sender-${id}`, address: `${id}@ex.example` }, to: [], cc: [],
-    date: at(hour), folder: "INBOX", snippet: `snip-${id}`,
-    unread: true, hasAttachments: false, attachmentCount: 0,
-    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null, labels: [], remoteContent: "none", updatedAt: at(hour),
-  } as unknown as EngineMessage;
+  return message(id, { subject: `subj-${id}`, snippet: `snip-${id}`, date: at(hour), updatedAt: at(hour), unread: true });
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-let table: string[] = [];
-const bulk: Array<{ action: string; ids: string[] }> = [];
+let shell: DraftShell | null = null;
+let host: HTMLElement | null = null;
+/** What a selection's verb ran, read off the wire: Park writes each picked letter `set_aside`. */
+const bulk = (): Array<{ action: string; ids: string[] }> =>
+  (shell?.sent ?? []).flatMap((m) => {
+    const r = m as { kind: string; messageId?: string; state?: string };
+    return r.kind === "triage_set" && r.state === "set_aside" ? [{ action: "aside", ids: [r.messageId!] }] : [];
+  });
 
 async function mount(rows: EngineMessage[]): Promise<void> {
-  const Seated = await (await import("./_today.js")).prepareSeated();
-  const { useKeymap } = await import("@ohmail/app-logic/keys/keymap");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  let shown = rows;
-  function Probe(): null {
-    table = useKeymap().bindings.map(
-      (b) => `${b.chord}|${b.label}|${b.disabled ? `off${b.disabledReason ? `:${b.disabledReason}` : ""}` : "on"}`,
-    );
-    return null;
-  }
-  function Wrapper(): React.ReactElement {
-    const [sel, setSel] = React.useState<string | null>(null);
-    const [, redraw] = React.useState(0);
-    return h(Seated as never, {
-      owed: false, demo: false, settled: true,
-      newForYou: shown, previouslySeen: [],
-      tags: [], now: new Date(at(12)),
-      onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: () => {},
-      bulk: {
-        run: (action: string, ids: string[]) => {
-          bulk.push({ action, ids });
-          shown = shown.filter((m) => !ids.includes(m.id));
-          redraw((n) => n + 1);
-          return true;
-        },
-        tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {},
-      },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-      selectedId: sel,
-      onSelect: (id: string | null) => setSel(id),
-    } as never);
-  }
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: new Date(at(12)),
-    children: h(KeymapProvider as never, { children: [h(Probe, { key: "probe" }), h(Wrapper, { key: "view" })] } as never),
-  });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => { root!.render(el); });
+  shell = await mountShell("#/ohbox", rows);
+  host = shell.el;
+  for (let i = 0; i < 60 && host!.querySelectorAll('[role="option"][data-id]').length !== rows.length; i++)
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
 }
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-  table = [];
-  bulk.length = 0;
+beforeEach(() => {
+  try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
+  stubDom();
+  table.rows = [];
 });
 
+afterEach(async () => {
+  await unmountAll();
+  shell = null;
+  host = null;
+});
 const key = async (k: string, target: EventTarget = document.activeElement ?? document): Promise<void> => {
   await act(async () => {
     target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
@@ -130,7 +94,7 @@ const OHBOX_LABELS = new Set([
   "Delete the selection — asks first", "Move the selection to Trash", "Back to the list", "Focus the menu",
   "Focus the open message", "Up the menu", "Down the menu", "Scroll the open message",
 ]);
-const ours = (): string[] => table.filter((r) => OHBOX_LABELS.has(r.split("|")[1]!)).sort();
+const ours = (): string[] => table.rows.filter((r) => OHBOX_LABELS.has(r.split("|")[1]!)).sort();
 
 /* The base's table at today's Ohbox (the shipped shell, read before the seat: `wide.1-list-nothing-open`,
    `wide.2-after-j`, `wide.8-a-row-picked`), the Ohbox's rows of it. The base holds `←`/`h` "Back to the list" twice:
@@ -195,7 +159,7 @@ describe("the seated Ohbox's own keys read as the base's", () => {
     await mount([msg("a", 11), msg("b", 10)]);
     await key("j", document);
     await key("x", document);
-    const shown = table.filter((r) => OHBOX_LABELS.has(r.split("|")[1]!) && r.endsWith("|on"));
+    const shown = table.rows.filter((r) => OHBOX_LABELS.has(r.split("|")[1]!) && r.endsWith("|on"));
     expect(shown.length, "the probe read the table").toBeGreaterThan(10);
     expect(new Set(shown).size, "an enabled row bound twice").toBe(shown.length);
   });
@@ -221,7 +185,7 @@ describe("the seated Ohbox keeps the keyboard in its list", () => {
     row("a").focus();
     await key("x");
     await key("e");
-    expect(bulk.map((b) => b.action), "the pick's Park ran").toEqual(["aside"]);
+    expect(bulk().map((b) => b.action), "the pick's Park ran").toEqual(["aside"]);
     expect(host!.querySelector('[role="option"][data-id="a"]'), "the parked row left the list").toBeNull();
     const now = document.activeElement as HTMLElement | null;
     expect(now === null || now === document.body, "the keyboard fell to the page").toBe(false);

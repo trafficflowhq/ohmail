@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,8 +7,10 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ReadingPane, StreamCard } from "@ohmail/ui";
+import { cleanup, screen } from "@testing-library/react";
 import messages from "../messages/en.json";
 import { settleEditor } from "./_first-paint.js";
+import { mountReader } from "../../../packages/app/test/reader/support/mail.js";
 
 /**
  * A PLAIN-TEXT LETTER KEEPS ITS OWN LINE BREAKS IN EVERY PANEL THAT SHOWS IT. The rule sat on the
@@ -34,6 +37,16 @@ const SHEETS = [
   "packages/letter-body/src/message-body.css",
 ];
 
+/**
+ * The sheets the new reader's column and its letters' body bring with them (each parsed, below). The kit's own
+ * reading sheets stand in `@layer oh`, which jsdom does not parse; a layered rule loses to an unlayered one in the
+ * cascade, so none of them can take `.msg-plain`'s line breaks away.
+ */
+const READER_SHEETS = [
+  "packages/app/src/reader/column.css",
+  "packages/letter-body/src/message-body-sheet.css",
+];
+
 /** The sender's own line break, inside one paragraph — what the finding's reply carried. */
 const SIGNED = "Thanks, that works for me.\n\nCasey Reeve\nohmail — sent from my phone";
 const SIGNATURE = "Casey Reeve\nohmail — sent from my phone";
@@ -53,7 +66,19 @@ function loadSheets(): void {
   for (const el of styles) expect((el.sheet as CSSStyleSheet).cssRules.length).toBeGreaterThan(5);
 }
 
+function loadReaderSheets(): void {
+  const more = READER_SHEETS.map((rel) => {
+    const el = document.createElement("style");
+    el.textContent = readFileSync(resolve(process.cwd(), rel), "utf8");
+    document.head.appendChild(el);
+    return el;
+  });
+  for (const el of more) expect((el.sheet as CSSStyleSheet).cssRules.length).toBeGreaterThan(0);
+  styles.push(...more);
+}
+
 afterEach(async () => {
+  cleanup();
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
   for (const el of styles) el.remove();
@@ -104,33 +129,19 @@ function mail(id: string, date: string): Record<string, unknown> {
 describe("a conversation keeps every letter's line breaks, not only the focused one's", () => {
   it("the focused panel AND both siblings render the two-line signature on two lines", async () => {
     loadSheets();
-    const { MessagePane } = await import("../app/shell/MessagePane.js");
-    const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
+    loadReaderSheets();
+    const { letterBody } = await import("@ohmail/app/reader/body");
     const thread = [
       mail("a", "2026-07-30T09:00:00.000Z"), mail("b", "2026-07-31T09:00:00.000Z"), mail("c", "2026-08-01T09:00:00.000Z"),
-    ];
-    const el = await render(h(MessageChromeProvider as never, {
-      value: {
-        ownAddresses: [], replyTo: null, replyBody: { text: "", html: "" },
-        onReplyBody: () => {}, closeReply: () => {}, sendReply: () => {}, replySendState: () => ({ phase: "idle" }),
-        openSenderMenu: () => {}, conversationOf: () => thread,
-        bodyOf: (m: Record<string, unknown>) => ({
-          text: m.body as string, state: "full", withheld: null, html: null,
-          loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
-        }),
-        hydrateBody: () => {}, hydrateThread: () => {}, openSubjectRule: () => {}, openAttachmentPreview: () => {},
-      },
-      children: h(MessagePane as never, {
-        message: thread[1], tags: [], now: new Date("2026-08-02T12:00:00.000Z"),
-        onAction: () => {}, onAddTag: () => {}, onAttachment: () => {},
-      } as never),
-    } as never));
+    ] as unknown as EngineMessage[];
+    const full = { text: SIGNED, state: "ready", withheld: null, html: null, loadedRemoteContent: false };
+    mountReader({ letters: thread, open: "b", parts: { body: letterBody }, bodies: { a: full, b: full, c: full } });
     await settleEditor();
 
-    // The shape the finding was read on: the opened letter plus two sibling panels.
-    expect(el.querySelectorAll(".conv .pm .pm-body"), "no sibling panels — this would measure nothing").toHaveLength(2);
+    // The shape the finding was read on: the opened letter plus two siblings, each drawn whole by the new reader.
+    expect(screen.getAllByRole("article"), "no sibling letters — this would measure nothing").toHaveLength(3);
     for (const id of ["a", "b", "c"]) {
-      const panel = el.querySelector(`.conv [data-conv-id="${id}"]`);
+      const panel = document.querySelector(`[data-conv-id="${id}"]`);
       expect(panel, `panel ${id} missing`).not.toBeNull();
       expect(whiteSpaceOf(signatureIn(panel!)), `panel ${id} runs the signature together`).toBe("pre-line");
     }

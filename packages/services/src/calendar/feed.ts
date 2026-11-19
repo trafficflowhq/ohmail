@@ -14,6 +14,8 @@ import type {
 } from "@ohmail/wire";
 import type { Db } from "../context.js";
 import { CALENDAR_EVENT_MAX_BYTES } from "../sync-page-byte-budget.js";
+import { proofPlaceOf, PROVEN_REPEATS, type RepeatShape } from "@ohmail/cal-providers/repeat-shapes";
+import { personalSeriesOf } from "@ohmail/cal-providers/series";
 import { writeMarksOf } from "./write-marks.js";
 
 type Builders = {
@@ -46,6 +48,17 @@ function time(kind: string, value: string, zone: string | null): CalendarTime {
 }
 
 const times = (v: unknown): CalendarTime[] => (Array.isArray(v) ? (v as CalendarTime[]) : []);
+
+const PERSONAL_SERIES_SHAPES: readonly RepeatShape[] = [
+  "daily/never", "daily/until", "daily/count", "weekly/never", "weekly/until", "weekly/count",
+];
+
+function canEditPersonalSeries(provider: string, serverUrl: string | null): boolean {
+  if (provider !== "caldav") return false;
+  const place = proofPlaceOf(provider, serverUrl);
+  const proven = place && PROVEN_REPEATS[place];
+  return !!proven && PERSONAL_SERIES_SHAPES.every((shape) => proven.includes(shape));
+}
 
 async function buildConnections(db: Db, accountId: string, ids: readonly string[]): Promise<Map<string, CalendarConnectionRecord>> {
   if (ids.length === 0) return new Map();
@@ -140,6 +153,14 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     busy: calEvents.busy, private: calEvents.private, organizer: calEvents.organizer, organizerName: calEvents.organizerName,
     myAnswer: calEvents.myAnswer, heldBack: calEvents.heldBack, updatedAt: calEvents.updatedAt,
   }).from(calEvents).where(and(eq(calEvents.accountId, accountId), inArray(calEvents.id, [...ids])));
+  const candidates = rows.filter((r) => r.recurrenceId === "" && r.repeatRule && r.startKind === "date" && r.endKind === "date" && !r.organizer).map((r) => r.id);
+  const sources = candidates.length === 0 ? [] : await db.select({
+    id: calEvents.id, original: calEvents.original, provider: calConnections.provider, serverUrl: calConnections.serverUrl,
+  }).from(calEvents)
+    .innerJoin(calCalendars, and(eq(calEvents.calendarId, calCalendars.id), eq(calCalendars.accountId, accountId)))
+    .innerJoin(calConnections, and(eq(calCalendars.connectionId, calConnections.id), eq(calConnections.accountId, accountId)))
+    .where(and(eq(calEvents.accountId, accountId), eq(calConnections.provider, "caldav"), inArray(calEvents.id, candidates)));
+  const editable = new Set(sources.filter((r) => canEditPersonalSeries(r.provider, r.serverUrl) && personalSeriesOf(r.original)).map((r) => r.id));
   const found = rows.map((r) => r.id);
   const alarms = await alarmsBy(db, accountId, "eventId", found);
   const marks = await writeMarksOf(db, accountId, found);
@@ -180,6 +201,7 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       endsAt: iso(r.endsAt),
       occurrenceAt: iso(r.occurrenceAt),
       repeat: rules.length > 0 || excluded.length > 0 || added.length > 0 ? { rules, excluded, added } : null,
+      ...(editable.has(r.id) && !invitees.has(r.id) && r.myAnswer === null && { personalSeries: true as const }),
       busy: r.busy,
       private: r.private,
       organizer: r.organizer === null ? null : { address: r.organizer, name: r.organizerName },

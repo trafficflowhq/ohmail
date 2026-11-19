@@ -41,7 +41,7 @@ export interface StreamScrollSeam {
 /** What the core reads of its caller on every use (the hook's latest props). */
 export interface StreamScrollInputs {
   readonly card: StreamCardNames;
-  readonly onCurrentChange: (id: string) => void;
+  readonly onCurrentChange: (id: string, byHand?: boolean) => void;
   readonly pileIndexOf?: (id: string) => number;
   readonly seam?: StreamScrollSeam;
 }
@@ -66,6 +66,7 @@ export class StreamScrollCore {
   inputs: StreamScrollInputs;
   /** Hands counted here when the seam does not count them. */
   ownHands = 0;
+  private handsAtPin = 0;
   cur: string | null = null;
   /** A programmatic jump in flight: its target, and when to stop protecting it. */
   jump: { id: string; until: number } | null = null;
@@ -137,6 +138,7 @@ export class StreamScrollCore {
   }
 
   pin(id: string): void {
+    this.handsAtPin = this.hands();
     this.held = id;
     this.cur = id;
   }
@@ -304,7 +306,7 @@ export class StreamScrollCore {
     }
     if (id !== this.cur) {
       this.cur = id;
-      this.inputs.onCurrentChange(id);
+      this.inputs.onCurrentChange(id, this.hands() !== this.handsAtPin);
     }
   }
   /** Still travelling to the jump's own aim (clamped as the landing clamps it): true. Landed or expired: cleared. */

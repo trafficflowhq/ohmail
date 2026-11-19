@@ -1,29 +1,22 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createRoot, type Root } from "react-dom/client";
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  MutationRejectedError, OhmailEngine, OUTBOX_BACKOFF_CAP_MS,
-  OUTBOX_MAX_SERVER_FAILURES, intentOf, ohboxView, sendAndDonePlanFor,
-  type MutationResult, type SendAndDonePlan,
+  MutationRejectedError, OhmailEngine, intentOf, ohboxView, sendAndDonePlanFor,
+  type SendAndDonePlan,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
-import { UnsavedChangesList } from "../app/shell/UnsavedChanges";
-import { releaseSendAndDone, SendReleaseProvider, type SendRelease } from "@ohmail/app-logic/writing/send-release";
+import { releaseSendAndDone } from "@ohmail/app-logic/writing/send-release";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
-/**
- * SEND + DONE KEEPS ITS PLAN ON THE WEB. Rows: SEND-AND-DONE-LATE-RELEASE-APPLIES-THE-PRESS-TIME-PLAN
- * (the web half) and WEB-STRIP-RETRY-DROPS-THE-SEND-AND-DONE-RELEASE. The demo fixtures are the
- * mirror; only the send route is faked, unreachable or answering 500 by `mode`. The door is the
- * shell's own (`releaseSendAndDone`), read at the release.
- */
+/** Release Send and Done with the filing plan captured at the press. The demo mirror is real to the shell; only the send route is doubled. */
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const ROOT = process.cwd();
 
@@ -63,13 +56,6 @@ const sends = (s: Scene) => s.wire.filter((m) => m.kind === "mail_send");
 const intentFor = (s: Scene, src: string): SendAndDonePlan => intentOf(sendAndDonePlanFor(s.engine.read(), src)!, src);
 const applied = async (s: Scene, m: EngineMutation) => (await s.engine.mutate(m)).status !== "rolled_back";
 
-/** The shell's door over a confirmed result, as `shell-compose.ts` `releaseConfirmed` reaches it. */
-function door(s: Scene, said: EngineMutation[][]): SendRelease {
-  return (res) => {
-    if (res.status !== "confirmed" || res.andDone === undefined) return;
-    releaseSendAndDone({ presented: s.engine.read(), intent: res.andDone, dispatch: (m) => applied(s, m), say: (u) => said.push(u) });
-  };
-}
 const settleAll = async () => { for (let i = 0; i < 20; i++) await act(async () => { await Promise.resolve(); }); };
 
 async function sourceIn(engine: OhmailEngine): Promise<string> {
@@ -160,7 +146,7 @@ describe("the reply's own discharge and the release, over one source", () => {
 
   async function lane(s: Scene, said: EngineMutation[][], toasts: string[]) {
     const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+    const { useMailSendText } = await import("./_write-1-send-text.js");
     let api!: { send: (m: unknown, o?: unknown) => void };
     const Probe = (): null => {
       const mail = useMailSend(
@@ -298,99 +284,13 @@ describe("the reply's own discharge and the release, over one source", () => {
   });
 });
 
-describe("Try again on the strip", () => {
-  async function abandoned() {
-    const s = scene();
-    const src = await sourceIn(s.engine);
-    s.net.mode = "fail500";
-    await s.engine.mutate(reply(src), { andDone: intentFor(s, src) });
-    for (let i = 0; i < OUTBOX_MAX_SERVER_FAILURES * 2 && s.engine.abandoned().length === 0; i++) {
-      s.clock.t += OUTBOX_BACKOFF_CAP_MS + 1;
-      await s.engine.flushPending();
-    }
-    const rows = s.engine.abandoned();
-    expect(rows[0]?.mutation.kind, "the send was not given up on").toBe("mail_send");
-    s.net.mode = "ok";
-    return { s, src, rows };
-  }
-  async function pressTryAgain(rows: ReturnType<OhmailEngine["abandoned"]>, s: Scene, release: SendRelease | null) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    const results: MutationResult[] = [];
-    // Wired as `UnsavedChanges` wires it (asserted below).
-    const onRetry = async (id: string) => { const r = await s.engine.retryAbandoned(id); results.push(r); return r; };
-    const list = <UnsavedChangesList abandoned={rows} onRetry={onRetry} onDiscard={async () => {}} />;
-    act(() => {
-      root!.render(
-        <NextIntlClientProvider locale="en" messages={messages}>
-          {release === null ? list : <SendReleaseProvider value={release}>{list}</SendReleaseProvider>}
-        </NextIntlClientProvider>,
-      );
-    });
-    const toggle = host.querySelector<HTMLButtonElement>("button[aria-expanded]");
-    if (toggle && toggle.getAttribute("aria-expanded") === "false") act(() => { toggle.click(); });
-    const retry = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Try again");
-    expect(retry, "no Try again on the strip").toBeTruthy();
-    await act(async () => { retry!.click(); });
-    await settleAll();
-    return results;
-  }
-
-  it("files the source of a Send + Done it confirms, once, and says its Undo", async () => {
-    const { s, src, rows } = await abandoned();
-    const said: EngineMutation[][] = [];
-    const results = await pressTryAgain(rows, s, door(s, said));
-    expect(results[0]?.status, "Try again did not confirm the send").toBe("confirmed");
-    expect(sends(s), "the retry did not deliver exactly once").toHaveLength(1);
-    expect(unreadOf(s.engine, src), "Try again confirmed the Send + Done and filed nothing").toBe(false);
-    expect(marks(s)).toHaveLength(1);
-    expect(said).toHaveLength(1);
-    for (const m of said[0]!) await s.engine.mutate(m);
-    expect(unreadOf(s.engine, src), "the strip's Undo did not put the source back").toBe(true);
-  });
-
-  it("CONTROL: with no shell above it, the strip delivers once and releases nothing", async () => {
-    const { s, src, rows } = await abandoned();
-    const results = await pressTryAgain(rows, s, null);
-    expect(results[0]?.status).toBe("confirmed");
-    expect(sends(s)).toHaveLength(1);
-    expect(unreadOf(s.engine, src)).toBe(true);
-  });
-
-  /* The frame keeps one mount of the list: the dialog a notice's Show opens (`TodaysShown`), which the shell draws as
-     `{todaysShown}` inside its release provider. */
-  it("the list's one mount sits under the shell's release provider, which the compose hook's door feeds", () => {
-    const shell = readFileSync(`${ROOT}/apps/webapp/app/shell/AppShell.tsx`, "utf8");
-    const open = shell.indexOf("<SendReleaseProvider value={releaseConfirmed}>");
-    const close = shell.indexOf("</SendReleaseProvider>");
-    const drawn = [...shell.matchAll(/\{todaysShown\}/g)].map((m) => m.index!);
-    expect(open).toBeGreaterThan(0);
-    expect(drawn).toHaveLength(1);
-    expect(drawn[0]! > open && drawn[0]! < close, "the notice's dialog is drawn outside the release provider").toBe(true);
-    expect([...shell.matchAll(/<UnsavedChanges variant=/g)], "the shell mounts the list beside the dialog").toHaveLength(0);
-    const feeds = readFileSync(`${ROOT}/apps/webapp/app/shell/todays-feeds.tsx`, "utf8");
-    const mounts = [...feeds.matchAll(/<UnsavedChanges variant=/g)].map((m) => m.index!);
-    expect(mounts).toHaveLength(1);
-    expect(mounts[0]!).toBeGreaterThan(feeds.indexOf("function TodaysShown("));
-    const compose = withoutComments(readFileSync(`${ROOT}/packages/app-logic/src/writing/shell-compose.ts`, "utf8"));
-    expect(compose).toContain("return releaseSendAndDone({");
-    expect(compose).toContain("onSendOutcome(res.key,");
-  });
-
-  it("is wired to the engine's retry, with nothing between", () => {
-    const src = readFileSync(`${ROOT}/apps/webapp/app/shell/UnsavedChanges.tsx`, "utf8");
-    expect(src).toContain("onRetry={(id) => engine.retryAbandoned(id)}");
-  });
-});
-
 describe("one door on the web", () => {
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? walk(join(dir, e.name)) : /\.(ts|tsx)$/.test(e.name) ? [join(dir, e.name)] : []);
 
   it("the release is applied in send-release.tsx alone, and no carried plan is applied anywhere", () => {
     const calls: string[] = [];
-    for (const f of [...walk(`${ROOT}/apps/webapp/app`), ...walk(`${ROOT}/packages/app-logic/src`), ...walk(`${ROOT}/packages/letter-body/src`)]) {
+    for (const f of [...walk(`${ROOT}/apps/webapp/app`), ...walk(`${ROOT}/packages/app/src`), ...walk(`${ROOT}/packages/app-logic/src`), ...walk(`${ROOT}/packages/letter-body/src`)]) {
       const text = withoutComments(readFileSync(f, "utf8"));
       for (const m of text.matchAll(/\bapplySendAndDone\(|(?<![A-Za-z.])sendAndDone\(/g)) calls.push(`${f.slice(ROOT.length)}:${m.index}`);
     }

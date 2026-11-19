@@ -175,7 +175,7 @@ async function mount(opts: {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const engine = await engineWith(opts.mail, opts.queued);
   const overlayOf = (s: Record<string, unknown>) =>
     new Map(Object.entries(s).map(([addr, x]) => [senderKey(addr), x]));

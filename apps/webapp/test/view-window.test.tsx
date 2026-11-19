@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, MessageBody, TagEntity as TagDTO } from "@ohmail/wire";
+import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -8,10 +9,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import type { FeedPartition } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { prepareToday, type TodayOhboxProps } from "./ohbox/_today";
+import { fakeMail } from "../../../packages/app/test/reader/support/fake-mail";
+import { mountSeat } from "./_ohbox-1-seat";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**
@@ -93,9 +95,6 @@ interface Mounted {
 /** A row of a list column: today's rows, and the Ohbox's, which are options of its listboxes. */
 const LIST_ROWS = ".list-col :is(.row, [role=option])[data-id], .ob-scroll [role=option][data-id]";
 
-/** Today's Ohbox, as today's shell mounts it (prepared once: its mail state stands on an engine). */
-let Ohbox: ((p: TodayOhboxProps) => React.ReactNode) | null = null;
-
 async function mount(node: React.ReactNode): Promise<Mounted> {
   const host = document.createElement("div");
   document.body.append(host);
@@ -108,6 +107,10 @@ async function mount(node: React.ReactNode): Promise<Mounted> {
       </NextIntlClientProvider>,
     );
   });
+  return observe(host);
+}
+
+function observe(host: HTMLElement): Mounted {
   return {
     host,
     scroller: host.querySelector(".list-col .scroller, .ob-scroll") as HTMLElement,
@@ -127,21 +130,18 @@ async function scrollTo(m: Mounted, px: number): Promise<void> {
   });
 }
 
-const ohbox = (count: number) => {
+const ohbox = async (count: number): Promise<Mounted> => {
   const half = Math.floor(count / 2);
-  return (
-    <OhboxEl owed={false}
-      demo={false}
-      newForYou={Array.from({ length: half }, (_, i) => message(i))}
-      previouslySeen={Array.from({ length: count - half }, (_, i) => message(i + half))}
-      tags={tags} now={new Date(ISO)} selectedId={null} onSelect={() => {}} onEnterReader={() => {}}
-      onMarkSeen={() => {}} readerId={null} readSetFor={(id: string) => [id]} doorbellInitials={[]} doorbellCount={0} settled
-      onDoorbell={() => {}} onAction={() => {}} onAddTag={() => {}}
-      bulk={{ run: () => true, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => true }}
-    />
-  );
+  const letters = Array.from({ length: count }, (_, index) => {
+    const date = new Date(Date.parse(ISO) - index * 1000).toISOString();
+    const unread = index < half;
+    return { ...message(index), date, unread, lastReadAt: unread ? null : date };
+  });
+  const { engine } = fakeMail(letters);
+  const { container } = mountSeat(engine, { demo: true });
+  await act(async () => {});
+  return observe(container);
 };
-const OhboxEl = (p: TodayOhboxProps) => <>{Ohbox!(p)}</>;
 
 const reads = (count: number) => {
   const freshRows = Array.from({ length: count }, (_, i) => message(i));
@@ -160,8 +160,7 @@ const receipts = (count: number) => (
 );
 
 describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () => {
-  beforeEach(async () => {
-    Ohbox ??= await prepareToday();
+  beforeEach(() => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true, writable: true,
       value: (q: string) => ({ matches: false, media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
@@ -169,6 +168,7 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
   afterEach(async () => {
+    cleanup();
     for (const r of roots) await act(() => r.unmount());
     roots = [];
     document.body.innerHTML = "";
@@ -177,11 +177,11 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
 
   for (const [name, render] of [
     ["Ohbox", ohbox],
-    ["News", reads],
-    ["Receipts", receipts],
+    ["News", (count: number) => mount(reads(count))],
+    ["Receipts", (count: number) => mount(receipts(count))],
   ] as const) {
     it(`${name}: mounts a viewport's worth of list rows at ${N}, not ${N}`, async () => {
-      const m = await mount(render(N));
+      const m = await render(N);
       const idx = m.rowIndices();
       // The load-bearing assertion — unwindowing the view makes this the whole pile.
       expect(idx.length).toBe(name === "Ohbox" ? ROWS_AT_TOP - 1 : ROWS_AT_TOP);
@@ -190,7 +190,7 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
     });
 
     it(`${name}: scrolling mounts rows under the thumb and unmounts those far above`, async () => {
-      const m = await mount(render(N));
+      const m = await render(N);
       await scrollTo(m, 300 * ESTIMATED_ROW_PX);
       const idx = m.rowIndices();
       expect(idx).toContain(300);
@@ -199,7 +199,7 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
     });
 
     it(`${name}: a short list renders every row and reserves nothing`, async () => {
-      const m = await mount(render(12));
+      const m = await render(12);
       expect(m.rowIndices().length).toBe(12);
       const pads = [...m.host.querySelectorAll<HTMLElement>(".list-col .rows > div[aria-hidden], .ob-scroll div[aria-hidden]")]
         .filter((d) => d.style.height !== "" && d.style.height !== "0px");
@@ -226,7 +226,7 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
      * three views (the last row never mounts) and leaves every other test in this file green.
      */
     it(`${name}: scrolled to the bottom, the list mounts its LAST row and reserves nothing below`, async () => {
-      const m = await mount(render(DEEP));
+      const m = await render(DEEP);
       // The bottom of a scroller holding `DEEP` rows: total height less one viewport. jsdom has
       // no layout, so the window's own fallbacks are the geometry — the same arithmetic a
       // browser runs with measured numbers.

@@ -15,7 +15,7 @@ export function useMarks(
   selected: EngineMessage | null,
   returnToNew: (ids: readonly string[]) => void,
 ): Marks {
-  const { onMarkSeen, bulk, resurfacedRows = NO_ROWS, readerId, readSetFor } = input;
+  const { onMarkSeen, bulk, resurfacedRows = NO_ROWS, readerId, readSetFor, columnHidden } = input;
   /**
    * Two directions, not one toggle: "invert eleven messages" turns a mixed selection into a
    * different mixed selection — a direction produces the same state from any state. `u` and a
@@ -37,10 +37,13 @@ export function useMarks(
       recordOf(visit, m)?.release(m.id);
       // An explicit read of the shown message is a read in ohmail: held like an open, so it keeps
       // its place while shown and files at the top of Earlier when left. A resurfaced one keeps arrival.
-      if (m.unread && !isResurfaced(m) && heldRead.current !== m.id) hold(m.id);
+      // A row the cursor stands on with no reader showing its letter (one column) is not shown: its read
+      // moves it at once, as a read from anywhere else does.
+      const shown = !columnHidden() || readerId === m.id;
+      if (shown && m.unread && !isResurfaced(m) && heldRead.current !== m.id) hold(m.id);
       onMarkSeen([m.id], false);
     },
-    [onMarkSeen, hold, heldRead, visit],
+    [onMarkSeen, hold, heldRead, visit, columnHidden, readerId],
   );
 
   /**

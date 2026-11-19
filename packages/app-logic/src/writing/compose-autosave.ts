@@ -65,7 +65,10 @@ export function worthSaving(f: ComposeFields): boolean {
  * silent refusal is the shape where a person loses what they wrote believing it was kept.
  * `compose-autosave.test.tsx` drives this and the door from one input and asserts they agree.
  */
-export function draftNoteKey(fields: ComposeFields, saveRefused = false): "draftNote" | "bodyTooLong" | "draftNotSaved" {
+export function draftNoteKey(
+  fields: Pick<ComposeFields, "body" | "html">,
+  saveRefused = false,
+): "draftNote" | "bodyTooLong" | "draftNotSaved" {
   if (draftOverCeiling(fields.body, fields.html)) return "bodyTooLong";
   // The account refused the last save: what is on screen is not in Drafts.
   return saveRefused ? "draftNotSaved" : "draftNote";

@@ -126,6 +126,16 @@ describe("an answer to an invitation", () => {
     expect(held).toMatchObject({ waiting: "device", record: { myAnswer: "accepted" } });
   });
 
+  it("reports the calendar's recorded refusal when an answer conflicts with a more recent change", async () => {
+    const record = invitation("ev-1", "20261118");
+    const { port } = await portOver([record], async (_act, key) => ({
+      answer: { write: { id: "w-1", key, state: "refused", reason: "version_stale" }, events: [] },
+      seq: null,
+    }));
+    const outcome = await pressAnswer(port, rowOf(record), "accepted");
+    expect(outcome).toMatchObject({ pressed: true, verdict: { kind: "refused" }, say: "fault.stale" });
+  });
+
   it("says our server's refusal by its own word", async () => {
     const record = invitation("ev-1", "20261118");
     const { port } = await portOver([record], async () => {

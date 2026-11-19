@@ -318,7 +318,7 @@ async function mountView(
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
 
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);

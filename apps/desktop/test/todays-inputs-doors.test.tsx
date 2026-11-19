@@ -1,29 +1,39 @@
 /** @vitest-environment jsdom */
 /**
- * THE DESKTOP'S REAL HOST, READ BACK BY THE ADAPTER, door by door: what today's views are handed through the frame
- * equals what `DesktopGate` handed the old shell on that door. The frame itself is not drawn here; its host and the
- * two nodes beside it are captured as the window builds them.
+ * THE DESKTOP'S REAL HOST, READ DOOR BY DOOR AT THE CONTRACT: what the window hands the mail frame on each door, as
+ * `DesktopGate` handed the old shell on that door. The frame itself is not drawn here: `MailFrame`, the one
+ * component every browser host mounts, records the host it is handed and draws nothing.
+ *
+ * Each line reads the contract member the old shell's input was read from (the adapter `todaysInputs` that mapped
+ * one onto the other is gone with today's shell; its mapping, kept here line by line): a wire handed or `none`, a
+ * reading or `none`, `capabilities.service === "managed"` for the managed service, `capabilities.awayRunsOn` for
+ * where the away replies leave from, `capabilities.unsubscribeFrom` for "from this computer", `!rulesMarked` for a
+ * rule that is not marked, `features.*` handed or `none` for a Settings section, `features.help` with the build and
+ * the session's account for Help's support line.
  */
 import { createElement as h } from "react";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { OhmailEngine } from "@ohmail/client-engine";
+import { useDoors } from "@ohmail/app-logic/reader/doors";
 import { createFeed, NONE, type FrameSupplies, type HostConnectionState, type HostContract } from "@ohmail/app/host";
-import type { TodaysNodes } from "../../webapp/app/shell/todays-inputs";
+import { Frame } from "@ohmail/app/frame";
+import { MailGround } from "@ohmail/app/mail";
+import { TextProvider } from "@ohmail/app/text";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { WORDS } from "../../../packages/app/test/reader/support/mail.js";
 
-const seen: { host: HostContract | null; todays: TodaysNodes | null; hosts: HostContract[] } = { host: null, todays: null, hosts: [] };
-vi.mock("../../webapp/app/shell/TodaysFrame", async () => {
-  const real = await vi.importActual<object>("../../webapp/app/shell/TodaysFrame");
-  return {
-    ...real,
-    TodaysFrame: ({ host, todays }: { host: HostContract; todays: TodaysNodes }) => {
-      seen.host = host;
-      seen.todays = todays;
-      seen.hosts.push(host);
-      return null;
-    },
-  };
-});
+const seen: { host: HostContract | null; hosts: HostContract[] } = { host: null, hosts: [] };
+vi.mock("../../webapp/app/shell/browser-mail", async (load) => ({
+  ...(await load<object>()),
+  MailFrame: ({ host }: { host: HostContract }) => {
+    seen.host = host;
+    seen.hosts.push(host);
+    return null;
+  },
+}));
 
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { CLOUD_URL } from "../src/doors.js";
@@ -36,6 +46,7 @@ import { desktopNotificationHost } from "../src/notify-host.js";
 import { readMailboxFacts } from "../src/local-mailbox-facts.js";
 import { readMirrorFreshness } from "../src/DesktopMailboxes.js";
 import { BUILD_SHA, BUILD_VERSION } from "../src/build-id.js";
+import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
 
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
 const frame = {
@@ -54,19 +65,19 @@ const props = (s: EngineStatus, over: Partial<DesktopFrameProps> = {}): DesktopF
   engine: named("engine"), status: s, session: "live", sessionRefused: false, sealFailed: false,
   paired: s === paired, hostLabel: s === paired ? "kestrel" : null, freshness: null, account: s === onItsOwn ? null : "acct-1",
   storage: null, mayLinkOut: true, manageOffered: false, withdrawManage: () => undefined, rereadAccess: () => undefined,
-  reuseSweeps: [], ai: null, setAi: () => undefined, onStatus: () => undefined, openOverlay: () => undefined,
-  takeOver: () => undefined, firstRunOpen: false, firstRun: undefined, takesMailLinks: true, scope: "a-mailbox",
-  onUnread, liveBody: named("liveBody"), links: linkSlot(), connection: createFeed<HostConnectionState | null>(null),
+  reuseSweeps: [], recheckSweeps: async () => undefined, ai: null, setAi: () => undefined, onStatus: () => undefined,
+  openOverlay: () => undefined, takeOver: () => undefined, firstRunOpen: false, firstRun: undefined, takesMailLinks: true,
+  scope: "a-mailbox", onUnread, liveBody: named("liveBody"), links: linkSlot(),
+  connection: createFeed<HostConnectionState | null>(null),
   ...over,
 });
 
 let root: ReturnType<typeof createRoot> | null = null;
-async function draw(p: DesktopFrameProps) {
+async function draw(p: DesktopFrameProps): Promise<HostContract> {
   const container = document.createElement("div");
   root ??= createRoot(container);
   await act(async () => root!.render(h(DesktopFrame, p)));
-  const { todaysInputs } = await import("../../webapp/app/shell/todays-inputs");
-  return todaysInputs(seen.host!, seen.todays!);
+  return seen.host!;
 }
 afterEach(async () => {
   await act(async () => root?.unmount());
@@ -74,69 +85,90 @@ afterEach(async () => {
   seen.hosts = [];
 });
 
-describe("the desktop's host, read back as today's inputs", () => {
+/** Help's support line as the host hands it: `none` where Help is not handed, else the build and the session's account. */
+function support(host: HostContract) {
+  if (host.features.help === NONE) return undefined;
+  const { surface, version, commit, mailtoLeaves } = host.device.build;
+  return { surface, version, commit, accountId: host.session.account, mailtoLeaves };
+}
+/** The other computer the away replies leave from, by its name, or nothing where none is named. */
+function awayOnHost(host: HostContract): string | undefined {
+  const away = host.capabilities.awayRunsOn;
+  return typeof away === "object" ? away.host : undefined;
+}
+
+describe("the desktop's host, read door by door at the contract", () => {
   it("on its own: the window's own model, its own consent, no account, pictures and unsubscribes from this computer", async () => {
-    const inputs = await draw(props(onItsOwn));
-    expect(inputs.managedService).toBe(false);
-    expect(inputs.consentTransport).toBe(consentOverBridgeStandalone);
-    expect(inputs.imageWire).toBe(localImageDoor);
-    expect(inputs.imagesFromComputer).toBe(true);
-    expect(inputs.suggestWire).toBeUndefined();
-    expect(inputs.liveBodyWire).toBeUndefined();
-    expect(inputs.awayIsLocal).toBe(true);
-    expect(inputs.mailboxFacts).toBe(readMailboxFacts);
-    expect(inputs.mirrorFreshness).toBeUndefined();
-    expect(inputs.notificationHost).toBe(desktopNotificationHost);
-    expect(inputs.onUnread).toBe(onUnread);
-    expect(inputs.support).toEqual({ surface: "desktop", version: BUILD_VERSION ?? null, commit: BUILD_SHA || null, accountId: null, mailtoLeaves: false });
-    expect(inputs.accountSection).toBeUndefined();
-    expect(inputs.desktopSection?.label).toBeTruthy();
-    expect(typeof inputs.screenerSuggest).toBe("function");
-    expect(inputs.devicesSection).toBeDefined();
-    expect(inputs.awayTransport, "no away on this computer's own door").toBeDefined();
-    expect(inputs.awayOnHost).toBeUndefined();
+    const liveNoticeScope = vi.fn(() => "a-mailbox");
+    const host = await draw(props(onItsOwn, { liveNoticeScope }));
+    expect(host.capabilities.service === "managed").toBe(false);
+    expect(host.wires.consent).toBe(consentOverBridgeStandalone);
+    expect(host.wires.images).toBe(localImageDoor);
+    expect(host.capabilities.unsubscribeFrom === "computer").toBe(true);
+    expect(host.wires.suggest).toBe(NONE);
+    expect(host.wires.liveBody).toBe(NONE);
+    expect(host.capabilities.awayRunsOn === "thisComputer").toBe(true);
+    expect(host.reads.mailboxes).toBe(readMailboxFacts);
+    expect(host.reads.copyAge).toBe(NONE);
+    expect(host.device.notifications).toEqual({
+      ...desktopNotificationHost,
+      liveNoticeScope,
+      emitter: {
+        carries: ["ohbox", "screener", "pairing", "cal_alert"],
+        acts: [],
+        ahead: expect.any(Function),
+        post: expect.any(Function),
+        takeBack: expect.any(Function),
+      },
+    });
+    expect(host.device.badge).toBe(onUnread);
+    expect(support(host)).toEqual({ surface: "desktop", version: BUILD_VERSION ?? null, commit: BUILD_SHA || null, accountId: null, mailtoLeaves: false });
+    expect(host.features.account).toBe(NONE);
+    /* The Desktop section stands in Settings under its own name (the frame's Settings names a section by its entry). */
+    expect(host.features.desktop === NONE ? undefined : host.features.desktop.name).toBe("desktop");
+    expect(host.features.devices).not.toBe(NONE);
+    expect(host.wires.away, "no away on this computer's own door").not.toBe(NONE);
+    expect(awayOnHost(host)).toBeUndefined();
   });
 
-  it("on the managed door: the account's consent, the priced suggest, Load it now, the copy's age", async () => {
-    const inputs = await draw(props(managed));
-    expect(inputs.managedService).toBe(true);
-    expect(inputs.consentTransport).toBe(consentOverBridge);
-    expect(inputs.suggestWire).toBe(cloudSuggestWire);
-    expect(inputs.liveBodyWire).toBeDefined();
-    expect(inputs.mirrorFreshness).toBe(readMirrorFreshness);
-    expect(inputs.actRulesUnmarked).toBe(true);
-    expect(inputs.support?.accountId).toBe("acct-1");
-    expect(inputs.accountSection).toBeDefined();
-    expect(typeof inputs.screenerSuggest).toBe("function");
-    expect(inputs.awayTransport, "no away on the account's door").toBeDefined();
-    expect(inputs.awayIsLocal, "the account's away said it leaves from this computer").toBe(false);
-    expect(inputs.awayOnHost).toBeUndefined();
+  it("on the managed door: the account's consent, Load it now, the copy's age", async () => {
+    const host = await draw(props(managed));
+    expect(host.capabilities.service === "managed").toBe(true);
+    expect(host.wires.consent).toBe(consentOverBridge);
+    expect(host.wires.liveBody).not.toBe(NONE);
+    expect(host.reads.copyAge).toBe(readMirrorFreshness);
+    expect(!host.capabilities.rulesMarked).toBe(true);
+    expect(support(host)?.accountId).toBe("acct-1");
+    expect(host.features.account).not.toBe(NONE);
+    expect(host.wires.away, "no away on the account's door").not.toBe(NONE);
+    expect(host.capabilities.awayRunsOn === "thisComputer", "the account's away said it leaves from this computer").toBe(false);
+    expect(awayOnHost(host)).toBeUndefined();
   });
 
   it("on a self-hosted door: not the managed service, with the same account panes", async () => {
-    const inputs = await draw(props(selfHosted));
-    expect(inputs.managedService).toBe(false);
-    expect(inputs.accountSection).toBeDefined();
+    const host = await draw(props(selfHosted));
+    expect(host.capabilities.service === "managed").toBe(false);
+    expect(host.features.account).not.toBe(NONE);
   });
 
   it("on a paired door: the other computer's away and nothing priced", async () => {
-    const inputs = await draw(props(paired));
+    const host = await draw(props(paired));
     // Devices: host mode's pane on its own door, the account's on an account door, and none on a paired one.
-    expect(inputs.devicesSection).toBeUndefined();
-    expect(inputs.managedService).toBe(false);
-    expect(inputs.suggestWire).toBeUndefined();
-    expect(inputs.screenerSuggest).toBeUndefined();
+    expect(host.features.devices).toBe(NONE);
+    expect(host.capabilities.service === "managed").toBe(false);
+    expect(host.wires.suggest).toBe(NONE);
+    expect(host.capabilities.suggest).toBe(NONE);
     // The away pane is the other computer's: its replies leave from there, and it is named, or nothing is said.
-    expect(inputs.awayTransport, "no away on a paired door").toBeDefined();
-    expect(inputs.awayIsLocal).toBe(false);
-    expect(inputs.awayOnHost).toBe("kestrel");
-    expect((await draw(props(paired, { hostLabel: null }))).awayOnHost).toBeUndefined();
+    expect(host.wires.away, "no away on a paired door").not.toBe(NONE);
+    expect(host.capabilities.awayRunsOn === "thisComputer").toBe(false);
+    expect(awayOnHost(host)).toBe("kestrel");
+    expect(awayOnHost(await draw(props(paired, { hostLabel: null })))).toBeUndefined();
   });
 
   it("hands the first run's object on the door it was written for, and on no other", async () => {
     const firstRun = { door: "local" } as unknown as DesktopFrameProps["firstRun"];
-    expect((await draw(props(onItsOwn, { firstRun }))).firstRun).toBe(firstRun);
-    expect((await draw(props(managed, { firstRun }))).firstRun).toBeUndefined();
+    expect((await draw(props(onItsOwn, { firstRun }))).wires.firstRun).toBe(firstRun);
+    expect((await draw(props(managed, { firstRun }))).wires.firstRun).toBe(NONE);
   });
 
   it("a refused session reaches the frame as the session's state, not as an input", async () => {
@@ -154,18 +186,122 @@ describe("the desktop's host, read back as today's inputs", () => {
   });
 
   it("holds the first run's door to the capability and the folders flag to the consent object", async () => {
-    const inputs = await draw(props(managed));
-    expect(seen.host!.capabilities.foldersStorable).toBe(inputs.consentTransport?.foldersStorable === true);
-    expect(seen.host!.capabilities.imagesFrom === "service" || seen.host!.capabilities.imagesFrom === seen.host!.capabilities.unsubscribeFrom).toBe(true);
+    const host = await draw(props(managed));
+    /* The window hands the shell's consent object, which carries the flag beside its verbs; the contract's type does not. */
+    const consent = host.wires.consent as { foldersStorable?: unknown } | typeof NONE;
+    expect(host.capabilities.foldersStorable).toBe(consent !== NONE && consent.foldersStorable === true);
+    expect(host.capabilities.imagesFrom === "service" || host.capabilities.imagesFrom === host.capabilities.unsubscribeFrom).toBe(true);
   });
 });
 
-/* THE PAIRED PAGE, read back the same way: the page a desktop serves to a phone's browser hands today's views the
-   calls its host serves over the bearer, and none of the Cloud's. */
-describe("the paired page's host, read back as today's inputs", () => {
+describe("opening and saving files through the desktop host's mail ground", () => {
+  const parts = [
+    { id: "file", messageId: "m1", filename: "notes.pdf", contentType: "application/pdf", sizeBytes: 4, inline: false, contentId: null },
+    { id: "image", messageId: "m1", filename: "photo.png", contentType: "image/png", sizeBytes: 4, inline: false, contentId: null },
+  ];
+
+  function FilePresses() {
+    const { files } = useDoors();
+    const hold = files?.hold;
+    useEffect(() => hold?.("m1"), [hold]);
+    if (files?.itemsOf("m1").state !== "ready") return null;
+    return h("div", null,
+      h("button", { type: "button", onClick: () => files.open("m1", "file") }, "Save notes"),
+      h("button", { type: "button", onClick: () => files.ensure("m1", "image") }, "Preview photo"),
+    );
+  }
+
+  async function fileGround() {
+    const fetchBytes = vi.fn(async (_attachmentId: string) => new Blob(["test"]));
+    const listAttachments = vi.fn(async (_messageId: string) => parts);
+    const unexpectedCall = async () => { throw new Error("the file fixture only serves attachments"); };
+    const engine = new OhmailEngine({ adapter: {
+      listAttachments,
+      fetchAttachment: fetchBytes,
+      sync: unexpectedCall,
+      mutate: unexpectedCall,
+      fetchBody: unexpectedCall,
+      withdrawSend: unexpectedCall,
+    } });
+    const desktop = await draw(props(onItsOwn, { engine }));
+    // Supply a small letter pane and keep the account's unrelated wires disconnected.
+    const { host } = fakeHost({ engine, service: "self", scope: "file-test", above: MailGround, places: {
+      ohbox: { id: "ohbox", body: "ohbox", rail: null, panes: { kind: "wide", Wide: FilePresses } },
+    } });
+    const mounted = render(h(TextProvider, { locale: "en", messages: WORDS.en, timeZone: "UTC",
+      children: h(Frame, { host: { ...host, device: { ...host.device, saveFile: desktop.device.saveFile } } }),
+    }));
+    await screen.findByRole("button", { name: "Save notes" });
+    expect(listAttachments.mock.calls).toEqual([["m1"]]);
+    return { mounted, fetchBytes };
+  }
+
+  it("uses browser downloads until the desktop arms its native file commands", async () => {
+    const invoke = vi.fn(async (command: string, _payload: unknown) => command === "stage_attachment_preview"
+      ? { url: "blob:staged-image", token: "fixture-preview" }
+      : null);
+    const downloads: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      downloads.push(this.download);
+    });
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL() { return "blob:browser-file"; }
+      static revokeObjectURL() { /* the fixture owns no bytes outside this tab */ }
+    });
+    try {
+      const browser = await fileGround();
+      fireEvent.click(screen.getByRole("button", { name: "Save notes" }));
+      await waitFor(() => expect(downloads).toEqual(["notes.pdf"]));
+      fireEvent.click(screen.getByRole("button", { name: "Preview photo" }));
+      await waitFor(() => expect(browser.fetchBytes.mock.calls.map(([id]) => id)).toEqual(["file", "image"]));
+      expect(invoke).not.toHaveBeenCalled();
+      browser.mounted.unmount();
+
+      enableDesktopAttachments();
+      const desktop = await fileGround();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Save notes" }));
+        fireEvent.click(screen.getByRole("button", { name: "Preview photo" }));
+      });
+      expect(invoke).toHaveBeenCalledTimes(2);
+      expect(invoke).toHaveBeenCalledWith("save_attachment", { attachmentId: "file", filename: "notes.pdf" });
+      expect(invoke).toHaveBeenCalledWith("stage_attachment_preview", { attachmentId: "image", mimeType: "image/png" });
+      expect(downloads).toEqual(["notes.pdf"]);
+      expect(desktop.fetchBytes).not.toHaveBeenCalled();
+      desktop.mounted.unmount();
+      expect(invoke).toHaveBeenLastCalledWith("release_attachment_preview", { token: "fixture-preview" });
+    } finally {
+      vi.unstubAllGlobals();
+      click.mockRestore();
+    }
+  });
+});
+
+/* THE SCREENER's SUGGESTION, DOOR BY DOOR: moved out of the two door cases above, where today's shell was handed the
+   own-model control on this computer's own door and the priced suggestion on the managed one. Since the switch the
+   desktop hands the mail no suggestion wire and no control on any door (FOR-S3-TO-S8 point 16: nothing is bought
+   without a press on the window's own control) until the Screener's mount builds the window's control (points 33
+   and 36): red until then, and that mount's to turn. */
+describe("the Screener's suggestion on each of the desktop's doors", () => {
+  it("offers its own model on this computer's own door, the account's suggestion on the managed door, none on a paired one", async () => {
+    const own = await draw(props(onItsOwn));
+    expect(own.capabilities.suggest).toBe("ownModel");
+    expect(own.wires.ownModelAutoSuggest, "the own model's control is handed on this computer's own door").not.toBe(NONE);
+    const account = await draw(props(managed));
+    expect(account.wires.suggest).toBe(cloudSuggestWire);
+    expect(account.capabilities.suggest).not.toBe(NONE);
+    const other = await draw(props(paired));
+    expect(other.wires.suggest).toBe(NONE);
+    expect(other.wires.ownModelAutoSuggest).toBe(NONE);
+  });
+});
+
+/* THE PAIRED PAGE, read back the same way: the page a desktop serves to a phone's browser hands the mail the calls its
+   host serves over the bearer, and none of the Cloud's. */
+describe("the paired page's host, read door by door at the contract", () => {
   it("hands the bearer's wires, says pictures and unsubscribes come from the computer, and nothing of the Cloud", async () => {
     const { pairedHost } = await import("../../paired-page/src/host.js");
-    const { todaysInputs, NO_TODAYS } = await import("../../webapp/app/shell/todays-inputs");
     const { HOST_CLIENT_SEND_MAX_TOTAL_BYTES } = await import("../../paired-page/src/HostGate.js");
     const wire = <T,>(name: string) => named<T>(name);
     const consent = { foldersStorable: false } as never;
@@ -173,18 +309,18 @@ describe("the paired page's host, read back as today's inputs", () => {
       signOut: async () => undefined, mailboxes: wire("mailboxes"),
       wires: { gapLetters: wire("gap"), profileImport: wire("profile"), consent, olderBody: wire("older"), junk: wire("junk"), trash: wire("trash"), draftReply: wire("draft"), autoFiled: NONE },
       features: { account: { name: "account", render: () => null }, accountStrip: { name: "accountStrip", render: () => null }, screener: { name: "screener", render: () => null } },
-      notifications: named("notifications"), frame,
+      notifications: named("notifications"), frame, language: NONE, openLink: named("openLink"),
     });
-    const inputs = todaysInputs(host, NO_TODAYS);
-    expect(inputs.managedService).toBe(false);
-    expect(inputs.sendSurfaceMaxTotalBytes).toBe(HOST_CLIENT_SEND_MAX_TOTAL_BYTES);
-    expect(inputs.imagesFromComputer).toBe(true);
-    expect(inputs.imageWire).toBeUndefined();
-    expect(inputs.consentTransport).toBe(consent);
-    expect([inputs.gapLettersTransport, inputs.profileImportTransport, inputs.olderBodyWire, inputs.junkWire, inputs.trashWire, inputs.draftReplyWire])
+    expect(host.capabilities.service === "managed").toBe(false);
+    expect(host.capabilities.sendCeiling).toBe(HOST_CLIENT_SEND_MAX_TOTAL_BYTES);
+    expect(host.capabilities.unsubscribeFrom === "computer").toBe(true);
+    expect(host.wires.images).toBe(NONE);
+    expect(host.wires.consent).toBe(consent);
+    const { gapLetters, profileImport, olderBody, junk, trash, draftReply } = host.wires;
+    expect([gapLetters, profileImport, olderBody, junk, trash, draftReply])
       .toEqual([named("gap"), named("profile"), named("older"), named("junk"), named("trash"), named("draft")]);
-    expect([inputs.liveBodyWire, inputs.suggestWire, inputs.awayTransport, inputs.organizerNoticeTransport, inputs.support])
-      .toEqual([undefined, undefined, undefined, undefined, undefined]);
-    expect(inputs.accountSection).toBeDefined();
+    expect([host.wires.liveBody, host.wires.suggest, host.wires.away, host.wires.organizerNotice, support(host)])
+      .toEqual([NONE, NONE, NONE, NONE, undefined]);
+    expect(host.features.account).not.toBe(NONE);
   });
 });

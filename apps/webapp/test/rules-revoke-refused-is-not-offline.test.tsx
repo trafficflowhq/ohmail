@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import {
-  MemoryMirrorStore, MutationRejectedError, OhmailEngine,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine, rulesShown,
   type EngineAdapter, type QueuedRuleWrite, type SyncChange,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
@@ -14,7 +14,6 @@ import messages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";
 import { queuedSentence, queuedWaitOf } from "@ohmail/app-logic/press/queued-sentence";
 import { queuedRuleKey } from "@ohmail/app-logic/press/sender-screening";
-import { useShellDerivations, type ShellDerivationsInput } from "../app/shell/shell-derivations";
 
 /**
  * A REVOKE THE SERVER REFUSED IS NOT "BACK ONLINE". The server answered a revoke 500;
@@ -47,7 +46,7 @@ const setOnline = (on: boolean): void => {
   Object.defineProperty(window.navigator, "onLine", { value: on, configurable: true });
 };
 
-async function open(items: RuleDTO[], answer: Answer, queued: QueuedRuleWrite[] = []): Promise<void> {
+async function open(items: RuleDTO[], answer: Answer, queued: readonly QueuedRuleWrite[] = []): Promise<void> {
   const view = h(SettingsView, {
     notifications: null, tags: [], tagCounts: {},
     rules: {
@@ -220,22 +219,14 @@ describe("the shell reads the rules as the server runs them", () => {
     }] as SyncChange[]);
     await engine.mutate({ kind: "rule_delete", ruleId: "a" });
 
-    let seen: string[] | null = null;
-    const input = (): ShellDerivationsInput => ({
-      engine, reader: engine.read(), derived: 1, demo: false, resolvedDemo: false,
-      now: new Date("2026-10-13T05:00:00.000Z"), facts: null, seedOwed: false,
-      consent: {
-        known: true, standalone: false, dormancyDays: 30, screeningBaselineAt: null, screeningScope: "all_time",
-        foldersEnabled: false, folderMailboxesOff: {},
-      },
-      route: { view: "settings" as ShellDerivationsInput["route"]["view"], folderId: null },
-      trashWire: undefined, deleting: { held: new Set() }, restoring: { held: new Set() }, routing: { places: new Map() },
+    const queued = engine.queuedRuleWrites();
+    const shown = rulesShown(engine.read(), {
+      readerOnly: false, queued, applied: engine.appliedRuleRequests(), now: new Date("2026-10-13T05:00:00.000Z"),
     });
-    function Probe(): null {
-      seen = useShellDerivations(input()).rules.map((r) => r.id);
-      return null;
-    }
-    await act(async () => { root!.render(h(Probe)); });
-    expect(seen, "the shell's list hid a rule the server still runs").toEqual(["a"]);
+    await open(shown.rules, { status: "confirmed" }, queued);
+    const ids = [...host.querySelectorAll("[data-rule-id]")].map((row) => row.getAttribute("data-rule-id"));
+    expect(ids, "the shell's list hid a rule the server still runs").toEqual(["a"]);
+    expect(rowOf("a")!.textContent).toContain(R.queuedRevokeFailing);
+    expect(buttonIn(rowOf("a")!, R.revoke)!.disabled).toBe(true);
   });
 });

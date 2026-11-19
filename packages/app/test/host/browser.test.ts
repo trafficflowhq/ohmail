@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { browserWindowFacts, fragmentAddress, postureWindow } from "@ohmail/app/host/browser";
+import { browserLinkOut, browserWindowFacts, fragmentAddress, postureWindow } from "@ohmail/app/host/browser";
 import { NONE, type FoldFeature, type FoldReading } from "../../src/host/index.js";
 import { fakeWindow, movable } from "../support/fake-window.js";
 
@@ -87,5 +87,21 @@ describe("the window with its fold", () => {
   it("is the window itself where the host has no fold", () => {
     const win = fakeWindow("phone");
     expect(postureWindow(win, NONE)).toBe(win);
+  });
+});
+
+describe("a browser shell's way to an address the app itself makes", () => {
+  it("opens it in a new tab that can neither reach back to this page nor say where it came from", () => {
+    const opened = vi.spyOn(window, "open").mockReturnValue(null);
+    try {
+      browserLinkOut(window)("https://ohmail.example/download");
+      expect(opened).toHaveBeenCalledTimes(1);
+      const [href, target, features] = opened.mock.calls[0]!;
+      expect(href).toBe("https://ohmail.example/download");
+      expect(target).toBe("_blank");
+      expect(String(features).split(",").sort()).toEqual(["noopener", "noreferrer"]);
+    } finally {
+      opened.mockRestore();
+    }
   });
 });

@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { renderHook, waitFor } from "@testing-library/react";
+import type { EngineAdapter } from "@ohmail/client-engine";
+import { useShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
+import { engineOver, msg, storeWith } from "./_view-shell";
 import { deleteIntentsKey } from "@ohmail/app-logic/press/delete-intents";
 import {
   createDeleteUndo,
@@ -102,6 +106,66 @@ describe("a delete window keeps its press in its own scope's journal", () => {
     answer({ status: "confirmed" });
     await settled();
     expect({ a: rowsOf(A), b: rowsOf(B) }).toEqual({ a: [], b: ["b-press"] });
+  });
+});
+
+describe("a delete left on disk while its answer is in flight", () => {
+  it("retries each message under the identity its original request used", async () => {
+    const targets = [TARGET, { ...TARGET, id: "m2" }];
+    const requests = new Map<string, string[]>();
+    const applied = new Set<string>();
+    let release!: () => void;
+    const lostReply = new Promise<void>((resolve) => { release = resolve; });
+
+    // The local service has accepted both deletes. The last answer never reaches the first tab.
+    const mount = async (interrupted: boolean) => {
+      const mutate: EngineAdapter["mutate"] = async (mutation, { idempotencyKey }) => {
+        if (mutation.kind !== "message_delete") throw new Error("expected a delete");
+        const keys = requests.get(mutation.messageId) ?? [];
+        keys.push(idempotencyKey);
+        requests.set(mutation.messageId, keys);
+        applied.add(idempotencyKey);
+        if (interrupted && mutation.messageId === "m2") await lostReply;
+        return { changes: [], seq: null };
+      };
+      const store = await storeWith(targets.map(({ id }) => msg(id)));
+      const engine = engineOver(store, { adapter: { mutate } });
+      return renderHook(() => useShellDispatch({
+        engine,
+        reader: engine.read(),
+        scope: A,
+        demo: false,
+        toast: () => {},
+        t: (key) => key,
+        placeLabel: (place) => place,
+        refreshFacts: () => {},
+      }));
+    };
+
+    const first = await mount(true);
+    await settled();
+    first.result.current.rosterRef.current = { kind: "absent" };
+    act(() => { expect(first.result.current.deleting.remove(targets)).toBe(true); });
+    const [press] = rowsOf(A);
+    expect(press).toBeTruthy();
+    act(() => { window.dispatchEvent(new Event("pagehide")); });
+    await waitFor(() => expect(requests.size).toBe(2));
+    expect(rowsOf(A)).toEqual([press]);
+    first.unmount();
+
+    const next = await mount(false);
+    try {
+      await waitFor(() => expect(rowsOf(A)).toEqual([]));
+      for (const { id } of targets) {
+        const key = `delete-replay:${press}:${id}`;
+        expect(requests.get(id)).toEqual([key, key]);
+      }
+      expect(applied.size).toBe(2);
+    } finally {
+      next.unmount();
+      release();
+      await settled();
+    }
   });
 });
 

@@ -11,6 +11,7 @@ import type {
   CalendarReason,
   CalendarSettingsWire,
   CalendarWindow,
+  CalendarWriteFault,
   CalendarWriteReceipt,
 } from "@ohmail/wire";
 
@@ -21,7 +22,11 @@ export type CalendarRefusalWord =
 /** What our server made of one press. */
 export type CalendarVerdict =
   | { readonly kind: "taken"; readonly write: CalendarWriteReceipt | null }
-  | { readonly kind: "refused"; readonly word: CalendarRefusalWord; readonly details: unknown };
+  | {
+      readonly kind: "refused";
+      readonly word: CalendarRefusalWord | CalendarWriteFault;
+      readonly details: unknown;
+    };
 
 /** A span of the device's mirror that was read, in milliseconds since the epoch. */
 export interface HeldSpan {

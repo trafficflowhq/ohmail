@@ -1,12 +1,9 @@
 /** @vitest-environment jsdom */
-/* @reads: apps/webapp/app/shell/AppShell.tsx */
 import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { MemoryMirrorStore, consentPartition, type MirrorStore } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
@@ -23,6 +20,10 @@ import { subjectRuleContext } from "@ohmail/app-logic/press/subject-rule";
  * straight to the Ohbox, because its nothing-organizes arms stood only at zero waiting; the sender
  * sheet promised "Future mail … files there too", because `otherOrganizerOf` read a reader with no
  * recorded holder as this install organizing it. Both now map from `organizerSituation`.
+ *
+ * (share ohbox-1, the switch's older tests) The three cases over the derivation alone moved word for word to
+ * `other-organizer-of.test.ts`; the census over today's `AppShell.tsx` retired with it. The four cases left draw
+ * today's sender and subject-rule sheets, which the new shell has no part for yet (their rows: the switch's gap).
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -59,7 +60,7 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 async function mount(node: React.ReactElement, locale: "en" | "de" = "en"): Promise<HTMLElement> {
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -86,23 +87,6 @@ afterEach(async () => {
   host?.remove();
   host = null;
   vi.restoreAllMocks();
-});
-
-describe("otherOrganizerOf — the sheet's organizer, from the one derivation", () => {
-  it("a hand-back, a holder that stopped and a mailbox nobody agreed to: nothing organizes it", () => {
-    for (const r of [HANDED_BACK, STOPPED, NEVER]) expect(otherOrganizerOf([r], ONE)).toEqual({ name: null, nobody: true });
-  });
-
-  it("CONTROL: a live holder is named; this install, an unread lease and a pause claim nothing", () => {
-    expect(otherOrganizerOf([LIVE], ONE)).toEqual({ name: "Studio laptop", nobody: false });
-    for (const r of [HERE, UNREAD, PARKED]) expect(otherOrganizerOf([r], ONE)).toBeUndefined();
-    expect(otherOrganizerOf([HANDED_BACK], new Set(["another"])), "a mailbox the subject is not in").toBeUndefined();
-  });
-
-  it("a live holder on one of the subject's mailboxes outranks one nothing organizes", () => {
-    expect(otherOrganizerOf([HANDED_BACK, { ...LIVE, id: "mb2" }], new Set(["mb", "mb2"])))
-      .toEqual({ name: "Studio laptop", nobody: false });
-  });
 });
 
 async function freshStore(list: EngineMessage[]): Promise<MirrorStore> {
@@ -177,10 +161,5 @@ describe("the subject-rule sheet over a mailbox nothing organizes", () => {
     expect(el.querySelector(".sm-org")).toBeNull();
     await choose(el);
     expect(el.querySelector(".sm-confirm")!.textContent).not.toContain(en.screening.subjectOrgNobody);
-  });
-
-  it("the shell hands it the same answer the sender sheet reads", () => {
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    expect(shell).toMatch(/nobody=\{otherOrganizerOf\(facts, new Set\(subjectRuleFor\.messages\.map\(\(m\) => m\.mailboxId\)\)\)\?\.nobody === true\}/);
   });
 });

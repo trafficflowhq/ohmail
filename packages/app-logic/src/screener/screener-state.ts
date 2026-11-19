@@ -22,7 +22,7 @@ import type {
   ScreenerWaitingSenderDTO,
   UnscreenedGroupDTO,
 } from "@ohmail/wire";
-import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import {
   FOLDER_OF_VIEW,
   cardReach,
@@ -50,6 +50,7 @@ import {
   type EntityReader,
   type OhmailEngine,
   type PressTally,
+  type StayVerdict,
   type ScreenerSegments,
   type UnsubscribeClaim,
   type AbandonedMutation,
@@ -82,8 +83,8 @@ import {
   releaseRules,
   senderScreening,
 } from "../press/sender-screening.js";
-import { screeningShown } from "../press/press-verdict.js";
-import { syncIdentityOf } from "../session/sync-scheduler.js";
+import { screeningShown, verdictSentence } from "../press/press-verdict.js";
+import { confirmedSyncEngine, syncIdentityOf } from "../session/sync-scheduler.js";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "../text/idn.js";
 import type { UndoToastFn } from "../press/undo-door.js";
 import type { ScreenerReleaseWindow } from "../press/release-window.js";
@@ -132,6 +133,9 @@ export interface ScreenerText {
   locale: string;
   zone: () => string;
 }
+
+/** The outcome from the confirmed account's presentation, or null if that account no longer holds. */
+export type DecisionVerdict = (engine: OhmailEngine, decision: ScreenerIntent, retro: boolean) => StayVerdict | null;
 
 export interface DecideOptions {
   read: boolean;
@@ -666,8 +670,14 @@ export function useScreenerState(
    * that builds no window.
    */
   releaseWindow?: ScreenerReleaseWindow,
+  decisionVerdict?: DecisionVerdict,
 ): ScreenerState {
   const owner = useRef(usePinnedScope(scope));
+  const activeEngine = useRef<OhmailEngine | null>(null);
+  useLayoutEffect(() => {
+    activeEngine.current = engine;
+    return () => { activeEngine.current = null; };
+  }, [engine]);
   const t = text.screener;
   /* The five pile names as the catalogue has them, so a toast naming a destination uses the
      word the rail uses. See `decision-copy.ts`. */
@@ -1195,6 +1205,18 @@ export function useScreenerState(
     const derived = d.derived;
     const heldIds = d.heldIds;
     const done = () => disarmScreenerIntent(id, owner.current);
+    const mayReport = () => activeEngine.current === engine && confirmedSyncEngine(engine) !== null;
+    const explainDecision = (retro: boolean): boolean => {
+      if (d.quiet || !mayReport()) return true;
+      const verdict = decisionVerdict?.(engine, d, retro);
+      // Withhold the generic success sentence too when the confirmed account has changed.
+      if (verdict === null || !mayReport()) return true;
+      if (verdict === undefined || verdict.key === "none") return false;
+      const domain = d.scope === "domain" ? domainOfAddress(d.from.address) : null;
+      const sender = domain === null ? displayAddress(d.from.address) : displayDomain(domain);
+      toast(verdictSentence(ts, verdict, sender, piles[d.dest]));
+      return true;
+    };
     /* THE CARD FILES WHAT IT SHOWS: no rule of this press reaches mail already
        filed elsewhere, and the INBOX letters the card listed move by id beside the decision, marked as
        its own (`pressRule`) so the next decision moves them too. A sheet
@@ -1285,7 +1307,7 @@ export function useScreenerState(
         if (res.status === "rolled_back") { refuse(d, res.error); return; }
         // The card's INBOX letters and the sheet's letter, by id, once the decision stands: refused
         // or replaced, none moves.
-        if (res.status !== "superseded") for (const mv of [...cardMoves, ...seedMoves]) void engine.mutate(mv);
+        const moves = res.status === "superseded" ? [] : [...cardMoves, ...seedMoves].map((m) => engine.mutate(m));
         /* The organizer took it, and will carry it out later. `pendingWith`
          * is present only where the server queued the decision instead of
          * applying it: nothing moved, no rule written, the mail still in
@@ -1295,7 +1317,17 @@ export function useScreenerState(
          * carries no move (there was none), and the projection offers the
          * same sender again with nothing saying why. The mark is on the
          * ADDRESS because the overlay's row id is gone by then. */
-        if (res.pendingWith) markQueued(d, res.pendingWith.name);
+        if (res.pendingWith) {
+          if (mayReport()) markQueued(d, res.pendingWith.name);
+        }
+        else if (res.status === "confirmed") {
+          if (moves.length === 0) explainDecision(retroOf ?? true);
+          else void Promise.allSettled(moves).then((answers) => {
+            if (answers.every((answer) => answer.status === "fulfilled" && answer.value.status === "confirmed")) {
+              explainDecision(retroOf ?? true);
+            }
+          });
+        }
       }, () => { done(); settleOnward(false); refuse(d); });
     } else {
       // Past the gate: a rule, not a decide (#116). The sender's mail is
@@ -1320,15 +1352,27 @@ export function useScreenerState(
         const subject = sender.scopes[d.scope].messages;
         const before = shownAt(subject, dest);
         let refused: Parameters<typeof organizerRefusalOf>[0] = undefined;
+        const heldBy: { current: { name: string | null } | null } = { current: null };
         // A card press moves the INBOX letters it showed, a sheet press its own letter; a sheet's
         // backlog is the server pass's. Beside a decide they wait for its answer.
         void dispatchScreeningChange(plan, [...cardMoves, ...seedMoves], (m) => engine.mutate(over ? outrankCoveringDomains(over, m) : m).then((r) => {
           if (r.status === "rolled_back" && refused === undefined) refused = r.error;
+          if (r.status === "confirmed" && r.pendingWith) {
+            heldBy.current = r.pendingWith;
+            return { ...r, status: "awaiting_organizer" as const };
+          }
           return r;
         }), card ? cardFiled.length : seedMoves.length, card || plan.ruleState === "promoted").then((key) => {
           done();
           // Replaced by a newer press about this sender: that press says the sentence.
           if (key === null) return;
+          if (key === "toastRuleOrganizer" && heldBy.current) {
+            if (!mayReport()) return;
+            const { name } = heldBy.current;
+            markQueued(d, name);
+            if (!d.quiet) toast(name ? t("pendingDecided", { name }) : t("pendingDecidedUnknown"));
+            return;
+          }
           // THE SENTENCE IS UNCHANGED — `toastRuleFailed` says "… moved, but the rule couldn't be
           // made. Future mail is unchanged.", which is strictly more informative than a generic
           // refusal and is true: the mail moved, only the rule was lost. What was missing is the
@@ -1336,6 +1380,9 @@ export function useScreenerState(
           // plans no `move` at all) the sender comes back into the queue, and it used to come back
           // looking untouched while the only record faded with the toast.
           if (key === "toastRuleFailed") markRefused(id);
+          if (key === "toastRuled" || key === "toastRetargeted" || key === "toastRuledMoved" || key === "toastRuledFuture") {
+            if (explainDecision(plan.retro)) return;
+          }
           const why = key === "toastRuleFailed" ? whyOf(refused) : null;
           toast(ts(key, { sender: who, place, count: pressGained(before, shownAt(subject, dest)) }) + (why ? ` ${why}` : ""));
         }, () => { done(); refuse(d); });

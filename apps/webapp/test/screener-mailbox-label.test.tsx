@@ -102,7 +102,7 @@ async function mount(facts: MailboxLabelFact[] | null, select?: boolean): Promis
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const engine = await engineWith(MAIL);
   const resolve = mailboxLabelResolver(facts);
 

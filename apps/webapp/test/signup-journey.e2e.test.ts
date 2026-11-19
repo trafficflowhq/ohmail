@@ -142,6 +142,21 @@ async function said(page: Page): Promise<string> {
 }
 
 const h1 = async (page: Page): Promise<string> => (await page.locator("h1").first().textContent())?.trim() ?? "";
+
+/*
+ * THE ONE CONNECT FORM, as a person finds it on the mailbox step (`@ohmail/app/mailboxes/connect`, the join's words):
+ * the providers are a group of pressed buttons, each field is found by its label, a refusal is the form's alert, and
+ * the second factor is the step-up dialog with its code field and Verify. English here; the German case names its own.
+ */
+const PROVIDERS = "Provider";
+const OTHER_IMAP = "Any other IMAP mailbox";
+const MAILBOX_ADDRESS = "Mailbox address";
+const IMAP_HOST = "IMAP server (incoming)";
+const SMTP_HOST = "SMTP server (outgoing)";
+const APP_PASSWORD = "App password";
+const tile = (page: Page, name: string | RegExp, group = PROVIDERS) =>
+  page.getByRole("group", { name: group }).getByRole("button", { name });
+const field = (page: Page, label: string) => page.getByLabel(label, { exact: true });
 /**
  * What the authenticator step says of a refused code, once it says it: the card's alert, or what describes the
  * code's blank on a door's page (the field says its own refusal there).
@@ -272,40 +287,43 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
   }, 120_000);
 
   it("a mail server on the person's own network is refused ON the mailbox step, with everything typed kept", async () => {
-    expect(await page.locator(".pvp-tile").first().evaluate((e) => getComputedStyle(e).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
-    await page.getByRole("radio", { name: /Any other IMAP mailbox/ }).click();
-    await page.fill("#join-mb-address", person.email);
-    await page.fill("#join-imap", OWN_NETWORK_HOST);
-    await page.fill("#join-smtp", PUBLIC_SMTP);
-    await page.fill("#join-mb-pass", "app-password-fixture");
+    expect(await tile(page, OTHER_IMAP).evaluate((e) => getComputedStyle(e).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+    await tile(page, OTHER_IMAP).click();
+    await field(page, MAILBOX_ADDRESS).fill(person.email);
+    await field(page, IMAP_HOST).fill(OWN_NETWORK_HOST);
+    await field(page, SMTP_HOST).fill(PUBLIC_SMTP);
+    await field(page, APP_PASSWORD).fill("app-password-fixture");
     await page.getByRole("button", { name: "Connect mailbox" }).click();
-    await page.locator(".join-error").first().waitFor({ timeout: 30_000 });
+    // The form's refusal: an alert that says something (the router's own announcer is an empty one).
+    const refusal = page.getByRole("alert").filter({ hasText: /\S/ }).first();
+    await refusal.waitFor({ timeout: 30_000 });
     expect(await h1(page), `the refusal left the mailbox step: ${await said(page)}`).toBe("Connect a mailbox");
     // The host guard's own sentence for a name that resolves to a private address.
-    expect(await page.locator(".join-error").first().textContent()).toMatch(/points inside a private network/);
-    expect(await page.inputValue("#join-imap")).toBe(OWN_NETWORK_HOST);
-    expect(await page.inputValue("#join-mb-pass")).toBe("app-password-fixture");
+    expect(await refusal.textContent()).toMatch(/points inside a private network/);
+    expect(await field(page, IMAP_HOST).inputValue()).toBe(OWN_NETWORK_HOST);
+    expect(await field(page, APP_PASSWORD).inputValue()).toBe("app-password-fixture");
   }, 60_000);
 
   it("after six minutes making an app password, the second factor is asked in place and the same connect goes through", async () => {
     // Where the last case left the person; if it did not, start from the wizard's own resume.
-    if (await page.locator("#join-imap").count() === 0) {
+    if (await field(page, IMAP_HOST).count() === 0) {
       await page.goto(`http://localhost:${webPort}/join`);
-      await page.getByRole("radio", { name: /Any other IMAP mailbox/ }).click();
-      await page.fill("#join-mb-address", person.email);
-      await page.fill("#join-mb-pass", "app-password-fixture");
+      await tile(page, OTHER_IMAP).click();
+      await field(page, MAILBOX_ADDRESS).fill(person.email);
+      await field(page, APP_PASSWORD).fill("app-password-fixture");
     }
-    await page.fill("#join-imap", PUBLIC_IMAP);
-    await page.fill("#join-smtp", PUBLIC_SMTP);
+    await field(page, IMAP_HOST).fill(PUBLIC_IMAP);
+    await field(page, SMTP_HOST).fill(PUBLIC_SMTP);
     world.clock.advance(6 * 60_000);
     heard = [];
     await page.getByRole("button", { name: "Connect mailbox" }).click();
-    await page.locator("[data-testid=step-up-prompt]").waitFor({ timeout: 30_000 }).catch(() => {});
-    expect(await page.locator("[data-testid=step-up-prompt]").count(), `no step-up prompt: ${await said(page)}`).toBe(1);
+    const stepUp = page.getByRole("dialog");
+    await stepUp.waitFor({ timeout: 30_000 }).catch(() => {});
+    expect(await stepUp.count(), `no step-up prompt: ${await said(page)}`).toBe(1);
     expect(await h1(page)).toBe("Connect a mailbox");
 
-    await page.fill("#stepup-code", totpAt(person.totpSecret, world.clock.now()));
-    await page.locator("[data-testid=step-up-prompt]").getByRole("button", { name: "Verify code" }).click();
+    await stepUp.getByLabel("Six-digit code from your authenticator app").fill(totpAt(person.totpSecret, world.clock.now()));
+    await stepUp.getByRole("button", { name: "Verify code" }).click();
     await page.getByRole("heading", { name: "Your mailbox is connected" }).waitFor({ timeout: 30_000 }).catch(() => {});
     expect(await h1(page), `the connect did not finish: ${await said(page)}`).toBe("Your mailbox is connected");
     const creates = heard.filter((h) => h.method === "POST" && h.path === "/mailboxes");
@@ -402,8 +420,10 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.getByRole("button", { name: de.join.continue }).click();
       await p.getByRole("heading", { name: de.join.step_mailbox_title }).waitFor({ timeout: 30_000 });
 
-      await p.getByRole("radio", { name: /GMX/ }).click();
-      expect(await p.locator(".pvp-note p").first().textContent()).toBe(de.providerPicker.note_gmx);
+      await tile(p, /GMX/, de.providerPicker.label).click();
+      const note = p.getByText(de.providerPicker.note_gmx, { exact: true }).first();
+      await note.waitFor({ timeout: 30_000 }).catch(() => {});
+      expect(await note.textContent().catch(() => null), `no GMX note: ${await said(p)}`).toBe(de.providerPicker.note_gmx);
       const text = await p.evaluate(() => document.body?.innerText ?? "");
       expect(text, "English left on the German mailbox step").not.toMatch(/GMX ships with IMAP|enabling IMAP/);
     } finally {

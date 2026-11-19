@@ -41,6 +41,7 @@ describe("the column's keys", () => {
 
   it("r hands a reply to write, and nothing is sent", () => {
     const { mail, address } = mountReader({ letters: [letter("m1")], open: "m1" });
+    expect(screen.getByRole("button", { name: "Reply" }).getAttribute("aria-keyshortcuts")).toBe("r");
     act(() => {
       fireEvent.keyDown(document.body, { key: "r" });
     });
@@ -116,6 +117,7 @@ describe("the column's keys", () => {
       },
     });
     expect(screen.getByRole("button", { name: "Mark read" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reply" }).hasAttribute("aria-keyshortcuts")).toBe(false);
     act(() => {
       fireEvent.keyDown(document.body, { key: "u" });
     });

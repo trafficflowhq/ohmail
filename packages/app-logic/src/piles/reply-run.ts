@@ -33,10 +33,13 @@ export interface ReplyRunPorts {
   readonly open: (id: string) => void;
   /** Open the reply to it in the column; the column's Send is Done. */
   readonly write: (id: string) => void;
+  /** Close this run's reply, keeping its draft. */
+  readonly close?: (id: string) => void;
 }
 
 export interface ReplyRun {
   readonly state: ReplyRunState | null;
+  readonly canStart: boolean;
   /** `f` and the head's button: from the first letter of the pile. */
   start(): void;
 }
@@ -52,9 +55,11 @@ interface Run {
 export function useReplyRun(ids: readonly string[], ports: ReplyRunPorts): ReplyRun {
   const [run, setRun] = useState<Run | null>(null);
   const portsRef = useRef(ports);
+  const opened = useRef<string | null>(null);
   portsRef.current = ports;
 
   const stand = useCallback((id: string) => {
+    opened.current = portsRef.current.openId === id ? id : null;
     portsRef.current.open(id);
     portsRef.current.write(id);
   }, []);
@@ -87,13 +92,16 @@ export function useReplyRun(ids: readonly string[], ports: ReplyRunPorts): Reply
     stand(run.order[next]!);
   }, [pileKey, run, stand]);
 
-  /* Opening another letter ends the run: read when the open letter changes, never when the run steps. */
+  /* Opening another letter or closing this step ends the run. An address that has not landed yet can still be empty. */
   const runRef = useRef(run);
   runRef.current = run;
   useEffect(() => {
     const r = runRef.current;
-    if (r === null || ports.openId === null) return;
-    if (ports.openId !== r.order[r.index]) setRun(null);
+    if (r === null) return;
+    const at = r.order[r.index]!;
+    if (ports.openId === at) opened.current = at;
+    // Navigation leaves the reply's ordinary draft and any pending send with their existing owners.
+    else if (ports.openId !== null || opened.current === at) setRun(null);
   }, [ports.openId]);
 
   /* Leaving the place ends it: the run lives with the place. */
@@ -103,6 +111,10 @@ export function useReplyRun(ids: readonly string[], ports: ReplyRunPorts): Reply
     stand(ids[0]!);
   }, [ids, stand]);
 
+  const finish = (id: string) => {
+    portsRef.current.close?.(id);
+    setRun(null);
+  };
   const state: ReplyRunState | null =
     run === null
       ? null
@@ -114,13 +126,13 @@ export function useReplyRun(ids: readonly string[], ports: ReplyRunPorts): Reply
             const pile = new Set(ids);
             const next = nextFrom(run, run.index + 1, pile);
             if (next < 0) {
-              setRun(null);
+              finish(run.order[run.index]!);
               return;
             }
             setRun({ ...run, index: next });
             stand(run.order[next]!);
           },
-          exit: () => setRun(null),
+          exit: () => finish(run.order[run.index]!),
         };
-  return { state, start };
+  return { state, canStart: ids.length > 0 && state === null, start };
 }

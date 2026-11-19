@@ -3,7 +3,7 @@
  * notice raised when no editor shows the lane. Moved out of the web shell's `SendStatus.tsx` as it stood.
  */
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
-import type { SendState } from "./mail-send.js";
+import type { SendLineItem, SendState } from "./mail-send.js";
 
 /**
  * What a send line's sentence takes beside its key: the draft ceiling as the sentences name it (`{size}`), said in
@@ -142,4 +142,33 @@ export function sendLine(send: SendState, longAt: boolean): { tone: SendTone; ke
                       : "statusDuplicate",
               }
               : null);
+}
+
+/** One row of the line: one kind, and its items. */
+export interface LineRow { kind: SendLineItem["state"]; items: SendLineItem[] }
+
+/**
+ * THE LINE'S ROWS: every kind present, in this order — a not-sent ending, queued, sending, sent —
+ * each counted when it holds several. #185's rule stands within the endings: only refusals that left
+ * their row are counted "weren't sent"; an unverified send (it may have gone), a duplicate or a
+ * refusal with no row says its own line, the latest one, on a row above the count. A sent letter
+ * whose Sent copy has a note stands on its own row, above all of them, the oldest on top (`line()`
+ * lists them newest first): the line rests on its end, so a cap cuts the oldest note, never a live row.
+ */
+export function lineRows(items: readonly SendLineItem[]): LineRow[] {
+  const noted = (i: SendLineItem): boolean => i.state === "sent" && i.copy !== undefined;
+  const rows: LineRow[] = items.filter(noted).reverse().map((i) => ({ kind: "sent", items: [i] }));
+  for (const kind of ["ended", "queued", "sending", "sent"] as const) {
+    const of = items.filter((i) => i.state === kind && !noted(i));
+    if (of.length === 0) continue;
+    if (kind === "ended") {
+      const kept = (i: SendLineItem): boolean => i.ended?.phase === "failed" && i.left !== undefined;
+      const own = of.filter((i) => !kept(i));
+      if (own.length > 0) rows.push({ kind, items: [own[own.length - 1]!] });
+      if (of.some(kept)) rows.push({ kind, items: of.filter(kept) });
+      continue;
+    }
+    rows.push({ kind, items: of });
+  }
+  return rows;
 }

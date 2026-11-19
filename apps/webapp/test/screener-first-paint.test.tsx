@@ -133,7 +133,7 @@ async function mount(
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
   // (api-client reads API_BASE at load — the module top sets it, and every shell import stays dynamic.)
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
 
   let live: ScreenerState | null = null;
 

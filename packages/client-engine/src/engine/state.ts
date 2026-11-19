@@ -781,7 +781,10 @@ export abstract class EngineState {
    * create under that key with newer words is the middleware's `idempotency_replay`: the press would
    * end refused, unsaid. Bounded; the oldest goes first.
    */
-  protected readonly confirmedRows = new Map<string, CreatedDraftRow>();
+  protected readonly confirmedRows = new Map<string, {
+    saved?: CreatedDraftRow;
+    delivered?: { id: string; seq: number };
+  }>();
 
   /** Late answers a flush has claimed and not yet handed over — see {@link flushPending}. */
   protected readonly lateClaimed = new Set<string>();

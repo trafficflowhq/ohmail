@@ -1,11 +1,13 @@
 import { Fragment, type ReactNode } from "react";
-import { Avatar, Button } from "../../base/index.js";
+import { AddressText, Avatar, Button } from "../../base/index.js";
 import { Icon } from "../../icons/Icon.js";
 import "./message-head.css";
 
 /** Somebody the head names: a press opens the contact card at the name. */
 export interface HeadPerson {
   name: string;
+  /** Their card stands open: the name says so (`aria-expanded`). */
+  expanded?: boolean;
   onPress?: (anchor: HTMLElement) => void;
 }
 
@@ -18,15 +20,25 @@ export interface HeadLine {
 
 export interface MessageHeadProps {
   /** Who wrote it. `printed` is the name as the head prints it where that is not the person's own ("You"). */
-  sender: { name: string; address: string; printed?: string; onPress?: (anchor: HTMLElement) => void };
+  sender: {
+    name: string;
+    address: string;
+    printed?: string;
+    /** Their card stands open. */
+    expanded?: boolean;
+    onPress?: (anchor: HTMLElement) => void;
+  };
   /** Not read yet: the dot on the circle. */
   unread?: boolean;
   /** What was kept out of the letter, as its one chip. */
   note?: ReactNode;
   /** The message's own menu. */
   menu?: { label: string; expanded?: boolean; onPress?: (anchor: HTMLElement) => void };
-  /** When, as it is printed. A press turns short times into full dates and back; `title` says what a press does. */
-  stamp: { when: string; full: boolean; title: string; onPress?: () => void };
+  /**
+   * When, as it is printed. A press turns short times into full dates and back; `title` says what a press does. `at`:
+   * the instant, as a machine reads it (an ISO date), behind the printed words.
+   */
+  stamp: { when: string; full: boolean; title: string; at?: string; onPress?: () => void };
   /** The recipients, a group a word: "to", "cc". */
   to?: readonly { word: string; people: readonly HeadPerson[] }[];
   /** The word that opens the full lines, and the lines. */
@@ -40,23 +52,45 @@ export interface MessageHeadProps {
   marks?: readonly { text: string; when?: string; lead?: string }[];
 }
 
+/** The sender, one button: the circle, the name and the address, whose domain is never cut. */
+function Sender({ sender, unread }: Pick<MessageHeadProps, "sender" | "unread">) {
+  const printed = sender.printed ?? sender.name;
+  return (
+    <button
+      type="button"
+      className="oh-control oh-messagehead-sender"
+      data-sender-line=""
+      /* The address is drawn in two halves; a screen reader hears it whole, after the name, as the head prints it. */
+      aria-label={sender.address !== printed ? `${printed} ${sender.address}` : printed}
+      aria-haspopup="dialog"
+      aria-expanded={sender.expanded ?? false}
+      onClick={(event) => sender.onPress?.(event.currentTarget)}
+    >
+      <span className="oh-messagehead-line">
+        <Avatar name={sender.name} address={sender.address} unread={unread} />
+        <span className="oh-messagehead-who">
+          <b className="oh-messagehead-name">
+            {/* No name: the address stands in its place, and its domain is kept whole there too. */}
+            {printed === sender.address ? <AddressText address={printed} /> : printed}
+          </b>
+          {/* A sender with no name is printed once: the address is not said again beside itself. Its domain is never
+            cut (the evidence a stranger is judged by): the local part gives way first. */}
+          {sender.address !== printed ? (
+            <span className="oh-messagehead-address">
+              <AddressText address={sender.address} />
+            </span>
+          ) : null}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 /** Who wrote it, to whom, and when. Every name is a way to the contact card. */
 export function MessageHead({ sender, unread, note, menu, stamp, to, details, marks }: MessageHeadProps) {
   return (
     <header className="oh-messagehead" data-noted={note ? "" : undefined}>
-      <button
-        type="button"
-        className="oh-control oh-messagehead-sender"
-        data-sender-line=""
-        aria-haspopup="dialog"
-        onClick={(event) => sender.onPress?.(event.currentTarget)}
-      >
-        <Avatar name={sender.name} address={sender.address} unread={unread} />
-        <span className="oh-messagehead-who">
-          <b className="oh-messagehead-name">{sender.printed ?? sender.name}</b>
-          <span className="oh-messagehead-address">{sender.address}</span>
-        </span>
-      </button>
+      <Sender sender={sender} unread={unread} />
       <span className="oh-messagehead-tools">
         {note ? <span className="oh-messagehead-noted">{note}</span> : null}
         {menu ? (
@@ -70,15 +104,20 @@ export function MessageHead({ sender, unread, note, menu, stamp, to, details, ma
             onPress={(event) => menu.onPress?.(event.currentTarget)}
           />
         ) : null}
-        <button
-          type="button"
-          className="oh-control oh-messagehead-stamp"
-          aria-pressed={stamp.full}
-          title={stamp.title}
-          onClick={stamp.onPress}
-        >
-          <time className="oh-messagehead-when">{stamp.when}</time>
-        </button>
+        {/* A letter with no date draws no stamp: no nameless control that toggles nothing. */}
+        {stamp.when ? (
+          <button
+            type="button"
+            className="oh-control oh-messagehead-stamp"
+            aria-pressed={stamp.full}
+            title={stamp.title}
+            onClick={stamp.onPress}
+          >
+            <time className="oh-messagehead-when" dateTime={stamp.at}>
+              {stamp.when}
+            </time>
+          </button>
+        ) : null}
       </span>
       {to?.length ? (
         <p className="oh-text oh-messagehead-to">
@@ -92,6 +131,8 @@ export function MessageHead({ sender, unread, note, menu, stamp, to, details, ma
                   <button
                     type="button"
                     className="oh-control oh-messagehead-person"
+                    aria-haspopup="dialog"
+                    aria-expanded={person.expanded ?? false}
                     onClick={(event) => person.onPress?.(event.currentTarget)}
                   >
                     {person.name}

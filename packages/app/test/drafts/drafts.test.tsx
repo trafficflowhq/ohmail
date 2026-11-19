@@ -1,13 +1,14 @@
 /** @vitest-environment jsdom */
 import type { EngineDraft } from "@ohmail/wire";
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import words from "../../messages/drafts.en.json" with { type: "json" };
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PressVerdict } from "@ohmail/client-engine";
 import { useDraftsList, type DraftsDoor } from "@ohmail/app-logic/drafts";
 import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import type { UndoToastOptions } from "@ohmail/app-logic/press/undo-door";
 import { DraftsAbove, DraftsList, DraftsReading, useDiscardWords } from "../../src/drafts/index.js";
-import { at, draft, draw, pane, PHONE, stamp } from "../places/lists-world.js";
+import { at, draft, draw, inWords, pane, PHONE, stamp } from "../places/lists-world.js";
 import { wideWindow } from "../ohbox/setup.js";
 
 interface Seen {
@@ -168,6 +169,7 @@ describe("Discard is one press, with Undo", () => {
     });
     await flush();
     expect(seen.discarded).toEqual(["d1"]);
+    expect(seen.resolved).toEqual([]);
   });
 
   it("Undo brings the row back and nothing is deleted", async () => {
@@ -188,46 +190,140 @@ describe("Discard is one press, with Undo", () => {
     draw(
       <Drafts
         seen={seen}
-        drafts={[draft({ id: "d1", subject: "Half a letter" })]}
+        drafts={[
+          draft({ id: "d1", subject: "First held letter", status: "unverified" }),
+          draft({ id: "d2", subject: "Second held letter", status: "unverified" }),
+        ]}
         door={{ decide: () => ({ kind: "refuse", why: "still-sending" }) }}
       />,
     );
+    const first = screen.getByRole("option", { name: /First held letter/ }).closest<HTMLElement>(".dr-row")!;
+    const second = screen.getByRole("option", { name: /Second held letter/ }).closest<HTMLElement>(".dr-row")!;
+    const discard = within(second).getByRole("button", { name: "Discard" });
+    discard.focus();
+    fireEvent.click(discard);
+    await flush();
+    const refusal = within(second).getByRole("alert");
+    expect(refusal.textContent).toBe(words.drafts.discardStillSending);
+    expect(document.activeElement).toBe(refusal);
+    expect(within(first).queryByRole("alert")).toBeNull();
+    expect(seen.discarded).toEqual([]);
+  });
+
+  it("leaves focus on the next draft when a delayed refusal arrives", async () => {
+    const seen = fresh();
+    let refuse!: (result: "unknown") => void;
+    const answer = new Promise<"unknown">((resolve) => { refuse = resolve; });
+    draw(<Drafts
+      seen={seen}
+      drafts={[draft({ id: "d1", subject: "First letter" }), draft({ id: "d2", subject: "Next letter" })]}
+      door={{ withdrawWaiting: () => answer }}
+    />);
+    const [discard, next] = screen.getAllByRole("button", { name: "Discard" });
+    discard!.focus();
+    fireEvent.click(discard!);
+    next!.focus();
+    await act(async () => { refuse("unknown"); });
+    const first = screen.getByRole("option", { name: /First letter/ }).closest<HTMLElement>(".dr-row")!;
+    expect(within(first).getByRole("alert").textContent).toBe(words.drafts.discardCancelUnknown);
+    expect(document.activeElement).toBe(next);
+    expect(seen.discarded).toEqual([]);
+  });
+
+  it("keeps the draft when this browser cannot read its own send records and names a way forward", async () => {
+    const seen = fresh();
+    draw(<Drafts seen={seen} drafts={[draft({ id: "d1", subject: "My letter" })]}
+      door={{ decide: () => ({ kind: "refuse", why: "unknown-jar" }) }} />);
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     await flush();
-    expect(screen.getByText("Half a letter")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toContain("Not discarded");
+    expect(screen.getByRole("alert").textContent).toBe(words.drafts.discardUnknownJar);
+    expect(screen.getByRole("option", { name: /My letter/ })).toBeTruthy();
+    expect(seen.discarded).toEqual([]);
   });
 });
 
 describe("a send nobody could confirm", () => {
+  function answers(sentence: string): void {
+    const panel = screen.getByRole("toolbar", { name: words.drafts.heldActs });
+    expect(within(panel).getByText(sentence)).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: words.drafts.sendAgain })).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: words.drafts.heldItWasSent })).toBeTruthy();
+  }
+
   it("says so on its row, and open, stands Send again and It was sent beside Discard", () => {
     const seen = fresh();
-    draw(
-      <Drafts
-        seen={seen}
-        open="h1"
-        drafts={[draft({ id: "h1", subject: "Sent or not", status: "unverified", updatedAt: at(1) })]}
-      />,
-    );
-    expect(screen.getAllByText(/It isn't in your Sent folder/).length).toBeGreaterThan(0);
+    const drafts = [
+      draft({ id: "h1", subject: "Sent or not", status: "unverified", updatedAt: at(1) }),
+      draft({ id: "p1", subject: "Ordinary draft" }),
+    ];
+    const show = (open: string) => <Drafts seen={seen} open={open} drafts={drafts} />;
+    const view = draw(show("h1"));
+    const panel = screen.getByRole("toolbar", { name: words.drafts.heldActs });
+    expect(within(panel).getByText(words.drafts.heldNotInSent)).toBeTruthy();
+    expect(within(panel).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent))
+      .toEqual([words.drafts.sendAgain, words.drafts.heldItWasSent, words.drafts.discard]);
     fireEvent.click(screen.getByRole("button", { name: "Send again" }));
-    fireEvent.click(screen.getByRole("button", { name: "It was sent" }));
     expect(seen.again).toEqual(["h1"]);
+    expect(seen.resolved).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "It was sent" }));
     expect(seen.resolved).toEqual([["h1", "arrived"]]);
+    view.rerender(inWords(show("p1")));
+    expect(screen.queryByRole("toolbar", { name: words.drafts.heldActs })).toBeNull();
   });
 
   it("a row this browser holds by its own record is held too, though the server calls it a draft", () => {
     const seen = fresh();
-    draw(
-      <Drafts
-        seen={seen}
-        open="h1"
-        drafts={[draft({ id: "h1", subject: "Sent or not", updatedAt: "2026-08-02T09:55:00.000Z" })]}
-        door={{ heldHere: new Set(["h1"]) }}
-      />,
+    const held = draft({ id: "h1", subject: "Sent or not", updatedAt: "2026-08-02T09:55:00.000Z" });
+    const ordinary = draft({ id: "h2", subject: "Another letter" });
+    const show = (open: string) => (
+      <Drafts seen={seen} open={open} drafts={[held, ordinary]} door={{ heldHere: new Set(["h1"]) }} />
     );
-    expect(screen.getAllByText(/checking your Sent folder/).length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Send again" })).toBeTruthy();
+    const view = draw(show("h1"));
+    expect(screen.getByRole("option", { name: /Sent or not/ }).getAttribute("aria-description"))
+      .toBe(words.drafts.heldChecking);
+    expect(screen.getByRole("option", { name: /Another letter/ }).getAttribute("aria-description")).toBeNull();
+    answers(words.drafts.heldChecking);
+    view.rerender(inWords(show("h2")));
+    expect(screen.queryByRole("toolbar", { name: words.drafts.heldActs })).toBeNull();
+  });
+
+  it("checking Sent ends after twenty minutes, and both answers remain available", () => {
+    const seen = fresh();
+    const drafts = [
+      draft({ id: "recent", subject: "Recent", status: "unverified", updatedAt: "2026-08-02T09:41:00.000Z" }),
+      draft({ id: "old", subject: "Earlier", status: "unverified", updatedAt: "2026-08-02T09:39:00.000Z" }),
+    ];
+    const show = (open: string) => <Drafts seen={seen} drafts={drafts} open={open} />;
+    const view = draw(show("recent"));
+    expect(screen.getByRole("option", { name: /Recent/ }).getAttribute("aria-description")).toBe(words.drafts.heldChecking);
+    expect(screen.getByRole("option", { name: /Earlier/ }).getAttribute("aria-description")).toBe(words.drafts.heldNotInSent);
+    answers(words.drafts.heldChecking);
+    view.rerender(inWords(show("old")));
+    answers(words.drafts.heldNotInSent);
+    expect(document.body.textContent).not.toContain("Did this message arrive");
+    expect(document.body.textContent).not.toContain("over a week");
+  });
+
+  it.each([
+    ["an unreadable time", "unverified", "unreadable", words.drafts.heldNotInSent],
+    ["an interrupted send", "sending", "2026-08-02T09:59:00.000Z", words.drafts.heldInterrupted],
+  ] as const)("the row and its two answers explain %s", (_case, status, updatedAt, sentence) => {
+    const seen = fresh();
+    const drafts = [
+      draft({ id: "h1", subject: "Held letter", status, updatedAt }),
+      draft({ id: "p1", subject: "Ordinary draft" }),
+    ];
+    const show = (open: string) => <Drafts seen={seen} open={open} drafts={drafts} />;
+    const view = draw(show("h1"));
+    expect(screen.getByRole("option", { name: /Held letter/ }).getAttribute("aria-description")).toBe(sentence);
+    answers(sentence);
+    fireEvent.click(screen.getByRole("button", { name: words.drafts.sendAgain }));
+    expect(seen.again).toEqual(["h1"]);
+    expect(seen.resolved).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: words.drafts.heldItWasSent }));
+    expect(seen.resolved).toEqual([["h1", "arrived"]]);
+    view.rerender(inWords(show("p1")));
+    expect(screen.queryByRole("toolbar", { name: words.drafts.heldActs })).toBeNull();
   });
 
   it("a send waiting to go says so, and is not a held row", () => {

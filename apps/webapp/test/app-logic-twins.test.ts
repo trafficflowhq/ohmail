@@ -3,9 +3,20 @@
  * TWO THINGS EXIST TWICE: the geometry under the web door's text size, and the keys a browser
  * scrolls with. Behaviour may not import the component kit, and the kit needs both for itself.
  * Until the kit stops exporting them, each pair answers the same for the same page.
+ *
+ * AND THE PRESS SEAM'S SENTENCES ARE SAID BY TWO READERS until the old shell is gone: the old shell's own reader of
+ * the whole catalogue, and the frame's room, which composes one over the six namespaces the seam speaks from. A
+ * press says the same sentence through either, in both languages.
+ *
+ * (The connection's why, said twice by the old shell's feed and the mail ground's, moved as it stood to
+ * `app-logic-twins-connection.test.ts`: it waits there for the deletions that take today's feed.)
  */
+import { createElement as h, type ReactNode } from "react";
+import { renderHook } from "@testing-library/react";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import * as kit from "@ohmail/ui";
+import { TextProvider, useTextLookup } from "@ohmail/app/text";
 import * as geometry from "@ohmail/app-logic/geometry";
 import { SCROLL_KEYS } from "@ohmail/app-logic/keys";
 import type { ToastFn, ToastOptions } from "@ohmail/app-logic/press/report";
@@ -31,8 +42,11 @@ import { autoLoadsImages as readerAutoLoads } from "@ohmail/app-logic/reader";
 import { HELD_FOLDERS } from "@trafficflow/core/destinations";
 import { autoLoadsImages as shellAutoLoads } from "../app/shell/remote-images";
 import * as horizons from "@ohmail/app-logic/reader";
+import { PRESS_NAMESPACES, pressWords, type NamespaceText } from "@ohmail/app-logic/reader";
+import de from "../messages/de.json";
+import en from "../messages/en.json";
 import * as shellFormat from "../app/shell/format";
-import { setActiveFormatZone } from "../app/shell/locale";
+import { setActiveCatalog, setActiveFormatZone } from "../app/shell/locale";
 
 const html = (): HTMLElement => document.documentElement;
 afterEach(() => html().removeAttribute("style"));
@@ -149,7 +163,7 @@ describe("the answers of the Junk wire and of the suggestion wire as the Screene
   });
 
   it("the code for a server never reached is the server client's own", async () => {
-    const { UNREACHED_CODE } = await import("../app/shell/screener-suggest");
+    const { UNREACHED_CODE } = await import("@ohmail/app-logic/screener/screener-suggest");
     const { OFFLINE_CODE } = await import("../app/api-client");
     expect(UNREACHED_CODE).toBe(OFFLINE_CODE);
   });
@@ -210,5 +224,72 @@ describe("the resurface horizons, twice", () => {
       }
     }
     expect(horizons.DEFAULT_RESURFACE_TIME).toBe(shellFormat.DEFAULT_RESURFACE_TIME);
+  });
+});
+
+/**
+ * The two readers of one catalogue. The old shell's: the web's own reader at the root (`ohbox.toastQueued`). The
+ * room's: one reader a namespace out of the frame's text reader, composed as the room composes them.
+ */
+type Catalogue = Readonly<Record<string, unknown>>;
+type Says = (key: string, values?: Record<string, string | number>) => string;
+function readersOf(locale: "en" | "de", messages: Catalogue): { shell: Says; room: Says } {
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    h(NextIntlClientProvider, { locale, messages, timeZone: "UTC", children: h(TextProvider, { locale, messages, timeZone: "UTC", children } as never) } as never);
+  const { result } = renderHook(
+    () => {
+      const root = useTranslations();
+      const text = useTextLookup();
+      const room = pressWords(
+        Object.fromEntries(PRESS_NAMESPACES.map((ns) => [ns, text(ns)])) as unknown as Record<(typeof PRESS_NAMESPACES)[number], NamespaceText>,
+      );
+      return { shell: root as unknown as Says, room: room as Says };
+    },
+    { wrapper },
+  );
+  return result.current;
+}
+/** Every sentence under a namespace, by its key inside it. */
+function sentencesOf(tree: unknown, at = ""): Array<[key: string, sentence: string]> {
+  if (typeof tree === "string") return [[at, tree]];
+  if (typeof tree !== "object" || tree === null) return [];
+  return Object.entries(tree).flatMap(([key, under]) => sentencesOf(under, at === "" ? key : `${at}.${key}`));
+}
+/** Values for every name a sentence asks for: a count once as one and once as several, a choice by its last arm, a word. */
+function valuesFor(sentence: string): Array<Record<string, string | number>> {
+  const asked = [...sentence.matchAll(/\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*([a-z]+))?/g)].map((m) => [m[1]!, m[2]] as const);
+  const counted = asked.some(([, kind]) => kind === "plural" || kind === "number");
+  const fill = (count: number): Record<string, string | number> =>
+    Object.fromEntries(asked.map(([name, kind]) => [name, kind === "plural" || kind === "number" ? count : kind === "select" ? "other" : "Ada"]));
+  return counted ? [fill(1), fill(3)] : [fill(1)];
+}
+
+describe("the press seam's sentences, twice", () => {
+  for (const [locale, messages] of [["en", en], ["de", de]] as const) {
+    it(`the room's reader says every sentence of the seam's six namespaces as the old shell's reader does, in ${locale}`, () => {
+      const { shell, room } = readersOf(locale, messages as Catalogue);
+      const differing: string[] = [];
+      let said = 0;
+      for (const ns of PRESS_NAMESPACES) {
+        for (const [key, sentence] of sentencesOf((messages as Catalogue)[ns])) {
+          /* A sentence with marks in it is drawn by its place as rich text; the seam says none of those. */
+          if (sentence.includes("<")) continue;
+          for (const values of valuesFor(sentence)) {
+            said += 1;
+            const theShells = shell(`${ns}.${key}`, values);
+            const theRooms = room(`${ns}.${key}`, values);
+            if (theShells !== theRooms || theShells === "") differing.push(`${ns}.${key}: "${theShells}" and "${theRooms}"`);
+          }
+        }
+      }
+      expect(said, "the sentences read").toBeGreaterThan(800);
+      expect(differing).toEqual([]);
+    });
+  }
+
+  it("a sentence outside those six namespaces is said by the old shell's reader alone: the room answers nothing for it", () => {
+    const { shell, room } = readersOf("en", en as Catalogue);
+    expect(shell("markAll.undo")).toBe(en.markAll.undo);
+    expect(room("markAll.undo")).toBe("");
   });
 });

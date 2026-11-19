@@ -5,7 +5,7 @@ reference, element by element and value by value. It is the comparison's sibling
 the comparison cannot: the comparison draws states pages that load the faces themselves, carry a rail written by
 hand and stand the frame's own columns, so the shell a person runs is on none of its pages. This measure bundles
 the pages the frame's browser tests bundle (`apps/webapp/test/frame/demo-page/entry.tsx`, and `web-page/entry.tsx`
-for what only the web's rail draws), with the product page's stylesheets and body, and opens them in the pinned
+for the signed-in Account pane and what only the web's rail draws), with the product page's stylesheets and body, and opens them in the pinned
 browser beside the reference.
 
 ## The one command
@@ -21,6 +21,28 @@ read only those; `--ref <tag or commit>` (or `REAL_MEASURE_REF`) names the pinne
 Without a reference it says so in one line and ends `SKIPPED`, exit 0: CI has none. As in the comparison,
 `COMPARE_REQUIRE_REFERENCE=1` turns that skip into `RED`. The measure is a workstation proof: run by a mount's
 builder before the push, and at a milestone.
+
+## Comparing the same account and mail
+
+Add `--state matched` to open every subject in the registered signed-in web entry. The pinned reference supplies
+fictional account and mailbox inputs, saved signatures, Ohbox thread membership, News, Receipts, stored drafts,
+read flags, filing, scheduled and resurfaced mail, and
+waiting senders to the product’s local API fixture. The first mailbox is the default sender in both. The web host
+has mail enabled, and the reference uses its Calendar-off state. The ordinary visit dismisses the download offer
+through its real action. The separate wide offer subject keeps the first-visit state. The product and the reference
+each draw their own words, icons, controls and layout.
+
+Both card readings use the painted edge to the content box for Account insets. Badge text and dimensions are
+compared even across different numbers of digits. The command writes all observed differences to
+`build/real-measure-matched/` and exits red on any difference or fault. The original inventory remains available
+with the default command and its own output folder. The matched run keeps the full rail and dock subject, including
+destinations the reference offers and the current host does not register.
+
+The expanded Tags comparison opens the group through the product’s fold and carries the same stored tags and
+message assignments into both rails. It reads
+each named row by tag identity, with its count and dot, and the New tag action. `--tags initial` keeps both
+products’ first-visit defaults. `--tags collapsed` folds the expanded group through the normal button in each
+wide rail. Both explicit choices revisit the product and verify its saved fold state. These options belong to `--state matched`.
 
 ## The reference
 
@@ -114,10 +136,11 @@ helper the list lacks (a place's entry found by its words, say) goes into `page.
 `helpers`, named for what it finds, and is listed here and in `subjects.ts`'s header: a finder is run inside the
 page, where only those helpers stand, so a helper written in `subjects.ts` is never seen.
 
-Built: `frame` (the rail with its foot, the columns' handles, the dock), `ohbox` (the list's sheet and head),
-`reader` (the reading column with nothing open) and `frame-web` (the web's offer of the desktop app). The next two
-are Write (`compose`, against `screen=compose&state=blank`) and Settings' Account pane (`settings-account`, against
-`screen=settings&sec=account`), each added by the change that mounts it.
+The subjects cover the frame and its dock, the Ohbox list, the empty reader, the blank letter
+(`compose`) and signed-in Settings Account (`settings-account`). The `frame-web` subject checks the desktop
+offer on the web rail. These web subjects enter the signed-in Cloud shell with the same fictional session,
+mailboxes and local responses. Account uses the web's account and password doors. The blank letter starts
+with a saved two-line mailbox signature and the hosted drafting control, as in the reference.
 
 ## What it does not read
 

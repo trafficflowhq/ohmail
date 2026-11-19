@@ -176,7 +176,7 @@ describe("the open", () => {
 
   it("opens as today's reader opens: the opened letter's top 14 px under the head that stays over the column", () => {
     mountReader({ letters: LETTERS, open: "c" });
-    const head = screen.getByRole("heading", { level: 1 }).closest("header")!;
+    const head = screen.getByRole("heading", { level: 2 }).closest("header")!;
     head.style.position = "sticky";
     head.getBoundingClientRect = () => rect(0, 100);
     layOut();

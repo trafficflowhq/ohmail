@@ -166,9 +166,17 @@ async function unmount(): Promise<void> {
   host = null;
 }
 
+/*
+ * THE NEW SHELL's REPLY, by role and name (re-pointed from today's InlineReply by the older tests' sorting, share
+ * write-1): History is not mounted, so the letter is opened at the Ohbox by its row and the reply by "r" where the
+ * keys are. Write's reply stands in the open letter (the region "Open message"): its text the textbox "Reply body", its
+ * people folded into the line "To" with the press "Change recipients" until they are changed, then the three lines
+ * (the comboboxes "To", "Cc", "Bcc"; a person in a line is its press "Remove <address>"), its subject the line
+ * "Subject", its verbs the toolbar "Actions". Today's Escape that closed the reply is its leave key in its text.
+ */
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -178,48 +186,74 @@ async function mountShell(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-  // Step to a message with the product's own key, then open its reply editor.
-  await key("j");
+  // Open the Ohbox's first letter by its row, then its reply with the product's own key.
+  const deadline = Date.now() + 10_000;
+  let row = firstRow();
+  while (!row && Date.now() <= deadline) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    row = firstRow();
+  }
+  expect(row, "the Ohbox listed no letter").not.toBeNull();
+  await act(async () => {
+    row!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    row!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    row!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await settle();
   await key("r");
+  await settle();
 }
 
+const firstRow = (): HTMLElement | null =>
+  host!.querySelector<HTMLElement>('section[aria-label="Messages"] [role=option][data-id]');
+
+/** A key where the keys are: the focused row or field. */
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+    (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
 };
 
-const reply = (): HTMLElement => host!.querySelector<HTMLElement>(".read-col .reply")!;
+const reply = (): HTMLElement => host!.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]')!;
+const replyText = (): HTMLElement | null =>
+  reply()?.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"]') ?? null;
 
 /** The reply's rich editor, waited for by real time: its cold lazy import outlasts any tick count under load. */
 async function replyEditor(): Promise<HTMLElement> {
   const deadline = Date.now() + 10_000;
-  let editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface");
+  let editor = replyText();
   while (!editor && Date.now() <= deadline) {
     await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-    editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface");
+    editor = replyText();
   }
   expect(editor, "the reply's rich editor never mounted").not.toBeNull();
   return editor!;
 }
 
-/** The recipient row input labelled `label` inside the opened editor. */
+/** The people line named `label` inside the opened reply. */
 function rowInput(label: string): HTMLInputElement {
-  const l = [...reply().querySelectorAll<HTMLLabelElement>(".reply-rcpt label")]
-    .find((el) => el.textContent === label)!;
-  return document.getElementById(l.htmlFor) as HTMLInputElement;
+  return reply().querySelector<HTMLInputElement>(`[role="combobox"][aria-label="${label}"]`)!;
+}
+
+/** The people a line holds, each as the address it shows beside its name (the kit's person in a line). */
+function lineHolds(label: string): string[] {
+  const group = reply().querySelector<HTMLElement>(`[role="group"][aria-label="${label}"]`);
+  return [...(group?.querySelectorAll<HTMLElement>("[data-person]") ?? [])]
+    .map((p) => [p, ...p.querySelectorAll("*")].map((e) => (e.textContent ?? "").trim())
+      .find((text) => /^[^\s<>@]+@[^\s<>@]+$/.test(text)) ?? (p.textContent ?? "").trim())
+    .filter(Boolean);
 }
 
 async function typeRecipient(label: string, text: string): Promise<void> {
   const el = rowInput(label);
   await act(async () => {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    el.focus();
     setter.call(el, text);
     el.setSelectionRange(text.length, text.length);
     el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -229,25 +263,27 @@ async function typeRecipient(label: string, text: string): Promise<void> {
   });
 }
 
-/**
- * Open the subject input, retrying once per settle: the rich editor's DEFERRED init focuses
- * itself exactly once, and a press that lands before that moment has its input blurred shut —
- * the component's documented one-time race, which a person recovers from by clicking again.
- */
-async function openSubjectInput(): Promise<HTMLInputElement> {
-  for (let i = 0; i < 10; i++) {
-    const btn = reply().querySelector<HTMLButtonElement>(".reply-subject");
-    if (btn) await act(async () => { btn.click(); });
-    const input = reply().querySelector<HTMLInputElement>(".reply-subject-input");
-    if (input) return input;
-    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
-  }
-  throw new Error("the subject input never opened");
-}
+/** The reply's subject: one line of its head, a field that holds the whole subject. */
+const subjectInput = (): HTMLInputElement | null =>
+  reply()?.querySelector<HTMLInputElement>('input[aria-label="Subject"]') ?? null;
+
+/** The folded people's press (today's head button): "Change recipients". */
+const changePeople = (): HTMLButtonElement | null =>
+  [...(reply()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.textContent?.trim() === "Change recipients") ?? null;
 
 const sendButton = (): HTMLButtonElement =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".read-col .msg .reply-actions button")]
-    .find((b) => b.textContent?.trim().startsWith("Send"))!;
+  [...reply().querySelectorAll<HTMLButtonElement>('[role="toolbar"][aria-label="Actions"] button')]
+    .find((b) => b.getAttribute("aria-label") === "Send")!;
+
+/** Escape in the reply's text: its leave key (today's Escape that closed the editor). */
+async function leaveReply(): Promise<void> {
+  const text = replyText();
+  expect(text, "no reply open to leave").not.toBeNull();
+  await act(async () => {
+    text!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+}
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
@@ -255,7 +291,10 @@ async function settle(): Promise<void> {
 
 beforeEach(() => {
   setViewport();
-  window.location.hash = "#/history";
+  // jsdom draws no animation: the frame's report leaves through `animate`.
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
+  Element.prototype.scrollIntoView ??= () => {};
+  window.location.hash = "#/ohbox";
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
 });
 
@@ -358,28 +397,26 @@ describe("the reply's subject edits in place — and threading never depends on 
     await act(async () => { typeInto(editor, "Passt."); });
     await settle();
 
-    // Calm plain text: a button, not an input, and no input on screen yet.
-    const subjectBtn = reply().querySelector<HTMLButtonElement>(".reply-subject");
-    expect(subjectBtn, "the reply renders no subject line").not.toBeNull();
-    expect(reply().querySelector(".reply-subject-input")).toBeNull();
-    const derived = subjectBtn!.querySelector(".reply-subject-text")!.textContent!;
+    /* Today's "calm plain text, a button that swaps in an input" was its markup (retired with today's reply by its
+       row): Write draws the subject as one line of the head, a field the person writes in place. The claim stands:
+       the line holds the FULL subject, the prefix exposed. */
+    const input = subjectInput();
+    expect(input, "the reply renders no subject line").not.toBeNull();
+    const derived = input!.value;
     expect(derived.startsWith("Re: "), `the derived subject exposes the prefix (${derived})`).toBe(true);
-
-    // Press → an input, in place, holding the FULL subject.
-    const input = await openSubjectInput();
-    expect(input.value).toBe(derived);
 
     // Edit it — the whole line is the user's, prefix included.
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
       setter.call(input, "Thursday works (was: planning)");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
     });
     // No warning chrome: the subject edit is an ordinary act, not a hazard — checked while
     // the editor is still open (a settled send closes it).
     expect(reply().querySelector("[role='alert']")).toBeNull();
 
     await act(async () => { sendButton().click(); });
+    await settle();
     await settle();
 
     const sends = seen.filter((m) => m.kind === "mail_send");
@@ -403,19 +440,19 @@ describe("the reply's subject edits in place — and threading never depends on 
     await act(async () => { typeInto(editor, "Passt."); });
     await settle();
 
-    const input = await openSubjectInput();
+    const input = subjectInput()!;
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
       setter.call(input, "Kept across a close");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    // Close (Escape falls to the view's binding from outside the input), then reopen.
-    await key("Escape");
-    expect(host!.querySelector(".read-col .reply"), "the editor did not close").toBeNull();
+    // Close (the reply's leave key in its text), then reopen.
+    await leaveReply();
+    expect(replyText(), "the editor did not close").toBeNull();
     await key("r");
-    const shown = reply().querySelector(".reply-subject-text")?.textContent
-      ?? reply().querySelector<HTMLInputElement>(".reply-subject-input")?.value;
+    await replyEditor();
+    const shown = subjectInput()?.value;
     expect(shown, "the reopened reply lost its retitled subject").toBe("Kept across a close");
   });
 
@@ -431,9 +468,10 @@ describe("the reply's subject edits in place — and threading never depends on 
     } as never);
 
     await mountShell();
-    const shown = reply().querySelector(".reply-subject-text")!.textContent!;
     const editor = await replyEditor();
+    const shown = subjectInput()!.value;
     await act(async () => { typeInto(editor, "Passt."); });
+    await settle();
     await act(async () => { sendButton().click(); });
     await settle();
 
@@ -447,41 +485,43 @@ describe("the reply's subject edits in place — and threading never depends on 
 describe("the reply head opens into editable recipients", () => {
   it("is a BUTTON naming the audience; pressing it swaps in prefilled chip rows", async () => {
     await mountShell();
-    const head = reply().querySelector<HTMLButtonElement>(".reply-head-btn");
+    await replyEditor();
+    const head = changePeople();
     expect(head, "the reply head is not a control — recipients are not editable").not.toBeNull();
-    expect(head!.textContent).toContain("Reply to");
+    /* The head names the audience: today's "Reply to <name>" is the reply's own name in Write ("Reply to <name>", the
+       sheet's label), and the folded line beside the press names who it goes to. */
+    expect(host!.querySelector('[aria-label^="Reply to "]'), "the reply does not say whom it answers").not.toBeNull();
 
     await act(async () => { head!.click(); });
+    await settle();
 
     // The head is gone; the rows are up; the To row holds the computed audience as a CHIP
     // whose entry parses to a real address — the prefill is the envelope, not a caption.
-    expect(reply().querySelector(".reply-head-btn")).toBeNull();
-    const chips = [...reply().querySelectorAll<HTMLElement>(".reply-rcpt .rcp-chip")];
+    expect(changePeople()).toBeNull();
+    const chips = lineHolds("To");
     expect(chips.length).toBeGreaterThan(0);
-    const entry = chips[0]!.dataset.entry!;
+    const entry = chips[0]!;
     expect(parseRecipients(entry).invalid).toEqual([]);
     // CC AND BCC ARE ALREADY OPEN — no second click (2026-08-27). Opening the stack IS the
     // "change recipients" act, so the blind-copy row is reachable the moment the head is
     // pressed; a toggle here was two clicks about one decision.
-    expect(reply().querySelector(".reply-rcpt .c-ccbcc-toggle")).toBeNull();
-    const labels = [...reply().querySelectorAll<HTMLLabelElement>(".reply-rcpt .c-field label")]
-      .map((l) => l.textContent);
-    expect(labels).toContain("Cc");
-    expect(labels).toContain("Bcc");
+    expect(rowInput("Cc"), "the Cc line is not open").not.toBeNull();
+    expect(rowInput("Bcc"), "the Bcc line is not open").not.toBeNull();
   });
 
   it("Enter on the head opens the rows with focus IN the To field, never on the list row", async () => {
     await mountShell();
-    const head = reply().querySelector<HTMLButtonElement>(".reply-head-btn")!;
+    await replyEditor();
+    const head = changePeople()!;
     await act(async () => { head.focus(); });
     // The browser's own activation: the keydown, then the click it fires when nothing prevented it.
     const press = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
     await act(async () => { head.dispatchEvent(press); });
     if (!press.defaultPrevented) await act(async () => { head.click(); });
     await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
-    expect(reply().querySelector(".reply-rcpt"), "the rows did not open").not.toBeNull();
+    expect(rowInput("To"), "the rows did not open").not.toBeNull();
     expect(document.activeElement).toBe(rowInput("To"));
-    expect(document.activeElement?.closest(".row[data-id]")).toBeNull();
+    expect(document.activeElement?.closest("[role=option][data-id]")).toBeNull();
   });
 
   it("an edited envelope reaches the adapter: recipients added, Bcc typed, all on the mutation", async () => {
@@ -496,8 +536,10 @@ describe("the reply head opens into editable recipients", () => {
     } as never);
 
     await mountShell();
-    await act(async () => { reply().querySelector<HTMLButtonElement>(".reply-head-btn")!.click(); });
-    const prefilled = reply().querySelector<HTMLElement>(".reply-rcpt .rcp-chip")!.dataset.entry!;
+    await replyEditor();
+    await act(async () => { changePeople()!.click(); });
+    await settle();
+    const prefilled = lineHolds("To")[0]!;
 
     // Add a second To recipient and blind-copy somebody — the Bcc row is already open
     // (no toggle stands between the head press and a blind copy).
@@ -506,6 +548,7 @@ describe("the reply head opens into editable recipients", () => {
 
     const editor = await replyEditor();
     await act(async () => { typeInto(editor, "Donnerstag passt."); });
+    await settle();
     await act(async () => { sendButton().click(); });
     await settle();
 
@@ -526,15 +569,18 @@ describe("the reply head opens into editable recipients", () => {
 
   it("the edit dies with the editor — reopening computes the audience afresh", async () => {
     await mountShell();
-    await act(async () => { reply().querySelector<HTMLButtonElement>(".reply-head-btn")!.click(); });
+    await replyEditor();
+    await act(async () => { changePeople()!.click(); });
+    await settle();
     await typeRecipient("To", "extra@example.test");
 
-    await key("Escape");
+    await leaveReply();
     await key("r");
+    await replyEditor();
 
     // A fresh head, not the abandoned edit: an envelope edited for one reply must never
     // address the next one.
-    expect(reply().querySelector(".reply-head-btn"), "the editor reopened without its head").not.toBeNull();
-    expect(reply().querySelector(".reply-rcpt")).toBeNull();
+    expect(changePeople(), "the editor reopened without its head").not.toBeNull();
+    expect(rowInput("To")).toBeNull();
   });
 });

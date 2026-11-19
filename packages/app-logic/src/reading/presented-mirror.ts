@@ -18,8 +18,8 @@ import { hideMessages } from "../press/delete-undo.js";
 export const PresentedMirrorContext: Context<EntityReader | null> = createContext<EntityReader | null>(null);
 
 /**
- * The presented mirror a shell handed, or null where none was. It belongs to the reading column alone: its null arm
- * is the column's fail-closed on a host that hands a reader and no ground. A place reads `usePresented()`.
+ * The presented mirror a shell handed, or null where none was: for a part that says itself what it does where none
+ * stands. A place and the reading column read `usePresented()`, which throws.
  */
 export function usePresentedMirror(): EntityReader | null {
   return useContext(PresentedMirrorContext);

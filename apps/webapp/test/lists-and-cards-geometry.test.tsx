@@ -629,7 +629,7 @@ describe("the Screener: the newest letter clears the decision bar, the first row
           import { NextIntlClientProvider } from "next-intl"; import { OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
           import { ThemeProvider } from "@ohmail/ui"; import messages from "./messages/en.json";
           import { useScreenerState } from "@ohmail/app-logic/screener/screener-state"; import { useScreenerText } from "./app/shell/screener-text"; import { ScreenerView } from "./app/views/ScreenerView";
-          import { KeymapProvider } from "@ohmail/app/keys"; import { withBodyDoor } from "./test/_body-door";
+          import { KeymapProvider } from "../../../test/support/keymap-provider"; import { withBodyDoor } from "./test/_body-door";
           const NOW = new Date("2026-08-10T12:00:00.000Z");
           const msg = (s, i) => ({ id: "m" + s + "-" + i, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
             subject: "Offer " + s + "/" + i + ": quarry invoice glacier review", from: { name: "Vane Offers " + s, address: "offers" + s + "@vane.invalid" },

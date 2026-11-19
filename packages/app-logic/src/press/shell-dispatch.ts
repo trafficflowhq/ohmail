@@ -13,6 +13,7 @@
 import type { EngineMutation } from "@ohmail/wire";
 import { useMemo, useRef, type MutableRefObject } from "react";
 import {
+  deleteIntentKey,
   inverseMutations,
   PRESS_THREW,
   pressVerdict,
@@ -41,8 +42,8 @@ import type { StorageScope } from "../storage/scope.js";
  * WHAT THE SPINE IS HANDED. Every field is required and none has a default: a forgotten `demo`
  * would leave the replay and the routing window enabled in the fixture world, which is the shape
  * of an absent configuration selecting the live branch. `refreshFacts` has a constant identity (a
- * ref at the provider), and `reader` is the render's own `engine.read()` — handed in rather than
- * re-read here, so a press asks the mirror the shell last rendered against.
+ * ref at the provider), and `reader` is the engine's one reader for its life; the seam reads none of
+ * it: its press watch asks the engine itself at a change, only while a press waits (`press-watch.ts`).
  */
 export interface ShellDispatchInput {
   engine: OhmailEngine;
@@ -111,10 +112,16 @@ export interface ShellDispatch {
   ) => Promise<number>;
   /** Where the Ohbox registers its answer to an Undo — see {@link UndoLink}. */
   undoLink: MutableRefObject<UndoLink | null>;
+  /**
+   * The letters this seam's own verbs sent away this session (a delete once its window closed, a move to a folder):
+   * a tombstone one of them left is this tab's own, never another app's. Read at each call. Every seam this hook
+   * makes hands it; a seam a shell assembles of its own parts may not (then nothing reads as this tab's own).
+   */
+  ownGone?: { has(id: string): boolean };
 }
 
 export function useShellDispatch({
-  engine, reader, toast: show, t, placeLabel, demo, refreshFacts, scope,
+  engine, toast: show, t, placeLabel, demo, refreshFacts, scope,
 }: ShellDispatchInput): ShellDispatch {
   /* THE ONE UNDO DOOR (`undo-door.ts`), built once over the host's toast. Every sentence below
      goes out through it; only the ones marked `undo` arm `z`. */
@@ -122,6 +129,11 @@ export function useShellDispatch({
   const door = useMemo(() => createUndoDoor(showLatest), [showLatest]);
   const toast = door.toast;
   const undoLink = useRef<UndoLink | null>(null);
+  /* What this seam's presses moved away itself, for the session: written as the mutation leaves. */
+  const movedAway = useRef<Set<string>>(new Set()).current;
+  const sentAway = (m: EngineMutation): void => {
+    if (m.kind === "message_delete" || m.kind === "move") movedAway.add(m.messageId);
+  };
   /* A held window's Undo sends nothing, so it has taken back everything it names. Answers
      whether the person had moved on from one of them (the toast's sentence follows it). */
   const rowsUndone = useStableCallback((ids: readonly string[]): boolean => {
@@ -166,7 +178,9 @@ export function useShellDispatch({
        the only place that covers both, and `test/filing-refresh-on-decision.test.tsx` pins this
        line by name: nothing conflicts here, so a census that only read this file would have gone
        vacuous for `message_delete` instead of red. */
-    mutate: (messageId) => fileAndRefresh(engine.mutate({ kind: "message_delete", messageId })),
+    mutate: (messageId, pressId) => fileAndRefresh(
+      engine.mutate({ kind: "message_delete", messageId }, { key: deleteIntentKey(pressId, messageId) }),
+    ),
     toast,
     onUndone: rowsUndone,
     copy: {
@@ -300,7 +314,7 @@ export function useShellDispatch({
         )
       : undefined,
   });
-  const pressWatch = usePressWatch(reader);
+  const pressWatch = usePressWatch(engine);
   const refusalCopy = useMemo(
     () => ({
       named: (name: string) => t("screener.readerMoveRefused", { name }),
@@ -368,13 +382,15 @@ export function useShellDispatch({
    * is undone here — the overlay is the engine's own, already rolled back by the time this
    * resolves; the interface is simply told the truth about it.
    */
-  const dispatchPress = useStableCallback((mutation: EngineMutation): Promise<PressOutcome> =>
-    engine.mutate(mutation).then(
+  const dispatchPress = useStableCallback((mutation: EngineMutation): Promise<PressOutcome> => {
+    sentAway(mutation);
+    return engine.mutate(mutation).then(
       pressVerdict,
       /* `mutate` resolves with a verdict rather than rejecting, so a throw here is this client
          failing — still a press that did nothing, and still owed a sentence. */
       () => PRESS_THREW,
-    ));
+    );
+  });
 
   /**
    * THE SENTENCE A WAIT GETS. `organizer` is a request the SERVER recorded for the install that
@@ -540,5 +556,7 @@ export function useShellDispatch({
     mutateAndReport,
     mutateSetAndReport,
     undoLink,
+    /* A delete is sent from its window, after it closed: the window's own record of what landed. */
+    ownGone: { has: (id) => movedAway.has(id) || deleting.landedIds.includes(id) },
   };
 }

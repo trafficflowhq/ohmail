@@ -1,14 +1,10 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { FocusFollows } from "@ohmail/app-logic/keys/focus-follows";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import { act, cleanup } from "@testing-library/react";
+import type { OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage, type MountedStage } from "./_first-run-stage.js";
 
 /**
  * ═══ ↵ DOES WHAT THE ↵ BADGE SAYS, ON SETUP'S LAST STEP ════════════════════════════════════
@@ -17,11 +13,13 @@ import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors
  * control and the step took it away, so the shell's focus rule landed in the card at its first
  * control — "Start over", the summary having no Cancel — and ↵ asked to start setup over while
  * "Open ohmail" wore the ↵ badge. Mounted with the shell's `FocusFollows`, as the app mounts it.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`_first-run-stage.tsx`), whose own focus rule replaces the shell's `FocusFollows`; the mailbox is
+ * the ground's row, the holder's date its `holderSince`; a choice is the step's radio by its name; the words the
+ * stage's catalogue. Every expectation is as it stood.
  */
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const t = messages.onboarding;
+const t = O;
 
 const PEEKED: OnboardingMailbox = {
   organizerRole: "reader",
@@ -31,17 +29,10 @@ const PEEKED: OnboardingMailbox = {
   initialImportCompletedAt: null,
 };
 
-const facts: OnboardingFacts = {
-  door: "local",
-  mailbox: PEEKED,
-  account: { onboardingCompletedAt: null },
-  ai: "unset",
-  queuedSenders: 0,
-};
+const ROW = { id: id("mb-1"), address: "me@example.invalid", ...PEEKED, holderSince: "30 Aug 2026" } as FirstRunRow;
 
-const roots: Root[] = [];
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
@@ -50,39 +41,20 @@ const flush = async (): Promise<void> => {
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
 };
 
-async function mount(): Promise<{ el: HTMLElement; completed: () => number }> {
+async function mount(): Promise<{ el: HTMLElement; st: MountedStage; completed: () => number }> {
   let completes = 0;
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  const host: FirstRunHost = {
+  const st = await mountStage({
+    rows: [ROW],
     door: "local",
-    ai: facts.ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async () => "stored",
-    complete: async () => { completes += 1; },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, {
-        children: [
-          h(FocusFollows, { key: "ff" }),
-          h(FirstRun, {
-            key: "fr", host, facts, onRefresh: () => {}, onLeave: () => {},
-            pull: { screened: 0, history: 0, pulled: 0 }, decide: null,
-            mailboxId: "mb-1", organizedSince: "30 Aug 2026",
-          }),
-        ],
-      }),
-    }));
+    verbs: {
+      ai: "unset",
+      organize: async () => "stored",
+      complete: async () => { completes += 1; },
+      setAiEnabled: async () => { /* answered */ },
+    },
   });
-  return { el, completed: () => completes };
+  await flush();
+  return { el: st.el, st, completed: () => completes };
 }
 
 /** ↵ as a browser delivers it: keydown at the focused element, then a focused button's activation. */
@@ -105,8 +77,7 @@ const heading = (el: HTMLElement): string => (el.querySelector("h1")?.textConten
 
 async function toSummary(): Promise<{ el: HTMLElement; completed: () => number }> {
   const s = await mount();
-  const read = [...s.el.querySelectorAll<HTMLInputElement>("input[type=radio]")].find((i) => i.value === "read");
-  await act(async () => { read!.click(); });
+  await s.st.pick(t.elsewhereChoiceRead);
   await act(async () => { button(s.el, t.continue).focus(); });
   await enter();
   expect(heading(s.el), "Continue did not reach the summary").toBe(t.doneReaderTitle);

@@ -13,7 +13,6 @@ import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore, OhmailEngine, mutationEffects, type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
-import { forgetOpenVerdict, markOpenVerdict } from "@ohmail/app-logic/session/access-window";
 import { namesOwner, resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import messages from "../messages/en.json";
 import { act, consentTransport, msg, NOW, S, setup, teardown, waitFor } from "./_view-shell.js";
@@ -181,39 +180,8 @@ describe("today's views keep their looks under the shell's scope", () => {
   }, 30_000);
 });
 
-describe("the mail state asks the access window for the scope its host handed", () => {
-  const behind = (messages as unknown as { frame: { connection: { behind: { title: string; asOf: string } } } })
-    .frame.connection.behind;
-  /* The catalogue's own words around the time of the dated sentence. */
-  const [before, after] = behind.asOf.split(/\{[^}]*\}/) as [string, string];
-  /* The copy on screen last finished a sync three days ago, as the host's copy-age read says it. */
-  const asOf = new Date(Date.now() - 3 * 86_400_000).toISOString();
-  const staleCopy = { mirrorFreshness: async () => ({ state: "stale" as const, asOf }) };
-  /** What the frame's notices say of a copy that is catching up: with its date, or without. */
-  const catchingUp = (el: HTMLElement): string[] =>
-    [...el.querySelectorAll<HTMLElement>('[role="status"]')].map((n) => (n.textContent ?? "").trim())
-      .filter((said) => said.includes(behind.title) || (said.includes(before) && said.includes(after)));
-
-  /* The service said open for B over a stored refusal a moment ago, and the storage owner has come to name B. */
-  beforeEach(() => {
-    setStorageOwner(B);
-    markOpenVerdict(B, Date.now() - 20_000, true);
-  });
-  afterEach(() => { forgetOpenVerdict(); });
-
-  it("another account's reopening withholds no date of the copy this shell shows", async () => {
-    const el = await shellIn(A, staleCopy);
-    await waitFor(() => catchingUp(el).length > 0, "the catching-up notice", 5000);
-    expect(catchingUp(el).join(" | "), "B's reopening withheld the date of A's copy").toContain(before);
-  }, 30_000);
-
-  it("CONTROL: the reopening of the account its host named withholds the date from before it", async () => {
-    const el = await shellIn(B, staleCopy);
-    await waitFor(() => catchingUp(el).length > 0, "the catching-up notice", 5000);
-    expect(catchingUp(el).join(" | ")).not.toContain(before);
-    expect(catchingUp(el).join(" | ")).toContain(behind.title);
-  }, 30_000);
-});
+// "the mail state asks the access window for the scope its host handed" (two cases over the new shell's door) moved
+// word for word to `views-keep-the-shell-scope-ground.test.tsx`.
 
 describe("the rail and the review keep theirs under the scope the shell hands them", () => {
   let root: Root | null = null;
@@ -244,21 +212,8 @@ describe("the rail and the review keep theirs under the scope the shell hands th
     expect(whose(keysHolding("mb1|Projects"))).toEqual(UNDER_A);
   });
 
-  it("the sent-mail review put off under A while the storage owner names B is A's", async () => {
-    setStorageOwner(B);
-    const { useSeedOffer } = await import("../app/shell/seed-offer");
-    let later: (() => void) | null = null;
-    function Probe(): null {
-      const offer = useSeedOffer({
-        scope: A, demo: false, known: true, supported: true, seedConfirmedAt: null, hasMailbox: true,
-      } as never);
-      later = offer.later;
-      return null;
-    }
-    await mountIn(React.createElement(Probe));
-    await act(async () => { later!(); });
-    expect(whose(keysHolding("1", true).filter((k) => k.startsWith("ohmail.ui.seed.notNow.")))).toEqual(UNDER_A);
-  });
+  // "the sent-mail review put off under A while the storage owner names B is A's" moved to
+  // `views-keep-the-shell-scope-ground.test.tsx`, over the first run's own module.
 });
 
 describe("drawn in no shell, a view keeps nothing", () => {
@@ -272,7 +227,7 @@ describe("drawn in no shell, a view keeps nothing", () => {
     document.body.appendChild(el);
     root = createRoot(el);
     const { ThemeProvider } = await import("@ohmail/ui");
-    const { KeymapProvider } = await import("@ohmail/app/keys");
+    const { KeymapProvider } = await import("../../../test/support/keymap-provider");
     await act(async () => {
       root!.render(React.createElement(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "UTC", now: NOW,
@@ -302,26 +257,10 @@ describe("drawn in no shell, a view keeps nothing", () => {
     expect({ shown: order.value, stored: stored() }).toEqual({ shown: "date_asc", stored: before });
   });
 
-  it("a letter shown in its original look alone keeps the choice for itself and stores nothing", async () => {
-    const { COPY, MessageBody } = await import("../app/letter-body/MessageBody.js");
-    const el = await bare(React.createElement(MessageBody, { text: "Newsletter", html: LIGHT, messageId: "m-1" } as never));
-    const before = stored();
-    await press(buttonSaying(el, COPY.darkOriginal), "Original");
-    expect({ shown: buttonSaying(el, COPY.darkAdapt) != null, stored: stored() }).toEqual({ shown: true, stored: before });
-  });
-
-  it("the attach dial moved alone shows the move and stores nothing", async () => {
-    const { ComposeAttach } = await import("../app/components/ComposeAttach");
-    const zone = { current: document.createElement("div") };
-    const el = await bare(React.createElement(ComposeAttach, { attachments: [], onChange: () => {}, dropZone: zone } as never));
-    const before = stored();
-    const dial = el.querySelector<HTMLSelectElement>(".compose-attach-level select")!;
-    await act(async () => {
-      dial.value = "low";
-      dial.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    expect({ shown: dial.value, stored: stored() }).toEqual({ shown: "low", stored: before });
-  });
+  // "a letter shown in its original look alone…" moved to `views-keep-the-shell-scope-alone.test.tsx`, over the body
+  // the new reader mounts. "the attach dial moved alone…" (today's ComposeAttach) left with that part: Write's quality
+  // is drawn only inside the frame, under its scope; a part drawn under no scope names no key, the frame's rule
+  // (`packages/app/test/frame/scope.test.tsx`, "is none where no scope stands above…").
 
   it("the picture quality and the after-verb rows pressed alone store nothing", async () => {
     const { ImageQualityRow } = await import("../app/shell/ImageQualityRow");
@@ -335,25 +274,5 @@ describe("drawn in no shell, a view keeps nothing", () => {
   });
 });
 
-describe("the shell's mount of its scope is no second way to read it", () => {
-  it("a part that holds the provider reads nothing through it, while the scope's own hook reads the shell's", async () => {
-    const { TodaysScopeProvider, useTodaysScope } = await import("../app/shell/todays-scope");
-    const read: { throughTheProvider: unknown; throughTheHook: unknown } = { throughTheProvider: "not drawn", throughTheHook: "not drawn" };
-    function Outsider(): null {
-      /* Every file may import the provider; were it the context itself, this would be the shell's scope. */
-      read.throughTheProvider = React.useContext(TodaysScopeProvider as unknown as React.Context<string | null>);
-      return null;
-    }
-    function Reader(): null {
-      read.throughTheHook = useTodaysScope();
-      return null;
-    }
-    const root = createRoot(document.createElement("div"));
-    await act(async () => {
-      root.render(React.createElement(TodaysScopeProvider, { value: "acc-A" },
-        React.createElement(Outsider), React.createElement(Reader)));
-    });
-    await act(async () => { root.unmount(); });
-    expect(read).toEqual({ throughTheProvider: undefined, throughTheHook: "acc-A" });
-  });
-});
+// "the shell's mount of its scope is no second way to read it" read today's `todays-scope`, which leaves with today's
+// shell: a part reads the frame's scope through `useScopeHere()` (`packages/app/test/frame/scope.test.tsx`).

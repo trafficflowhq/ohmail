@@ -10,9 +10,10 @@ import { markSessionAlive, markSessionDead } from "@ohmail/app-logic/session/ses
 import type { ReactNode } from "react";
 import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import type { ListVisit } from "@ohmail/app-logic/reading";
-import { useRoomHandOver, type ResurfaceTime } from "../../src/frame/room.js";
+import { useRoomResurface, type ResurfaceTime } from "../../src/frame/room.js";
 import { fakeAppearance } from "../support/fake-window.js";
-import { freshRecord, letter, mountReader, READER_PLACE } from "./support/mail.js";
+import { freshRecord, letter, mountReader, READER_PLACE, WORDS } from "./support/mail.js";
+import frameEn from "../../messages/frame.en.json" with { type: "json" };
 
 /**
  * A CONVERSATION'S LETTERS, each handed to the shell's body with its own pictures, the app's scheme and the session's
@@ -249,17 +250,36 @@ describe("the conversation as the lists present it", () => {
     expect([...handed.keys()]).toEqual(["a-let-in"]);
   });
 
-  it("with no presented mirror handed, no letter loads its pictures by itself: each offers the press", () => {
-    const { handed } = mountReader({
-      letters: LETTERS,
-      open: "m-let-in",
-      presented: null,
-      parts: { pictures: seam() },
-    });
-    expect(handed.size).toBe(3);
-    for (const props of handed.values()) {
-      expect(props).toMatchObject({ remoteLoaded: false });
-      expect(props.onLoadRemote).toBeTypeOf("function");
+  it("with no presented mirror handed, no letter loads its pictures by itself: the column is not drawn, and says why", () => {
+    const said = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const pictures = seam();
+    const proxy = vi.spyOn(pictures, "proxyFor");
+    const load = vi.spyOn(pictures, "needRemote");
+    try {
+      const { handed } = mountReader({
+        letters: LETTERS,
+        open: "m-let-in",
+        presented: null,
+        parts: { pictures },
+        words: { ...WORDS.en, viewError: frameEn.viewError },
+      });
+      const error = said.mock.calls.find(
+        ([kind, place]) => kind === "[view] render failed" && place === "ohbox",
+      )?.[2];
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toHaveProperty(
+        "message",
+        "usePresented: no presented mirror stands above (PresentedMirrorContext)",
+      );
+      const column = within(screen.getByRole("region", { name: "Reading" }));
+      expect(column.getByRole("region", { name: frameEn.viewError.title })).toBeTruthy();
+      expect(column.queryByRole("article")).toBeNull();
+      expect(handed.size).toBe(0);
+      expect(pictures.consents).toEqual([]);
+      expect(proxy).not.toHaveBeenCalled();
+      expect(load).not.toHaveBeenCalled();
+    } finally {
+      said.mockRestore();
     }
   });
 });
@@ -445,7 +465,7 @@ describe("a letter whose text is not kept here", () => {
       host: {
         wires: { liveBody: () => new Promise<never>(() => undefined) } as never,
         places: { ohbox: READER_PLACE, settings: { ...READER_PLACE, id: "settings" } },
-        mailboxes: async () => [{ id: "mb-1", address: "me@studio.example", status: "removed" }],
+        mailboxes: async () => [{ id: "mb-1", address: "me@studio.example", status: "disabled" }],
       },
     });
     await screen.findByText(/no longer reads this mailbox/);
@@ -683,7 +703,7 @@ describe("the head", () => {
       open: "c4",
       host: { mailboxes: async () => ME },
     });
-    const head = screen.getByRole("heading", { level: 1 }).closest("header")!;
+    const head = screen.getByRole("heading", { level: 2 }).closest("header")!;
     expect(await within(head).findByText("Giulia Ferrari, Ben Arnold")).toBeTruthy();
     expect(head.textContent).not.toContain("Mila Brunner");
   });
@@ -699,18 +719,18 @@ describe("the head", () => {
       open: "g2",
       rows: { "thread:t1": { id: "t1", subject: "Glaze order #2291" } },
     });
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Glaze order #2291");
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Glaze order #2291");
     cleanup();
     // Before its thread has synced, the opened letter's own.
     mountReader({ letters: glaze, open: "g2" });
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Re: Glaze order #2291");
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Re: Glaze order #2291");
     cleanup();
     mountReader({
       letters: [letter("s1", { threadId: "t2", subject: "Re: Kiln schedule" })],
       open: "s1",
       rows: { "thread:t2": { id: "t2", subject: "Kiln schedule" } },
     });
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Re: Kiln schedule");
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Re: Kiln schedule");
   });
 
   it("prints You for the sender of a letter of the account's own, once the room has read the mailboxes", async () => {
@@ -888,7 +908,7 @@ describe("the panel's menus", () => {
       expect(screen.queryByRole("menuitem", { name: /^Next week/ })).toBeNull();
     });
 
-    describe("the account's hour, as the shell hands it to the room", () => {
+    describe("the account's hour, as a part above the panes hands it to the room", () => {
       /** What the list's path heard, and what was kept, in the order it happened. */
       const heard: string[] = [];
       beforeEach(() => {
@@ -896,13 +916,10 @@ describe("the panel's menus", () => {
       });
       const store = vi.fn(async (hhmm: string) => void heard.push(`kept ${hhmm}`));
       function handing(resurface: ResurfaceTime) {
-        /* A shell above the panes hands the room its seam and the account's hour; the list's visit runs the verbs. */
-        const seam = {
-          deleting: { held: new Set<string>() },
-          routing: { places: new Map<string, string>() },
-        } as unknown as ShellDispatch;
+        /* A part above the panes hands the room's own seam the account's hour, as the mail ground does; the list's
+           visit runs the verbs. */
         function Shell({ children }: { children: ReactNode }) {
-          useRoomHandOver({ seam, rows: null, resurface });
+          useRoomResurface(resurface);
           return <>{children}</>;
         }
         const visit: ListVisit = {
@@ -923,9 +940,7 @@ describe("the panel's menus", () => {
           },
         };
         const meeting = { visit, blank: null };
-        /* A shell that hands its own seam says so: the room then mounts none beside it. */
-        const above = Object.assign(Shell, { handsSeam: true as const });
-        mountReader({ letters: [letter("m1")], open: "m1", meeting, host: { above } });
+        mountReader({ letters: [letter("m1")], open: "m1", meeting, host: { above: Shell } });
       }
       const time = () => screen.getByLabelText("Time", { selector: "input" }) as HTMLInputElement;
       const press = async (name: RegExp) => {

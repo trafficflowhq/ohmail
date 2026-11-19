@@ -143,14 +143,16 @@
     font-weight: var(--oh-actionpanel-weight-held);
   }
 
-  .oh-actionpanel-verb:not([data-kind]):disabled {
+  .oh-actionpanel-verb:not([data-kind]):disabled,
+  .oh-actionpanel-verb:not([data-kind])[aria-disabled="true"] {
     background: transparent;
     color: var(--on-off);
     transform: none;
     cursor: default;
   }
 
-  .oh-actionpanel-verb[data-kind]:disabled {
+  .oh-actionpanel-verb[data-kind]:disabled,
+  .oh-actionpanel-verb[data-kind][aria-disabled="true"] {
     background: var(--off);
     color: var(--on-off);
     transform: none;

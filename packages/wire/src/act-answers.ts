@@ -39,6 +39,11 @@ export interface MutationOutcome {
    * mirror for a lookalike row, the matching that sends the wrong message.
    */
   entityId?: string;
+  /** The draft delivered by this send. Together with its change sequence this identifies
+   * the reservation a still-sending row can lag behind. A scheduled or uncertain send names none. */
+  sentDraftId?: string;
+  /** On a settled replay, the draft was still sent at this account sequence. The replay emitted no change. */
+  sentDraftThrough?: number;
   /** The version a `draft_save` left the row at (`DraftDTO.contentRevision`), when the server said. */
   revision?: string;
   /**

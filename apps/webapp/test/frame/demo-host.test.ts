@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CANNOT, FEATURE_NAMES, NONE, type FrameSupplies, type HostContract } from "@ohmail/app/host";
 import { DEMO_STORAGE_OWNER } from "@ohmail/app-logic/storage/storage-owner";
+import { DEMO_NOW } from "@ohmail/testing/adapter";
 import { demoHost } from "../../app/(product)/demo/host";
 
 /** The invented world reaches nothing: every wire, read, feature and signal is none, and it says its own service. */
@@ -12,7 +13,7 @@ const frame = {
 const engine = named<HostContract["engine"]>("engine");
 
 describe("the demo's host", () => {
-  const host = demoHost(engine, frame, { service: "managed", sendCeiling: "strict" });
+  const host = demoHost(engine, frame, { service: "managed", sendCeiling: "strict" }, NONE);
 
   it("hands no wire, read, feature or signal to the invented world", () => {
     expect(Object.values(host.wires).every((w) => w === NONE)).toBe(true);
@@ -20,12 +21,16 @@ describe("the demo's host", () => {
     expect(host.reads).toEqual({ mailboxes: NONE, copyAge: NONE, access: NONE });
     expect(FEATURE_NAMES.filter((f) => host.features[f] !== NONE)).toEqual([]);
     expect(Object.values(host.signals).every((s) => s === NONE)).toBe(true);
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: DEMO_STORAGE_OWNER, account: null, recover: NONE, signOut: NONE });
+    /* The one member the demo says beside its partition: its frozen day (the demo keeps it, as today's did). */
+    expect(host.session).toEqual({
+      resolve: NONE, confirmed: NONE, state: NONE, scope: DEMO_STORAGE_OWNER, account: null, accountAddress: null, recover: NONE, signOut: NONE,
+      today: DEMO_NOW,
+    });
   });
 
   it("says its service and its ceiling as the page names them, and marks its rules", () => {
     expect(host.capabilities).toEqual({ ...CANNOT, service: "managed", sendCeiling: "strict", rulesMarked: true });
-    expect(demoHost(engine, frame, { service: "self", sendCeiling: 1024 }).capabilities).toMatchObject({ service: "self", sendCeiling: 1024 });
+    expect(demoHost(engine, frame, { service: "self", sendCeiling: 1024 }, NONE).capabilities).toMatchObject({ service: "self", sendCeiling: 1024 });
   });
 
   it("stands in a browser: the frame's address, window and look, and the browser's notifications", () => {
