@@ -5,8 +5,9 @@
  * rests; the words typed in the new view are the composition's, kept across a remount; offline, the letter waits
  * and says so.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
+import { setFormatWords } from "@ohmail/app-logic/text";
 import { readComposeDraft, resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import { COMPOSE_ATTACH_MAX_TOTAL_BYTES, type ImageQualityLevel } from "@ohmail/client-engine";
 import en from "../../messages/en.json";
@@ -401,33 +402,54 @@ describe("send later", () => {
   });
 
   it("with the card open, Mod+Enter schedules the time it holds and nothing goes now; 2 takes tomorrow morning", async () => {
+    const noon = new Date("2026-11-20T12:00:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"], now: noon });
+    setFormatWords({ locale: () => "en", zone: () => "UTC", translatorOf: () => null });
+    onTestFinished(() => {
+      vi.useRealTimers();
+      setFormatWords(null);
+    });
     const w = await mountWriting({ view: true });
     await typeLetter("lena@example.invalid", "For the morning.");
     await act(async () => {
       fireEvent.click(verb(W.later.verb));
     });
+    const day = screen.getByLabelText<HTMLInputElement>(W.later.day).value;
+    const time = screen.getByLabelText<HTMLInputElement>(W.later.time);
+    const held = `${day}T${time.value}:00.000Z`;
+    expect(sends(w)).toBe(0);
     await act(async () => {
-      fireEvent.keyDown(screen.getByLabelText(W.later.time), { key: "Enter", ctrlKey: true });
+      fireEvent.keyDown(time, { key: "Enter", ctrlKey: true });
     });
     await rounds(10);
     const first = w.sent.filter((m) => m.kind === "mail_send") as { sendAt?: string }[];
     expect(first).toHaveLength(1);
+    expect(first[0]!.sendAt).toBe(held);
     expect(Date.parse(first[0]!.sendAt ?? "")).toBeGreaterThan(Date.now() + 60_000);
-    await unmountWritings();
-    const again = await mountWriting({ view: true });
-    await typeLetter("lena@example.invalid", "For the morning.");
-    await act(async () => {
-      fireEvent.click(verb(W.later.verb));
-    });
-    await act(async () => {
-      fireEvent.keyDown(screen.getByRole("button", { name: W.later.confirm }), { key: "2" });
-    });
-    await rounds(10);
-    const out = again.sent.filter((m) => m.kind === "mail_send") as { sendAt?: string }[];
-    expect(out).toHaveLength(1);
-    const at = new Date(out[0]!.sendAt ?? "");
-    expect(at.getTime()).toBeGreaterThan(Date.now());
-    expect(at.getDate()).not.toBe(new Date().getDate());
+
+    // In the small hours, "tomorrow morning" means the coming morning on the same calendar day.
+    const mornings = [
+      [noon, "2026-11-21T09:00:00.000Z"],
+      [new Date("2026-11-20T01:23:00.000Z"), "2026-11-20T09:00:00.000Z"],
+    ] as const;
+    for (const [now, sendAt] of mornings) {
+      await unmountWritings();
+      vi.setSystemTime(now);
+      const again = await mountWriting({ view: true });
+      await typeLetter("lena@example.invalid", "For the morning.");
+      await act(async () => {
+        fireEvent.click(verb(W.later.verb));
+      });
+      expect(sends(again)).toBe(0);
+      await act(async () => {
+        fireEvent.keyDown(screen.getByRole("button", { name: W.later.confirm }), { key: "2" });
+      });
+      await rounds(10);
+      const out = again.sent.filter((m) => m.kind === "mail_send") as { sendAt?: string }[];
+      expect(out).toHaveLength(1);
+      expect(out[0]!.sendAt).toBe(sendAt);
+      expect(Date.parse(sendAt)).toBeGreaterThan(Date.now());
+    }
   });
 
   it("with the card open, Mod+Enter from the letter's text sends nothing now", async () => {
