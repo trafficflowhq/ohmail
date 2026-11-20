@@ -572,6 +572,25 @@ describe("the table of installers is derived from the build workflow, not kept b
     expect(Object.keys(uploaded).length, "build.yml stopped uploading installers where this test reads them").toBe(9);
     expect(INSTALLERS).toEqual(uploaded);
   });
+
+  /* A feeds re-run for a release page reads these artifacts of the tag's build, and the repository's
+   * default retention is short, so each installer upload states its own: 90 days on a tag build. */
+  it("keeps every installer a tag build uploads for 90 days, whatever the repository default", () => {
+    const kept: Record<string, string | undefined> = {};
+    for (let i = 0; i < buildText.length; i++) {
+      if (!/uses: actions\/upload-artifact/.test(buildText[i])) continue;
+      const window = buildText.slice(i, i + 6);
+      const name = window.find((l) => /^\s+name:\s/.test(l))?.replace(/^\s+name:\s*/, "").trim();
+      const path = window.find((l) => /^\s+path:\s/.test(l))?.replace(/^\s+path:\s*/, "").trim();
+      if (!name || !path?.match(/^build\/[^/]+$/)) continue;
+      const days = window.find((l) => /^\s+retention-days:\s/.test(l))?.replace(/^\s+retention-days:\s*/, "").trim();
+      kept[name] = days;
+    }
+    expect(Object.keys(kept).length, "build.yml stopped uploading installers where this test reads them").toBe(9);
+    for (const [name, days] of Object.entries(kept)) {
+      expect(days, `${name}: retention on tag and non-tag builds`).toMatch(/^\$\{\{\s*startsWith\(github\.ref, 'refs\/tags\/'\) && 90 \|\| 3\s*\}\}$/);
+    }
+  });
 });
 
 describe("the Android table and the release key are read from android.yml, not kept beside it", () => {
@@ -608,7 +627,7 @@ describe("the Android table and the release key are read from android.yml, not k
 
   /* The feeds read the APK and the mapping on a desktop page against these artifacts before they
    * sign anything, so an artifact that expires first refuses a feeds re-run for the whole page.
-   * build.yml's installers carry the repository default, 90 days. */
+   * build.yml's installers state 90 days on a tag build. */
   it("keeps every artifact the feeds read for 90 days, as long as the desktop installers", () => {
     const lines = androidText.split("\n");
     const from = lines.indexOf("  build:");
@@ -618,10 +637,18 @@ describe("the Android table and the release key are read from android.yml, not k
       const window = lines.slice(i, i + 6);
       const name = window.find((l) => /^\s+name:\s/.test(l))?.replace(/^\s+name:\s*/, "").trim();
       const days = window.find((l) => /^\s+retention-days:\s/.test(l))?.replace(/^\s+retention-days:\s*/, "").trim();
-      if (name) kept[name] = days === undefined ? 90 : Number(days);
+      if (name) kept[name] = Number(days);
     }
     for (const want of Object.values(ANDROID_ASSETS)) {
-      expect(kept[want.artifact], `${want.artifact} retention in android.yml's tag build`).toBeGreaterThanOrEqual(90);
+      expect(kept[want.artifact], `${want.artifact} retention in android.yml's tag build`).toBe(90);
+    }
+  });
+
+  it("keeps the non-tag APK and its mapping for three days", () => {
+    for (const name of ["ohmail-android-debug-signed", "ohmail-android-debug-mapping"]) {
+      const upload = androidText.split("\n").findIndex((line) => line.trim() === `name: ${name}`);
+      expect(upload, `${name} upload`).toBeGreaterThan(-1);
+      expect(androidText.split("\n").slice(upload, upload + 5).join("\n")).toMatch(/retention-days: 3(?:\n|$)/);
     }
   });
 
