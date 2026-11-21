@@ -107,7 +107,7 @@ export function enrollmentSession(
   // Bearer-only host: the token is already in the body (that is the native shape), so the
   // cookies are the only part that has to go. See {@link cookieSurface}.
   if (!cookieSurface(deps)) return json(est, status);
-  return json(est, status, enrollmentCookies(
+  return json({ ...est, familyId: deps.credentialFamily }, status, enrollmentCookies(
     est.enrollmentToken, csrfTokenFor(est.enrollmentToken), deps.authConfig, deps.credentialFamily,
   ));
 }
@@ -124,11 +124,9 @@ export function enrollmentResult<T extends { session?: SessionEstablished }>(dep
   if (!r.session || deps.session?.via === "bearer" || !cookieSurface(deps)) return json(r, 200);
   const cookies = sessionCookies(
     r.session.tokens!, csrfTokenFor(r.session.tokens!.accessToken), deps.authConfig,
-    // The enrollment session that is being RETIRED here never carried one (see
-    // `enrollmentCookies`); the full session replacing it does, from its own user.
     r.session.user?.accountId ?? null,
     deps.credentialFamily,
   );
   const { tokens: _tokens, ...session } = r.session;
-  return json({ ...r, session }, 200, cookies);
+  return json({ ...r, session: { ...session, familyId: deps.credentialFamily } }, 200, cookies);
 }

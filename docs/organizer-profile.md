@@ -86,7 +86,7 @@ One RFC822 message in `ohmail/_meta`:
     {
       "kind": "sender" | "domain" | "header",
       "match": "<address | domain | header spec>",
-      "destination": "<canonical folder NAME, e.g. ohmail/Reads>",
+      "destination": "<canonical folder NAME, e.g. ohmail/News>",
       "priority": 0,
       "enabled": true,
       "provenance": "manual" | "migrated" | "promoted" | "seeded-from-sent",
@@ -141,7 +141,7 @@ The envelope:
 | --- | --- | --- |
 | `kind` | `"sender"` \| `"domain"` \| `"header"` | What `match` is matched against. |
 | `match` | string | The address, the domain, or the header spec. |
-| `destination` | string | The canonical folder **name** (`ohmail/Reads`, `ohmail/Screened`, …) — never an internal id. |
+| `destination` | string | The canonical folder **name** (`ohmail/News`, `ohmail/Screened`, …) — never an internal id. |
 | `priority` | number | Higher wins between overlapping rules; `0` is the default. Read as a whole number from 0 to 1000; a value outside that range is read as the nearest end. |
 | `enabled` | boolean | A disabled rule is kept, not deleted — re-enabling restores it exactly. |
 | `provenance` | string | How the rule came to be. Today's writers emit `"manual"` (written by hand), `"migrated"` (imported from another tool), `"promoted"` (a screening decision — a screen-out and a spam verdict both leave one), or `"seeded-from-sent"` (the onboarding pass over your own Sent mail). The field is open: a reader must carry an unknown value through unchanged, never reject the profile over it. |
@@ -166,7 +166,7 @@ The envelope:
 | `endsAt` | ISO 8601 or null | When it stops. |
 | `audience` | `"screened_in"` \| `"everyone"` | Who gets an answer. |
 | `throttle` | `"always"` \| `"per_message"` \| `"per_day"` \| `"per_week"` | How often one person may be answered. `"per_message"` means once until the text changes. Absent in a document written by an older ohmail, which reads as `"per_day"`. |
-| `piles` | array of `"INBOX"` \| `"ohmail/Reads"` \| `"ohmail/Receipts"` \| `"ohmail/Screener"` | Which piles the responder answers. A SET: duplicates are collapsed and order carries no meaning. An empty array means it answers nobody. **Absent means unstated, not the default** — a document written by an older ohmail says nothing about scope, and a reader applying one leaves its own stored value alone rather than narrowing it. Members a reader does not recognise are dropped. |
+| `piles` | array of `"INBOX"` \| `"ohmail/Reads"` \| `"ohmail/Receipts"` \| `"ohmail/Screener"` | Which piles the responder answers. `ohmail/News` is also accepted for the News pile; older scopes use `ohmail/Reads`. A SET: duplicates are collapsed and order carries no meaning. An empty array means it answers nobody. **Absent means unstated, not the default** — a document written by an older ohmail says nothing about scope, and a reader applying one leaves its own stored value alone rather than narrowing it. Members a reader does not recognise are dropped. |
 
 The responder is reply-only: it answers in the correspondent's own thread under `Re: ` plus their
 subject, so there is no subject to carry. A document written by an older ohmail may contain a

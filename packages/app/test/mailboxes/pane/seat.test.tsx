@@ -177,7 +177,7 @@ interface Seated {
   readonly account?: AccountPaneParts;
 }
 
-function seated(o: Seated) {
+async function seated(o: Seated) {
   const mail = fakeMail(o.letters ?? []);
   const syncOnce = vi.fn(async () => undefined);
   const engine = {
@@ -235,6 +235,10 @@ function seated(o: Seated) {
     </TextProvider>
   );
   const view = render(frame(SCOPE));
+  if (settings !== NONE && address.read().startsWith("#/settings/mailboxes")) {
+    await screen.findByRole("navigation", { name: settingsEn.settings.navAria });
+    await screen.findByRole("heading", { level: 1, name: settingsEn.settings.mailboxes });
+  }
   return { address, reads, syncOnce, as: (scope: string) => view.rerender(frame(scope)) };
 }
 
@@ -260,7 +264,7 @@ describe("the section reads the account's mailboxes over the ground", () => {
       toSignIn: () => undefined,
     };
     const passwordDoor = { change: async () => ({ ok: true as const, value: { ended: 0 } }) };
-    const { address } = seated({
+    const { address } = await seated({
       pane: () => pane.wire,
       account: {
         useDoor: () => accountDoor,
@@ -295,7 +299,7 @@ describe("the section reads the account's mailboxes over the ground", () => {
 
   it("lists the account's own mailboxes from the section's wire, and its count is the mail state's live mailboxes (a disabled one not counted)", async () => {
     const pane = fakePane({ list: [ok(ROWS)], allowance: [ALLOWED] });
-    seated({
+    await seated({
       pane: () => pane.wire,
       facts: () => [...FACTS, fact("mbx-old", "old@lichtgrat.example", { status: "disabled" })],
     });
@@ -309,7 +313,7 @@ describe("the section reads the account's mailboxes over the ground", () => {
   it("draws nothing where the host answers the section's wire with none, and asks nothing of any wire", async () => {
     const door = fakeDoor();
     const firstRun = verbs();
-    seated({ pane: () => NONE, connect: door.door, firstRun });
+    await seated({ pane: () => NONE, connect: door.door, firstRun });
     await answered();
     expect(head().name).toBe(settingsEn.settings.mailboxes);
     expect(screen.queryByText(M.modeSelfhost)).toBeNull();
@@ -325,7 +329,7 @@ describe("the section reads the account's mailboxes over the ground", () => {
       allowance: [ALLOWED, ALLOWED, ALLOWED],
       resync: [ok(null)],
     });
-    const made = seated({
+    const made = await seated({
       at: "#/settings/mailboxes?mailbox=mbx-a",
       pane: () => pane.wire,
       connect: door.door,
@@ -358,7 +362,7 @@ describe("the section reads the account's mailboxes over the ground", () => {
 describe("connecting goes to the first run's add run over the ground", () => {
   it("Connect a mailbox writes the add run into the address and the first run's mailbox step stands; with no first run it is not offered", async () => {
     const pane = fakePane({ list: [ok(ROWS)], allowance: [ALLOWED] });
-    const made = seated({ pane: () => pane.wire, connect: fakeDoor().door });
+    const made = await seated({ pane: () => pane.wire, connect: fakeDoor().door });
     await answered();
     press(M.connect);
     await answered();
@@ -368,7 +372,7 @@ describe("connecting goes to the first run's add run over the ground", () => {
 
     cleanup();
     const none = fakePane({ list: [ok(ROWS)], allowance: [ALLOWED] });
-    seated({ pane: () => none.wire, connect: fakeDoor().door, stages: false });
+    await seated({ pane: () => none.wire, connect: fakeDoor().door, stages: false });
     await answered();
     expect(rowOf(A)).toBeTruthy();
     expect(screen.queryByRole("button", { name: M.connect })).toBeNull();
@@ -376,7 +380,7 @@ describe("connecting goes to the first run's add run over the ground", () => {
 
   it("the address's word opens a row only where the account's own rows hold it; a word no row holds opens nothing and sends nothing", async () => {
     const pane = fakePane({ list: [ok(ROWS)], allowance: [ALLOWED] });
-    seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
+    await seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
     await answered();
     expect([rowOf(A).getAttribute("aria-expanded"), rowOf(B).getAttribute("aria-expanded")]).toEqual([
       "false",
@@ -385,7 +389,7 @@ describe("connecting goes to the first run's add run over the ground", () => {
 
     cleanup();
     const one = fakePane({ list: [ok([row("mbx-a", A)])], allowance: [ALLOWED] });
-    seated({
+    await seated({
       at: "#/settings/mailboxes?mailbox=mbx-elsewhere",
       pane: () => one.wire,
       facts: () => [FACTS[0]!],
@@ -435,7 +439,7 @@ describe("an edit of a mailbox whose domain is internationalized", () => {
   it("is titled with the mailbox's address in Unicode, never in its ASCII form", async () => {
     const ascii = "post@xn--bcher-kva.example";
     const pane = fakePane({ list: [ok([row("mbx-a", ascii)])], allowance: [ALLOWED] });
-    seated({
+    await seated({
       at: "#/settings/mailboxes?mailbox=mbx-a",
       pane: () => pane.wire,
       connect: fakeDoor().door,
@@ -470,7 +474,7 @@ describe("an edit's password, over the ground", () => {
       list: [ok(ROWS), ok(ROWS), ok(ROWS)],
       allowance: [ALLOWED, ALLOWED, ALLOWED, ALLOWED],
     });
-    const made = seated({
+    const made = await seated({
       at: "#/settings/mailboxes?mailbox=mbx-b",
       pane: () => pane.wire,
       connect: door.door,
@@ -508,7 +512,7 @@ describe("a removal, over the ground", () => {
       allowance: [ALLOWED, ALLOWED],
       erase: [erased],
     });
-    seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
+    await seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
     await answered();
     press(M.remove);
     await settle();
@@ -530,7 +534,7 @@ describe("a removal, over the ground", () => {
       allowance: [ALLOWED, ALLOWED],
       remove: [ok(null)],
     });
-    seated({ at: "#/settings/mailboxes?mailbox=mbx-a", pane: () => pane.wire });
+    await seated({ at: "#/settings/mailboxes?mailbox=mbx-a", pane: () => pane.wire });
     await answered();
     press(M.remove);
     await settle();
@@ -552,7 +556,7 @@ describe("a removal, over the ground", () => {
       refusal: refusal("mailbox_busy", {}, 409, "The mailbox is busy for a moment."),
     };
     const pane = fakePane({ list: [ok(ROWS)], allowance: [ALLOWED, ALLOWED], remove: [busy] });
-    seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
+    await seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
     await answered();
     press(M.remove);
     await settle();
@@ -598,7 +602,7 @@ describe("organizing a mailbox another install holds, over the ground", () => {
       organizer: [peek],
       organizeHere: [taken],
     });
-    seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
+    await seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
     await answered();
     press(M.organizerCheckServer);
     await answered();
@@ -616,7 +620,7 @@ describe("organizing a mailbox another install holds, over the ground", () => {
       organizer: [peek, peek],
       organizeHere: [WINDOW_CLOSED, taken, WINDOW_CLOSED],
     });
-    seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
+    await seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
     await answered();
     press(M.organizerCheckServer);
     await answered();
@@ -652,7 +656,7 @@ describe("organizing a mailbox another install holds, over the ground", () => {
       organizer: [peek],
       organizeHere: [answer.promise],
     });
-    seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
+    await seated({ at: "#/settings/mailboxes?mailbox=mbx-b", pane: () => pane.wire });
     await answered();
     press(M.organizerCheckServer);
     await answered();
@@ -670,10 +674,10 @@ describe("organizing a mailbox another install holds, over the ground", () => {
 describe("another account under the same frame", () => {
   const C = "post@hohtenn.example";
   /** The first account with its two rows, the second with one of its own; each account's own wire. */
-  function twoAccounts(script: Parameters<typeof fakePane>[0], connect: ConnectWire | None = NONE) {
+  async function twoAccounts(script: Parameters<typeof fakePane>[0], connect: ConnectWire | None = NONE) {
     const first = fakePane({ list: [ok(ROWS), ok(ROWS)], allowance: [ALLOWED, ALLOWED], ...script });
     const second = fakePane({ list: [ok([row("mbx-c", C)])], allowance: [ALLOWED] });
-    const made = seated({
+    const made = await seated({
       at: "#/settings/mailboxes?mailbox=mbx-a",
       pane: (scope) => (scope === SCOPE ? first.wire : second.wire),
       connect,
@@ -685,7 +689,7 @@ describe("another account under the same frame", () => {
   it("the list is read again for it; the first account's opened row and an edit's typed words are gone, and none of it was stored", async () => {
     const stored = vi.spyOn(Storage.prototype, "setItem");
     const door = fakeDoor();
-    const { second, made } = twoAccounts({}, door.door);
+    const { second, made } = await twoAccounts({}, door.door);
     await answered();
     press(M.edit);
     fireEvent.change(screen.getByLabelText(M.passwordLabel), { target: { value: MARKER } });
@@ -702,7 +706,7 @@ describe("another account under the same frame", () => {
   });
 
   it("a press of the first account parked for its factor is gone with it: a factor verified after the change sends nothing", async () => {
-    const { first, made } = twoAccounts({ remove: [WINDOW_CLOSED, ok(null)] });
+    const { first, made } = await twoAccounts({ remove: [WINDOW_CLOSED, ok(null)] });
     await answered();
     press(M.remove);
     await settle();
@@ -735,7 +739,7 @@ describe("the section's notices, in the frame's slot", () => {
   it("that a mailbox stopped being organized is said once with its act, and gone once answered through its wire", async () => {
     const acknowledged: string[] = [];
     const facts = { now: [FACTS[0]!, stopped] };
-    const made = seated({
+    const made = await seated({
       at: "#/ohbox",
       pane: () => fakePane().wire,
       facts: () => facts.now,
@@ -780,7 +784,7 @@ describe("the section's notices, in the frame's slot", () => {
       const acknowledge = vi.fn(async () => {
         throw new TypeError();
       });
-      const made = seated({
+      const made = await seated({
         at: "#/ohbox",
         pane: () => pane.wire,
         facts: () => facts,
@@ -800,17 +804,25 @@ describe("the section's notices, in the frame's slot", () => {
       await answered();
       expect(notice.textContent).toContain(M.noticeDismissOffline);
 
-      fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: M.noticeCountShow }));
-      const roster = screen.getByRole("dialog");
-      expect(
-        within(roster)
-          .getAllByRole("listitem")
-          .map((item) => item.textContent),
-      ).toEqual(addresses.map((address, index) => `${address} · ${index === 1 ? unknown : holder}`));
-      expect(roster.textContent).toContain(M.noticeDismissOffline);
-      fireEvent.click(within(roster).getByRole("button", { name: "Close" }));
-      expect(screen.queryByRole("dialog")).toBeNull();
-      expect(made.address.read()).toBe("#/ohbox");
+      if (state === "stopped") {
+        fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: M.noticeOpenMailboxes }));
+        await screen.findByRole("heading", { level: 1, name: settingsEn.settings.mailboxes });
+        await answered();
+        expect(made.address.read()).toBe("#/settings/mailboxes");
+        for (const address of addresses) expect(rowOf(address)).toBeTruthy();
+      } else {
+        fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: M.noticeCountShow }));
+        const roster = screen.getByRole("dialog");
+        expect(
+          within(roster)
+            .getAllByRole("listitem")
+            .map((item) => item.textContent),
+        ).toEqual(addresses.map((address, index) => `${address} · ${index === 1 ? unknown : holder}`));
+        expect(roster.textContent).toContain(M.noticeDismissOffline);
+        fireEvent.click(within(roster).getByRole("button", { name: "Close" }));
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(made.address.read()).toBe("#/ohbox");
+      }
       expect(acknowledge).toHaveBeenCalledTimes(addresses.length);
     },
   );
@@ -841,7 +853,7 @@ describe("the section's notices, in the frame's slot", () => {
         } as Partial<MailboxFacts>),
       );
       const acknowledge = vi.fn(async () => {});
-      seated({
+      await seated({
         at: "#/ohbox",
         pane: () => wire,
         settings,
@@ -873,7 +885,7 @@ describe("the section's notices, in the frame's slot", () => {
 
   it("still dismisses a stopped mailbox named in full on a host without the list", async () => {
     const acknowledge = vi.fn(async () => {});
-    seated({
+    await seated({
       at: "#/ohbox",
       pane: () => NONE,
       settings: NONE,
@@ -895,7 +907,7 @@ describe("the section's notices, in the frame's slot", () => {
   it("the offer about the letters a gap left answers through its wire once", async () => {
     const offered: unknown[] = [];
     const gap = fact("mbx-a", A, { gapLetters: 3, gapStrangers: 0 } as Partial<MailboxFacts>);
-    seated({
+    await seated({
       at: "#/ohbox",
       pane: () => fakePane().wire,
       facts: () => [gap],
@@ -914,7 +926,7 @@ describe("a provider's sign-in that came back", () => {
       ways: { microsoft: { redirect: true, device: false } },
       returned: { kind: "failed", reason: null, message: "The provider did not answer in time." },
     });
-    const made = seated({
+    const made = await seated({
       pane: () => fakePane({ list: [ok(ROWS), ok(ROWS)], allowance: [ALLOWED, ALLOWED] }).wire,
       connect: door.door,
     });

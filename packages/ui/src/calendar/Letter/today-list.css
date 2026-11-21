@@ -106,6 +106,15 @@
     --oh-today-out: 0 0 var(--s1);
     padding: var(--oh-today-out);
   }
+  .oh-today[data-kind="coming"] .oh-today-head {
+    justify-content: space-between;
+    padding: var(--s2) var(--s3) var(--s1);
+    color: var(--ink2);
+    font-family: var(--f-text);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    letter-spacing: 0;
+  }
   .oh-today[data-kind="coming"] > .oh-today-row {
     --oh-today-row-pad: 6px var(--s3);
     --oh-today-row-hover: var(--hover);

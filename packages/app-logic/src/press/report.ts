@@ -14,6 +14,8 @@ export interface ToastOptions {
   duration?: number;
   /** The stored deadline of an action whose window started before the report was shown. */
   actionDeadline?: number;
+  /** Keep this local recovery behind a newer report until its original deadline. */
+  retainUndo?: boolean;
   /** The button still reverses the mail move during the fade, after the routing decision is committed. */
   undoDuringFade?: boolean;
   /**

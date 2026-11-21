@@ -10,6 +10,7 @@ import { processDoor } from "./build-release.js";
 import { COLLAPSED_SENTENCE, PROXY_PEER_HEADER, serverConfigOf } from "./config.js";
 import { processDoorInput } from "./deps.js";
 import { makeHttpServer, makeTrustedProxies, systemLookup } from "./http.js";
+import { migrateCommand } from "./migrate-command.js";
 import { buildProgram } from "./program.js";
 import { loadSettings } from "./settings.js";
 import { mintFirstRunSetupToken, printSetupToken } from "./setup-token.js";
@@ -201,9 +202,14 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-main().catch((err: unknown) => {
-  // The refusal path: a named-variable config error or a failed provisioning verification.
-  // Message only — a provisioning error names journals and indexes, never credentials.
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
-});
+if (process.argv[2] === "migrate") {
+  void migrateCommand(process.argv.slice(3), process.env, processDoor(buildVersionFile))
+    .then((code) => { process.exitCode = code; });
+} else {
+  main().catch((err: unknown) => {
+    // The refusal path: a named-variable config error or a failed provisioning verification.
+    // Message only — a provisioning error names journals and indexes, never credentials.
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
+}

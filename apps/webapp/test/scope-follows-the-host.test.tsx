@@ -103,7 +103,7 @@ describe("today's views mounted again under the same frame", () => {
     window.location.hash = "#/compose";
     await mountEntry(false);
     await tick(2000);
-    expect(subject(), "the composer under the account").not.toBeNull();
+    await vi.waitFor(() => expect(subject(), "the composer under the account").not.toBeNull());
     await write(FIRST);
     const started = holding(FIRST);
     expect(started).not.toEqual([]);
@@ -122,7 +122,7 @@ describe("today's views mounted again under the same frame", () => {
     expect(subject(), "the composer still stands where the seated Ohbox is drawn").toBeNull();
     expect(seatedList(), "the seated Ohbox's list").not.toBeNull();
     await visit("#/compose");
-    expect(subject(), "the composer mounted again").not.toBeNull();
+    await vi.waitFor(() => expect(subject(), "the composer mounted again").not.toBeNull());
     await write(AFTER);
     expect(holding(AFTER), "the returning composer did not save the new words").not.toEqual([]);
     const keys = [...started, ...holding(FIRST), ...holding(LAST_KEYSTROKE), ...holding(AFTER)];
@@ -143,7 +143,7 @@ describe("the demo opened over a live session, in place", () => {
     window.location.hash = "#/compose";
     await mountEntry(false);
     await tick(2000);
-    expect(subject(), "the composer under the account").not.toBeNull();
+    await vi.waitFor(() => expect(subject(), "the composer under the account").not.toBeNull());
     await write(A_WORDS);
     expect(holding(A_WORDS).length, "the account's words were kept").toBeGreaterThan(0);
 
@@ -152,7 +152,7 @@ describe("the demo opened over a live session, in place", () => {
     window.history.pushState(null, "", "/?demo=1#/compose");
     await mountEntry(true);
     await tick(4000);
-    expect(subject(), "the demo's composer").not.toBeNull();
+    await vi.waitFor(() => expect(subject(), "the demo's composer").not.toBeNull());
     expect(subject()!.value, "the demo's composer opened over the account's half letter").toBe("");
     await write(DEMO_WORDS);
 
@@ -194,7 +194,7 @@ describe("the session's marker moves between the session's question and the fram
     expect(seatedList(), "a stale confirmation showed the departing account's mail").toBeNull();
     expect(holding(ANSWERED_A)).toEqual([]);
     await reopenFirstAccount("#/compose");
-    expect(subject(), "the composer once the check named the account").not.toBeNull();
+    await vi.waitFor(() => expect(subject(), "the composer once the check named the account").not.toBeNull());
     await write(ANSWERED_A);
     return holding(ANSWERED_A);
   }

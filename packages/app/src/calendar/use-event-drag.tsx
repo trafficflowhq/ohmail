@@ -5,10 +5,12 @@ import {
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { addDays, clockOf } from "@ohmail/app-logic/calendar";
+import { addDays, clockOf, dayLong, isoOfDay } from "@ohmail/app-logic/calendar";
 import { EventChip } from "@ohmail/ui/calendar";
 import type { CalendarEventFace } from "./faces.js";
-import type { EventActions } from "./use-event-actions.js";
+import { resizedDays, type EventActions } from "./use-event-actions.js";
+import type { DayEdge } from "./view.js";
+import { useLocale, useText } from "../text/index.js";
 
 const DAY_MS = 86_400_000;
 const DAY_MINUTES = 24 * 60;
@@ -44,9 +46,18 @@ interface Ghost {
   minute: number;
 }
 
+interface RangeGhost {
+  first: string;
+  last: string;
+  face: CalendarEventFace;
+  month: boolean;
+  boxes: { left: number; top: number; width: number; height: number }[];
+}
+
 interface DragCallbacks {
   moveTime: (delta: number) => DragTime | null;
   preview: (ghost: Ghost | null) => void;
+  range: (preview: RangeGhost | null) => void;
   done: () => void;
   absorbClick: () => void;
   commit: (days: number, minutes: number) => void;
@@ -97,10 +108,16 @@ function trackDrag(
   chip: HTMLButtonElement,
   down: PointerEvent,
   face: CalendarEventFace,
-  { preview, absorbClick, done, commit, moveTime }: DragCallbacks,
+  edge: DayEdge | undefined,
+  { preview, range, absorbClick, done, commit, moveTime }: DragCallbacks,
 ) {
   const source = chip.closest<HTMLElement>(DROP) ?? dayTarget(chip, down);
-  const sourceDay = source?.dataset.calDropDay;
+  const sourceDay =
+    edge && face.start.kind === "date" && face.end.kind === "date"
+      ? edge === "start"
+        ? isoOfDay(face.start)
+        : addDays(isoOfDay(face.end), -1)
+      : source?.dataset.calDropDay;
   if (!source || !sourceDay) return null;
   const kind = source.dataset.calDropKind;
   const start = source.getBoundingClientRect();
@@ -120,6 +137,7 @@ function trackDrag(
     if (timer !== null) clearTimeout(timer);
     delete chip.dataset.drag;
     preview(null);
+    range(null);
     if (target) delete target.dataset.calDropActive;
     detach();
     done();
@@ -143,9 +161,23 @@ function trackDrag(
     point.preventDefault();
     if (target) delete target.dataset.calDropActive;
     target = dayTarget(chip, point, kind);
+    if (target && face.start.kind === "date" && face.end.kind === "date") {
+      const drop = destinationAt(point, target);
+      const days =
+        drop &&
+        (edge
+          ? resizedDays(face.start, face.end, edge, drop.days)
+          : {
+              first: addDays(isoOfDay(face.start), drop.days),
+              last: addDays(isoOfDay(face.end), drop.days - 1),
+            });
+      range(days ? rangePreview(chip, face, target, days) : null);
+      return;
+    }
     if (!target || kind !== "time") {
       if (target) target.dataset.calDropActive = "";
       preview(null);
+      range(null);
       return;
     }
     const drop = destinationAt(point, target);
@@ -170,6 +202,7 @@ function trackDrag(
     aborted = true;
     delete chip.dataset.drag;
     preview(null);
+    range(null);
     if (target) delete target.dataset.calDropActive;
     target = null;
   };
@@ -213,6 +246,9 @@ function listen(
 }
 
 export function useEventDrag(actions: EventActions, page: string) {
+  const t = useText("calendar");
+  const locale = useLocale();
+  const [range, showRange] = useState<RangeGhost | null>(null);
   const [ghost, showGhost] = useState<Ghost | null>(null);
   const stop = useRef<(() => void) | null>(null);
   const suppress = useRef<HTMLButtonElement | null>(null);
@@ -220,14 +256,21 @@ export function useEventDrag(actions: EventActions, page: string) {
   latest.current = actions;
   useLayoutEffect(() => () => stop.current?.(), [page]);
 
-  function drag(face: CalendarEventFace, press: ReactPointerEvent<HTMLButtonElement>) {
+  function drag(
+    face: CalendarEventFace,
+    press: ReactPointerEvent<HTMLButtonElement>,
+    local?: (first: string, last: string) => void,
+  ) {
     if (press.button !== 0 || press.altKey || stop.current) return;
-    const expected = actions.moveVersion(face);
-    if (!expected) return;
+    const expected = local ? undefined : actions.moveVersion(face);
+    if (!local && !expected) return;
     const chip = press.currentTarget;
-    stop.current = trackDrag(chip, press.nativeEvent, face, {
+    const edge = (press.target as HTMLElement).closest<HTMLElement>("[data-cal-resize]")?.dataset.calResize;
+    const resize = edge === "start" || edge === "end" ? edge : undefined;
+    stop.current = trackDrag(chip, press.nativeEvent, face, resize, {
       moveTime: (delta) => actions.moveTime(face, delta, true),
       preview: (next) => showGhost((was) => (was?.day === next?.day && was?.top === next?.top ? was : next)),
+      range: showRange,
       done: () => {
         stop.current = null;
       },
@@ -237,12 +280,40 @@ export function useEventDrag(actions: EventActions, page: string) {
           if (suppress.current === chip) suppress.current = null;
         }, 0);
       },
-      commit: (days, minutes) => latest.current.start(face, { kind: "time", days, minutes }, chip, expected),
+      commit: (days, minutes) => {
+        if (!local) {
+          latest.current.start(
+            face,
+            resize ? { kind: "resize", edge: resize, days } : { kind: "time", days, minutes },
+            chip,
+            expected ?? undefined,
+          );
+        } else if (resize) {
+          const span = resizedDays(face.start, face.end, resize, days);
+          if (span) local(span.first, span.last);
+        } else if (face.start.kind === "date" && face.end.kind === "date" && days) {
+          local(addDays(isoOfDay(face.start), days), addDays(isoOfDay(face.end), days - 1));
+        }
+      },
     });
   }
 
   return {
     drag,
+    rangePreview: range?.boxes.map((box) => (
+      <div key={box.top} className="cal-day-range-preview" style={box}>
+        <EventChip
+          {...(range.month ? ({ size: "line", run: true } as const) : ({ size: "pill" } as const))}
+          drag="copy"
+          title={t("actions.resizePreview", {
+            first: dayLong(range.first, locale, range.first.slice(0, 4)),
+            last: dayLong(range.last, locale, range.first.slice(0, 4)),
+            title: range.face.title,
+          })}
+          tone={range.face.tone}
+        />
+      </div>
+    )),
     preview: ghost
       ? {
           day: ghost.day,
@@ -264,5 +335,45 @@ export function useEventDrag(actions: EventActions, page: string) {
         event.stopPropagation();
       }
     },
+  };
+}
+
+function rangePreview(
+  chip: HTMLElement,
+  face: CalendarEventFace,
+  target: HTMLElement,
+  days: { first: string; last: string },
+): RangeGhost | null {
+  const view = chip.closest(".cal-body-view");
+  if (!view) return null;
+  const kind = target.dataset.calDropKind;
+  const month = kind === "month";
+  const origin = view.getBoundingClientRect();
+  const source = chip.getBoundingClientRect();
+  const sourceWeek = month ? chip.parentElement?.getBoundingClientRect() : null;
+  const rowOffset = source.top - (sourceWeek?.top ?? origin.top);
+  const rows = new Map<number, { left: number; right: number }>();
+  for (const cell of view.querySelectorAll<HTMLElement>(DROP)) {
+    const day = cell.dataset.calDropDay;
+    if (!day || day < days.first || day > days.last || cell.dataset.calDropKind !== kind) continue;
+    const rect = cell.getBoundingClientRect();
+    if (!rect.width || rect.bottom <= origin.top || rect.top >= origin.bottom) continue;
+    const top = month ? (cell.parentElement?.getBoundingClientRect().top ?? rect.top) : origin.top;
+    const row = rows.get(top);
+    rows.set(top, {
+      left: Math.min(row?.left ?? rect.left, rect.left),
+      right: Math.max(row?.right ?? rect.right, rect.right),
+    });
+  }
+  return {
+    ...days,
+    face,
+    month,
+    boxes: [...rows].map(([top, { left, right }]) => ({
+      left: left - origin.left,
+      top: top - origin.top + rowOffset,
+      width: right - left,
+      height: source.height,
+    })),
   };
 }

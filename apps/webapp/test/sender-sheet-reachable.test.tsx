@@ -2,6 +2,7 @@
 import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { UnsubscribeLetter } from "@ohmail/client-engine";
+import { settleFirstPaint } from "./_first-paint.js";
 import messages from "../messages/en.json";
 import { clickMounted, withMountedSender } from "./fixtures/mounted-sender-sheet.js";
 import {
@@ -9,7 +10,7 @@ import {
   teardownScreeningWeb, tick, warmScreeningWeb,
 } from "./fixtures/screening-web.js";
 import { UNDO_MS } from "@ohmail/app-logic/press/routing-undo";
-import { within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 /**
  * ── THE SHEET IS REACHED, NOT MERELY BUILT ──────────────────────────────────
  *
@@ -130,6 +131,7 @@ async function render(
   mounted = true;
   const frame = within(await mountScreeningWeb());
   await tick(4000);
+  await settleFirstPaint();
   if (opts.atScreener) {
     const listbox = within(frame.getByRole("listbox", { name: messages.screener.title }));
     await clickMounted(listbox.getByRole("option", { name: (name) => name.startsWith(`${person}:`) }));
@@ -138,8 +140,6 @@ async function render(
   const reader = within(frame.getByRole("region", { name: messages.frame.landmark.reading }));
   await clickMounted(reader.getByRole("button", { name: (name) => name.startsWith(contactName) }));
   const page = within(document.body);
-  const contact = within(page.getByRole("dialog", { name: messages.message.contactAria.replace("{who}", contactName) }));
-  await clickMounted(contact.getByRole("menuitem", { name: messages.screening.action }));
   return {
     el: page.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", person) }),
     writes,
@@ -152,7 +152,7 @@ const click = async (node: Element | null | undefined) => {
   await act(async () => { node!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 };
 const domain = (el: HTMLElement, name: RegExp = /^Everyone at x\.example/) => within(el).queryByRole("radio", { name });
-const option = (el: HTMLElement, name: RegExp) => within(el).getByRole("option", { name });
+const option = (el: HTMLElement, name: RegExp) => within(el).getByRole("radio", { name });
 const ruleControl = (el: HTMLElement) => within(el).queryByRole("switch", { name: messages.screening.ruleToggleAria });
 const retroControl = (el: HTMLElement) => within(el).queryByRole("switch", { name: messages.screening.retroToggleAria });
 const rulesWritten = (writes: RequestWrite[]) => writes.filter(({ path }) => path === "/api/rules").map(({ body }) => body);
@@ -192,7 +192,7 @@ describe("the scope switch is on the sheet and does something", () => {
     // claim ("no scope CHOICE is presented"), and this file's header says role- and text-driven
     // on purpose. Render a second radiogroup here and it still goes red.
     const { el } = await render([msg("a", "malformed-no-at-sign", "INBOX")], "a");
-    expect(el.querySelector("[role=radiogroup]")).toBeNull();
+    expect(within(el).queryByRole("radiogroup", { name: messages.screening.scopeAria })).toBeNull();
     expect(domain(el, /^Everyone at/)).toBeNull();
   });
 });
@@ -230,8 +230,8 @@ describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
    */
   it("a sender already past the gate commits straight away — no rule, nothing armed", async () => {
     const { writes, el, person } = await render([msg("a", "spam@bulk.example", "INBOX")], "a");
-    await click(option(el, /^Screened/));
-    expect(el.querySelector(".sm-confirm")).toBeNull();
+    await click(option(el, /^Screen out/));
+    expect(screen.queryByRole("dialog", { name: /^Screening for / })).toBeNull();
     await afterDecision();
     expect(rulesWritten(writes)).toEqual([expect.objectContaining({ kind: "sender", match: person, destination: "ohmail/Screened", applyRetro: true })]);
   });
@@ -252,9 +252,8 @@ describe("the sheet resolved to a chip's address", () => {
     };
     const { writes, el, person } = await render([seed], "seed", { address: "cy@x.example" });
 
-    const head = el.querySelector(".sm-head")!;
-    expect(head.textContent).toContain("Cy Cole");
-    expect(head.textContent).not.toContain("sender@corp.example");
+    expect(within(el).getByText("Cy Cole", { exact: true })).toBeTruthy();
+    expect(el.textContent).not.toContain("sender@corp.example");
     // The scope switch names the CHIP's domain, so the wide option widens the right subject.
     expect(domain(el)).toBeTruthy();
 
@@ -272,7 +271,7 @@ describe("the way into the detail view", () => {
     ];
     const { el } = await render(letters, "a");
     const detail = within(el).getByRole("button", { name: /See all 1 message/ });
-    expect(detail.textContent).toContain("See all 1 message");
+    expect(detail.textContent).toBe("See all");
     await click(detail);
     expect(within(document.body).getByRole("dialog", { name: new RegExp(letters[0]!.from.address) })).toBeTruthy();
 
@@ -280,7 +279,7 @@ describe("the way into the detail view", () => {
     const wide = await render(letters, "a");
     await click(domain(wide.el));
     const audit = within(wide.el).getByRole("button", { name: /See all 2 messages/ });
-    expect(audit.textContent).toContain("See all 2 messages");
+    expect(audit.textContent).toBe("See all");
     await click(audit);
     expect(within(document.body).getByRole("dialog", { name: /x\.example/ })).toBeTruthy();
   });
@@ -309,13 +308,13 @@ describe("the rule toggle", () => {
     }
     const { writes, el } = await render(letters, "a", opts);
     const sheet = within(el);
-    const label = name === "Screened" ? /^Screened out/ : new RegExp(`^${name}`);
-    await click(sheet.getByRole("option", { name: label }));
+    const label = name === "Screened" ? /^Screen out/ : new RegExp(`^${name}`);
+    await click(sheet.getByRole("radio", { name: label }));
     if (confirmation) {
       expect(writes).toEqual([]);
-      await click(sheet.getByRole("button", { name: confirmation }));
+      await click(within(screen.getByRole("dialog", { name: /^Screening for / })).getByRole("button", { name: confirmation }));
     } else {
-      expect(sheet.queryByRole("button", { name: /unsubscribe|^Continue$/i })).toBeNull();
+      expect(screen.queryByRole("dialog", { name: /^Screening for / })).toBeNull();
     }
     await afterDecision();
     const grant = confirmation ? ["a"] : undefined;
@@ -339,7 +338,7 @@ describe("the rule toggle", () => {
     const sheet = within(el);
     expect(sheet.getByRole("switch", { name: messages.screening.ruleToggleAria }).getAttribute("aria-checked")).toBe("true");
     expect(sheet.getByRole("switch", { name: messages.screening.retroToggleAria }).getAttribute("aria-checked")).toBe("true");
-    await click(sheet.getByRole("option", { name: /^News/ }));
+    await click(sheet.getByRole("radio", { name: /^News/ }));
     await afterDecision();
     expect(rulesWritten(writes)).toEqual([expect.objectContaining({ kind: "sender", match: person, destination: "ohmail/News", applyRetro: true })]);
     await expectLetterMenuDecision("screened", "Screened", {
@@ -377,8 +376,8 @@ describe("the rule toggle", () => {
    */
   it("screening past the gate to a reject folder commits straight away, rule and all", async () => {
     const { writes, el, person } = await render([msg("a", "spam@bulk.example", "INBOX")], "a");
-    await click(option(el, /^Screened/));
-    expect(el.querySelector(".sm-confirm")).toBeNull();
+    await click(option(el, /^Screen out/));
+    expect(screen.queryByRole("dialog", { name: /^Screening for / })).toBeNull();
     await afterDecision();
     expect(rulesWritten(writes)).toEqual([expect.objectContaining({ kind: "sender", match: person, destination: "ohmail/Screened", applyRetro: true })]);
   });
@@ -390,7 +389,7 @@ describe("the footer keeps telling the truth", () => {
       msg("a", "one@x.example", "INBOX"),
       msg("b", "two@x.example", "INBOX"),
     ], "a", { address: "two@x.example" });
-    const foot = () => el.querySelector(".sm-foot")!.textContent!;
+    const foot = () => option(el, /^News/).getAttribute("aria-description")!;
     expect(foot()).not.toContain("This message moves there now");
     expect(foot()).toContain("Future mail from two@x.example files there too");
     await click(retroControl(el));
@@ -403,7 +402,7 @@ describe("the footer keeps telling the truth", () => {
       msg("b", "two@x.example", "ohmail/Screener"),
     ], "a");
     await click(domain(el));
-    expect(el.querySelector(".sm-foot")!.textContent).toContain("anyone at x.example");
+    expect(option(el, /^News/).getAttribute("aria-description")).toContain("anyone at x.example");
   });
 
   /**
@@ -419,7 +418,7 @@ describe("the footer keeps telling the truth", () => {
    */
   it("says future mail follows AND that the rule reaches mail already here, by default", async () => {
     const { el } = await render([msg("a", "one@x.example", "INBOX")], "a");
-    const foot = () => el.querySelector(".sm-foot")!.textContent!;
+    const foot = () => option(el, /^News/).getAttribute("aria-description")!;
     // The press files the letter it was made on now: said before the press, not promised to stay.
     expect(foot()).toContain("This message moves there now, and future mail from one@x.example files there too");
     expect(foot()).toContain("applies the rule to the rest of the mail it has already filed for you");
@@ -447,7 +446,7 @@ describe("the footer keeps telling the truth", () => {
   it("the opt-out withdraws the retroactive claim as well, not only the future one", async () => {
     const { el } = await render([msg("a", "one@x.example", "INBOX")], "a");
     await click(ruleControl(el));
-    const foot = el.querySelector(".sm-foot")!.textContent!;
+    const foot = option(el, /^News/).getAttribute("aria-description")!;
     expect(foot).not.toContain("already filed for you");
     expect(foot).not.toContain("revoke the rule");
     // …and the past-mail row goes with it: no rule, nothing for it to be a question about.
@@ -460,7 +459,7 @@ describe("the footer keeps telling the truth", () => {
       msg("b", "two@x.example", "INBOX"),
     ], "a");
     await click(domain(el));
-    expect(el.querySelector(".sm-foot")!.textContent)
+    expect(option(el, /^News/).getAttribute("aria-description"))
       .toContain("This message moves there now, and future mail from anyone at x.example files there too");
   });
 
@@ -477,9 +476,10 @@ describe("the footer keeps telling the truth", () => {
     ], "a");
     // The count moved WITH the claim in 0.19: it sits on the switch that turns the retroactive
     // apply on, not on the rule's label, so the rule's own sentence is about the future alone.
-    expect(ruleControl(el)!.textContent, "the rule label promises only the future")
-      .not.toContain("messages");
-    const note = el.querySelector(".sm-retro small")!.textContent!;
+    const label = ruleControl(el)!.closest("label")!;
+    expect(label.textContent, "the visible rule label promises only the future")
+      .toBe(messages.screening.cardFuture);
+    const note = retroControl(el)!.getAttribute("aria-description")!;
     expect(note).toContain("2 messages");
     expect(note, "a count must never be phrased as a promise that they all move")
       .not.toContain("move");
@@ -511,7 +511,7 @@ describe("the past-mail option", () => {
     // The rule is untouched — that is the whole point of the second control.
     expect(ruleControl(el)!.getAttribute("aria-checked")).toBe("true");
 
-    const foot = el.querySelector(".sm-foot")!.textContent!;
+    const foot = option(el, /^News/).getAttribute("aria-description")!;
     expect(foot).toContain("files there too");
     // The needle here was `not.toContain("already")` — the absence of a WORD, which the off-state
     // sentence satisfied while it read "This moves the mail that is here" over a switch that had
@@ -530,7 +530,7 @@ describe("the past-mail option", () => {
   it("the answer reaches the plan through the shell, not only through onChoose", async () => {
     await withMountedSender(async ({ sheet, writes, sender }) => {
       await clickMounted(sheet.getByRole("switch", { name: messages.screening.retroToggleAria }));
-      await clickMounted(sheet.getByRole("option", { name: /^News/ }));
+      await clickMounted(sheet.getByRole("radio", { name: /^News/ }));
       expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([]);
       await tick(UNDO_MS + 500);
       expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([{
@@ -540,7 +540,7 @@ describe("the past-mail option", () => {
     });
     for (const applyRetro of [false, true]) {
       await withMountedSender(async ({ sheet, writes, sender }) => {
-        await clickMounted(sheet.getByRole("button", { name: messages.screening.subjectRuleOpen }));
+        await clickMounted(sheet.getByRole("menuitem", { name: messages.screening.cardSubject }));
         const editor = within(document.body).getByRole("dialog", {
           name: messages.screening.subjectAria.replace("{who}", sender),
         });
@@ -583,7 +583,7 @@ describe("the past-mail option", () => {
       msg("a", "one@x.example", "INBOX"),
       msg("b", "one@x.example", "ohmail/News"),
     ], "a");
-    const note = el.querySelector(".sm-retro small")!.textContent!;
+    const note = retroControl(el)!.getAttribute("aria-description")!;
     expect(note).toContain("2 messages");
     expect(note, "the count is what has SYNCED, and the sheet says so").toContain("synced");
     expect(note, "a count must never be phrased as a promise that they all move")

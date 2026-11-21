@@ -8,9 +8,9 @@
  * One record while nothing of it moved, with the scope the frame is mounted under. It throws where no room is on
  * (`usePress`): a place that presses stands over a host that hands a ground above the panes, or a reader.
  */
-import { useMemo } from "react";
+import { useContext, useMemo } from "react";
 import type { PlaceLiveArgs } from "@ohmail/app-logic/lists";
-import { useEntered, useFrame } from "./commands.js";
+import { FrameContext, useEntered, useFrame } from "./commands.js";
 import { isCalendarPlace } from "./product.js";
 import { usePress } from "./room.js";
 
@@ -18,6 +18,7 @@ export function usePlaceLiveArgs(): PlaceLiveArgs {
   const { host, route, plan, commands, report } = useFrame();
   const press = usePress();
   const entered = useEntered();
+  const initialPlace = useContext(FrameContext)?.initialPlace;
   const scope = host.session.scope;
   /* Under the frame's own gate every mounted part has a scope; a part mounted outside it has no account to keep under. */
   if (scope === null) throw new Error("usePlaceLiveArgs: a place stands under no scope");
@@ -26,7 +27,7 @@ export function usePlaceLiveArgs(): PlaceLiveArgs {
   if (isCalendarPlace(place))
     throw new Error("usePlaceLiveArgs: a mail place's seat stands at a calendar place");
   return useMemo(
-    () => ({ press, scope, route: { ...route, place }, commands, plan, report, entered }),
-    [press, scope, route, place, commands, plan, report, entered],
+    () => ({ press, scope, route: { ...route, place }, commands, plan, report, entered, initialPlace }),
+    [press, scope, route, place, commands, plan, report, entered, initialPlace],
   );
 }

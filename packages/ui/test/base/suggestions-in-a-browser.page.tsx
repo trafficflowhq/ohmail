@@ -3,7 +3,9 @@
  * as a screen wires it, with the kit's own parts, listeners and sheets.
  */
 import { useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { portalRenderer } from "../../src/base/Overlays/portal-renderer.js";
 import {
   Dialog,
   Menu,
@@ -24,7 +26,7 @@ import { ToastHost, useToast } from "../../src/primitives/Toast.js";
 import { Gloss } from "../../src/primitives/Gloss.js";
 import { DatePicker } from "../../src/primitives/DatePicker.js";
 import { EventForm } from "../../src/calendar/index.js";
-import { Composer, FileQuickLook, ReadSquares, Recipients } from "../../src/mail/index.js";
+import { Composer, QuickLook, ReadSquares, Recipients } from "../../src/mail/index.js";
 
 const place = (id: string, icon: IconName, primary: string, secondary?: string): SuggestionRow => ({
   id,
@@ -194,16 +196,19 @@ function ToastTrigger() {
 
 const SCENES = {
   file: () => (
-    <FileQuickLook
-      open
-      onClose={() => {}}
-      label="File preview"
-      name="Document"
-      facts="Text"
-      close={{ label: "Close" }}
-    >
-      <p>File content</p>
-    </FileQuickLook>
+    <portalRenderer.Provider value={createPortal}>
+      <QuickLook
+        open
+        portal
+        onClose={() => {}}
+        label="File preview"
+        name="Document"
+        facts="Text"
+        close={{ label: "Close" }}
+      >
+        <p>File content</p>
+      </QuickLook>
+    </portalRenderer.Provider>
   ),
   menu: () => (
     <Menu open label="Actions" onClose={() => {}}>

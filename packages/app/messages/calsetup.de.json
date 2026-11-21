@@ -1,5 +1,6 @@
 {
   "calsetup": {
+    "activate": "Einen Kalender verbinden",
     "leave": "Nicht jetzt",
     "back": "Zurück",
     "continue": "Weiter",
@@ -64,6 +65,8 @@
     },
     "fault": {
       "signInRefused": "Diese Anmeldung wurde nicht angenommen. iCloud braucht ein App-spezifisches Passwort, erstellt bei Apple, nicht das Passwort des Accounts.",
+      "signInRefusedCaldav": "Der Server hat den Benutzernamen und das Passwort nicht angenommen. Prüfe beides und die Serveradresse.",
+      "signInRefusedIcs": "Der Feed verlangt eine Anmeldung.",
       "signInAgain": "Die Anmeldung gilt nicht mehr. Melde dich neu an.",
       "forbidden": "Dieser Account darf die Kalender des Servers nicht lesen.",
       "notFound": "Unter dieser Adresse wurde kein Kalender gefunden.",

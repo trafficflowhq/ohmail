@@ -351,9 +351,9 @@ export function rosterSection(scope: WorkerScope): void {
       }
       const scheduled: string[] = [];
       if (toSchedule.length > 0) {
-        // One read of the hosts, only when there is something to schedule.
+        // Read each scheduled account’s hosts on its own handle.
         const hosts = await asDatabaseFault("roster.attachHosts",
-          () => loadAttachHosts(scope.roster, toSchedule.map((m) => m.mailboxId)));
+          () => loadAttachHosts(toSchedule, scope.forAccount));
         if (scope.stopped) return;
         for (const mb of toSchedule) {
           const queued = scope.attachPool.enqueue({

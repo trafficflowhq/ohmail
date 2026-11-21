@@ -196,10 +196,11 @@ async function openApp(browser: Browser, look: Look, s: Subject, page$: { js: st
   } : WEB_READS;
   const page = await ctx.newPage();
   if (world?.calendar) await page.clock.setFixedTime(new Date(world.calendar.now));
+  // Authenticated fixture answers name their fictional owner, as the real server does.
   await page.route(`${APP_ORIGIN}/**`, (route) => {
     const path = new URL(route.request().url()).pathname;
     if (s.page === "web" && path === "/api/auth/session") {
-      return route.fulfill({ json: { scope: "full", user: {
+      return route.fulfill({ headers: { "X-Ohmail-Account": ACCOUNT }, json: { scope: "full", user: {
         accountId: ACCOUNT, userId: "measure-user", displayName: world?.account.displayName ?? "Fictional reader",
         email: world?.account.signIn ?? "reader@example.invalid", emailVerified: true,
         twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: true },
@@ -208,10 +209,10 @@ async function openApp(browser: Browser, look: Look, s: Subject, page$: { js: st
     if (s.page === "web") {
       if (path === "/auth/refresh") return route.fulfill({ status: 204 });
       if (route.request().method() === "GET" && Object.hasOwn(responses, path)) {
-        return route.fulfill({ json: responses[path] });
+        return route.fulfill({ headers: { "X-Ohmail-Account": ACCOUNT }, json: responses[path] });
       }
     }
-    if (path.startsWith("/api/")) return route.fulfill({ status: 404, json: {} });
+    if (path.startsWith("/api/")) return route.fulfill({ status: 404, headers: { "X-Ohmail-Account": ACCOUNT }, json: {} });
     if (path.endsWith(".js")) return route.fulfill({ contentType: "application/javascript", body: page$.js });
     if (path.endsWith(".css")) return route.fulfill({ contentType: "text/css", body: page$.css });
     return route.fulfill({
@@ -282,7 +283,7 @@ async function readSide(page: Page, elements: readonly Element[], side: "app" | 
       continue;
     }
     const reading = await page.evaluate(readElement, [mark, el.kind] as [string, "box" | "text" | "icon"]);
-    if (reading && matched && el.contentChild) {
+    if (reading && el.contentChild) {
       reading.padding = await page.evaluate(contentInsets, [mark, side === "app" ? el.contentChild : null] as [string, string | null]);
     }
     if (reading && el.kind === "text") {

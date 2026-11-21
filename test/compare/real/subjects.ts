@@ -69,7 +69,7 @@ const FRAME_DESK: Element[] = [
     icon(`${p}.icon`, `within(railEntry(${said(p)}), "svg")`, `within(refEntry(${said(p)}), "svg")`, IN_RAIL),
     text(`${p}.count`, `within(railEntry(${said(p)}), ".oh-railentry-count")`, `within(refEntry(${said(p)}), ".c")`, { ...IN_RAIL, count: true }),
   ]),
-  ...[1, 2, 3, 4, 5].map((n) => box(`rail.group ${n}`, `qa("nav.oh-rail .oh-rail-group")[${n - 1}] ?? null`, `qa("#rail .rscroll > .grp")[${n - 1}] ?? null`, IN_RAIL)),
+  ...[1, 2, 3, 4, 5].map((n) => box(`rail.group ${n}`, `qa("nav.oh-rail .oh-rail-group:not(:empty)")[${n - 1}] ?? null`, `qa("#rail .rscroll > .grp")[${n - 1}] ?? null`, IN_RAIL)),
   box("rail.scroll", `q("nav.oh-rail .oh-rail-scroll")`, `q("#rail .rscroll")`),
   box("rail.foot", `q("nav.oh-rail .oh-railfoot")`, `q("#rail .foot")`),
   box("foot.pull", `footPull()`, `q("#rail .foot .pull")`, { in: "rail.foot" }),

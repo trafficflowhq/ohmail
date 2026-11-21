@@ -17,6 +17,8 @@ export interface Control {
   /** The control this one is inside; a place means "inside that place's content". */
   within?: PlaceId | string;
   nameFrom?: "key" | "visible" | "none";
+  /** The composite name of a search result starts with its sender and includes its subject. */
+  searchResult?: true;
   /** The app may follow the name with a count ("Ohbox 3"). */
   counted?: true;
   /** The app nests a second control of the same role and name inside this one; the outer one is meant. */
@@ -33,48 +35,54 @@ const entries: Array<[string, Control]> = [
   c("content", "main", null, { nameFrom: "none" }),
   // The rail is the frame's own, drawn from the places' registrations: its landmark is the frame's word.
   c("rail", "navigation", "frame.landmark.places"),
-  c("rail-compose", "button", "rail.compose", { within: "rail" }),
-  c("rail-ohbox", "button", "rail.ohbox", { within: "rail", counted: true }),
-  c("rail-reads", "button", "rail.reads", { within: "rail", counted: true }),
-  c("rail-receipts", "button", "rail.receipts", { within: "rail", counted: true }),
-  c("rail-screener", "button", "rail.screener", { within: "rail", counted: true }),
-  c("rail-reply-later", "button", "rail.replyLater", { within: "rail", counted: true }),
-  c("rail-set-aside", "button", "rail.setAside", { within: "rail", counted: true }),
-  c("rail-resurface", "button", "rail.resurface", { within: "rail", counted: true }),
-  c("rail-history", "button", "rail.history", { within: "rail" }),
-  c("rail-search", "button", "rail.search", { within: "rail" }),
-  c("rail-drafts", "button", "rail.drafts", { within: "rail", counted: true }),
-  c("rail-trash", "button", "rail.trash", { within: "rail", counted: true }),
-  c("rail-settings", "button", "rail.settings", { within: "rail" }),
+  c("rail-compose", "button", "frame.dock.write", { within: "rail" }),
+  c("rail-ohbox", "button", "ohbox.title", { within: "rail", counted: true }),
+  c("rail-reads", "button", "news.title", { within: "rail", counted: true }),
+  c("rail-receipts", "button", "receipts.title", { within: "rail", counted: true }),
+  c("rail-screener", "button", "screener.title", { within: "rail", counted: true }),
+  c("rail-reply-later", "button", "later.title", { within: "rail", counted: true }),
+  c("rail-set-aside", "button", "parked.title", { within: "rail", counted: true }),
+  c("rail-resurface", "button", "resurface.title", { within: "rail", counted: true }),
+  c("rail-history", "button", "history.title", { within: "rail" }),
+  c("rail-search", "button", "search.title", { within: "rail" }),
+  c("rail-drafts", "button", "drafts.title", { within: "rail", counted: true }),
+  c("rail-trash", "button", "trash.title", { within: "rail", counted: true }),
+  c("rail-settings", "button", "settings.title", { within: "rail" }),
   c("demo-dismiss", "button", "ribbon.dismiss"),
 
   // Lists and their rows.
   c("list-new", "listbox", "ohbox.newForYou", { within: "content" }),
   c("list-earlier", "listbox", "ohbox.previouslySeen", { within: "content" }),
-  c("list-reads", "listbox", "reads.title", { within: "content" }),
-  c("list-receipts", "listbox", "receipts.title", { within: "content" }),
+  c("list-reads", "listbox", "news.list.label", { within: "content" }),
+  c("list-receipts", "listbox", "receipts.list.label", { within: "content" }),
   c("list-screener", "listbox", "screener.title", { within: "content" }),
   c("list-triage", "listbox", "triage.title", { within: "content" }),
   c("list-history", "listbox", "history.title", { within: "content" }),
   c("list-drafts", "listbox", "drafts.title", { within: "content" }),
-  c("list-trash", "listbox", "rail.trash", { within: "content" }),
+  c("trash-region", "region", "frame.landmark.list", { within: "content" }),
+  c("list-trash", "listbox", "trash.title", { within: "trash-region" }),
+  c("trash-letter", "option", null, { within: "list-trash", nameFrom: "visible" }),
   c("conversation", "option", null, { within: "content", nameFrom: "visible" }),
   c("mark-all-read", "button", "markAll.aria", { within: "content" }),
 
   // The open message.
   c("reader", "region", "reader.pane"),
+  c("reader-subject", "heading", null, { within: "reader", nameFrom: "visible" }),
   c("letter", "article", null, { within: "reader", nameFrom: "none" }),
-  c("reply", "button", "ohbox.actionReply", { within: "reader" }),
+  c("reply", "button", "reader.verb.reply", { within: "reader" }),
   c("forward", "button", "message.menuForward", { within: "reader" }),
-  c("mark-unread", "button", "ohbox.actionMarkUnread", { within: "reader" }),
-  c("more", "button", "ohbox.actionMore", { within: "reader" }),
-  c("park", "button", "ohbox.actionSetAside", { within: "reader" }),
-  c("later", "button", "ohbox.actionLater", { within: "reader" }),
+  c("mark-unread", "button", "reader.verb.markUnread", { within: "reader" }),
+  c("more", "button", "reader.verb.more", { within: "reader" }),
+  c("reader-more", "menu", "reader.verb.more"),
+  c("delete-letter", "menuitem", "reader.verb.delete", { within: "reader-more" }),
+  c("undo", "button", "screener.toastUndo"),
+  c("park", "button", "reader.verb.aside", { within: "reader" }),
+  c("later", "button", "reader.verb.later", { within: "reader" }),
   c("images-blocked", "button", "mailBody.imagesCaption", { within: "content" }),
   c("show-original", "button", "mailBody.design", { within: "content" }),
   c("show-as-text", "button", "mailBody.plain", { within: "content" }),
   c("reply-send", "button", "reply.send", { within: "reader" }),
-  c("reply-body", "textbox", "reply.editorAria", { within: "reader" }),
+  c("reply-body", "textbox", "write.reply.text", { within: "reader" }),
 
   // Compose.
   // Write's letter: its people and its subject as the kit's Write names them (`write.to`, `write.subject`).
@@ -83,25 +91,33 @@ const entries: Array<[string, Control]> = [
   // Write's letter names its text as the kit's Write draws it (`write.text`).
   c("compose-body", "textbox", "write.text", { within: "content" }),
   c("compose-send", "button", "write.send", { within: "content" }),
-  c("compose-cancel", "button", "compose.cancel", { within: "content" }),
-  c("compose-bold", "button", "compose.rte.bold", { within: "content" }),
+  c("compose-cancel", "button", "write.discard", { within: "content" }),
+  c("compose-bold", "button", "write.marks.bold", { within: "content" }),
 
   // Search.
   c("search-box", "textbox", "search.aria", { within: "content" }),
-  c("search-hit", "button", null, { within: "content", nameFrom: "visible" }),
+  c("search-results", "list", "search.aria", { within: "content" }),
+  c("search-result", "listitem", null, { within: "search-results", nameFrom: "none" }),
+  c("search-hit", "button", null, { within: "search-result", nameFrom: "visible", searchResult: true }),
 
   // The Screener.
-  c("screener-sections", "tablist", "screener.segAria", { within: "content" }),
-  c("screener-waiting", "tab", "screener.segWaiting", { within: "screener-sections", counted: true }),
-  c("screener-screened", "tab", "screener.segScreened", { within: "screener-sections", counted: true }),
-  c("screener-spam", "tab", "screener.segSpam", { within: "screener-sections", counted: true }),
+  c("screener-sections", "group", "screener.segAria", { within: "content" }),
+  c("screener-waiting", "button", "screener.segWaiting", { within: "screener-sections", counted: true }),
+  c("screener-screened", "button", "screener.segScreened", { within: "screener-sections", counted: true }),
+  c("screener-spam", "button", "screener.segSpam", { within: "screener-sections", counted: true }),
+  c("screener-junk", "button", "screener.segJunk", { within: "screener-sections" }),
   c("screener-destinations", "menu", "screener.rowMoreAria", { within: "content" }),
 
   // Triage.
-  c("triage-piles", "group", "triage.pilesAria", { within: "content" }),
-  c("triage-reply-later", "button", "triage.replyLater", { within: "triage-piles", counted: true }),
-  c("triage-set-aside", "button", "triage.setAside", { within: "triage-piles", counted: true }),
-  c("triage-resurface", "button", "triage.resurface", { within: "triage-piles", counted: true }),
+  c("triage-piles", "group", "later.switch.label", { within: "content" }),
+  c("triage-reply-later", "button", "later.title", { within: "triage-piles", counted: true }),
+  c("triage-set-aside", "button", "parked.title", { within: "triage-piles", counted: true }),
+  c("triage-resurface", "button", "resurface.title", { within: "triage-piles", counted: true }),
+
+  // Mail and Calendar.
+  c("products", "group", "frame.products.label"),
+  c("switch-calendar", "button", "frame.products.cal", { within: "products" }),
+  c("switch-mail", "button", "frame.products.mail", { within: "products" }),
 
   // Settings.
   c("settings-menu", "navigation", "settings.navAria", { within: "content" }),
@@ -139,8 +155,9 @@ const entries: Array<[string, Control]> = [
   c("device-for", "textbox", "devices.addFor", { within: "settings-pane" }),
   c("device-add", "button", "devices.addAction", { within: "settings-pane" }),
   c("sign-out", "button", "account.signOut", { within: "settings-pane" }),
-  c("erase-begin", "button", "account.begin", { within: "settings-pane" }),
-  c("erase-confirm", "textbox", "account.typeLabel", { within: "settings-pane" }),
+  c("erase-open", "button", "account.begin", { within: "settings-pane" }),
+  c("erase-begin", "button", "deleteAccount.begin"),
+  c("erase-confirm", "textbox", "deleteAccount.typeLabel"),
 
   // The doors.
   c("login-email", "textbox", "login.emailLabel"),

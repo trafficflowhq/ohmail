@@ -6,6 +6,7 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { createContext, useContext, type ReactNode } from "react";
+import type { RowAsk } from "@ohmail/app-logic/ohbox";
 import type { NotOrganizingYet } from "@ohmail/app-logic/mail-state/mail-state";
 import type { None } from "../host/index.js";
 
@@ -40,6 +41,8 @@ export interface OhboxBeside {
   pull: { busy: boolean; run(): void } | None;
   /** Key hints are shown on this device. */
   keysShown: boolean;
+  askRow?: (ask: RowAsk) => void;
+  canDelete?: (id: string) => boolean;
   /** A press on a row's time turns every time in the list to its other form; left out, a time is no press. */
   flipTime?: () => void;
   /** The letter a search or a link just took the person to: its row is marked while this names it. */

@@ -1,5 +1,7 @@
 {
   "gate": {
+    "settingsHandoffSignIn": "Sign in to the account open on your desktop.",
+    "settingsHandoffInvalid": "This Settings link is unavailable. Open Settings again from your desktop.",
     "lede": "This build has no server attached.",
     "body": "It runs the whole interface on demo mail, with no network at all.",
     "note": "Your own mailboxes are at ohmail.app.",

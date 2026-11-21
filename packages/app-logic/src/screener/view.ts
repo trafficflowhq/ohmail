@@ -69,6 +69,8 @@ export type ScreenerShown =
   "place" | "scope" | "more" | "row" | "card" | "subject" | "audit" | "filter" | null;
 
 export interface ScreenerView {
+  /** Changes when a decision advances to another sender. */
+  readonly decisionMotion?: number;
   readonly segment: KeySegment;
   /** The section's rows, in the order they are drawn and walked. */
   readonly rows: readonly ViewRow[];
@@ -269,7 +271,7 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
   const engine = useEngineOrNull();
   const simulated = useContext(EngineContext)?.demo === true;
   const ask = useBulkAsk(state, segment, scopeOf, simulated);
-  const { decide, decideRow, answerUnsub, unsub, dropUnsub } = useDecide({
+  const { decide, decideRow, answerUnsub, unsub, dropUnsub, decisionMotion } = useDecide({
     state,
     segment,
     openId,
@@ -330,6 +332,7 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
     },
     openId,
     open,
+    decisionMotion,
     enteredLetter,
     full: oneColumn && full && (open !== null || failedOpen !== null),
     shown,

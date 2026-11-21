@@ -115,12 +115,26 @@ describe("General", () => {
   it("chooses a look by its tile, and a press on the chosen one writes nothing", () => {
     const set = vi.fn();
     const model = generalState();
-    mount({ ...model, look: { ...model.look, set } });
+    const { again } = mount({ ...model, look: { ...model.look, set } });
     const tiles = group(generalEn.settingsGeneral.lookChoice);
-    fireEvent.click(within(tiles).getByRole("button", { name: /^paper/ }));
+    fireEvent.click(within(tiles).getByRole("button", { name: /^oh(?:\.|$)/ }));
     expect(set).not.toHaveBeenCalled();
     fireEvent.click(within(tiles).getByRole("button", { name: /^ohmarchy/ }));
     expect(set).toHaveBeenCalledWith("ohmarchy");
+    again({ ...model, look: { ...model.look, face: "ohmarchy", set } });
+    fireEvent.click(within(group(generalEn.settingsGeneral.lookChoice)).getByRole("button", { name: "oh" }));
+    expect(set).toHaveBeenLastCalledWith("paper");
+  });
+
+  it("chooses where the subject appears in a conversation", () => {
+    const set = vi.fn();
+    const model = generalState();
+    const { again } = mount({ ...model, subject: { value: "head", set } });
+    expect(screen.getByRole("button", { name: "One heading" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "On each message" }));
+    expect(set).toHaveBeenCalledWith("each");
+    again({ ...model, subject: { value: "each", set } });
+    expect(screen.getByRole("button", { name: "On each message" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("sets the text size, the picture quality and what follows a verb by their segments", () => {

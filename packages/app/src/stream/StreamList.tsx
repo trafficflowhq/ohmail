@@ -62,7 +62,9 @@ function ItemRow({
   sentLabel: ReturnType<typeof useSentLabel>;
   rowPeople: ReturnType<typeof useRowPeople>;
 }) {
+  const message = useText("message");
   const who = senderOf(m);
+  const unread = presentsUnread(m);
   const sent = answered && sentLabel(answered);
   const recipient = sent && answered ? sentRowRecipient(answered) : null;
   const shown = sent && answered ? answered : m;
@@ -85,7 +87,7 @@ function ItemRow({
       file={m.hasAttachments ? t("item.file") : undefined}
       open={model.openId === m.id}
       stream
-      unread={presentsUnread(m)}
+      unread={unread}
       onOpen={() => model.open(m.id, false, true)}
       onKeyboardOpen={() => model.open(m.id, true, true)}
       tag={
@@ -100,7 +102,9 @@ function ItemRow({
         selected: selection.ids.length ? pick.picked === true : selected,
         stop: selected,
         place: position,
-        spoken: [delivery?.title, t("item.keyboardOpen")].filter(Boolean).join(". "),
+        spoken: [delivery?.title, t("item.keyboardOpen"), unread ? message("rowUnread") : null]
+          .filter(Boolean)
+          .join(". "),
       }}
       mark={{ id: m.id, index, unseen: m.unread }}
     />
@@ -155,7 +159,6 @@ function StreamRowsList({
       ? engine?.read().get<FilingChipData>("view_meta", "reads_ai_chip")
       : undefined;
   const t = useStreamText(model.place);
-  const news = useText("reads");
   const locale = useLocale();
   const mailboxWord = useMailboxWord();
   const place = useFrame().host.features.places[model.place];
@@ -244,9 +247,6 @@ function StreamRowsList({
         </Rows>
       ) : null}
       {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
-      {model.place === "news" && model.mayState && model.items.length > 0 ? (
-        <p className="st-read-rule">{news("tail")}</p>
-      ) : null}
       {empty}
       {contact.card}
     </ListColumn>

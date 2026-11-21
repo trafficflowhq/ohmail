@@ -584,7 +584,7 @@ export const STORED_KEYS = [
   },
   {
     key: "tf_family", store: "cookie", owner: "server",
-    at: ["packages/api/src/cookies.ts", "packages/api/src/routes/session-lifecycle.ts", "apps/webapp/app/signed-out-signal.ts"],
+    at: ["packages/api/src/cookies.ts", "packages/api/src/routes/session-lifecycle.ts", "apps/webapp/app/signed-out-signal.ts", "apps/webapp/public/sw.js"],
     holds: "the host-only session family marker readable by the browser for matching session changes",
     words: false, erased: "sign-out", mark: "kept",
   },
@@ -608,7 +608,7 @@ export const STORED_KEYS = [
   },
   {
     key: "tf_owner", store: "cookie", owner: "server",
-    at: ["packages/api/src/cookies.ts", "packages/app-logic/src/storage/owner-cookie.ts"],
+    at: ["packages/api/src/cookies.ts", "packages/app-logic/src/storage/owner-cookie.ts", "apps/webapp/public/sw.js"],
     holds: "the account id the jar belongs to, readable by script, never a credential",
     words: false, erased: "sign-out", mark: "kept",
   },

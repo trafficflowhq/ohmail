@@ -99,22 +99,22 @@ describe("the shell on the account's own mail", () => {
     const host = await screeningShell();
     const own = await openScreening(host, "Note to self", ME);
     expect(own.getByText(SENTENCE).textContent).toBe(SENTENCE);
-    expect(own.queryAllByRole("option")).toHaveLength(0);
-    expect(own.queryByRole("button", { name: en.screening.subjectRuleOpen })).toBeNull();
+    expect(own.queryByRole("radiogroup", { name: en.screening.cardGoesTo })).toBeNull();
+    expect(own.queryByRole("menuitem", { name: en.screening.cardSubject })).toBeNull();
     await closeScreening();
     const friend = await openScreening(host, "Lunch on Friday", FRIEND);
-    expect(friend.getAllByRole("option")).toHaveLength(5);
+    expect(within(friend.getByRole("radiogroup", { name: en.screening.cardGoesTo })).getAllByRole("radio")).toHaveLength(5);
   });
 
   it("our own note's title says the sentence instead of opening the subject sheet; a friend's opens it", async () => {
     const host = await screeningShell();
     const own = await openScreening(host, "Note to self", ME);
     expect(own.getByText(SENTENCE).textContent).toBe(SENTENCE);
-    expect(own.queryByRole("button", { name: en.screening.subjectRuleOpen })).toBeNull();
+    expect(own.queryByRole("menuitem", { name: en.screening.cardSubject })).toBeNull();
     expect(screen.queryByRole("dialog", { name: /^Rule on/ })).toBeNull();
     await closeScreening();
     const friend = await openScreening(host, "Lunch on Friday", FRIEND);
-    await click(friend.getByRole("button", { name: en.screening.subjectRuleOpen }));
+    await click(friend.getByRole("menuitem", { name: en.screening.cardSubject }));
     const dialog = within(screen.getByRole("dialog", {
       name: en.screening.subjectAria.replace("{who}", FRIEND),
     }));

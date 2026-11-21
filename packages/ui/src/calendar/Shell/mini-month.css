@@ -208,8 +208,9 @@
     content: none;
   }
   .oh-mini-run {
+    --oh-mini-run-top: calc(var(--s1) - var(--cal-year-run-line));
     position: absolute;
-    inset: var(--cal-year-run-top) 0 var(--s1);
+    inset: var(--oh-mini-run-top) 0 var(--s1);
     background: color-mix(
       in oklab,
       var(--oh-cal-mark, var(--cal-grey)) var(--cal-year-run-wash),

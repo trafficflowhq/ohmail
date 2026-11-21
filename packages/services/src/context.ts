@@ -51,6 +51,20 @@ export function dbFor(db: Db, accountId: string): BoundDb {
   return bindDb(db, { account: accountId });
 }
 
+/** A credential lookup carries the presented key for one indexed read. */
+export function keyedCredentialDb(ctx: ServiceContext, key: string | null): ContextDb {
+  if (ctx.credentialDb !== undefined) return bindDb(ctx.credentialDb, { account: null, key });
+  return ctx.accountId === ""
+    ? bindDb(ctx.db, { account: null, key })
+    : bindDb(ctx.db, { account: ctx.accountId, key });
+}
+
+/** Account work after a credential identifies its owner. The request's session stays on the caller's context. */
+export function credentialContext(ctx: ServiceContext, accountId: string): ServiceContext {
+  if (ctx.accountId === accountId) return ctx;
+  return { ...ctx, accountId, db: dbFor(ctx.credentialDb ?? ctx.db, accountId) };
+}
+
 /**
  * THE ONE DIALECT BRIDGE (review 020, BACKEND L4). Services are written against the pg builder
  * types while the handle behind `Db` may be PGlite, hosted Postgres or the phone's sqlite-proxy;
@@ -111,6 +125,8 @@ export async function claimOrLose(
 export interface ServiceContext {
   /** Bound to the account this context runs for, or to nothing; never a plain handle (`dbFor`, `serviceContext`). */
   db: ContextDb;
+  /** The original request handle, available to public credential ceremonies with an ambient session. */
+  credentialDb?: UnboundDb;
   accountId: string;
   userId: string | null;
   now: () => Date;

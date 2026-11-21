@@ -73,7 +73,7 @@ export async function startStack(recordAs: string, size: Size): Promise<Bench> {
     },
     async account() {
       const session = await far.signIn(await far.register());
-      const { address } = await far.connectMailbox(session);
+      const address = await far.setUpMailbox(session);
       const account: Account = {
         accountId: session.accountId, userId: session.userId, email: session.email,
         access: session.cookies.find((c) => c.name === "tf_session")?.value ?? "",

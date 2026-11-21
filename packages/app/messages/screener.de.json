@@ -205,6 +205,8 @@
     "markAllSpam": "Alles als Spam markieren",
     "askAllSpam": "{count, plural, one {Den # wartenden Absender als Spam markieren?} other {Alle # wartenden Absender als Spam markieren?}}",
     "askAllSpamNote": "Ihre zurückgehaltenen Mails kommen in Spam, ebenso alles, was sie später senden.",
+    "askScreenPicked": "{count, plural, one {# Absender aussortieren?} other {# Absender aussortieren?}}",
+    "askScreenPickedNote": "Ihre zurückgehaltenen und zukünftigen Mails werden aussortiert.",
     "askAllSpamYes": "{count} als Spam markieren",
     "askApplySuggestions": "{count, plural, one {# Vorschlag übernehmen?} other {# Vorschläge übernehmen?}}",
     "askApplySuggestionsYes": "{count, plural, one {# Vorschlag übernehmen} other {# Vorschläge übernehmen}}",
@@ -491,6 +493,14 @@
     "reopenAction": "Ansehen"
   },
   "screening": {
+    "cardSeeAll": "Alle ansehen",
+    "cardNowIn": "Jetzt in {place}",
+    "cardNowSpread": "Jetzt an {count, plural, one {einem Ort} other {# Orten}}",
+    "cardGoesTo": "Geht nach",
+    "cardScreenOut": "Aussortieren",
+    "cardFuture": "Regel für künftige Nachrichten",
+    "cardExisting": "Vorhandene Nachrichten verschieben",
+    "cardSubject": "Regel für einen Betreff",
     "scopeShared": "{domain} ist ein geteilter Anbieter. Entscheide hier pro Adresse.",
     "action": "Einordnen",
     "openFor": "{sender} einordnen",

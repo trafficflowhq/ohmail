@@ -263,8 +263,8 @@ describe("the mail server's own Trash", () => {
   it("`none` withholds the section: nothing is asked of any server", async () => {
     mount({ rows: [row("t1", "INBOX")], wire: "none" });
     await flush();
-    expect(screen.queryByRole("region", { name: "In your mail server's Trash" })).toBeNull();
-    expect(document.body.textContent).not.toContain("In your mail server's Trash");
+    expect(screen.queryByRole("region", { name: "On your mail server" })).toBeNull();
+    expect(document.body.textContent).not.toContain("On your mail server");
   });
 
   it("lists its rows read-only: an open live row reads its text and offers no verb", async () => {
@@ -279,7 +279,7 @@ describe("the mail server's own Trash", () => {
     );
     const m = mount({ rows: [], wire, open: "mb:7:41" });
     await flush();
-    expect(screen.getByRole("listbox", { name: "In your mail server's Trash" }).textContent).toContain(
+    expect(screen.getByRole("listbox", { name: "On your mail server" }).textContent).toContain(
       "Gone elsewhere",
     );
     expect(asked).toEqual(["list", "body:41"]);
@@ -297,13 +297,13 @@ describe("the mail server's own Trash", () => {
     });
     mount({ rows: [], wire: wireOf(page("more"), []) });
     await flush();
-    const partial = screen.getByRole("heading", { name: /In your mail server's Trash/ });
+    const partial = screen.getByRole("heading", { name: /On your mail server/ });
     expect(partial.textContent).not.toMatch(/\d/);
     expect(screen.getByRole("button", { name: "Show older" })).toBeTruthy();
     cleanup();
     mount({ rows: [], wire: wireOf(page(null), []) });
     await flush();
-    expect(screen.getByRole("heading", { name: /In your mail server's Trash/ }).textContent).toContain("2");
+    expect(screen.getByRole("heading", { name: /On your mail server/ }).textContent).toContain("2");
   });
 
   it("a failed read says so with a way to ask again, never an empty Trash", async () => {

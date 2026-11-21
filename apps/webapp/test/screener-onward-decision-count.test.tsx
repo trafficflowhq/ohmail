@@ -127,7 +127,7 @@ async function settleWrite() {
 describe("a decision on a sender from a later page", () => {
   it("lowers the count at the press and keeps it lowered until the store's next answer", async () => {
     await open(false);
-    expect(count(250)).toBeTruthy();
+    await vi.waitFor(() => expect(count(250)).toBeTruthy());
     await press();
     expect(count(249)).toBeTruthy();
     expect(writes).toEqual([]);

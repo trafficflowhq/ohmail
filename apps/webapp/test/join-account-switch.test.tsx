@@ -72,6 +72,7 @@ const enrolling = (accountId: string, email: string) => ({
     twofaEnrolled: { webauthn: false, totp: false, recoveryCodes: false },
   },
   scope: "enrollment",
+  familyId: "enroll-fixture",
 });
 
 /** …and once its codes exist. */
@@ -83,7 +84,11 @@ const withCodes = (accountId: string, email: string) => {
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-beforeEach(() => {
+beforeEach(async () => {
+  const { bindApiOwner } = await import("../app/api-client.js");
+  bindApiOwner(null);
+  document.cookie = "tf_owner=; Max-Age=0; path=/";
+  document.cookie = "tf_family=enroll-fixture; path=/";
   calls = [];
   sessionAt = 0;
   sessionScript = [asAccount("acct_A", "a@example.invalid")];
@@ -114,7 +119,10 @@ afterEach(async () => {
   root = null;
   host = null;
   globalThis.fetch = originalFetch;
+  document.cookie = "tf_family=; Max-Age=0; path=/";
+  document.cookie = "tf_owner=; Max-Age=0; path=/";
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function mountJoin(props: {
@@ -166,7 +174,7 @@ describe("the ordinary first signup — the path the guard was OFF for", () => {
       if (url.includes("/auth/register")) {
         registered = true;
         return json({
-          status: "enrollment", next: "enroll_2fa", enrollmentToken: "t", expiresIn: 600,
+          status: "enrollment", next: "enroll_2fa", familyId: "enroll-fixture", enrollmentToken: "t", expiresIn: 600,
           user: {
             userId: "u_A", accountId: "acct_A", email: "a@example.invalid", displayName: "Pat",
             emailVerified: false,
@@ -263,7 +271,7 @@ describe("the ordinary first signup — the path the guard was OFF for", () => {
       if (url.includes("/auth/register")) {
         registered = true;
         return json({
-          status: "enrollment", next: "enroll_2fa", enrollmentToken: "t", expiresIn: 600,
+          status: "enrollment", next: "enroll_2fa", familyId: "enroll-fixture", enrollmentToken: "t", expiresIn: 600,
           user: {
             userId: "u_A", accountId: "acct_A", email: "a@example.invalid", displayName: "Pat",
             emailVerified: false,
@@ -483,7 +491,7 @@ describe("a switch between the check and the write is the server's refusal, said
       if (url.includes("/auth/register")) {
         registered = true;
         return json({
-          status: "enrollment", next: "enroll_2fa", enrollmentToken: "t", expiresIn: 600,
+          status: "enrollment", next: "enroll_2fa", familyId: "enroll-fixture", enrollmentToken: "t", expiresIn: 600,
           user: {
             userId: "u_A", accountId: "acct_A", email: "a@example.invalid", displayName: "Pat",
             emailVerified: false,
@@ -832,4 +840,70 @@ describe("a factor added in another tab ends the factor step here", () => {
     expect(calls.filter((u) => u.includes("/auth/2fa/totp/activate")), "a second factor was activated").toEqual([]);
     expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title);
   });
+});
+
+it.each([
+  { factor: "passkey", displaced: false },
+  { factor: "authenticator", displaced: false },
+  { factor: "passkey", displaced: true },
+] as const)("recovery codes after $factor activation (binding displaced: $displaced)", async ({ factor, displaced }) => {
+  vi.stubGlobal("PublicKeyCredential", class {});
+  const fetcher = vi.mocked(globalThis.fetch);
+  const fallback = fetcher.getMockImplementation()!;
+  const owned = (body: unknown): Response => new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "X-Ohmail-Account": "acct_A" },
+  });
+  let active = false;
+  const factorPath = factor === "passkey" ? "/webauthn/register/verify" : "/totp/activate";
+  const enrollment = enrolling("acct_A", "");
+  const established = {
+    ...asAccount("acct_A", enrollment.user.email),
+    familyId: "full-fixture",
+  };
+  fetcher.mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/session")) return owned(active ? established : enrollment);
+    if (path.endsWith("/webauthn/register/options")) return owned({ options: {} });
+    if (path.endsWith(factorPath)) {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("X-Ohmail-Expected-Account")).toBe("acct_A");
+      expect(headers.get("X-Ohmail-Expected-Family")).toBe(enrollment.familyId);
+      active = true;
+      document.cookie = "tf_family=full-fixture; Path=/";
+      return owned({ session: { status: "authenticated", user: established.user, familyId: established.familyId } });
+    }
+    if (path.endsWith("/auth/2fa/recovery-codes")) {
+      calls.push(path);
+      return owned({ codes: ["aaaa-bbbb", "cccc-dddd"] });
+    }
+    return fallback(input, init);
+  });
+
+  const c = await mountJoin();
+  expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_factor_title);
+  if (factor === "passkey") {
+    const apiClient = await import("../app/api-client.js");
+    vi.spyOn(apiClient, "createPasskey").mockImplementation(async () => {
+      if (displaced) apiClient.bindApiOwner("acct_A");
+      return {};
+    });
+    await pressed(c, messages.join.addPasskey);
+  } else {
+    await pressed(c, messages.join.useTotp);
+    const field = c.querySelector<HTMLInputElement>("#join-totp")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "123456");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await pressed(c, messages.join.activate);
+  }
+  if (displaced) {
+    expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_factor_title);
+    expect(active).toBe(false);
+    expect(generated()).toHaveLength(0);
+    return;
+  }
+  expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title);
+  expect(generated()).toHaveLength(1);
+  for (const code of ["aaaa-bbbb", "cccc-dddd"]) expect(c.textContent).toContain(code);
 });

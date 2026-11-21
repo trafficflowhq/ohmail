@@ -50,6 +50,38 @@ describe("a refused sign-in", () => {
     expect(connect).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    [
+      "icloud",
+      [
+        ["Apple Account email address", "person"],
+        ["App-specific password", "secret"],
+      ],
+      /iCloud takes an app-specific password/,
+    ],
+    [
+      "caldav",
+      [
+        ["The server’s address", "server"],
+        ["User name", "person"],
+        ["Password", "secret"],
+      ],
+      /The server did not accept the username and password\. Check them and the server address\./,
+    ],
+    ["ics", [["The calendar’s address", "feed"]], /The feed asked for a sign-in\./],
+  ] as const)("shows the refused sign-in for %s", async (way, fields, sentence) => {
+    const port = setupPort(async () => [way], {
+      connect: vi.fn(async () => ({ kind: "refused", fault: "sign_in_refused" }) as const),
+    });
+    mountFrame(`#/cal/cal-setup?step=signin&way=${way}`, mirror(), port);
+    await act(async () => undefined);
+    for (const [label, value] of fields)
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+    await act(async () => undefined);
+    expect(screen.getByText(sentence)).toBeTruthy();
+  });
+
   it("shows the mirror's refusal of a connection and calls nothing until Try again is pressed", async () => {
     const world = mirror();
     world.put(
@@ -71,6 +103,25 @@ describe("a refused sign-in", () => {
     await act(async () => undefined);
     expect(address.writes.at(-1)?.next).toMatch(/step=signin&way=icloud&again=conn-1/);
     expect(doors(port).every((door) => door.mock.calls.length === 0)).toBe(true);
+  });
+
+  it.each([
+    ["caldav", /The server did not accept the username and password/],
+    ["ics", /The feed asked for a sign-in/],
+  ] as const)("shows the %s refusal during the first read", async (way, sentence) => {
+    const world = mirror();
+    world.put(
+      "calendar_connection",
+      "conn-1",
+      connectionRecord({ status: "reconnect", errorCode: "sign_in_refused" }),
+    );
+    mountFrame(
+      `#/cal/cal-setup?step=calendars&way=${way}&connection=conn-1`,
+      world,
+      setupPort(async () => [way]),
+    );
+    await act(async () => undefined);
+    expect(screen.getByText(sentence)).toBeTruthy();
   });
 
   it("says it is still checking while nothing has answered, and follows the calendars when they arrive", async () => {

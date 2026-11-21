@@ -15,6 +15,7 @@ import {
   SearchIndex,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
+import germanMessages from "../messages/de.json";
 import { createEngine } from "../app/shell/engine-config";
 
 /**
@@ -55,7 +56,6 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 const NOW = new Date("2026-08-04T12:00:00.000Z");
 
-const intlMessages = messages;
 
 let seq = 0;
 
@@ -122,8 +122,10 @@ afterEach(async () => {
   leaveSearch();
 });
 
-async function render(engine: OhmailEngine, query: string, _version = 1): Promise<void> {
-  await act(async () => { root.render(h(RegisteredSearch, { engine, now: NOW, catalogue: intlMessages })); });
+async function render(engine: OhmailEngine, query: string, _version = 1, locale: "en" | "de" = "en"): Promise<void> {
+  const catalogue = locale === "de" ? germanMessages : messages;
+  await act(async () => { root.render(h(RegisteredSearch, { engine, now: NOW, catalogue, locale })); });
+  await within(host).findByRole("textbox", { name: catalogue.search.aria });
   await act(async () => { typeSearch(host, query); });
 }
 
@@ -136,6 +138,8 @@ async function settleArchive(): Promise<void> {
 }
 
 const text = (): string => host.textContent ?? "";
+const resultsCount = (): string | null =>
+  within(host).getByRole("heading", { name: (name) => name.startsWith(messages.search.results) }).textContent;
 const hits = (): string[] =>
   [...host.querySelectorAll('[role="listitem"] .oh-row-subject')].map((n) => n.textContent ?? "");
 
@@ -207,7 +211,7 @@ describe("the sentence under the box is true at every moment", () => {
     // The row already on screen stays first; the store's other rows follow in its order; a device
     // row the store did not return is gone — one list, the store's.
     expect(hits()).toEqual(["ZQXBRIM in the subject", "Pottery order"]);
-    expect(text()).toContain("Searched your whole mailbox — 41 matched");
+    expect(resultsCount()).toBe("Results41");
     expect(text()).not.toContain("Searching your whole mailbox");
   });
 
@@ -367,14 +371,31 @@ describe("a desktop paired with ohmail Cloud: the account's verdict, or a senten
   }
   const row = msg({ id: "h", subject: "Heron census" });
 
-  it("the account's answer is the whole-mailbox verdict, with its count and its server ms", async () => {
+  it("the account's answer shows the count with Results and the elapsed time at Search", async () => {
     const engine = await engineWith([], door({
       page: { items: [row], total: 50, totalExact: false, ms: 37 },
       estimate: { items: [], total: 4321, totalExact: true, ms: 11 },
     }));
     await render(engine, "heron");
     await settleArchive();
-    expect(text()).toContain("Searched your whole mailbox — 4,321 matched · ");
+    expect(resultsCount()).toBe("Results4,321");
+    expect(within(host).getByText(/^[1-9]\d* ms$/)).toBeTruthy();
+    expect(within(host).getByRole("status").textContent).toMatch(
+      /^Searched your whole mailbox — 4,321 matched · [1-9]\d* ms$/,
+    );
+  });
+
+  it("announces an exact account answer in German", async () => {
+    const engine = await engineWith([], door({
+      page: { items: [row], total: 50, totalExact: false, ms: 37 },
+      estimate: { items: [], total: 4321, totalExact: true, ms: 11 },
+    }));
+    await render(engine, "heron", 1, "de");
+    await settleArchive();
+    expect(within(host).getByRole("heading", { name: "Treffer 4.321" })).toBeTruthy();
+    expect(within(host).getByRole("status").textContent).toMatch(
+      /^Dein ganzes Postfach wurde durchsucht — 4\.321 gefunden · [1-9]\d* ms$/,
+    );
   });
 
   it("the mirror's answer says it covers this computer while ohmail Cloud is unreachable, never the whole mailbox", async () => {
@@ -397,7 +418,7 @@ describe("a desktop paired with ohmail Cloud: the account's verdict, or a senten
     } as unknown as Partial<EngineAdapter>);
     await render(engine, "heron");
     await settleArchive();
-    expect(text()).toContain("Searched your whole mailbox — 3 matched · ");
+    expect(resultsCount()).toBe("Results3");
     await render(engine, "heron", 2);
     await settleArchive();
     expect(got).toHaveLength(1);
@@ -413,7 +434,7 @@ describe("a desktop paired with ohmail Cloud: the account's verdict, or a senten
     }));
     await render(engine, "heron");
     await settleArchive();
-    expect(text()).toContain("Searched your whole mailbox — 4,321 matched · ");
-    expect(text()).not.toContain("— 1 matched");
+    expect(resultsCount()).toBe("Results4,321");
+    expect(resultsCount()).not.toBe("Results1");
   });
 });

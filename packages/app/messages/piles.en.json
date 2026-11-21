@@ -29,10 +29,12 @@
     "runExit": "exit",
     "pileResurfaces": "resurfaces {when}",
     "list": {
-      "menu": "List"
+      "menu": "List",
+      "unread": "{count, plural, one {1 unread} other {# unread}}"
     }
   },
   "later": {
+    "summary": "{count, number} to answer",
     "title": "Answer Later",
     "empty": "Nothing to answer later",
     "switch": {
@@ -61,10 +63,12 @@
     }
   },
   "parked": {
+    "summary": "{count, number} parked",
     "title": "Parked",
     "empty": "Nothing parked"
   },
   "resurface": {
+    "summary": "{count, number} set to come back",
     "title": "Resurface",
     "empty": "Nothing set to come back"
   }

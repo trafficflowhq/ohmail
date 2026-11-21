@@ -19,7 +19,7 @@ export interface MonthRun {
   readonly height: number;
   readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly onScroll: (event: UIEvent<HTMLDivElement>) => void;
-  readonly jump: (day: string) => void;
+  readonly jump: (day: string, revealDay?: "reveal-day") => number | undefined;
 }
 
 /** The month with the greatest share of the weeks currently in view. */
@@ -64,6 +64,7 @@ export function useMonthRun(anchor: string | null, weekStart: number): MonthRun 
   const rowHeight = Math.max(1, room.minRow, Math.ceil(room.height / FIT));
   const roomInRows = room.height > 0 ? room.height / rowHeight : FIT;
   const maxRow = Math.max(0, total - roomInRows);
+  const visibleRows = Math.max(1, roomInRows);
   const initial = anchor === null ? 0 : Math.max(0, Math.min(maxRow, monthStart(anchor)));
   const picked = anchor === null ? 0 : rowOf(anchor);
   const top = position?.first === first ? position.row : initial;
@@ -95,9 +96,9 @@ export function useMonthRun(anchor: string | null, weekStart: number): MonthRun 
     const previous = before.current;
     let row = previous?.first === first ? previous.row : initial;
     const resized = previous?.first !== first || previous.rowHeight !== rowHeight;
-    if (!resized && previous.anchor !== anchor) {
+    if (previous?.anchor !== anchor) {
       if (picked < row) row = picked;
-      else if (picked + 1 > row + roomInRows + 0.01) row = Math.ceil(picked + 1 - roomInRows);
+      else if (picked + 1 > row + visibleRows + 0.01) row = Math.ceil(picked + 1 - visibleRows);
     }
     if (resized || row !== previous.row) {
       el.scrollTop = Math.max(0, Math.min(maxRow, row)) * rowHeight;
@@ -105,7 +106,7 @@ export function useMonthRun(anchor: string | null, weekStart: number): MonthRun 
       setPosition({ first, row });
     }
     before.current = { first, rowHeight, anchor, row };
-  }, [anchor, room.height, first, rowHeight, initial, picked, maxRow, roomInRows]);
+  }, [anchor, room.height, first, rowHeight, initial, picked, maxRow, visibleRows]);
 
   if (anchor === null) return null;
   const end = Math.min(total, top + roomInRows);
@@ -130,9 +131,11 @@ export function useMonthRun(anchor: string | null, weekStart: number): MonthRun 
       current.row = row;
       setPosition((prev) => (prev?.first === first && prev.row === row ? prev : { first, row }));
     },
-    jump: (day) => {
+    jump: (day, revealDay) => {
       const el = scrollRef.current;
-      const target = monthStart(day);
+      // A short viewport may show fewer than six rows of the requested month.
+      const start = monthStart(day);
+      const target = revealDay ? Math.max(start, Math.ceil(rowOf(day) + 1 - visibleRows)) : start;
       if (!el || room.height === 0 || target < 0 || target >= total) return;
       const row = Math.max(0, Math.min(maxRow, target));
       if (motionReduced(el)) {
@@ -144,6 +147,7 @@ export function useMonthRun(anchor: string | null, weekStart: number): MonthRun 
       }
       // The explicit jump owns this scroll. The route change only updates the picked day.
       if (before.current) before.current.anchor = day;
+      return row * rowHeight;
     },
   };
 }

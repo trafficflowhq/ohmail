@@ -323,10 +323,18 @@ function useWebNotifications(
   const zone = useTimeZone() ?? "UTC";
   const mounted = useRef({ address, engine, calendarPort, owner, zone });
   mounted.current = { address, engine, calendarPort, owner, zone };
-  useEffect(subscribeBrowserNoticeOpening, []);
+  useEffect(() => subscribeBrowserNoticeOpening((owner, family) => {
+    const current = mounted.current;
+    if (current.owner !== owner || boundApiFamily(owner) !== family ||
+        !captureFaceOwner(owner)() || !sessionMayAsk()) return false;
+    return openMailNotice(current.address, undefined, () => false);
+  }), []);
   return useMemo(() => ({
     ...browserNotificationHost,
-    liveNoticeScope: readOwner,
+    liveNoticeScope: () => {
+      const owner = mounted.current.owner;
+      return captureFaceOwner(owner)() && sessionMayAsk() ? owner : null;
+    },
     emitter: webNoticeEmitter(browserNoticePage, () => noticeWordingOf((key, values) => say.current(key, values)), (notice, letter) => {
       if (notice.kind !== "ohbox" && (!("eventId" in notice) || mounted.current.calendarPort === NONE)) return;
       const before = mounted.current;
@@ -337,7 +345,7 @@ function useWebNotifications(
           return openMailNotice(before.address, letter, (id) => before.engine.store.get("message", id) !== undefined);
         }
         if (before.calendarPort === NONE || mounted.current.calendarPort !== before.calendarPort) return false;
-        return openCalendarNotice(before.address, before.calendarPort, notice.eventId, mounted.current.zone);
+        return openCalendarNotice(before.address, before.calendarPort, notice.eventId, mounted.current.zone, notice.kind === "cal_alert" ? notice.startMs : undefined);
       };
     }),
   }), []);

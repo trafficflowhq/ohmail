@@ -105,6 +105,8 @@ const subscribe = vi.fn(async () => ({ id: "unused" }));
    a registration acknowledgment against the corresponding session change. */
 vi.mock("../app/api-client", () => ({
   apiConfigured: () => true,
+  boundApiFamily: (owner: string) => owner === "account_B" && document.cookie.includes("tf_family=family-current")
+    ? "family-current" : "family-old",
   push: {
     vapidKey: () => Promise.resolve({ publicKey: null }),
     subscribe: () => subscribe(),
@@ -114,6 +116,7 @@ vi.mock("../app/api-client", () => ({
 
 describe("revokeWakeRegistration", () => {
   beforeEach(() => {
+    document.cookie = "tf_family=family-old; Path=/";
     cachePuts.length = 0;
     cacheDeletes.length = 0;
     deleted.length = 0;
@@ -129,6 +132,7 @@ describe("revokeWakeRegistration", () => {
     });
   });
   afterEach(() => {
+    document.cookie = "tf_family=; Path=/; Max-Age=0";
     Reflect.deleteProperty(navigator, "locks");
     vi.resetModules();
   });
@@ -252,11 +256,17 @@ describe("revokeWakeRegistration", () => {
     await waking;
     expect(cachePuts).toEqual([]);
 
+    document.cookie = "tf_family=family-current; Path=/";
+    const proof = vi.spyOn(crypto, "randomUUID").mockReturnValueOnce("2cfcc3f0-be28-4ba9-9e03-6210584a9881");
     subscribe.mockResolvedValueOnce({ id: "row-current" });
     await expect(applyWakeIntent(browserNotificationHost, true, "Mail from this session")).resolves.toBe("subscribed");
     expect(cachePuts.map(({ body }) => JSON.parse(body))).toEqual([
-      { enabled: true, title: "ohmail", body: "Mail from this session" },
+      {
+        enabled: true, title: "ohmail", body: "Mail from this session",
+        registration: { owner: "account_B", family: "family-current", proof: "2cfcc3f0-be28-4ba9-9e03-6210584a9881" },
+      },
     ]);
+    proof.mockRestore();
   });
 
   it("keeps the worker disarmed when the signed-in account changes during the cache read", async () => {
@@ -347,6 +357,28 @@ describe("revokeWakeRegistration", () => {
     expect(window.localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBe("row-current");
   });
 
+  it.each(["account", "family"])("leaves a replacement %s's subscription alone when an earlier turn-off is still looking it up", async (change) => {
+    const { applyWakeIntent, browserNotificationHost } =
+      await import("../app/shell/notification-settings");
+    document.cookie = "tf_owner=account_A; Path=/";
+    document.cookie = "tf_family=family-old; Path=/";
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const unsubscribed = { value: false };
+    installSubscribedBrowser(unsubscribed, () => { reading.resolve(); return release.promise; });
+
+    const turningOff = applyWakeIntent(browserNotificationHost, false, "Mail");
+    await reading.promise;
+    document.cookie = change === "family" ? "tf_family=family-replacement; Path=/" : "tf_owner=account_B; Path=/";
+    window.localStorage.setItem(SUBSCRIPTION_ID_KEY, "row-current");
+    release.resolve();
+
+    await expect(turningOff).resolves.toBeNull();
+    expect(unsubscribed.value).toBe(false);
+    expect(deleted).toEqual([]);
+    expect(window.localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBe("row-current");
+  });
+
   it("orders another tab's registration after an earlier turn-off waiting on the browser", async () => {
     const offTab = await import("../app/shell/notification-settings");
     vi.resetModules();
@@ -409,12 +441,48 @@ describe("revokeWakeRegistration", () => {
     await sent.promise;
     const turningOff = offTab.applyWakeIntent(offTab.browserNotificationHost, false, "Mail");
     await vi.waitFor(() => expect(JSON.parse(cachePuts.at(-1)!.body).enabled).toBe(false));
+    const disarmed = cachePuts.length;
     receipt.resolve({ id: "new-row" });
 
     await Promise.all([turningOn, turningOff]);
+    expect(cachePuts.slice(disarmed).some(({ body }) => JSON.parse(body).enabled)).toBe(false);
     expect(deleted).toEqual(["new-row"]);
     expect(localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBeNull();
     expect(JSON.parse(cachePuts.at(-1)!.body).enabled).toBe(false);
+  });
+
+  it.each([1, 2])("keeps a late ON disarmed when %s OFF cache writes fail", async (failures) => {
+    const onTab = await import("../app/shell/notification-settings");
+    vi.resetModules();
+    const offTab = await import("../app/shell/notification-settings");
+    installSharedLocks();
+    document.cookie = "tf_owner=account_A; Path=/";
+    installSubscribedBrowser({ value: false });
+    const attemptedOff = Promise.withResolvers<void>();
+    let remainingFailures = failures;
+    installFakeCaches({ beforeWrite: async (enabled) => {
+      if (enabled || remainingFailures === 0) return;
+      remainingFailures -= 1;
+      attemptedOff.resolve();
+      throw new Error("Cache write refused");
+    } });
+    const sent = Promise.withResolvers<void>();
+    const receipt = Promise.withResolvers<{ id: string }>();
+    subscribe.mockImplementationOnce(() => { sent.resolve(); return receipt.promise; });
+
+    const oldOn = onTab.applyWakeIntent(onTab.browserNotificationHost, true, "Mail");
+    await sent.promise;
+    const off = offTab.applyWakeIntent(offTab.browserNotificationHost, false, "Mail");
+    await attemptedOff.promise;
+    receipt.resolve({ id: "old-row" });
+    await Promise.all([oldOn, off]);
+    expect(cachePuts.some(({ body }) => JSON.parse(body).enabled)).toBe(false);
+    expect(deleted).toEqual(["old-row"]);
+
+    await expect(onTab.applyWakeIntent(onTab.browserNotificationHost, true, "Mail")).resolves.toBe("subscribed");
+    const state = JSON.parse(cachePuts.at(-1)!.body);
+    expect(state.enabled).toBe(true);
+    expect(state.revision).toEqual(expect.any(String));
   });
 
   it("reports a browser without a shared lock as unavailable for closed-window wakes", async () => {
@@ -491,7 +559,7 @@ describe("revokeWakeRegistration", () => {
     const otherTab = await import("../app/shell/notification-settings");
     markSignedOutPending();
     const signingOut = otherTab.revokeWakeRegistration({ signingOutOf: "account_A" });
-    await vi.waitFor(() => expect(request.mock.calls.filter(([name]) => name === "ohmail-notify-state")).toHaveLength(2));
+    await vi.waitFor(() => expect(request.mock.calls.filter(([name]) => name === "ohmail-notify-state")).toHaveLength(3));
     expect(cachePuts).toEqual([]);
     finish();
     await Promise.all([waking, signingOut]);

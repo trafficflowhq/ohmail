@@ -106,6 +106,7 @@ afterEach(async () => {
   const { bindApiOwner } = await import("../app/api-client.js");
   bindApiOwner(null);
   setOwnerCookie(null);
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
 });
@@ -599,6 +600,96 @@ describe("the answer names the account it was for", () => {
  * whose live session and credential disagree. So a disagreement that came back 2xx is not a leak;
  * it is a sign-in that succeeded, and this is how the browser learns whose it now is.
  */
+describe("finishing enrollment", () => {
+  describe.each(["/auth/2fa/totp/activate", "/auth/2fa/webauthn/register/verify"])("%s", (path) => {
+    it.each(["full-session", "unrelated-session", "enrollment-session", "other-account", "displaced-binding", "revoked"])(
+      "only adopts the committed exchange (%s)",
+      async (scenario) => {
+        const { api, bindApiOwner, boundApiFamily, captureEnrollment } = await import("../app/api-client.js");
+        setOwnerCookie(A);
+        document.cookie = "tf_family=enrollment-session; Path=/";
+        bindApiOwner(A);
+        const session = { status: "authenticated", user: { accountId: A }, familyId: "full-session" };
+        vi.mocked(globalThis.fetch).mockImplementationOnce(async (_input, init) => {
+          const headers = new Headers(init?.headers);
+          expect(headers.get("X-Ohmail-Expected-Account")).toBe(A);
+          expect(headers.get("X-Ohmail-Expected-Family")).toBe("enrollment-session");
+          if (scenario === "revoked") return json({ error: { code: "unauthorized" } }, 401);
+          if (scenario === "other-account") setOwnerCookie(B);
+          const family = scenario === "unrelated-session" || scenario === "enrollment-session"
+            ? scenario : "full-session";
+          document.cookie = `tf_family=${family}; Path=/`;
+          if (scenario === "displaced-binding") bindApiOwner(A);
+          return json({ session }, 200, A);
+        });
+        const enrollment = captureEnrollment(A, "enrollment-session");
+        const pending = api(path, { method: "POST", body: {}, ...enrollment });
+        if (scenario === "full-session") {
+          await expect(pending).resolves.toEqual({ session });
+          expect(boundApiFamily(A)).toBe("full-session");
+        } else {
+          await expect(pending).rejects.toMatchObject({ code: scenario === "revoked" ? "unauthorized" : "owner_mismatch" });
+        }
+      },
+    );
+    it("refuses a displaced enrollment while waiting for the cookie lock", async () => {
+      const { api, bindApiOwner, captureEnrollment } = await import("../app/api-client.js");
+      setOwnerCookie(A);
+      document.cookie = "tf_family=enrollment-session; Path=/";
+      bindApiOwner(A);
+      const enrollment = captureEnrollment(A, "enrollment-session");
+      const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+      const request = vi.fn(async (_name, _options, run: () => Promise<unknown>) => {
+        bindApiOwner(A);
+        return run();
+      });
+      Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+      try {
+        await expect(api(path, { method: "POST", body: {}, ...enrollment })).rejects.toMatchObject({
+          code: "owner_mismatch",
+        });
+        expect(request).toHaveBeenCalledOnce();
+        expect(vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => String(url).endsWith(path))).toEqual([]);
+      } finally {
+        if (originalLocks) Object.defineProperty(navigator, "locks", originalLocks);
+        else Reflect.deleteProperty(navigator, "locks");
+      }
+    });
+  });
+
+  it("refuses an exchange when enrollment has no confirmed family", async () => {
+    const { api, bindApiOwner, boundApiFamily } = await import("../app/api-client.js");
+    setOwnerCookie(A);
+    bindApiOwner(A, null);
+    const session = { status: "authenticated", user: { accountId: A }, familyId: "full-session" };
+    vi.mocked(globalThis.fetch).mockImplementationOnce(async () => {
+      document.cookie = "tf_family=full-session; Path=/";
+      return json({ session }, 200, A);
+    });
+    await expect(api("/auth/2fa/totp/activate", { method: "POST", body: {} })).rejects.toMatchObject({
+      code: "owner_mismatch",
+    });
+    expect(boundApiFamily(A)).toBeNull();
+  });
+
+  it.each([null, B])("rejects a new family when the reply does not confirm this enrollment (%s)", async (account) => {
+    const { api, bindApiOwner, boundApiFamily } = await import("../app/api-client.js");
+    setOwnerCookie(A);
+    document.cookie = "tf_family=enrollment-session; Path=/";
+    bindApiOwner(A);
+    vi.mocked(globalThis.fetch).mockImplementationOnce(async () => {
+      document.cookie = "tf_family=unconfirmed; Path=/";
+      const body = account === null ? {} : { session: { status: "authenticated", user: { accountId: account } } };
+      return json(body, 200, account ?? A);
+    });
+
+    await expect(api("/auth/2fa/totp/activate", { method: "POST", body: {} })).rejects.toMatchObject({
+      code: "owner_mismatch",
+    });
+    expect(boundApiFamily(A)).toBe("enrollment-session");
+  });
+});
+
 describe("a credential route's answer is the new owner, not a mismatch", () => {
   it("binds to the account the credential resolved to and rewrites the marker", async () => {
     const { api, bindApiOwner, apiOwnerBinding } = await import("../app/api-client.js");
@@ -646,4 +737,44 @@ describe("a credential route's answer is the new owner, not a mismatch", () => {
       .toEqual({ kind: "bound", owner: A });
     expect(document.cookie, "an unfinished sign-in rewrote the marker").toContain(`tf_owner=${A}`);
   });
+});
+
+
+it("cancels a held sync reply after local sign-out before scheduler teardown", async () => {
+  const { bindApiOwner, blockApiOwner } = await import("../app/api-client.js");
+  const { sessionFetch } = await import("@ohmail/app-logic/session/session-truth");
+  const { HttpAdapter, MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
+  const { startSyncScheduler } = await import("@ohmail/app-logic/session/sync-scheduler");
+  const { OWNER_SIGNED_OUT } = await import("@ohmail/app-logic/storage/owner-cookie");
+  setOwnerCookie(A);
+  bindApiOwner(A);
+  const adapter = new HttpAdapter({ baseUrl: "/api", fetch: (url, init) => sessionFetch(url, init, A) });
+  const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore() });
+  let finish!: (res: Response) => void;
+  let started!: () => void;
+  const issued = new Promise<void>((resolve) => { started = resolve; });
+  vi.mocked(globalThis.fetch).mockImplementationOnce(() => new Promise((resolve) => {
+    finish = resolve;
+    started();
+  }));
+  vi.useFakeTimers();
+  const report = vi.fn();
+  const onDraining = vi.fn();
+  const stop = startSyncScheduler(engine, { report, onDraining });
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    await issued;
+    expect(onDraining).toHaveBeenLastCalledWith(true);
+    setOwnerCookie(OWNER_SIGNED_OUT);
+    blockApiOwner();
+    finish(json({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "late", hasMore: false }, 200, A));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onDraining).toHaveBeenLastCalledWith(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(report).not.toHaveBeenCalled();
+    expect(onDraining.mock.calls.filter(([draining]) => draining)).toHaveLength(1);
+  } finally {
+    stop();
+    vi.useRealTimers();
+  }
 });

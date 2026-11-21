@@ -2,7 +2,7 @@
 import { screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  ISO, act, answerSyncWith, installShellEnv, liveAccountResponse, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
 import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import en from "../messages/en.json";
@@ -185,7 +185,9 @@ describe("an answered conversation's row in the shipped shell", () => {
   it("opened, the bar's Later takes the row, the letter being the focused panel", async () => {
     const host = await mount(answered());
     await openRow(host);
-    expect(focusedPanel(host)).toBe("a1");
+    // The grouped row opens the whole conversation under its own address.
+    expect(window.location.hash).toBe("#/ohbox/t/a1");
+    expect(lettersShown(host)).toEqual(["a1", "x2"]);
     await click(bar(host, "abar-later"));
     expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
@@ -590,7 +592,10 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
       const stayed = /\/screener\/stayed\?ids=([^&]*)/.exec(String(input));
       if (stayed) {
         const asked = decodeURIComponent(stayed[1]!).split(",").filter(Boolean);
-        return new Response(JSON.stringify({ stayed: asked.map((id) => ({ id, why: "set-aside" })) }), { status: 200, headers: { "content-type": "application/json" } });
+        return liveAccountResponse(new Response(
+          JSON.stringify({ stayed: asked.map((id) => ({ id, why: "set-aside" })), max: 100 }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ));
       }
       return (inner as unknown as (i: unknown, n?: RequestInit) => Promise<Response>)(input, init);
     }) as unknown as typeof globalThis.fetch;
@@ -924,7 +929,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
   const sheetTo = async (host: HTMLElement, dest: "receipts" | "spam", ruleOff = false, subject?: RegExp): Promise<void> => {
     const sheet = await openSender(host, subject);
     if (ruleOff) await click(sheet.getByRole("switch", { name: en.screening.ruleToggleAria }));
-    const option = sheet.queryByRole("option", { name: dest === "receipts" ? "Receipts" : "Spam" });
+    const option = sheet.queryByRole("radio", { name: dest === "receipts" ? "Receipts" : "Spam" });
     expect(option, `the sheet's ${dest}`).toBeTruthy();
     await click(option!);
   };
@@ -1085,7 +1090,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
 
   it("Kai's rule left his letters in T for their pins: the sheet's Move them too files them and spends the rest of T's pins", async () => {
     const host = await mount(seven(() => "resurfaced").map((c) => (c.id === `rule_${KAI.address}`
-      ? { ...c, entity: { ...c.entity, destination: "ohmail/Receipts", retro: { requestedAt: ISO, doneAt: ISO } } }
+      ? { ...c, entity: { ...c.entity, destination: "ohmail/Receipts", provenance: "manual", retro: { requestedAt: ISO, doneAt: ISO } } }
       : c)));
     const sheet = await openSender(host);
     await click(await waitFor(() => sheet.queryByRole("button", { name: "Move them too" }), "the sheet's Move them too"));

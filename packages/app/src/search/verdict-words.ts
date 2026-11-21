@@ -47,11 +47,9 @@ function verdictLines(model: SearchListModel, t: Text, locale: string): SaidLine
       /* The one sentence that may name this device: a failure's (History's and Search's copy census admits it). */
       return [{ say: t(v.refused ? "scopeFailed" : "scopeUnanswered"), warn: true, again: true }];
     case "matched": {
-      if (v.scope === "whole" && !v.near) {
-        const total = v.count.n.toLocaleString(locale);
-        if (v.count.kind === "exact" && v.count.n > 0) return reading;
-        if (v.count.kind === "about") return [...reading, { say: t("saidAbout", { total }) }];
-        if (v.count.kind === "atLeast") return [...reading, { say: t("saidAtLeast", { total }) }];
+      if (v.scope === "whole" && !v.near && v.count.kind !== "exact") {
+        const total = new Intl.NumberFormat(locale).format(v.count.n);
+        return [...reading, { say: t(v.count.kind === "about" ? "saidAbout" : "saidAtLeast", { total }) }];
       }
       const mirror = v.scope === "mirror";
       return [
@@ -78,7 +76,7 @@ export function saidOf(model: SearchListModel, t: Text, locale: string): Said {
     lines.push({ say: t("bounded", { count: model.bounded.toLocaleString(locale) }) });
   const v = model.verdict;
   if (v.kind === "matched") {
-    const total = v.count.n.toLocaleString(locale);
+    const total = new Intl.NumberFormat(locale).format(v.count.n);
     const count = v.count.kind === "atLeast" ? t("saidCountAtLeast", { total }) : total;
     return { count, lines };
   }

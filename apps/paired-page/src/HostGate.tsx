@@ -62,7 +62,7 @@ import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import { scopeMayMount, setStorageOwner } from "@ohmail/app-logic/storage";
 import { BearerManager, type SignOutOutcome } from "./bearer.js";
 import { usePairedEngine, useReplacePairedEngine } from "./paired-engine.js";
-import { languageOf, pairedAccountDoor, pairedHost, pairedPaneParts } from "./host.js";
+import { languageOf, pairedAccountDoor, pairedHost, pairedPaneParts, PairedSettingsAbove } from "./host.js";
 import { discardHostOutbox } from "./outbox-store.js";
 import { reportDiscard, reportSweep } from "./pairing-cleanup.js";
 import { PairScreen } from "./PairScreen.js";
@@ -150,8 +150,7 @@ function PairedScreenerPane() {
 
 export const PAIRED_PANE_PARTS = pairedPaneParts(usePairedAccountDoor, PairedGeneralPane, PairedScreenerPane);
 
-/** What only this page hands the mail: a browser host's reader, no part of a stage, and that one door. */
-const PAIRED_MAIL_PARTS = browserMailParts(PAIRED_PANE_PARTS);
+const PAIRED_MAIL_PARTS = { ...browserMailParts(PAIRED_PANE_PARTS), settingsAbove: PairedSettingsAbove };
 
 /** The paired root supplies the language controls for adoption and the General pane. */
 export function HostGate({ bearer, language }: { bearer: BearerManager; language?: PairedLocale | null }) {

@@ -27,7 +27,8 @@ export interface TodayListProps {
   /** Its name for a screen reader, where it has no heading of its own. */
   label: string;
   /** Today: the heading, with the calendar's dot, and the date beside it. */
-  heading?: { title: string; date: string };
+  heading?: { title: string; date?: string };
+  actions?: ReactNode;
   rows: readonly TodayListRow[];
   /** How many more there are than rows, as it is printed: "+2". */
   more?: string;
@@ -61,7 +62,7 @@ function mark(m: TodayListRow["mark"]): ReactNode {
  * Where the calendar shows in mail beside a letter's own card and row: Today, under the count of
  * an empty reading column, and Coming up on a person's card. Each row opens its event's day.
  */
-export function TodayList({ kind, label, heading, rows, more }: TodayListProps) {
+export function TodayList({ kind, label, heading, rows, more, actions }: TodayListProps) {
   const id = useId();
   const named = heading ? { "aria-labelledby": id } : { "aria-label": label };
   return (
@@ -69,8 +70,13 @@ export function TodayList({ kind, label, heading, rows, more }: TodayListProps) 
       {heading ? (
         <h4 id={id} className="oh-text oh-display oh-today-head">
           {heading.title}
-          <Dot kind="ink" />
-          <small className="oh-today-date">{heading.date}</small>
+          {heading.date ? (
+            <>
+              <Dot kind="ink" />
+              <small className="oh-today-date">{heading.date}</small>
+            </>
+          ) : null}
+          {kind === "coming" && more ? <small className="oh-today-date">{more}</small> : null}
         </h4>
       ) : null}
       {rows.map((row) => (
@@ -105,7 +111,8 @@ export function TodayList({ kind, label, heading, rows, more }: TodayListProps) 
           )}
         </button>
       ))}
-      {more ? <p className="oh-text oh-today-more">{more}</p> : null}
+      {more && kind === "today" ? <p className="oh-text oh-today-more">{more}</p> : null}
+      {actions}
     </div>
   );
 }

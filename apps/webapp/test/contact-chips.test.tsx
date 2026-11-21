@@ -195,7 +195,7 @@ describe("the contact popover", () => {
     const card = within(popover()!);
     expect(card.getByRole("button", { name: "Copy address" })).toBeTruthy();
     expect(card.getByRole("radiogroup", { name: "Where their mail goes" })).toBeTruthy();
-    expect(items().map((item) => item.textContent)).toEqual(["Everything from and to this address", "Write"]);
+    expect(items().map((item) => item.textContent)).toEqual(["Write", "Everything from and to this address"]);
     expect(card.queryByText("Only some of their mail? Make a rule on the subject too")).toBeNull();
     await click(itemByText("Everything from and to this address"));
     expect(openedAddress).toBe(message.to[0]!.address);

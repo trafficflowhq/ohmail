@@ -1,5 +1,21 @@
 import { expect } from "vitest";
-import { EVERY_WEB, journey, journeysOf, signedIn, type Guard } from "../bench/web.js";
+import { EVERY_WEB, journey, journeysOf, personWith, signedIn, type Guard } from "../bench/web.js";
+
+import { PEOPLE } from "../vocabulary/world.js";
+
+const OFFLINE: Guard[] = ["new letter", "reply"].map<Guard>((surface) => ({
+  title: `The first ${surface} accepts text offline after the Ohbox loads`,
+  rows: [],
+  surfaces: ["W-s"],
+  needs: [],
+  // The browser deliberately refuses every request after we take it offline.
+  tolerates: [/^console: Failed to load resource: net::ERR_INTERNET_DISCONNECTED$/],
+}));
+
+const WHILE_LOADING: Guard[] = OFFLINE.map((guard) => ({
+  ...guard,
+  title: guard.title + " with a Settings script response held",
+}));
 
 export const GUARDS: Guard[] = [
   { title: "A letter with a recipient, a subject and words can be sent", rows: [], surfaces: EVERY_WEB, needs: [] },
@@ -8,6 +24,8 @@ export const GUARDS: Guard[] = [
     title: "A letter whose formatting was removed and retyped plain is still sent",
 rows: [], surfaces: ["W-d"], needs: [],
   },
+  ...OFFLINE,
+  ...WHILE_LOADING,
 ];
 
 journeysOf("compose", () => {
@@ -42,4 +60,29 @@ journeysOf("compose", () => {
     await person.act("press", "compose-send");
     await person.reads("compose.toastSent");
   });
+
+  [...OFFLINE, ...WHILE_LOADING].forEach((guard, index) => journey(guard, async (b) => {
+    const reply = index % 2 === 1;
+    const whileLoading = index >= OFFLINE.length;
+    const { person, named } = await personWith(b, {
+      from: PEOPLE.ben, subject: "Kiln schedule", text: "The next firing is on Friday.", pile: "ohbox",
+    });
+    await person.arrive("ohbox");
+    await person.see("conversation", { named });
+    if (reply) {
+      await person.act("press", "conversation", { named });
+      await person.see("reply");
+    }
+    if (whileLoading) {
+      await person.goOfflineWhileOpeningSettings();
+      await person.here("ohbox", 5_000);
+    } else await person.goOffline();
+    if (reply) await person.act("press", "reply");
+    else await person.act("keyIn", "conversation", { named, value: "c" });
+    const body = reply ? "reply-body" : "compose-body";
+    const text = "These words were written offline.";
+    await person.see(body, {}, 5_000);
+    await person.act("write", body, { value: text });
+    expect(await person.text(body)).toBe(text);
+  }));
 });

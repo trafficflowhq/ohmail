@@ -29,7 +29,7 @@ import { useText } from "../text/index.js";
 export function lazyView<T extends ComponentType<any>>(
   load: () => Promise<{ default: T }>,
   frame: {
-    /** Painted while the chunk is in flight; nothing by default. */
+    /** An optional layout placeholder beside the loading feedback. */
     loading?: (props: ComponentProps<T>) => ReactNode;
     failed?: (retry: () => void, props: ComponentProps<T>) => ReactNode;
   } = {},
@@ -72,7 +72,7 @@ export function lazyView<T extends ComponentType<any>>(
           current ??= open(remedy);
           const Door = current.View;
           return (
-            <Suspense fallback={frame.loading?.(props) ?? null}>
+            <Suspense fallback={<LoadingPane placeholder={frame.loading?.(props)} />}>
               <Door {...props} />
             </Suspense>
           );
@@ -165,6 +165,18 @@ export function LoadFailed({ onRetry }: { onRetry: () => void }): ReactElement {
       <p>{t("loadFailed")}</p>
       <Button onPress={onRetry}>{t("tryAgain")}</Button>
     </div>
+  );
+}
+
+function LoadingPane({ placeholder }: { placeholder?: ReactNode }): ReactElement {
+  const t = useText("viewError");
+  return (
+    <>
+      {placeholder}
+      <div className="view-fail-card" role="status">
+        <p>{t("loading")}</p>
+      </div>
+    </>
   );
 }
 

@@ -1745,7 +1745,7 @@ describe("what the section says, decided once", () => {
     const page = firstPageSeat(list);
     await settled();
     expect(providerSection().textContent).toContain(T.liveLoading);
-    expect(providerHeading().textContent).toBe(T.liveHead);
+    expect(providerHeading().textContent).toBe(`${T.liveHead}${T.liveReadOnlyTag}`);
     expect(providerRowIds()).toEqual([]);
     await act(async () => {
       reject(new Error("no answer"));
@@ -1754,7 +1754,7 @@ describe("what the section says, decided once", () => {
     expect(providerSection().textContent).toContain(T.liveFailed);
     expect(providerSection().textContent).not.toContain(T.liveLoading);
     expect(providerSection().textContent).not.toContain(T.liveEmpty);
-    expect(providerHeading().textContent).toBe(T.liveHead);
+    expect(providerHeading().textContent).toBe(`${T.liveHead}${T.liveReadOnlyTag}`);
     expect(providerRowIds()).toEqual([]);
     expect(list.mock.calls).toEqual([[]]);
     page.expectReadOnly();
@@ -1783,7 +1783,7 @@ describe("what the section says, decided once", () => {
       await settled();
       expect(providerSection().textContent).toContain(T.liveReadLimited);
       expect(providerSection().textContent).not.toContain(T.liveEmpty);
-      expect(providerHeading().textContent).toBe(T.liveHead);
+      expect(providerHeading().textContent).toBe(`${T.liveHead}${T.liveReadOnlyTag}`);
       expect(providerRowIds()).toEqual([]);
       expect(list.mock.calls).toEqual([[]]);
       page.expectReadOnly();
@@ -1799,7 +1799,7 @@ describe("what the section says, decided once", () => {
       await settled();
       expect(providerSection().textContent).toContain(T.liveUnavailable);
       expect(providerSection().textContent).not.toContain(T.liveEmpty);
-      expect(providerHeading().textContent).toBe(T.liveHead);
+      expect(providerHeading().textContent).toBe(`${T.liveHead}${T.liveReadOnlyTag}`);
       expect(providerRowIds()).toEqual([]);
       expect(list.mock.calls).toEqual([[]]);
       page.expectReadOnly();
@@ -1821,7 +1821,7 @@ describe("what the section says, decided once", () => {
     await settled();
     expect(providerRowIds()).toEqual([]);
     expect(providerSection().textContent).not.toContain(T.liveEmpty);
-    expect(providerHeading().textContent).toBe(T.liveHead);
+    expect(providerHeading().textContent).toBe(`${T.liveHead}${T.liveReadOnlyTag}`);
     expect(list.mock.calls).toEqual([[]]);
     fireEvent.click(within(providerSection()).getByRole("button", { name: T.liveOlder }));
     await settled();
@@ -1835,7 +1835,7 @@ describe("what the section says, decided once", () => {
     const list = vi.fn<TrashLiveWire["list"]>().mockResolvedValue(providerPage());
     const page = firstPageSeat(list);
     await settled();
-    expect(providerHeading().textContent).toBe(`${T.liveHead}0`);
+    expect(providerHeading().textContent).toBe(`${T.liveHead}0${T.liveReadOnlyTag}`);
     expect(providerSection().textContent).not.toContain(T.liveLoading);
     expect(providerSection().textContent).not.toContain(T.liveReadLimited);
     expect(providerSection().textContent).not.toContain(T.liveUnavailable);
@@ -1900,7 +1900,7 @@ describe("the window's first page", () => {
     await settled();
     expect(providerSection().textContent).toContain(T.liveFailed);
     expect(providerSection().textContent).not.toContain(T.liveEmpty);
-    expect(providerHeading().textContent).toBe(T.liveHead);
+    expect(providerHeading().textContent).toBe(`${T.liveHead}${T.liveReadOnlyTag}`);
     expect(providerRowIds()).toEqual([]);
     expect(list.mock.calls).toEqual([[]]);
     await settled();

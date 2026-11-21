@@ -5,10 +5,10 @@
  * stays ink when nothing stands open.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, renderHook, screen } from "@testing-library/react";
 import { PANE_IDS, type SettingsPane } from "../../src/settings/contract.js";
 import { paneOf } from "../../src/settings/facts.js";
-import { NotificationsContext } from "../../src/settings/notifications/summary.js";
+import { NotificationsContext, useNotificationSummary } from "../../src/settings/notifications/summary.js";
 import type { NotificationsModel } from "../../src/settings/notifications/model.js";
 import { SettingsMenu } from "../../src/settings/SettingsMenu.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
@@ -68,4 +68,19 @@ describe("the dots in the Settings menu heads", () => {
     expect(dotKind("Settings")).toBe("ink");
     expect(dotKind("Mail")).toBe("ink");
   });
+});
+
+it("summarizes this device's enabled notification channels", () => {
+  const model = {
+    ...modelOf("granted"),
+    carries: ["ohbox", "screener", "scheduled", "pairing"] as NotificationsModel["carries"],
+  };
+  const { result } = renderHook(() => useNotificationSummary(), {
+    wrapper: ({ children }) => (
+      <TextProvider locale="en" messages={WORDS}>
+        <NotificationsContext.Provider value={model}>{children}</NotificationsContext.Provider>
+      </TextProvider>
+    ),
+  });
+  expect(result.current).toEqual({ value: "On", detail: "Ohbox · Screener · Scheduled · Devices" });
 });

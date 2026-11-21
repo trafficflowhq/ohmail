@@ -104,7 +104,7 @@ export const NOTICE_LEAD_MAX_MIN = 40_320;
 
 export type CalendarNotice =
   | {
-    readonly kind: "cal_alert"; readonly eventId: string; readonly label: EventLabel; readonly at: Clock;
+    readonly kind: "cal_alert"; readonly eventId: string; readonly startMs?: number; readonly label: EventLabel; readonly at: Clock;
     readonly allDay: boolean; readonly leadMin: number; readonly acts: readonly NoticeAct[];
   }
   | { readonly kind: "cal_invitation"; readonly eventId: string; readonly label: EventLabel; readonly at: Clock; readonly allDay: boolean }

@@ -88,7 +88,7 @@ async function mountShell(): Promise<void> {
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(rows().length).toBeGreaterThan(0));
   /**
    * …AND THEN PUT THE CURSOR ON THE FIRST ROW.
    *
@@ -410,7 +410,7 @@ describe("a sender's screening, from a list row", () => {
       const row = within(shell).getByRole("option", { name: /Ada: A note from Ada/ });
       await click(within(row).getByRole("button", { name: "Screening for Ada" }));
       const sheet = within(within(document.body).getByRole("dialog", { name: sheetName }));
-      await click(sheet.getByRole("option", { name: /^News/ }));
+      await click(sheet.getByRole("radio", { name: /^News/ }));
       await act(async () => { await vi.advanceTimersByTimeAsync(250); });
       expect(reportSays()).toContain("goes there, and so does future mail.");
       const moves = () => writes.filter((path) => path.endsWith("/move"));
@@ -443,7 +443,7 @@ describe("a sender's screening, from a list row", () => {
       await click(within(row).getByRole("button", { name: "Screening for Ada" }));
       const sheet = within(within(document.body).getByRole("dialog", { name: sheetName }));
       await click(sheet.getByRole("switch", { name: messages.screening.ruleToggleAria }));
-      await click(sheet.getByRole("option", { name: /^News/ }));
+      await click(sheet.getByRole("radio", { name: /^News/ }));
       await act(async () => { await vi.advanceTimersByTimeAsync(250); });
       expect(writes.filter((path) => path.startsWith("/api/rules"))).toEqual([]);
       expect(writes.filter((path) => path.endsWith("/move")).length, reportSays()).toBeGreaterThan(0);
@@ -458,7 +458,7 @@ describe("a sender's screening, from a list row", () => {
         const row = within(shell).getByRole("option", { name: /Ada: A note from Ada/ });
         await click(within(row).getByRole("button", { name: "Screening for Ada" }));
         const sheet = within(within(document.body).getByRole("dialog", { name: sheetName }));
-        await click(sheet.getByRole("option", { name: /^Ohbox/ }));
+        await click(sheet.getByRole("radio", { name: /^Ohbox/ }));
       };
       await pressOhbox();
       expect(ruleWrites).toEqual([]);
@@ -493,8 +493,6 @@ describe("a sender's screening, from a list row", () => {
     await withScreeningWeb("history", async (shell, sheetName) => {
       const reader = within(within(shell).getByRole("region", { name: "Reading" }));
       await click(reader.getByRole("button", { name: /^Ada / }));
-      const contact = within(document.body).getByRole("dialog", { name: "Options for Ada" });
-      await click(within(contact).getByRole("menuitem", { name: messages.screening.action }));
       expect(within(document.body).getByRole("dialog", { name: sheetName })).toBeTruthy();
     });
   });
@@ -518,8 +516,6 @@ describe("a sender's screening, from a list row", () => {
       const row = within(shell).getByRole("option", { name: /Ada: A note from Ada/ });
       expect(row.getAttribute("aria-selected")).toBe("true");
       await key("s");
-      const contact = within(document.body).getByRole("dialog", { name: "Options for Ada" });
-      await click(within(contact).getByRole("menuitem", { name: messages.screening.action }));
       expect(within(document.body).getByRole("dialog", { name: sheetName })).toBeTruthy();
     });
   });

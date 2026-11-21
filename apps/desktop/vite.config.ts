@@ -208,7 +208,9 @@ const BASE_MESSAGE_NAMESPACES = [
   // this namespace is for, so a build without it puts `aiRefusal.insufficientCredits` where
   // that sentence belongs.
   "aiRefusal",
-  "reply", "ribbon", "screener", "screening", "search", "session", "settings", "settingsMenu", "settingsNotifications",
+  "reply", "screener", "screening", "search", "session", "settings",
+  "settingsAbout", "settingsAi", "settingsAway", "settingsGeneral", "settingsMenu", "settingsNotifications",
+  "settingsRules", "settingsScreener", "settingsSignatures", "settingsTags",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
   // this list against what the sources READ, not against what they display.
@@ -912,6 +914,8 @@ export default defineConfig({
       { find: "@ohmail/letter-body/cache", replacement: r("../../packages/letter-body/src/mail-doc-cache.ts") },
       { find: "@ohmail/letter-body/words", replacement: r("../../packages/letter-body/src/words.ts") },
       { find: /^@ohmail\/letter-body$/, replacement: r("../../packages/letter-body/src/index.ts") },
+      { find: "@ohmail/app/calendar", replacement: r("../../packages/app/src/calendar/index.ts") },
+      { find: "@ohmail/app/account/way-out", replacement: r("../../packages/app/src/account/way-out/index.ts") },
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
       { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },

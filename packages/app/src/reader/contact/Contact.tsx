@@ -11,6 +11,7 @@ import { MenuItem } from "@ohmail/ui/base";
 import { ContactCard, type ContactCardProps } from "@ohmail/ui/mail";
 import { useFrame } from "../../frame/commands.js";
 import { NONE } from "../../host/index.js";
+import { ContactEvents, ContactNewEvent } from "../../calmail/contact.js";
 import { useText } from "../../text/index.js";
 
 export interface ContactOf {
@@ -44,7 +45,7 @@ export interface ContactScreeningProps {
   readonly person: ContactOf;
   readonly direct?: boolean;
   readonly onClose: () => void;
-  readonly children: (action?: ReactNode) => ReactNode;
+  readonly children: (subjectRule?: ReactNode, card?: ContactCardProps, showAddress?: boolean) => ReactNode;
 }
 
 type ContactProps = { person: ContactOf | null; onClose: () => void };
@@ -54,15 +55,17 @@ export function ContactDetails({
   onClose,
   clipboard,
   screening,
-  action,
   subjectRule,
   organizerNote,
+  card,
+  showAddress = true,
 }: ContactProps & {
   clipboard: "none" | ((text: string) => Promise<boolean>);
   screening?: Pick<ContactCardProps, "scope" | "now" | "goes" | "rules" | "switches">;
   subjectRule?: ReactNode;
-  action?: ReactNode;
   organizerNote?: string;
+  card?: ContactCardProps;
+  showAddress?: boolean;
 }) {
   const t = useText("message");
   const { host, commands } = useFrame();
@@ -82,26 +85,21 @@ export function ContactDetails({
   return (
     <ContactCard
       open
-      id={person.cardId}
       onClose={onClose}
-      anchor={person.anchor}
       label={t("contactAria", { who: person.name })}
       person={{ name: person.name, address: displayAddress(person.address) }}
-      copy={copy}
       {...screening}
+      {...card}
+      anchor={person.anchor}
+      id={person.cardId}
+      copy={copy}
+      more={
+        <>
+          {card?.more}
+          <ContactEvents person={person} onClose={onClose} />
+        </>
+      }
     >
-      {host.features.places.address === NONE ? null : (
-        <MenuItem
-          icon="search"
-          onPress={() => {
-            onClose();
-            commands.go({ place: "address", sub: person.address });
-          }}
-        >
-          {t("addressOpen")}
-        </MenuItem>
-      )}
-      {action}
       {host.features.places.write === NONE ? null : (
         <MenuItem
           icon="write"
@@ -116,6 +114,18 @@ export function ContactDetails({
           {t("write")}
         </MenuItem>
       )}
+      <ContactNewEvent person={person} onClose={onClose} />
+      {showAddress && host.features.places.address !== NONE ? (
+        <MenuItem
+          icon="go"
+          onPress={() => {
+            onClose();
+            commands.go({ place: "address", sub: person.address });
+          }}
+        >
+          {card ? t("contactAllMail") : t("addressOpen")}
+        </MenuItem>
+      ) : null}
       {subjectRule}
       {organizerNote ? <p>{organizerNote}</p> : null}
     </ContactCard>

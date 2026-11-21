@@ -132,7 +132,7 @@ const resolveBox = (): HTMLElement | null => {
   return line !== null && within(line).queryAllByRole("button").length > 0 ? line : null;
 };
 /** The reply's text box, by its role and name. */
-const surface = (): HTMLElement => screen.getByRole("textbox", { name: GROUND_CATALOGUE("write.reply.text") });
+const surface = (): Promise<HTMLElement> => screen.findByRole("textbox", { name: GROUND_CATALOGUE("write.reply.text") });
 
 /**
  * No phase may produce copy a hurried reader takes for a delivery.
@@ -151,6 +151,7 @@ const CLAIMS_DELIVERY = /(?<!\bnot (?:sure (?:this|it) was )?)\b(sent(?!\s+folde
 describe("the reply editor's send states", () => {
   it("idle — nothing to report, and Send is live", async () => {
     await mount({ phase: "idle" });
+    await surface(); // the reply's editor arrives with its own code; idle is read once it can be typed in
     expect(status()).toBeNull();
     expect(sendBtn().disabled).toBe(false);
     expect(sendBtn().textContent).toContain("Send");
@@ -162,7 +163,7 @@ describe("the reply editor's send states", () => {
     // `readOnly` is a textarea's word for it; a `contenteditable` says `contenteditable="false"`,
     // which is what `RichEditor`'s `editable` prop sets. The claim is unchanged: mid-send the
     // text is still on screen and still cannot be edited out from under the request.
-    expect(surface().getAttribute("contenteditable")).toBe("false");
+    expect((await surface()).getAttribute("contenteditable")).toBe("false");
     // And the toolbar goes with it — a live formatting button would edit a document the caret
     // cannot reach.
     expect(marks().length, "the reply draws no formatting control to check").toBeGreaterThan(0);
@@ -185,7 +186,7 @@ describe("the reply editor's send states", () => {
     expect(sendBtn().disabled).toBe(true);
     expect(status()!.textContent).toContain("Not sent yet");
     expect(status()!.textContent).not.toMatch(CLAIMS_DELIVERY);
-    expect(surface().textContent).toContain("Donnerstag passt.");
+    expect((await surface()).textContent).toContain("Donnerstag passt.");
   });
 
   it("the server's accepted-pending send says the product HAS it; the transport's does not", async () => {
@@ -232,7 +233,7 @@ describe("the reply editor's send states", () => {
     // `send-status-copy.test.tsx` pins the never-the-wire half per class of reason.
     await mount({ phase: "failed", reason: "A prior send under this key failed and was not delivered." });
     expect(sendBtn().disabled).toBe(false);
-    expect(status()!.textContent).toContain("Sending didn't work");
+    expect(status()!.textContent).toContain(messages.write.status.failed);
     expect(status()!.textContent, "the wire leaked into the sentence").not.toContain("was not delivered");
   });
 

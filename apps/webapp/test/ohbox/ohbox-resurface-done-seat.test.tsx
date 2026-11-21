@@ -2,7 +2,7 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
-import { cleanup } from "@testing-library/react";
+import { cleanup, within } from "@testing-library/react";
 import { pinnedRows } from "../_resurfaced-rows.js";
 import { ohboxList } from "../_ohbox-1-list.js";
 
@@ -86,8 +86,7 @@ function doneBeside(id: string): HTMLButtonElement | null {
   if (!rowEl) return null;
   // Today's piles stand it beside the row; the Ohbox's row stands its own verb beside it too, in the row's slot.
   const slot = rowEl.parentElement;
-  return slot?.querySelector<HTMLButtonElement>(".rsf-done") ??
-    (slot && slot.getAttribute("role") !== "listbox" ? slot.querySelector<HTMLButtonElement>("button") : null) ?? null;
+  return slot === null ? null : within(slot).queryByRole<HTMLButtonElement>("button", { name: "Done" });
 }
 
 const click = async (el: Element | null): Promise<void> => {
@@ -128,7 +127,7 @@ describe("the pinned row carries Done — and only the pinned row", () => {
       { id: "c-2", unread: true, pinned: true, threadId: "T" },
       { id: "c-3", unread: true, pinned: true, threadId: "T" },
     ]);
-    const done = host!.querySelectorAll("[role=listbox] button");
+    const done = within(host!).getAllByRole("button", { name: "Done" });
     expect(done, "three pins in one conversation are ONE row").toHaveLength(1);
     await click(done[0]!);
     expect(bulkRuns).toHaveLength(1);

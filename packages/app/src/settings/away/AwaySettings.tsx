@@ -137,7 +137,7 @@ function useAwayControls(
     if (wire === NONE) return;
     let current = true;
     alive.current = true;
-    void wire.state().then(
+    void (wire.initialState?.() ?? wire.state()).then(
       (loaded) => {
         if (current) step({ kind: "loaded", row: rowOf(loaded), refused: refusalOf(loaded) });
       },

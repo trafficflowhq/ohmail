@@ -8,7 +8,8 @@ import { runMigrations } from "../src/migrate.js";
 import { schema, accounts } from "../src/schema.js";
 import { mailboxOauthCeremonies, mailboxOauthDeviceCeremonies } from "../src/schema-cloud.js";
 import {
-  createDeviceCeremony, readDeviceCeremony, leaseDeviceCeremonyPoll,
+  deviceCeremonyKey, createDeviceCeremony, readDeviceCeremony, leaseDeviceCeremonyPoll,
+  type DeviceCeremonyScope,
   noteDeviceCeremonySlowDown, claimDeviceCeremony, pruneDeviceCeremonies,
   DEVICE_CEREMONY_RETENTION_MS,
   createOAuthCeremony, consumeOAuthCeremony,
@@ -79,12 +80,12 @@ async function seedAccount(): Promise<string> {
 async function seedDevice(
   accountId: string,
   over: { createdAt?: Date; expiresAt?: Date; intervalMs?: number } = {},
-): Promise<string> {
+): Promise<DeviceCeremonyScope> {
   const state = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
+  const scope = { state, accountId, sessionId: randomUUID() };
   const createdAt = over.createdAt ?? NOW;
   await createDeviceCeremony(dbA, {
-    state,
-    accountId,
+    ...scope,
     provider: "microsoft",
     deviceCodeEnc: "enc:device-code",
     deviceCodeKeyVersion: 1,
@@ -94,16 +95,27 @@ async function seedDevice(
     grantExpiresAt: over.expiresAt ?? new Date(createdAt.getTime() + GRANT_TTL_MS),
     now: createdAt,
   });
-  return state;
+  return scope;
 }
 
-const rowOf = async (state: string) => {
+const rowOf = async (scope: DeviceCeremonyScope) => {
   const [row] = await dbA.select().from(mailboxOauthDeviceCeremonies)
-    .where(eq(mailboxOauthDeviceCeremonies.state, state));
+    .where(eq(mailboxOauthDeviceCeremonies.state, deviceCeremonyKey(scope)));
   return row;
 };
 
 describe.skipIf(!PG_UP)("cloud 0027 — DIRECTION ONE: the poll READS WITHOUT CONSUMING", () => {
+  it("only reads a ceremony within its account and session", async () => {
+    const accountId = await seedAccount();
+    const owner = { ...await seedDevice(accountId), now: NOW };
+    const anotherAccount = { ...owner, accountId: await seedAccount() };
+    const anotherSession = { ...owner, sessionId: randomUUID() };
+
+    expect((await readDeviceCeremony(dbA, owner)).outcome).toBe("ok");
+    expect((await readDeviceCeremony(dbA, anotherAccount)).outcome).toBe("unknown");
+    expect((await readDeviceCeremony(dbA, anotherSession)).outcome).toBe("unknown");
+  });
+
   it("a hundred reads leave the ceremony live, and consumed_at NULL throughout", async () => {
     /*
      * Many rather than three, because the real number is every read of a ceremony: fifteen
@@ -114,13 +126,13 @@ describe.skipIf(!PG_UP)("cloud 0027 — DIRECTION ONE: the poll READS WITHOUT CO
      * goes red on the second iteration.
      */
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);
+    const scope = await seedDevice(accountId);
 
     for (let i = 0; i < 100; i++) {
-      const r = await readDeviceCeremony(dbA, { state, now: NOW });
+      const r = await readDeviceCeremony(dbA, { ...scope, now: NOW });
       expect(r.outcome, `read ${i}`).toBe("ok");
       expect(r.outcome === "ok" && r.row.accountId).toBe(accountId);
-      expect((await rowOf(state))!.consumedAt, `read ${i} must not consume`).toBeNull();
+      expect((await rowOf(scope))!.consumedAt, `read ${i} must not consume`).toBeNull();
     }
   });
 
@@ -129,11 +141,11 @@ describe.skipIf(!PG_UP)("cloud 0027 — DIRECTION ONE: the poll READS WITHOUT CO
     // accidentally became a claimer would show up here as seven losers, which is exactly what the
     // claim test below demands and exactly what a poll must not do.
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);
+    const scope = await seedDevice(accountId);
 
-    const outcomes = await Promise.all(racers.map((db) => readDeviceCeremony(db, { state, now: NOW })));
+    const outcomes = await Promise.all(racers.map((db) => readDeviceCeremony(db, { ...scope, now: NOW })));
     expect(outcomes.filter((o) => o.outcome === "ok")).toHaveLength(RACERS);
-    expect((await rowOf(state))!.consumedAt).toBeNull();
+    expect((await rowOf(scope))!.consumedAt).toBeNull();
   });
 
   it("a read past the grant's own deadline is EXPIRED, still without consuming", async () => {
@@ -141,22 +153,22 @@ describe.skipIf(!PG_UP)("cloud 0027 — DIRECTION ONE: the poll READS WITHOUT CO
     // the caller decides whether this is the moment to spend the ceremony. Keeping the write out of
     // the read is what lets the same function serve the pending path and the terminal one.
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);
+    const scope = await seedDevice(accountId);
     const late = new Date(NOW.getTime() + GRANT_TTL_MS + 1_000);
 
-    const r = await readDeviceCeremony(dbA, { state, now: late });
+    const r = await readDeviceCeremony(dbA, { ...scope, now: late });
     expect(r.outcome).toBe("expired");
-    expect((await rowOf(state))!.consumedAt).toBeNull();
+    expect((await rowOf(scope))!.consumedAt).toBeNull();
   });
 
   it("a `slow_down` write moves the interval and NOTHING else", async () => {
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);
-    const before = (await rowOf(state))!;
+    const scope = await seedDevice(accountId);
+    const before = (await rowOf(scope))!;
 
-    await noteDeviceCeremonySlowDown(dbA, { state, stepMs: 5_000, ceilingMs: 60_000 });
+    await noteDeviceCeremonySlowDown(dbA, { ...scope, stepMs: 5_000, ceilingMs: 60_000 });
 
-    const after = (await rowOf(state))!;
+    const after = (await rowOf(scope))!;
     expect(after.pollIntervalMs).toBe(10_000);   // the start plus one slow_down step
     // A `slow_down` is an instruction to keep going more slowly, not a terminal verdict.
     expect(after.consumedAt).toBeNull();
@@ -180,31 +192,31 @@ describe.skipIf(!PG_UP)("cloud 0027 — DIRECTION TWO: the TERMINAL claim is sin
      * exists.
      */
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);
+    const scope = await seedDevice(accountId);
 
-    const outcomes = await Promise.all(racers.map((db) => claimDeviceCeremony(db, { state, now: NOW })));
+    const outcomes = await Promise.all(racers.map((db) => claimDeviceCeremony(db, { ...scope, now: NOW })));
 
     const winners = outcomes.filter((o) => o.outcome === "ok");
     expect(winners, "exactly one caller may spend a device ceremony").toHaveLength(1);
     expect(outcomes.filter((o) => o.outcome === "unknown")).toHaveLength(RACERS - 1);
     expect(winners[0]!.outcome === "ok" && winners[0]!.row.accountId).toBe(accountId);
     // Stamped ONCE, and datable — a replay attempt is worth being able to date.
-    expect((await rowOf(state))!.consumedAt?.toISOString()).toBe(NOW.toISOString());
+    expect((await rowOf(scope))!.consumedAt?.toISOString()).toBe(NOW.toISOString());
   });
 
   it("a claimed ceremony is invisible to the READ — spent and never-issued are one answer", async () => {
     // Distinguishing them would be an oracle for whether a given 256-bit value was ever issued.
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);
-    expect((await claimDeviceCeremony(dbA, { state, now: NOW })).outcome).toBe("ok");
+    const scope = await seedDevice(accountId);
+    expect((await claimDeviceCeremony(dbA, { ...scope, now: NOW })).outcome).toBe("ok");
 
-    expect((await readDeviceCeremony(dbA, { state, now: NOW })).outcome).toBe("unknown");
-    expect((await claimDeviceCeremony(dbA, { state, now: NOW })).outcome).toBe("unknown");
-    expect((await readDeviceCeremony(dbA, { state: "never-issued".padEnd(43, "x"), now: NOW })).outcome)
+    expect((await readDeviceCeremony(dbA, { ...scope, now: NOW })).outcome).toBe("unknown");
+    expect((await claimDeviceCeremony(dbA, { ...scope, now: NOW })).outcome).toBe("unknown");
+    expect((await readDeviceCeremony(dbA, { ...scope, state: "never-issued".padEnd(43, "x"), now: NOW })).outcome)
       .toBe("unknown");
     // …and an empty state never matches a row, whatever the column holds.
-    expect((await readDeviceCeremony(dbA, { state: "", now: NOW })).outcome).toBe("unknown");
-    expect((await claimDeviceCeremony(dbA, { state: "", now: NOW })).outcome).toBe("unknown");
+    expect((await readDeviceCeremony(dbA, { ...scope, state: "", now: NOW })).outcome).toBe("unknown");
+    expect((await claimDeviceCeremony(dbA, { ...scope, state: "", now: NOW })).outcome).toBe("unknown");
   });
 });
 
@@ -224,36 +236,36 @@ describe.skipIf(!PG_UP)("cloud 0027 — the POLL LEASE is atomic, which is the s
      * staying at 1 on PGlite.
      */
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);
+    const scope = await seedDevice(accountId);
 
-    const outcomes = await Promise.all(racers.map((db) => leaseDeviceCeremonyPoll(db, { state, now: NOW })));
+    const outcomes = await Promise.all(racers.map((db) => leaseDeviceCeremonyPoll(db, { ...scope, now: NOW })));
     expect(outcomes.filter((o) => o.outcome === "ok"), "one poll slot per interval").toHaveLength(1);
     expect(outcomes.filter((o) => o.outcome === "denied")).toHaveLength(RACERS - 1);
     // The lease is a WRITE, but never a claim: `consumed_at` is not in its `SET`.
-    expect((await rowOf(state))!.consumedAt).toBeNull();
-    expect((await rowOf(state))!.lastPolledAt?.toISOString()).toBe(NOW.toISOString());
+    expect((await rowOf(scope))!.consumedAt).toBeNull();
+    expect((await rowOf(scope))!.lastPolledAt?.toISOString()).toBe(NOW.toISOString());
   });
 
   it("the fence opens exactly at the interval, and moves when a slow_down widens it", async () => {
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);
+    const scope = await seedDevice(accountId);
 
-    expect((await leaseDeviceCeremonyPoll(dbA, { state, now: NOW })).outcome).toBe("ok");
+    expect((await leaseDeviceCeremonyPoll(dbA, { ...scope, now: NOW })).outcome).toBe("ok");
     // One millisecond early is early. The boundary is asserted on both sides because an off-by-one
     // here is either a permanent stall or no fence at all.
     const early = new Date(NOW.getTime() + 4_999);
-    expect((await leaseDeviceCeremonyPoll(dbA, { state, now: early })).outcome).toBe("denied");
+    expect((await leaseDeviceCeremonyPoll(dbA, { ...scope, now: early })).outcome).toBe("denied");
     const due = new Date(NOW.getTime() + 5_000);
-    expect((await leaseDeviceCeremonyPoll(dbA, { state, now: due })).outcome).toBe("ok");
+    expect((await leaseDeviceCeremonyPoll(dbA, { ...scope, now: due })).outcome).toBe("ok");
 
     // Now Microsoft asks for more room. The row's OWN interval is what the predicate reads, so the
     // widened value fences the next poll without the caller having to remember it.
     // Three steps from the first interval gets to the widened one, applied in SQL rather than assigned.
-    for (let i = 0; i < 3; i++) await noteDeviceCeremonySlowDown(dbA, { state, stepMs: 5_000, ceilingMs: 60_000 });
+    for (let i = 0; i < 3; i++) await noteDeviceCeremonySlowDown(dbA, { ...scope, stepMs: 5_000, ceilingMs: 60_000 });
     const oldInterval = new Date(due.getTime() + 5_000);
-    expect((await leaseDeviceCeremonyPoll(dbA, { state, now: oldInterval })).outcome).toBe("denied");
+    expect((await leaseDeviceCeremonyPoll(dbA, { ...scope, now: oldInterval })).outcome).toBe("denied");
     const newInterval = new Date(due.getTime() + 20_000);
-    expect((await leaseDeviceCeremonyPoll(dbA, { state, now: newInterval })).outcome).toBe("ok");
+    expect((await leaseDeviceCeremonyPoll(dbA, { ...scope, now: newInterval })).outcome).toBe("ok");
   });
 
   it("CONCURRENT slow_downs each add their step — no increment is lost", async () => {
@@ -271,14 +283,14 @@ describe.skipIf(!PG_UP)("cloud 0027 — the POLL LEASE is atomic, which is the s
      * MUTATION: go back to `.set({ pollIntervalMs: <computed> })` and this reads one step, not two.
      */
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);   // starts at the default interval
+    const scope = await seedDevice(accountId);   // starts at the default interval
 
     const results = await Promise.all(
-      racers.map((db) => noteDeviceCeremonySlowDown(db, { state, stepMs: 5_000, ceilingMs: 60_000 })),
+      racers.map((db) => noteDeviceCeremonySlowDown(db, { ...scope, stepMs: 5_000, ceilingMs: 60_000 })),
     );
     expect(results.every((r) => r !== null)).toBe(true);
     // The start plus two steps, under the ceiling.
-    expect((await rowOf(state))!.pollIntervalMs).toBe(45_000);
+    expect((await rowOf(scope))!.pollIntervalMs).toBe(45_000);
     // …and each caller was told what the row held after ITS OWN increment, so the route reports a
     // real value rather than its own guess. Eight distinct values, no duplicates.
     expect(new Set(results.map((r) => r!.pollIntervalMs)).size).toBe(RACERS);
@@ -288,18 +300,18 @@ describe.skipIf(!PG_UP)("cloud 0027 — the POLL LEASE is atomic, which is the s
     // A grant lives about fifteen minutes; an unbounded interval would strand one that had been
     // approved. The cap is applied in the same statement as the increment.
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId, { intervalMs: 58_000 });
-    await noteDeviceCeremonySlowDown(dbA, { state, stepMs: 5_000, ceilingMs: 60_000 });
-    expect((await rowOf(state))!.pollIntervalMs).toBe(60_000);
-    await noteDeviceCeremonySlowDown(dbA, { state, stepMs: 5_000, ceilingMs: 60_000 });
-    expect((await rowOf(state))!.pollIntervalMs).toBe(60_000);
+    const scope = await seedDevice(accountId, { intervalMs: 58_000 });
+    await noteDeviceCeremonySlowDown(dbA, { ...scope, stepMs: 5_000, ceilingMs: 60_000 });
+    expect((await rowOf(scope))!.pollIntervalMs).toBe(60_000);
+    await noteDeviceCeremonySlowDown(dbA, { ...scope, stepMs: 5_000, ceilingMs: 60_000 });
+    expect((await rowOf(scope))!.pollIntervalMs).toBe(60_000);
   });
 
   it("a CLAIMED ceremony can no longer be leased — no poll after a terminal verdict", async () => {
     const accountId = await seedAccount();
-    const state = await seedDevice(accountId);
-    await claimDeviceCeremony(dbA, { state, now: NOW });
-    expect((await leaseDeviceCeremonyPoll(dbA, { state, now: NOW })).outcome).toBe("denied");
+    const scope = await seedDevice(accountId);
+    await claimDeviceCeremony(dbA, { ...scope, now: NOW });
+    expect((await leaseDeviceCeremonyPoll(dbA, { ...scope, now: NOW })).outcome).toBe("denied");
   });
 });
 
@@ -315,8 +327,8 @@ describe.skipIf(!PG_UP)("cloud 0027 — the prune, and the redirect arm it must 
 
     const left = await dbA.select().from(mailboxOauthDeviceCeremonies)
       .where(eq(mailboxOauthDeviceCeremonies.accountId, accountId));
-    expect(left.map((r) => r.state)).toEqual([fresh]);
-    expect(left.map((r) => r.state)).not.toContain(stale);
+    expect(left.map((r) => r.state)).toEqual([deviceCeremonyKey(fresh)]);
+    expect(left.map((r) => r.state)).not.toContain(deviceCeremonyKey(stale));
     // The pruned row was never consumed — an abandoned ceremony (somebody closed the tab without
     // approving) is exactly half this prune's input, which is why the predicate is the age and not
     // `consumed_at IS NOT NULL`.

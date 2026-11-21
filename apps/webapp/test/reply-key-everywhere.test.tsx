@@ -15,8 +15,10 @@ const key = (k: string, init: KeyboardEventInit = {}) =>
 
 async function pile(name: "News" | "Receipts", go: string) {
   const subject = `${name} letter`;
+  const folder = name === "News" ? "ohmail/News" : "ohmail/Receipts";
   const { el } = await mountShell("#/ohbox", [
-    message("stream-letter", { subject, folder: name === "News" ? "ohmail/News" : "ohmail/Receipts" }),
+    message("previous-letter", { subject: "Previous letter", folder, date: "2026-09-17T09:00:00.000Z" }),
+    message("stream-letter", { subject, folder, date: "2026-09-16T09:00:00.000Z" }),
   ]);
   await key("g");
   await key(go);
@@ -35,8 +37,9 @@ async function pile(name: "News" | "Receipts", go: string) {
     if (this.closest("[data-stream-item]") && port.contains(this)) return new DOMRect(0, 90, 400, 200);
     return rect.call(this);
   });
+  await within(reading).findByRole("heading", { name: "Previous letter" });
   await key("j");
-  await waitFor(() => reading.querySelector("[data-stream-item][data-open]") !== null, "the cursor's card");
+  await waitFor(() => reading.querySelector('[data-stream-item="stream-letter"][data-open]') !== null, "the cursor's card");
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
   const card = () => within(stream()!).getByRole("heading", { name: subject }).closest("[data-stream-window-item]");
   const editor = (label = messages.write.reply.text) => within(stream()!).queryByRole("textbox", { name: label });

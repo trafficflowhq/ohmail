@@ -64,6 +64,8 @@ export function foundOf(input: FoundInput): FoundRow[] {
       at: momentOrUtc(times.start, input.zones),
       row: {
         id: s.id,
+        messageId: s.messageId,
+        mailboxId: s.mailboxId,
         title: s.proposed.title,
         day: when.first,
         when,

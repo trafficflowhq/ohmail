@@ -15,7 +15,7 @@
  *
  * The device counts come from the engine. A focused Devices pane can acknowledge the counts its list actually showed.
  */
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useHostCalendarNotices } from "@ohmail/app-logic/calendar/alerts";
 import { usePartition } from "@ohmail/app-logic/consent";
 import { useDerivedVersion } from "@ohmail/app-logic/engine";
@@ -38,8 +38,16 @@ export function MailSystemNotices(): null {
   const { ownAddresses } = usePartition();
   const storeSettled = useScreener().storeSettled;
   const notifications = host.device.notifications;
+  const scope = host.session.scope;
   const choices = notifications === NONE ? undefined : notifications.choices;
-  const emitter = notifications === NONE || choices === undefined ? NONE : notifications.emitter;
+  const owns = useCallback(
+    () =>
+      scope !== null &&
+      notifications !== NONE &&
+      (!notifications.liveNoticeScope || notifications.liveNoticeScope() === scope),
+    [notifications, scope],
+  );
+  const emitter = notifications === NONE || choices === undefined || !owns() ? NONE : notifications.emitter;
   const choicesVersion = useSignal(
     notifications === NONE ? QUIET_VERSION : (notifications.choicesVersion ?? QUIET_VERSION),
   );
@@ -50,28 +58,34 @@ export function MailSystemNotices(): null {
   const calendar = useHostCalendarNotices(
     host,
     mailboxes === null && ownAddresses.length === 0 ? null : ownAddresses,
-    () => choices?.().showTitles === true,
+    () => owns() && choices?.(scope).showTitles === true,
     emitter === NONE ? [] : emitter.acts,
   );
   const devicesShown = route.place === "settings" && route.sub === "devices" && route.stage === null;
   const reads = useMemo(
     () =>
-      noticeReadsOf(host.engine, notifications === NONE ? null : notifications, {
-        choices: () => {
-          if (choices === undefined)
-            throw new Error("the notices' gate was asked over a host that stores no choices");
-          return choices();
+      noticeReadsOf(
+        host.engine,
+        {
+          permission: () => (notifications !== NONE && owns() ? notifications.permission() : "unsupported"),
         },
-        atDevices: () => devicesShown && frame?.current?.ownerDocument.hasFocus() === true,
-        calendar,
-      }),
-    [host.engine, notifications, choices, devicesShown, frame, calendar],
+        {
+          choices: () => {
+            if (choices === undefined)
+              throw new Error("the notices' gate was asked over a host that stores no choices");
+            return choices(owns() ? scope : null);
+          },
+          atDevices: () => devicesShown && frame?.current?.ownerDocument.hasFocus() === true,
+          calendar,
+        },
+      ),
+    [host.engine, notifications, choices, owns, scope, devicesShown, frame, calendar],
   );
   useNotices({
     reader,
     version: version + choicesVersion + calendarVersion,
     settled: state.settled && storeSettled,
-    scope: host.session.scope,
+    scope,
     emitter,
     reads,
   });

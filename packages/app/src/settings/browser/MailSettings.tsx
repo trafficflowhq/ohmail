@@ -52,12 +52,11 @@ export function BrowserSettingsAbove({
   preferences: NotificationPreferences;
 }) {
   const { host, route } = useFrame();
-  const model = useNotificationSettings(
-    host.device.notifications,
-    host.session.scope,
-    route.sub === "notifications",
-    preferences,
-  );
+  const door = host.device.notifications;
+  const scope = host.session.scope;
+  const activeScope =
+    door !== NONE && (!door.liveNoticeScope || door.liveNoticeScope() === scope) ? scope : null;
+  const model = useNotificationSettings(door, activeScope, route.sub === "notifications", preferences);
   return <NotificationsContext.Provider value={model}>{children}</NotificationsContext.Provider>;
 }
 
@@ -67,7 +66,10 @@ export function BrowserNotificationsPane() {
   const door = host.device.notifications;
   const scope = host.session.scope;
   useNoticesVersion(0);
-  const choices = host.wires.calendar === NONE || door === NONE ? undefined : door.choices?.();
+  const choices =
+    host.wires.calendar === NONE || door === NONE
+      ? undefined
+      : door.choices?.(door.liveNoticeScope?.() === scope ? scope : null);
   return (
     model && (
       <NotificationsPane
@@ -78,7 +80,7 @@ export function BrowserNotificationsPane() {
             set(key, value) {
               if (scope === null || isDemoOwned(scope) || door === NONE || door.liveNoticeScope?.() !== scope)
                 return;
-              writeCalendarNotice(key, value);
+              writeCalendarNotice(key, value, scope);
             },
           }
         }

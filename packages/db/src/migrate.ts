@@ -9,9 +9,10 @@ import { assertNoActiveAddressDuplicates } from "./mailbox-dedup.js";
 import { JOURNALS } from "./journal-specs.js";
 import { OLD_HEADS, type ServerJournal } from "./journal-heads.js";
 import {
-  TransitionRefused, describeEvent, runTransition, transitionState,
+  TransitionFailed, TransitionRefused, describeEvent, runTransition, transitionState,
   type SealedOpener, type TransitionInput, type TransitionLog,
 } from "./transition/index.js";
+import { sampleCloudSealed } from "./transition/sealed.js";
 
 /**
  * The journal SPECS — folders and pinned migrations tables — are pure data in `journal-specs.ts`,
@@ -341,6 +342,8 @@ async function passOver(
   }
 }
 
+const SEALED_PROOF_REFUSAL = "the configured ring could not open the store's sealed values";
+
 /**
  * Replay BOTH journals against `url`: adopt → mail → cloud, under one session advisory lock, on
  * one {@link openMigrationSession}. A LIBRARY function — production reaches it only through
@@ -383,6 +386,8 @@ export async function runMigrations(
     }
     if (typeof state === "object") throw new TransitionRefused([{ what: state.refused, n: 1 }]);
     const done: string[] = [];
+    const sealedProof = opts.transition?.kind === "cloud" && opts.transition.verifyExistingSealed
+      ? opts.transition.openSealed : undefined;
     if (state === "at-old-head") {
       // No kind, no run: which store this is is its runner's word, never read off the store.
       if (!opts.transition) throw new TransitionNeedsRunner();
@@ -394,11 +399,26 @@ export async function runMigrations(
         });
       } catch (err) {
         // Nothing of it committed, so this is never a partial migration; a lost session says so itself.
+        if (sealedProof && err instanceof TransitionFailed && err.at.stage === "sealed") {
+          log(err.message);
+          throw new Error(SEALED_PROOF_REFUSAL);
+        }
         throw session.lost() ?? err;
       }
       done.push("transition");
     }
     await passOver(db, session, JOURNALS, done, log);
+    if (sealedProof) {
+      if (state !== "at-old-head") {
+        const samples = await db.transaction(
+          (tx) => sampleCloudSealed(tx, sealedProof),
+          { accessMode: "read only", isolationLevel: "repeatable read" },
+        ).catch(() => { throw new Error(SEALED_PROOF_REFUSAL); });
+        for (const s of samples) log(`sealed values of ${s.site}: ${s.rows} sampled, ${s.opened} opened, ${s.failed} failed`);
+        if (samples.some((s) => s.failed > 0)) throw new Error(SEALED_PROOF_REFUSAL);
+      }
+      log("SEALED_VALUES_OK");
+    }
   });
 }
 
@@ -407,11 +427,13 @@ export interface MigrateOptions {
   log?: (msg: string) => void;
   /**
    * What a store at 1.0.11's heads needs to become a 2.0 store: which kind of store it is, and an
-   * opener for its sealed values. Read only in that one state; absent there, the run refuses.
+   * opener for its sealed values. A managed command can also require proof on a later invocation.
    */
   transition?: {
     readonly kind: "cloud" | "server";
     readonly openSealed: SealedOpener;
+    /** Certify the Cloud ring on every run, sampling the store if the transition already ran. */
+    readonly verifyExistingSealed?: boolean;
     /** Each event of the transition; by default its line goes to `log`. */
     readonly log?: TransitionLog;
     /** A rehearsal's own step inside the transaction, after the entries and before the checks. */

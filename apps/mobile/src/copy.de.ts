@@ -3,7 +3,7 @@
  * from the English table in `copy.en.ts`, so shape is compiler-checked: a missing key, an extra
  * key or a differing parameter list is a build error; `test/copy-parity.test.ts` adds what a
  * type cannot see. The vocabulary is not invented here: `apps/webapp/messages/de.json` settled
- * it — Ohbox, News, Screener, Spam, Tag, paper and ohmarchy stay; Receipts is Belege, screened
+ * it — Ohbox, News, Screener, Spam, Tag, oh and ohmarchy stay; Receipts is Belege, screened
  * out is aussortiert, Park is Parken/Geparkt, Trash is the Papierkorb. Where the phone shares a
  * whole sentence with the web client, this deck carries its German byte for byte. Register: Du,
  * never Sie; plain statements, no slogans. Plurals are a ternary on the number.
@@ -1046,7 +1046,7 @@ export const DE: Deck = {
 
   face: "Stil",
   faceHint: "ohmarchy — ein Kachel-Stil, tastaturzentriert, inspiriert von Omarchy.",
-  facePaper: "paper",
+  facePaper: "oh",
   faceOhmarchy: "ohmarchy",
   faceScopeAll: "Gilt auf allen deinen Geräten.",
   faceScopeDevice: "Gilt nur auf diesem Gerät.",

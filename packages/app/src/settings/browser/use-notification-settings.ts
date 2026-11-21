@@ -10,13 +10,14 @@ import type { DurableWrite } from "@ohmail/app-logic/storage/durable";
 import type { PushSyncOutcome } from "../../host/device.js";
 
 export interface NotificationPreferences {
-  readChannels(): NotificationChannels;
-  writeChannels(next: NotificationChannels): DurableWrite;
+  readChannels(scope: string | null): NotificationChannels;
+  writeChannels(next: NotificationChannels, scope: string | null): DurableWrite;
   subscriptionWanted(channels: NotificationChannels, permission: NoticePermission): boolean;
   applyWakeIntent?: (
     door: DeviceNotifications,
     wanted: boolean,
     body: string,
+    scope: string | null,
   ) => Promise<PushSyncOutcome | null>;
 }
 
@@ -30,7 +31,7 @@ export function useNotificationSettings(
   { applyWakeIntent, readChannels, subscriptionWanted, writeChannels }: NotificationPreferences,
 ): NotificationsModel {
   const t = useText("settings");
-  const [channels, setChannels] = useState(readChannels);
+  const [channels, setChannels] = useState(() => readChannels(scope));
   const [permission, setPermission] = useState<NoticePermission>(() =>
     door === NONE ? "unsupported" : door.permission(),
   );
@@ -39,19 +40,24 @@ export function useNotificationSettings(
   const revision = useRef(0);
   const alive = useRef(false);
   // A failed store write still counts for this visit, until a newer stored preference appears.
-  const unwritten = useRef<{ stored: NotificationChannels; channels: NotificationChannels } | null>(null);
+  const unwritten = useRef<{
+    scope: string | null;
+    stored: NotificationChannels;
+    channels: NotificationChannels;
+  } | null>(null);
   const readCurrent = useCallback(() => {
-    const stored = readChannels();
+    const stored = readChannels(scope);
     const local = unwritten.current;
-    if (local && CHANNEL_KEYS.every((key) => stored[key] === local.stored[key])) return local;
+    if (local?.scope === scope && CHANNEL_KEYS.every((key) => stored[key] === local.stored[key]))
+      return local;
     unwritten.current = null;
     return { stored, channels: stored };
-  }, [readChannels]);
+  }, [readChannels, scope]);
   const body = t("notifyClosedBody");
-  const owns = useCallback(
-    () => door !== NONE && !isDemoOwned(scope) && (!door.liveNoticeScope || door.liveNoticeScope() === scope),
-    [door, scope],
-  );
+  const owns = useCallback(() => {
+    if (door === NONE || scope === null || isDemoOwned(scope)) return false;
+    return !door.liveNoticeScope || door.liveNoticeScope() === scope;
+  }, [door, scope]);
 
   function showDelivery(outcome: PushSyncOutcome | null, at: number) {
     if (!alive.current || revision.current !== at || !owns()) return;
@@ -72,8 +78,8 @@ export function useNotificationSettings(
     const at = ++revision.current;
     if (applyWakeIntent && door !== NONE && owns()) {
       // A pane visit retries the stored intent. Only the bounded wake owner can arm the worker.
-      const wanted = subscriptionWanted(readChannels(), door.permission());
-      void applyWakeIntent(door, wanted, body).then((outcome) => showDelivery(outcome, at));
+      const wanted = subscriptionWanted(readChannels(scope), door.permission());
+      void applyWakeIntent(door, wanted, body, scope).then((outcome) => showDelivery(outcome, at));
     }
     return () => {
       alive.current = false;
@@ -95,11 +101,11 @@ export function useNotificationSettings(
     const next = update(current);
     setChannels(next);
     setPermission(at);
-    unwritten.current = writeChannels(next) === "lost" ? { stored, channels: next } : null;
+    unwritten.current = writeChannels(next, scope) === "lost" ? { scope, stored, channels: next } : null;
     const request = ++revision.current;
     if (applyWakeIntent) {
       const wanted = subscriptionWanted(next, at);
-      void applyWakeIntent(door, wanted, body).then((outcome) => showDelivery(outcome, request));
+      void applyWakeIntent(door, wanted, body, scope).then((outcome) => showDelivery(outcome, request));
     }
   }
   async function pressMaster(want: boolean) {

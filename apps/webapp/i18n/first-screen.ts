@@ -36,6 +36,7 @@ export const FIRST_SCREEN: Readonly<Record<string, true | readonly string[]>> = 
   settings: ["about", "general", "notifications", "rules", "tags"],
   // The frame's own words on its first frame at rest (the frame says which).
   frame: FRAME_AT_REST,
+  viewError: ["loading"],
 };
 
 /** Copy one dotted path from `from` into `into`, creating the branches it passes through. */

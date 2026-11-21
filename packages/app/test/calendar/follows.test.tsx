@@ -703,9 +703,11 @@ describe("the calendar frame", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /Hours in view/ }));
     const hours = screen.getByRole("dialog", { name: "Hours in view" });
     const from = within(hours).getByRole("group", { name: "From" });
+    expect(within(from).getByText("06:00")).toBeTruthy();
+    expect(within(hours).getByRole("group", { name: "To" }).textContent).toContain("22:00");
     await act(async () => fireEvent.click(within(from).getByRole("button", { name: "An hour later" })));
-    expect((await port.settings()).dayFromMinute).toBe(60);
-    expect(from.textContent).toContain("01:00");
+    expect(await port.settings()).toMatchObject({ dayFromMinute: 420, dayToMinute: 1320 });
+    expect(from.textContent).toContain("07:00");
     expect(host.device.address.read()).toBe("#/cal/day/2026-11-16");
   });
 
@@ -733,9 +735,9 @@ describe("the calendar frame", () => {
     });
     expect(saveSettings.mock.calls).toEqual([
       [{ dayFromMinute: 0, dayToMinute: 1410 }],
-      [{ dayFromMinute: null, dayToMinute: null }],
+      [{ dayFromMinute: 0, dayToMinute: 1440 }],
     ]);
-    expect(await port.settings()).toMatchObject({ dayFromMinute: null, dayToMinute: null });
+    expect(await port.settings()).toMatchObject({ dayFromMinute: 0, dayToMinute: 1440 });
     expect(from.getByText("00:00")).toBeTruthy();
     expect(to.getByText("24:00")).toBeTruthy();
     expect(earlier.disabled).toBe(true);
@@ -1024,6 +1026,55 @@ describe("the calendar frame", () => {
     fireEvent.click(within(head).getByRole("button", { name: "Today" }));
     expect(host.device.address.read()).toBe(`#/cal/${view}`);
   });
+
+  it.each([
+    ["month", false, "ring", 700],
+    ["week", false, "ring", 700],
+    ["day", false, "ring", 700],
+    ["month", true, "outline", 1200],
+    ["week", true, "outline", 1200],
+  ] as const)(
+    "draws and clears the Today signal in %s (reduced motion: %s)",
+    (view, reduced, signal, duration) => {
+      vi.useFakeTimers({
+        toFake: ["Date", "requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout"],
+      });
+      vi.setSystemTime(new Date("2026-11-21T10:00:00Z"));
+      vi.stubGlobal("matchMedia", () => ({ matches: reduced }));
+      onTestFinished(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+      });
+      const { engine, port } = mirror();
+      const { host } = mount(engine, port, `#/cal/${view}/2026-12-07`);
+      const calendar = screen.getByRole("region", { name: "Calendar", exact: true });
+      calendar.style.setProperty("--d-today-pulse", "700ms");
+      calendar.style.setProperty("--d-today-outline", "1200ms");
+      const today = within(calendar).getByRole("button", { name: "Today", exact: true });
+      const badge = () => within(calendar).getByRole("button", { current: "date" });
+
+      fireEvent.click(today);
+      act(() => vi.advanceTimersByTime(48));
+      expect(host.device.address.read()).toBe(`#/cal/${view}`);
+      expect(badge().querySelector("[data-today-pulse]")?.getAttribute("data-today-pulse")).toBe(signal);
+      const line = calendar.querySelector('[data-today-pulse-target="now"]');
+      expect(line?.getAttribute("data-today-pulse") ?? null).toBe(
+        view !== "month" && !reduced ? "ring" : null,
+      );
+
+      // Today is already in view. Another press restarts its full display time.
+      act(() => vi.advanceTimersByTime(duration / 2));
+      fireEvent.click(today);
+      act(() => vi.advanceTimersByTime(48 + duration / 2));
+      expect(badge().querySelector("[data-today-pulse]")?.getAttribute("data-today-pulse")).toBe(signal);
+      act(() => vi.advanceTimersByTime(duration / 2));
+      expect(badge().querySelector("[data-today-pulse]")).toBeNull();
+
+      fireEvent.keyDown(document.body, { key: "t" });
+      act(() => vi.advanceTimersByTime(48));
+      expect(badge().querySelector("[data-today-pulse]")?.getAttribute("data-today-pulse")).toBe(signal);
+    },
+  );
 
   it("counts waiting invitations and suggestions from mail in the calendar rail", () => {
     vi.useFakeTimers({ toFake: ["Date"] });

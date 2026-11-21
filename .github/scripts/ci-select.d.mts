@@ -24,7 +24,7 @@ export interface Tree { read(p: string): string | null; exists?(p: string): bool
 export interface Harness { p: string; what: string; shape: string }
 /** A reason a pull request into a direct base is capped for: the path and the trigger it met. */
 export interface Capped { p: string; what: string }
-export interface Scope { scope: "whole" | "selected"; why: string; changes?: Change[]; sqliteWhole?: boolean; dovecotAll?: boolean; harness?: Harness[]; capped?: Capped[] }
+export interface Scope { scope: "whole" | "selected" | "build-only"; why: string; changes?: Change[]; sqliteWhole?: boolean; dovecotAll?: boolean; harness?: Harness[]; capped?: Capped[] }
 export interface Reader { paths: string[]; loads: string[]; git: boolean; bundle: boolean; sweep: boolean }
 /** `rootsRelated`: the test files the graph relates to `roots` alone, asked for with them; null when that reading failed. */
 export interface Graph { related: string[]; all: string[]; reached?: string[]; rootsRelated?: string[] | null }
@@ -54,7 +54,7 @@ export interface Plan {
   };
 }
 export interface Outputs {
-  scope: "whole" | "selected"; why: string;
+  scope: Scope["scope"]; why: string;
   shards: { shard: number; files?: string; dovecot?: string }[]; alone: string[]; sqlite: { shard: number; files?: string }[];
   summary: Plan["summary"] | null;
   /** A capped plan's, for its summary. */
@@ -101,7 +101,7 @@ export function directSet(sets: {
   picked: string[]; rule: Map<string, string>; hits: Map<string, string>; rootHits: Map<string, string>;
   graphRelated: string[]; related: string[]; dovecot?: Set<string>; rootReach?: string[] | null;
 }): { direct: string[]; deferred: Deferred[] };
-export function select(args?: { root?: string; ctx: Ctx; changes?: Change[] | null; graph?: (root: string, related: string[], options: GraphOptions) => Promise<Graph>; costs?: Costs | null; base?: Tree | null; head?: Tree | null }): Promise<Plan | { scope: "whole"; why: string }>;
+export function select(args?: { root?: string; ctx: Ctx; changes?: Change[] | null; graph?: (root: string, related: string[], options: GraphOptions) => Promise<Graph>; costs?: Costs | null; base?: Tree | null; head?: Tree | null }): Promise<Plan | { scope: "whole" | "build-only"; why: string }>;
 export function composeOutputs(args: { indexes: number[]; sqliteIndexes: number[]; alone: string[]; scope?: string; scopeWhy?: string; selectOutcome?: string; plan?: Plan | null }): Outputs;
 export function summaryText(out: Outputs): string;
-export function deferredLog(plan: Plan | { scope: "whole"; why: string }, ctx?: Partial<Ctx>): string;
+export function deferredLog(plan: Plan | { scope: "whole" | "build-only"; why: string }, ctx?: Partial<Ctx>): string;

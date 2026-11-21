@@ -21,7 +21,7 @@ import { FOLDERS_ON, LIST_WORDS, listFrame } from "../../../packages/app/test/pl
 import { mountStreamFrame } from "../../../packages/app/test/streams/registered-world.js";
 import { modelOf, mountPlace } from "../../../packages/app/test/screener/screener-world.js";
 import trashWords from "../../../packages/app/messages/trash.en.json";
-import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
+import { enterSearchRoute, RegisteredSearch, findSearchField, typeSearch } from "./search-registered-fixture";
 import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
 import { CONTAINERS, expectHeard, indexOfKey, scrollTo, walk } from "./_windowed-list-hearing.js";
 import { FIXTURE_NOW, storeFixture, storeRows } from "./_store-fixture";
@@ -200,6 +200,7 @@ describe("a windowed list announces its true size and every row's true position"
     } as never);
     restoreRoute = enterSearchRoute();
     const { container: host } = render(<RegisteredSearch engine={engine} now={NOW} />);
+    await findSearchField(host);
     await act(async () => { typeSearch(host, "axa"); });
     await within(host).findByRole("list", { name: "Search" });
     const m = { host, scroller: scrollerOf(host, "list", "Search") };

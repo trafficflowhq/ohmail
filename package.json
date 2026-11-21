@@ -15,7 +15,8 @@
     "lint": "node tools/check.mjs --list",
     "format": "node tools/check.mjs --format",
     "check:tools": "node tools/check.mjs --base origin/next && node tools/check.mjs --controls",
-    "db:setup:prod": "tsx --conditions=ohmail-source packages/db/src/setup-prod-cli.ts"
+    "db:setup:prod": "tsx --conditions=ohmail-source packages/db/src/setup-prod-cli.ts",
+    "db:setup:server": "tsx --conditions=ohmail-source apps/server/src/index.ts migrate"
   },
   "workspaces": [
     "apps/api-vercel",

@@ -177,6 +177,7 @@
     },
     "list": {
       "menu": "Aktionen der Ohbox",
+      "checked": "Geprüft {when}",
       "pull": "Neue Mails abrufen"
     },
     "end": {

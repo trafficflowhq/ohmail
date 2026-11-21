@@ -258,6 +258,33 @@ describe("NoticeSlot", () => {
 });
 
 describe("Report", () => {
+  it("lets the full stop land as the report arrives, unless motion is reduced", () => {
+    const style = document.createElement("style");
+    style.textContent =
+      ".oh-report, .oh-dot { --d-in: 220ms; --e-drop: linear; --x-drop: translateY(-1em); --x-drop-land: translateY(0); }";
+    document.head.append(style);
+    const original = Element.prototype.animate;
+    const animated: Element[] = [];
+    Element.prototype.animate = function () {
+      animated.push(this);
+      return { cancel() {}, addEventListener() {} } as unknown as Animation;
+    };
+    try {
+      const first = render(<Report>Moved</Report>);
+      const dot = first.getByRole("status").querySelector("i")!;
+      expect(animated).toContain(dot);
+      first.unmount();
+      animated.length = 0;
+      document.documentElement.dataset.rm = "1";
+      const second = render(<Report>Moved</Report>);
+      expect(animated).not.toContain(second.getByRole("status").querySelector("i"));
+    } finally {
+      delete document.documentElement.dataset.rm;
+      Element.prototype.animate = original;
+      style.remove();
+    }
+  });
+
   it("is a status with the one way back", () => {
     const undo = vi.fn();
     render(<Report undo={{ label: "Undo", keyHint: "z", onPress: undo }}>Parked</Report>);

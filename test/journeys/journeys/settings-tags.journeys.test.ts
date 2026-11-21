@@ -7,9 +7,8 @@ export const GUARDS: Guard[] = [
   ...PANE,
   { title: "A tag made in Settings is in the rail at once", rows: [], surfaces: EVERY_WEB, needs: [] },
   {
-    // Open: Settings is drawn again when the account's mailboxes arrive, and the box comes back empty.
     title: "Words typed into the new tag's box before the mailboxes have arrived are still there after",
-    rows: [], surfaces: WEB, needs: [], open: true,
+    rows: [], surfaces: WEB, needs: [],
   },
 ];
 
@@ -17,6 +16,7 @@ journeysOf("settings-tags", () => {
   paneJourneys("settings-tags", PANE, "tag-new");
   journey(GUARDS[PANE.length]!, async (b) => {
     const { person } = await openPane(b, "settings-tags", "tag-new");
+    if ((await person.spoken("rail-tags")).expanded === "false") await person.act("press", "rail-tags");
     await person.act("type", "tag-new", { value: "Kiln notes" });
     await person.act("press", "tag-add");
     await person.see("rail-tag", { named: "Kiln notes" });

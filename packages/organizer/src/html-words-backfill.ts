@@ -65,18 +65,27 @@ export interface HtmlWordsBackfillResult {
 }
 
 /** The accounts still owed the walk: not erased, living mail, no stamp. `shard` is a predicate over `accounts.id`. */
-export async function htmlWordsOwedAccounts(db: Tx, opts: { limit: number; shard?: SQL }): Promise<string[]> {
-  const rows = await db.select({ id: accounts.id }).from(accounts)
+export async function htmlWordsOwedAccounts(db: Tx, opts: { limit: number; shard?: SQL; forAccount?: (accountId: string) => Tx }): Promise<string[]> {
+  if (opts.limit === 0) return [];
+  const query = db.select({ id: accounts.id }).from(accounts)
     .leftJoin(passProgress, onPass(JOB, accounts.id))
     .where(and(
       isNull(accounts.erasedAt),
       isNull(passProgress.doneAt),
-      sql`exists (select 1 from ${messages} where ${messages.accountId} = ${accounts.id} and ${messages.deletedAt} is null)`,
+      opts.forAccount === undefined ? sql`exists (select 1 from ${messages} where ${messages.accountId} = ${accounts.id} and ${messages.deletedAt} is null)` : undefined,
       opts.shard,
     ))
-    .orderBy(accounts.id)
-    .limit(opts.limit);
-  return rows.map((r) => r.id);
+    .orderBy(accounts.id);
+  if (opts.forAccount === undefined) return (await query.limit(opts.limit)).map((row) => row.id);
+
+  const owed: string[] = [];
+  for (const { id } of await query) {
+    const [letter] = await opts.forAccount(id).select({ id: messages.id }).from(messages)
+      .where(and(eq(messages.accountId, id), isNull(messages.deletedAt))).limit(1);
+    if (letter) owed.push(id);
+    if (owed.length === opts.limit) break;
+  }
+  return owed;
 }
 
 interface Fill { id: string; blank: string; htmlBytes: number; words: string }

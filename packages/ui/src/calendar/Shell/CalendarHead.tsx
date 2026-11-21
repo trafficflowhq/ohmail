@@ -16,6 +16,8 @@ export interface CalendarHeadProps {
   title: string;
   /** The same in fewer letters, for a head short of room. */
   shortTitle?: string;
+  /** The date in a single-day title can stand as today’s badge. */
+  todayNumber?: string;
   /** The span holds today, or something in the place waits: the title ends in the hot dot. */
   hot: boolean;
   /** A span of days is the way to a date: what the title's press does, said in full. */
@@ -33,7 +35,7 @@ export interface CalendarHeadProps {
   /** The span before and after. Left out in a place that is no span. */
   before?: Way;
   after?: Way;
-  today?: Way & { keyHint?: string };
+  today?: Way & { keyHint?: string; alwaysOnPhone?: boolean };
   /** The view is not on today: on the phone Today then stands in the title line. */
   away?: boolean;
   /** The views: a view switch. */
@@ -76,16 +78,30 @@ function tool(
  * about that. A key is a hint the app's own registry answers; the head only draws it.
  */
 export function CalendarHead(p: CalendarHeadProps) {
+  const dateWords = (title: string) => {
+    if (!p.todayNumber) return title;
+    const start = title.indexOf(p.todayNumber);
+    if (start < 0) return title;
+    return (
+      <>
+        {title.slice(0, start)}
+        <span className="oh-calhead-today-date" data-today-pulse-target="badge">
+          {p.todayNumber}
+        </span>
+        {title.slice(start + p.todayNumber.length)}
+      </>
+    );
+  };
   const words =
     p.shortTitle && p.shortTitle !== p.title ? (
       <>
-        <span className="oh-calhead-full">{p.title}</span>
+        <span className="oh-calhead-full">{dateWords(p.title)}</span>
         <span className="oh-calhead-short" aria-hidden>
-          {p.shortTitle}
+          {dateWords(p.shortTitle)}
         </span>
       </>
     ) : (
-      p.title
+      dateWords(p.title)
     );
   const dot = <Dot kind={p.hot ? "hot" : "ink"} />;
   const week = p.week ? (
@@ -105,6 +121,7 @@ export function CalendarHead(p: CalendarHeadProps) {
             type="button"
             className="oh-control oh-calhead-goto"
             aria-label={p.goTo.label}
+            aria-current={p.todayNumber ? "date" : undefined}
             title={p.goTo.label}
             onClick={p.goTo.onPress}
           >
@@ -138,7 +155,11 @@ export function CalendarHead(p: CalendarHeadProps) {
       {tool("before", "back", p.before)}
       {tool("after", "fwd", p.after)}
       {p.today ? (
-        <span className="oh-calhead-part" data-part="today">
+        <span
+          className="oh-calhead-part"
+          data-part="today"
+          data-always={p.today.alwaysOnPhone ? "" : undefined}
+        >
           <Button
             kind="two"
             size="s"

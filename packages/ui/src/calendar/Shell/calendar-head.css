@@ -39,6 +39,16 @@
     white-space: nowrap;
     transition: background-color var(--d-hover) var(--e-std);
   }
+  .oh-calhead-today-date {
+    display: inline-grid;
+    place-items: center;
+    min-width: var(--s5);
+    border-radius: var(--r-pill);
+  }
+  .oh-calhead-today-date[data-today-pulse] {
+    color: var(--on-hot);
+    background: var(--hot);
+  }
   .oh-calhead-goto:hover {
     background: var(--hover-ground);
   }
@@ -157,7 +167,7 @@
     --oh-calhead-pad: 0 0 0 var(--s3);
     --oh-calhead-gap: 2px;
   }
-  /* The phone: the title, Today while away, the bell, More. Its view switch is the dock. */
+  /* The phone: the title, Today, the bell, More. Its view switch is the dock. */
   :root[data-device="phone"] .oh-calhead {
     --oh-calhead-pad: 0 var(--s2) 0 var(--s3);
     height: 64px;
@@ -295,7 +305,8 @@
 }
 
 @layer oh {
-  :root[data-device="phone"] .oh-calhead[data-away] .oh-calhead-part[data-part="today"] {
+  :root[data-device="phone"] .oh-calhead[data-away] .oh-calhead-part[data-part="today"],
+  :root[data-device="phone"] .oh-calhead .oh-calhead-part[data-part="today"][data-always] {
     display: contents;
   }
 }

@@ -114,7 +114,7 @@ async function mount(letter: EngineMessage, standing: RuleEntity, segment = copy
     await act(() => { fireEvent.click(control); });
     await tick(50);
   };
-  const sections = within(screen.getByRole("group", { name: copy.segAria }));
+  const sections = within(await vi.waitFor(() => screen.getByRole("group", { name: copy.segAria })));
   await click(sections.getByRole("button", { name: (name) => name === segment || name.startsWith(`${segment} `) }));
   const row = () => screen.queryByRole("option", { name: new RegExp(letter.subject) });
   expect(row(), "the sender is on the requested shelf").not.toBeNull();

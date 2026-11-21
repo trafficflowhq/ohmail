@@ -7,14 +7,16 @@ import { useRef, useState, type ReactNode } from "react";
 import { Button, Dot, Menu, MenuItem, Page, Sentence, Slot } from "@ohmail/ui/base";
 import type { CalendarRecord } from "@ohmail/app-logic/calendar";
 import {
-  connectFaultKeyOf,
   newEventsCalendarOf,
   writableOf,
+  wayOfConnection,
+  type SteppedWay,
   type CalendarSetupPort,
 } from "@ohmail/app-logic/calendar/setup";
 import { useReport } from "../frame/commands.js";
 import { useText } from "../text/index.js";
 import { CalendarLine } from "./CalendarLine.js";
+import { setupFaultKeyOf } from "./setup-fault.js";
 import type { CalendarMirror } from "./mirror.js";
 
 interface StepBase {
@@ -34,7 +36,8 @@ export function CalendarsStep({
   leave,
   again,
   next,
-}: StepBase & { readonly again: () => void; readonly next: () => void }) {
+  way,
+}: StepBase & { readonly way: SteppedWay | null; readonly again: () => void; readonly next: () => void }) {
   const t = useText("calsetup");
   const report = useReport();
   const record = mirror.connections.find((c) => c.id === connection) ?? null;
@@ -47,7 +50,7 @@ export function CalendarsStep({
             {t("calendars.again")}
           </Button>
         }
-        refusal={[t(connectFaultKeyOf(record.errorCode))]}
+        refusal={[t(setupFaultKeyOf(record.errorCode, way ?? wayOfConnection(record)))]}
       >
         <Sentence size="xl" level={1}>
           {t("calendars.refused")}
@@ -84,6 +87,7 @@ export function CalendarsStep({
             <CalendarLine
               key={k.id}
               calendar={k}
+              tone={mirror.tones.get(k.id) ?? "neutral"}
               switchLabel={t("calendars.show", { name: k.name })}
               onToggle={setCalendar === "none" ? undefined : (on) => show(k, on)}
             />

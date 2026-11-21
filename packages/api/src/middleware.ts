@@ -511,7 +511,7 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
   }
   // Last, and here alone: the session is settled (resolved, or dropped above), and the request's
   // handle comes to name its account before any later step or the handler reads through it.
-  bindRequest(deps);
+  bindRequest(deps, route.options?.credentialLookup);
   return next(req, deps, params);
 };
 

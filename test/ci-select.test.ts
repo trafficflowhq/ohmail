@@ -135,6 +135,20 @@ describe("the scope: who runs the whole suite", () => {
     expect(eventWhole(across)).toBeNull();
   });
 
+  it("plans build-only for a maintainer's landing round into next", () => {
+    const repo = { full_name: "trafficflowhq/ohmail" };
+    const head = { ref: "pr/round-example", repo };
+    const intoNext = { base: { ref: "next" }, head };
+    const changes = [M(".github/workflows/ci.yml")];
+    const scope = (ctx: Ctx) => decideScope({ root: ROOT, ctx, changes }).scope;
+
+    expect(scope(pr({ ...intoNext, head: { ref: "pr/batch-example", repo } }))).toBe("whole");
+    expect(scope(pr({ head }))).toBe("whole");
+    expect(scope(pr({ ...intoNext, head: { ...head, repo: { full_name: "someone/ohmail" } } }))).toBe("whole");
+    expect(scope(pr(intoNext, { triggering_actor: "renovate[bot]" }))).toBe("whole");
+    expect(scope(pr(intoNext))).toBe("build-only");
+  });
+
   it("prints its decision as two output lines, from the event and a name-status file", () => {
     const at = join(scratch, "changes.tsv");
     writeFileSync(at, "M\tapps/webapp/app/views/OhboxView.tsx\n");
@@ -1271,6 +1285,18 @@ describe("the plan job's outputs", () => {
     scope: "selected", why: "2 changed path(s)", alone: [], sqlite: null,
     shards: [{ shard: 0, files: "packages/q/test/a.test.ts\ntest/root.test.ts", dovecot: "no" }],
   };
+
+  it("hands a landing round no test jobs and explains when the suite runs", () => {
+    const decision = decideScope({
+      root: ROOT,
+      ctx: pr({ base: { ref: "next" }, head: { ref: "pr/round-example", repo: { full_name: "trafficflowhq/ohmail" } } }),
+      changes: [M(".github/workflows/ci.yml")],
+    });
+    const out = composeOutputs({ ...base, scope: decision.scope, scopeWhy: decision.why });
+    expect(out).toMatchObject({ scope: "build-only", shards: [], alone: [], sqlite: [] });
+    expect(summaryText(out)).toContain("the batch build");
+    expect(summaryText(out)).toContain("after landing");
+  });
 
   it("hands the selected plan on, and the whole run in every other case, with its reason", () => {
     const sel = composeOutputs({ ...base, scope: "selected", selectOutcome: "success", plan });

@@ -72,8 +72,14 @@ export interface EnteredTarget {
   readonly letter: string;
 }
 
+export interface CalendarGuest {
+  readonly address: string;
+  readonly name: string | null;
+}
+
 export interface FrameInner {
   readonly api: FrameApi;
+  readonly initialPlace?: boolean;
   readonly notices: NoticeStore;
   readonly rail: Feed<RailModel | null>;
   /** The rail's foot, fed apart from the places; read where no whole rail is fed. */
@@ -81,6 +87,7 @@ export interface FrameInner {
   readonly connection: Feed<ConnectionFeed>;
   /** A letter handed to `write`, taken once by the place that writes. */
   readonly draft: { current: LinkedDraft | null };
+  readonly calendarGuest: { current: CalendarGuest | null };
   /** The letter a `go` named as entered, until the place that lists it takes the word or the address moves on. */
   readonly entered: Feed<EnteredTarget | null>;
   readonly searchQuery: { current: string };
@@ -118,6 +125,10 @@ export function useDragFeed(): Feed<Dragging | null> {
 /** Search text kept for the lifetime of this account’s frame. */
 export function useSearchQuery() {
   return useInner().searchQuery;
+}
+
+export function useCalendarGuest(): FrameInner["calendarGuest"] {
+  return useInner().calendarGuest;
 }
 
 export function useFrame(): FrameApi {

@@ -85,6 +85,7 @@
     "placed": "First message selected. Press again: {label}"
   },
   "viewError": {
+    "loading": "Loading this view…",
     "updated": "ohmail was updated. Reload to continue.",
     "loadFailed": "This part of ohmail couldn't load. Check the connection and try again.",
     "tryAgain": "Try again",
@@ -127,6 +128,8 @@
     "blocked_read_limited": "ohmail read what it could; this mailbox's server sent more than one pass can take. It will try again.",
     "blocked_clock_off": "Not syncing — this computer's clock is too far from the mail server's for ohmail to organize this mailbox safely. Set the clock; ohmail starts again on its own.",
     "blocked_account_closed": "Not syncing — this account's subscription has ended. Your mailbox is untouched, and syncing starts again once the account is active.",
+    "notice_provider_unavailable": "The mail server asked ohmail to wait.",
+    "notice_mailbox_full": "The mailbox is full.",
     "blocked_provider_unavailable": "Not syncing for now — the mail server asked ohmail to wait. It tries again on its own.",
     "blocked_meta_folder_full": "Not syncing — the ohmail/_meta folder on that server holds more messages than ohmail can read. Move mail that was filed into it to another folder and leave the messages ohmail wrote (their subject starts with \"ohmail\"). ohmail starts again on its own.",
     "blocked_meta_undeletable": "Not syncing — the mail server will not let ohmail remove its own messages from ohmail/_meta. Give that folder delete permission, or ask your provider. ohmail starts again on its own.",
@@ -393,6 +396,10 @@
         "since": "Offline since {time, date, ::HHmm}",
         "sinceDay": "Offline since {time, date, ::MMMd}"
       },
+      "mailboxFailed": {
+        "title": "A mailbox failed to sync",
+        "named": "{address} failed to sync"
+      },
       "mailServerDown": {
         "title": "Mail server not reached",
         "named": "{address} not reached"
@@ -417,8 +424,8 @@
       },
       "firstSync": {
         "title": "First sync",
-        "count": "First sync, {count, number} so far",
-        "of": "First sync, {count, number} of {total, number}"
+        "count": "{count, number} so far",
+        "of": "{count, number} of {total, number}"
       },
       "filing": {
         "title": "Filing on your mail server",

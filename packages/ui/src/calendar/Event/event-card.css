@@ -127,10 +127,20 @@
     text-wrap: balance;
   }
   .oh-ecard-title-input {
-    inline-size: 100%;
+    --oh-ecard-title-line: inset 0 calc(var(--oh-hair) * -1) 0 var(--line);
+    --oh-ecard-title-focus: inset 0 calc(var(--oh-focus) * -1) 0 currentColor;
+    inline-size: calc(100% - var(--oh-ecard-beside));
+    padding-inline: 0;
+    padding-block-end: var(--s1);
     background: transparent;
     border: 0;
+    border-radius: var(--r-sq);
+    box-shadow: var(--oh-ecard-title-line);
     color: inherit;
+  }
+  .oh-control.oh-ecard-title-input:focus-visible {
+    outline: none;
+    box-shadow: var(--oh-ecard-title-focus);
   }
   .oh-ecard-head[data-act="edit"] > .oh-ecard-title {
     --oh-ecard-title-room: calc(88px + var(--oh-ecard-beside));
@@ -146,7 +156,6 @@
   }
   .oh-ecard-was {
     margin-right: var(--s2);
-    color: var(--ink2);
     font-weight: var(--w-text);
   }
   .oh-ecard-where {
@@ -190,6 +199,18 @@
     align-items: center;
     gap: var(--oh-ecard-rows-gap);
     margin: var(--oh-ecard-rows-out);
+  }
+  .oh-ecard-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    color: var(--ink2);
+    font-size: var(--t-ui);
+    font-weight: var(--w-mid);
+  }
+  .oh-ecard-status[data-failed] {
+    color: var(--hot-ink);
+    font-weight: var(--w-bold);
   }
   .oh-ecard-row {
     display: contents;
@@ -324,6 +345,7 @@
     --oh-ecard-pad: var(--s3) var(--s5) var(--s4);
     --oh-ecard-z: 9;
     --oh-ecard-top: var(--r-sheet) var(--r-sheet) 0 0;
+    --oh-ecard-grab-space: calc(var(--s3) + var(--s4) + var(--s1));
     top: auto;
     right: 0;
     bottom: 0;
@@ -353,7 +375,9 @@
   }
   .oh-ecard-grab {
     --oh-ecard-grab-out: 0 auto var(--s4);
+    --oh-ecard-grab-z: 1;
     position: relative;
+    z-index: var(--oh-ecard-grab-z);
     display: block;
     width: 36px;
     height: 4px;
@@ -371,12 +395,12 @@
     content: "";
   }
   .oh-ecard[data-frame="sheet"] > .oh-ecard-head {
-    margin: 0;
-    padding: 0;
-    background: transparent;
+    --oh-ecard-head-out: calc(var(--oh-ecard-grab-space) * -1) calc(var(--s5) * -1) 0;
+    --oh-ecard-head-pad: var(--oh-ecard-grab-space) var(--s5) var(--s3);
+    padding: var(--oh-ecard-head-pad);
   }
   .oh-ecard[data-frame="sheet"] .oh-ecard-close > .oh-button {
-    top: var(--s3);
+    top: var(--oh-ecard-grab-space);
     right: var(--s3);
   }
   .oh-ecard[data-frame="sheet"] .oh-ecard-title {
@@ -386,11 +410,11 @@
     font-variation-settings: var(--opsz-l);
     line-height: 1.12;
   }
+  .oh-ecard[data-frame="sheet"] .oh-ecard-title-input {
+    padding-inline: 0;
+  }
   .oh-ecard[data-frame="sheet"] .oh-ecard-when {
     margin-top: var(--s2);
-  }
-  .oh-ecard[data-frame="sheet"] .oh-ecard-where {
-    color: var(--ink2);
   }
   .oh-ecard[data-frame="sheet"] .oh-ecard-link {
     line-height: var(--h-s);

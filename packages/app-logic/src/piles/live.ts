@@ -92,8 +92,8 @@ export function usePilesLive(args: PlaceLiveArgs, own: PilesLiveOwn) {
     write: own.openReply,
     close: own.closeReply,
     stamp: useMemo(() => stampOver(now), [now]),
-    /* Today's view and the studio alike stand a pile's first letter open beside it on arrival. */
-    arrival: "first",
+    // Navigation from the rail keeps its first-letter preview.
+    arrival: args.initialPlace ? "rest" : "first",
   });
   useListWalkKeys(model.walk, own);
   return { ...model, verbs: list.verbs };

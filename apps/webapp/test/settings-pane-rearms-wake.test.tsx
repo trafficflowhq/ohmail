@@ -11,6 +11,7 @@ import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { NONE } from "@ohmail/app/host";
 import { mirror } from "../../../packages/app/test/calsetup/world.js";
 import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
+import { bindApiOwner } from "../app/api-client";
 import messages from "../messages/en.json";
 import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
 import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
@@ -93,6 +94,8 @@ function hostAnswering(outcome: PushSyncOutcome | null): NotificationHost & {
 }
 
 /** Every switch a reader left ON — an install preference that survives a sign-out. */
+const NOTIFICATION_CHANNELS_KEY_SCOPED = `${NOTIFICATION_CHANNELS_KEY}.account-b`;
+const CALENDAR_NOTICES_KEY_SCOPED = `${CALENDAR_NOTICES_KEY}.account-b`;
 const ALL_ON = JSON.stringify({
   master: true, ohbox: true, screener: true,
   scheduled: true, pairing: true, showSenderAndSubject: false,
@@ -102,6 +105,9 @@ let host: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  document.cookie = "tf_owner=account-b; Path=/";
+  document.cookie = "tf_family=family-b; Path=/";
+  bindApiOwner("account-b");
   window.localStorage.clear();
   cachePuts.length = 0;
   installFakeCaches();
@@ -111,6 +117,9 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  bindApiOwner(null);
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
   await act(async () => { root?.unmount(); });
   root = null;
   host.remove();
@@ -147,12 +156,13 @@ async function renderPane(pane: string, notificationHost: NotificationHost, cale
       }),
     );
   });
-  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  await findByRole(host, "navigation", { name: messages.settings.navAria });
+  await act(async () => {});
 }
 
 /** Flip the notifications master switch and let the act settle. */
 async function pressFirstSwitch(): Promise<void> {
-  const first = getByRole(host, "switch", { name: messages.settings.notifyMaster });
+  const first = await findByRole(host, "switch", { name: messages.settings.notifyMaster });
   await act(async () => {
     first.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
@@ -165,17 +175,17 @@ const enabledNow = (): unknown => {
 };
 
 async function openNotifications(): Promise<void> {
-  const row = getByRole(host, "button", { name: messages.settings.notifications });
+  const row = await findByRole(host, "button", { name: messages.settings.notifications });
   await act(async () => { row.click(); });
   await findByRole(host, "switch", { name: messages.settings.notifyMaster });
 }
 
 describe("browser notification preferences during a Settings visit", () => {
   it("shows and keeps another tab's notification choices when opening Notifications from General", async () => {
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, ALL_ON);
     const wired = hostAnswering("subscribed");
     let scope = "account-b";
-    localStorage.setItem(CALENDAR_NOTICES_KEY, JSON.stringify({ showTitles: false, summaryAt: 570 }));
+    localStorage.setItem(CALENDAR_NOTICES_KEY_SCOPED, JSON.stringify({ showTitles: false, summaryAt: 570 }));
     await renderPane("general", {
       ...wired,
       liveNoticeScope: () => scope,
@@ -185,29 +195,29 @@ describe("browser notification preferences during a Settings visit", () => {
 
     const changed = JSON.stringify({ ...JSON.parse(ALL_ON), master: false, screener: false });
     await act(async () => {
-      window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, changed);
-      window.dispatchEvent(new StorageEvent("storage", { key: NOTIFICATION_CHANNELS_KEY, oldValue: ALL_ON, newValue: changed }));
+      window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, changed);
+      window.dispatchEvent(new StorageEvent("storage", { key: NOTIFICATION_CHANNELS_KEY_SCOPED, oldValue: ALL_ON, newValue: changed }));
     });
     await openNotifications();
 
     expect(getByRole(host, "switch", { name: messages.settings.notifyMaster }).getAttribute("aria-checked")).toBe("false");
     expect(wired.asked).toEqual([{ wanted: true, forced: true }]);
     await pressFirstSwitch();
-    expect(JSON.parse(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY)!)).toMatchObject({ master: true, screener: false });
+    expect(JSON.parse(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY_SCOPED)!)).toMatchObject({ master: true, screener: false });
     const reminder = getByRole(host, "switch", { name: "An alert" });
     expect(reminder.getAttribute("aria-checked")).toBe("false");
     await act(async () => reminder.click());
     expect(reminder.getAttribute("aria-checked")).toBe("true");
-    expect(JSON.parse(localStorage.getItem(CALENDAR_NOTICES_KEY)!)).toEqual({
+    expect(JSON.parse(localStorage.getItem(CALENDAR_NOTICES_KEY_SCOPED)!)).toEqual({
       cal_alert: true, showTitles: false, summaryAt: 570,
     });
     scope = "account-c";
     await act(async () => reminder.click());
-    expect(JSON.parse(localStorage.getItem(CALENDAR_NOTICES_KEY)!)).toMatchObject({ cal_alert: true });
+    expect(JSON.parse(localStorage.getItem(CALENDAR_NOTICES_KEY_SCOPED)!)).toMatchObject({ cal_alert: true });
   });
 
   it("shows a permission revoked while General was open", async () => {
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, ALL_ON);
     const wired = hostAnswering("subscribed");
     let permission: ReturnType<NotificationHost["permission"]> = "granted";
     await renderPane("general", { ...wired, permission: () => permission });
@@ -222,21 +232,21 @@ describe("browser notification preferences during a Settings visit", () => {
   });
 
   it("keeps another tab's master and channel choices when a channel press reaches storage first", async () => {
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, ALL_ON);
     const wired = hostAnswering("subscribed");
     await renderPane("notifications", {
       ...wired,
       emitter: { carries: ["ohbox", "screener"], acts: [], post() {}, ahead: NONE, takeBack() {} },
     });
-    const ohbox = getByRole(host, "switch", { name: messages.settings.notifyOhbox });
+    const ohbox = await findByRole(host, "switch", { name: messages.settings.notifyOhbox });
     expect(ohbox.getAttribute("aria-checked")).toBe("true");
     wired.asked.length = 0;
 
     // The other tab's write is readable before its storage event reaches this tab.
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, JSON.stringify({ ...JSON.parse(ALL_ON), master: false, screener: false }));
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, JSON.stringify({ ...JSON.parse(ALL_ON), master: false, screener: false }));
     await act(async () => { ohbox.click(); });
 
-    expect(JSON.parse(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY)!)).toMatchObject({
+    expect(JSON.parse(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY_SCOPED)!)).toMatchObject({
       master: false, ohbox: false, screener: false, scheduled: true, pairing: true,
     });
     expect(wired.asked).toEqual([{ wanted: false, forced: false }]);
@@ -246,7 +256,7 @@ describe("browser notification preferences during a Settings visit", () => {
 
 describe("the Settings door and the previous reader's registration", () => {
   it("says notifications only work while open when closed-window wakes are unavailable", async () => {
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, ALL_ON);
     await renderPane("notifications", hostAnswering("unsupported"));
 
     expect(host.textContent).toContain("This browser can show notifications only while ohmail is open.");
@@ -262,7 +272,7 @@ describe("the Settings door and the previous reader's registration", () => {
      * The host refuses, which is what the server does for a foreign row: the endpoint conflicts
      * and the account-scoped lookup cannot see another account's registration.
      */
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, ALL_ON);
     const wired = hostAnswering("not_registered");
 
     await renderPane("general", wired);
@@ -298,7 +308,7 @@ describe("the Settings door and the previous reader's registration", () => {
    * So the press is pinned the way the mount already was: on what the host was ASKED.
    */
   it("THE PRESS is gated the same way — turning the switch on is a wish, not a row", async () => {
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, JSON.stringify({ master: false }));
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, JSON.stringify({ master: false }));
     const wired = hostAnswering("not_registered");
     await renderPane("notifications", wired);
     cachePuts.length = 0;
@@ -319,7 +329,7 @@ describe("the Settings door and the previous reader's registration", () => {
   it("CONTROL: the same press ARMS when the server names the row", async () => {
     // Without this, the case above could pass by never arming under any circumstances — the same
     // argument the mount case's control makes, which the press was missing.
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, JSON.stringify({ master: false }));
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, JSON.stringify({ master: false }));
     const wired = hostAnswering("subscribed");
     await renderPane("notifications", wired);
     cachePuts.length = 0;
@@ -332,7 +342,7 @@ describe("the Settings door and the previous reader's registration", () => {
   });
 
   it("CONTROL: a row the server DID name arms it, or the two above pass by never arming", async () => {
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, ALL_ON);
 
     await renderPane("general", hostAnswering("subscribed"));
 
@@ -343,7 +353,7 @@ describe("the Settings door and the previous reader's registration", () => {
   it("switches OFF still disarm first and unconditionally — the safe direction is unchanged", async () => {
     // The OFF half must not acquire a precondition: a worker told not to draw cannot leak, and
     // that write needs neither the network nor a live subscription.
-    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, JSON.stringify({ master: false }));
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY_SCOPED, JSON.stringify({ master: false }));
 
     await renderPane("general", hostAnswering("not_registered"));
 

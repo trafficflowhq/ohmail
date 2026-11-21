@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
-import { animate } from "../../motion/motion.js";
+import { animate, motionShape } from "../../motion/motion.js";
 import { useSaidOnArrival } from "../said-on-arrival.js";
 import { Button } from "../Primitives/Button.js";
 import { EndDot } from "../Primitives/EndDot.js";
@@ -66,8 +66,20 @@ export function Report(props: ReportProps) {
     const node = el.current;
     if (!node) return;
     if (leaving) animate(node, "hush", { ease: "--e-hush", keyframes: FADE, onDone: () => gone.current?.() });
-    else animate(node, "in", { ease: "--e-arrive" });
-  }, [leaving]);
+    else {
+      animate(node, "in", { ease: "--e-arrive" });
+      const dot = node.querySelector(".oh-dot");
+      if (dot)
+        animate(dot, "in", {
+          ease: "--e-drop",
+          keyframes: [
+            { transform: motionShape(dot, "--x-drop") },
+            { transform: motionShape(dot, "--x-drop-land"), offset: 0.62 },
+            { transform: "none" },
+          ],
+        });
+    }
+  }, [leaving, children]);
   const press = props.kind === "why" ? props.act : props.undo;
   /* Said when it appears: its words are given to a screen reader once the region stands; its way back at once. */
   const held = useSaidOnArrival(true) ? true : undefined;

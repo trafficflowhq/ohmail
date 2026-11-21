@@ -112,6 +112,7 @@ async function engineFor(setting: Setting): Promise<OhmailEngine> {
  * order by its name, and scroll to the list's end. Drive the registered Search screen through the mail frame.
  */
 interface SearchVisit {
+  ready: () => HTMLElement;
   type: (q: string) => void;
   enter: () => void;
   facet: (name: string) => boolean;
@@ -138,6 +139,7 @@ function mountSearchVisit(engine: OhmailEngine, now: Date): SearchVisit {
   const search = within(host);
   const box = () => search.getByRole("textbox", { name: messages.search.aria });
   return {
+    ready: box,
     type: (q) => fireEvent.change(box(), { target: { value: q } }),
     enter: () => fireEvent.keyDown(box(), { key: "Enter" }),
     facet: (name) => {
@@ -172,6 +174,7 @@ async function visit(setting: Setting): Promise<Call[]> {
       v = mountSearchVisit(engine, NOW);
     });
     const visit = v!;
+    await vi.waitFor(visit.ready);
     for (const q of ["k", "ke", "kes", "kest", "kestr", "kestre", "kestrel"]) await step(20, () => visit.type(q));
     await step(900);
     await step(200, () => visit.enter());

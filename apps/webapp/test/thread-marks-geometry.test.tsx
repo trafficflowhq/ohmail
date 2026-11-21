@@ -96,7 +96,7 @@ describe("the scrolled reader stays under its tile's top line", () => {
  * rooms the paper stays put as the reply joins, both rings fit, and the stream's other cards stay
  * where they were. Without the desktop stream's reclaim its box cuts the rings.
  */
-const NO_RECLAIM = '[data-reading-scroll]:has(.rd-stream-conversation){clip-path:inset(0 12px);padding-inline:12px}';
+const NO_RECLAIM = '[data-reading-scroll]:has(.rd-stream-conversation){clip-path:inset(0 24px)}';
 const STREAM_CASES = [1440, 1024, 390] as const;
 
 async function streamRead(viewport: number, theme: "light" | "dark", panels: number, placed = true, extra = "") {
@@ -127,7 +127,8 @@ async function streamRead(viewport: number, theme: "light" | "dark", panels: num
       const scroller = pane.querySelector<HTMLElement>("[data-reading-scroll]")!;
       const marks = phoneReader ? pane.querySelector(".oh-sheet-top") : pane.querySelector(".rd-stream-squares");
       const scrollBox = box(scroller)!;
-      const clip = getComputedStyle(scroller).clipPath === "none" ? 0 : 12;
+      const clipPath = getComputedStyle(scroller).clipPath;
+      const clip = Number(/^inset\(0px (\d+(?:\.\d+)?)px\)$/.exec(clipPath)?.[1] ?? 0);
       return {
         stream: { ...scrollBox, left: scrollBox.left + clip, right: scrollBox.right - clip },
         ringFrame: box(phoneReader ? pane : scroller)!,

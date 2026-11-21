@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import {
+  addDays,
+  isoOfDay,
   eventTimeOf,
   deleteAudienceOf,
   pressAndHear,
@@ -18,10 +20,30 @@ import { fragmentOf } from "../frame/route.js";
 import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
 import { editableEvent, moveDestinations, removableEvent } from "./editable-event.js";
 import type { CalendarEventFace } from "./faces.js";
+import { useRangeUpdateReport } from "./update-report.js";
+import type { DayEdge } from "./view.js";
 import { eventUpdate, guestUpdate } from "./guest-update.js";
 
 type Change =
-  { kind: "delete" } | { kind: "calendar"; target: string } | { kind: "time"; days: number; minutes: number };
+  | { kind: "delete" }
+  | { kind: "calendar"; target: string }
+  | { kind: "time"; days: number; minutes: number }
+  | { kind: "resize"; edge: DayEdge; days: number };
+
+export function resizedDays(
+  start: CalendarEventFace["start"],
+  end: CalendarEventFace["end"],
+  edge: DayEdge,
+  days: number,
+) {
+  if (start.kind !== "date" || end.kind !== "date") return null;
+  const first = isoOfDay(start);
+  const last = addDays(isoOfDay(end), -1);
+  const shifted = addDays(edge === "start" ? first : last, days);
+  return edge === "start"
+    ? { first: shifted > last ? last : shifted, last }
+    : { first, last: shifted < first ? first : shifted };
+}
 
 const versionOf = (record: CalendarEventRecord) =>
   JSON.stringify([record.updatedAt, record.calendarId, record.start, record.end]);
@@ -118,7 +140,15 @@ function actionFor(
   const wholeSeries = scope.kind === "record" && record.repeat !== null;
   const start = wholeSeries ? eventTimeOf(record.start) : face.start;
   const end = wholeSeries ? record.end && eventTimeOf(record.end) : face.end;
-  const times = start && end && reschedule(start, end, change.days, change.minutes, zone, zones);
+  if (!start || !end) return null;
+  const range = change.kind === "resize" ? resizedDays(start, end, change.edge, change.days) : null;
+  const times =
+    change.kind === "time"
+      ? reschedule(start, end, change.days, change.minutes, zone, zones)
+      : range && {
+          start: { kind: "date" as const, value: range.first.replaceAll("-", "") },
+          end: { kind: "date" as const, value: addDays(range.last, 1).replaceAll("-", "") },
+        };
   if (!times) return null;
   const updateScope = scope.kind === "following" ? { ...scope, newEventId: newId() } : scope;
   return eventUpdate(record, base, times, updateScope);
@@ -182,6 +212,7 @@ async function commitAction(
   report: ToastFn,
   current: () => boolean,
   close: () => void,
+  updated?: (act: Extract<CalendarAct, { kind: "calendar_event_update" }>) => void,
 ) {
   if (act.kind === "calendar_event_delete" && guests.length === 0 && port.holdDelete) {
     const held = await port.holdDelete(act, UNDO_MS);
@@ -216,6 +247,7 @@ async function commitAction(
     report(e("refusal.changed"));
   else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_delete" && guests.length)
     report(e("taken.deleteAudience", { guests: new Intl.ListFormat(locale).format(guests) }));
+  else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_update" && updated) updated(act);
   else if (heard.say) report(e(heard.say));
   if (heard.verdict?.kind !== "refused") close();
 }
@@ -241,6 +273,7 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
   const zone = useTimeZone();
   const e = useText("event");
   const locale = useLocale();
+  const reportRange = useRangeUpdateReport(port);
   const report = useReport();
   const page = fragmentOf(route);
   const { question, ask, busy, setBusy, ticket } = useEventActionState(page, host.engine, port, zone);
@@ -271,6 +304,9 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
       report(e(act));
       return;
     }
+    const range = change.kind === "resize" && resizedDays(face.start, face.end, change.edge, change.days);
+    const before = { ...current.record };
+    const currentRecord = () => canWrite(face, change)?.record ?? null;
     const stamp = Symbol();
     ticket.current = stamp;
     setBusy(true);
@@ -286,6 +322,7 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
         () => {
           if (route.open === face.id) commands.event(null);
         },
+        range ? (act) => reportRange(range, before, act.change, currentRecord) : undefined,
       );
     } catch {
       if (ticket.current === stamp) report(e("refusal.unknown"));
@@ -299,6 +336,11 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
 
   const start = (face: CalendarEventFace, change: Change, anchor: HTMLElement, expectedVersion?: string) => {
     if (ticket.current || question || (change.kind === "time" && !change.days && !change.minutes)) return;
+    if (change.kind === "resize") {
+      const range = resizedDays(face.start, face.end, change.edge, change.days);
+      const before = resizedDays(face.start, face.end, change.edge, 0);
+      if (!range || (range.first === before?.first && range.last === before.last)) return;
+    }
     const current = canWrite(face, change);
     if (!current) return;
     const request = requestFor(current.record, face, change, anchor);
@@ -341,9 +383,7 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
       return event && versionOf(event.record);
     },
     cancel: () => ask(null),
-    confirm: () => {
-      if (question) void send(question);
-    },
+    confirm: () => question && void send(question),
   };
 }
 

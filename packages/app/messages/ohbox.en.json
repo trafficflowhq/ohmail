@@ -177,6 +177,7 @@
     },
     "list": {
       "menu": "Ohbox actions",
+      "checked": "Checked {when}",
       "pull": "Pull new mail"
     },
     "end": {

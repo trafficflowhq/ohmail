@@ -85,11 +85,20 @@ export function DayView(props: CalendarViewProps) {
     )),
   }));
 
+  const calendar = useText("calendar");
   const lane = model.lane.pills.map((p) => (
     <EventChip
       key={p.item.id}
       size="pill"
       {...pillChip(p, p.item.id === openId)}
+      dayEdges={
+        props.onDrag && (openId === null || openId === p.item.id) && !p.item.viewOnly
+          ? {
+              start: p.before ? undefined : calendar("actions.resizeStart"),
+              end: p.after ? undefined : calendar("actions.resizeEnd"),
+            }
+          : undefined
+      }
       label={t("chipAllDay", { title: p.item.title })}
       style={{ gridColumn: "2 / 3", gridRow: p.row + 1 }}
       onPress={() => open(p.item)}

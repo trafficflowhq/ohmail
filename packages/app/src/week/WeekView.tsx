@@ -129,7 +129,7 @@ export function WeekView(props: CalendarViewProps) {
     )),
   }));
 
-  const lane = weekPills(model.lane.pills, crease, props, t);
+  const lane = weekPills(model.lane.pills, crease, props, t, useText("calendar"));
 
   return (
     <section className="cw-week" aria-label={t("hours")}>
@@ -186,6 +186,7 @@ function weekPills(
   crease: number,
   props: CalendarViewProps,
   t: ReturnType<typeof useText>,
+  calendar: ReturnType<typeof useText>,
 ) {
   return pills.map((p) => {
     const chip = pillChip(p, p.item.id === props.openId);
@@ -194,6 +195,14 @@ function weekPills(
         key={p.item.id}
         size="pill"
         {...chip}
+        dayEdges={
+          props.onDrag && (props.openId === null || props.openId === p.item.id) && !p.item.viewOnly
+            ? {
+                start: p.before ? undefined : calendar("actions.resizeStart"),
+                end: p.after ? undefined : calendar("actions.resizeEnd"),
+              }
+            : undefined
+        }
         label={t("chipAllDay", { title: p.item.title })}
         style={{
           gridColumn: `${dayColumn(chip.first, crease)} / ${dayColumn(chip.last, crease) + 1}`,

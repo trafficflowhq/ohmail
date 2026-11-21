@@ -2,10 +2,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { findByRole } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { MAIL_NOTICE_KINDS, type NoticeKind, type NoticePermission } from "@ohmail/client-engine";
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
+import { bindApiOwner } from "../app/api-client";
 import messages from "../messages/en.json";
 import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { NONE } from "@ohmail/app/host";
@@ -49,6 +51,7 @@ import {
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
+const NOTIFICATION_CHANNELS_KEY_SCOPED = `${NOTIFICATION_CHANNELS_KEY}.account-b`;
 const settingsCopy = (messages as unknown as { settings: Record<string, string> }).settings;
 
 /** A host that answers a fixed platform state; `request` reports what the OS would settle on. */
@@ -76,22 +79,47 @@ function hostSyncing(
   };
 }
 
+/** The browser's Cache API, where the wake's state is kept; jsdom has none, and without it no wake is registered. */
+function installCaches(): void {
+  const held = new Map<string, string>();
+  Object.defineProperty(globalThis, "caches", {
+    configurable: true,
+    value: {
+      open: async () => ({
+        put: async (url: string, res: Response) => { held.set(url, await res.text()); },
+        match: async (url: string) => held.has(url)
+          ? new Response(held.get(url), { headers: { "content-type": "application/json" } })
+          : undefined,
+        delete: async (url: string) => held.delete(url),
+      }),
+    },
+  });
+}
+
 let host: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  document.cookie = "tf_owner=account-b; Path=/";
+  document.cookie = "tf_family=family-b; Path=/";
+  bindApiOwner("account-b");
   window.localStorage.clear();
+  installCaches();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
 });
 
 afterEach(async () => {
+  bindApiOwner(null);
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
   await act(async () => { root?.unmount(); });
   root = null;
   host.remove();
   window.history.replaceState(null, "", "/");
   window.localStorage.clear();
+  delete (globalThis as { caches?: unknown }).caches;
 });
 
 function WebSettings({ door }: { door: NotificationHost }) {
@@ -116,8 +144,11 @@ async function renderSettings(pane: React.ReactNode): Promise<void> {
   });
 }
 
-function renderPane(door: NotificationHost = hostAt("granted")): Promise<void> {
-  return renderSettings(h(WebSettings, { door }));
+async function renderPane(door: NotificationHost = hostAt("granted")): Promise<void> {
+  await renderSettings(h(WebSettings, { door }));
+  await findByRole(host, "navigation", { name: settingsCopy.navAria });
+  await act(async () => {});
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
 async function renderDemo(): Promise<void> {
@@ -165,7 +196,7 @@ describe("a granted platform — the switches are real", () => {
     expect(master.getAttribute("aria-checked")).toBe("true");
     await act(async () => { master.click(); });
     expect(switchFor(settingsCopy.notifyMaster!)!.getAttribute("aria-checked")).toBe("false");
-    expect(JSON.parse(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY)!).master).toBe(false);
+    expect(JSON.parse(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY_SCOPED)!).master).toBe(false);
   });
 
   it("master OFF withdraws the event switches — no control that cannot act", async () => {
@@ -211,7 +242,7 @@ describe("a platform that refuses — no switch may claim ON", () => {
       switchFor(settingsCopy.notifyMaster!)!.getAttribute("aria-checked"),
       "the master latched ON over an OS that refused at the prompt",
     ).toBe("false");
-    expect(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY)).toBeNull();
+    expect(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY_SCOPED)).toBeNull();
   });
 
   it("DEFAULT then GRANTED at the prompt turns it on and reveals the events", async () => {
@@ -303,7 +334,7 @@ describe("A HOST THAT CANNOT READ THE OS ANSWER — the desktop window", () => {
     ).toBe("false");
     /* THE STORED VALUE, not the rendered one — this is what the emitter reads before every
        notice, so it is the only thing that actually stops one being drawn. */
-    expect(readChannels().master, "nothing was written, so nothing stopped").toBe(false);
+    expect(readChannels("account-b").master, "nothing was written, so nothing stopped").toBe(false);
     // No control that cannot act: the events go with a dead master.
     expect(switches()).toHaveLength(1);
   });

@@ -113,7 +113,7 @@ export function useThreadWalk({
     const pinned = pin.current === null ? -1 : list.current.indexOf(pin.current);
     const top = at.get(pin.current ?? "");
     if (anchoring && pinned >= 0 && top !== undefined && Number.isFinite(top)) {
-      const clearance = coverOf(scroller, latest.current.names) + OPEN_GAP_PX;
+      const clearance = coverOf(scroller, latest.current.names, top0) + OPEN_GAP_PX;
       const offset = wholeThread && pinned === 0 ? 0 : Math.max(0, top - clearance);
       if (wholeThread && offset > max) {
         const lastTop = at.get(list.current.at(-1)!) ?? top;
@@ -231,11 +231,13 @@ function extendOpenRoom(scroller: HTMLElement, top: number, end: number): number
 }
 
 /** How much of the scroller's top its head covers while it stays there; nothing where it scrolls away with the rest. */
-function coverOf(scroller: HTMLElement, names: ThreadDomNames): number {
+function coverOf(scroller: HTMLElement, names: ThreadDomNames, scrollerTop: number): number {
   const head = names.head === undefined ? null : scroller.querySelector<HTMLElement>(names.head);
   const win = scroller.ownerDocument.defaultView;
   if (head === null || win === null) return 0;
-  return win.getComputedStyle(head).position === "sticky" ? cssRect(head).height : 0;
+  return win.getComputedStyle(head).position === "sticky"
+    ? Math.max(0, cssRect(head).bottom - scrollerTop)
+    : 0;
 }
 
 /** The open's anchor is let go at the person's first gesture, wherever it lands, or at the ceiling. */

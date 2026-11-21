@@ -34,6 +34,8 @@ export interface AgendaRowProps {
   open?: boolean;
   /** The keys are on it: it wears the ground a row under the pointer wears. */
   cursor?: boolean;
+  /** Search results wear their calendar’s tint. */
+  tinted?: boolean;
   /** What the typing line makes: dashed, and no button. */
   draft?: boolean;
   /** Controls of the row's own under its lines: the answers, Add. */
@@ -65,7 +67,7 @@ function gutter(mark: AgendaMark): ReactNode {
  * the event and opens it there; the open row is marked and nothing moves under the press.
  */
 export function AgendaRow(p: AgendaRowProps) {
-  const tone = p.mark.kind === "draft" ? p.mark.tone : null;
+  const tone = p.mark.kind === "draft" || (p.tinted && p.mark.kind === "calendar") ? p.mark.tone : null;
   const own = toneOf(tone);
   const key = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
@@ -99,6 +101,7 @@ export function AgendaRow(p: AgendaRowProps) {
       data-quiet={p.quiet ? "" : undefined}
       data-off={p.off ? "" : undefined}
       data-open={p.open ? "" : undefined}
+      data-tinted={p.tinted && p.mark.kind === "calendar" && tone !== null ? "" : undefined}
       data-cursor={p.cursor ? "" : undefined}
       data-draft={p.draft ? "" : undefined}
       data-tail={p.tail ? "" : undefined}

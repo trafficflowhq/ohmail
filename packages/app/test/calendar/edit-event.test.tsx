@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { dayLong, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
+import { dayShort, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
 import calendarDe from "../../messages/calendar.de.json" with { type: "json" };
 import calmail from "../../messages/calmail.en.json" with { type: "json" };
 import { calendar } from "../../src/calendar/entry.js";
@@ -100,7 +100,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("submits only the fields changed in a personal event when its card closes", async () => {
+it("saves only the fields changed in a personal event and returns to its card", async () => {
   const record = meeting();
   const { world } = open(record);
   const press = vi.fn(async () => ({ key: "change" }));
@@ -109,7 +109,7 @@ it("submits only the fields changed in a personal event when its card closes", a
   const edit = within(screen.getByRole("dialog", { name: "Edit event" }));
   fireEvent.change(edit.getByRole("textbox", { name: "Event title" }), { target: { value: "Glaze check" } });
   expect(press).not.toHaveBeenCalled();
-  fireEvent.click(edit.getByRole("button", { name: "Close" }));
+  fireEvent.click(edit.getByRole("button", { name: "Save" }));
   await act(async () => {});
   expect(press.mock.calls).toEqual([
     [
@@ -124,6 +124,7 @@ it("submits only the fields changed in a personal event when its card closes", a
     ],
   ]);
   expect(screen.queryByRole("dialog", { name: "Edit event" })).toBeNull();
+  expect(screen.getByRole("dialog", { name: record.title })).toBeTruthy();
 });
 
 it("the event date opens the current calendar picker and accepts a day with the keyboard", async () => {
@@ -141,7 +142,7 @@ it("the event date opens the current calendar picker and accepts a day with the 
   expect(document.activeElement).toBe(next);
   fireEvent.keyDown(next, { key: "Enter" });
   expect(screen.queryByRole("dialog", { name: "Event date" })).toBeNull();
-  expect(date.textContent).toBe(dayLong("2026-11-17", "en", "2026"));
+  expect(date.textContent).toBe(dayShort("2026-11-17", "en", "2026"));
 });
 
 it("withdraws the editor and its unsent words when the calendar becomes busy-only", async () => {
@@ -165,7 +166,7 @@ it("preserves an existing long event and its provider fields when only the place
     private: true,
   });
   const initial = draftOfRecord(r);
-  expect(initial.timeEditable).toBe(false);
+  expect(initial.timeEditable).toBe(true);
   expect(eventChanges(r, { ...initial.draft, place: "Studio" }, calendarRecord(), ZURICH)).toEqual({
     place: "Studio",
   });
@@ -217,13 +218,13 @@ it("asks the organizer before any guest update, keeps a cancelled edit, and send
   const form = within(screen.getByRole("dialog", { name: "Edit event" }));
   const title = form.getByRole("textbox", { name: "Event title" });
   fireEvent.change(title, { target: { value: "Moved firing" } });
-  fireEvent.click(form.getByRole("button", { name: "Close" }));
+  fireEvent.click(form.getByRole("button", { name: "Save" }));
   const question = () => within(screen.getByRole("dialog", { name: /Morgan Glass/ }));
   expect(press).not.toHaveBeenCalled();
   fireEvent.click(question().getByRole("button", { name: "Cancel" }));
   expect((title as HTMLInputElement).value).toBe("Moved firing");
   expect(press).not.toHaveBeenCalled();
-  fireEvent.click(form.getByRole("button", { name: "Close" }));
+  fireEvent.click(form.getByRole("button", { name: "Save" }));
   fireEvent.click(question().getByRole("button", { name: "Send update" }));
   await act(async () => {});
   expect(press.mock.calls).toEqual([
@@ -249,7 +250,7 @@ it("requires a fresh decision when the guest list changes before confirmation", 
   fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
   const form = within(screen.getByRole("dialog", { name: "Edit event" }));
   fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Open kiln" } });
-  fireEvent.click(form.getByRole("button", { name: "Close" }));
+  fireEvent.click(form.getByRole("button", { name: "Save" }));
   const first = within(screen.getByRole("dialog", { name: /Morgan Glass/ })).getByRole("button", {
     name: "Send update",
   });
@@ -302,7 +303,7 @@ it("asks about an invited mailbox even when the same account owns it", async () 
   fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
   const form = within(screen.getByRole("dialog", { name: "Edit event" }));
   fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Moved firing" } });
-  fireEvent.click(form.getByRole("button", { name: "Close" }));
+  fireEvent.click(form.getByRole("button", { name: "Save" }));
   await act(async () => {});
   expect(press).not.toHaveBeenCalled();
   const question = within(screen.getByRole("dialog", { name: /Morgan Glass/ }));
@@ -343,12 +344,12 @@ it.each(["This event", "This and following", "All events"])(
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     const form = within(screen.getByRole("dialog", { name: "Edit event" }));
     fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "New firing" } });
-    fireEvent.click(form.getByRole("button", { name: "Close" }));
+    fireEvent.click(form.getByRole("button", { name: "Save" }));
     const question = () => within(screen.getByRole("dialog", { name: "Which events will change?" }));
     fireEvent.click(question().getByRole("button", { name: "Cancel" }));
     expect(press).not.toHaveBeenCalled();
     expect((form.getByRole("textbox", { name: "Event title" }) as HTMLInputElement).value).toBe("New firing");
-    fireEvent.click(form.getByRole("button", { name: "Close" }));
+    fireEvent.click(form.getByRole("button", { name: "Save" }));
     fireEvent.click(question().getByRole("menuitem", { name: new RegExp(label) }));
     await act(async () => {});
     const scope =
@@ -381,7 +382,7 @@ it("opens Edit from an event with the E key and writes the changed form", async 
   fireEvent.keyDown(close, { key: "e" });
   const edit = within(screen.getByRole("dialog", { name: "Edit event" }));
   fireEvent.change(edit.getByRole("textbox", { name: "Event title" }), { target: { value: "Glaze check" } });
-  fireEvent.click(edit.getByRole("button", { name: "Close" }));
+  fireEvent.click(edit.getByRole("button", { name: "Save" }));
   await act(async () => {});
   expect(press).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -1075,4 +1076,137 @@ it("says too late if Calendar Undo is pressed after the deadline before the time
   await act(async () => fireEvent.click(control));
   expect(undo).not.toHaveBeenCalled();
   expect(standingReports()).toContain("Too late to undo");
+});
+
+it("offers Save only after a change and recovers a cancelled edit without writing", async () => {
+  const { world } = open(meeting());
+  const press = vi.fn(async () => ({ key: "edit" }));
+  world.port.press = press;
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const edit = within(screen.getByRole("dialog", { name: "Edit event" }));
+  const save = edit.getByRole<HTMLButtonElement>("button", { name: "Save" });
+  expect(save.disabled).toBe(true);
+  const title = edit.getByRole("textbox", { name: "Event title" });
+  fireEvent.change(title, { target: { value: "Glaze check" } });
+  expect(save.disabled).toBe(false);
+  fireEvent.keyDown(title, { key: "Escape" });
+  expect(screen.getByRole("dialog", { name: "Kiln check" })).toBeTruthy();
+  expect(screen.getByText("Discarded")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(screen.getByDisplayValue("Glaze check")).toBeTruthy();
+  expect(press).not.toHaveBeenCalled();
+});
+
+it("changes the first and last day independently from the keyboard", async () => {
+  const record = meeting({
+    start: { kind: "date", value: "20261116" },
+    end: { kind: "date", value: "20261119" },
+  });
+  for (const [edge, key, start, end] of [
+    ["start", "ArrowRight", "20261117", "20261119"],
+    ["end", "ArrowRight", "20261116", "20261120"],
+  ] as const) {
+    const { world } = open(record);
+    const press = vi.fn(async () => ({ key: "resize" }));
+    world.port.press = press;
+    const card = within(await screen.findByRole("dialog", { name: record.title }));
+    fireEvent.keyDown(card.getByRole("button", { name: "Close" }), {
+      key,
+      shiftKey: true,
+      altKey: true,
+      ctrlKey: edge === "start",
+    });
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "calendar_event_update",
+        change: { start: { kind: "date", value: start }, end: { kind: "date", value: end } },
+      }),
+    );
+    cleanup();
+  }
+});
+
+it("discards a dirty edit when leaving its card and lets Undo reopen it", async () => {
+  const { world } = open(meeting());
+  const press = vi.fn(async () => ({ key: "edit" }));
+  world.port.press = press;
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const edit = within(screen.getByRole("dialog", { name: "Edit event" }));
+  fireEvent.change(edit.getByRole("textbox", { name: "Event title" }), { target: { value: "Glaze check" } });
+  fireEvent.click(edit.getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog", { name: "Edit event" })).toBeNull();
+  expect(screen.getByText("Discarded")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(await screen.findByDisplayValue("Glaze check")).toBeTruthy();
+  expect(press).not.toHaveBeenCalled();
+});
+
+async function editTitle(value: string) {
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const editor = within(screen.getByRole("dialog", { name: "Edit event" }));
+  fireEvent.change(editor.getByRole("textbox", { name: "Event title" }), { target: { value } });
+  return editor;
+}
+
+it("restores an earlier edit after reopening and keeps the newer words recoverable", async () => {
+  const { world } = open(meeting());
+  const press = vi.fn(async () => ({ key: "edit" }));
+  world.port.press = press;
+  fireEvent.click((await editTitle("First version")).getByRole("button", { name: "Cancel" }));
+  await editTitle("Second version");
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(screen.getByDisplayValue("First version")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(screen.getByDisplayValue("Second version")).toBeTruthy();
+  expect(press).not.toHaveBeenCalled();
+});
+
+it("keeps each discarded edit recoverable in newest-first order", async () => {
+  const { world } = open(meeting());
+  const press = vi.fn(async () => ({ key: "edit" }));
+  world.port.press = press;
+  for (const title of ["First version", "Second version"]) {
+    fireEvent.click((await editTitle(title)).getByRole("button", { name: "Cancel" }));
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(screen.getByDisplayValue("Second version")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(screen.getByDisplayValue("First version")).toBeTruthy();
+  expect(press).not.toHaveBeenCalled();
+});
+
+it("brings back a discarded edit after Undo for another calendar action", async () => {
+  const record = meeting();
+  const { world } = open(record);
+  const undoDelete = vi.fn(async () => true);
+  world.port.holdDelete = async () => ({
+    key: "held",
+    deadline: Date.now() + 8000,
+    remainingMs: () => 8000,
+    undo: undoDelete,
+  });
+  fireEvent.click((await editTitle("Before removing")).getByRole("button", { name: "Cancel" }));
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Delete" })));
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(undoDelete).toHaveBeenCalledTimes(1);
+  await screen.findByText("Discarded");
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(await screen.findByDisplayValue("Before removing")).toBeTruthy();
+});
+
+it("leaves a padded stored title untouched on Enter and when saving another field", async () => {
+  const { world } = open(meeting({ title: "Kiln check  " }));
+  const press = vi.fn(async () => ({ key: "edit" }));
+  world.port.press = press;
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const editor = within(screen.getByRole("dialog", { name: "Edit event" }));
+  const save = editor.getByRole<HTMLButtonElement>("button", { name: "Save" });
+  expect(save.disabled).toBe(true);
+  fireEvent.keyDown(editor.getByRole("textbox", { name: "Event title" }), { key: "Enter" });
+  expect(press).not.toHaveBeenCalled();
+
+  fireEvent.change(editor.getByRole("textbox", { name: "Place" }), { target: { value: "Studio" } });
+  fireEvent.click(save);
+  expect(press.mock.calls).toEqual([[expect.objectContaining({ change: { place: "Studio" } })]]);
+  await act(async () => {});
 });

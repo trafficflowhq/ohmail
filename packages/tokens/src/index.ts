@@ -20,3 +20,4 @@ export type {
   TagHue,
   LiftShadows,
 } from "./tokens.js";
+export { CALENDAR_HUES } from "./calendar.js";

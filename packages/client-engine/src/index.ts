@@ -266,6 +266,7 @@ export {
   CursorExpiredError,
   SnapshotCursorRefusedError,
   MutationRejectedError,
+  SyncAbortedError,
   UnsupportedMutationError,
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,

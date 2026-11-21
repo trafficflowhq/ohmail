@@ -1,37 +1,74 @@
 @layer oh {
   .subject-picture {
     display: grid;
-    grid-template-rows: repeat(2, 1fr);
-    gap: var(--s1);
+    align-content: start;
+    gap: var(--subject-preview-gap);
+    box-sizing: border-box;
     width: 100%;
-    min-height: var(--h-xl);
-    padding: var(--s2);
+    height: calc(var(--s8) * 2.5);
+    padding: var(--s3) var(--s3) 0;
     border-radius: var(--r-row);
-    background: var(--sheet);
-    font-size: var(--t-meta);
+    background: var(--ground);
+    overflow: hidden;
+    pointer-events: none;
   }
 
-  .subject-picture[data-shared] {
-    grid-template-rows: auto repeat(2, 1fr);
+  .subject-picture-heading {
+    padding: var(--subject-preview-inset) var(--subject-preview-inset) var(--s1);
+    font-family: var(--f-display);
+    font-size: var(--subject-preview-heading);
+    font-weight: var(--w-display);
+    letter-spacing: var(--track);
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .subject-picture-letter {
     display: grid;
-    align-content: start;
-    gap: var(--s1);
-    padding: var(--s1) var(--s2);
-    border-radius: var(--r-row);
-    background: var(--soft-sheet);
+    grid-template-columns: var(--s4) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--subject-preview-row-gap) var(--s2);
+    padding: var(--s2) var(--subject-preview-padding) var(--subject-preview-padding);
+    border-radius: var(--subject-preview-radius);
+    background: var(--sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--ring);
   }
 
+  .subject-picture-subject {
+    grid-column: 1 / -1;
+    font-size: var(--subject-preview-subject);
+    font-weight: var(--w-bold);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .subject-picture-avatar {
+    width: var(--s4);
+    height: var(--s4);
+    border-radius: var(--av-r);
+    background: var(--oh-hue-bg);
+  }
+
+  .subject-picture-name,
   .subject-picture-line {
     display: block;
-    width: 70%;
-    height: var(--oh-hair);
-    background: var(--btn-ring);
+    height: calc(var(--s1) * 1.5);
+    border-radius: var(--r-sq);
+    background: var(--ink2);
   }
 
+  .subject-picture-name {
+    width: min(var(--s8), 60%);
+  }
+  .subject-picture-line {
+    grid-column: 2;
+    height: calc(var(--s1) * 1.25);
+    background: var(--off);
+  }
   .subject-picture-line:last-child {
-    width: 45%;
+    width: 62%;
   }
 }

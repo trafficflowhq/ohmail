@@ -140,7 +140,7 @@ export {
    * `consumeOAuthCeremony` is of the redirect table's. The separation is the security property —
    * see the module's own header for why one table with a flag would not be.
    */
-  createDeviceCeremony, readDeviceCeremony, leaseDeviceCeremonyPoll,
+  deviceCeremonyKey, createDeviceCeremony, readDeviceCeremony, leaseDeviceCeremonyPoll,
   noteDeviceCeremonySlowDown, claimDeviceCeremony, pruneDeviceCeremonies,
   DEVICE_CEREMONY_RETENTION_MS,
   type DeviceCeremonyRow, type CreateDeviceCeremonyInput, type ReadDeviceCeremonyOutcome,

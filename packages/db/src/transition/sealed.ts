@@ -124,17 +124,43 @@ export async function compareSealed(tx: Executor): Promise<Verdict[]> {
   ];
 }
 
-/** Every sealed value of every place, opened under the ring. One verdict per place: its rows, and how many failed. */
+type Envelope = { c: string; v: number | null };
+type SealedCounts = { site: string; rows: number; opened: number; failed: number };
+
+async function openRows(site: string, rows: Envelope[], opener: SealedOpener): Promise<SealedCounts> {
+  let opened = 0;
+  for (const row of rows) {
+    if (row.v !== null && await opener.open(site, row.c, Number(row.v)) === "opened") opened += 1;
+  }
+  return { site, rows: rows.length, opened, failed: rows.length - opened };
+}
+
+/** Every sealed value of every place, opened under the ring inside the transition. */
 export async function openSealed(
   tx: Executor, kind: StoreKind, opener: SealedOpener,
-): Promise<{ site: string; rows: number; opened: number; failed: number }[]> {
-  const out: { site: string; rows: number; opened: number; failed: number }[] = [];
+): Promise<SealedCounts[]> {
+  const out: SealedCounts[] = [];
   for (const s of await standing(tx, kind)) {
-    const rows = rowsOf<{ c: string; v: number }>(await tx.execute(sql.raw(
+    const rows = rowsOf<Envelope>(await tx.execute(sql.raw(
       `select "${s.ciphertext}" as c, "${s.keyVersion}" as v from "${s.table}" where "${s.ciphertext}" is not null`)));
-    let opened = 0;
-    for (const r of rows) if (await opener.open(s.site, r.c, Number(r.v)) === "opened") opened += 1;
-    out.push({ site: s.site, rows: rows.length, opened, failed: rows.length - opened });
+    out.push(await openRows(s.site, rows, opener));
+  }
+  return out;
+}
+
+/** On an already migrated Cloud store, open one envelope per stored version of each populated column. */
+export async function sampleCloudSealed(tx: Executor, opener: SealedOpener): Promise<SealedCounts[]> {
+  const out: SealedCounts[] = [];
+  for (const s of SEALED_SITES) {
+    // A filtered read could appear empty and certify a ring it never tried.
+    const [scope] = rowsOf<{ filtered: boolean }>(await tx.execute(
+      sql`select pg_catalog.row_security_active(pg_catalog.to_regclass(${`public.${s.table}`})) as filtered`,
+    ));
+    if (scope?.filtered !== false) throw new Error("sealed column is unavailable for verification");
+    const rows = rowsOf<Envelope>(await tx.execute(sql.raw(
+      `select distinct on ("${s.keyVersion}") "${s.ciphertext}" as c, "${s.keyVersion}" as v
+       from public."${s.table}" where "${s.ciphertext}" is not null order by "${s.keyVersion}"`)));
+    out.push(await openRows(s.site, rows, opener));
   }
   return out;
 }

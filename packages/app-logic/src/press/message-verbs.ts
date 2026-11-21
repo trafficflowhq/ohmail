@@ -9,25 +9,20 @@ import type { EngineMessage, OhmailView } from "@ohmail/wire";
 import { FOLDER_OF_VIEW, inverseMutations } from "@ohmail/client-engine";
 import { readerMoveRefusal } from "../mail-state/mail-state.js";
 import { dayStamp, PLACE_LABEL, resurfaceLabel, tomorrowAt } from "../text/format.js";
-import type { MessageAction } from "./actions.js";
+import type { MessageAction, MoveSubject } from "./actions.js";
 import { decidesAtGate, fileThroughRouting, planMoveToPlace } from "./move-to-place.js";
 import { pressMoveSet, removeSpending, runBulkAction } from "./selection-verbs.js";
 import { dispatchScreeningChange, moveSubjectIds, screeningToast } from "./sender-screening.js";
 import { rowOf, withRow, type MoveContext, type VerbContext } from "./verb-context.js";
 
 /** Move one row to a place: the sender's routing, held for the Undo window, and the row's own letters moved now. */
-function moveToPlace(
-  cx: MoveContext,
-  m: EngineMessage,
-  view: OhmailView,
-  subject: "letter" | "conversation",
-): void {
+function moveToPlace(cx: MoveContext, m: EngineMessage, view: OhmailView, subject: MoveSubject): void {
   const { engine, t } = cx;
   /* A CONVERSATION WHOSE NEWEST LETTER IS OURS moves the letters other people sent in it (`moveSubjectIds`): one
      sender's on this arm, several senders' through the selection's. A row pressed on stands for its letter, so the
      seed is the reply facing that row; a letter reached by a link, a search or opened unread and then answered
      seeds itself. */
-  const seed = cx.offOhbox ? m : (cx.ownFaceFor?.(m) ?? m);
+  const seed = subject === "letter" || cx.offOhbox ? m : (cx.ownFaceFor?.(m) ?? m);
   const subjects =
     subject === "letter"
       ? [m.id]
@@ -206,12 +201,7 @@ function pressDone(cx: VerbContext, m: EngineMessage): void {
  * `move:<view>`: the destination travels with the action. A READER INSTALL MOVES NOTHING, AND HEARS SO BEFORE
  * ANYTHING LEAVES: asked at the press, before the wire, in the roster's own words.
  */
-export function pressMove(
-  cx: MoveContext,
-  view: OhmailView,
-  m: EngineMessage,
-  subject: "letter" | "conversation",
-): void {
+export function pressMove(cx: MoveContext, view: OhmailView, m: EngineMessage, subject: MoveSubject): void {
   /* The destination has to BE one: an unknown view is the only thing this cannot act on. */
   if (!FOLDER_OF_VIEW[view]) return;
   const refusedMove = readerMoveRefusal(
@@ -227,7 +217,12 @@ export function pressMove(
 }
 
 /** Run `action` on `m`. */
-export function runMessageAction(cx: VerbContext, action: MessageAction, m: EngineMessage): void {
+export function runMessageAction(
+  cx: VerbContext,
+  action: MessageAction,
+  m: EngineMessage,
+  moveSubject: MoveSubject = "conversation",
+): void {
   const { t, nowAt } = cx;
   switch (action) {
     case "reply":
@@ -288,7 +283,7 @@ export function runMessageAction(cx: VerbContext, action: MessageAction, m: Engi
         );
         return;
       }
-      pressMove(cx, action.slice("move:".length) as OhmailView, m, "conversation");
+      pressMove(cx, action.slice("move:".length) as OhmailView, m, moveSubject);
     }
   }
 }

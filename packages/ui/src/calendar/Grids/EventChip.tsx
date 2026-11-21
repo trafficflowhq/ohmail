@@ -32,6 +32,8 @@ interface EventChipCommon {
   onPress?: MouseEventHandler<HTMLButtonElement>;
   onContextMenu?: MouseEventHandler<HTMLButtonElement>;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  dayEdges?: { start?: string; end?: string };
+  drag?: "lifted" | "copy";
   ref?: Ref<HTMLButtonElement>;
 }
 
@@ -53,8 +55,6 @@ export interface EventBlockProps extends EventChipCommon {
   nowCrosses?: boolean;
   /** An event of your own: its top and bottom edges lengthen it. */
   handles?: boolean;
-  /** Being dragged: the original stays lifted, a ringed copy stands at the target. */
-  drag?: "lifted" | "copy";
   /** The shortest a block is drawn here, in px. */
   shortest?: number;
 }
@@ -111,6 +111,9 @@ function shared(p: EventChipProps, style: CSSProperties | undefined) {
     "data-state": p.state && p.state !== "plain" ? p.state : undefined,
     "data-open": p.open ? "" : undefined,
     "data-fresh": p.fresh ? "" : undefined,
+    "data-drag": p.drag,
+    "aria-hidden": p.drag === "copy" || undefined,
+    tabIndex: p.drag === "copy" ? -1 : undefined,
     "aria-label": p.label,
     "aria-haspopup": "dialog" as const,
     "aria-expanded": p.open ?? false,
@@ -134,9 +137,6 @@ function Block(p: EventBlockProps) {
       data-tiny={p.tiny ? "" : undefined}
       data-lap={p.place.lap ? "" : undefined}
       data-now={p.nowCrosses ? "" : undefined}
-      data-drag={p.drag}
-      aria-hidden={p.drag === "copy" ? true : undefined}
-      tabIndex={p.drag === "copy" ? -1 : undefined}
       data-fixed={handles ? undefined : ""}
       data-failed={p.status?.failed ? "" : undefined}
     >
@@ -171,6 +171,7 @@ export function EventChip(p: EventChipProps) {
         {lead(p)}
         <span className="oh-ev-tt">{p.title}</span>
         {tail(p)}
+        {dayGrips(p)}
       </button>
     );
   }
@@ -180,6 +181,16 @@ export function EventChip(p: EventChipProps) {
       {p.run || p.time === undefined ? null : <time className="oh-ev-time">{p.time}</time>}
       <span className="oh-ev-tt">{p.title}</span>
       {tail(p)}
+      {dayGrips(p)}
     </button>
   );
+}
+
+function dayGrips({ dayEdges }: EventChipCommon) {
+  return dayEdges ? (
+    <>
+      {dayEdges.start && <span data-cal-resize="start" title={dayEdges.start} aria-hidden />}
+      {dayEdges.end && <span data-cal-resize="end" title={dayEdges.end} aria-hidden />}
+    </>
+  ) : null;
 }

@@ -37,7 +37,6 @@ function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boole
     model,
     t,
     blank,
-    newsText,
     locale,
     now,
     lineStamp,
@@ -130,9 +129,6 @@ function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boole
         })}
         {padBottomPx > 0 ? <div aria-hidden data-stream-tail style={{ height: padBottomPx }} /> : null}
       </div>
-      {model.place === "news" && model.mayState && end === model.items.length ? (
-        <p>{newsText("streamTail")}</p>
-      ) : null}
       {model.place === "receipts" &&
       host.features.places.search !== NONE &&
       model.items.length > 0 &&
@@ -167,7 +163,6 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
   const t = useStreamText(model.place);
   /* The blank of an empty stream is the Ohbox's own word, "All read". */
   const blank = useText("ohbox");
-  const newsText = useText("reads");
   const locale = useLocale();
   const { host, commands, route } = useFrame();
   const now = useDayClock(null, useTimeZone());
@@ -233,7 +228,6 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
     model,
     t,
     blank,
-    newsText,
     locale,
     now,
     lineStamp,

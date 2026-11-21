@@ -360,13 +360,23 @@ async function showBrowser(
 }
 
 /** Listen in the mounted product page. The host's opening act rechecks its session. */
-export function subscribeBrowserNoticeOpening(): () => void {
+export function subscribeBrowserNoticeOpening(
+  openWake?: (owner: string, family: string) => boolean,
+): () => void {
   const worker = navigator.serviceWorker;
   if (!worker?.addEventListener) return () => undefined;
   const onMessage = (event: MessageEvent) => {
     if (!worker.controller || event.source !== worker.controller || event.data?.type !== "ohmail:notice-open") return;
     const port = event.ports[0];
     if (!port) return;
+    const { wake } = event.data;
+    if (wake !== undefined) {
+      try {
+        port.postMessage(typeof wake?.owner === "string" && typeof wake.family === "string" &&
+          openWake?.(wake.owner, wake.family) === true);
+      } catch { port.postMessage(false); }
+      return;
+    }
     const shown = [...generation.latest.values()].find(({ opening }) => opening && opening.handle === event.data.open);
     const opening = shown?.opening;
     if (shown && opening) delete shown.opening;

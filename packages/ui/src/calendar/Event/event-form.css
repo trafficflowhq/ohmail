@@ -1,4 +1,4 @@
-/* One form for a new event and for an edit: rows led by a glyph. A change takes effect at once; there is no Save. */
+/* One form for a new event and for an edit: rows led by a glyph. */
 @layer oh {
   .oh-evform {
     --oh-evform-row: 32px;
@@ -96,9 +96,17 @@
     border-radius: var(--oh-evform-notes-r);
   }
   .oh-evform-word,
-  .oh-evform-note {
+  .oh-evform-note,
+  .oh-evform-cue {
     color: var(--ink2);
     font-size: var(--t-meta);
+  }
+  .oh-evform-timed {
+    display: contents;
+  }
+  .oh-evform-cue:hover {
+    color: var(--ink);
+    text-decoration: underline;
   }
   .oh-evform-note {
     flex: 1 1 0;
@@ -226,13 +234,29 @@
   .oh-evform-last {
     --oh-evform-last-out: var(--s2) 0 0 calc(var(--s1) * -1);
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
     gap: var(--s2);
     min-height: var(--h-s);
     margin: var(--oh-evform-last-out);
   }
-  .oh-evform-last > .oh-button {
+  .oh-evform-verbs {
+    display: flex;
+    justify-content: flex-end;
     flex: none;
+    gap: var(--s2);
+    margin-inline-start: auto;
+  }
+  .oh-ecard .oh-evform-verbs {
+    flex-basis: 100%;
+  }
+  .oh-ecard .oh-evform-last,
+  .oh-qa .oh-evform-last {
+    --oh-evform-last-z: 1;
+    position: sticky;
+    inset-block-end: 0;
+    z-index: var(--oh-evform-last-z);
+    background: var(--sheet);
   }
   .oh-evform-adds {
     --oh-evform-adds-gap: 2px;

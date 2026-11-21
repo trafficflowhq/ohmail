@@ -47,12 +47,14 @@ export interface EventCardProps {
   /** Whose it is: the head stands on that colour, a step deeper. `null` while it is on no calendar. */
   tone: CalendarTone;
   /** The time in full, and the time it replaced, struck before it. */
-  when: string;
+  when?: string;
   was?: string;
   /** The time on the spot, the place; a place may lead to a map. */
   where?: readonly { text: string; maps?: Way }[];
   /** What it overlaps, what changed: a tag each. A hot one waits for you. */
   tags?: readonly { text: string; hot?: boolean; tone?: CalendarTone }[];
+  /** A sync waiting or failure, shown before the event details. */
+  status?: { text: string; failed: boolean };
   /** An event of your own: Edit. In a sheet from the foot the verbs at the foot carry it. */
   edit?: Way;
   /** Nothing to edit: the same place says why. */
@@ -64,6 +66,7 @@ export interface EventCardProps {
   rows?: readonly EventCardRow[];
   notes?: string;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
+  keyShortcuts?: string;
   /** In a sheet from the foot: the event's verbs, which stay at its foot. */
   foot?: ReactNode;
   /** `card` stands beside its event; `inline` is set into a list under the row that is its head; `sheet` comes up from the foot. */
@@ -118,6 +121,7 @@ export function EventCard(p: EventCardProps) {
       }}
       role="dialog"
       aria-label={p.title}
+      aria-keyshortcuts={p.keyShortcuts}
       onKeyDown={esc}
       {...pulls}
     >
@@ -155,10 +159,12 @@ export function EventCard(p: EventCardProps) {
         ) : (
           <h3 className="oh-text oh-display oh-ecard-title">{p.title}</h3>
         )}
-        <p className="oh-text oh-ecard-when">
-          {p.was ? <s className="oh-ecard-was">{p.was}</s> : null}
-          {p.when}
-        </p>
+        {p.when !== undefined && (
+          <p className="oh-text oh-ecard-when">
+            {p.was ? <s className="oh-ecard-was">{p.was}</s> : null}
+            {p.when}
+          </p>
+        )}
         {p.where?.map((w, i) => (
           <p key={i} className="oh-text oh-ecard-where">
             {w.text}
@@ -183,16 +189,32 @@ export function EventCard(p: EventCardProps) {
         {p.answers}
       </div>
       {p.editor}
-      {p.rows?.length ? (
-        <dl className="oh-ecard-rows">
-          {p.rows.map((r) => (
-            <CardRow key={r.label} row={r} />
-          ))}
-        </dl>
-      ) : null}
+      <CardRows status={p.status} rows={p.rows} />
       {p.notes ? <p className="oh-text oh-ecard-notes">{p.notes}</p> : null}
       {frame === "sheet" && p.foot ? <div className="oh-ecard-foot">{p.foot}</div> : null}
     </div>
+  );
+}
+
+function CardRows({ status, rows }: Pick<EventCardProps, "status" | "rows">) {
+  if (!status && !rows?.length) return null;
+  return (
+    <dl className="oh-ecard-rows">
+      {status ? (
+        <div className="oh-ecard-row">
+          <dt className="oh-ecard-term" />
+          <dd className="oh-ecard-value">
+            <span className="oh-ecard-status" data-failed={status.failed ? "" : undefined}>
+              <Icon name={status.failed ? "warn" : "clock"} size={16} />
+              {status.text}
+            </span>
+          </dd>
+        </div>
+      ) : null}
+      {rows?.map((row) => (
+        <CardRow key={row.label} row={row} />
+      ))}
+    </dl>
   );
 }
 

@@ -16,7 +16,7 @@ export const TODAY_ROWS = 5;
 export const COMING_DAYS = 60;
 export const COMING_ROWS = 3;
 
-function useRowOf(): (row: TodayRow, withDay: boolean) => TodayListRow {
+export function useRowOf(): (row: TodayRow, withDay: boolean) => TodayListRow {
   const t = useText("calmail");
   const locale = useLocale();
   const { commands } = useFrame();

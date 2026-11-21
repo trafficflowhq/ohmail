@@ -153,5 +153,5 @@ export function dueNotice(alert: NoticeAhead, at: Clock, carries: readonly Notic
   const clock = clockOf(at);
   if (read === null || clock === null) return null;
   const acts = read.acts.filter((act) => carries.includes(act));
-  return { kind: "cal_alert", eventId: read.eventId, label: read.label, at: clock, allDay: read.allDay, leadMin: read.leadMin, acts };
+  return { kind: "cal_alert", eventId: read.eventId, startMs: read.startMs, label: read.label, at: clock, allDay: read.allDay, leadMin: read.leadMin, acts };
 }

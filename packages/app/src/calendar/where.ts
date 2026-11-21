@@ -27,6 +27,7 @@ import {
   type ZoneSource,
 } from "@ohmail/app-logic/calendar";
 import { NONE } from "../host/index.js";
+import { hoursInView } from "../calsettings/hours.js";
 import { useCalendarSettings } from "../calsettings/settings-read.js";
 import { useFrame } from "../frame/commands.js";
 import type { AnyPlaceId, CalendarPlaceId, Route } from "../frame/contract.js";
@@ -34,6 +35,7 @@ import { isCalendarPlace } from "../frame/product.js";
 import { useText } from "../text/index.js";
 import { AGENDA_DAYS, AGENDA_MORE } from "../agenda/index.js";
 import { faceOf, type CalendarEventFace } from "./faces.js";
+import { calendarTones } from "./tones.js";
 import type { CalendarViewSettings } from "./view.js";
 
 /** The views the head switches between, in its order. */
@@ -83,10 +85,7 @@ export function useSettings(port: CalendarPort | typeof NONE): CalendarViewSetti
       weekStart: 0,
       weekNumbers: said?.weekNumbers ?? false,
       secondZone: said?.secondZone ?? null,
-      hours: {
-        from: said?.dayFromMinute ?? 0,
-        to: said?.dayToMinute ?? 24 * 60,
-      },
+      hours: hoursInView(said),
     }),
     [said],
   );
@@ -196,7 +195,12 @@ export function useSources(port: CalendarPort | typeof NONE) {
   const records = useMemo(() => {
     void version;
     if (port === NONE)
-      return { calendars: [], connections: new Map<string, CalendarConnectionRecord>(), events: [] };
+      return {
+        calendars: [],
+        tones: calendarTones([]),
+        connections: new Map<string, CalendarConnectionRecord>(),
+        events: [],
+      };
     const read = <T>(kind: string) =>
       host.engine.store
         .entries<T | null>(kind)
@@ -205,7 +209,8 @@ export function useSources(port: CalendarPort | typeof NONE) {
     const connections = new Map(
       read<CalendarConnectionRecord>("calendar_connection").map((c) => [c.id, c] as const),
     );
-    return { calendars: read<CalendarRecord>("calendar"), connections, events: port.events() };
+    const calendars = read<CalendarRecord>("calendar");
+    return { calendars, tones: calendarTones(calendars), connections, events: port.events() };
   }, [host.engine, port, version]);
   const faceWords = useMemo(
     () => ({
@@ -242,7 +247,7 @@ export function useFaces(
     return {
       capped: occurrences.capped,
       events: occurrences.shown.map((o): CalendarEventFace =>
-        faceOf(o, sources.connections, sources.faceWords),
+        faceOf(o, sources.connections, sources.faceWords, sources.tones.get(o.calendar.id) ?? "neutral"),
       ),
       /* The held window moves with the version, as the records do. */
       edge: edgeOf({ from, to }, port.held(), at),

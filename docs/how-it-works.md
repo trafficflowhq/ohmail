@@ -1,6 +1,27 @@
 # How ohmail works
 
-Moved here from the README, word for word: how ohmail organizes inside your mailbox, model providers and keys, and where your mail is and what the app talks to.
+How ohmail organizes your mailbox, connects calendars, and uses models, and where your mail is and what the app talks to.
+
+## Finding your way around
+
+Ohbox holds mail from people you have let in. The Screener holds new senders
+until you decide; News and Receipts collect the mail you send there. Search
+finds mail across these places. Settings has separate panes for your account,
+mailboxes, rules and the other choices available to your installation.
+
+## Signing out
+
+Open Settings → Account, then choose Sign out to end the browser session and
+remove its cached mail. Your account and mailbox stay
+untouched. A browser paired with your own computer also asks for confirmation;
+unsent changes and unfinished drafts in that browser are discarded.
+
+## Calendar
+
+Calendar is available with ohmail Cloud and with a self-hosted server whose
+operator has turned Calendar on. It is not available in Desktop on its own.
+Connect iCloud or another CalDAV calendar, or subscribe to an ICS feed; a
+subscribed feed is read-only.
 
 ## How ohmail organizes inside your mailbox
 
@@ -94,8 +115,12 @@ mail, its folders and the profile above are what travel.
 
 ## Model providers and keys
 
-Pick the model in **Settings → Desktop**, under *AI for suggestions and drafts*.
-Four options:
+On Desktop by itself, pick your own provider in **Settings → Desktop**, under
+*AI for suggestions and drafts*. Cloud uses its built-in AI within your plan's
+credits; when those run out, rules continue to file mail. On a self-hosted
+server, suggestions and drafts use the model the operator configured, if any.
+
+Desktop offers four options:
 
 - **Your Anthropic key** — requests go to `api.anthropic.com`, billed to your
   account.

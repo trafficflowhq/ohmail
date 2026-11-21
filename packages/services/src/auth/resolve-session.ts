@@ -1,5 +1,5 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { bindDb, sessions, users } from "@trafficflow/db";
+import { bindDb, carryBinding, rebindTx, sessions, users } from "@trafficflow/db";
 import { hashToken } from "./crypto.js";
 import type { Db, UnboundDb } from "../context.js";
 
@@ -30,11 +30,7 @@ export interface ResolvedSessionCore {
    * When this user's address was proven (`users.email_verified_at`, migration 0023), or
    * `null` for an unproven one. Read by `withVerifiedEmail` in `packages/api`.
    *
-   * It rides on the SESSION resolution rather than being fetched by the middleware that needs
-   * it, for the same reason `scope` does: a privilege decision that costs an extra round trip
-   * is a privilege decision somebody will eventually be tempted to skip on the hot path. The
-   * JOIN below is on `users.id` — the primary key, against a query already limited to one row —
-   * so this costs nothing measurable and no additional query.
+   * It rides on session resolution so admission checks share the same account-scoped user read.
    */
   emailVerifiedAt: Date | null;
   /**
@@ -48,51 +44,43 @@ export interface ResolvedSessionCore {
 /**
  * Resolve an opaque session/bearer access token to its live session row, or `null`. Usable iff
  * `accessTokenHash` equals `hashToken(token)` (tokens are only stored hashed), not revoked, and
- * the access window has not elapsed; one lookup shared by cookie and bearer auth so
- * `packages/api` never duplicates the query. The `users` JOIN is INNER, and that is a decision: a
- * session row whose user has been erased resolves to `null` rather than to an identity with no
- * user behind it, so an erased account's live session stops authenticating on the next request.
- * `sessions.user_id` is a FK, so the join can only fail for a row that is genuinely gone.
- *
- * THE LOOK-UP BEFORE THE ACCOUNT IS KNOWN. It is bound here and nowhere else: to no account, keyed
- * by the token's digest, the one thing the request has proven it holds. The account is what the
- * row answers, never what the request says. One statement, so one flight of its own. A handle that
- * names an account already is refused by the binder: the door runs before any account is bound.
+ * the access window has not elapsed. Cookie and bearer auth share this lookup.
+ * The digest names a single session before the account is known. The user read runs in the
+ * same transaction after binding the session's account, and a missing user denies admission.
  */
 export async function resolveSession(db: UnboundDb, token: string, now: Date): Promise<ResolvedSessionCore | null> {
   const digest = hashToken(token);
-  const rows = await bindDb(db, { account: null, key: digest })
-    .select({
+  const door = bindDb(db, { account: null, key: digest });
+  return door.transaction(async (handle) => {
+    const tx = carryBinding(door, handle);
+    const [row] = await tx.select({
       id: sessions.id,
       familyId: sessions.familyId,
       accountId: sessions.accountId,
       userId: sessions.userId,
       lastTwofaAt: sessions.lastTwofaAt,
       scope: sessions.scope,
-      emailVerifiedAt: users.emailVerifiedAt,
       lastSyncedAt: sessions.lastSyncedAt,
-    })
-    .from(sessions)
-    .innerJoin(users, eq(users.id, sessions.userId))
-    .where(and(
+    }).from(sessions).where(and(
       eq(sessions.accessTokenHash, digest),
       isNull(sessions.revokedAt),
       gt(sessions.accessExpiresAt, now),
-    ))
-    .limit(1);
+    )).limit(1);
+    if (!row) return null;
 
-  const row = rows[0];
-  if (!row) return null;
-  return {
-    accountId: row.accountId,
-    userId: row.userId,
-    sessionId: row.id,
-    familyId: row.familyId,
-    lastTwofaAt: row.lastTwofaAt,
-    // The column is CHECK-constrained to ('full','enrollment') by migration 0017, so
-    // this narrowing is exhaustive rather than a silent fallback.
-    scope: row.scope === "enrollment" ? "enrollment" : "full",
-    emailVerifiedAt: row.emailVerifiedAt,
-    lastSyncedAt: row.lastSyncedAt,
-  };
+    const scoped = await rebindTx<Db>(tx, { account: row.accountId });
+    const [user] = await scoped.select({ emailVerifiedAt: users.emailVerifiedAt })
+      .from(users).where(and(eq(users.id, row.userId), eq(users.accountId, row.accountId))).limit(1);
+    if (!user) return null;
+    return {
+      accountId: row.accountId,
+      userId: row.userId,
+      sessionId: row.id,
+      familyId: row.familyId,
+      lastTwofaAt: row.lastTwofaAt,
+      scope: row.scope === "enrollment" ? "enrollment" : "full",
+      emailVerifiedAt: user.emailVerifiedAt,
+      lastSyncedAt: row.lastSyncedAt,
+    };
+  }, { accessMode: "read only" });
 }

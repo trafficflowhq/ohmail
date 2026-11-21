@@ -1,5 +1,7 @@
 {
   "gate": {
+    "settingsHandoffSignIn": "Melde dich mit dem Account an, das du auf deinem Desktop geöffnet hast.",
+    "settingsHandoffInvalid": "Dieser Link zu den Einstellungen ist nicht verfügbar. Öffne die Einstellungen erneut auf deinem Desktop.",
     "lede": "An diesen Build ist kein Server angeschlossen.",
     "body": "Er zeigt die ganze Oberfläche mit Demo-Mails, ganz ohne Netzwerk.",
     "note": "Deine eigenen Postfächer findest du auf ohmail.app.",

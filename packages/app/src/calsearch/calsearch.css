@@ -58,9 +58,8 @@
 .cal-sr-day {
   padding-top: var(--s2);
 }
-.cal-sr-hit[data-focus] {
-  border-radius: var(--r-row);
-  background: var(--hover);
+.cal-sr-hit + .cal-sr-hit {
+  margin-block-start: var(--s1);
 }
 .cal-sr-held {
   margin: 0;

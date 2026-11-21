@@ -1,12 +1,15 @@
 import { useSyncExternalStore } from "react";
 import { viewOnlyOf, type CalendarConnectionRecord, type CalendarRecord } from "@ohmail/app-logic/calendar";
-import { useFrame } from "../frame/commands.js";
+import { useCalendarGuest, useFrame, type CalendarGuest } from "../frame/commands.js";
+import { fragmentOf } from "../frame/route.js";
+import { isCalendarPlace } from "../frame/product.js";
 import { NONE } from "../host/index.js";
 
 const noChanges = () => () => undefined;
 
-export function useNewEvent() {
+export function useNewEvent(withGuest?: CalendarGuest) {
   const { host, route, commands } = useFrame();
+  const guest = useCalendarGuest();
   const port = host.wires.calendar;
   const canCreate = useSyncExternalStore(
     port === NONE ? noChanges : port.subscribe,
@@ -28,7 +31,11 @@ export function useNewEvent() {
   );
   if (!canCreate) return null;
   return () => {
-    const place = route.place === "calsettings" || route.place === "frommail" ? "week" : route.place;
-    commands.go({ place, sub: route.sub, words: { panel: "new" } }, { history: "open-dialog" });
+    const here = isCalendarPlace(route.place) && route.place !== "calsettings" && route.place !== "frommail";
+    const place = here ? route.place : "week";
+    const target = { place, sub: here ? route.sub : null, open: null, stage: null, words: { panel: "new" } };
+    if (guest) guest.current = withGuest ?? null;
+    commands.go(target, { history: "open-dialog" });
+    if (guest && host.device.address.read() !== fragmentOf(target)) guest.current = null;
   };
 }

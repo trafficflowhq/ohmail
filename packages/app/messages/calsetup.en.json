@@ -1,5 +1,6 @@
 {
   "calsetup": {
+    "activate": "Connect a calendar",
     "leave": "Not now",
     "back": "Back",
     "continue": "Continue",
@@ -64,6 +65,8 @@
     },
     "fault": {
       "signInRefused": "That sign-in was not accepted. iCloud takes an app-specific password, made at Apple, not the account’s own.",
+      "signInRefusedCaldav": "The server did not accept the username and password. Check them and the server address.",
+      "signInRefusedIcs": "The feed asked for a sign-in.",
       "signInAgain": "The sign-in is no longer accepted. Sign in again.",
       "forbidden": "This account may not read the server’s calendars.",
       "notFound": "No calendar was found at that address.",

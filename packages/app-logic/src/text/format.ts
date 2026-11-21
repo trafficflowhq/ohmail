@@ -123,8 +123,8 @@ function pad(n: number): string {
 }
 
 /** "16:32" — the wall clock an instant shows where the reader is. */
-export function clockOf(iso: string): string {
-  return clock(new Date(iso), activeFormatZone());
+export function clockOf(iso: string, zone: string = activeFormatZone()): string {
+  return clock(new Date(iso), zone);
 }
 
 /**
