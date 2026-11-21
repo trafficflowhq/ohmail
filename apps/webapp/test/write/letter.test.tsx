@@ -46,7 +46,7 @@ afterEach(async () => {
 const sendButton = (): HTMLButtonElement =>
   within(screen.getByRole("toolbar", { name: W.verbs })).getByRole("button", { name: W.send }) as HTMLButtonElement;
 const sends = (w: WritingWorld): number => w.sent.filter((m) => m.kind === "mail_send").length;
-const sendAnnouncements = () => within(letterRegion()).getAllByRole("status")
+const sendAnnouncements = () => within(letterRegion()).queryAllByRole("status")
   .map((status) => status.textContent)
   .filter((text) => text === W.status.sending || text === W.status.offline);
 
@@ -98,7 +98,8 @@ describe("the new letter", () => {
     await rounds(10);
     expect(sends(w)).toBe(1);
     expect(sendButton().disabled).toBe(true);
-    expect(sendAnnouncements()).toEqual([W.status.sending]);
+    expect(sendAnnouncements()).toEqual([]);
+    expect(screen.getByText(en.compose.sending)).toBeTruthy();
   });
 
   it("Mod+Enter from the subject sends once, however long it is held", async () => {
@@ -147,6 +148,9 @@ describe("the new letter", () => {
     await mountWriting({ view: true, store: w.store });
     await rounds(4);
     expect(richText().getText()).toBe("Words worth keeping.");
+    fireEvent.click(screen.getByRole("button", { name: "Emoji" }));
+    fireEvent.click(screen.getByRole("button", { name: "smile" }));
+    expect(richText().getText()).toContain("\u{1F642}");
   });
 
   it("draws the sender's signature under the text; written over in place, the send carries the new words", async () => {
@@ -401,7 +405,7 @@ describe("the letter's files", () => {
     expect(enc.state.level).toBe("low");
     await choose(W.files.level.original);
     expect(attached(w)[0]!.contentBase64).toBe(b64(picked));
-    expect(document.body.textContent).toContain(W.files.qualityScope);
+    expect(document.body.textContent).not.toContain("Pictures already attached are re-encoded at this quality too, always from the original. Other files are unchanged.");
   });
 });
 
@@ -441,6 +445,9 @@ describe("send later", () => {
     await act(async () => {
       fireEvent.click(verb(W.later.verb));
     });
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("menuitem", { name: new RegExp(W.later.pick) }), { key: "4" });
+    });
     const day = screen.getByLabelText<HTMLInputElement>(W.later.day).value;
     const time = screen.getByLabelText<HTMLInputElement>(W.later.time);
     const held = `${day}T${time.value}:00.000Z`;
@@ -469,7 +476,7 @@ describe("send later", () => {
       });
       expect(sends(again)).toBe(0);
       await act(async () => {
-        fireEvent.keyDown(screen.getByRole("button", { name: W.later.confirm }), { key: "2" });
+        fireEvent.keyDown(screen.getByRole("menuitem", { name: /^Tomorrow morning/ }), { key: "2" });
       });
       await rounds(10);
       const out = again.sent.filter((m) => m.kind === "mail_send") as { sendAt?: string }[];
@@ -499,6 +506,9 @@ describe("send later", () => {
     await typeLetter("lena@example.invalid", "Too late for this.");
     await act(async () => {
       fireEvent.click(verb(W.later.verb));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(W.later.pick) }));
     });
     await act(async () => {
       fireEvent.change(screen.getByLabelText(W.later.day), { target: { value: "2020-01-01" } });

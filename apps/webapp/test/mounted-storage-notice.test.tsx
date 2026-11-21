@@ -57,12 +57,12 @@ describe("storage in the signed-in Ohbox", () => {
     const messages = page.getAllByRole("region", { name: en.frame.landmark.list });
     expect(messages.some((region) => region.contains(storage))).toBe(true);
     expect(storage.textContent).toContain("Storage 80% full");
-    expect(storage.textContent).toContain("3.2 GB of 4 GB");
-    expect(storage.textContent).toContain("Expected about 12.5 GB after the import.");
-    expect(storage.textContent).toContain("Plus + 10 GB keeps all of it, $25/month.");
+    expect(storage.textContent).not.toContain("3.2 GB of 4 GB");
+    expect(storage.textContent).toContain("12.5 GB after the import.");
+    expect(storage.textContent).not.toContain("Plus + 10 GB keeps all of it, $25/month.");
     expect(within(storage).getByRole("button", { name: en.settings.storageAddStorage })).toBeTruthy();
     expect(within(storage).getByRole("button", { name: en.settings.storageChangePlan })).toBeTruthy();
-    expect(within(storage).getByRole("link", { name: en.settings.storageWhatCounts }).getAttribute("href"))
+    expect(within(storage).getByRole("link", { name: en.settings.storage }).getAttribute("href"))
       .toBe("#/settings/storage");
   });
 

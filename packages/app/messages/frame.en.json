@@ -23,11 +23,8 @@
     "tagEmpty": "No tags yet.",
     "folders": "Folders",
     "folderLoading": "Loading folders",
-    "folderEmpty": "No folders on your mail server yet.",
-    "junkNote": "Your mail server's own {folder} folder is not listed here — ohmail does not mirror it.",
-    "junkNoteUnnamed": "Your mail server's own junk folder is not listed here — ohmail does not mirror it.",
     "folderFilter": "Filter folders",
-    "folderNoMatch": "No folder matches.",
+    "folderNoMatch": "No folder matches",
     "folderShowAll": "Show all {count}…",
     "folderShowFewer": "Show fewer",
     "folderExpand": "Expand {name}",
@@ -188,7 +185,7 @@
     "unreachable": "Can't reach the mail server.",
     "pullUnreachable": "Can't reach the mail server, so nothing new could be checked.",
     "unsavedCount": "{count, plural, one {# change could not be saved} other {# changes could not be saved}}",
-    "unsavedShow": "Show them",
+    "unsavedShow": "Show",
     "unsavedHide": "Hide",
     "unsavedRetry": "Try again",
     "unsavedDiscard": "Discard",
@@ -284,7 +281,7 @@
     "lineReloadAction": "Reload",
     "lineReloadAfterSendTitle": "Reload after your letter is sent",
     "lineReloadAfterFilesTitle": "Reload after your draft's files are sent or removed",
-    "lineLater": "Later",
+    "lineLater": "Not now",
     "lineTooOld": "This ohmail is too old for its server.",
     "lineServerUpdating": "ohmail is being updated and will be back shortly.",
     "lineUpdateAction": "Update",
@@ -382,7 +379,6 @@
       },
       "signedOut": {
         "title": "Signed out",
-        "line": "Sign in again to get new mail.",
         "restart": "Start ohmail again to sign in."
       },
       "ownerLost": {
@@ -390,8 +386,7 @@
         "line": "This window lost track of its account."
       },
       "noMailbox": {
-        "title": "No mailbox connected",
-        "line": "Nothing can arrive until one is."
+        "title": "No mailbox connected"
       },
       "offline": {
         "title": "Offline",

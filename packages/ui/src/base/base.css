@@ -88,6 +88,12 @@
   :root[data-face="ohmarchy"] .oh-control:focus-visible {
     outline-offset: 0;
   }
+  @media (forced-colors: active) {
+    :root :is(.oh-row, .oh-menu-item, .oh-railentry, .oh-readsquares-slot):focus-visible {
+      outline: var(--key-focus-w) solid var(--focus);
+      outline-offset: calc(-1 * var(--key-focus-w));
+    }
+  }
   .oh-control:disabled,
   .oh-control[aria-disabled="true"] {
     cursor: default;

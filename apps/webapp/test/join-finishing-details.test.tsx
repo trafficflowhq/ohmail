@@ -112,25 +112,26 @@ async function render(screen: "join" | "verify", props: Record<string, unknown> 
   /** A button by its words; a door's ink button carries its key after them. */
   const press = async (label: string) => {
     const buttons = [...host.querySelectorAll("button")];
-    const button = buttons.find((b) => b.textContent === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
+    const button = buttons.find((b) => (b.getAttribute("aria-label") ?? b.textContent) === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     await settle();
   };
-  /* The stations: the items of the list the setup names (`join.progress`). */
-  const stations = () => [...host.querySelectorAll("ol, ul")].find((l) => l.getAttribute("aria-label") === en.join.progress);
-  const rail = () => [...(stations()?.querySelectorAll("li") ?? [])].map((li) => ({
-    label: li.textContent, state: li.getAttribute("data-state"), current: li.getAttribute("aria-current"),
-  }));
-  return { host, type, press, rail, settle };
+  const station = () => host.querySelector(".oh-stepdots-mark");
+  const progress = () => ({
+    label: station()?.getAttribute("aria-label"),
+    dots: [...(station()?.children ?? [])].map((dot) => dot.getAttribute("data-kind")),
+  });
+  return { host, type, press, progress, settle };
 }
 
 describe("the rail on the open path", () => {
   it("Email is the second station, and the current one says so", async () => {
     const ui = await render("join");
-    expect(ui.rail().map((s) => s.label)).toEqual(["Account", "Email", "Passkey", "Recovery", "Plan", "Mailbox", "Organize"]);
-    expect(ui.rail()[0]).toEqual({ label: "Account", state: "now", current: "step" });
-    expect(ui.rail().filter((s) => s.current === "step")).toHaveLength(1);
+    expect(ui.progress()).toEqual({
+      label: "Step 1 of 5, Account, 1 of 5",
+      dots: ["hot", "todo", "todo", "todo", "todo"],
+    });
   });
 
   it("Check your email: the account is behind, Email is where the person is", async () => {
@@ -139,19 +140,18 @@ describe("the rail on the open path", () => {
     await ui.type("join-email", "pat@family.example");
     await ui.type("join-name", "Pat");
     await ui.type("join-pw", "a-long-signup-password");
-    await ui.press(en.join.createAccount);
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_sent_title);
-    expect(ui.rail().slice(0, 3)).toEqual([
-      { label: "Account", state: "done", current: null },
-      { label: "Email", state: "now", current: "step" },
-      { label: "Passkey", state: "todo", current: null },
-    ]);
+    await ui.press(en.join.continue);
+    expect(ui.host.querySelector("h1")?.textContent).toContain(en.join.openLink.split("<a>")[0]!.trim());
+    expect(ui.progress()).toEqual({
+      label: "Step 1 of 5, Account, 2 of 5",
+      dots: ["hot", "todo", "todo", "todo", "todo"],
+    });
   });
 
   it("the second factor: account and Email behind", async () => {
     enroll();
     const ui = await render("join");
-    expect(ui.rail().slice(0, 3).map((s) => s.state)).toEqual(["done", "done", "now"]);
+    expect(ui.progress()).toEqual({ label: "Step 1 of 5, Account, 3 of 5", dots: ["hot", "todo", "todo", "todo", "todo"] });
   });
 });
 
@@ -167,23 +167,27 @@ describe("the rail ends with what follows the setup", () => {
 
   it("Organize closes it, and it is never the station the person is on", async () => {
     const ui = await render("join");
-    expect(ui.rail().at(-1)).toEqual({ label: en.join.rail_organize, state: "todo", current: null });
-    expect(ui.rail().filter((s) => s.current === "step").map((s) => s.label)).toEqual(["Account"]);
+    expect(ui.progress()).toEqual({
+      label: "Step 1 of 5, Account, 1 of 5",
+      dots: ["hot", "todo", "todo", "todo", "todo"],
+    });
   });
 
   it("the mailbox connected and nothing agreed: every setup station is done, Organize is still ahead", async () => {
     connected(null);
     const ui = await render("join");
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_connected_title);
-    expect(ui.rail().slice(0, -1).every((s) => s.state === "done")).toBe(true);
-    expect(ui.rail().at(-1)).toEqual({ label: en.join.rail_organize, state: "todo", current: null });
+    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.myMailboxes.replace(/\.$/, ""));
+    expect(ui.progress()).toEqual({
+      label: "Step 3 of 5, Organize",
+      dots: ["ink", "ink", "hot", "todo", "todo"],
+    });
   });
 
   it("organizing already agreed: Organize is done too", async () => {
     connected("2026-10-09T10:00:00.000Z");
     const ui = await render("join");
     expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_done_title);
-    expect(ui.rail().at(-1)).toEqual({ label: en.join.rail_organize, state: "done", current: null });
+    expect(ui.progress()).toEqual({ label: en.join.progressComplete, dots: ["ink", "ink", "ink", "ink", "ink"] });
   });
 });
 
@@ -191,7 +195,7 @@ describe("the authenticator fallback", () => {
   async function totpOpen() {
     enroll();
     const ui = await render("join");
-    await ui.press(en.join.useTotp);
+    await ui.press(en.join.factorApp);
     return ui;
   }
 
@@ -217,8 +221,9 @@ describe("the authenticator fallback", () => {
     /* What the step says of a refusal: its alerts, and what describes its blanks. */
     const described = [...ui.host.querySelectorAll("[aria-describedby]")].flatMap((el) =>
       (el.getAttribute("aria-describedby") ?? "").split(/\s+/).map((id) => (id ? ui.host.querySelector(`[id="${id}"]`) : null)));
-    const errors = [...ui.host.querySelectorAll('[role="alert"]'), ...described].filter((el): el is Element => el !== null);
+    const errors = [...new Set([...ui.host.querySelectorAll('[role="alert"]'), ...described])].filter((el): el is Element => el !== null);
     expect(errors).toHaveLength(1);
+    expect(described).toContain(errors[0]);
     const field = ui.host.querySelector("#join-totp")!;
     expect(field.compareDocumentPosition(errors[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -263,9 +268,9 @@ describe("a typo in the address has a way back", () => {
     await ui.type("join-email", "pat@famliy.example");
     await ui.type("join-name", "Pat");
     await ui.type("join-pw", "a-long-signup-password");
-    await ui.press(en.join.createAccount);
-    await ui.press(en.join.wrongAddress);
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_account_title);
+    await ui.press(en.join.continue);
+    await ui.press(en.join.changeAddress);
+    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.account.replace("<name>,</name>", `${en.join.nameLabel},`).replace("<email>,</email>", `${en.join.emailLabel},`).replace("<password></password>.", en.join.passwordLabel));
     expect(ui.host.querySelector<HTMLInputElement>("#join-email")!.value).toBe("pat@famliy.example");
   });
 });

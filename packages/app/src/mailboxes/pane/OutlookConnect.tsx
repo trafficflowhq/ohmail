@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Button, RefusalLine } from "@ohmail/ui/base";
-import { SettingActs, SettingNote } from "@ohmail/ui/mail";
+import { Button, Menu, MenuItem, RefusalLine } from "@ohmail/ui/base";
+import { ActionPanel, SettingActs, type PanelVerb } from "@ohmail/ui/mail";
 import type { CodeCeremony } from "@ohmail/app-logic/mailboxes/connect/types";
 import { deviceSignInFailureKey } from "@ohmail/app-logic/mailboxes/connect/sign-in";
 import { useWays } from "@ohmail/app-logic/mailboxes/connect/use-sign-in";
@@ -15,12 +15,14 @@ export function OutlookConnect({
   resting,
   deviceReady,
   add,
+  again,
   connected,
 }: {
   signIn: ProviderSignInWire | None;
   resting: boolean;
   deviceReady: boolean;
   add(): void;
+  again?(): void;
   connected(result: Extract<CodeCeremony, { kind: "connected" }>): void;
 }): ReactNode {
   const words = useText("mailboxes");
@@ -92,14 +94,6 @@ export function OutlookConnect({
       {result?.kind === "ended" && !offer ? <DeviceSignIn result={result} stop={() => code?.stop()} /> : null}
       {offer && armed ? (
         <>
-          {microsoft.redirect ? (
-            <>
-              <SettingNote>{words("microsoftOauthNote")}</SettingNote>
-              <SettingNote>{words("oauthOfferWhich")}</SettingNote>
-            </>
-          ) : (
-            <SettingNote>{words("deviceOauthNote")}</SettingNote>
-          )}
           {error === null ? null : <RefusalLine alert>{error}</RefusalLine>}
           <SettingActs>
             <Button disabled={busy} onPress={() => void start()}>
@@ -111,17 +105,72 @@ export function OutlookConnect({
           </SettingActs>
         </>
       ) : (
-        <div className="mbx-pane-acts">
-          <Button icon="plus" onPress={add}>
-            {words("connect")}
-          </Button>
-          {armed ? (
-            <Button kind="two" onPress={() => setOffer(true)}>
-              {words("oauthConnect")}
-            </Button>
-          ) : null}
-        </div>
+        <MailboxActions add={add} again={again} outlook={armed ? () => setOffer(true) : undefined} />
       )}
+    </>
+  );
+}
+
+function MailboxActions({
+  add,
+  again,
+  outlook,
+}: {
+  readonly add: () => void;
+  readonly again?: () => void;
+  readonly outlook?: () => void;
+}) {
+  const words = useText("mailboxes");
+  const [folded, setFolded] = useState<readonly string[]>([]);
+  const [moreAt, setMoreAt] = useState<HTMLElement | null>(null);
+  const anchor = useRef<HTMLElement | null>(null);
+  anchor.current = moreAt;
+  const verbs: PanelVerb[] = [
+    { id: "add", label: words("connect"), icon: "plus", kind: "ink", rank: 0, onPress: add },
+  ];
+  if (again)
+    verbs.push({
+      id: "setup-again",
+      label: words("setupAgain"),
+      icon: "pull",
+      kind: "soft",
+      rank: 1,
+      onPress: again,
+    });
+  if (outlook)
+    verbs.push({
+      id: "outlook",
+      label: words("oauthConnect"),
+      kind: "soft",
+      rank: 2,
+      onPress: outlook,
+    });
+  const more = words("moreActions");
+  return (
+    <>
+      <ActionPanel
+        label={words("connect")}
+        items={verbs}
+        onFold={setFolded}
+        folded={folded}
+        more={{ label: more, behind: false, expanded: moreAt !== null, onPress: setMoreAt }}
+      />
+      <Menu anchor={anchor} label={more} open={moreAt !== null} onClose={() => setMoreAt(null)}>
+        {verbs
+          .filter((verb) => folded.includes(verb.id))
+          .map((verb) => (
+            <MenuItem
+              key={verb.id}
+              icon={verb.icon}
+              onPress={() => {
+                if (moreAt) verb.onPress?.(moreAt);
+                setMoreAt(null);
+              }}
+            >
+              {verb.label}
+            </MenuItem>
+          ))}
+      </Menu>
     </>
   );
 }

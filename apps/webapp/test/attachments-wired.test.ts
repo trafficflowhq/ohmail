@@ -42,7 +42,7 @@ import { sliceOfDeclaration } from "./source-anchor.js";
  *     having it, or the demo claims an archive it has no server for);
  *  4. `res.ok` is branched on BEFORE `.blob()`, so a 413's explanatory JSON is never handed
  *     to somebody as a download named after their PDF;
- *  5. the surface consumes it — `MessagePane` renders the strip and no longer toasts (since the switch to the
+ *  5. the surface consumes it — the shared Reader renders the strip and no longer toasts (since the switch to the
  *     new shell: the new reader's `Letter.tsx` and `LetterFiles`, the ground's one file door; share reader-1).
  */
 
@@ -408,7 +408,7 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
 
   it("`AppShell` builds the preview overlay's list WITH inline images, so an inline png opens", () => {
     // Item 4. The overlay must be able to find the id it was opened on. An INLINE image is a real
-    // clickable tile in the strip (`MessagePane` lists them when the body renders as text), so the
+    // clickable tile in the strip (the shared Reader lists them when the body renders as text), so the
     // overlay's own `itemsOf` has to include them too — otherwise clicking an inline picture finds
     // no matching item and, when the message carries nothing else, opens nothing at all. The strip
     // and the overlay must agree on which attachments exist. Source-level because the empty-list →

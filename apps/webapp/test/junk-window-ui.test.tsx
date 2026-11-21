@@ -101,7 +101,7 @@ describe("flag-off parity (§16.7)", () => {
     await mount("none");
     expect(tabs()).toContain("Spam");
     expect(button("Junk")).toBeNull();
-    expect(host.textContent?.match(/No spam held/g)).toHaveLength(1);
+    expect(host.textContent?.match(/Nothing here/g)).toHaveLength(1);
   });
 });
 
@@ -111,8 +111,8 @@ describe("the live window", () => {
     expect(tabs()).toContain("Junk");
     expect(button("Spam")).toBeNull();
     expect(rows()).toHaveLength(2);
-    expect(rows().map((r) => r.textContent).join(" ")).toContain("your verdict");
-    expect(rows().map((r) => r.textContent).join(" ")).toContain("filed by your mail server");
+    expect(rows().map((r) => r.textContent).join(" ")).toContain("Your verdict");
+    expect(rows().map((r) => r.textContent).join(" ")).toContain("Mail server");
     expect(within(host).getByText(/on its own schedule/).textContent).not.toMatch(/\d/);
   });
 
@@ -221,7 +221,7 @@ describe("the preview and the rescue", () => {
   it("Not junk dispatches the rescue for the SELECTED row, with the honest note beside it", async () => {
     const junk = wire({ items: [item({ uid: 5 }), item({ uid: 4 })] });
     await mount(junk);
-    expect(host.textContent).toContain("a first-time sender waits in the Screener");
+    expect(host.textContent).not.toContain("a first-time sender waits in the Screener");
     await click(button("Not junk"));
     expect(junk.rescue.mock.calls).toEqual([["mb1", 5, "7", {}]]);
   });
@@ -233,7 +233,7 @@ describe("the second verb — Not junk, always allow", () => {
     // A refused command keeps the same row in Junk, so its plain verb can still be pressed.
     junk.rescue.mockRejectedValueOnce(new Error("command refused"));
     await mount(junk);
-    expect(host.textContent).toContain("their spam rule is switched off");
+    expect(host.textContent).not.toContain("their spam rule is switched off");
     await click(button("Not junk, always allow"));
     expect(junk.rescue.mock.calls).toEqual([["mb1", 5, "7", { allow: { sender: "s5@example.invalid" } }]]);
     await click(button("Not junk"));
@@ -263,7 +263,7 @@ describe("the search-append's rendering", () => {
     junk.search.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
     await mount(junk);
     await query("acme");
-    await click(button("Also search your mail server's Junk folder"));
+    await click(button("Also search your mail server"));
     expect(host.textContent).toContain("Searching your mail server's Junk folder for “acme”…");
     expect(host.textContent).not.toContain("Found on your mail server");
     expect(junk.search.mock.calls).toEqual([["acme"]]);
@@ -276,7 +276,7 @@ describe("the search-append's rendering", () => {
     });
     expect(within(host).getByRole("listbox", { name: "Found on your mail server" }).textContent).toContain("older acme");
     expect(host.textContent).toContain("b@example.invalid couldn't be searched in time.");
-    expect(host.textContent).toContain("Showing the newest matches");
+    expect(host.textContent).toContain("These are the newest matches. Narrow the search to reach older ones.");
     expect(button("Show older")).toBeNull();
   });
 
@@ -299,7 +299,7 @@ describe("the search-append's rendering", () => {
 
     await query("acme");
     const beforeServer = junk.search.mock.calls.length;
-    await click(button("Also search your mail server's Junk folder"));
+    await click(button("Also search your mail server"));
     expect(junk.search).toHaveBeenCalledTimes(beforeServer + 1);
     expect(junk.search).toHaveBeenLastCalledWith("acme");
   });
@@ -331,9 +331,12 @@ describe("the one-time sweep offer", () => {
     const earlier = wire();
     earlier.sweepPreview.mockResolvedValue({ ...preview(2), confirmationRequired: true });
     await mount(earlier);
-    expect(host.textContent).toContain("Your previous Quarantine move needs a new confirmation.");
+    expect(host.textContent).not.toContain("Your previous Quarantine move needs a new confirmation.");
     expect(earlier.sweepRequest).not.toHaveBeenCalled();
     await click(button("Move to Junk"));
+    expect(within(document.body).getByRole("dialog", { name: "Move to Junk" }).textContent).toContain(
+      "They move to your mail server's Junk folder, and ohmail does not move them back.",
+    );
     expect(earlier.sweepRequest).not.toHaveBeenCalled();
     await click(button("Move 2 messages"));
     expect(earlier.sweepRequest.mock.calls).toEqual([[fingerprint(2)]]);
@@ -354,6 +357,7 @@ describe("the one-time sweep offer", () => {
     await click(button("Move to Junk"));
     await click(button("Move 2 messages"));
     expect(host.textContent).toContain("ohmail/Quarantine is empty");
+    expect(host.textContent).toContain("The 2 messages are in your mail server's Junk folder now.");
 
     await remount();
     const stranded = wire();

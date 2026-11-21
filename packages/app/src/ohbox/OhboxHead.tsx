@@ -2,13 +2,14 @@
  * THE OHBOX'S HEAD: its name with the hot dot while something waits, and its own tools: the Screener's doorbell,
  * Mark all read, and the list's menu with Pull new mail and Mark all read.
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { sharedNotOrganizedWhy } from "@ohmail/app-logic/mail-state/mail-state";
 import { Button, Menu, MenuItem } from "@ohmail/ui/base";
 import { ProductSwitch } from "../frame/ProductSwitch.js";
 import { Doorbell, ListHead } from "@ohmail/ui/mail";
-import type { LayoutPlan } from "../frame/contract.js";
+import type { FrameNotice, LayoutPlan } from "../frame/contract.js";
+import { useNotice } from "../frame/index.js";
 import { useLastMailCheckLabel } from "../place-list/ListMenu.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText } from "../text/index.js";
@@ -42,6 +43,7 @@ export function OhboxHead({
   const markAll = onMarkAllRead && unread > 0 ? () => onMarkAllRead(model.unreadIds) : null;
   return (
     <>
+      {!displayOnly ? <NotOrganizingNotice beside={beside} /> : null}
       <ListHead
         title={t("title")}
         hot={model.mayState && unread > 0}
@@ -105,55 +107,61 @@ export function OhboxHead({
   );
 }
 
-/**
- * THE DOOR TO THE SCREENER, or what is true instead. Withheld until the Screener's queue has been read and the
- * Ohbox may speak; nothing at zero (the kit leaves an empty doorbell out). Where nothing organizes a mailbox the
- * slot says so and leads to the organize decision, whatever the count.
- */
+function NotOrganizingNotice({ beside }: { beside: OhboxBeside }): null {
+  const t = useText("ohbox");
+  const [dismissed, dismiss] = useState<string | null>(null);
+  const no = beside.notOrganizing;
+  const first = no?.mailboxes[0];
+  let notice: FrameNotice | null = null;
+  if (no && first) {
+    const why = no.every ? sharedNotOrganizedWhy(no) : (first.why ?? "never_agreed");
+    const setup = why === "never_agreed";
+    const address = beside.words.mailbox(first.address);
+    const one = no.mailboxes.length === 1;
+    const id = JSON.stringify([why, no.every, no.mailboxes.map(({ id }) => id)]);
+    if (dismissed !== id) {
+      const title =
+        no.every && setup
+          ? t("organizingNotice.notYet")
+          : why === "handed_back" && one
+            ? t("organizingNotice.handedBack", { address })
+            : no.every
+              ? t("organizingNotice.mailboxes")
+              : one
+                ? t("organizingNotice.mailbox", { address })
+                : t("organizingNotice.someMailboxes", { count: no.mailboxes.length });
+      const line =
+        why === "handed_back" && one
+          ? t("organizingNotice.handedBackLine")
+          : no.every
+            ? t("organizingNotice.line")
+            : one
+              ? t("organizingNotice.mailboxLine")
+              : t("organizingNotice.someMailboxesLine");
+      notice = {
+        kind: "notOrganizing",
+        id,
+        title,
+        line,
+        hot: true,
+        acts: [
+          {
+            label: t(setup ? "organizingNotice.setup" : "organizingNotice.manage"),
+            onPress: () => (setup ? beside.go.organize(first.id) : beside.go.mailboxes()),
+          },
+          { label: t("organizingNotice.dismiss"), onPress: () => dismiss(id) },
+        ],
+      };
+    }
+  }
+  useNotice(notice);
+  return null;
+}
+
+/** The number it prints is grouped as its accessible name groups it. */
 function OhboxDoor({ model, beside }: { model: OhboxListModel; beside: OhboxBeside }) {
   const t = useText("ohbox");
   const locale = useLocale();
-  const no = beside.notOrganizing;
-  const first = no?.mailboxes[0];
-  if (no && first && (no.every || beside.doorbell.count === 0)) {
-    const why = no.every ? sharedNotOrganizedWhy(no) : (first.why ?? "never_agreed");
-    const never = why === "never_agreed";
-    const address = beside.words.mailbox(first.address);
-    const bold = { b: (chunks: ReactNode) => <b>{chunks}</b> };
-    /* The statement printed for every eye (the shipped head printed it beside its action), the whole of it in the
-       control's name. */
-    const said = !no.every
-      ? t.rich("doorbellNotOrganizingSome", { count: no.mailboxes.length, address, ...bold })
-      : t.rich(
-          never ? "doorbellNotYet" : why === "handed_back" ? "doorbellHandedBack" : "doorbellNotOrganizing",
-          bold,
-        );
-    const label = !no.every
-      ? t("doorbellNotOrganizingSomeAria", {
-          count: no.mailboxes.length,
-          address,
-        })
-      : t(
-          never
-            ? "doorbellNotYetAria"
-            : why === "handed_back"
-              ? "doorbellHandedBackAria"
-              : "doorbellNotOrganizingAria",
-        );
-    return (
-      <span className="ob-door">
-        <span className="ob-door-said">{said}</span>
-        <Button
-          kind="quiet"
-          size="s"
-          label={label}
-          onPress={() => (never ? beside.go.organize(first.id) : beside.go.mailboxes())}
-        >
-          {t(never ? "doorbellNotYetAction" : "doorbellNotOrganizingAction")}
-        </Button>
-      </span>
-    );
-  }
   if (!model.mayState || !beside.doorbell.settled || beside.doorbell.count === 0) return null;
   /* The number it prints is the number its name says, grouped as the name groups it ("1,042"), as the shipped head
      printed it: a raw figure beside a grouped name reads as two numbers. */

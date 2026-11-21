@@ -1,35 +1,18 @@
 "use client";
 
-/**
- * The subject-rule sheet — pressing a message's title offers a rule with two terms. The gesture
- * people have is "click the sender, change where their mail goes"; this is the same gesture one
- * level finer, and the two sheets are deliberate siblings (same popover box, destination list and
- * honest footer — it reuses `sender-sheet.css` verbatim, because a second set of nearly-identical
- * rules is how siblings drift). The confirm row states both terms ("from … AND subject contains …
- * → Reads"): the failure mode is a term subtly wrong, and no toast can repair a re-filed backlog.
- * Copy reads through a shim with one exit — `messages/en.json` wins the moment a key exists.
- */
-
-/**
- * What it refuses: no BLIND free text — the exact-subject option is an editable match field (owner
- * request 2026-08-26) whose count re-runs the server's own test per keystroke and says out loud
- * when the fragment stops narrowing (matching ALL of the sender's mail here, or none); the
- * detected token is still offered first and never typed. No claim that mail moves back — revoking
- * a rule un-files nothing (`DELETE /rules/:id` touches the rules row and the change log), so the
- * way back is the count and the choice BEFORE the press. No second identical rule — the sheet says
- * so and writes nothing: a habit-press must not mint rows nobody can tell apart.
- */
+/** Pick a term and a destination before making a sender rule. The rule planner owns all writes. */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Avatar, InfoNote } from "@ohmail/ui/sender-sheet";
+import { Button, Switch } from "@ohmail/ui/base";
+import { ContactCardHeader, ContactDestinations } from "@ohmail/ui/mail";
 import { TextField } from "@ohmail/ui/text-field";
 import { usePileNames } from "../shell/decision-copy";
-import { avatarHue, initialsOf } from "../shell/format";
-import { displayAddress, displayAddressee, displayRuleMatch } from "@ohmail/app-logic/text/idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useOverlayFit } from "./overlay-clamp";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { SheetClose } from "./SheetClose";
 import "../shell/sender-sheet.css";
+import "./subject-rule-sheet.css";
 import { RETRO_DEFAULT_ON, type ScreeningDest } from "@ohmail/app-logic/press/sender-screening";
 import {
   MAX_SUBJECT_TERM_CHARS,
@@ -70,6 +53,7 @@ export function SubjectRuleSheet({
   nobody = false,
   onConfirm,
   onClose,
+  onBack = onClose,
 }: {
   state: SubjectRuleState;
   ctx: SubjectRuleContext;
@@ -80,6 +64,7 @@ export function SubjectRuleSheet({
   nobody?: boolean;
   onConfirm: (term: string, dest: ScreeningDest, field: TermField, applyRetro: boolean) => void;
   onClose: () => void;
+  onBack?: () => void;
 }) {
   const t = useTranslations("screening");
   const rootRef = useRef<HTMLDivElement>(null);
@@ -114,7 +99,6 @@ export function SubjectRuleSheet({
      and the sender sheet use. See `decision-copy.ts`. */
   const piles = usePileNames();
 
-  const label = displayAddressee(ctx.name, ctx.address);
   /** The sender as the sheet's sentences read them — see `idn.ts`. `ctx.address` writes the rule. */
   const who = displayAddress(ctx.address);
   // The choice decides BOTH halves — the term and the field it reads — in one place, so the
@@ -161,25 +145,24 @@ export function SubjectRuleSheet({
   return (
     <div
       ref={rootRef}
-      className={full ? "senderm sm-full" : "senderm"}
+      className={full ? "senderm subject-rule-card sm-full" : "senderm subject-rule-card"}
       role="dialog"
       aria-modal="true"
       tabIndex={-1}
-      aria-label={t("subjectAria", { who })}
+      aria-label={t("subjectAria")}
+      aria-description={who}
+      data-full={full ? "" : undefined}
       style={style}
     >
       {/* The sender sheet's way out, for the same reason: see `SenderMenu`. */}
       <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
-      <div className="sm-head">
-        <Avatar initials={initialsOf(label)} hue={avatarHue(ctx.address)} size="s" />
-        <span className="sm-who">
-          <b>{label}</b>
-          {ctx.name ? <small>{who}</small> : null}
-        </span>
-      </div>
-
-      <div className="sm-now">
-        {t("subjectLead")}
+      <div className="subject-rule-head">
+        <ContactCardHeader
+          heading
+          title={t("cardSubject")}
+          note={who}
+          lead={<Button kind="quiet" size="s" icon="back" label={t("cardBack")} onPress={onBack} />}
+        />
       </div>
 
       {/* ── THE TERM, AS A CHOICE OF TWO ─────────────────────────────────────────────────────
@@ -236,6 +219,7 @@ export function SubjectRuleSheet({
             type="text"
             className="sm-edit-input"
             value={custom}
+            placeholder={t("subjectTermPlaceholder")}
             aria-label={t("subjectEditAria")}
             aria-describedby="sm-edit-status"
             spellCheck={false}
@@ -287,126 +271,40 @@ export function SubjectRuleSheet({
         ) : null}
       </div>
 
-      {/* NOTHING REPEATS, SAID OUT LOUD. Detection answering `null` is a normal outcome, and a sheet
-          that silently offered only one option would leave the reader wondering what it looked for.
-          It is a note and not a refusal: the exact-subject rule is still a real thing to write. */}
-      {!ctx.token ? (
-        <InfoNote
-          className="sm-confirm-fine"
-          lead={t("subjectNoToken")}
-          moreLabel={t("subjectNoTokenMoreLabel")}
-        >
-          {t("subjectNoTokenMore")}
-        </InfoNote>
+      <ContactDestinations
+        note={term.trim() === "" ? undefined : t("subjectMatches", { count: plan.matched, total: ctx.messages.length })}
+        goes={{
+          label: t("cardGoesTo"),
+          value: pending ?? undefined,
+          places: SUBJECT_RULE_DESTS.map((dest) => ({
+            value: dest,
+            label: dest === "screened" ? t("cardScreenOut") : piles[dest],
+          })),
+          onChange: (value) => setPending(SUBJECT_RULE_DESTS.find((dest) => dest === value) ?? null),
+        }}
+      />
+      {plan.already && pending !== null ? (
+        <p className="sm-org" role="status">{t("subjectConfirmAlready")}</p>
+      ) : nobody ? (
+        <p className="sm-org" role="status">{t(subjectOrganizerMissing)}</p>
       ) : null}
-
-      {/* ── THE CONFIRM, WHICH STATES BOTH TERMS ─────────────────────────────────────────────
-          Not an "are you sure?" — the one moment at which the CONJUNCTION can be read before it is
-          written. A term that is subtly wrong is this feature's failure mode, and nothing said
-          afterwards repairs a backlog that has already been re-filed. */}
-      {pending ? (
-        <div className="sm-confirm">
-          <p>
-            {t(plan.field === "body" ? "bodyConfirm" : "subjectConfirm", {
-              match: displayRuleMatch(plan.match),
-              term: plan.term,
-              dest: piles[pending],
-            })}
-          </p>
-          <InfoNote
-            className="sm-confirm-fine"
-            lead={
-              plan.already
-                ? t("subjectConfirmAlready")
-                : nobody
-                  ? t(subjectOrganizerMissing)
-                  : applyRetro
-                  ? t("subjectConfirmFine", { count: plan.matched })
-                  : t("subjectConfirmFineFuture")
-            }
-            moreLabel={t("subjectConfirmMoreLabel")}
-          >
-            {t(plan.field === "body" ? "bodyConfirmMore" : "subjectConfirmMore")}
-          </InfoNote>
-          {/* The past-mail answer, beside the sentence it changes. Withheld when a rule of this
-              exact shape already stands: there the press writes nothing and files only the visible
-              mail, so an option about the backlog would be a control with no effect. */}
-          {plan.already ? null : (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={applyRetro}
-              aria-label={t("retroToggleAria")}
-              className="sm-retro"
-              onClick={() => setApplyRetro((on) => !on)}
-            >
-              <span className="lab">
-                <b>{t("retroToggle")}</b>
-              </span>
-              <span className="switch" aria-hidden="true">
-                <i />
-              </span>
-            </button>
-          )}
-          <span className="sm-confirm-row">
-            <button
-              type="button"
-              className="go"
-              /* An EMPTIED match field names no mail and writes no rule (`planSubjectRule`
-                 answers it with zero mutations), so the press is withheld rather than confirmed
-                 into a no-op. `plan.already` stays pressable — its press is the honest "nothing
-                 will be written" the fine print above has already stated. */
-              disabled={!plan.already && plan.ruleMutations.length === 0}
-              onClick={() => { setPending(null); onConfirm(plan.term, pending, plan.field, applyRetro); }}
-            >
-              {t("subjectConfirmGo", { dest: piles[pending] })}
-            </button>
-            <button type="button" onClick={() => setPending(null)}>
-              {t("cancel")}
-            </button>
-          </span>
-        </div>
-      ) : (
-        <ul
-          role="listbox"
-          aria-label={t("subjectAria", { who })}
+      {!(plan.already && pending !== null) ? (
+        <label className="subject-rule-switch">
+          <span aria-hidden="true">{t("cardExisting")}</span>
+          <Switch label={t("retroToggleAria")} on={applyRetro} onChange={setApplyRetro} />
+        </label>
+      ) : null}
+      <div className="subject-rule-actions">
+        <Button
+          size="s"
+          disabled={!pending || (!plan.already && plan.ruleMutations.length === 0)}
+          onPress={() => {
+            if (pending) onConfirm(plan.term, pending, plan.field, applyRetro);
+          }}
         >
-          {SUBJECT_RULE_DESTS.map((dest) => (
-            <li
-              key={dest}
-              role="option"
-              aria-selected={ctx.current === dest}
-              className={ctx.current === dest ? "sel" : undefined}
-              // Focusable and key-operable, matching `SenderMenu`'s destinations: an option a
-              // keyboard cannot reach is the same defect as one rendered off-screen.
-              tabIndex={0}
-              onClick={() => setPending(dest)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setPending(dest);
-                }
-              }}
-            >
-              {piles[dest]}
-              {ctx.current === dest ? <span className="ck">✓</span> : null}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {/* ── THE FOOTER ───────────────────────────────────────────────────────────────────────
-          Two true sentences. The first names what a rule with two terms does that a sender rule
-          cannot; the second is the way back, and it is the count-and-choice kind rather than an undo,
-          because revoking a rule moves no mail. When a rule with a term already exists for this
-          address the footer says so — that is the state in which a second press is most likely to be
-          a duplicate the user did not intend. */}
-      {nobody && !pending ? <div className="sm-org">{t(subjectOrganizerMissing)}</div> : null}
-      <div className="sm-foot">
-        {/* "narrower", not "subject": the count includes body-term rules. */}
-        {ctx.existing.length > 0
-          ? t("subjectFootExisting", { count: ctx.existing.length })
-          : t("subjectFoot")}
+          {t("subjectMakeRule")}
+        </Button>
+        <Button kind="quiet" size="s" onPress={onBack}>{t("cancel")}</Button>
       </div>
     </div>
   );

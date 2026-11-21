@@ -63,7 +63,7 @@ export function useEngine(): OhmailEngine {
 
 /**
  * The engine if this tree has one — {@link useEngine}'s non-throwing sibling, and the same
- * carve-out `useMailboxFacts` makes for the same reason. `MessagePane` and `MessageCard` are
+ * carve-out `useMailboxFacts` makes for the same reason. The shared Reader (`packages/app/src/reader`) and the stream card are
  * published to the desktop mirror and mounted with no provider in several harnesses; they take
  * their body subscription through this (`body-slice.ts`), and a throw there would take a reading
  * surface down over a subscription it can simply not have. `null` means exactly one thing:

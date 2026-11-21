@@ -13,7 +13,7 @@
   On your own mailboxes. <img src="docs/assets/readme/mark-ai.svg" alt="" width="13" height="13" />&nbsp;AI accelerated if&nbsp;you&nbsp;want&nbsp;it.<br/>On <img src="docs/assets/readme/mark-linux.svg" alt="" width="13" height="13" />&nbsp;Linux, <img src="docs/assets/readme/mark-apple.svg" alt="" width="13" height="13" />&nbsp;macOS, <img src="docs/assets/readme/mark-windows.svg" alt="" width="13" height="13" />&nbsp;Windows,<br/><img src="docs/assets/readme/mark-ios.svg" alt="" width="13" height="13" />&nbsp;iOS&nbsp;and&nbsp;<img src="docs/assets/readme/mark-android.svg" alt="" width="13" height="13" />&nbsp;Android.
 </p>
 
-<p align="center">Calendar is available in ohmail Cloud and on self-hosted servers with Calendar enabled, not in standalone Desktop. Connect iCloud, CalDAV or read-only subscribed ICS feeds.</p>
+<p align="center">In 2.0, Calendar is available in ohmail Cloud and on self-hosted servers (<code>OHMAIL_CALENDAR=1</code> by default). Connect iCloud, CalDAV or read-only subscribed ICS feeds. Standalone Desktop supports mail only.</p>
 
 <h3 align="center"><a href="https://github.com/trafficflowhq/ohmail/releases/latest">Download ohmail</a></h3>
 
@@ -30,14 +30,14 @@
 
 <p align="center">
   <sub>Choose a face</sub><br/>
-  <a href="README.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/toggle-paper-off-dark.svg"><img src="docs/assets/readme/toggle-paper-off-light.svg" alt="paper: open this README in the paper face" width="77" height="40" /></picture></a><a
+  <a href="README.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/toggle-oh-off-dark.svg"><img src="docs/assets/readme/toggle-oh-off-light.svg" alt="oh: open this README in the oh face" width="77" height="40" /></picture></a><a
     href="README.ohmarchy.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/toggle-ohmarchy-on-dark.svg"><img src="docs/assets/readme/toggle-ohmarchy-on-light.svg" alt="ohmarchy, the face shown" width="101" height="40" /></picture></a>
 </p>
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/window-dark.webp">
-    <img src="docs/assets/readme/window-light.webp" alt="ohmail in a window. The places with their counts are on the left. The Ohbox is in the middle, with six senders waiting at the Screener. On the right is an open conversation, with one square for each of its messages." width="946" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/ohmarchy-window-dark.webp">
+    <img src="docs/assets/readme/ohmarchy-window-light.webp" alt="ohmail in a window. The places are on the left. The Ohbox is in the middle. On the right is an open conversation, with one square for each of its messages." width="946" />
   </picture>
 </p>
 
@@ -100,16 +100,14 @@ Filing is a real IMAP move into a few plain folders, and your rules are stored i
 </td><td width="47%">
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/ohmarchy-row-folders-dark.webp"><img src="docs/assets/readme/ohmarchy-row-folders-light.webp" alt="The mailbox folders." width="100%" /></picture>
 </td></tr>
-<tr><td width="53%" valign="middle">
+<tr><td colspan="2" valign="middle">
 
 ### On your phone
 
-The released 1.0 phone app is available for iPhone and Android.
+ohmail 2.0 keeps the 1.0 phone interface on iPhone and Android.
 
 <img src="docs/assets/readme/mark-ios.svg" alt="" width="13" height="13" />&nbsp;iPhone: [on the App Store][app-store], not yet available in the EU<br/><img src="docs/assets/readme/mark-android.svg" alt="" width="13" height="13" />&nbsp;Android: [ohmail-android.apk](https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-android.apk)
 
-</td><td width="47%">
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/ohmarchy-row-phone-dark.webp"><img src="docs/assets/readme/ohmarchy-row-phone-light.webp" alt="The Ohbox on a phone." width="100%" /></picture>
 </td></tr>
 <tr><td width="53%" valign="middle">
 
@@ -120,7 +118,7 @@ Run the whole stack on your own box with Docker Compose.
 [Self-hosting](docs/self-host/README.md)
 
 </td><td width="47%">
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/ohmarchy-row-devices-dark.webp"><img src="docs/assets/readme/ohmarchy-row-devices-light.webp" alt="Settings for a paired phone." width="100%" /></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/ohmarchy-row-selfhost-dark.webp"><img src="docs/assets/readme/ohmarchy-row-selfhost-light.webp" alt="The first-run setup screen on a self-hosted ohmail server." width="100%" /></picture>
 </td></tr>
 </table>
 
@@ -211,7 +209,7 @@ The apps send no usage telemetry. Standalone Desktop processes mail and keeps a 
 
 ## Contribute
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Every change is a pull request with a DCO sign-off (`git commit -s`) and a `changelog.d/` entry. `apps/webapp` is the client, `apps/desktop` the desktop shell, `apps/mobile` the phone app, `apps/sidecar` the desktop's mail engine, `packages/core` the organizer, `deploy/selfhost` the server stack. [Build from source](docs/install.md#build-the-desktop-app-yourself).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Every change is a pull request with a DCO sign-off (`git commit -s`) and a `changelog.d/` entry. `packages/app` and `packages/ui` hold the shared client interface. `apps/webapp` hosts it on the web, and `apps/desktop` hosts it on the desktop with the mail engine in `apps/sidecar`. `apps/mobile` is the phone app. `packages/organizer` holds the organizer. `apps/server` and `apps/worker` run the server stack, with Docker Compose files in `deploy/selfhost`. [Build from source](docs/install.md#build-the-desktop-app-yourself).
 
 Bugs and ideas go to [GitHub issues](https://github.com/trafficflowhq/ohmail/issues). Vulnerabilities go the way [SECURITY.md](SECURITY.md) describes, not into a public issue.
 

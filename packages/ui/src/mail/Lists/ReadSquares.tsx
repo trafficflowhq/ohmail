@@ -5,9 +5,11 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
+  type Ref,
 } from "react";
-import { cssRect, type CssRect } from "../../base/ui-zoom.js";
+import { cssPoint, cssRect, type CssRect } from "../../base/ui-zoom.js";
 import { animate } from "../../motion/motion.js";
 import { SquareTip, useSquareTip } from "./square-tip.js";
 import "./read-squares.css";
@@ -28,6 +30,7 @@ export interface SquaresRun {
 }
 
 export interface ReadSquaresProps {
+  ref?: Ref<HTMLSpanElement>;
   /** One square a message, oldest first. */
   squares: readonly SquareKind[];
   /** The square the reader is on, counted from 0. The ring stands there. */
@@ -40,6 +43,8 @@ export interface ReadSquaresProps {
   run?: SquaresRun;
   /** A press on a square: the conversation opens on that message. */
   onJump?: (index: number) => void;
+  /** A touch drag on a long reader run walks one letter per square pitch. */
+  touchWalk?: boolean;
   /**
    * Each square's name, said to a screen reader ("Anna Roth, Mon 08:00"). With `onJump` the squares are then one
    * roving set the keyboard walks: one tab stop, on the reader's square; the arrows, Home and End move it; Enter or
@@ -96,6 +101,75 @@ function useSquareKeys(count: number, here: number | undefined, on: boolean, pro
   return { at, keys };
 }
 
+interface Finger {
+  id: number;
+  from: number;
+  at: number;
+  along: number;
+  across: number;
+  pitch: number;
+  moving: boolean;
+}
+
+function useSquareDrag(props: ReadSquaresProps, cancelTip: () => void) {
+  const finger = useRef<Finger | null>(null);
+  const swiped = useRef(false);
+  const { axis, here, onJump, run, squares, touchWalk } = props;
+  const point = (event: PointerEvent<HTMLElement>) => {
+    const { x, y } = cssPoint(event);
+    return axis === "column" ? { along: y, across: x } : { along: x, across: y };
+  };
+  const start = (event: PointerEvent<HTMLElement>) => {
+    if (!event.isPrimary) return;
+    finger.current = null;
+    swiped.current = false;
+    if (!touchWalk || event.pointerType !== "touch" || here === undefined) return;
+    const pitch =
+      run?.column?.pitch ??
+      parseFloat(getComputedStyle(event.currentTarget).getPropertyValue("--oh-readsquares-pitch"));
+    if (!(pitch > 0)) return;
+    finger.current = { ...point(event), id: event.pointerId, from: here, at: here, pitch, moving: false };
+  };
+  const move = (event: PointerEvent<HTMLElement>) => {
+    const drag = finger.current;
+    if (!drag || drag.id !== event.pointerId) return;
+    const at = point(event);
+    const travel = drag.along - at.along;
+    if (!drag.moving) {
+      const across = Math.abs(at.across - drag.across);
+      if (across >= 6 && across > Math.abs(travel)) {
+        finger.current = null;
+        return;
+      }
+      if (Math.abs(travel) < 6) return;
+      drag.moving = true;
+      swiped.current = true;
+      cancelTip();
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    const to = Math.max(0, Math.min(squares.length - 1, drag.from + Math.round(travel / drag.pitch)));
+    if (to === drag.at) return;
+    drag.at = to;
+    onJump?.(to);
+  };
+  const end = (event: PointerEvent<HTMLElement>) => {
+    if (finger.current?.id === event.pointerId) finger.current = null;
+  };
+  const lost = (event: PointerEvent<HTMLElement>) => {
+    if (event.target === event.currentTarget) end(event);
+  };
+  const handlers = touchWalk
+    ? {
+        onPointerDown: start,
+        onPointerMove: move,
+        onPointerUp: end,
+        onPointerCancel: end,
+        onLostPointerCapture: lost,
+      }
+    : undefined;
+  return { handlers, suppressClick: () => swiped.current };
+}
+
 /**
  * How far a conversation is read, and where the reader is in it. Longer than its room, a run of the
  * squares stands and each edge that hides more says how many; nothing is ever cut.
@@ -106,6 +180,7 @@ export function ReadSquares(props: ReadSquaresProps) {
   const walks = Boolean(onJump && names);
   const { at, keys } = useSquareKeys(squares.length, here, walks, props);
   const tip = useSquareTip();
+  const drag = useSquareDrag(props, tip.cancel);
   const before = run ? run.from : 0;
   const after = run ? squares.length - run.to : 0;
   const long = before > 0 || after > 0;
@@ -143,7 +218,8 @@ export function ReadSquares(props: ReadSquaresProps) {
         const slot = (event.target as HTMLElement).closest<HTMLElement>("[data-square]");
         if (!slot) return;
         event.stopPropagation();
-        if (!tip.suppressClick()) onJump(Number(slot.dataset.square));
+        if (!tip.suppressClick() && !(event.detail && drag.suppressClick()))
+          onJump(Number(slot.dataset.square));
       }
     : undefined;
   const room =
@@ -156,6 +232,7 @@ export function ReadSquares(props: ReadSquaresProps) {
 
   return (
     <span
+      ref={props.ref}
       className="oh-readsquares"
       role="group"
       aria-label={label}
@@ -163,8 +240,10 @@ export function ReadSquares(props: ReadSquaresProps) {
       data-long={long ? "" : undefined}
       data-motion-track={track ? "" : undefined}
       data-press={onJump ? "" : undefined}
+      data-touch-walk={props.touchWalk ? "" : undefined}
       style={room}
       onClick={jump}
+      {...drag.handlers}
       onKeyDown={walks ? keys : undefined}
     >
       <i className="oh-readsquares-more" data-on={before ? "" : undefined} aria-hidden="true">

@@ -29,6 +29,8 @@ export interface OpenInvite {
 
 /** An invite link, made once: the link whole, and the name the server kept for it ("" for none). */
 export interface MadeInvite {
+  readonly id?: string;
+  readonly expires?: string;
   readonly link: string;
   readonly name: string;
 }

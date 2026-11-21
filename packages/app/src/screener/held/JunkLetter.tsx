@@ -5,9 +5,9 @@
  * that stands is said where the presses were; one the mail server refused is said, and can be asked again or left.
  */
 import { useRef, useState } from "react";
-import { junkLabelOf } from "@ohmail/app-logic/screener";
+import { junkKey, junkLabelOf } from "@ohmail/app-logic/screener";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
-import { Dot, Menu, MenuItem, RefusalLine, Sentence } from "@ohmail/ui/base";
+import { Dot, Menu, MenuItem, RefusalLine, Sentence, Slot, Tag } from "@ohmail/ui/base";
 import { ActionPanel, Message, MessageHead, Sheet, type PanelNote, type PanelVerb } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import { junkWho, useJunkStamp } from "../list/Junk.js";
@@ -32,26 +32,51 @@ function Body({ junk, item }: { junk: ScreenerJunk; item: ScreenerJunkItem }) {
   );
 }
 
-/** Who wrote it, who filed it (or that the move was refused), and what the two presses do. */
-function JunkHead({ item, who }: { item: ScreenerJunkItem; who: string }) {
+/** The Junk slot uses the same rescue actions as the panel. */
+function JunkHead({ item, rescue }: { item: ScreenerJunkItem; rescue: readonly PanelVerb[] }) {
   const t = useText("screener");
+  const at = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const label = t("junkActions");
+  const place = t("segJunk");
+  const address = displayAddress(item.from.address);
+  const canAsk = rescue.length > 0;
   return (
     <div>
       <Sentence level={2}>
-        {who}
+        {t.rich("place.goes", {
+          who: address,
+          place,
+          slot: () =>
+            canAsk ? (
+              <Slot ref={at} label={label} expanded={open} onPress={() => setOpen((was) => !was)}>
+                {place}
+              </Slot>
+            ) : (
+              <b>{place}</b>
+            ),
+        })}
         <Dot kind="ink" />
       </Sentence>
-      {item.rescue === "refused" ? (
-        <RefusalLine>{t("junkRescueRefused")}</RefusalLine>
-      ) : (
-        <p className="oh-text">{t(junkLabelOf(item))}</p>
-      )}
-      {item.rescue === "queued" ? null : (
-        <>
-          <p className="oh-text">{t("junkNotJunkNote")}</p>
-          <p className="oh-text">{t("junkAllowNote")}</p>
-        </>
-      )}
+      <p className="oh-text sc-sentence-tools">
+        <span>{address}</span>
+        <Tag>{t(junkLabelOf({ origin: item.origin }))}</Tag>
+      </p>
+      {item.rescue === "refused" ? <RefusalLine>{t("junkRescueRefused")}</RefusalLine> : null}
+      <Menu open={canAsk && open} onClose={() => setOpen(false)} anchor={at} label={label}>
+        {rescue.map((verb) => (
+          <MenuItem
+            key={verb.id}
+            disabled={verb.disabled}
+            onPress={() => {
+              setOpen(false);
+              if (at.current !== null) verb.onPress?.(at.current);
+            }}
+          >
+            {verb.label}
+          </MenuItem>
+        ))}
+      </Menu>
     </div>
   );
 }
@@ -74,9 +99,9 @@ export function JunkLetter({
   const [folded, setFolded] = useState<readonly string[]>([]);
   const [more, setMore] = useState(false);
   const moreAt = useRef<HTMLElement | null>(null);
-  const items: (PanelNote | PanelVerb)[] =
+  const rescue: PanelVerb[] =
     item.rescue === "queued"
-      ? [{ note: t("junkRescueQueued"), keep: true }]
+      ? []
       : [
           {
             id: "notjunk",
@@ -94,6 +119,12 @@ export function JunkLetter({
             disabled: busy,
             onPress: () => junk.rescue(item, { allow: true }),
           },
+        ];
+  const items: (PanelNote | PanelVerb)[] =
+    item.rescue === "queued"
+      ? [{ note: t("junkRescueQueued"), keep: true }]
+      : [
+          ...rescue,
           ...(item.rescue === "refused" && item.rescueId !== undefined
             ? [
                 {
@@ -112,7 +143,7 @@ export function JunkLetter({
       kind="reading"
       label={who}
       back={onBack ? { word: t("segJunk"), onPress: onBack } : undefined}
-      head={<JunkHead item={item} who={who} />}
+      head={<JunkHead key={junkKey(item)} item={item} rescue={rescue} />}
       foot={
         <>
           <ActionPanel

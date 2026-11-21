@@ -966,8 +966,13 @@ export function threadSizeIndex(reader: EntityReader): ReadonlyMap<string, Threa
   return sizes;
 }
 
-/** One conversation member's square: unread, read, or the account's own (unread wins). */
+/** One conversation member's square: unread, read, or the account's own. */
 export type ThreadMark = "unread" | "read" | "mine";
+
+/** A sent reply stays hollow even if its stored copy carries an unread flag. */
+export function threadMarkOf(m: Pick<EngineMessage, "folder" | "mailboxId" | "local" | "unread">): ThreadMark {
+  return isOwnOutbound(m) ? "mine" : m.unread ? "unread" : "read";
+}
 
 const marksCache = new WeakMap<EntityReader, { v: number; marks: Map<string, ThreadMark[]> }>();
 
@@ -996,7 +1001,7 @@ export function threadMarksIndex(reader: EntityReader): ReadonlyMap<string, read
     if (list.length < 2) continue;
     const members = collapseTwins(list.sort(byDateAsc), "");
     if (members.length < 2) continue;
-    marks.set(threadId, members.map((m) => (m.unread ? "unread" : isOwnOutbound(m) ? "mine" : "read")));
+    marks.set(threadId, members.map(threadMarkOf));
   }
   if (v !== null) marksCache.set(reader, { v, marks });
   return marks;
@@ -2278,7 +2283,7 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
  * carries `hits`, `lastHitAt` and `demotions`, and nothing anywhere writes them — every value
  * is still its inserted `default(0)` / `null` — so a count would put "0 messages" beside a rule
  * that has silently filed three thousand; the surface says the count is not recorded instead
- * (see `RulesView`). A count of mirror messages currently in the rule's destination is also
+ * (see the rule list, `packages/app-logic/src/press/rule-list.ts`). A count of mirror messages currently in the rule's destination is also
  * refused: it reads as "these will move back", exactly the false promise revocation must not
  * make.
  */

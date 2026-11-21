@@ -84,6 +84,8 @@ export interface SignInDoor {
   restart(): void;
   /** To the sign-up, for an invite code or a new account. */
   readonly join: DoorWay;
+  /** Back to the welcome surface, where the host has one. */
+  readonly back?: string;
   /** The demo, where this build has one and no server. */
   readonly demo: DoorWay | None;
 }

@@ -80,7 +80,7 @@ describe("the reader's read slot covers the conversation on screen", () => {
 
     await click(readSlot(col()), "Mark read");
     expect(deliberate(), "ONE deliberate mark_seen over the rest of the conversation").toEqual([{ ids: ["a1"], unread: false, openRead: true }]);
-    expect(toastText()).toContain("1 message marked read.");
+    expect(toastText()).toContain("1 · Read");
     expect(undoPress()?.textContent).toContain("Undo");
     expect(label(col())).toBe("Mark unread");
     expect(unseenPanel("a1"), "a1's panel is read").toBe(false);
@@ -155,7 +155,7 @@ describe("the reader's read slot covers the conversation on screen", () => {
     await click(readSlot(col()), "Mark read");
     await settle();
     expect(deliberate()).toEqual([{ ids: ["a1"], unread: false, openRead: true }]);
-    expect(toastText(), "no success sentence").not.toContain("marked read");
+    expect(toastText(), "no success sentence").not.toMatch(/\d+ · Read/);
     expect(toastText().trim().length, "a refusal sentence shows").toBeGreaterThan(0);
     expect(unseenPanel("a1"), "the overlay rolled back").toBe(true);
     expect(label(col())).toBe("Mark read");
@@ -169,7 +169,7 @@ describe("the reader's read slot covers the conversation on screen", () => {
     await click(readSlot(col()), "Mark read");
     await settle();
     expect(deliberate().map((p) => [p.ids.length, p.unread])).toEqual([[200, false], [1, false]]);
-    expect(toastText()).toContain("Marked 200 of 201 as read.");
+    expect(toastText()).toContain("Marked 200 of 201 as read");
     await click(undoPress(), "Undo");
     const undo = deliberate().slice(2);
     expect(undo.map((p) => [p.ids.length, p.unread]), "the landed chunk's ids back, nothing for the refused one").toEqual([[200, true]]);
@@ -196,8 +196,8 @@ describe("the reader's read slot covers the conversation on screen", () => {
     await openAndRead("x");
     await click(readSlot(col()), "Mark read");
     expect(deliberate().map((p) => [p.ids.length, p.unread])).toEqual([[200, false], [1, false]]);
-    expect(toastText()).toContain("201" + " messages marked read.");
-    expect(toastText().match(/marked read/g)?.length, "one sentence").toBe(1);
+    expect(toastText()).toContain("201 · Read");
+    expect(toastText().match(/201 · Read/g)?.length, "one sentence").toBe(1);
     await click(undoPress(), "Undo");
     expect(deliberate().slice(2).map((p) => [p.ids.length, p.unread])).toEqual([[200, true], [1, true]]);
     expect(patches.every((p) => p.ids.length <= 200), "nothing the route refuses").toBe(true);

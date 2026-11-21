@@ -173,7 +173,6 @@ function world(): Fixtures {
     ohbox: [...base.ohbox, ...gen(NO, "ohbox", 7)],
     reads,
     readsWaterline: { ...base.readsWaterline, newestSeenId: reads[Math.min(10, reads.length - 1)]!.id },
-    readsAiChip: { ...base.readsAiChip, afterId: reads[0]!.id },
     receipts,
     receiptsGroups: [],
   };

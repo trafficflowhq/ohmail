@@ -5,6 +5,7 @@ import type { EngineMessage } from "@ohmail/wire";
 import type { MessageClip, MessageHeadProps } from "@ohmail/ui/mail";
 import type { CalendarEntry, FrameNotice, FrameOvers, FramePlaces, FrameStages, PaneProps } from "../frame/contract.js";
 import type { HeldParts } from "../screener/ports.js";
+import type { PanelRoom } from "../reader/actions/panel-verbs.js";
 import type { ContactScreeningProps } from "../reader/contact/Contact.js";
 import type { None } from "./contract.js";
 
@@ -54,6 +55,7 @@ export interface ReaderEntry {
     message: EngineMessage;
     hideBodyNotice?: boolean;
     selection?: MessageHeadProps["selection"];
+    markUnread?: (id: string) => void;
   }>;
   /** The cached markup of a folded card, with remote pictures and reader actions unavailable. */
   readonly PreviewBody?: ComponentType<{ message: EngineMessage; children: ReactNode }>;
@@ -64,6 +66,7 @@ export interface ReaderEntry {
     message: EngineMessage;
     opened: boolean;
     clip?: MessageClip;
+    markUnread?: (id: string) => void;
     conversation?: ConversationShown;
     scroller?: HTMLElement | null;
     onEnter?: () => void;
@@ -77,9 +80,12 @@ export interface ReaderEntry {
     readonly deleteKeyId?: string;
     readonly canDeleteKey?: (id: string) => boolean;
     readonly canAnswerKey?: (id: string) => boolean;
+    readonly watchAnswerKey?: (update: () => void) => () => void;
     readonly keysHere?: boolean;
     readonly focus?: boolean;
     readonly showPanel?: boolean;
+    readonly room?: PanelRoom;
+    readonly canAnswerFromPanel?: boolean;
     readonly markUnread?: (id: string) => void;
   }>;
   /** The writing surface under the selected letter where a place draws its own cards. */

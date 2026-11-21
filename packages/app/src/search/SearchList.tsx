@@ -6,7 +6,7 @@
  *
  * Where the host's server takes a person, unread and the days, what is typed as an operator becomes its filter once a
  * space finishes it (`from:` and `to:` a person, `in:` a place the answer counted, `has:` files, `is:unread`) and
- * leaves the field; one met inside the words stays words. Elsewhere it is searched as words, and that is said.
+ * leaves the field; one met inside the words stays words. Elsewhere it is searched as words.
  */
 import { useMemo, useRef, type UIEvent } from "react";
 import type { AddressBookEntry } from "@ohmail/client-engine";
@@ -35,6 +35,7 @@ import { SearchFilters } from "./SearchFilters.js";
 import { SearchPersonRow, SearchRefine } from "./SearchNarrow.js";
 import { SearchPeople } from "./SearchPeople.js";
 import { SearchResults } from "./SearchResults.js";
+import { SearchEvents } from "./SearchEvents.js";
 import { SearchVerdictLine } from "./SearchVerdictLine.js";
 import { saidOf } from "./verdict-words.js";
 import "./search.css";
@@ -181,7 +182,7 @@ export function SearchList({ route, plan }: PaneProps) {
         <ListLine>{t("mailboxTotal", { count: model.mailboxTotal })}</ListLine>
       ) : null}
     </div>
-  ) : model.length === 0 || model.egg ? (
+  ) : model.length === 0 ? (
     <>
       {meant}
       <SearchEmpty model={model} beside={beside} lines={said.lines} />
@@ -189,7 +190,6 @@ export function SearchList({ route, plan }: PaneProps) {
   ) : (
     <>
       {meant}
-      <SearchVerdictLine model={model} lines={said.lines} />
       <SearchResults
         model={model}
         beside={beside}
@@ -198,6 +198,8 @@ export function SearchList({ route, plan }: PaneProps) {
         selection={beside.selection ? selection : undefined}
         contact={beside.selection ? contact : undefined}
       />
+      <SearchEvents beside={beside} text={model.text} />
+      <SearchVerdictLine model={model} lines={said.lines} />
     </>
   );
   return (
@@ -213,8 +215,6 @@ export function SearchList({ route, plan }: PaneProps) {
               beside={beside}
               more={people ? <SearchRefine model={model} today={new Date()} /> : null}
             />
-            {/* Typed scopes are searched as words where they are no filter: said, rather than an answer of nothing. */}
-            {model.operatorsTyped ? <ListLine fine>{t("noOperators")}</ListLine> : null}
           </div>
         }
       />

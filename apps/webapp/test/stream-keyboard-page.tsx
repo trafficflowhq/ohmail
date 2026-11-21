@@ -7,12 +7,14 @@ import receiptsEn from "../../../packages/app/messages/receipts.en.json";
 import writeEn from "../../../packages/app/messages/write.en.json";
 import { bodyDouble, fakeMail, letter, WORDS } from "../../../packages/app/test/reader/support/mail.js";
 import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
-import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
+import { fakeAddress, fakeAppearance, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
 
 const query = new URLSearchParams(location.search);
+const face = query.get("face") === "ohmarchy" ? "ohmarchy" : "paper";
+document.documentElement.dataset.face = face;
 const receipts = query.get("place") === "receipts";
 const folder = receipts ? "ohmail/Receipts" : "ohmail/News";
-const { engine } = fakeMail([
+const { engine, mutations } = fakeMail([
   letter("short", { folder, subject: "Short letter", body: "One line of mail.", threadId: "thread" }),
   letter("long", { folder, subject: "Long letter", body: "Another line of mail.\n".repeat(30), date: "2026-11-09T09:00:00.000Z" }),
   ...Array.from({ length: query.has("older") ? 22 : 0 }, (_, i) => letter(`older-${i}`, {
@@ -22,6 +24,9 @@ const { engine } = fakeMail([
     date: new Date(Date.UTC(2026, 9, 25 - i, 9)).toISOString(),
   })),
 ]);
+Object.defineProperty(window, "streamFiled", {
+  get: () => mutations.flatMap((m) => m.kind === "triage_set" && m.state === "reply_later" ? [m.messageId] : []),
+});
 const emptyFiles: ReturnType<typeof engine.attachmentsOf> = { state: "ready", items: [] };
 engine.attachmentsOf = () => emptyFiles;
 engine.loadAttachments = async () => emptyFiles;
@@ -33,6 +38,7 @@ const { host } = fakeHost({
   engine, service: "self", scope: "acct-1",
   address: fakeAddress(receipts ? "#/receipts" : "#/reads"),
   window: viewport,
+  appearance: fakeAppearance({ face, scheme: "light" }),
   above: MailGround,
   places: mailPlaces(),
   reader: mailReader({ body: bodyDouble().body, look: "none" }),

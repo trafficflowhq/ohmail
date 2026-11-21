@@ -1,3 +1,5 @@
-### Collapsing a stream card closes its actions
+### News and Receipts keep their actions in view
 
-In News and Receipts, collapsing the card you selected leaves it selected and hides the action bar. Open the card again to bring its actions back.
+The reading column keeps its action bar visible as you browse and collapse cards. Each card has its own menu beside the timestamp, and Back to top appears once you have scrolled down.
+
+Receipts links to older mail from the list and shows the same waterline timestamp in both columns. News and Receipts use shorter list and screening copy.

@@ -123,16 +123,16 @@ async function mount(
 
 /** Consent, then Continue to How far back. */
 async function toWindow(s: Awaited<ReturnType<typeof mount>>) {
-  expect(s.heading()).toBe(t.consentTitle);
+  expect(s.heading()).toBe(t.mapTitle);
   await s.press(t.continue);
-  expect(s.heading()).toBe(t.windowTitle);
+  expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
 }
 
 /** The waiting panel stands where the consent statement would: no statement, no way forward. */
 function waiting(s: Awaited<ReturnType<typeof mount>>, line: string = t.windowCheckingHolder) {
   expect(s.heading(), "the consent step showed before the look answered").toBe(t.resumeCheckingTitle);
   expect(s.text()).toContain(line);
-  expect(s.text(), "the consent statement was on screen").not.toContain(t.consentBody);
+  expect(s.text(), "the consent statement was on screen").not.toContain("ohmail re-arranges your existing inbox. The Ohbox is your Inbox itself, so that mail stays where it is; the rest moves into folders ohmail creates inside an ohmail folder in your mailbox: News, Receipts, Screener, Screened and Quarantine. They are ordinary IMAP folders — every other mail client sees them too, and you can leave any time with your mail exactly where it is.");
   expect(s.button(t.continue)?.disabled, "Continue was offered before anybody looked").toBe(true);
   expect(s.agree(), "Agree was offered before anybody looked").toBeUndefined();
 }
@@ -172,11 +172,11 @@ describe("setup waits for the first look before it asks for consent", () => {
     const s = await mount(UNLOOKED);
     waiting(s);
     await s.read(LIVE);
-    expect(s.heading(), "the claim question did not come").toBe(t.elsewhereTitle);
+    expect(s.heading(), "the claim question did not come").toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.pick("here");
     await s.press(t.continue);
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.press(t.agree);
     expect(s.organizedWith.map((b) => b.intent)).toEqual(["takeover"]);
   });
@@ -196,7 +196,7 @@ describe("setup waits for the first look before it asks for consent", () => {
     const s = await mount(UNLOOKED);
     waiting(s);
     await s.read(STOPPED);
-    expect(s.heading()).toBe(t.elsewhereTitleStopped);
+    expect(s.heading()).toBe(t.elsewhereSayStopped.replace("{name}", "W-live").replace(/\.$/, ""));
     await s.press(t.continue);
     await s.press(t.continue);
     await s.press(t.agree);
@@ -215,7 +215,7 @@ describe("setup waits for the first look before it asks for consent", () => {
     waiting(s);
     await s.read(LIVE);
     expect(s.organizedWith.map((b) => b.intent)).toEqual(["join"]);
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   });
 
   it("the door could not look: it says so, nothing is stored and the window stays", async () => {
@@ -223,7 +223,7 @@ describe("setup waits for the first look before it asks for consent", () => {
     await toWindow(s);
     await s.press(t.agree);
     expect(s.text()).toContain(t.holderCheckSlow);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text(), "the run went on as if the press had been stored").not.toContain(t.aiTitle);
   });
 
@@ -240,7 +240,7 @@ describe("setup waits for the first look before it asks for consent", () => {
     waiting(s, t.holderCheckSlow);
     expect(s.organizedWith).toEqual([]);
     await s.read(NOBODY);
-    expect(s.heading(), "the answer after the bound did not open consent").toBe(t.consentTitle);
+    expect(s.heading(), "the answer after the bound did not open consent").toBe(t.mapTitle);
   });
 });
 

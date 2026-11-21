@@ -1,7 +1,14 @@
-import { Fragment, type KeyboardEvent, type ReactNode } from "react";
+import { type KeyboardEvent, type ReactNode } from "react";
 import { Button, Dialog, Field, type IconName } from "@ohmail/ui/base";
-import { SettingLine, SettingNote, SettingsSheet, type SettingsSheetProps } from "@ohmail/ui/mail";
-import { useText, type Text } from "../../text/index.js";
+import {
+  ActionPanel,
+  SettingLine,
+  SettingNote,
+  SettingsSheet,
+  type SettingsSheetProps,
+} from "@ohmail/ui/mail";
+import type { PaneSheet } from "../../settings/contract.js";
+import { useLocale, useText, type Text } from "../../text/index.js";
 import { ACCOUNT_REFUSALS, type FactorSlot, type QrSlot } from "../contract.js";
 import type { DeviceKind, DeviceSession, DevicesModel } from "./model.js";
 import "./placement.css";
@@ -12,6 +19,7 @@ export interface DevicesPaneProps {
   readonly factor: FactorSlot;
   /** The picture of the pairing link to scan, filled by the shell. */
   readonly qr: QrSlot;
+  readonly sheet?: PaneSheet;
 }
 
 type Wants = NonNullable<SettingsSheetProps["wants"]>;
@@ -27,6 +35,8 @@ const KIND: Readonly<Record<DeviceKind, { readonly word: string; readonly sign: 
   other: { word: "kindOther", sign: "key" },
 };
 
+export const deviceKindText = (kind: DeviceKind, t: Text): string => t(KIND[kind].word);
+
 /** A device's name: its owner's word; ohmail's own, said in the reader's language; or its kind where nobody named it. */
 function nameOf(device: DeviceSession, t: Text): string {
   const kind = t(KIND[device.kind].word);
@@ -39,14 +49,45 @@ function nameOf(device: DeviceSession, t: Text): string {
  * in, each with its way back. It holds no state and reaches nothing: it draws its model, and its verbs are the
  * model's. A removal is asked about before it is sent.
  */
-export function DevicesPane({ model, factor, qr }: DevicesPaneProps) {
-  return (
+export function DevicesPane({ model, factor, qr, sheet }: DevicesPaneProps) {
+  const t = useText("devices");
+  const locale = useLocale();
+  const body = (
     <>
       {model.made === null ? <NewDevice model={model} /> : <MadeLink model={model} qr={qr} />}
       <CodesNotUsed model={model} />
       <SignedIn model={model} />
       <Question model={model} />
       {model.ask ? factor(model.ask) : null}
+    </>
+  );
+  const foot = (
+    <ActionPanel
+      label={t("title")}
+      items={[
+        model.made === null
+          ? {
+              id: "add",
+              icon: "plus",
+              label: model.working?.kind === "add" ? t("working") : t("addAction"),
+              kind: "ink",
+              disabled: model.working !== null,
+              onPress: model.add,
+            }
+          : { id: "done", icon: "check", label: t("mintedDone"), kind: "ink", onPress: model.done },
+      ]}
+    />
+  );
+  const count =
+    model.list.at === "read"
+      ? new Intl.NumberFormat(locale).format(model.list.devices.length + (model.list.webGroup?.count ?? 0))
+      : undefined;
+  return sheet ? (
+    sheet(body, foot, count)
+  ) : (
+    <>
+      {body}
+      {foot}
     </>
   );
 }
@@ -58,6 +99,7 @@ export function DevicesPane({ model, factor, qr }: DevicesPaneProps) {
 function FirstSheet(p: {
   readonly model: DevicesModel;
   readonly title?: string;
+  readonly aside?: string;
   readonly children: ReactNode;
 }) {
   const t = useText("devices");
@@ -66,14 +108,14 @@ function FirstSheet(p: {
   const nothingRanSaid = t("stepUpCancelledNothingRan");
   let wants: Wants | undefined;
   if (problem === null) wants = nothingRan ? { word: own("cancelled"), line: nothingRanSaid } : undefined;
-  else if (problem.with === "copy") wants = { word: own("notCopied"), line: t("copyFailed") };
+  else if (problem.with === "copy") wants = { word: own("notCopied"), line: t("copyPairingFailed") };
   else {
     const word = own(problem.with === "read" ? "notRead" : "notDone");
     const line = problem.why.word === "said" ? problem.why.said : t(ACCOUNT_REFUSALS.devices.sign_in.key);
     wants = line === "" ? { word } : { word, line };
   }
   return (
-    <SettingsSheet title={p.title} hot={p.title !== undefined} wants={wants}>
+    <SettingsSheet title={p.title} aside={p.aside} hot={p.title !== undefined} wants={wants}>
       {problem !== null && nothingRan ? <SettingNote>{nothingRanSaid}</SettingNote> : null}
       {p.children}
       <Told told={p.model.told} />
@@ -101,14 +143,15 @@ function NewDevice({ model }: { readonly model: DevicesModel }) {
   };
   return (
     <FirstSheet model={model}>
-      <SettingNote>{t("intro")}</SettingNote>
       <div className="account-device-name" onKeyDown={onKey}>
-        <Field label={t("addFor")} value={model.name} onChange={model.type} maxLength={100} />
+        <Field
+          label={t("whoseDevice")}
+          placeholder={t("namePlaceholder")}
+          value={model.name}
+          onChange={model.type}
+          maxLength={100}
+        />
       </div>
-      <SettingNote>{t("addHint")}</SettingNote>
-      <Button kind="ink" size="s" disabled={off} onPress={model.add}>
-        {model.working?.kind === "add" ? t("working") : t("addAction")}
-      </Button>
     </FirstSheet>
   );
 }
@@ -121,23 +164,29 @@ function MadeLink({ model, qr }: { readonly model: DevicesModel; readonly qr: Qr
   const t = useText("devices");
   const { made } = model;
   if (made === null) return null;
+  const code = model.codes.find(({ id }) => id === made.id);
   return (
-    <FirstSheet model={model} title={made.name === "" ? t("codeFallback") : made.name}>
-      <SettingNote>
-        {made.name === "" ? t("mintedLead") : t("mintedLeadFor", { name: made.name })}
-      </SettingNote>
+    <FirstSheet
+      model={model}
+      title={made.name || t("newDevice")}
+      aside={code ? t("onceUntil", { time: code.until }) : undefined}
+    >
       {qr(made.link, t("qrAria"))}
-      <SettingNote>{t("typedEntry")}</SettingNote>
-      <div className="account-device-link">
-        <SettingNote>{made.link}</SettingNote>
-      </div>
+      <SettingLine label={t("scanWith")} value={t("scanApp")} />
       <Button kind="two" size="s" onPress={model.copy}>
         {t("copyLink")}
       </Button>
-      <Button kind="ink" size="s" onPress={model.done}>
-        {t("mintedDone")}
-      </Button>
-      <SettingNote>{t("mintedOnce")}</SettingNote>
+      {code ? (
+        <Button
+          kind="quiet"
+          size="s"
+          label={t("revokePairingLink")}
+          disabled={model.working !== null}
+          onPress={() => model.revokeCode(code.id)}
+        >
+          {t("revoke")}
+        </Button>
+      ) : null}
     </FirstSheet>
   );
 }
@@ -146,10 +195,11 @@ function MadeLink({ model, qr }: { readonly model: DevicesModel; readonly qr: Qr
 function CodesNotUsed({ model }: { readonly model: DevicesModel }) {
   const t = useText("devices");
   const { codes, working } = model;
-  if (codes.length === 0) return null;
+  const unused = codes.filter((code) => code.id !== model.made?.id);
+  if (unused.length === 0) return null;
   return (
-    <SettingsSheet title={t("codesTitle")} aside={codes.length}>
-      {codes.map((code) => (
+    <SettingsSheet title={t("codesTitle")} aside={unused.length}>
+      {unused.map((code) => (
         <SettingLine
           key={code.id}
           label={code.name ?? t("codeFallback")}
@@ -205,25 +255,20 @@ function SignedIn({ model }: { readonly model: DevicesModel }) {
       {devices.map((device) => {
         const kind = KIND[device.kind];
         return (
-          <Fragment key={device.id}>
-            <SettingLine
-              label={nameOf(device, t)}
-              icon={kind.sign}
-              tag={device.current ? own("thisOne") : undefined}
-            >
-              {/* This device's way out is signing out, which Account has: it gets no second one here. */}
-              {device.current ? null : (
-                <Button kind="two" size="s" disabled={off} onPress={() => model.askRemove(device.id)}>
-                  {working?.kind === "remove" && working.id === device.id ? t("working") : t("remove")}
-                </Button>
-              )}
-            </SettingLine>
+          <SettingLine
+            key={device.id}
+            label={nameOf(device, t)}
+            value={t(kind.word)}
+            icon={kind.sign}
+            tag={device.current ? own("thisOne") : undefined}
+          >
+            {/* This device's way out is signing out, which Account has: it gets no second one here. */}
             {device.current ? null : (
-              <SettingNote>
-                {t("deviceMeta", { kind: t(kind.word), created: device.added, seen: device.seen })}
-              </SettingNote>
+              <Button kind="two" size="s" disabled={off} onPress={() => model.askRemove(device.id)}>
+                {working?.kind === "remove" && working.id === device.id ? t("working") : t("remove")}
+              </Button>
             )}
-          </Fragment>
+          </SettingLine>
         );
       })}
       {webGroup === null ? null : (
@@ -233,7 +278,6 @@ function SignedIn({ model }: { readonly model: DevicesModel }) {
               {working?.kind === "signOutWeb" ? t("working") : t("webGroupAction")}
             </Button>
           </SettingLine>
-          <SettingNote>{t("webGroupMeta", { seen: webGroup.seen })}</SettingNote>
         </>
       )}
     </SettingsSheet>
@@ -248,17 +292,16 @@ function Question({ model }: { readonly model: DevicesModel }) {
   const device =
     question?.kind === "remove" ? listed?.devices.find((each) => each.id === question.id) : undefined;
   const group = question?.kind === "signOutWeb" ? listed?.webGroup : undefined;
-  let asked: { readonly title: string; readonly line: string; readonly confirm: string } | null = null;
+  let asked: { readonly title: string; readonly line?: string; readonly confirm: string } | null = null;
   if (device) {
     asked = {
       title: t("removeAsk", { name: nameOf(device, t) }),
-      line: t("removeWhat"),
       confirm: t("remove"),
     };
   } else if (group) {
     asked = {
       title: t("webGroupAsk", { count: group.count }),
-      line: t("webGroupWhat"),
+      line: t("webGroupScope"),
       confirm: t("webGroupAction"),
     };
   }

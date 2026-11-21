@@ -46,6 +46,7 @@ function rowFacts(sender: ScreenerSenderDTO, t: Text, model: ReturnType<typeof u
   const flag = impersonation
     ? { label: t("place.lookalike"), word: t("senderCheck.chip", { brand: checked.brand }) }
     : undefined;
+  if (advice?.dest === "screener" && !advice.noAnswer) labels.push(t("aiHoldChip"));
   let explanation: string | undefined;
   if (impersonation) {
     explanation = t(checked.domainShared ? "senderCheck.impersonationShared" : "senderCheck.impersonation", {
@@ -55,7 +56,6 @@ function rowFacts(sender: ScreenerSenderDTO, t: Text, model: ReturnType<typeof u
   } else if (advice?.reasonCode) {
     const values = { brand: advice.reasonBrand ?? "", count: advice.reasonCount ?? 0 };
     labels.push(t(`aiReasonChip.${advice.reasonCode}`, values));
-    explanation = t(`aiReason.${advice.reasonCode}`, values);
   }
   const spoken = [...labels, ...(explanation === undefined ? [] : [explanation])].join(" · ");
   return { labels, flag, spoken: spoken || undefined };
@@ -172,6 +172,13 @@ function SenderRowsWindow({
   const waitingRows = rows.slice(win.start, Math.min(win.end, rows.length));
   const pendingFrom = Math.max(0, win.start - pendingStart);
   const pendingRows = decided.slice(pendingFrom, Math.max(0, win.end - pendingStart));
+  const holder = decided[0]?.decision.holder;
+  const pendingHeading = t("pendingHeading", {
+    name:
+      holder && decided.every(({ decision }) => decision.holder === holder)
+        ? holder
+        : t("pendingHolderUnknown"),
+  });
   const showHeading = decided.length > 0 && win.start <= rows.length && rows.length < win.end;
 
   /* A cursor move may address an unmounted option. A scroll by hand leaves the cursor where it was. */
@@ -210,13 +217,11 @@ function SenderRowsWindow({
       ) : null}
       {showHeading ? (
         <div data-index={rows.length}>
-          <GroupHeading count={t("pendingCount", { count: decided.length })}>
-            {t("pendingHeading")}
-          </GroupHeading>
+          <GroupHeading count={t("pendingCount", { count: decided.length })}>{pendingHeading}</GroupHeading>
         </div>
       ) : null}
       {pendingRows.length > 0 ? (
-        <KitRows group label={t("pendingHeading")}>
+        <KitRows group label={pendingHeading}>
           {pendingRows.map(({ sender }, i) => {
             const index = pendingStart + pendingFrom + i;
             return (
@@ -246,6 +251,23 @@ function useQueueMotion(view: ScreenerView, scroller?: RefObject<HTMLDivElement 
     JSON.stringify([rowIds, waiting ? view.decided.map(({ sender }) => sender.id) : []]),
     waiting ? { scope: view.filter.active, ids: rowIds } : undefined,
   );
+}
+
+function shelfFacts(
+  row: ScreenerView["rows"][number],
+  segment: ScreenerView["segment"],
+  model: ReturnType<typeof useScreener>,
+  t: Text,
+) {
+  const sender = viewSender(row);
+  const labels = model.refused(viewRowId(row)) ? [t("rowNotSaved")] : [];
+  if (segment === "screened") labels.push(t("place.heldLabel", { count: sender.held.length }));
+  else if ("pinned" in row && row.pinned) labels.push(t("markedByYou"));
+  else {
+    const newest = sender.held.at(-1);
+    if (sender.detection || (newest && model.wasAutoFiledSpam?.(newest.id))) labels.push(t("autoDetected"));
+  }
+  return { labels };
 }
 
 export function Rows({
@@ -279,7 +301,7 @@ export function Rows({
   const open = view.open === null || view.segment !== "waiting" ? null : viewSender(view.open);
   /*
    * The place at the row's end: the suggestion accepted in one press, another chosen from the row's menu. Where the
-   * press would also send an unsubscribe request its word says so (a touch has no title), and it asks first.
+   * press would also send an unsubscribe request its accessible name says so, and it asks first.
    */
   const placeOf = (sender: ScreenerSenderDTO): RowPlace | undefined => {
     if (!deciding) return undefined;
@@ -295,10 +317,9 @@ export function Rows({
     if (dest === null) return { word: t("place.chooseWord"), choose };
     const demoting = dest === "screened" || dest === "spam";
     const unsub = demoting && model.unsubClaimOf(sender, view.scopeOf(sender)) !== "none";
-    const word = unsub
-      ? t(dest === "spam" ? "place.unsub.spam" : "place.unsub.screened")
-      : t(PILE_VERB_KEY[dest]);
-    return { word, accept: { label: word, onPress: () => view.acceptRow(sender.id) }, choose };
+    const word = t(PILE_VERB_KEY[dest]);
+    const label = unsub ? t(dest === "spam" ? "place.unsub.spam" : "place.unsub.screened") : word;
+    return { word, accept: { label, onPress: () => view.acceptRow(sender.id) }, choose };
   };
   const renderRow = (row: ScreenerView["rows"][number], slot?: SenderSlot) => {
     const sender = viewSender(row);
@@ -311,9 +332,7 @@ export function Rows({
         contact={contact}
         open={view.openId === id}
         stop={view.openId === null ? id === viewRowId(view.rows[0]!) : view.openId === id}
-        {...(waiting
-          ? rowFacts(sender, t, model)
-          : { labels: model.refused(id) ? [t("rowNotSaved")] : undefined })}
+        {...(waiting ? rowFacts(sender, t, model) : shelfFacts(row, view.segment, model, t))}
         decided={!waiting}
         place={waiting ? placeOf(sender) : undefined}
         leaving={waiting ? model.leavingOf?.(id) : undefined}
@@ -328,7 +347,7 @@ export function Rows({
     <>
       {failed.length > 0 ? (
         <>
-          <GroupHeading count={String(failed.length)}>{t("failedAria")}</GroupHeading>
+          <GroupHeading count={String(failed.length)}>{t("place.failedHeading")}</GroupHeading>
           <KitRows label={t("failedAria")}>
             {failed.map((f) => {
               const who = f.from.name?.trim() || displayAddress(f.from.address);

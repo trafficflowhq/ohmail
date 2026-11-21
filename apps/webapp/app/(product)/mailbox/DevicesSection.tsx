@@ -88,7 +88,7 @@ export function DevicesSection({ report }: { report: ToastFn }) {
   const format = useFormatter();
   /**
    * A label whose key may not be in `messages/*.json` yet — the same shim, with the same one
-   * exit, as `MessagePane.copy` (named `line` here — this pane already has a clipboard verb
+   * exit, as the shared Reader's `copy` shim (named `line` here — this pane already has a clipboard verb
    * called `copy`): `t.has` hands the line to the locale files the moment the key
    * lands there, so this can never become a second source of copy. It exists because the
    * messages files are a shared, frequently-touched surface and this pane's states should not

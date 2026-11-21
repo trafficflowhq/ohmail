@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { TagDTO } from "@ohmail/wire";
 import { MOVE_TARGETS, type BulkAction } from "@ohmail/app-logic/press/actions";
 import type { ListVerbs } from "@ohmail/app-logic/place-list";
-import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
+import { EndDot, Menu, MenuItem } from "@ohmail/ui/base";
 import type { PanelVerb } from "@ohmail/ui/mail";
 import { useFrame } from "../frame/commands.js";
 import { TagPicker } from "../tags/TagPicker.js";
@@ -63,7 +63,7 @@ function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProp
   const tags = read?.list<TagDTO>("tag") ?? [];
   const assigned = tags
     .filter(({ id }) =>
-      ids.every((messageId) => read?.get<{ labels: string[] }>("message", messageId)?.labels.includes(id)),
+      ids.every((messageId) => read?.get<{ labels: string[] }>("message", messageId)?.labels?.includes(id)),
     )
     .map(({ id }) => id);
   return (
@@ -98,13 +98,12 @@ function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProp
         up
         kind="ask"
         label={t("bulkDeleteAsk", { count: ids.length })}
-        title={t("bulkDeleteAsk", { count: ids.length })}
       >
-        <MenuNote>{t("deleteNote")}</MenuNote>
+        <h4 className="oh-text oh-menu-title">
+          <EndDot kind="hot">{t("bulkDeleteAsk", { count: ids.length }).slice(0, -1)}</EndDot>
+        </h4>
+        <MenuItem onPress={() => run("delete")}>{t("deleteConfirm")}</MenuItem>
         <MenuItem onPress={close}>{t("moveCancel")}</MenuItem>
-        <MenuItem dot="hot" onPress={() => run("delete")}>
-          {t("actionDelete")}
-        </MenuItem>
       </Menu>
     </PickedFoot>
   );

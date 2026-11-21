@@ -130,16 +130,6 @@ export interface WaterlineFixture {
   meta: string;
 }
 
-/** The pending classification chip under the first Reads row. */
-export interface ReadsAiChipFixture {
-  afterId: string;
-  label: string;
-  confidence: number;
-  reason: string;
-  approvedLabel: string;
-  correctedLabel: string;
-}
-
 export interface ReceiptsGroupFixture {
   label: string;
   items: string[];
@@ -241,8 +231,6 @@ export interface SearchHitFixture {
   who: string;
   where: string;
   subject: string;
-  /** Fuzzy-match annotation ('fuzzy match — "invoice"'). */
-  fuzzyNote?: string;
   /** Substring of `subject` to highlight as an exact match. */
   highlight?: string;
 }
@@ -321,7 +309,6 @@ export interface Fixtures {
   ohbox: MessageFixture[];
   reads: MessageFixture[];
   readsWaterline: WaterlineFixture;
-  readsAiChip: ReadsAiChipFixture;
   receipts: MessageFixture[];
   receiptsGroups: ReceiptsGroupFixture[];
   screener: {

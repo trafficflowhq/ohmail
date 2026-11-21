@@ -465,7 +465,7 @@ export function SenderMenu({
     const count = countedOf(subject);
     const current = subject.current === null ? "" : placeName(subject.current);
     const detail = {
-      label: t("cardSeeAll"), ariaLabel: t("auditOpen", { count: subject.messages.length }), onPress: () => onOpenDetail(scope),
+      label: t("cardSeeAll"), ariaLabel: t("auditOpenAria", { count: subject.messages.length }), onPress: () => onOpenDetail(scope),
     };
     const organizerLine = organizerNote ? <p className="sm-org">{t(organizerNote.key, organizerNote.values)}</p> : null;
     const check = own ? failedLine : checkLine;
@@ -550,7 +550,7 @@ export function SenderMenu({
             </div>
           ))}
         </div> : null}
-        {own || count === 0 ? <Button kind="quiet" size="s" onPress={detail.onPress}>
+        {own || count === 0 ? <Button kind="quiet" size="s" label={detail.ariaLabel} onPress={detail.onPress}>
           {t("auditOpen", { count: subject.messages.length })}
         </Button> : null}
         {!own && subject.waiting && listClaims ? <p className="sm-foot">
@@ -576,7 +576,9 @@ export function SenderMenu({
           <p className="sm-check" data-reason="failed"><Icon name="shield" size={12} /><span>{failedLine.text}</span></p>
         ) : <div className="sm-now">{t("toastOwnAddress")}</div>}
         <div className="sm-links">
-          <button type="button" className="sm-detail" onClick={() => onOpenDetail("sender")}>
+          <button type="button" className="sm-detail"
+            aria-label={t("auditOpenAria", { count: sender.scopes.sender.messages.length })}
+            onClick={() => onOpenDetail("sender")}>
             {t("auditOpen", { count: sender.scopes.sender.messages.length })}
           </button>
           <a className="sm-detail" href={addressHref(sender.address)} onClick={onClose}>{t("addressOpen")}</a>
@@ -834,7 +836,9 @@ export function SenderMenu({
       )}
 
       <div className="sm-links">
-      <button type="button" className="sm-detail" onClick={() => onOpenDetail(scope)}>
+      <button type="button" className="sm-detail"
+        aria-label={t("auditOpenAria", { count: subject.messages.length })}
+        onClick={() => onOpenDetail(scope)}>
         {t("auditOpen", { count: subject.messages.length })}
       </button>
 

@@ -3,6 +3,7 @@
  * exactly — the counts the UI renders are assertions about this data.
  */
 import { describe, expect, it } from "vitest";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import {
   account,
   composeDraft,
@@ -17,7 +18,6 @@ import {
   parseGuardList,
   PUBLIC_GUARD,
   reads,
-  readsAiChip,
   readsWaterline,
   receipts,
   receiptsGroups,
@@ -436,9 +436,12 @@ describe("reads", () => {
     }
   });
 
-  it("carries the pending AI classification chip", () => {
-    expect(readsAiChip.confidence).toBe(0.87);
-    expect(readsAiChip.afterId).toBe("f1");
+  it("publishes the News waterline without a classification suggestion", async () => {
+    const adapter = new FixturesAdapter();
+    const { changes } = await adapter.sync({ since: "0", limit: 2000 });
+    const ids = changes.creates.map(({ id }) => id);
+    expect(ids).toContain("reads_waterline");
+    expect(ids).not.toContain("reads_ai_chip");
   });
 
   it("keeps the Wohnfalz issue's inline product art around the [[img]] split", () => {
@@ -607,7 +610,7 @@ describe("search demo", () => {
     expect(search.resultCount).toBe(2);
     expect(search.hits).toHaveLength(2);
     expect(search.tookMs).toBe(11);
-    expect(search.hits[0].fuzzyNote).toContain("invoice");
+    expect(search.hits[0]).not.toHaveProperty("fuzzyNote");
     expect(search.hits[1].subject).toBe("Invoice #078 — Pottery Workshop — CHF 240.00");
     expect(search.facets.map((f) => f.title)).toEqual(["From", "Folder", "Refine", "Date"]);
   });

@@ -99,7 +99,7 @@ describe("a refused Not junk", () => {
     await act(async () => { leave[0]!.click(); });
     await tick(200);
     expect(calls).toEqual([`DELETE ${junkPath}/rescue/${RESCUE}`]);
-    expect(report()).toBe(messages.screener.junkRescueDismissed);
+    expect(report()).toBe(messages.screener.junkRescueDismissed.replace(/\.$/u, ""));
     expect(page().queryAllByText(copy.junkRescueRefused)).toEqual([]);
     expect(page().queryAllByRole("button", { name: copy.junkRescueDismiss })).toHaveLength(0);
     // The message is still in Junk: the row stays, saying who filed it.
@@ -112,7 +112,7 @@ describe("a refused Not junk", () => {
     await act(async () => { page().getByRole("button", { name: copy.junkRescueDismiss }).click(); });
     await tick(200);
     expect(calls).toEqual([`DELETE ${junkPath}/rescue/${RESCUE}`]);
-    expect(report()).toBe(messages.screener.junkRescueDismissFailed);
+    expect(report()).toBe(messages.screener.junkRescueDismissFailed.replace(/\.$/u, ""));
     expect(page().queryAllByText(copy.junkRescueRefused)).not.toHaveLength(0);
   });
 
@@ -122,7 +122,7 @@ describe("a refused Not junk", () => {
     await act(async () => { page().getByRole("button", { name: copy.junkRescueDismiss }).click(); });
     await tick(200);
     expect(calls).toEqual([`DELETE ${junkPath}/rescue/${RESCUE}`]);
-    expect(report()).toBe(messages.screener.junkRescueDismissed);
+    expect(report()).toBe(messages.screener.junkRescueDismissed.replace(/\.$/u, ""));
     expect(page().queryAllByText(copy.junkRescueRefused)).toEqual([]);
   });
 

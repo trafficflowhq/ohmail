@@ -57,10 +57,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "packages/ui/src/composites/FocusReplyOverlay.tsx": [
     { text: "esc", why: "keycap — the run's exit hint names the key" },
   ],
-  "apps/webapp/app/shell/engine.tsx": [
-    { text: "oh", why: "wordmark — the boot screen's mark" },
-    { text: "mail", why: "wordmark — its second half" },
-  ],
   "apps/webapp/app/components/sender-menu/SenderMenu.tsx": [
     { text: "esc", why: "keycap — the resolve step's and the confirm's step-back hint" },
   ],

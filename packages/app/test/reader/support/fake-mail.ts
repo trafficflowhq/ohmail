@@ -161,6 +161,7 @@ export function fakeMail(
     abandoned: () => NOTHING_ABANDONED,
     screenerWaitingAvailable: () => false,
     refreshScreenerWaiting: async () => undefined,
+    fileHeldDecisions: () => undefined,
     refreshHeldReleases: async () => undefined,
     refreshUnscreened: async () => undefined,
     autoFiled: async () => null,

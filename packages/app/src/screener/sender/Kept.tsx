@@ -78,18 +78,3 @@ export function keptVerbs(
     },
   ];
 }
-
-/** What a kept-out section says of the open sender, said as 1.0.11 says it. */
-export function KeptLines({ view }: { view: ScreenerView }) {
-  const t = useText("screener");
-  const open = view.open;
-  if (open === null || view.segment === "waiting") return null;
-  const sender = "pinned" in open ? open.sender : open;
-  return view.segment === "screened" ? (
-    <p className="oh-text">
-      {t("screenedNote", { date: sender.screenedOn ?? sender.time, count: sender.held.length })}
-    </p>
-  ) : (
-    <p className="oh-text">{t("spamNote")}</p>
-  );
-}

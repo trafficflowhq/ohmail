@@ -98,7 +98,7 @@ async function studioOption(shell: HTMLElement): Promise<HTMLElement> {
     await click(within(bar).getByRole("button", { name: "Tag" }));
   }
   const menu = within(document.body).getByRole("menu", { name: "Tag" });
-  return within(menu).getByRole("menuitemradio", { name: "Studio" });
+  return within(menu).getByRole("menuitemcheckbox", { name: "Studio" });
 }
 
 async function toggleStudio(shell: HTMLElement): Promise<void> {
@@ -130,7 +130,7 @@ describe("the seam: nine families, each refused, each told", () => {
     expect(wire.requests).toEqual([request(true), request(true)]);
     expect(report()).not.toContain("Tagged");
     await wire.answer();
-    expect(report()).toContain("Tagged “Studio”.");
+    expect(report()).toContain("Studio");
     expect((await studioOption(shell)).getAttribute("aria-checked")).toBe("true");
     await goTo("ohbox");
     await click(within(document.body).getByRole("button", { name: "Undo" }));
@@ -170,7 +170,7 @@ describe("the seam: nine families, each refused, each told", () => {
     expect(report()).not.toContain("Tagged");
     await wire.answer();
     await act(async () => { expect((await retry)?.status).toBe("confirmed"); });
-    expect(report()).toContain("Tagged “Studio”.");
+    expect(report()).toContain("Studio");
     await click(within(document.body).getByRole("button", { name: "Undo" }));
     await tick(25);
     expect(wire.requests).toEqual([

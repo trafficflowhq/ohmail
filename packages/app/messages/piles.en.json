@@ -51,8 +51,7 @@
       "empty": "Nothing to answer later"
     },
     "row": {
-      "done": "Done",
-      "resurfaces": "back {when}"
+      "done": "Done"
     },
     "stamp": {
       "yesterday": "yesterday {time}"

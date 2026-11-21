@@ -657,7 +657,8 @@ async function openHelp(status: EngineStatus): Promise<HTMLElement> {
   const menu = await pane.findByRole("navigation", { name: messages.settings.navAria });
   const help = within(menu).getByRole("button", { name: messages.settings.help });
   await act(async () => { help.click(); });
-  return pane.findByRole("region", { name: messages.settings.help });
+  const reading = await pane.findByRole("region", { name: messages.settings.help });
+  return reading.closest<HTMLElement>('[data-kind="reading"]')!;
 }
 
 afterEach(async () => {

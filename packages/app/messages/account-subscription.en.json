@@ -23,6 +23,11 @@
     "planFacts": "{mailboxes, plural, one {# mailbox} other {# mailboxes}} · {credits, number} credits · {storage}",
     "subscribe": "Subscribe",
     "subscribeTo": "Subscribe to {plan, select, solo {Solo} plus {Plus} pro {Pro} other {{plan}}}",
-    "fixPayment": "Fix payment"
+    "fixPayment": "Fix payment",
+    "trialEnds": "Trial ends",
+    "then": "Then",
+    "price": "Price",
+    "organizingUntil": "Organizing until {date}.",
+    "mailboxesConnected": "{used, number} of {count, number}"
   }
 }

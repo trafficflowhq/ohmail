@@ -42,12 +42,11 @@ export interface NotificationsModel {
 export const NOTIFY_ROWS: readonly {
   readonly key: MailNoticeKind;
   readonly label: string;
-  readonly why: string;
 }[] = [
-  { key: "ohbox", label: "notifyOhbox", why: "notifyOhboxWhy" },
-  { key: "screener", label: "notifyScreener", why: "notifyScreenerWhy" },
-  { key: "scheduled", label: "notifyScheduled", why: "notifyScheduledWhy" },
-  { key: "pairing", label: "notifyPairing", why: "notifyPairingWhy" },
+  { key: "ohbox", label: "notifyOhbox" },
+  { key: "screener", label: "notifyScreener" },
+  { key: "scheduled", label: "notifyScheduled" },
+  { key: "pairing", label: "notifyPairing" },
 ];
 
 /** The sentence for a reconcile's answer, a key in `settings`. */

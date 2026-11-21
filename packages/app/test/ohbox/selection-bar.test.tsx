@@ -33,8 +33,8 @@ describe("the selection's bar", () => {
     fireEvent.click(within(bar).getByRole("button", { name: "More" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Delete/ }));
     expect(world.said.bulk).toEqual([]);
-    expect(screen.getByRole("dialog", { name: "Delete 2 messages?" })).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("menuitem", { name: /Delete/ }).at(-1)!);
+    const ask = screen.getByRole("dialog", { name: "2 to Trash." });
+    fireEvent.click(within(ask).getByRole("menuitem", { name: "Move" }));
     expect(world.said.bulk).toEqual([{ action: "delete", ids: ["a", "b"] }]);
   });
 
@@ -120,18 +120,36 @@ describe("the selection's bar", () => {
     pick("a: A");
     const bar = () => screen.getByRole("toolbar", { name: "Selection" });
     fireEvent.click(within(bar()).getByRole("button", { name: /Screening/ }));
-    expect(screen.getByRole("dialog", { name: "screen to" })).toBeTruthy();
-    expect(screen.queryByRole("dialog", { name: "move to" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Screen to" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Move" })).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: /News/ }));
     expect(
-      screen.queryByRole("dialog", { name: "screen to" }),
+      screen.queryByRole("dialog", { name: "Screen to" }),
       "the place leads on to the confirmation",
     ).toBeNull();
     cleanup();
     ohbox({ newForYou: three() });
     pick("a: A");
     fireEvent.click(within(bar()).getByRole("button", { name: /Move/ }));
-    expect(screen.getByRole("dialog", { name: "move to" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Move" })).toBeTruthy();
+  });
+
+  it("explains when screening makes a rule", () => {
+    const world = ohbox({ newForYou: three() });
+    world.again({
+      bulk: {
+        run: () => true,
+        tag: () => {},
+        screenPreview: () => ({ senders: 1, messages: 2, rules: 1 }),
+        screen: () => true,
+      },
+    });
+    pick("a: A");
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Selection" })).getByRole("button", { name: /Screening/ }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: /News/ }));
+    expect(screen.getByText("2 messages move and a rule is made.")).toBeTruthy();
   });
 
   it("a verb on the bar runs over the pick in list order", () => {

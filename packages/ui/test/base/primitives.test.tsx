@@ -254,6 +254,17 @@ describe("EndDot", () => {
     const dot = container.querySelector("[aria-hidden='true']");
     expect(dot?.parentElement?.textContent).toBe("unread");
   });
+
+  it.each([
+    ["New senders go straight to the Ohbox.", "New senders go straight to the Ohbox"],
+    ["Neue Absender landen direkt in der Ohbox.", "Neue Absender landen direkt in der Ohbox"],
+    ["Is it ready?", "Is it ready?"],
+    ["Loading...", "Loading..."],
+  ])("uses the drawn stop after %s", (words, expected) => {
+    const { container } = render(<EndDot>{words}</EndDot>);
+    expect(container.textContent).toBe(expected);
+    expect(container.querySelector("[aria-hidden='true']")).toBeTruthy();
+  });
 });
 
 describe("Mark", () => {

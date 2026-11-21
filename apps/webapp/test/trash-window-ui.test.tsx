@@ -130,16 +130,16 @@ describe("the live section's states", () => {
 
   it("UNAVAILABLE: no Trash folder on the server is said, not shown as an empty folder", async () => {
     await mount({ live: async () => page({ mailboxes: [{ ...okBox, window: "no_trash_folder" }] }) });
-    expect(liveSection().textContent).toContain(en.trash.liveUnavailable);
+    expect(liveSection().textContent).toContain(en.trash.liveUnavailable.replace(/\.$/u, ""));
     expect(liveSection().textContent).not.toContain(en.trash.liveEmpty);
     expect(listRows()).toHaveLength(0);
   });
 
   it("READ-LIMITED: a read the server did not finish says so, and never says empty", async () => {
     await mount({ live: async () => page({ mailboxes: [{ ...okBox, window: "unreachable" }] }) });
-    expect(liveSection().textContent).toContain(en.trash.liveReadLimited);
+    expect(liveSection().textContent).toContain(en.trash.liveReadLimited.replace(/\.$/u, ""));
     expect(liveSection().textContent).not.toContain(en.trash.liveEmpty);
-    expect(liveSection().textContent).not.toContain(en.trash.liveUnavailable);
+    expect(liveSection().textContent).not.toContain(en.trash.liveUnavailable.replace(/\.$/u, ""));
   });
 
   it("a per-mailbox degrade is named under whatever DID load", async () => {
@@ -183,12 +183,12 @@ describe("a failing live read", () => {
     fireEvent.click(within(liveSection()).getByRole("button", { name: en.trash.liveRetry }));
     await settle();
     expect(list?.mock.calls).toEqual([[], []]);
-    expect(document.body.textContent).toContain(en.trash.footLive);
+    expect(document.body.textContent).not.toContain("Mail you deleted in ohmail — the only deleted mail ohmail can put back. Under it, what sits in your mail server's Trash: read-only, because nothing here records where that mail came from. Your mail server decides how long Trash keeps it.");
   });
 
   it("and the mirrored section's own unavailable state does not hide the live one", async () => {
     await mount({ mirroredAvailable: false, live: async () => page({ items: [liveRow(1)] }) });
-    expect(document.body.textContent).toContain(en.trash.unavailable);
+    expect(document.body.textContent).toContain(en.trash.unavailable.replace(/\.$/u, ""));
     expect(listRows()).toHaveLength(1);
   });
 });
@@ -197,13 +197,13 @@ describe("without a live window", () => {
   it("the view is what it was, and the foot names the mirror alone", async () => {
     await mount({ rows: [mirrored("m1")] });
     expect(screen.queryByRole("region", { name: en.trash.liveHead })).toBeNull();
-    expect(document.body.textContent).toContain(en.trash.foot);
-    expect(document.body.textContent).not.toContain(en.trash.footLive);
+    expect(document.body.textContent).not.toContain("Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.");
+    expect(document.body.textContent).not.toContain("Mail you deleted in ohmail — the only deleted mail ohmail can put back. Under it, what sits in your mail server's Trash: read-only, because nothing here records where that mail came from. Your mail server decides how long Trash keeps it.");
   });
 
   it("and with one, the foot says both populations and that the second is read-only", async () => {
     await mount({ rows: [mirrored("m1")], live: async () => page() });
-    expect(document.body.textContent).toContain(en.trash.footLive);
+    expect(document.body.textContent).not.toContain("Mail you deleted in ohmail — the only deleted mail ohmail can put back. Under it, what sits in your mail server's Trash: read-only, because nothing here records where that mail came from. Your mail server decides how long Trash keeps it.");
   });
 });
 
@@ -213,7 +213,7 @@ describe("in German", () => {
     const section = liveSection(de.trash.liveHead);
     expect(section.textContent).toContain(de.trash.liveHead);
     expect(section.textContent).toContain(de.trash.liveOrigin);
-    expect(document.body.textContent).toContain(de.trash.footLive);
+    expect(document.body.textContent).not.toContain("Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. Darunter, was im Papierkorb deines Mailservers liegt: nur lesbar, denn hier ist nicht festgehalten, wo diese Mails herkamen. Dein Mailserver entscheidet, wie lange er sie behält.");
   });
 });
 

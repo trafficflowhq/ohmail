@@ -26,6 +26,8 @@ export interface MenuProps {
    * Left out: it comes up from the foot, on every device.
    */
   anchor?: RefObject<Element | null> | Point | Element;
+  /** The control that opened a menu positioned at a point. */
+  returnFocus?: RefObject<Element | null> | Element;
   /** Its name, said to a screen reader. */
   label: string;
   /**
@@ -53,6 +55,8 @@ export interface MenuProps {
   closeWhenFull?: string;
   /** The control that takes focus when the overlay opens. */
   initialFocus?: RefObject<HTMLElement | null>;
+  /** Whether an explicit initial field opens the keyboard on touch. */
+  initialFocusOnTouch?: boolean;
   /**
    * The app's own keys over this menu (a card's digits, the key that sends), asked before Esc, Tab and the
    * arrows. True: the key was taken, and the menu does nothing with it. Taken or not, it never reaches what
@@ -99,6 +103,7 @@ export function Menu(props: MenuProps) {
     modal,
     onClose,
     anchor,
+    returnFocus,
     label,
     kind,
     title,
@@ -108,6 +113,7 @@ export function Menu(props: MenuProps) {
     anchored,
     closeWhenFull,
     initialFocus,
+    initialFocusOnTouch = true,
     onKey,
     children,
   } = props;
@@ -116,13 +122,13 @@ export function Menu(props: MenuProps) {
   const lastItem = useRef<HTMLElement | null>(null);
   const [full, setFull] = useState(false);
   const dialog = kind === "card" || kind === "ask";
-  const from = anchor && !("x" in anchor) ? anchor : null;
+  const from = returnFocus ?? (anchor && !("x" in anchor) ? anchor : null);
   useOverlayFocus(
     open,
     box,
     (el) => initialFocus?.current ?? firstStop(el),
     () => (from && "current" in from ? from.current : from),
-    initialFocus === undefined,
+    initialFocus === undefined || !initialFocusOnTouch,
   );
   useOverlayEscape(open, box, onClose);
   useMenuPosition(props, box, closeBar, setFull);

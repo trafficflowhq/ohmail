@@ -138,7 +138,7 @@ function ReadsBody() {
             title={Copy.reads}
             meta={metaWhen(surface, meta) ?? " "}
             metaBeside
-            /* The web's ReadsView press, both halves: flip the stream's unread AND commit the
+            /* The web app's stream press, both halves: flip the stream's unread AND commit the
                waterline above the newest issue — a fresh-only stream ("2 new", nothing
                unread) still gets its clearing control. */
             right={

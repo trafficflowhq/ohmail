@@ -444,7 +444,7 @@ function linkify(block: string, keyBase: string, links: DrawnLinks): ReactNode[]
 }
 
 /**
- * The shared body renderer — the focused message in `MessagePane` AND the conversation siblings in `Conversation`.
+ * The shared body renderer — the focused message in the shared Reader AND the conversation siblings in the conversation column (`packages/app/src/reader`).
  * ONE COMPONENT, BOTH SURFACES, on purpose. "Built, tested, unreachable" — the fix landing on the pane while the
  * thread below it keeps dumping raw text — is a shape this repo has shipped five times, and a second copy of this
  * logic is how it happens a sixth. Returns a fragment of `<p>` rather than its own wrapper: the caller owns the

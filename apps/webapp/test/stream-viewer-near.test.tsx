@@ -9,7 +9,7 @@ import { STREAM_CARD_ESTIMATE_PX, openingCount } from "@ohmail/app-logic/lists/s
 import { NEAR_SEED } from "@ohmail/app-logic/lists/stream-near";
 
 /**
- * A CARD BUILDS ITS RENDERED VIEWER ONLY NEAR THE SCREEN (`stream-near.ts`, `StreamCardMemo.viewer`).
+ * A CARD BUILDS ITS RENDERED VIEWER ONLY NEAR THE SCREEN (`stream-near.ts`, the stream card's viewer in `packages/app/src/stream`).
  *
  * A switch into News mounted a viewer — a sanitize pass and a framed document — for every mounted
  * card: forty-five frames at entry over a large mirror. Now the entry mounts one screen of cards

@@ -227,6 +227,7 @@ describe("a decision made in the Screener survives leaving and coming back", () 
     await tick(400);
     expect(rowIds(c), "a decided row is still listed after its exit").toEqual([]);
     expect(w.posts, "a decision reached the wire before the undo window closed").toEqual([]);
+    expect(c.textContent).toContain("2 decided");
 
     // Leaving flushes both pending commits — this is the gesture the report names.
     await goTo("ohbox");
@@ -240,6 +241,7 @@ describe("a decision made in the Screener survives leaving and coming back", () 
     await tick(200);
     expect(rowIds(c), "the screened-in sender is waiting again").not.toContain(ALPHA);
     expect(rowIds(c), "the screened-out sender is waiting again").not.toContain(BETA);
+    expect(c.textContent).toContain("2 decided");
     // Nothing claims a failure, because there was none.
     expect(c.textContent).not.toContain("Not saved");
   }, 30000);

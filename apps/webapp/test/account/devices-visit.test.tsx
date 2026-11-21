@@ -153,7 +153,7 @@ interface Side {
 async function walk(pane: ReactNode, side: Side): Promise<string[]> {
   const { unmount } = render(<Words>{pane}</Words>);
   await settle();
-  const label = await screen.findByRole("textbox", { name: en.devices.addFor });
+  const label = await screen.findByRole("textbox", { name: en.devices.whoseDevice });
   await act(async () => {
     fireEvent.change(label, { target: { value: "Ben" } });
   });

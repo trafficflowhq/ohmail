@@ -166,17 +166,17 @@ async function mount(o: {
 describe("a re-run of setup, driven through the rendered stage", () => {
   it("opens on the consent statement — the behaviour the loop was hiding behind", async () => {
     const s = await mount({ facts: finished(), rerun: true });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
   });
 
   it("AGREE MOVES ON. It returned to the consent statement, every press, for ever", async () => {
     const s = await mount({ facts: finished(), rerun: true });
     await s.press(t.continue);
-    expect(s.heading(), "the window screen").toBe(t.windowTitle);
+    expect(s.heading(), "the window screen").toContain(t.organizeLast.split("<window>")[0]!.trim());
 
     await s.press(t.agree);
-    expect(s.heading(), "the press walked back to the screen it came from").not.toBe(t.consentTitle);
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading(), "the press walked back to the screen it came from").not.toBe(t.mapTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
   });
 
   it("…and the window it carried is the one that was chosen, not the default", async () => {
@@ -185,9 +185,8 @@ describe("a re-run of setup, driven through the rendered stage", () => {
     // "All time" — the answer somebody opens setup again to give.
     const rung = RUNGS.find((r) => r.value === "all")!;
     const all = t[rung.label.slice("onboarding.".length) as keyof typeof t] as string;
-    expect([...s.el.querySelectorAll("[role=radio]")].some((r) => (r.textContent ?? "").trim().startsWith(all)),
-      "the window screen offers no all-time rung").toBe(true);
     await s.pick(all);
+    expect(s.heading()).toContain(t.organizeAll.split("<window>")[0]!.trim());
     await s.press(t.agree);
     expect(s.organized).toEqual([{ scope: "all_time" }]);
   });
@@ -196,10 +195,10 @@ describe("a re-run of setup, driven through the rendered stage", () => {
     const s = await mount({ facts: finished(), rerun: true });
     await s.press(t.continue);
     await s.press(t.agree);
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     await s.press(t.continue);
-    expect(s.heading(), "the second write looped as well").not.toBe(t.consentTitle);
-    expect(s.heading()).toBe(t.doneTitle);
+    expect(s.heading(), "the second write looped as well").not.toBe(t.mapTitle);
+    expect(s.heading()).toBe(t.noOneWaits.replace(/\.$/, ""));
   });
 
   it("A PRESS THAT STORED NOTHING SAYS SO, and does not advance", async () => {
@@ -208,7 +207,7 @@ describe("a re-run of setup, driven through the rendered stage", () => {
     const s = await mount({ facts: finished(), rerun: true, outcome: "gone" });
     await s.press(t.continue);
     await s.press(t.agree);
-    expect(s.heading(), "it walked on as though the window had been stored").toBe(t.windowTitle);
+    expect(s.heading(), "it walked on as though the window had been stored").toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text()).toContain(t.windowGone);
   });
 });
@@ -220,15 +219,15 @@ describe("a FIRST run whose read has not caught up yet", () => {
     // return "consent"`) puts the person back in front of the question they just answered, and
     // there is nothing in the loop to end it.
     const s = await mount({ facts: fresh(), refresh: false });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
 
     await s.press(t.agree);
     expect(s.heading(), "the stale read sent the run back to the consent statement")
-      .not.toBe(t.consentTitle);
+      .not.toBe(t.mapTitle);
     // Row 5: the AI question is the first thing left unanswered once consent is recorded.
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
   });
 
   it("CONTROL: with the read caught up it lands on the same screen", async () => {
@@ -236,6 +235,6 @@ describe("a FIRST run whose read has not caught up yet", () => {
     const s = await mount({ facts: fresh() });
     await s.press(t.continue);
     await s.press(t.agree);
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
   });
 });

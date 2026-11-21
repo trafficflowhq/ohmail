@@ -51,6 +51,15 @@
     cursor: pointer;
   }
 
+  .oh-readsquares-slot:focus-visible {
+    outline: none;
+    box-shadow: var(--key-focus-ring);
+  }
+
+  .oh-readsquares-slot:focus-visible > .oh-readsquares-ring {
+    visibility: hidden;
+  }
+
   .oh-readsquares-slot[data-off] {
     pointer-events: none;
   }
@@ -231,22 +240,32 @@
     touch-action: pan-y;
   }
 
+  :root .oh-readsquares[data-touch-walk][data-axis="head"] {
+    touch-action: pan-y pinch-zoom;
+  }
+
+  :root .oh-readsquares[data-touch-walk][data-axis="column"] {
+    touch-action: pan-x pinch-zoom;
+  }
+
   .oh-square-tip {
+    --oh-square-tip-max: min(calc(var(--measure) / 2), calc(100dvw / var(--ui-zoom, 1) - 2 * var(--s2)));
+
     position: fixed;
     z-index: var(--oh-layer-top);
+    display: grid;
+    gap: var(--s1);
     width: max-content;
-    max-width: min(34ch, calc(100dvw / var(--ui-zoom, 1) - 16px));
-    padding: var(--s2) var(--s3);
-    background: var(--sheet);
+    max-width: var(--oh-square-tip-max);
+    padding: var(--s3) var(--s4);
     color: var(--ink);
-    border-radius: var(--r-row);
-    box-shadow: var(--float);
-    font-size: var(--t-meta);
+    font-family: var(--f-text);
+    font-size: var(--t-ui);
     font-weight: var(--w-text);
-    line-height: 1.5;
-    letter-spacing: 0;
+    line-height: var(--oh-lh);
     text-align: left;
     text-wrap: pretty;
+    overflow-wrap: anywhere;
     white-space: normal;
     animation: oh-square-tip-in var(--d-pop) var(--e-pop);
     pointer-events: none;
@@ -259,13 +278,20 @@
     }
   }
 
-  .oh-square-tip-time {
-    margin-inline-start: var(--s2);
-    color: var(--ink2);
+  .oh-square-tip-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--s2);
   }
 
-  .oh-square-tip-line {
-    display: block;
+  .oh-square-tip-from {
+    font-size: var(--t-group);
+  }
+
+  .oh-square-tip-time {
+    color: var(--ink2);
+    font-size: var(--t-meta);
   }
 }
 
@@ -273,16 +299,4 @@
   -webkit-touch-callout: none;
   user-select: none;
   -webkit-user-select: none;
-}
-
-/* The preview is portalled to the app root, or to the document body when there is no root. */
-.oh-square-tip.oh-square-tip {
-  z-index: var(--oh-layer-top);
-  background: var(--sheet);
-  border-radius: var(--r-sheet);
-  box-shadow: var(--float);
-  color: var(--ink);
-  font-family: var(--f-text);
-  font-size: var(--t-meta);
-  font-weight: var(--w-text);
 }

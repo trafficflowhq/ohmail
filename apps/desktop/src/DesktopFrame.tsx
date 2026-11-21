@@ -12,6 +12,7 @@ import {
   BrowserFoldersPane, BrowserNotificationsPane, BrowserRulesPane, BrowserSignaturesPane, BrowserTagsPane,
   useScreenerWindowSetting, useSuggestionSettings, useUnsubscribeSetting,
 } from "@ohmail/app/settings/browser";
+import type { PaneBodyProps } from "@ohmail/app/settings";
 import { ScreenerPane, useFiledLetters } from "@ohmail/app/settings/screener";
 import { calendarNoticeFragment, fragmentOf, useFrame } from "@ohmail/app/frame";
 import { type WayOutDoor, type WayOutSection } from "@ohmail/app/account/way-out";
@@ -127,7 +128,7 @@ function DesktopAboutPane() {
   return about === NONE ? null : about.render();
 }
 
-function DesktopHelpPane() {
+function DesktopHelpPane({ sheet }: Pick<PaneBodyProps, "sheet">) {
   const { host } = useFrame();
   const { writeSupport } = useWriting();
   const { mailboxes } = useMailState();
@@ -136,6 +137,7 @@ function DesktopHelpPane() {
   return (
     <BrowserHelpContactPane
       host={{ surface: "desktop", version, commit, mailtoLeaves, accountId }}
+      sheet={sheet}
       mailboxes={liveMailboxes(mailboxes)}
       onWrite={host.features.places.write === NONE ? null : writeSupport ?? null}
     />

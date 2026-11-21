@@ -12,30 +12,22 @@ import { kindOf } from "./kind.js";
 
 type Values = Record<string, string>;
 
-export function forwardWords(t: Text, line: ForwardLineKey, size: (bytes: number) => string): string {
+export function forwardWords(
+  t: Text,
+  line: ForwardLineKey,
+  size: (bytes: number) => string,
+): string | undefined {
   const v: Values = {};
   for (const [k, n] of Object.entries(line.bytes ?? {})) v[k] = size(n);
   switch (line.key) {
-    case "forwardFilesLine":
-      return t("forwarded.line", v);
-    case "forwardFilesAllGo":
-      return t("forwarded.allGo", v);
     case "forwardFilesReading":
-      return t("forwarded.reading", v);
-    case "forwardFilesUnreadKept":
-      return t("forwarded.unreadKept", v);
-    case "forwardFilesUnreadAllGo":
-      return t("forwarded.unreadAllGo", v);
-    case "forwardFilesRemovedGo":
-      return t("forwarded.removedGo", v);
-    case "forwardFilesUnreadRemovedGo":
-      return t("forwarded.unreadRemovedGo", v);
+      return t("forwarded.reading");
     case "forwardFilesTooLarge":
       return t("forwarded.tooLarge", v);
     case "forwardFilesTotalTooLarge":
       return t("forwarded.totalTooLarge", v);
     default:
-      return t("forwarded.unknown");
+      return undefined;
   }
 }
 
@@ -51,13 +43,17 @@ export function useForwarded(plan: WriteForwardFiles | null, locked: boolean): F
   const { size } = useWriteBeside();
   if (plan === null) return { forwarded: undefined, refusal: null };
   const { rows, line, refusal } = plan.plan;
-  const said = plan.said && refusal !== null ? forwardWords(t, refusal, size) : null;
-  if (rows.length === 0 && line === null) return { forwarded: undefined, refusal: said };
+  const said = plan.said && refusal !== null ? (forwardWords(t, refusal, size) ?? null) : null;
+  const summary =
+    line?.key === "forwardFilesTooLarge" || line?.key === "forwardFilesTotalTooLarge"
+      ? forwardWords(t, line, size)
+      : undefined;
+  if (rows.length === 0 && summary === undefined) return { forwarded: undefined, refusal: said };
   return {
     forwarded: {
       heading: t("forwarded.head"),
       files: (
-        <Files summary={line === null ? undefined : forwardWords(t, line, size)}>
+        <Files summary={summary}>
           {rows.map((row) => (
             <FileTile
               key={row.id}

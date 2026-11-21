@@ -3,14 +3,15 @@
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
     "emptyTitle": "Noch nichts trägt diesen Tag.",
     "emptyHint": "Drück <kbd>t</kbd> auf einer Nachricht, um ihn zu setzen.",
-    "toastTagged": "Mit „{name}“ getaggt.",
-    "toastUntagged": "Tag „{name}“ entfernt.",
+    "toastTagged": "{name}",
+    "toastUntagged": "Tag entfernt",
     "pickerPlaceholder": "Diese Nachricht taggen …",
-    "pickerNone": "Noch keine Tags. Tipp einen Namen, um den ersten anzulegen.",
+    "pickerNone": "Noch keine Tags.",
     "pickerFoot": "↵ schaltet um",
-    "pickerAria": "Tag hinzufügen",
+    "pickerAria": "Tag",
+    "pickerTitle": "Tag",
     "pickerCreate": "„{name}“ anlegen",
-    "newPlaceholder": "Name …",
+    "newPlaceholder": "Neuen Tag benennen…",
     "newTaken": "Du hast schon einen Tag namens „{name}“.",
     "toastCreated": "Tag „{name}“ angelegt.",
     "toastRenamed": "Umbenannt in „{name}“.",
@@ -32,8 +33,8 @@
     "loading": "Deine Tags werden geladen",
     "gone": "Diesen Tag gibt es nicht mehr",
     "empty": {
-      "none": "Noch keine Tags",
-      "tag": "Nichts trägt diesen Tag"
+      "none": "Nichts getaggt",
+      "tag": "Nichts getaggt"
     },
     "count": {
       "tags": "{count, plural, one {1 Tag} other {# Tags}}",
@@ -53,7 +54,6 @@
       "delete": "Löschen"
     },
     "rename": {
-      "title": "{name} umbenennen.",
       "field": "Name",
       "save": "Sichern",
       "cancel": "Abbrechen",
@@ -64,7 +64,7 @@
       "stay": "{count, plural, one {1 Nachricht trägt ihn und bleibt, wo sie ist.} other {# Nachrichten tragen ihn und bleiben, wo sie sind.}}",
       "nothing": "Nichts trägt ihn.",
       "confirm": "Löschen",
-      "cancel": "Behalten"
+      "cancel": "Abbrechen"
     },
     "list": {
       "menu": "Liste"

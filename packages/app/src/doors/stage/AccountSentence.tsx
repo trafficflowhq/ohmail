@@ -54,19 +54,22 @@ export function useWanted<F extends string>(
 export function AccountSentence(p: {
   t: Text;
   passwordHint: string;
+  ids?: Readonly<Record<AccountField, string>>;
   fields: Blanks<AccountField>;
   wanted: string | null;
   at: Readonly<Record<AccountField, RefObject<HTMLInputElement | null>>>;
   type(field: AccountField, value: string): void;
 }): ReactNode {
-  const { t, fields, wanted, at, type } = p;
+  const { t, fields, wanted, at, type, ids } = p;
   return (
     <SaidWith
+      level={ids === undefined ? undefined : 1}
       parts={t.rich("account", {
         name: (comma: ReactNode) => (
           <span className="way-nb">
             <SentenceBlank
               ref={at.name}
+              id={ids?.name}
               label={t("nameLabel")}
               placeholder={t("nameBlank")}
               size={t("nameBlank").length}
@@ -82,9 +85,11 @@ export function AccountSentence(p: {
           <span className="way-nb">
             <SentenceBlank
               ref={at.email}
+              id={ids?.email}
               label={t("emailLabel")}
               placeholder={t("emailBlank")}
               size={t("emailBlank").length}
+              type={ids === undefined ? undefined : "email"}
               inputMode="email"
               autoComplete="email"
               value={fields.email}
@@ -97,6 +102,7 @@ export function AccountSentence(p: {
         password: () => (
           <SentenceBlank
             ref={at.password}
+            id={ids?.password}
             label={t("passwordLabel")}
             placeholder={t(p.passwordHint)}
             size={t(p.passwordHint).length}

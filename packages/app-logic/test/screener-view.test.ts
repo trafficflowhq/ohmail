@@ -387,7 +387,8 @@ describe("what the open sender's sentence says", () => {
     );
     expect(w.dest).toBe("ohbox");
     expect(w.sure).toBe(0.92);
-    expect(w.lines).toEqual([{ key: "aiWhy", values: { why: "A note" } }]);
+    expect(w.reason).toEqual({ key: "aiWhy", values: { why: "A note" } });
+    expect(w.lines).toEqual([]);
   });
 
   it("a hold, a run that could not answer and no advice propose nothing, and each says why", () => {
@@ -399,9 +400,11 @@ describe("what the open sender's sentence says", () => {
       expect(suggestionWords(s, NO_RUN).dest).toBeNull();
       expect(suggestionWords(s, NO_RUN).sure).toBeNull();
     }
-    expect(keys(hold)).toEqual(["aiHolds"]);
-    expect(keys(cut)).toEqual(["aiSkip.over_quote"]);
-    expect(keys(sender("n"))).toEqual(["noSuggestion"]);
+    expect(suggestionWords(hold, NO_RUN).badge).toBe("aiHoldChip");
+    expect(suggestionWords(cut, NO_RUN).badge).toBe("aiNoAnswerChip");
+    expect(cut.ai?.noAnswer).toBe("over_quote");
+    expect(suggestionWords(sender("n"), NO_RUN).badge).toBeNull();
+    expect(keys(sender("n"))).toEqual([]);
     expect(keys(sender("q", { noAi: true }))).toEqual(["noSuggestionNoAutoAi"]);
   });
 
@@ -422,10 +425,10 @@ describe("what the open sender's sentence says", () => {
         reasonBrand: "Bank",
       } as never,
     });
-    expect(keys(s)).toEqual([
-      "senderCheck.impersonationShared",
-      "senderCheck.list",
-      "aiReason.impersonation",
-    ]);
+    const words = suggestionWords(s, NO_RUN);
+    expect(words.dest).toBe("spam");
+    expect(words.sure).toBe(0.96);
+    expect(words.reason).toBeNull();
+    expect(words.lines).toEqual([]);
   });
 });

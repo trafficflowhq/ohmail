@@ -189,8 +189,8 @@
     "note": "Only what a model needs to answer is sent. A suggestion sends the sender, the subject and a short extract. A draft sends the same for the message you reply to, plus the sender and a short extract of up to 20 other messages in its thread and up to 5 matching knowledge-base notes. Where a message carries a code or a login link, the credential itself is never sent, whichever provider is chosen."
   },
   "ohmarchy": {
-    "offerLead": "This device runs Linux, so ohmail is wearing its ohmarchy look here.",
-    "offerAction": "Go full Ohmarchy Theme on all your devices",
+    "offerLead": "ohmarchy on this computer",
+    "offerAction": "All devices",
     "offerNote": "This can always be changed under Settings.",
     "offerFailed": "Couldn't save that — try again.",
     "offerDismiss": "Dismiss the ohmarchy offer",

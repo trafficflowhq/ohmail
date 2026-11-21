@@ -127,8 +127,8 @@ describe("the connection states: one closed set", () => {
     [
       "noMailbox",
       input(ladder("noMailbox")),
-      "No mailbox connected Nothing can arrive until one is.Connect a mailbox",
-      "Kein Postfach verbunden Bis eines verbunden ist, kommt nichts an.Postfach verbinden",
+      "No mailbox connectedConnect a mailbox",
+      "Kein Postfach verbundenPostfach verbinden",
     ],
     ["offline", input(ladder("stale", { asOf: AT }), { online: false }), "Offline", "Offline"],
     [
@@ -196,7 +196,7 @@ describe("the connection states: one closed set", () => {
         "Offline since 00:30",
         "Offline seit 00:30",
       ],
-      ["before today", "2026-11-12T20:00:00Z", "Offline since Nov 12", "Offline seit 12. Nov."],
+      ["before today", "2026-11-12T20:00:00Z", "Offline since Nov 12", "Offline seit 12. Nov"],
       ["never known", null, "Offline", "Offline"],
     ];
     it.each(AGES)("%s", (_, copyAsOf, en, de) => {
@@ -236,7 +236,7 @@ describe("the connection states: one closed set", () => {
   it("offers Sign in where the host can sign in again, and says it at once as an alert", () => {
     const recover = vi.fn();
     said(input(ladder("stopped")), "en", recover);
-    expect(screen.getByRole("alert").textContent).toBe("Signed out. Sign in again to get new mail.");
+    expect(screen.getByRole("alert").textContent).toBe("Signed out");
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(recover).toHaveBeenCalledWith("signIn");
   });

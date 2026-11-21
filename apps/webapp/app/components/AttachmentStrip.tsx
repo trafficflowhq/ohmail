@@ -69,7 +69,7 @@ export interface AttachmentItem {
 /**
  * The list has a state of its own, and silence is only one of its answers. The strip used to take `AttachmentItem[]`
  * with everything non-`ready` flattened to `[]`, so a FAILED metadata read drew what an inline-only message draws:
- * nothing, under a paperclip. It is the `items` prop and not a new one because `MessagePane` already passes
+ * nothing, under a paperclip. It is the `items` prop and not a new one because the shared Reader already passes
  * `attachments.itemsOf(message.id)` — a new prop would have to be added there to ever render, and this repo has
  * shipped "built, tested, unreachable" seven times; widening the wire that ALREADY runs makes the reverse
  * unbuildable.
@@ -98,8 +98,8 @@ export type AttachmentsView =
 export interface AttachmentStripProps {
   /**
    * The LIST, not a list of items — see {@link AttachmentsView}. Named `items` because
-   * `MessagePane` already passes it under that name and that file is the reachability
-   * argument; a rename there and here is owed to whoever next owns the pane.
+   * the shared Reader already passes it under that name and that call is the reachability
+   * argument; a rename there and here is owed to whoever next owns the strip.
    */
   items: AttachmentsView;
   /**

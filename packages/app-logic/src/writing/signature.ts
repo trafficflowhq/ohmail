@@ -7,7 +7,7 @@
 /**
  * The whole contract — the follows-From state model, the exactly-as-shown serialization, the whitespace and tab-stop
  * encoding — is documented on the module itself. This file stays as the one name the composer and the screens that
- * draw the block read it by (`AppShell`, `SignatureBlock`, `InlineReply`, `ComposeView`, `message-chrome.tsx`), exactly
+ * draw the block read it by (`SignatureBlock` and the editors that draw the block), exactly
  * like the types `live.ts` re-exports on the phone: one implementation, one extra name.
  */
 export {

@@ -11,6 +11,7 @@ import type { Translator } from "../text/translator.js";
 
 export interface SearchKeysInput {
   readonly t: Translator;
+  readonly searchBy: "people" | "words";
   readonly text: string;
   readonly onQuery: (q: string) => void;
   readonly onExit: (() => void) | "none";
@@ -82,5 +83,17 @@ export function useSearchKeys(k: SearchKeysInput): void {
       run: () => k.openAt(k.cursor),
     },
   ];
+  if (k.searchBy === "people") {
+    for (const [chord, key] of [
+      ["from:", "keyPerson"],
+      ["to:", "keyPerson"],
+      ["in:", "keyFilter"],
+      ["has:", "keyFilter"],
+      ["is:", "keyFilter"],
+      ["Backspace", "keyLetGo"],
+    ]) {
+      keys.push({ chord, group: "navigate", label: t(key), helpOnly: true, run: () => {} });
+    }
+  }
   useKeyBindings(keys);
 }

@@ -11,7 +11,9 @@
     "replace": "Ersetzen",
     "setUp": "Einrichten",
     "remove": "Entfernen",
-    "byHand": "Tipp diesen Schlüssel in deine Authenticator-App ein.",
-    "byHandLabel": "Schlüssel"
+    "byHandLabel": "Oder gib den Schlüssel von Hand ein",
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "copyFailed": "Kopieren fehlgeschlagen"
   }
 }

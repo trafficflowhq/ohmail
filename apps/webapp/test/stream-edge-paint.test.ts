@@ -14,7 +14,8 @@ beforeAll(async () => {
 afterAll(async () => { await browser?.close(); });
 
 async function greenAcross(page: Page, y: number): Promise<number> {
-  const b64 = (await page.screenshot({ clip: { x: 0, y, width: WIDTH, height: 1 } })).toString("base64");
+  const width = page.viewportSize()!.width;
+  const b64 = (await page.screenshot({ clip: { x: 0, y, width, height: 1 } })).toString("base64");
   return page.evaluate(async ([b64, width]) => {
     const bmp = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
     const ctx = new OffscreenCanvas(width, 1).getContext("2d")!;
@@ -25,11 +26,11 @@ async function greenAcross(page: Page, y: number): Promise<number> {
       if (pixels[i]! < 80 && pixels[i + 1]! > 200 && pixels[i + 2]! < 80) count++;
     }
     return count;
-  }, [b64, WIDTH] as const);
+  }, [b64, width] as const);
 }
 
 async function streamPaint(face: "paper" | "ohmarchy") {
-  const page = await browser.newPage({ viewport: { width: WIDTH, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: WIDTH, height: 900 }, reducedMotion: "reduce" });
   try {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -75,6 +76,35 @@ describe("the mounted stream's paint at the window edge", () => {
     expect(paint.above, JSON.stringify(paint)).toBeGreaterThan(400);
   }, 60_000);
 });
+
+for (const width of [390, WIDTH]) for (const face of ["paper", "ohmarchy"]) {
+  it(`covers a scrolled card across the full ${face} action bar at ${width}px`, async () => {
+    const touch = width === 390;
+    const page = await browser.newPage({ viewport: { width, height: 900 }, hasTouch: touch, reducedMotion: "reduce" });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+      await page.goto(`${ORIGIN}/?face=${face}&geometry=reads`);
+      const reading = page.getByRole("region", { name: "News stream", exact: true });
+      const bar = reading.getByRole("toolbar", { name: "Actions", exact: true });
+      await bar.waitFor();
+      await page.addStyleTag({
+        content: `
+          [data-stream-item] { min-height: 1200px; background: #0f0 !important; }
+          [data-stream-item] .oh-message { background: #0f0 !important; }
+        `,
+      });
+      const scroller = reading.locator("[data-reading-scroll]");
+      await scroller.evaluate((el) => { el.scrollTop = 200; });
+      expect(await scroller.evaluate((el) => el.scrollTop)).toBe(200);
+      const barY = Math.ceil((await bar.boundingBox())!.y);
+      expect(await greenAcross(page, barY - 12)).toBeGreaterThan(300);
+      expect(await greenAcross(page, barY + 2)).toBe(0);
+      expect(await greenAcross(page, barY + 18)).toBe(0);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+}
 
 describe("inline conversation geometry", () => {
   for (const width of [1024, 1440]) for (const scheme of ["light", "dark"]) {
@@ -272,7 +302,7 @@ for (const width of [390, 358, 386, 620]) {
   }, 60_000);
 }
 
-it("keeps the News filing sentence across a narrow list and puts both actions beneath it", async () => {
+it("keeps a narrow News list free of filing copy and controls", async () => {
   const page = await browser.newPage({ viewport: { width: 1024, height: 900 }, reducedMotion: "reduce" });
   try {
     await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
@@ -283,18 +313,10 @@ it("keeps the News filing sentence across a narrow list and puts both actions be
     await list.waitFor({ timeout: 4000 });
     await list.evaluate((element) => { element.style.inlineSize = "300px"; });
     expect((await list.boundingBox())!.width).toBeCloseTo(300, 0);
-    await approve.waitFor({ timeout: 4000 });
-    const geometry = await approve.evaluate((button) => {
-      const chip = button.closest('[data-chip="ai"]')!;
-      const text = document.createRange();
-      const node = [...chip.childNodes].find((child) => child.textContent?.includes("newsletter fingerprint"))!;
-      text.selectNodeContents(node);
-      const lines = [...text.getClientRects()].map((rect) => Math.round(rect.top));
-      return { lines: new Set(lines).size, textBottom: text.getBoundingClientRect().bottom, buttonTop: button.getBoundingClientRect().top };
-    });
-    expect(geometry.lines).toBeLessThanOrEqual(2);
-    expect(geometry.buttonTop).toBeGreaterThanOrEqual(geometry.textBottom - 1);
-    expect((await approve.boundingBox())!.y).toBe((await correct.boundingBox())!.y);
+    await list.getByRole("option").first().waitFor();
+    expect(await list.getByText(/newsletter fingerprint/).count()).toBe(0);
+    expect(await approve.count()).toBe(0);
+    expect(await correct.count()).toBe(0);
   } finally {
     await page.close();
   }

@@ -77,10 +77,10 @@ async function launch(n: number, locale: "en" | "de" = "en"): Promise<HTMLElemen
   return container;
 }
 
-const stageHeading = () => screen.queryByRole("heading", { name: t.decideTitle, level: 1 });
+const stageHeading = () => screen.queryByRole("heading", { name: (text) => text.includes(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim()), level: 1 });
 const stageLead = (lead: RegExp) => {
   const dialog = within(screen.getByRole("dialog", { name: messages.frame.landmark.stage }));
-  expect(dialog.getByRole("heading", { name: t.decideTitle, level: 1 })).toBeTruthy();
+  expect(dialog.getByRole("heading", { name: (text) => text.includes(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim()), level: 1 })).toBeTruthy();
   return dialog.getByText(lead);
 };
 /** The rail keeps the counted entry under the stage. */
@@ -96,7 +96,7 @@ describe("the first decision says the Screener's count, the one the rail reads",
     await waitFor(() => stageHeading() !== null, "the first-decision step");
     await waitFor(() => railScreener(3) !== null, "the rail to count 3");
     expect(railScreener(3)?.getAttribute("title")).toBe("3 waiting");
-    expect(stageLead(/^3 senders are waiting\. /)).toBeTruthy();
+    expect(stageLead(/^3 left$/)).toBeTruthy();
   });
 
   it("control: one sender waits, and the step keeps the singular", async () => {
@@ -104,7 +104,7 @@ describe("the first decision says the Screener's count, the one the rail reads",
     await waitFor(() => stageHeading() !== null, "the first-decision step");
     await waitFor(() => railScreener(1) !== null, "the rail to count 1");
     expect(railScreener(1)?.getAttribute("title")).toBe("1 waiting");
-    expect(stageLead(/^One sender is waiting\. /)).toBeTruthy();
+    expect(stageLead(/^1 left$/)).toBeTruthy();
   });
 });
 

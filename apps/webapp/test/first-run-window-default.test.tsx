@@ -77,9 +77,9 @@ interface Stage {
   rerender: () => Promise<void>;
   heading: () => string;
   /** The value of the checked rung, or null when the control shows no selection at all. */
-  checked: () => string | null;
+  checked: () => Promise<string | null>;
   /** The visible label of the checked rung ("One year · usual"). */
-  checkedLabel: () => string;
+  checkedLabel: () => Promise<string>;
   stored: Array<{ dormancyDays?: number; scope?: "window" | "all_time" }>;
   /** Choose a rung, as a click on its radio. */
   pick: (value: string) => Promise<void>;
@@ -129,22 +129,31 @@ async function mount(o: {
     await act(async () => { (button as HTMLButtonElement).click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
   };
 
-  /** The window's rungs: each radio with the value its name says (`words.ts` RUNGS). */
-  const rungs = (): Array<{ el: HTMLElement; value: string; label: string; checked: boolean }> =>
-    [...el.querySelectorAll<HTMLElement>("[role=radio]")].map((r) => {
-      const label = (r.querySelector(".oh-radioline-word")?.textContent ?? "").trim();
-      const rung = RUNGS.find((g) => label.startsWith(t[g.label.slice("onboarding.".length) as keyof typeof t] as string));
-      return { el: r, value: rung?.value ?? label, label, checked: r.getAttribute("aria-checked") === "true" };
+  const rungs = async (): Promise<Array<{ el: HTMLElement; value: string; label: string; checked: boolean }>> => {
+    const slot = el.querySelector<HTMLButtonElement>('.oh-page-say button[aria-haspopup="menu"]');
+    if (slot && slot.getAttribute("aria-expanded") !== "true") await act(async () => { slot.click(); });
+    return [...el.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].map((r) => {
+      const name = r.querySelector(".oh-menu-word")?.textContent ?? "";
+      const note = r.querySelector(".oh-menu-item-note")?.textContent ?? "";
+      const rung = RUNGS.find((g) => name === t[g.label.slice("onboarding.".length) as keyof typeof t]);
+      return { el: r, value: rung?.value ?? name, label: note ? `${name} · ${note}` : name, checked: r.getAttribute("aria-checked") === "true" };
     });
+  };
+  const checked = async () => {
+    const picked = (await rungs()).find((row) => row.checked);
+    const slot = el.querySelector<HTMLButtonElement>('.oh-page-say button[aria-haspopup="menu"]');
+    if (slot?.getAttribute("aria-expanded") === "true") await act(async () => { slot.click(); });
+    return picked;
+  };
 
   return {
     el, press, stored,
     rerender: async () => { await st.move([rowOf()]); },
     heading: st.heading,
-    checked: () => rungs().find((i) => i.checked)?.value ?? null,
-    checkedLabel: () => rungs().find((i) => i.checked)?.label ?? "",
+    checked: async () => (await checked())?.value ?? null,
+    checkedLabel: async () => (await checked())?.label ?? "",
     pick: async (value: string) => {
-      const rung = rungs().find((i) => i.value === value);
+      const rung = (await rungs()).find((i) => i.value === value);
       expect(rung, `the screen offers no ${value}-day rung`).toBeDefined();
       await act(async () => { rung!.el.click(); });
     },
@@ -153,9 +162,9 @@ async function mount(o: {
 
 /** Walk the re-run from its opening screen to "How far back". */
 async function toWindow(s: Stage): Promise<void> {
-  expect(s.heading(), "the re-run did not open on the consent statement").toBe(t.consentTitle);
+  expect(s.heading(), "the re-run did not open on the consent statement").toBe(t.mapTitle);
   await s.press(t.continue);
-  expect(s.heading(), "Continue did not reach the window screen").toBe(t.windowTitle);
+  expect(s.heading(), "Continue did not reach the window screen").toContain(t.organizeLast.split(" the last")[0]!);
 }
 
 describe("the window screen agrees with its own label", () => {
@@ -163,42 +172,42 @@ describe("the window screen agrees with its own label", () => {
     const s = await mount({});
     await toWindow(s);
 
-    expect(s.checked(), "the pre-selected rung").toBe("365");
+    expect(await s.checked(), "the pre-selected rung").toBe("365");
     /* THE CONTRADICTION, in one assertion: the checked row must be the one carrying the word.
        Reading the value alone would pass a build that moved the label to another rung. */
-    expect(s.checkedLabel()).toContain(t.winDefault);
-    expect(s.checkedLabel()).toBe(`${t.win365} · ${t.winDefault}`);
+    expect(await s.checkedLabel()).toContain(t.winDefault);
+    expect(await s.checkedLabel()).toBe(`${t.win365} · ${t.winDefault}`);
   });
 
   it("…on the standalone install too, where a re-run is the only way in", async () => {
     const s = await mount({ door: "local" });
     await toWindow(s);
-    expect(s.checked()).toBe("365");
-    expect(s.checkedLabel()).toContain(t.winDefault);
+    expect(await s.checked()).toBe("365");
+    expect(await s.checkedLabel()).toContain(t.winDefault);
   });
 
   it("…and on a self-host account, the other door the row names", async () => {
     const s = await mount({ door: "selfhost" });
     await toWindow(s);
-    expect(s.checked()).toBe("365");
-    expect(s.checkedLabel()).toContain(t.winDefault);
+    expect(await s.checked()).toBe("365");
+    expect(await s.checkedLabel()).toContain(t.winDefault);
   });
 
   it("a real choice is kept: 90 stored opens on 90, and the label moves off it", async () => {
     const s = await mount({ screening: { dormancyDays: 90, scope: "window" } });
     await toWindow(s);
 
-    expect(s.checked()).toBe("90");
-    expect(s.checkedLabel()).toBe(t.win90);
+    expect(await s.checked()).toBe("90");
+    expect(await s.checkedLabel()).toBe(t.win90);
     /* The usual-row label stays where it belongs rather than following the selection —
        "usual" is a fact about the product, not about this account. */
-    expect(s.checkedLabel()).not.toContain(t.winDefault);
+    expect(await s.checkedLabel()).not.toContain(t.winDefault);
   });
 
   it("all-time stored opens on all-time", async () => {
     const s = await mount({ screening: { dormancyDays: 90, scope: "all_time" } });
     await toWindow(s);
-    expect(s.checked()).toBe("all");
+    expect(await s.checked()).toBe("all");
   });
 
   it("A STORED 60 SNAPS TO 90 — which is why the shell must withhold, not pass the resting values", async () => {
@@ -209,8 +218,8 @@ describe("the window screen agrees with its own label", () => {
        top of this file — and the two together are what tell the halves apart. */
     const s = await mount({ screening: { dormancyDays: 60, scope: "window" } });
     await toWindow(s);
-    expect(s.checked()).toBe("90");
-    expect(s.checkedLabel()).not.toContain(t.winDefault);
+    expect(await s.checked()).toBe("90");
+    expect(await s.checkedLabel()).not.toContain(t.winDefault);
   });
 });
 
@@ -218,16 +227,16 @@ describe("a pick survives", () => {
   it("choosing 90 on a fresh screen holds across a re-render, and it is 90 that gets stored", async () => {
     const s = await mount({});
     await toWindow(s);
-    expect(s.checked()).toBe("365");
+    expect(await s.checked()).toBe("365");
 
     await s.pick("90");
-    expect(s.checked()).toBe("90");
+    expect(await s.checked()).toBe("90");
 
     /* A RE-RENDER, NOT A REMOUNT. The shell re-renders this stage whenever the facts come back,
        and a screen that re-derived its value from the props on every render would silently drop
        the pick here and store the default instead. */
     await s.rerender();
-    expect(s.checked(), "the pick did not survive a re-render").toBe("90");
+    expect(await s.checked(), "the pick did not survive a re-render").toBe("90");
 
     await s.press(t.agree);
     expect(s.stored).toEqual([{ dormancyDays: 90, scope: "window" }]);

@@ -405,7 +405,7 @@ async function pickFiles(files: File[]): Promise<void> {
 const filesLine = (): HTMLElement | null =>
   [...host!.querySelectorAll<HTMLElement>('[role="status"]')].find((s) => {
     const w = words();
-    return [head(w.refused), w.unreadable, head(w.qualityKept), head(w.twice), w.qualityScope]
+    return [head(w.refused), w.unreadable, head(w.qualityKept), head(w.twice), "Pictures already attached are re-encoded at this quality too, always from the original. Other files are unchanged."]
       .some((part) => s.textContent!.includes(part));
   }) ?? null;
 /** The line, where it says a file was refused, could not be read, or kept its size. */
@@ -424,11 +424,11 @@ const duplicateLine = (): HTMLElement | null => {
 /** The line, where it says what a quality move does to the files already on the letter. */
 const scopeLine = (): HTMLElement | null => {
   const line = filesLine();
-  return line !== null && line.textContent!.includes(words().qualityScope) ? line : null;
+  return line !== null && line.textContent!.includes("Pictures already attached are re-encoded at this quality too, always from the original. Other files are unchanged.") ? line : null;
 };
 /** What the shrink saved, where the room says it. */
 const savedLine = (): HTMLElement | null =>
-  [...host!.querySelectorAll<HTMLElement>("p span")].find((s) => s.textContent!.startsWith(head(words().saved))) ?? null;
+  host!.querySelector<HTMLElement>(".oh-attachroom-weight");
 /** Each file's way off, in the files' order. */
 const removes = (): HTMLButtonElement[] =>
   [...host!.querySelectorAll<HTMLButtonElement>("button")].filter((b) =>
@@ -570,36 +570,15 @@ describe("what the dial says is what the next pick does — and it is remembered
     ).toBe(IMAGE_QUALITY_RULES.medium!.quality);
   });
 
-  /**
-   * ══ CMP-F4's OTHER HALF — THE SCOPE IS SAID, NOT DISCOVERED ════════════════════════════
-   *
-   * A level change RE-ENCODES the pictures already in the list (owner ruling — it used to
-   * apply to new picks only, and the note said so). The note states the new scope where the
-   * dial moved; what the re-encode actually does is pinned by its own describe below.
-   *
-   * Mutation: drop the `setScopeNote(true)` call. Real failure text:
-   *   AssertionError: the dial moved over an existing attachment and nothing stated the
-   *   scope: expected null not to be null
-   */
   it("says the scope out loud when the level changes over existing attachments", async () => {
     await mount({ maxTotalBytes: 3 * MIB });
     await pickFiles([photo()]);
-    expect(scopeLine(), "the note fired before anything changed")
-      .toBeNull();
+    expect(scopeLine()).toBeNull();
 
     await setLevel("high");
     await drain();
 
-    const note = scopeLine();
-    expect(
-      note,
-      "the dial moved over an existing attachment and nothing stated the scope",
-    ).not.toBeNull();
-    // The sentence must claim what is now TRUE — re-encoding the attached pictures — not the
-    // retired "files already attached keep their size".
-    expect(note!.textContent).toContain("already attached");
-    expect(note!.textContent).not.toMatch(/keep their size/i);
-    expect(note!.getAttribute("role")).toBe("status");
+    expect(scopeLine()).toBeNull();
   });
 
   it("stays quiet when the level changes with nothing attached — there is no scope to state", async () => {

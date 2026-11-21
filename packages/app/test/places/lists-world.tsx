@@ -15,8 +15,12 @@ import folderDe from "../../messages/folder.de.json" with { type: "json" };
 import folderEn from "../../messages/folder.en.json" with { type: "json" };
 import historyDe from "../../messages/history.de.json" with { type: "json" };
 import historyEn from "../../messages/history.en.json" with { type: "json" };
+import ohboxDe from "../../messages/ohbox.de.json" with { type: "json" };
+import ohboxEn from "../../messages/ohbox.en.json" with { type: "json" };
 import readerDe from "../../messages/reader.de.json" with { type: "json" };
 import readerEn from "../../messages/reader.en.json" with { type: "json" };
+import searchDe from "../../messages/search.de.json" with { type: "json" };
+import searchEn from "../../messages/search.en.json" with { type: "json" };
 import sharedDe from "../../messages/shared.de.json" with { type: "json" };
 import sharedEn from "../../messages/shared.en.json" with { type: "json" };
 import tagsDe from "../../messages/tags.de.json" with { type: "json" };
@@ -29,9 +33,11 @@ export const WORDS: Record<"en" | "de", Messages> = {
     ...draftsEn,
     ...trashEn,
     ...historyEn,
+    ...ohboxEn,
     ...tagsEn,
     ...folderEn,
     ...addressEn,
+    ...searchEn,
     ...sharedEn,
     reader: readerEn.reader,
   } as Messages,
@@ -39,9 +45,11 @@ export const WORDS: Record<"en" | "de", Messages> = {
     ...draftsDe,
     ...trashDe,
     ...historyDe,
+    ...ohboxDe,
     ...tagsDe,
     ...folderDe,
     ...addressDe,
+    ...searchDe,
     ...sharedDe,
     reader: readerDe.reader,
   } as Messages,

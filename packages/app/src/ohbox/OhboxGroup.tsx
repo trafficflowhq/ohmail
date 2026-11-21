@@ -124,6 +124,7 @@ export function OhboxGroup({
           model={model}
           row={menu.row}
           at={menu.at}
+          anchor={menu.anchor.querySelector<HTMLElement>('[role="option"]') ?? menu.anchor}
           onClose={() => setMenu(null)}
           onScreen={
             ScreenContact && model.picked.size === 0 && !beside.words.sentTo(menu.row.openTarget)

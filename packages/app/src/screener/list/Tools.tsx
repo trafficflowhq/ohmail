@@ -1,7 +1,7 @@
 /**
  * THE QUEUE'S TOOLS, over Waiting: the filter (the groups the suggestions make, each with its count, the whole queue
  * first), Suggest (where the shell hands a run: the price before the spend, nothing bought before the confirm), and
- * Apply, which files every sender with a real suggestion where it says, and names those places on its button.
+ * Apply, which files every sender with a suggestion into the proposed pile.
  */
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import {
@@ -11,12 +11,12 @@ import {
   type ScreenerFilterId,
   type ScreenerView,
 } from "@ohmail/app-logic/screener";
-import { stripStandingKey } from "@ohmail/app-logic/screener/no-suggestion";
-import { Button, Menu, MenuItem, Seg } from "@ohmail/ui/base";
-import { GroupHeading, ListLine } from "@ohmail/ui/mail";
+import { suggestMenuStandingKey } from "@ohmail/app-logic/screener/no-suggestion";
+import { Button, Menu, MenuItem, MenuRule, Seg } from "@ohmail/ui/base";
+import { GroupHeading } from "@ohmail/ui/mail";
 import { NONE } from "../../host/index.js";
 import { useText, type Text } from "../../text/index.js";
-import { ListMenu } from "./ListMenu.js";
+import { ListMenu, type ListMenuItem } from "../../place-list/ListMenu.js";
 import { useNoAdvice, useScreener, useScreenerBeside } from "../contract.js";
 import type { ScreenerSuggest } from "../ports.js";
 
@@ -29,14 +29,6 @@ function ScreeningProgress({ label, done, total }: { label: string; done: number
       ) : null}
     </div>
   );
-}
-
-/** The places Apply files into, as one phrase: "Ohbox, News & Receipts". */
-function pileList(dests: readonly DecisionDestination[], t: Text): string {
-  const names = dests.map((d) => t(PILE_KEY[d]));
-  if (names.length <= 1) return names[0] ?? "";
-  const last = names[names.length - 1]!;
-  return t("pileJoin", { a: names.slice(0, -1).join(", "), b: last });
 }
 
 const filterWord = (t: Text, id: ScreenerFilterId): string =>
@@ -56,9 +48,11 @@ function Filter({
   const { counts, active, choices, choose } = view.filter;
   const all = choices.reduce((n, id) => n + counts[id], 0);
   return (
-    <div ref={at}>
+    <div className="sc-tool-heading" ref={at}>
       <GroupHeading
         opensMenu
+        flushEnd
+        hot
         count={String(active === null ? all : counts[active])}
         onPress={() => onOpen(!open)}
       >
@@ -99,15 +93,30 @@ function Filter({
   );
 }
 
-function Suggest({ suggest, allAnswered }: { suggest: ScreenerSuggest; allAnswered: boolean }) {
+function Suggest({
+  suggest,
+  touch,
+  listAnchor,
+  again,
+  fromList,
+  start,
+}: {
+  suggest: ScreenerSuggest;
+  touch: boolean;
+  listAnchor: RefObject<HTMLButtonElement | null>;
+  again: boolean;
+  fromList: boolean;
+  start: (again: boolean, fromList?: boolean) => void;
+}) {
   const t = useText("screener");
-  const buyAnchor = useRef<HTMLButtonElement | null>(null);
-  const reaskAnchor = useRef<HTMLButtonElement | null>(null);
+  const button = useRef<HTMLButtonElement | null>(null);
   const reaskContent = useRef<HTMLDivElement | null>(null);
+  const { standing, subscriptionPane } = useNoAdvice();
   const c = suggest.control;
   const open = c.phase !== "closed";
-  const [again, setAgain] = useState(false);
-  if (!open && c.available === 0 && c.resuggestable === 0) return null;
+  const first = c.available > 0;
+  if (!open && !first && c.resuggestable === 0) return null;
+  const inline = !touch && first;
   const price =
     c.quote === null || again
       ? undefined
@@ -116,55 +125,23 @@ function Suggest({ suggest, allAnswered }: { suggest: ScreenerSuggest; allAnswer
         : t("suggest.priceUnmetered", { senders: c.quote.senders });
   return (
     <>
-      {!open && c.available === 0 && allAnswered ? (
-        <p className="oh-text" role="status">
-          {t("suggest.allSuggested", { count: c.resuggestable })}
-        </p>
-      ) : null}
-      {(open ? !again : c.available > 0) ? (
+      {inline ? (
         <Button
           kind="quiet"
           size="s"
           opens="menu"
           expanded={!c.disabled && open}
           disabled={c.disabled || c.phase === "running"}
-          ref={buyAnchor}
-          onPress={
-            open
-              ? c.cancel
-              : () => {
-                  setAgain(false);
-                  c.open();
-                }
-          }
+          ref={button}
+          onPress={open && !fromList ? c.cancel : () => start(false)}
         >
           {t("suggest.open")}
-        </Button>
-      ) : null}
-      {(open ? again : c.resuggestable > 0) ? (
-        <Button
-          kind="quiet"
-          size="s"
-          opens="menu"
-          expanded={!c.disabled && open}
-          disabled={c.disabled || c.phase === "running"}
-          ref={reaskAnchor}
-          onPress={
-            open
-              ? c.cancel
-              : () => {
-                  setAgain(true);
-                  c.openAgain();
-                }
-          }
-        >
-          {t("suggest.again")}
         </Button>
       ) : null}
       <Menu
         open={!c.disabled && open}
         onClose={c.cancel}
-        anchor={again ? reaskAnchor : buyAnchor}
+        anchor={inline && !fromList ? button : listAnchor}
         label={again ? t("suggest.ariaAgain") : t("suggest.aria")}
         kind="ask"
         fitContent={again}
@@ -172,7 +149,22 @@ function Suggest({ suggest, allAnswered }: { suggest: ScreenerSuggest; allAnswer
         title={again ? t("suggest.labelAgain") : t("suggest.label")}
         aside={c.phase === "ready" ? price : undefined}
       >
-        <SuggestMenuContent suggest={suggest} again={again} contentRef={reaskContent} />
+        <SuggestMenuContent
+          suggest={suggest}
+          again={again}
+          contentRef={reaskContent}
+          standingLine={suggestMenuStandingKey(standing, subscriptionPane)}
+        />
+        {!again && c.phase === "ready" && c.resuggestable > 0 ? (
+          <>
+            <MenuRule />
+            <div className="sc-suggest-actions">
+              <Button kind="quiet" size="s" onPress={() => start(true, fromList)}>
+                {t("suggest.again")}
+              </Button>
+            </div>
+          </>
+        ) : null}
       </Menu>
     </>
   );
@@ -182,10 +174,12 @@ function SuggestMenuContent({
   suggest,
   again,
   contentRef,
+  standingLine,
 }: {
   suggest: ScreenerSuggest;
   again: boolean;
   contentRef: RefObject<HTMLDivElement | null>;
+  standingLine: string | null;
 }) {
   const t = useText("screener");
   const c = suggest.control;
@@ -205,6 +199,9 @@ function SuggestMenuContent({
       ? t("suggest.credits", { credits: c.quote.credits })
       : null;
   const noControls = c.phase === "running" || (emptyAgain && !showSizes);
+  const creditRefusal = useText("aiRefusal")("insufficientCredits");
+  const notice =
+    standingLine !== null && (c.notice === null || c.notice === creditRefusal) ? t(standingLine) : c.notice;
   return (
     <div ref={contentRef} tabIndex={again ? (noControls ? 0 : -1) : undefined}>
       {c.phase === "pricing" ? (
@@ -242,7 +239,7 @@ function SuggestMenuContent({
                 disabled={c.phase !== "ready" || c.quote === null || c.quote.senders === 0}
                 onPress={c.confirm}
               >
-                {again ? t("suggest.confirmAgain", { n, count }) : t("suggest.confirm", { n })}
+                {t(again ? "suggest.confirmAgain" : "suggest.confirm", { n, count })}
               </Button>
             ) : null}
             {!emptyAgain ? (
@@ -251,9 +248,9 @@ function SuggestMenuContent({
               </Button>
             ) : null}
           </div>
-          {c.notice ? (
+          {notice ? (
             <p className={again ? "oh-text sc-suggest-copy" : "oh-text"} role="status">
-              {c.notice}
+              {notice}
             </p>
           ) : null}
         </>
@@ -262,52 +259,103 @@ function SuggestMenuContent({
   );
 }
 
-export function Tools({ view }: { view: ScreenerView }) {
+export function Tools({
+  view,
+  touch,
+  junkCount,
+}: {
+  view: ScreenerView;
+  touch?: boolean;
+  junkCount?: number | null;
+}) {
   const t = useText("screener");
   const model = useScreener();
-  const { suggest, ownSuggest } = useScreenerBeside();
-  const { standing, subscriptionPane } = useNoAdvice();
-  const standingLine = stripStandingKey(standing, subscriptionPane);
-  if (view.segment !== "waiting") return null;
+  const { suggest, ownSuggest, facts } = useScreenerBeside();
+  const listAnchor = useRef<HTMLButtonElement>(null);
+  const [suggestionMenu, setSuggestionMenu] = useState({ again: false, fromList: false });
   const { applying } = model;
   const progress =
     applying === null ? null : <ScreeningProgress label={t("applying", applying)} {...applying} />;
-  if (model.waitingCount === 0) {
-    // The last decision can remove the last row before the bulk summary arrives.
-    return progress === null ? null : (
-      <div className="sc-tools" role="group" aria-label={t("bulkAria")}>
-        {progress}
-      </div>
-    );
-  }
+  const waiting = view.segment === "waiting";
+  const count = waiting ? model.waitingCount : (junkCount ?? view.rows.length);
+  const counted = waiting
+    ? model.queueSettled
+    : junkCount !== undefined
+      ? junkCount !== null
+      : model.queueSettled && !facts.owed && model.copyBehind !== true;
   const may = !refused(model.role);
-  const filtering = view.filter.choices.length > 0;
-  const apply = may && model.suggestedCount > 0;
-  /* What Spam and Screen out also send is said on any waiting queue this install may decide, tools or none. */
-  const unsub =
-    may &&
-    model.waiting.some((x) => !model.isExiting(x.id) && model.unsubClaimOf(x, view.scopeOf(x)) !== "none");
+  const control = waiting && ownSuggest == null && suggest !== NONE ? suggest.control : null;
+  const start = (again: boolean, fromList = false) => {
+    setSuggestionMenu({ again, fromList });
+    if (again) control?.openAgain();
+    else control?.open();
+  };
+  const first = control !== null && control.available > 0;
+  const reask = control !== null && control.resuggestable > 0;
+  const items: ListMenuItem[] = [];
+  if (control && (first || reask)) {
+    const label = t(first ? "suggest.open" : "suggest.again");
+    items.push({
+      label,
+      spoken: label,
+      note: String(first ? control.available : control.resuggestable),
+      disabled: control.disabled,
+      onPress: () => start(!first, true),
+      apart: true,
+    });
+  }
+  if (waiting && count > 0 && may)
+    items.push({
+      label: t("markAllSpam"),
+      spoken: t("markAllSpam"),
+      note: String(model.spamAllCount),
+      onPress: view.askAllSpam,
+      apart: items.length === 0,
+    });
+  const apply = waiting && may && model.suggestedCount > 0 && applying === null;
+  const hasFilter = waiting && view.filter.choices.length > 0;
+  const heading = t(
+    waiting
+      ? "filterAll"
+      : view.segment === "screened"
+        ? "segScreened"
+        : junkCount !== undefined
+          ? "segJunk"
+          : "segSpam",
+  );
   return (
-    <div className="sc-tools" role="group" aria-label={t("bulkAria")}>
-      {filtering ? (
+    <div
+      className="sc-tools"
+      role={waiting ? "group" : undefined}
+      aria-label={waiting ? t("bulkAria") : undefined}
+    >
+      {hasFilter ? (
         <Filter view={view} open={view.shown === "filter"} onOpen={(o) => view.show(o ? "filter" : null)} />
       ) : (
-        <GroupHeading count={String(model.waitingCount)}>{t("filterAll")}</GroupHeading>
+        <div className="sc-tool-heading">
+          <GroupHeading flushEnd hot={waiting} count={counted ? String(count) : undefined}>
+            {heading}
+          </GroupHeading>
+        </div>
       )}
-      {/* Offered to a reader too, as the released Screener offers it: advice moves no mail. */}
-      {ownSuggest ??
-        (suggest !== NONE ? (
-          <Suggest suggest={suggest} allAnswered={model.waitingCount === model.suggestedCount} />
-        ) : null)}
-      {apply && applying === null ? (
-        <Button kind="quiet" size="s" onPress={view.askApplySuggestions}>
-          {t("applyAll", { count: model.suggestedCount, piles: pileList(model.suggestedDests, t) })}
+      {waiting &&
+        (ownSuggest ??
+          (suggest !== NONE ? (
+            <Suggest
+              suggest={suggest}
+              touch={touch === true}
+              listAnchor={listAnchor}
+              {...suggestionMenu}
+              start={start}
+            />
+          ) : null))}
+      {apply ? (
+        <Button kind="two" size="s" keyHint="a" onPress={view.askApplySuggestions}>
+          {t("applyAll", { count: model.suggestedCount })}
         </Button>
       ) : null}
+      <ListMenu label={t("place.listMenu")} size="s" items={items} mail anchorRef={listAnchor} />
       {progress}
-      <ListMenu view={view} />
-      {standingLine ? <ListLine said>{t(standingLine)}</ListLine> : null}
-      {unsub ? <ListLine>{t("bulkUnsub")}</ListLine> : null}
     </div>
   );
 }

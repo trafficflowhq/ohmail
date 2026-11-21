@@ -9,6 +9,7 @@ import type { EngineDraft } from "@ohmail/wire";
 import { heldSentence, isHeld, useDraftsModel, type DraftsModel } from "@ohmail/app-logic/drafts";
 import { Empty, RefusalLine } from "@ohmail/ui/base";
 import { GroupHeading, ListHead, Row, Rows, type RowProps } from "@ohmail/ui/mail";
+import { FrameContext } from "../frame/commands.js";
 import type { PaneProps } from "../frame/contract.js";
 import { ListColumn, ListMenu } from "../place-list/index.js";
 import { useText, type Text } from "../text/index.js";
@@ -25,6 +26,7 @@ function focusRefusal(line: HTMLParagraphElement | null): void {
 
 export function DraftsList({ route, plan }: PaneProps) {
   const model = useDraftsModel();
+  const commands = useContext(FrameContext)?.api.commands;
   const t = useText("drafts");
   const composer = useWritingIfMounted();
   const writing = route.place === "write" ? composer : null;
@@ -116,7 +118,12 @@ export function DraftsList({ route, plan }: PaneProps) {
         </section>
       ) : null}
       {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
-      {model.empty && draftCount === 0 ? <Empty label={t("emptyTitle")} /> : null}
+      {model.empty && draftCount === 0 ? (
+        <Empty
+          label={t("emptyTitle")}
+          act={commands ? { label: t("emptyWrite"), onPress: () => commands.write() } : undefined}
+        />
+      ) : null}
       {model.loading ? <Empty label={t("listLoading")} /> : null}
     </>
   );
@@ -154,8 +161,8 @@ function CurrentDraft({
   when?: string;
 }) {
   const { compose, plan } = composer;
-  const who =
-    recipientsOf({ to: plan.addresses, cc: plan.cc.addresses, bcc: plan.bcc.addresses }) || t("noRecipient");
+  const to = recipientsOf({ to: plan.addresses, cc: plan.cc.addresses, bcc: plan.bcc.addresses });
+  const who = to ? t("rowTo", { name: to }) : t("noRecipient");
   const subject = compose.subject.trim() || t("noSubject");
   return (
     <div data-index={index}>
@@ -238,6 +245,7 @@ function DraftRow({
   const subject = d.subject.trim() || t("noSubject");
   const waits = model.door.waiting.has(d.id);
   const held = isHeld(model.door, d);
+  const reply = model.door.repliesHere(d);
   const state = waits
     ? t("waitingToSend")
     : held
@@ -252,18 +260,19 @@ function DraftRow({
   return (
     <div className="dr-row" data-id={d.id} data-index={index}>
       <Row
-        who={to || t("noRecipient")}
+        who={to ? t("rowTo", { name: to }) : t("noRecipient")}
         people={[]}
-        sign={model.door.repliesHere(d) ? "reply" : "drafts"}
+        sign={reply ? "reply" : "drafts"}
+        labels={held ? [t("heldLabel")] : reply ? [t("isReply")] : undefined}
         subject={subject}
-        preview={state ?? d.body ?? undefined}
+        preview={(held ? d.body : (state ?? d.body)) ?? undefined}
         when={model.stamp(d.updatedAt)}
         open={open}
         own={discard}
         onOpen={() => model.door.open(d)}
         listing={{
           name: `${to || t("noRecipient")}: ${subject}`,
-          spoken: [model.door.repliesHere(d) ? t("isReply") : null, state].filter(Boolean).join(", "),
+          spoken: [held ? t("heldLabel") : reply ? t("isReply") : null, state].filter(Boolean).join(", "),
           selected: open,
           place: { at: position, of: count },
         }}

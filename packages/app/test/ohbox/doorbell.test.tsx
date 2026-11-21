@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { msg, ohbox } from "./ohbox-world.js";
 import { wideWindow } from "./setup.js";
@@ -8,6 +8,8 @@ beforeEach(wideWindow);
 afterEach(cleanup);
 
 const rows = () => [msg({ id: "a" })];
+const shownNotice = (title: RegExp) =>
+  screen.queryAllByRole("status").find((status) => title.test(status.textContent ?? ""));
 
 describe("the doorbell in the head", () => {
   it("says how many wait and leads to the Screener", () => {
@@ -47,14 +49,14 @@ describe("the doorbell in the head", () => {
       {
         side: {
           notOrganizing: { every: true, mailboxes: [{ id: "mb1", address: "mila@ex.example" }] },
-          doorbell: { count: 3, settled: true },
+          doorbell: { count: 0, settled: true },
         },
       },
     );
     expect(screen.queryByRole("button", { name: /waiting/ })).toBeNull();
-    /* Said to every eye, not only to a screen reader: the statement printed, its action after it. */
-    expect(document.body.textContent).toMatch(/Not organizing yet\s*Set up ›/);
-    fireEvent.click(screen.getByRole("button", { name: /Not organizing yet/ }));
+    const notice = shownNotice(/Not organizing yet/)!;
+    expect(notice.textContent).toContain("New senders go straight to the Ohbox.");
+    fireEvent.click(within(notice).getByRole("button", { name: "Set up" }));
     expect(world.said.went).toEqual(["organize:mb1"]);
   });
 
@@ -70,19 +72,25 @@ describe("the doorbell in the head", () => {
         },
       },
     );
-    expect(document.body.textContent).toMatch(/Handed back\s*Mailboxes ›/);
-    fireEvent.click(screen.getByRole("button", { name: /Handed back/ }));
+    const notice = shownNotice(/is handed back/)!;
+    expect(notice.textContent).toContain("Nothing organizes it, so new senders go straight to the Ohbox.");
+    fireEvent.click(within(notice).getByRole("button", { name: "Mailboxes" }));
     expect(world.said.went).toEqual(["mailboxes"]);
   });
 
   it("where one of several mailboxes is not organized and nobody waits, it names that mailbox", () => {
-    ohbox(
+    const world = ohbox(
       { newForYou: rows() },
       {
         side: { notOrganizing: { every: false, mailboxes: [{ id: "mb2", address: "ben@ex.example" }] } },
       },
     );
-    expect(screen.getByRole("button", { name: /ben@ex\.example/ })).toBeTruthy();
-    expect(document.body.textContent).toMatch(/Not organizing ben@ex\.example\s*Set up ›/);
+    const title = /Nothing organizes ben@ex\.example/;
+    const notice = shownNotice(title)!;
+    expect(notice.textContent).toContain("Its new senders go straight to the Ohbox.");
+    fireEvent.click(within(notice).getByRole("button", { name: "Set up" }));
+    expect(world.said.went).toEqual(["organize:mb2"]);
+    fireEvent.click(within(notice).getByRole("button", { name: "Not now" }));
+    expect(shownNotice(title)).toBeUndefined();
   });
 });

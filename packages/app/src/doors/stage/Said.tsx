@@ -48,7 +48,15 @@ export function Address({ value, dot }: { value: string; dot?: ReactNode }): Rea
  * A sentence that holds a part, as the catalogue writes it with a tag (`<blank></blank>`, `<c>{code}</c>`): its closing
  * full stop becomes the dot, which stays with the part or with the last word, whichever ends the sentence.
  */
-export function SaidWith({ parts, dot = "hot" }: { parts: ReactNode; dot?: "hot" | "ink" }): ReactNode {
+export function SaidWith({
+  parts,
+  dot = "hot",
+  level,
+}: {
+  parts: ReactNode;
+  dot?: "hot" | "ink";
+  level?: 1 | 2;
+}): ReactNode {
   const list: ReactNode[] = Array.isArray(parts) ? [...(parts as ReactNode[])] : [parts];
   const last = list.at(-1);
   let end: ReactNode;
@@ -69,7 +77,7 @@ export function SaidWith({ parts, dot = "hot" }: { parts: ReactNode; dot?: "hot"
       );
   }
   return (
-    <Sentence size="xl">
+    <Sentence size="xl" level={level}>
       {list.map((part, i) => (
         <Fragment key={i}>{part}</Fragment>
       ))}

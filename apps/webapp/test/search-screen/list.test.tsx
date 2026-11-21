@@ -138,9 +138,8 @@ describe("the verdict", () => {
     await type("glaze");
     await settle();
     expect(screen.getByRole("heading", { name: "Results 1" })).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toMatch(
-      /^Searched your whole mailbox — 1 matched · [1-9]\d* ms$/,
-    );
+    expect(within(box().parentElement!).getByText(/^[1-9]\d* ms$/)).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("more than can be counted: at least so many, beside Results and in its line", async () => {
@@ -156,7 +155,7 @@ describe("the verdict", () => {
     await type("glaze");
     await settle();
     expect(screen.getByRole("status").textContent).toContain(
-      "Your server did not answer — showing the recent mail this device holds.",
+      "Your server did not answer, so these are from the recent mail this device holds.",
     );
     const asked = world.asked.length;
     await act(async () => {
@@ -171,7 +170,7 @@ describe("the verdict", () => {
     await type("glaze");
     await settle();
     expect(results().map((li) => li.getAttribute("data-hit"))).toEqual(["glaze"]);
-    expect(document.body.textContent).toContain("Search covers the sample mailbox.");
+    expect(document.body.textContent).not.toContain("Search covers the sample mailbox.");
   });
 });
 
@@ -185,9 +184,9 @@ describe("an empty answer", () => {
     await settle();
     const text = document.body.textContent ?? "";
     expect(said("Nothing matched")).not.toBeNull();
-    expect(text).toContain("A long message is searched in its first 65,536 characters.");
-    expect(text).toContain("Search does not reach your mail server's Spam folder, because ohmail keeps no copy of it.");
-    expect(text).toContain("Read it under Junk in the Screener.");
+    expect(text).not.toContain("A long message is searched in its first 65,536 characters.");
+    expect(text).toContain("Search does not reach your mail server’s Spam folder, because ohmail keeps no copy of it.");
+    expect(text).not.toContain("Read it under Junk in the Screener.");
   });
 
   it("a store that could not run it says the device's mail is all there is: Nothing matched stands above", async () => {
@@ -203,7 +202,7 @@ describe("an empty answer", () => {
     await type("nadja@erdton-atelier.example");
     await settle();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Everything from and to them" }));
+      fireEvent.click(within(screen.getByRole("list", { name: "People" })).getByRole("button", { name: /.@./ }));
     });
     expect(world.said.went).toEqual(["nadja@erdton-atelier.example"]);
   });
@@ -331,5 +330,19 @@ describe("in German", () => {
     });
     await settle();
     expect(said("Nichts gefunden")).not.toBeNull();
+  });
+});
+
+describe("calendar matches", () => {
+  it.each([true, false])("offers matching events after the mail answer (mail found: %s)", async (found) => {
+    let opened = 0;
+    await search(found ? [GLAZE] : [], {
+      store: page(found ? [GLAZE] : []),
+      side: { events: (text) => text === "glaze" ? { count: 3, open: () => { opened++; } } : null },
+    });
+    await type("glaze");
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "3 events" }));
+    expect(opened).toBe(1);
   });
 });

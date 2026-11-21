@@ -110,7 +110,7 @@ describe("an explicit Mark read on the shown message files it at the top of Earl
     expect(conversationReadSlot()?.getAttribute("aria-label")).toBe("Mark 2 unread messages as read");
     await click(conversationReadSlot(), "Mark read");
     expect(deliberate(), "one request for the conversation").toEqual([{ ids: ["a1", "x2"], unread: false, openRead: true }]);
-    expect(toastText()).toContain("2 messages marked read.");
+    expect(toastText()).toContain("2 · Read");
     await click(undoPress(), "Undo");
     expect(deliberate().at(-1), "Undo takes back what the press wrote").toEqual({ ids: ["a1", "x2"], unread: true });
     expect(conversationReadSlot()?.getAttribute("aria-label")).toBe("Mark 2 unread messages as read");

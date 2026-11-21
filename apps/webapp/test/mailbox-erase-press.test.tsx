@@ -238,10 +238,11 @@ describe("the copy is a claim, in both catalogues", () => {
 
   it("the sentences that say ohmail never erases mail stay true: they are about the mail server", () => {
     const en = messages as unknown as Record<string, Record<string, string>>;
-    const never = [en.rail?.folderErrNoTrash, en.ohbox?.deleteNote, en.trash?.noErase]
+    const never = [en.rail?.folderErrNoTrash, en.ohbox?.deleteNoTrash, en.trash?.noErase]
       .filter((v): v is string => typeof v === "string");
     expect(never.length, "a cited sentence moved — this reads it by key").toBe(3);
     for (const line of never) expect(line).toMatch(/ohmail never erases mail/);
+    expect(en.ohbox).not.toHaveProperty("deleteNote");
     // The new sentences never claim to erase MAIL: every erase names the copy.
     for (const k of keys) expect(copy[k]).not.toMatch(/erases? (your|the) mail\b/i);
   });

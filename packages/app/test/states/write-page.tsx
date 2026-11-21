@@ -389,9 +389,7 @@ async function steps(): Promise<void> {
   if (state === "later" || state === "pick" || (note?.startsWith("later") ?? false)) press(say("later.verb"));
   if (state === "pick") {
     await tick();
-    document
-      .querySelector<HTMLElement>('[role="menu"]')
-      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "4", bubbles: true }));
+    press(say("later.pick"));
   }
   if (state === "draft-ask") press(say("draft.letterVerb"));
   if (state === "quality" || line === "quality") {

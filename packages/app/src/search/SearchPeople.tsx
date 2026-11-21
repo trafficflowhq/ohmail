@@ -36,9 +36,12 @@ export function SearchPeople({
   const side = open !== null && (open.key === "from" || open.key === "to") ? open.key : null;
   if (model.person !== null || beside.people === NONE || model.addressOnly) return null;
   if (side === null && words === "" && !model.resting) return null;
+  const overview = new Map(model.restingPeople.map((entry) => [entry.person.address, entry]));
   const who = model.resting
     ? model.restingPeople
-    : peopleFor(side !== null ? open!.value : words, beside.people()).map((person) => ({ person }));
+    : peopleFor(side !== null ? open!.value : words, beside.people()).map(
+        (person) => overview.get(person.address) ?? { person, from: 0, to: 0 },
+      );
   if (who.length === 0) return null;
   const few = model.resting || side !== null ? FEW : FEW_WITH_WORDS;
   const shown = all ? who : who.slice(0, few);
@@ -63,13 +66,11 @@ export function SearchPeople({
           const name = p.name || p.address;
           const address = p.name === "" ? undefined : p.address;
           const amount =
-            "from" in entry
-              ? entry.from === 0
-                ? t("peopleTo", { count: entry.to })
-                : entry.to === 0
-                  ? t("peopleFrom", { count: entry.from })
-                  : t("peopleBoth", { from: entry.from, to: entry.to })
-              : t("peopleCount", { count: p.count });
+            entry.from === 0
+              ? t("peopleTo", { count: entry.to })
+              : entry.to === 0
+                ? t("peopleFrom", { count: entry.from })
+                : t("peopleBoth", { from: entry.from, to: entry.to });
           return (
             <div role="listitem" key={p.address}>
               <Row

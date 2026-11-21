@@ -18,7 +18,7 @@ import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { Frame } from "../../src/frame/Frame.js";
 import { useFrame, useRailModel } from "../../src/frame/commands.js";
 import type { CalendarEntry, PlaceEntry, RailModel } from "../../src/frame/contract.js";
-import { NONE } from "../../src/host/index.js";
+import { NONE, type ReaderEntry } from "../../src/host/index.js";
 import { readerEntry, type ReaderFiles } from "../../src/reader/index.js";
 import { letterBody } from "./reader-body-part.mjs";
 import { fillOver, TextProvider, type Messages } from "../../src/text/index.js";
@@ -120,7 +120,7 @@ function List() {
   );
 }
 
-const reader = readerEntry({
+const readerParts = readerEntry({
   body: letterBody,
   files,
   pictures: "none",
@@ -129,6 +129,13 @@ const reader = readerEntry({
   reply: "none",
   invitation: "none",
 });
+// Test the column control under touch without changing the foldable's normal placement.
+const reader: ReaderEntry = q.has("column")
+  ? {
+      ...readerParts,
+      Reading: (pane) => <readerParts.Reading {...pane} plan={{ ...pane.plan, device: "desktop" }} />,
+    }
+  : readerParts;
 const place: PlaceEntry = {
   id: "ohbox",
   body: "reading",
@@ -167,7 +174,13 @@ const { host } = fakeHost({
   places: { ohbox: place },
   ...(switchProducts && { calendar, products: "both" }),
   reader,
-  window: fakeWindow({ ...room, ...size, posture: "flat", reducedMotion: q.get("motion") !== "full" }),
+  window: fakeWindow({
+    ...room,
+    ...size,
+    pointer: q.has("fine") ? "fine" : room.pointer,
+    posture: "flat",
+    reducedMotion: q.get("motion") !== "full",
+  }),
   address: fakeAddress(switchProducts ? "#/ohbox" : `#/ohbox/${q.has("whole") ? "t" : "m"}/w${openAt}`),
   appearance: fakeAppearance(look),
 });

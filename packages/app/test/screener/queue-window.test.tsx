@@ -73,14 +73,14 @@ it.each([COUNT, 100])("announces the full Screener set when %i senders are waiti
   expect(heard.size).toBe(COUNT);
   if (pending > 0) {
     await scrollTo(scroller, waitingCount - 4);
-    const heading = within(list).getByRole("heading", { name: /Waiting for the organizer/ });
+    const heading = within(list).getByRole("heading", { name: /^Waiting for / });
     expect(heading.closest('[role="option"]')).toBeNull();
     expect(screen.getAllByRole("listbox")).toEqual([list]);
     fireEvent.click(within(list).getByRole("option", { name: /^Pending sender 1:/ }));
     const panel = within(screen.getByRole("region", { name: "Reading" })).getByRole("toolbar", {
       name: "Actions",
     });
-    expect(panel.textContent).toContain("Decided — Mac files it on its next pass.");
+    expect(panel.textContent).toContain("Sent to Mac, waiting for it to apply.");
     expect(within(panel).queryAllByRole("button")).toEqual([]);
   }
   expect(asked).not.toHaveProperty("decided");

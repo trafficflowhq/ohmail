@@ -63,10 +63,10 @@ describe("R13-04 — a full-height sender sheet carries a close control of at le
 
   it("the subject-rule sheet, the same shell, carries the same way out", async () => {
     for (const coarse of [true, false]) await visit(375, coarse, async (page) => {
-      await page.addStyleTag({ content: ".senderm .sm-now { min-height: 900px }" });
+      await page.addStyleTag({ content: ".subject-rule-card .oh-contactcard-head { min-height: 900px }" });
       const card = await senderCard(page);
-      await card.getByRole("button", { name: en.screening.subjectRuleOpen }).click({ timeout: 5000 });
-      await namedClose(page.getByRole("dialog", { name: /^Make a rule for mail from/ }));
+      await card.getByRole("menuitem", { name: en.screening.cardSubject }).click({ timeout: 5000 });
+      await namedClose(page.getByRole("dialog", { name: en.screening.subjectAria, exact: true }));
     });
   }, 30_000);
 

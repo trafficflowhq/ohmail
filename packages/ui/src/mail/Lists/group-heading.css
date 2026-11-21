@@ -12,6 +12,10 @@
     line-height: var(--oh-lh-tight);
   }
 
+  .oh-groupheading[data-flush-end] {
+    padding-inline-end: 0;
+  }
+
   .oh-groupheading-count {
     color: var(--ink2);
     font-family: var(--f-text);

@@ -160,13 +160,15 @@ describe("the reason on the row", () => {
   it("says the whole sentence beside the sender, above the model's own", async () => {
     await mount();
     await open(FORGED);
-    expect(reading().getByText("The sender's address is not Metanet's")).toBeTruthy();
+    expect(reading().getByText("Not Metanet", { exact: true })).toBeTruthy();
+    expect(reading().queryByText("The sender's address is not Metanet's")).toBeNull();
   });
 
   it("says it in German on a German surface — the wire carries no sentence", async () => {
     await mount("de");
     await open(FORGED);
-    expect(reading().getByText("Die Absenderadresse gehört nicht zu Metanet")).toBeTruthy();
+    expect(reading().getByText("Nicht Metanet", { exact: true })).toBeTruthy();
+    expect(reading().queryByText("Die Absenderadresse gehört nicht zu Metanet")).toBeNull();
   });
 
   it("says nothing at all for a suggestion no fact bounded", async () => {
@@ -181,7 +183,7 @@ describe("the closed set and its words", () => {
   it("every code has a sentence and a chip in both catalogues, and nothing else does", async () => {
     for (const [name, cat] of [["en", en], ["de", de]] as const) {
       const ns = cat.screener as unknown as Record<string, Record<string, string>>;
-      expect(Object.keys(ns.aiReason ?? {}).sort(), name).toEqual([...REASON_CODES].sort());
+      expect(ns.aiReason, name).toBeUndefined();
       expect(Object.keys(ns.aiReasonChip ?? {}).sort(), name).toEqual([...REASON_CODES].sort());
     }
   });
@@ -215,7 +217,8 @@ describe("the identity fact, outside the AI advice", () => {
     await mount("en", [marked("p0", PHISH, true), held("m1", CLEAN, 10)], [], false);
     await open(PHISH);
     const sentence = "This message claims to be from PostFinance, but anyone can register a gmail.com address.";
-    expect(reading().getByText(sentence)).toBeTruthy();
+    expect(reading().getByText("Not PostFinance", { exact: true })).toBeTruthy();
+    expect(reading().queryByText(sentence)).toBeNull();
     expect(reading().queryByText(/AI suggests/)).toBeNull();
     const row = within(rowOf(PHISH));
     expect(row.getByText("Not PostFinance")).toBeTruthy();
@@ -226,9 +229,10 @@ describe("the identity fact, outside the AI advice", () => {
   it("says the other sentence for an address that is no shared provider's, in German too", async () => {
     await mount("de", [marked("p1", "kunden@postfinance-sicherheit.example", false)], [], false);
     await open("kunden@postfinance-sicherheit.example");
-    expect(reading().getByText(
-      "Diese Nachricht gibt sich als PostFinance aus, aber postfinance-sicherheit.example ist keine Adresse von PostFinance.",
-    )).toBeTruthy();
+    const sentence = "Diese Nachricht gibt sich als PostFinance aus, aber postfinance-sicherheit.example ist keine Adresse von PostFinance.";
+    expect(reading().getByText("Nicht PostFinance", { exact: true })).toBeTruthy();
+    expect(reading().queryByText(sentence)).toBeNull();
+    expect(rowOf("kunden@postfinance-sicherheit.example").getAttribute("aria-description")).toContain(sentence);
   });
 
   /* A LIST ADDRESS (mail 0150): the mirrored fact says a mailing list posts as it, and the row says
@@ -241,20 +245,21 @@ describe("the identity fact, outside the AI advice", () => {
   it("a claim under a list address carries the list sentence beneath the identity line", async () => {
     await mount("en", [listed("l0", "list@lists.example")], [], false);
     await open("list@lists.example");
-    const identity = reading().getByText(/This message claims to be from PostFinance/);
-    const list = reading().getByText("Sent through a mailing list — anyone on it can write as this address.");
-    expect(identity.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(reading().getByText("Not PostFinance", { exact: true })).toBeTruthy();
+    expect(reading().queryByText(/This message claims to be from PostFinance/)).toBeNull();
+    expect(reading().queryByText(/Sent through a mailing list/)).toBeNull();
   });
 
   it("says it in German too", async () => {
     await mount("de", [listed("l1", "list@lists.example")], [], false, ["list@lists.example"]);
     await open("list@lists.example");
-    expect(reading().getByText("Über eine Mailingliste verschickt — alle auf der Liste können unter dieser Adresse schreiben.")).toBeTruthy();
-    expect(reading().getByText(
+    expect(reading().getByText("Nicht PostFinance", { exact: true })).toBeTruthy();
+    expect(reading().queryByText(/Über eine Mailingliste verschickt/)).toBeNull();
+    expect(reading().queryByText(
       "Beim Aussortieren oder Markieren als Spam werden nur die Nachrichten beiseitegelegt, die vorgeben, von PostFinance zu sein. Es wird keine Regel erstellt.",
-    )).toBeTruthy();
+    )).toBeNull();
     expect(reading().queryByText(/^Wird zur Regel/)).toBeNull();
-    expect(reading().getByText(/Ohbox, News und Belege werden zur Regel.*Aussortieren und Spam schreiben hier keine Regel/)).toBeTruthy();
+    expect(reading().queryByText(/Ohbox, News und Belege werden zur Regel.*Aussortieren und Spam schreiben hier keine Regel/)).toBeNull();
     const panel = screen().getByRole("toolbar", { name: de.screener.place.panel });
     await click(within(panel).getByRole("button", { name: /^Aussortieren/ }));
     expect(within(document.body).queryByRole("dialog", { name: de.screener.place.unsub.screened })).toBeNull();
@@ -262,7 +267,7 @@ describe("the identity fact, outside the AI advice", () => {
     const address = addressesById.get("l1");
     expect(reports.join(" ")).toContain(
       `Aussortiert — nur die Nachrichten von ${address}, die sich als PostFinance ausgeben. `
-      + "Es wurde keine Regel erstellt, die übrigen Mails der Liste bleiben, wo sie sind.",
+      + "Es wurde keine Regel erstellt, die übrigen Mails der Liste bleiben, wo sie sind",
     );
     expect(writes).toEqual([]);
     await tick(COMMIT_MS + 800);
@@ -274,7 +279,8 @@ describe("the identity fact, outside the AI advice", () => {
   it("CONTROL: a marked sender that is no list address has no list line", async () => {
     await mount("en", [marked("p2", "kunden@postfinance-sicherheit.example", false)], [], false);
     await open("kunden@postfinance-sicherheit.example");
-    expect(reading().getByText(/This message claims to be from PostFinance/)).toBeTruthy();
+    expect(reading().getByText("Not PostFinance", { exact: true })).toBeTruthy();
+    expect(reading().queryByText(/This message claims to be from PostFinance/)).toBeNull();
     expect(reading().queryByText(/Sent through a mailing list/)).toBeNull();
     expect(reading().queryByText(/Screen out files only/)).toBeNull();
   });
@@ -296,7 +302,8 @@ describe("the identity fact, outside the AI advice", () => {
   it("an unconfirmed brand sender's row says so, with no chip", async () => {
     await mount("en", [unconfirmed("v0"), held("m1", CLEAN, 10)], [], false);
     await open("service@paypal.com");
-    expect(reading().getByText("This message says it is from PayPal. Your mail provider did not confirm that.")).toBeTruthy();
+    expect(reading().getByText("Not confirmed", { exact: true })).toBeTruthy();
+    expect(reading().queryByText("This message says it is from PayPal. Your mail provider did not confirm that.")).toBeNull();
     expect(reading().queryByText(/This message claims to be from/)).toBeNull();
     expect(screen().queryByText(/^Not (PostFinance|PayPal)$/)).toBeNull();
   });
@@ -304,7 +311,8 @@ describe("the identity fact, outside the AI advice", () => {
   it("says it in German too", async () => {
     await mount("de", [unconfirmed("v1")], [], false);
     await open("service@paypal.com");
-    expect(reading().getByText("Diese Nachricht gibt an, von PayPal zu kommen. Dein Mailanbieter hat das nicht bestätigt.")).toBeTruthy();
+    expect(reading().getByText("Nicht bestätigt", { exact: true })).toBeTruthy();
+    expect(reading().queryByText("Diese Nachricht gibt an, von PayPal zu kommen. Dein Mailanbieter hat das nicht bestätigt.")).toBeNull();
   });
 
   it("says why an allow rule for everyone at gmail.com did not let the stranger through", async () => {
@@ -317,7 +325,7 @@ describe("the identity fact, outside the AI advice", () => {
     } as Change;
     await mount("en", [held("g0", personalAt("fixture.nadja", "gmail.com"), 10)], [rule], false);
     await open(personalAt("fixture.nadja", "gmail.com"));
-    expect(reading().getByText("Everyone at gmail.com: a shared provider, so this rule admits nobody. Decide per address.")).toBeTruthy();
+    expect(reading().getByText("This is a shared provider, so the rule admits nobody and you decide per address.")).toBeTruthy();
     expect(reading().queryByText(/This message claims to be from/)).toBeNull();
   });
 });
@@ -364,7 +372,7 @@ describe("the sender card lists the mail covered by the decision", () => {
     expect(row.textContent).toContain(chip);
     expect(row.textContent).not.toContain(heldLabel);
     expect(row.getAttribute("aria-description")).toBe(`${readState} · ${chip}`);
-    expect(reading().getByText(chip)).toBeTruthy();
+    expect(reading().queryByText(chip, { exact: true })).toBeNull();
   });
 });
 
@@ -372,7 +380,7 @@ describe("the new keys are du-form German, and only du-form", () => {
   const ADDED = [
     ["screener", "senderCheck", "impersonation"], ["screener", "senderCheck", "impersonationShared"],
     ["screener", "senderCheck", "chip"], ["screening", "scopeShared"], ["rules", "sharedProviderInert"],
-    ["screener", "senderCheck", "list"], ["screener", "senderCheck", "unverified"],
+    ["screener", "place", "notConfirmed"], ["screener", "senderCheck", "unverified"],
   ] as const;
   const SIE = /\b(Sie|Ihnen|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres)\b/;
   const at = (cat: unknown, path: readonly string[]): string =>

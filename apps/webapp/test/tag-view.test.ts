@@ -112,7 +112,7 @@ describe("Tag view", () => {
   it("states when nothing carries the tag", async () => {
     await openTag("tg2");
     expect(messages().getByRole("heading", { name: "Travel" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Messages" }).textContent).toContain("Nothing carries this tag");
+    expect(screen.getByRole("region", { name: "Messages" }).textContent).toContain("Nothing tagged");
     expect(messages().queryByRole("option")).toBeNull();
   });
 
@@ -123,7 +123,7 @@ describe("Tag view", () => {
     // `openMessage` would have set the hash to `#/ohbox`. The reader-in-place keeps the tag up,
     // and the address names the letter on the tag's route.
     expect(window.location.hash).toBe("#/tag/tg1/m/tg-a");
-    expect(column("Reading").getByText("subject of tg-a")).toBeTruthy();
+    expect(column("Reading").getByRole("heading", { name: "subject of tg-a" })).toBeTruthy();
   });
 
   it("is the two-pane layout on arrival, with no mode to pick, and a row reads in the column", async () => {
@@ -136,7 +136,7 @@ describe("Tag view", () => {
     await click(row("tg-b"));
 
     expect(window.location.hash).toBe("#/tag/tg1/m/tg-b");
-    expect(column("Reading").getByText("subject of tg-b")).toBeTruthy();
+    expect(column("Reading").getByRole("heading", { name: "subject of tg-b" })).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "Reading" })).toBeNull();
   });
 
@@ -160,7 +160,8 @@ describe("Tag view", () => {
     await openTag();
     const menu = await listMenu();
     await click(menu.getByRole("menuitem", { name: "Rename" }));
-    const form = within(screen.getByRole("dialog", { name: /Rename Invoices/ }));
-    expect(form.getByRole("textbox", { name: "Name" })).toHaveProperty("value", "Invoices");
+    const head = screen.getByRole("heading", { name: "Invoices" }).closest("header")!;
+    expect(within(head).getByRole("textbox", { name: "Name" })).toHaveProperty("value", "Invoices");
+    expect(screen.queryByRole("dialog", { name: /Rename Invoices/ })).toBeNull();
   });
 });

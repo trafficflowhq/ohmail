@@ -15,15 +15,15 @@
       "none": "Nothing open"
     },
     "key": {
-      "reply": "Reply inside the message",
-      "replyAll": "Reply to everyone on the message",
-      "forward": "Forward the message on",
-      "answerLater": "Queue it for the Reply Run",
-      "park": "Park it (out of the way, still here)",
-      "resurface": "Resurface it later",
-      "move": "Move to another place",
-      "deleteAsk": "Delete — asks first",
-      "deleteKey": "Move it to Trash"
+      "reply": "Reply",
+      "replyAll": "Reply all",
+      "forward": "Forward",
+      "answerLater": "Later",
+      "park": "Park",
+      "resurface": "Resurface",
+      "move": "Move",
+      "deleteAsk": "Move to Trash",
+      "deleteKey": "Move to Trash"
     },
     "verb": {
       "reply": "Reply",
@@ -52,19 +52,17 @@
       "prevMonth": "Previous month",
       "nextMonth": "Next month",
       "month": "{month, date, ::MMMMyyyy}",
-      "weekday": "{day, date, ::EEEEE}",
-      "skip": "{horizon} lands at {booked}: the clocks skip {asked} that night."
+      "weekday": "{day, date, ::EEEEE}"
     },
     "toast": {
-      "queued": "Queued in Answer Later",
+      "queued": "Later",
       "aside": "Parked",
-      "unqueued": "Out of Answer Later",
+      "unqueued": "Out of Later",
       "unparked": "Out of Parked",
-      "resurfaces": "Resurfaces {when}",
-      "resurfaceNow": "Back at the top"
+      "resurfaces": "{when}",
+      "resurfaceNow": "Resurfaced"
     },
     "squares": "{count} messages, {unread, plural, =0 {all read} other {# unread}}",
-    "protected": "This message holds a verification code. It is not shown here.",
     "from": "From",
     "sent": "Sent",
     "views": "How this letter is shown",
@@ -81,7 +79,8 @@
       "you": "you",
       "youSender": "You",
       "yesterday": "yesterday {time}",
-      "menu": "Message"
+      "menu": "Message",
+      "sensitive": "Verification code · kept out of AI"
     }
   },
   "body": {
@@ -197,10 +196,10 @@
     "sheetCaption": "Stylesheet blocked",
     "show": "Show images",
     "frameTitle": "Message content",
-    "unsupported": "Showing the plain-text version of this message.",
+    "unsupported": "You are reading this message's plain text.",
     "sheetOne": "A remote stylesheet was blocked, so this message may look plain.",
     "sheetMany": "{n} remote stylesheets were blocked, so this message may look plain.",
-    "oversize": "This message's HTML part is too large to render safely. Showing the plain-text version.",
+    "oversize": "This message's design is too large to draw safely, so you are reading its plain text.",
     "picture": "Picture",
     "darkOriginal": "Original",
     "darkAdapt": "Adapt to dark",
@@ -212,7 +211,8 @@
     "plainTitle": "Show this message as text, in the app's own type",
     "linkAskTitle": "Open this link?",
     "linkAskElsewhere": "The text of this link names a different site.",
-    "linkAskGoes": "It goes to {host}.",
+    "linkAskGoes": "This link goes to {host}.",
+    "linkAskHeading": "This link goes to {host}",
     "linkAskOpen": "Open {host}",
     "linkAskCancel": "Cancel",
     "linkAskStay": "To stay, close this tab.",
@@ -225,7 +225,7 @@
     "more": "Show more ({percent}% shown)"
   },
   "attachments": {
-    "count": "{count, plural, one {# attachment} other {# attachments}}",
+    "count": "{count, plural, one {# attachment} other {# attachments}} · {size}",
     "groupAria": "Attachments",
     "downloadAll": "Download all",
     "downloadingAll": "Fetching…",
@@ -247,7 +247,6 @@
     "faultOffline": "Couldn't reach ohmail — check your connection",
     "faultSignedOut": "Your session ended — sign in again",
     "faultRetry": "try again",
-    "faultRetrying": "{reason}. Ohmail will try again shortly.",
     "tooLarge": "{size} · too large to fetch",
     "listFailed": "Couldn't load this message's files.",
     "listOffline": "Couldn't reach ohmail — check your connection.",

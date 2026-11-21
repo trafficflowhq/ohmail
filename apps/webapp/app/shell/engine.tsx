@@ -12,20 +12,24 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { ActivityLine } from "@ohmail/ui/base";
+import { Button, Overlay, Sentence } from "@ohmail/ui/base";
+import { SignedOutPage } from "@ohmail/app/doors/signed-out";
+import { NONE } from "@ohmail/app/host";
+import { WebDoor } from "../(product)/door-device";
 import { useTranslations } from "next-intl";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
 import { cloudLane, cloudPushWakes, cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
-import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
+import { MailboxOpening } from "./BootSkeleton";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { accountCleanupOwed, finishRetiredComposeCleanup, isolateAccountScope, otherAccountCleanup, readIsolatedScope } from "../pending-sign-out-storage";
 import { listenBrowserSession, readSessionFamily } from "../signed-out-signal";
@@ -632,12 +636,8 @@ export function EngineProvider({
       });
       return;
     }
-    // A desktop build keeps its full cadence while occluded; a browser tab
-    // drops to the hidden cadence (one drain a minute, no stream).
-    // `visibility: null` is the scheduler's "no visibility model" seam,
-    // passed ONLY under the desktop build flag (`engine-config.ts` →
-    // `syncsWhileHidden`) — never unconditionally, or the web build would
-    // stop respecting a hidden tab (a web-side grep guards the leak).
+    // Only the native window build opts out of browser visibility and network signals.
+    // Its engine answers over IPC. The paired browser page keeps both browser checks.
     // `wake` is the push half: an EventSource on `/events` whose `sync`
     // frames drain through this same scheduler. `cloudWakeStream()` decides
     // WHICH builds hold one (web live only); the scheduler decides WHEN
@@ -647,7 +647,7 @@ export function EngineProvider({
       // The strip's moving marks, and nothing else, read this — see `drain-mark.ts` for why it
       // is a store rather than a field on the status this component holds.
       onDraining: markDrain,
-      ...(syncsWhileHidden() ? { visibility: null } : {}),
+      ...(syncsWhileHidden() ? { visibility: null, online: null } : {}),
       wake: cloudWakeStream(),
       // The service worker's push wake, heard by a tab with notifications on (web live only).
       pushWakes: cloudPushWakes(),
@@ -781,9 +781,7 @@ function useInertBackground(active: boolean): void {
  * probe is registered. `role="alertdialog"`; focus moves to the remedy.
  */
 function SessionEnded({ sync, engine }: { sync: SyncStatus; engine: OhmailEngine | null }) {
-  const t = useTranslations("session");
   const dead = useSessionDead();
-  const signInRef = useRef<HTMLAnchorElement | null>(null);
   useInertBackground(dead);
   // `inert` takes the background out of focus and hit-testing; this takes it out of the
   // KEYMAP, which `inert` cannot reach. See `modal-gate.ts`.
@@ -812,181 +810,65 @@ function SessionEnded({ sync, engine }: { sync: SyncStatus; engine: OhmailEngine
     probeSessionNow();
   }, [evidence, engine]);
 
-  useEffect(() => {
-    if (dead) signInRef.current?.focus();
-  }, [dead]);
-
-  if (!dead) return null;
-  return (
-    <div
-      className="session-end"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="session-end-title"
-      aria-describedby="session-end-body"
-    >
-      <div className="gate-card">
-        <span className="wordmark">
-          <b>
-            <em>oh</em>mail
-          </b>
-        </span>
-        <h1 id="session-end-title">{t("endedTitle")}</h1>
-        <p id="session-end-body">{t("endedMidUse")}</p>
-        <div className="gate-actions">
-          <a ref={signInRef} className="btn primary" href="/login">
-            {t("signIn")}
-          </a>
-        </div>
-      </div>
-    </div>
-  );
+  return dead ? <SessionDialog /> : null;
 }
 
-/**
- * "The check did not finish" — the end of the ladder. Four asks over one to thirty seconds got no ANSWER out
- * of `GET /auth/session` (`confirm-schedule.ts`; `OwnerOutcome`). The one thing this surface may not do is
- * report that as a session ending — the cookie may be, and in the measured case was, perfectly live; what
- * failed was the question. The copy names the failure (`session.unconfirmedTitle`/`unconfirmedBodyWarm`);
- * neither string contains "signed out", and a source guard keeps it so. The primary is Try again — it re-asks
- * the question that failed; Sign in is a demoted exit (occasionally right, and a one-button screen is a
- * trap). It yields to the real verdict: if `useSessionDead()` latches while this is up, `SessionEnded` is the
- * truthful surface and this gets out of the way.
- */
+/** An exhausted check has a retry. Confirmed session loss offers sign-in only. */
 function UnconfirmedOverlay({ onRetry }: { onRetry: () => void }) {
-  const t = useTranslations("session");
-  const retryRef = useRef<HTMLButtonElement | null>(null);
   useInertBackground(true);
   useModalGate(true);
-
-  // Focus the remedy when the surface appears, exactly as `SessionEnded` does and for the
-  // same reason: a keyboard or screen-reader user must be standing on the act that helps,
-  // not somewhere in a mailbox whose freshness is in question.
-  useEffect(() => {
-    retryRef.current?.focus();
-  }, []);
-
-  /*
-   * IT USED TO STAND ASIDE FOR `useSessionDead()`, AND THAT WAS THE SAME DEFECT AGAIN.
-   *
-   * The reasoning was "a confirmed death is the truthful surface, so yield to it". But the
-   * latch survives a client-side navigation, so on a freshly signed-in shell it can be a
-   * STALE `true` — and yielding to it meant the one honest sentence available ("the check did
-   * not finish") was suppressed by a claim this tab had never verified. The two surfaces are
-   * now disjoint by binding status instead: `SessionEnded` renders only at `ready`, this only
-   * at `unconfirmed`, so there is nothing left to yield to.
-   */
-  return (
-    <div
-      className="session-end"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="session-unconfirmed-title"
-      aria-describedby="session-unconfirmed-body"
-    >
-      <div className="gate-card">
-        <span className="wordmark">
-          <b>
-            <em>oh</em>mail
-          </b>
-        </span>
-        <h1 id="session-unconfirmed-title">{t("unconfirmedTitle")}</h1>
-        <p id="session-unconfirmed-body">{t("unconfirmedBodyWarm")}</p>
-        <div className="gate-actions">
-          <button ref={retryRef} type="button" className="btn primary" onClick={onRetry}>
-            {t("tryAgain")}
-          </button>
-          <a className="btn" href="/login">
-            {t("signIn")}
-          </a>
-        </div>
-      </div>
-    </div>
-  );
+  return <SessionDialog onRetry={onRetry} />;
 }
 
-/**
- * The same statement for a browser with NO mirror to stand behind it.
- *
- * Same card, same two acts, one different sentence: there is nothing on screen from this
- * device, so the body may not claim there is. It reuses `.gate` / `.gate-card` — the
- * product's own furniture, as `SessionScreen` does — rather than inventing a third layout for
- * a state a person meets for a few seconds.
- */
-function UnconfirmedGate({ onRetry }: { onRetry: () => void }) {
+function SessionDialog({ onRetry }: { onRetry?: () => void }) {
   const t = useTranslations("session");
-  const retryRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    retryRef.current?.focus();
-  }, []);
+  const description = useId();
+  const title = t(onRetry === undefined ? "endedTitle" : "unconfirmedTitle");
   return (
-    <div className="gate">
-      <div className="gate-card">
-        <span className="wordmark">
-          <b>
-            <em>oh</em>mail
-          </b>
-        </span>
-        <h1>{t("unconfirmedTitle")}</h1>
-        <p>{t("unconfirmedBody")}</p>
-        <div className="gate-actions">
-          <button ref={retryRef} type="button" className="btn primary" onClick={onRetry}>
-            {t("tryAgain")}
-          </button>
-          <a className="btn" href="/login">
-            {t("signIn")}
-          </a>
-        </div>
+    <Overlay
+      open
+      role="alertdialog"
+      className="oh-dialog"
+      label={title}
+      describedBy={description}
+      dismissOnScrim={false}
+      onClose={() => {}}
+      first={(panel) => panel.querySelector<HTMLElement>("button, a")}
+    >
+      <Sentence level={2} end="hot">{title}</Sentence>
+      <p id={description} className="oh-text oh-dialog-line">
+        {t(onRetry === undefined ? "endedMidUse" : "unconfirmedBodyWarm")}
+      </p>
+      <div className="oh-dialog-acts">
+        {onRetry === undefined ? null : <Button onPress={onRetry}>{t("tryAgain")}</Button>}
+        <Button href="/login" kind={onRetry === undefined ? "ink" : "quiet"}>{t("signIn")}</Button>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
-/**
- * The two states that are not a mailbox. `unauthenticated` now means what its copy says: reached only when the SERVER answered
- * that there is no full session (enrollment-scoped, the refresh's coded 401, or a confirmed owner that is not the remembered
- * account). A 5xx or dead socket used to land here too, making the sentence false in the one case people met it; those go to
- * `unconfirmed` now, held by `test/session-verdict-guard.test.ts`. Same markup as the mailbox page's gate, so a visitor sees
- * the product's own furniture. `resolving` is mostly silent — a sentence that flashes is worse than a quiet frame — but over a
- * slow link the blank page was followed by "Nothing in your Ohbox"; `useLoadingGrace` keeps both promises: below the grace,
- * the empty live region; above it, a sentence in the SAME `aria-live` node, so its late arrival is announced. It says the app
- * is opening the mailbox — nothing about what is in it.
- */
+function UnconfirmedGate({ onRetry }: { onRetry: () => void }) {
+  return (
+    <WebDoor>
+      <SignedOutPage
+        door={{ state: { at: "unchecked", warm: false }, tryAgain: onRetry, signIn: () => {}, demo: NONE }}
+        links={{ signIn: "/login" }}
+      />
+    </WebDoor>
+  );
+}
+
+/** A pending confirmation gets the opening frame. Only an answered refusal offers sign-in. */
 function SessionScreen({ status }: { status: "resolving" | "unauthenticated" }) {
   const t = useTranslations("session");
-  const slow = useLoadingGrace(status === "resolving");
-  if (status === "resolving") {
-    return (
-      <div className="gate" aria-busy="true" aria-live="polite">
-        {slow ? (
-          <span className="mbx-wait">
-            <ActivityLine />
-            {t("opening")}
-          </span>
-        ) : null}
-      </div>
-    );
-  }
+  if (status === "resolving") return <MailboxOpening />;
   return (
-    <div className="gate">
-      <div className="gate-card">
-        <span className="wordmark">
-          <b>
-            <em>oh</em>mail
-          </b>
-        </span>
-        <h1>{t("endedTitle")}</h1>
-        <p>{t("endedBody")}</p>
-        <div className="gate-actions">
-          <a className="btn primary" href="/login">
-            {t("signIn")}
-          </a>
-          <a className="btn" href="/?demo=1">
-            {t("openDemo")}
-          </a>
-        </div>
-      </div>
-    </div>
+    <WebDoor>
+      <SignedOutPage
+        door={{ state: { at: "out" }, tryAgain: () => {}, signIn: () => {}, demo: NONE }}
+        links={{ signIn: "/login", demo: "/?demo=1" }}
+      />
+    </WebDoor>
   );
 }
 

@@ -1,16 +1,10 @@
 import { useContext, useEffect, useRef, useState, type RefObject } from "react";
 import { useListWindow } from "@ohmail/app-logic/lists";
-import { Button, Dialog, Empty, Field, Menu, MenuItem, Seg, Slot, Switch } from "@ohmail/ui/base";
-import {
-  GroupHeading,
-  RuleLine,
-  SettingFilter,
-  SettingLine,
-  SettingNote,
-  SettingsSheet,
-} from "@ohmail/ui/mail";
+import { Button, Dialog, Empty, Field, Menu, MenuItem, MenuRule, Seg, Slot } from "@ohmail/ui/base";
+import { GroupHeading, RuleLine, SettingFilter, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import type { PaneSheet } from "../contract.js";
 import { FrameContext } from "../../frame/commands.js";
-import { useText } from "../../text/index.js";
+import { useLocale, useText } from "../../text/index.js";
 import { rulesByDecider, rulesRevokable, rulesShown, type RuleItem, type RulesModel } from "./model.js";
 import { RULES_NAMESPACE } from "./namespace.js";
 import "./rule-facets.css";
@@ -23,11 +17,14 @@ import "./rule-facets.css";
 export function RulesPane({
   model,
   scroller,
+  sheet,
 }: {
   readonly model: RulesModel;
+  readonly sheet?: PaneSheet;
   readonly scroller?: RefObject<HTMLDivElement | null>;
 }) {
   const t = useText("rules");
+  const locale = useLocale();
   const settings = useText("settings");
   const own = useText(RULES_NAMESPACE);
   const [query, setQuery] = useState("");
@@ -47,7 +44,6 @@ export function RulesPane({
     scrollerRef: scroller ?? noScroller,
     count: shown.length + (ohmail.length > 0 ? 1 : 0),
   });
-  const locked = model.locked !== null;
   const list = (rules: readonly RuleItem[], start: number, label: string) => {
     const from = Math.max(0, win.start - start);
     const until = Math.max(0, win.end - start);
@@ -69,8 +65,13 @@ export function RulesPane({
     );
   };
 
-  return (
+  const body = (
     <>
+      {model.intro && model.holder ? (
+        <SettingsSheet title={model.holder} sign="desktop">
+          <SettingNote>{model.intro}</SettingNote>
+        </SettingsSheet>
+      ) : null}
       <RulesFilters
         model={model}
         query={query}
@@ -81,13 +82,7 @@ export function RulesPane({
         openBulk={() => setBulkOpen(true)}
         toTop={win.toTop}
       />
-      {model.waiting.length > 0 ? (
-        <SettingsSheet title={t("waitingGroup")}>
-          {model.waiting.map((w) => (
-            <WaitingLine key={w.key} what={w.what} line={w.line} />
-          ))}
-        </SettingsSheet>
-      ) : null}
+      <WaitingRules model={model} />
       <SettingsSheet>
         {model.rules.length === 0 ? (
           model.waiting.length === 0 ? (
@@ -108,15 +103,14 @@ export function RulesPane({
             {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
           </div>
         )}
-        <SettingNote>{t("noCount")}</SettingNote>
       </SettingsSheet>
       <Dialog
         open={bulkOpen && canRevokeGroup}
         onClose={() => setBulkOpen(false)}
         title={t("bulkRevokeConfirm", { count: revokable.length })}
-        line={t("bulkRevokeExplain", { count: revokable.length })}
+        line={t("bulkRevokeExplain")}
         confirm={{
-          label: t("bulkRevokeConfirm", { count: revokable.length }),
+          label: t("revoke"),
           onPress: () => {
             setBulkOpen(false);
             model.revokeAll(revokable.map((r) => r.id));
@@ -126,14 +120,25 @@ export function RulesPane({
       />
     </>
   );
+  return sheet ? sheet(body, undefined, new Intl.NumberFormat(locale).format(shown.length)) : body;
 }
 
-function WaitingLine({ what, line }: { readonly what: string; readonly line: string }) {
+function WaitingRules({ model }: { readonly model: RulesModel }) {
+  const t = useText("rules");
+  if (model.waiting.length === 0) return null;
+  const holders = [...new Set(model.waiting.map((entry) => entry.holder).filter(Boolean))];
+  const waitingHolder = holders.length > 1 ? undefined : (holders[0] ?? model.holder);
   return (
-    <>
-      <SettingLine label={what} />
-      <SettingNote>{line}</SettingNote>
-    </>
+    <SettingsSheet title={t("waitingGroup", { holder: waitingHolder ?? t("theOrganizer") })} hot>
+      {model.waiting.map((w) => (
+        <RuleLine
+          key={w.key}
+          who={w.who ?? w.what}
+          goes={w.place ? t("goesToPlace", { place: w.place }) : null}
+          origin={w.line}
+        />
+      ))}
+    </SettingsSheet>
   );
 }
 
@@ -146,7 +151,6 @@ function RuleRow({ rule, model }: { readonly rule: RuleItem; readonly model: Rul
   const slot = useRef<HTMLButtonElement | null>(null);
   const held = model.locked !== null || rule.queued;
   const person = rule.person;
-  const changeDetails = changing && !held ? rule.refile : null;
   useEffect(() => {
     if (held) {
       setChanging(false);
@@ -168,47 +172,44 @@ function RuleRow({ rule, model }: { readonly rule: RuleItem; readonly model: Rul
             : undefined
         }
         goes={
-          <Slot
-            ref={slot}
-            label={t("filesInto", { place: rule.place })}
-            disabled={held}
-            expanded={changing && !held}
-            onPress={() => {
-              if (held) return;
-              setRefile(model.refileFirst);
-              setChanging((open) => !open);
-            }}
-          >
-            {rule.place}
-          </Slot>
+          <>
+            {t("goesTo")}{" "}
+            <Slot
+              ref={slot}
+              label={t("filesInto", { place: rule.place })}
+              disabled={held}
+              expanded={changing && !held}
+              onPress={() => {
+                if (held) return;
+                setRefile(model.refileFirst);
+                setChanging((open) => !open);
+              }}
+            >
+              {rule.place}
+            </Slot>
+          </>
         }
-        origin={rule.origin}
+        origin={[rule.origin, ...rule.notes].filter(Boolean).join(" · ")}
         act={
           <Button kind="quiet" size="s" disabled={held} opens="dialog" onPress={() => setRevoking(true)}>
             {t("revoke")}
           </Button>
         }
       />
-      {rule.notes.map((note) => (
-        <SettingNote key={note}>{note}</SettingNote>
-      ))}
       {rule.outranked ? (
         <Button kind="quiet" size="s" disabled={held} onPress={() => model.lift(rule.id)}>
           {t("liftAction")}
         </Button>
       ) : null}
-      {changeDetails && (
+      {changing && !held && (
         <Menu
           open={changing}
           onClose={() => setChanging(false)}
           anchor={slot}
           label={t("change")}
           kind="card"
-          title={rule.what}
+          title={rule.who}
         >
-          <SettingNote>{refile ? changeDetails.on : t("retargetExplain")}</SettingNote>
-          <Switch label={changeDetails.label} on={refile} onChange={setRefile} labelled />
-          <SettingNote>{changeDetails.note}</SettingNote>
           {rule.places.map((place) => (
             <MenuItem
               key={place.folder}
@@ -222,16 +223,20 @@ function RuleRow({ rule, model }: { readonly rule: RuleItem; readonly model: Rul
               {place.name}
             </MenuItem>
           ))}
+          <MenuRule />
+          <MenuItem checked={refile} many onPress={() => setRefile((on) => !on)}>
+            {t("moveAlreadyHere")}
+          </MenuItem>
         </Menu>
       )}
       <Dialog
         open={revoking && !held}
         onClose={() => setRevoking(false)}
-        title={t("revokeConfirm")}
+        title={t("bulkRevokeConfirm", { count: 1 })}
         line={t("revokeExplain")}
         kind="delete"
         confirm={{
-          label: t("revokeConfirm"),
+          label: t("revoke"),
           onPress: () => {
             setRevoking(false);
             model.revoke(rule.id);
@@ -239,7 +244,7 @@ function RuleRow({ rule, model }: { readonly rule: RuleItem; readonly model: Rul
         }}
         cancel={{ label: t("cancel") }}
       >
-        <SettingNote>{rule.what}</SettingNote>
+        <p className="oh-text">{rule.what}</p>
       </Dialog>
     </div>
   );
@@ -282,7 +287,6 @@ function RulesFilters({
           : undefined
       }
     >
-      <SettingNote>{model.intro}</SettingNote>
       {model.locked ? <SettingNote warn>{model.locked}</SettingNote> : null}
       {model.bound ? <SettingNote>{model.bound}</SettingNote> : null}
       {showSearch ? (

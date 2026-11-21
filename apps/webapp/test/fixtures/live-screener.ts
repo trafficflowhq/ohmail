@@ -11,7 +11,7 @@ const destinations = {
   ohbox: copy.pileOhbox,
   reads: copy.pileReads,
   receipts: copy.pileReceipts,
-  screened: copy.pileScreened,
+  screened: copy.pileScreenOut,
   spam: copy.pileSpam,
 };
 

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NO_RUN } from "@ohmail/app-logic/screener";
 import type { ScreenerBeside, ScreenerSuggestControl } from "../../src/screener/index.js";
 import { BESIDE, modelOf, mountPlace, sender, type Asked } from "./screener-world.js";
@@ -34,15 +34,18 @@ const press = (key: string, shiftKey = false) =>
 
 describe("the sentence", () => {
   it("says where a real suggestion files the sender, as a word to press, how sure, and why", () => {
-    mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2 }));
+    mountPlace(
+      modelOf(asked, { waiting: QUEUE, waitingCount: 2, senderConfirmed: (sender) => sender === LENA }),
+    );
     const head = within(reading()).getByRole("heading", { name: /Lena Hart goes to/ });
     const slot = within(head).getByRole("button", { name: "Choose where this sender's mail goes" });
     expect(slot.textContent).toBe("Ohbox");
     expect(slot.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(slot);
     expect(slot.getAttribute("aria-expanded")).toBe("true");
-    expect(reading().textContent).toContain("92% sure");
-    expect(reading().textContent).toContain("“A personal note”");
+    expect(within(reading()).getByTitle("Confidence").textContent).toBe("92%");
+    expect(within(reading()).getByRole("img", { name: "Confirmed" })).toBeTruthy();
+    expect(within(reading()).getByText("A personal note", { exact: true })).toBeTruthy();
     expect(asked.decided).toBeUndefined();
   });
 
@@ -50,14 +53,16 @@ describe("the sentence", () => {
     mountPlace(modelOf(asked, { waiting: [MARCO], waitingCount: 1 }));
     const head = within(reading()).getByRole("heading", { name: /Marco Pine goes to/ });
     expect(within(head).getByRole("button").textContent).toBe("a place");
-    expect(reading().textContent).toContain("No suggestion yet for this sender.");
-    expect(reading().textContent).not.toContain("sure");
+    expect(reading().textContent).not.toContain("No suggestion yet for this sender.");
+    expect(within(reading()).queryByTitle("Confidence")).toBeNull();
+    expect(within(reading()).queryByRole("img", { name: "Confirmed" })).toBeNull();
   });
 
   it("the reach is the person's: whole domain is chosen in its menu and the decision carries it", () => {
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2 }));
     fireEvent.click(within(reading()).getByRole("button", { name: "Decision scope" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "whole domain" }));
+    expect(screen.getByText("Rule for", { exact: true })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^Whole domain/i }));
     expect(within(reading()).getByRole("button", { name: "Decision scope" }).textContent).toBe(
       "whole domain",
     );
@@ -67,7 +72,10 @@ describe("the sentence", () => {
 
   it("what Screen out and Spam also send is said before the press", () => {
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2, unsubClaimOf: (() => "sends") as never }));
-    expect(reading().textContent).toContain("Screen out and Spam also send");
+    expect(within(reading()).getByText("Unsubscribe offered", { exact: true })).toBeTruthy();
+    expect(within(panel()).getByText("+ unsubscribe", { exact: true })).toBeTruthy();
+    expect(within(panel()).getByRole("button", { name: "Spam" })).toBeTruthy();
+    expect(reading().textContent).not.toContain("Screen out and Spam also send");
     expect(asked.decided).toBeUndefined();
   });
 });
@@ -77,7 +85,7 @@ describe("the panel says who decides", () => {
     const role = { mode: "blocked", name: null, reason: "no_organizer", oauthOnly: false } as never;
     const world = mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2, role }));
     expect(panel().textContent).toContain("Nothing organizes this mailbox");
-    expect(reading().textContent).toContain("No install is filing it");
+    expect(reading().textContent).not.toContain("No install is filing it");
     expect(
       within(reading()).queryByRole("button", { name: "Choose where this sender's mail goes" }),
     ).toBeNull();
@@ -108,8 +116,8 @@ describe("the panel says who decides", () => {
   it("an organizer that files what is decided here is named beside the verbs, with when it files", () => {
     const role = { mode: "pending", name: "ohmail Cloud", reason: null, oauthOnly: false } as never;
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2, role }));
-    expect(panel().textContent).toContain("ohmail Cloud files what you decide here");
-    expect(reading().textContent).toContain("Your decision is sent to it");
+    expect(panel().textContent).toContain("ohmail Cloud files what you decide");
+    expect(reading().textContent).not.toContain("Your decision is sent to it");
     expect(within(panel()).getByRole("button", { name: /Ohbox/ })).toBeTruthy();
   });
 });
@@ -122,12 +130,7 @@ describe("More", () => {
     const items = within(menu)
       .getAllByRole("menuitem")
       .map((i) => i.querySelector(".oh-menu-word")?.textContent);
-    expect(items).toEqual([
-      "Ohbox, mark read",
-      "News, mark read",
-      "Receipts, mark read",
-      "Change this sender's screening",
-    ]);
+    expect(items).toEqual(["Ohbox, mark read", "News, mark read", "Receipts, mark read"]);
     fireEvent.click(within(menu).getByRole("menuitem", { name: /News, mark read/ }));
     expect(asked.decided).toEqual([{ id: "lena", dest: "reads", read: true, scope: "sender" }]);
   });
@@ -135,7 +138,7 @@ describe("More", () => {
 
 describe("everyone decided", () => {
   it("shows the mark and the way to the Ohbox in the reading column, and the list stands empty", () => {
-    const world = mountPlace(modelOf(asked));
+    const world = mountPlace(modelOf(asked, { decidedThisSession: 1 }));
     const messages = screen.getByRole("region", { name: "Messages" });
     expect(within(messages).queryByRole("button", { name: "Ohbox" })).toBeNull();
     fireEvent.click(within(reading()).getByRole("button", { name: "Ohbox" }));
@@ -143,7 +146,7 @@ describe("everyone decided", () => {
   });
 
   it("on one column the mark stands in the list", () => {
-    const world = mountPlace(modelOf(asked), { room: "phone" });
+    const world = mountPlace(modelOf(asked, { decidedThisSession: 1 }), { room: "phone" });
     const messages = screen.getByRole("region", { name: "Messages" });
     fireEvent.click(within(messages).getByRole("button", { name: "Ohbox" }));
     expect(world.address.read()).toBe("#/ohbox");
@@ -176,7 +179,7 @@ describe("the place menu, the row's menu and the card", () => {
       clientY: 80,
     });
     const menu = screen.getByRole("menu", { name: "Choose where this sender's mail goes" });
-    expect(within(menu).getByRole("menuitem", { name: /Change this sender's screening/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: "Screening" })).toBeTruthy();
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Spam/ }));
     expect(asked.decided).toEqual([{ id: "marco", dest: "spam", read: false, scope: "sender" }]);
   });
@@ -186,7 +189,7 @@ describe("the place menu, the row's menu and the card", () => {
     press("s");
     const card = screen.getByRole("dialog", { name: "Change this sender's screening" });
     expect(asked.decided).toBeUndefined();
-    fireEvent.click(within(card).getByRole("radio", { name: /the whole domain/ }));
+    fireEvent.click(within(card).getByRole("radio", { name: /Everyone at/ }));
     fireEvent.click(within(card).getByRole("radio", { name: "Receipts" }));
     expect(asked.decided).toEqual([{ id: "lena", dest: "receipts", read: false, scope: "domain" }]);
   });
@@ -194,6 +197,38 @@ describe("the place menu, the row's menu and the card", () => {
 
 describe("the unsubscribe question", () => {
   const sends = { unsubClaimOf: (() => "sends") as never };
+
+  it("folded keep-out controls ask the same question as their keyboard shortcuts", () => {
+    const widths = [
+      vi.spyOn(Element.prototype, "clientWidth", "get").mockImplementation(function (this: Element) {
+        return this.matches(".oh-actionpanel") ? 200 : 0;
+      }),
+      vi.spyOn(Element.prototype, "scrollWidth", "get").mockImplementation(function (this: Element) {
+        return this.matches(".oh-actionpanel-bar")
+          ? 100 * this.querySelectorAll("[data-rank]:not([hidden])").length
+          : 0;
+      }),
+    ];
+    try {
+      mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2, ...sends }), { room: "phone" });
+      const list = within(screen.getByRole("listbox", { name: "Screener" }));
+      fireEvent.click(list.getByRole("option", { name: /Lena Hart/ }));
+      const actions = within(screen.getByRole("toolbar", { name: "Actions" }));
+      expect(actions.queryByRole("button", { name: /^Screen out/ })).toBeNull();
+      fireEvent.click(actions.getByRole("button", { name: "More" }));
+      const menu = within(screen.getByRole("menu", { name: "More" }));
+      expect(menu.getByText("Spam", { exact: true })).toBeTruthy();
+      fireEvent.click(menu.getByRole("menuitem", { name: /^Screen out/ }));
+      const ask = () => within(screen.getByRole("dialog", { name: "Screen out and unsubscribe" }));
+      fireEvent.click(ask().getByRole("button", { name: "Cancel" }));
+      expect(asked.decided).toBeUndefined();
+      press("n");
+      fireEvent.click(ask().getByRole("button", { name: "Screen out and unsubscribe" }));
+      expect(asked.decided).toEqual([{ id: "lena", dest: "screened", read: false, scope: "sender" }]);
+    } finally {
+      for (const width of widths) width.mockRestore();
+    }
+  });
 
   it("asks before Screen out or Spam send one; Cancel sends nothing; the keys start on Cancel", () => {
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2, ...sends }));
@@ -206,8 +241,8 @@ describe("the unsubscribe question", () => {
     expect(asked.decided).toBeUndefined();
     press("x");
     fireEvent.click(
-      within(screen.getByRole("dialog", { name: "Mark spam and unsubscribe" })).getByRole("button", {
-        name: "Mark spam and unsubscribe",
+      within(screen.getByRole("dialog", { name: "Spam and unsubscribe" })).getByRole("button", {
+        name: "Spam and unsubscribe",
       }),
     );
     expect(asked.decided).toEqual([{ id: "lena", dest: "spam", read: false, scope: "sender" }]);
@@ -221,13 +256,13 @@ describe("the unsubscribe question", () => {
       return within(screen.getByRole("dialog", { name }));
     };
     let account = mountAccount("account-one");
-    const first = question("x", "Mark spam and unsubscribe");
+    const first = question("x", "Spam and unsubscribe");
     expect(first.getByText(/Later mail from them follows this rule/)).toBeTruthy();
     fireEvent.click(first.getByRole("button", { name: "Cancel" }));
     expect(asked.decided).toBeUndefined();
-    const second = question("x", "Mark spam and unsubscribe");
+    const second = question("x", "Spam and unsubscribe");
     expect(second.getByText(/Later mail from them follows this rule/)).toBeTruthy();
-    fireEvent.click(second.getByRole("button", { name: "Mark spam and unsubscribe" }));
+    fireEvent.click(second.getByRole("button", { name: "Spam and unsubscribe" }));
     account.view.unmount();
 
     account = mountAccount("account-one", [MARCO]);
@@ -277,7 +312,11 @@ describe("the queue's tools", () => {
 
   it("the filter shows one group alone, with its count", () => {
     mountPlace(modelOf(asked, { waiting: [LENA, news], waitingCount: 2 }));
-    fireEvent.click(screen.getByRole("button", { name: /All/ }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Act on all waiting senders" })).getByRole("button", {
+        name: /All 2/,
+      }),
+    );
     fireEvent.click(screen.getByRole("menuitemradio", { name: /News/ }));
     expect(within(screen.getByRole("listbox", { name: "Screener" })).getAllByRole("option")).toHaveLength(1);
   });
@@ -314,7 +353,7 @@ describe("the queue's tools", () => {
     const ask = screen.getByRole("dialog", { name: "How many waiting senders to suggest for" });
     expect(ask.textContent).toContain("2 senders · 2 credits");
     expect(calls).toEqual(["open"]);
-    fireEvent.click(within(ask).getByRole("button", { name: "Suggest for 2 senders" }));
+    fireEvent.click(within(ask).getByRole("button", { name: "Suggest for all 2 senders" }));
     expect(calls).toEqual(["open", "confirm"]);
   });
 
@@ -322,6 +361,7 @@ describe("the queue's tools", () => {
     {
       lang: "en",
       open: "Suggest again…",
+      list: "List",
       title: "Suggest again",
       empty: "No senders need a new suggestion.",
       action: [
@@ -333,6 +373,7 @@ describe("the queue's tools", () => {
     {
       lang: "de",
       open: "Neu vorschlagen …",
+      list: "Liste",
       title: "Neu vorschlagen",
       empty: "Kein Absender braucht einen neuen Vorschlag.",
       action: [
@@ -343,7 +384,7 @@ describe("the queue's tools", () => {
     },
   ] as const)(
     "$lang names the actual re-ask and gives an empty quote no purchase control",
-    ({ lang, open, title, empty, action }) => {
+    ({ lang, open, list, title, empty, action }) => {
       let phase: ScreenerSuggestControl["phase"] = "closed";
       let size = 4;
       let quote = 0;
@@ -384,7 +425,8 @@ describe("the queue's tools", () => {
           suggest: { priced: true, control, noAdvice: NO_RUN },
         },
       });
-      fireEvent.click(screen.getByRole("button", { name: open }));
+      fireEvent.click(screen.getByRole("button", { name: list }));
+      fireEvent.click(within(screen.getByRole("menu", { name: list })).getByRole("menuitem", { name: open }));
       world.again({ ...model });
       const ask = within(screen.getByRole("dialog"));
       expect(ask.getByText(title, { exact: true })).toBeTruthy();
@@ -413,7 +455,7 @@ describe("the queue's tools", () => {
       }),
     );
     expect(screen.queryByRole("button", { name: "Suggest…" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Apply 1 — Ohbox" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply 1" }));
     expect(applied).toBe(1);
   });
 
@@ -442,15 +484,23 @@ describe("the queue's tools", () => {
   });
 
   it("Apply names every place it files into before the press", () => {
+    let applied = 0;
     mountPlace(
       modelOf(asked, {
-        waiting: [LENA, news],
+        waiting: [{ ...LENA, ...suggested("ohbox", 0.92) }, news],
         waitingCount: 2,
         suggestedCount: 2,
         suggestedDests: ["ohbox", "reads"],
+        applyAll: (() => (applied += 1)) as never,
       }),
     );
-    expect(screen.getByRole("button", { name: "Apply 2 — Ohbox & News" })).toBeTruthy();
+    const list = within(screen.getByRole("listbox", { name: "Screener" }));
+    const lena = list.getByRole("option", { name: /Lena Hart/ });
+    const paper = list.getByRole("option", { name: /Paperbird/ });
+    expect(within(lena.parentElement!).getByRole("button", { name: "Ohbox" })).toBeTruthy();
+    expect(within(paper.parentElement!).getByRole("button", { name: "News" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Apply 2" }));
+    expect(applied).toBe(1);
   });
 });
 
@@ -474,7 +524,8 @@ describe("the senders kept out", () => {
 
   it("Spam offers Not spam, back to the Screener or to the Ohbox", () => {
     const back: string[] = [];
-    const row = { sender: { ...(sender("spam1", "Prize Desk") as object), segment: "spam" }, pinned: false };
+    const detection = { source: "engine", confidence: 0.98, reason: "An unsafe link", label: "Spam" };
+    const row = { sender: sender("spam1", "Prize Desk", { segment: "spam", detection }), pinned: false };
     mountPlace(
       modelOf(asked, {
         spam: [row] as never,
@@ -484,6 +535,7 @@ describe("the senders kept out", () => {
       { at: "#/screener/spam" },
     );
     expect(panel().textContent).toContain("Not spam");
+    expect(within(screen.getByRole("listbox", { name: "Screener" })).getByText("Auto-detected")).toBeTruthy();
     fireEvent.click(within(panel()).getByRole("button", { name: "Screener" }));
     fireEvent.click(within(panel()).getByRole("button", { name: "Ohbox" }));
     expect(back).toEqual(["waiting spam1", "ohbox spam1"]);

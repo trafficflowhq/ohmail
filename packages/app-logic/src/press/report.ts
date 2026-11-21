@@ -4,6 +4,8 @@
  * compiler holds the two equal where the shell hands the kit's toast to the press seam.
  */
 export interface ToastOptions {
+  /** A short detail after a successful report’s title. */
+  line?: string;
   /** Action label (e.g. "Undo"). */
   action?: string;
   /** Fired at most once, when the action is pressed. */

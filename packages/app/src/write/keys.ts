@@ -4,7 +4,7 @@
  */
 import { useContext, useEffect } from "react";
 import { KeymapContext, useOptionalKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys";
-import { LATER_CHOICES, SCHEDULE_CHORD } from "@ohmail/app-logic/write/later";
+import { LATER_CHOICES } from "@ohmail/app-logic/write/later";
 import { useText } from "../text/index.js";
 
 type Press = () => void;
@@ -40,8 +40,7 @@ export function useLetterKeys(keysHere: boolean, mayGo: boolean, send: Press, le
             inInput: true,
             inWriting: true,
           },
-          teach(SCHEDULE_CHORD, t("keys.schedule")),
-          ...Object.entries(LATER_CHOICES).map(([chord, choice]) => teach(chord, t(`keys.${choice}`))),
+          ...Object.keys(LATER_CHOICES).map((chord) => teach(chord, t("keys.later"))),
         ]
       : [],
   );

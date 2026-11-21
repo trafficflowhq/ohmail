@@ -122,7 +122,7 @@ export interface OhboxListInput {
   owed: boolean;
   onDoorbell: () => void;
   onAction: (action: MessageAction, message: EngineMessage, moveSubject?: MoveSubject) => void;
-  onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
+  onAddTag: (messageId: string, anchor: HTMLElement | null, point?: TagMenuPoint) => void;
   onDropTag?: (ids: string[], tagId: string) => void;
   bulk: BulkVerbs;
   onMarkAllRead?: (ids: string[]) => void;
@@ -260,7 +260,7 @@ export interface OhboxListModel {
   /** A verb of the row's own menu, on the letter the row opens on: the shell's, as a press on that letter. */
   actOn: (row: OhboxRowGroup, action: MessageAction, moveSubject?: MoveSubject) => void;
   /** The tag picker for the row's letter, at the element it was asked from. */
-  tagRow: (row: OhboxRowGroup, anchor: HTMLElement | null) => void;
+  tagRow: (row: OhboxRowGroup, anchor: HTMLElement | null, point?: TagMenuPoint) => void;
   /** The tag picker for the picked letters, at the element it was asked from. */
   tagPicked: (anchor: HTMLElement | null) => void;
   drag: {
@@ -268,3 +268,4 @@ export interface OhboxListModel {
     onDrop: (target: RailDropTarget, source: DragSource) => void;
   };
 }
+export type TagMenuPoint = { x: number; y: number };

@@ -105,17 +105,17 @@ describe("an undecided mailbox asks the organize decision again", () => {
 
   it("a key behind it does not dismiss it: `g s` stays on the stage", async () => {
     await launch([UNDECIDED], "#/ohbox");
-    await waitFor(() => stageHeading() === t.consentTitle, "the stage");
+    await waitFor(() => stageHeading() === t.mapTitle, "the stage");
     await key("g");
     await key("s");
     await settle();
     expect(window.location.hash.startsWith("#/first-run")).toBe(true);
-    expect(stageHeading()).toBe(t.consentTitle);
+    expect(stageHeading()).toBe(t.mapTitle);
   });
 
   it("once per launch: closed, it does not come back until the next launch", async () => {
     await launch([UNDECIDED], "#/ohbox");
-    await waitFor(() => stageHeading() === t.consentTitle, "the stage");
+    await waitFor(() => stageHeading() === t.mapTitle, "the stage");
     await act(async () => {
       window.location.hash = "#/screener";
       window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -128,14 +128,14 @@ describe("an undecided mailbox asks the organize decision again", () => {
     setup();
     resetDecisionAskedForTests();
     await launch([UNDECIDED], "#/screener");
-    await waitFor(() => stageHeading() === t.consentTitle, "the stage at the next launch");
+    await waitFor(() => stageHeading() === t.mapTitle, "the stage at the next launch");
   });
 
   /* Close setup says the app opens as it is and setup runs again from Settings. The server's stamp
      keeps that, so a load in another browser, door or device (nothing in its storage) agrees. */
   it("Close setup stays closed: a later load anywhere opens the app, a mailbox added after it is still asked", async () => {
     await launch([UNDECIDED], "#/ohbox", true, stampedConsent as typeof consentTransport);
-    await waitFor(() => stageHeading() === t.consentTitle, "the stage");
+    await waitFor(() => stageHeading() === t.mapTitle, "the stage");
     await key("Escape");
     /* A button's name is its words; the key hint beside them is drawn in a `kbd` of its own. */
     const close = [...document.querySelectorAll<HTMLButtonElement>("button")]
@@ -154,7 +154,7 @@ describe("an undecided mailbox asks the organize decision again", () => {
     expect(window.location.hash).toBe("#/ohbox");
     expect(stageHeading()).toBe("");
     await elsewhere([UNDECIDED, { ...UNDECIDED, id: "mb2", address: "two@example.invalid", createdAt: "2026-09-16T10:00:00.000Z" }]);
-    await waitFor(() => stageHeading() === t.consentTitle, "the stage for the mailbox added after Close setup");
+    await waitFor(() => stageHeading() === t.mapTitle, "the stage for the mailbox added after Close setup");
     expect(window.location.hash).toContain("mailbox=mb2");
   });
 
@@ -184,14 +184,15 @@ describe("an undecided mailbox asks the organize decision again", () => {
     const readded = { ...UNDECIDED, createdAt: "2026-09-03T00:00:00.000Z" };
     await launch([readded], "#/first-run?mailbox=mb1", true, finished as typeof consentTransport);
     await waitFor(() => window.location.hash.startsWith("#/first-run/again"), "the decision as a re-run");
-    await waitFor(() => stageHeading() === t.consentTitle, "the consent statement on the stage");
+    await waitFor(() => stageHeading() === t.mapTitle, "the consent statement on the stage");
     expect(window.location.hash).toContain("mailbox=mb1");
   });
 
   it("the shell hands the Screener and the Ohbox the not-organizing fact (K109's wiring)", async () => {
     const el = await launch([UNDECIDED], "#/screener", false);
-    await waitFor(() => (el.textContent ?? "").includes("ohmail is not organizing this mailbox yet."),
-      "the Screener saying nothing organizes the mailbox");
+    await waitFor(() => (el.textContent ?? "").includes("Not organizing yet")
+      && (el.textContent ?? "").includes("New senders go straight to the Ohbox."),
+      "the Screener explaining that new senders go straight to the Ohbox");
     await act(async () => {
       window.location.hash = "#/ohbox";
       window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -203,7 +204,7 @@ describe("an undecided mailbox asks the organize decision again", () => {
   it("opens it at launch, over an inert shell", async () => {
     const el = await launch([UNDECIDED], "#/ohbox");
     await waitFor(() => window.location.hash.startsWith("#/first-run"), "the decision to open at launch");
-    await waitFor(() => stageHeading() === t.consentTitle, "the consent statement on the stage");
+    await waitFor(() => stageHeading() === t.mapTitle, "the consent statement on the stage");
     expect(window.location.hash).toContain("mailbox=mb1");
     expect(appInert(el)).toBe(true);
   });

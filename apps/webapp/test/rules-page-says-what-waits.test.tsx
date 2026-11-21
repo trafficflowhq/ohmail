@@ -91,7 +91,7 @@ function rowOf(id: string): HTMLElement {
   return within(host).getByRole("group", { name: name.replace(/\s+/g, " ").trim() });
 }
 
-const waitingGroup = () => within(host).queryByRole("heading", { name: words.rules.waitingGroup })
+const waitingGroup = () => within(host).queryByRole("heading", { name: /^Waiting on / })
   ?.closest<HTMLElement>(".oh-settingssheet") ?? null;
 
 const rankNote = (row: HTMLElement) => within(row).queryByText((text) =>
@@ -140,8 +140,8 @@ describe("what waits on the organizer is said on the page", () => {
     await open([rule("b", "sender", "bob@shop.example")], [waits({ ruleId: null, target: { rule: KEY("ann@shop.example") } })]);
     const group = waitingGroup()!;
     expect(group, "no waiting group").toBeTruthy();
-    expect(group.textContent).toContain("Mail from ann@shop.example");
-    expect(group.textContent).toContain("Removed here; waits on Laptop for other@shop.test");
+    expect(group.textContent).toContain("ann@shop.example");
+    expect(group.textContent).toContain("Removed here, and waits on Laptop for other@shop.test");
     // Outside the window's index space: at phone width the page is the window's scroller, and a
     // slot claimed here was measured as a row and re-measured for ever (measured on the rig).
     expect(group.querySelectorAll("[data-index]")).toHaveLength(0);
@@ -227,7 +227,7 @@ describe("twins and the settings bound", () => {
   it("past the bound the page says how many stay on this computer, and not before", async () => {
     const many = Array.from({ length: 5001 }, (_, i) => rule(`r${i}`, "sender", `s${i}@x.example`));
     await open(many);
-    expect(host.textContent).toContain("Your other computers receive your newest 5,000" + " rules; 1 older one stays on this one.");
+    expect(host.textContent).toContain("Your other computers receive your newest 5,000" + " rules, and 1 older one stays on this one.");
     await open(many.slice(0, 5000));
     expect(host.textContent).not.toContain("Your other computers receive");
   });

@@ -83,12 +83,14 @@ describe("the note on News and Receipts", () => {
   it("Receipts asks its own pile, one letter in the singular, and a floor says 'at least'", async () => {
     const receipts = await mount("receipts", answer("receipts", 1));
     expect(receipts.calls).toContainEqual({ method: "GET", path: "/api/screener/unscreened?pile=receipts" });
-    expect(receipts.note()?.textContent).toContain("1 letter here is from a sender you never let in.");
+    expect(receipts.note()?.textContent).toContain("1 letter here was never let in");
+    expect(receipts.note()?.textContent).toContain("They are from senders you never let in.");
     await teardownConfirmEnv();
     installed = false;
 
     const news = await mount("reads", answer("news", 40, false));
-    expect(news.note()?.textContent).toContain("At least 40 letters here are from senders you never let in.");
+    expect(news.note()?.textContent).toContain("At least 40 letters here were never let in");
+    expect(news.note()?.textContent).toContain("They are from senders you never let in.");
   });
 
   it("draws nothing at zero, on a failed read, or from a server that does not say the pile back", async () => {

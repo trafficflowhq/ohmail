@@ -3,14 +3,15 @@
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
     "emptyTitle": "Nothing carries this tag yet.",
     "emptyHint": "Press <kbd>t</kbd> on a message to add it.",
-    "toastTagged": "Tagged “{name}”.",
-    "toastUntagged": "Untagged “{name}”.",
+    "toastTagged": "{name}",
+    "toastUntagged": "Tag off",
     "pickerPlaceholder": "Tag this message…",
-    "pickerNone": "No tags yet. Type a name to create your first.",
+    "pickerNone": "No tags yet.",
     "pickerFoot": "↵ toggles",
-    "pickerAria": "Add tag",
+    "pickerAria": "Tag",
+    "pickerTitle": "Tag",
     "pickerCreate": "Create “{name}”",
-    "newPlaceholder": "Name it…",
+    "newPlaceholder": "Name a new tag…",
     "newTaken": "You already have a tag called “{name}”.",
     "toastCreated": "Tag “{name}” created.",
     "toastRenamed": "Renamed to “{name}”.",
@@ -32,8 +33,8 @@
     "loading": "Loading your tags",
     "gone": "This tag is gone",
     "empty": {
-      "none": "No tags yet",
-      "tag": "Nothing carries this tag"
+      "none": "Nothing tagged",
+      "tag": "Nothing tagged"
     },
     "count": {
       "tags": "{count, plural, one {1 tag} other {# tags}}",
@@ -53,7 +54,6 @@
       "delete": "Delete"
     },
     "rename": {
-      "title": "Rename {name}.",
       "field": "Name",
       "save": "Save",
       "cancel": "Cancel",
@@ -64,7 +64,7 @@
       "stay": "{count, plural, one {1 message carries it and stays where it is.} other {# messages carry it and stay where they are.}}",
       "nothing": "Nothing carries it.",
       "confirm": "Delete",
-      "cancel": "Keep"
+      "cancel": "Cancel"
     },
     "list": {
       "menu": "List"

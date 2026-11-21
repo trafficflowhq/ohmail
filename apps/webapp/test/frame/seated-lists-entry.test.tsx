@@ -170,7 +170,7 @@ describe("a folder over the web's real entry", () => {
     await act(async () => {
       fireEvent.contextMenu(row("New glaze")!);
     });
-    const menu = screen.getByRole("menu", { name: "Move to a folder" });
+    const menu = screen.getByRole("menu", { name: "Move" });
     /* The folder it is in is not offered. */
     expect(within(menu).queryByRole("menuitem", { name: /Clay/ })).toBeNull();
     await act(async () => {
@@ -178,7 +178,7 @@ describe("a folder over the web's real entry", () => {
     });
     await tick(1500);
     expect(moves()).toEqual([["m_clay", "Archive"]]);
-    expect(said(), "its sentence, in the frame's slot").toContain("Moved to Archive.");
+    expect(said(), "its sentence, in the frame's slot").toContain("Moved to Archive");
   }, 30_000);
 });
 

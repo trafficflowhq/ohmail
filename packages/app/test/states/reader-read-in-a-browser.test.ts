@@ -177,7 +177,10 @@ describe("the panel's folds in a real browser", () => {
       /* On a phone the frame's dock stands over the panel while a letter is open (the frame's to rule): pressed as an event. */
       if (width < 600) await panel.getByRole("button", { name: "More" }).dispatchEvent("click");
       else await panel.getByRole("button", { name: "More" }).click();
-      const behind = await page.getByRole("menuitem").allTextContents();
+      const menuItems = await page.getByRole("menuitem").all();
+      const behind = await Promise.all(
+        menuItems.map(async (item) => /^- menuitem "([^"]+)"/.exec(await item.ariaSnapshot())?.[1]),
+      );
       console.log(`MORE ${width}: ${behind.join(", ")}`);
       expect(VERBS.filter((v) => !shown.includes(v) && !behind.includes(v))).toEqual([]);
       expect(VERBS.filter((v) => shown.includes(v) && behind.includes(v))).toEqual([]);
@@ -245,8 +248,8 @@ describe("the panel's menus in a real browser", () => {
   /*
    * A menu comes out of the control that opened it (the kit's K3: a verb's press hands its element): the Tag menu ends
    * at its opener's right edge, the Resurface chooser starts at the Resurface button's left edge, and More's own
-   * menu ends at More. The day picker that "Pick a date" opens stands where the chooser stood. At this width Tag
-   * has folded into More, so More is its opener as well.
+   * menu ends at More. The day picker that "Pick a date" opens stands where the chooser stood. This case
+   * exercises Tag folded into More so the anchor is the button that opened that menu.
    */
   it("at 1440 the Tag menu ends at its button, the Resurface chooser starts at its button and its day picker, More's menu ends at More", async () => {
     const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
@@ -256,6 +259,31 @@ describe("the panel's menus in a real browser", () => {
     await page.goto(`${ORIGIN}/?open=lt-journal&screen=reading`);
     await page.waitForSelector('[data-conv-id="lt-journal"][data-body-ready]', { timeout: 15_000 });
     const panel = page.getByRole("toolbar", { name: "Actions" });
+    await page.evaluate(() => document.fonts.ready);
+    // Widen the list if necessary so Tag folds into More while Resurface stays on the toolbar.
+    const tag = panel.getByRole("button", { name: "Tag", exact: true });
+    const listWidth = page.getByRole("separator", { name: "List width" });
+    for (let step = 0; step < 8 && (await tag.isVisible()); step++) {
+      await listWidth.press("ArrowRight");
+      await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => done())));
+    }
+    if (await tag.isVisible()) {
+      await tag.evaluate((button) => {
+        const bar = button.parentElement!;
+        const rank = Number(button.dataset.rank);
+        const gap = parseFloat(getComputedStyle(bar).columnGap) || 0;
+        const higher = [...bar.querySelectorAll<HTMLElement>("[data-rank]")]
+          .filter((verb) => !verb.hidden && Number(verb.dataset.rank) > rank)
+          .reduce((width, verb) => {
+            const style = getComputedStyle(verb);
+            return (
+              width + verb.offsetWidth + parseFloat(style.marginLeft) + parseFloat(style.marginRight) + gap
+            );
+          }, 0);
+        bar.parentElement!.style.maxWidth = `${bar.scrollWidth - Math.ceil(higher + button.offsetWidth / 2)}px`;
+      });
+      await tag.waitFor({ state: "hidden" });
+    }
     const box = async (name: string) =>
       (await panel.getByRole("button", { name, exact: true }).boundingBox())!;
     const opened = async (button: string, menu: string) => {
@@ -265,6 +293,7 @@ describe("the panel's menus in a real browser", () => {
       await page.getByRole("menu").waitFor({ state: "detached" });
       return b;
     };
+    expect(await tag.isVisible()).toBe(false);
     const more = await box("More");
     await panel.getByRole("button", { name: "More", exact: true }).click();
     await page
@@ -300,6 +329,29 @@ describe("the panel's menus in a real browser", () => {
   }, 60_000);
 });
 
+it.each([540, 1000])(
+  "steps the heading back only in a short room (%i high)",
+  async (height) => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height }, reducedMotion: "reduce" });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) =>
+        route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+      );
+      await page.goto(`${ORIGIN}/?open=rd-a&read=1&screen=reading`);
+      const heading = page.locator(".oh-readinghead-subject");
+      const short = page.locator(".oh-readinghead-short");
+      await heading.evaluate((el) => el.parentElement!.parentElement!.scrollTo(0, 315));
+      await expect.poll(() => short.isVisible()).toBe(height < 900);
+      await heading.evaluate((el) => el.parentElement!.parentElement!.scrollTo(0, 0));
+      await expect.poll(() => short.isVisible()).toBe(false);
+      expect(await heading.isVisible()).toBe(true);
+    } finally {
+      await page.close();
+    }
+  },
+  20_000,
+);
+
 it("fades the sticky Paper heading only while it covers the letter", async () => {
   const page = await browser!.newPage({
     viewport: { width: 1440, height: 900 },
@@ -326,26 +378,32 @@ it("fades the sticky Paper heading only while it covers the letter", async () =>
   }
 }, 20_000);
 
-it.each(["paper", "ohmarchy"])(
-  "covers the scrolled letter across the %s heading",
-  async (face) => {
+it.each([
+  { face: "paper", scheme: "light", width: 1440, height: 900 },
+  { face: "ohmarchy", scheme: "light", width: 1440, height: 900 },
+  { face: "paper", scheme: "dark", width: 1440, height: 540 },
+  { face: "paper", scheme: "dark", width: 2000, height: 540 },
+])(
+  "covers the scrolled letter across and above the $face $scheme heading at $width",
+  async ({ face, scheme, width, height }) => {
     const page = await browser!.newPage({
-      viewport: { width: 1440, height: 900 },
+      viewport: { width, height },
       reducedMotion: "reduce",
     });
     try {
       await page.route(`${ORIGIN}/**`, (route) =>
         route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
       );
-      await page.goto(`${ORIGIN}/?open=rd-a&read=1&screen=reading&face=${face}`);
+      await page.goto(`${ORIGIN}/?open=rd-a&read=1&screen=reading&face=${face}&scheme=${scheme}`);
       const letter = page.locator('[data-conv-id="rd-a"][data-body-ready]');
       await letter.waitFor();
       await page.evaluate(() => document.fonts.ready);
-      const { leftGap, rightGap, clip, textUnderHead } = await page
+      const { leftGap, rightGap, topGap, clip, textUnderHead } = await page
         .locator(".oh-readinghead")
-        .evaluate((head) => {
+        .evaluate(async (head) => {
           const scroller = head.parentElement!;
           scroller.scrollTop = 315;
+          await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
           const port = scroller.getBoundingClientRect();
           const box = head.getBoundingClientRect();
           const left = port.left + scroller.clientLeft;
@@ -367,6 +425,7 @@ it.each(["paper", "ohmarchy"])(
           return {
             leftGap: Math.abs(box.left - left),
             rightGap: Math.abs(box.right - right),
+            topGap: box.top - top,
             clip: {
               x: Math.ceil(left),
               y: Math.ceil(top),
@@ -379,7 +438,11 @@ it.each(["paper", "ohmarchy"])(
       expect(leftGap).toBeLessThanOrEqual(1);
       expect(rightGap).toBeLessThanOrEqual(1);
       expect(textUnderHead).toBe(true);
-      // Hiding the letter without moving it must change no pixels in the head or above it.
+      expect(
+        topGap,
+        "the sticky heading leaves no exposed strip at the top of the scrollport",
+      ).toBeLessThanOrEqual(0);
+      // Hiding the letter without moving it must change no pixels from the scrollport's top through the heading.
       const visible = await page.screenshot({ clip });
       await letter.evaluate((el) => el.style.setProperty("visibility", "hidden"));
       const hidden = await page.screenshot({ clip });
@@ -452,3 +515,241 @@ it("lands the last message on the reading line after jumping away in a short thr
     await page.close();
   }
 }, 60_000);
+
+it.each([
+  { width: 390, height: 844, axis: "head", dx: -75, dy: 0, pointer: "coarse" },
+  { width: 719, height: 781, axis: "head", dx: -75, dy: 0, pointer: "coarse" },
+  { width: 719, height: 781, axis: "head", dx: -75, dy: 0, pointer: "fine" },
+  { width: 1000, height: 781, axis: "column", dx: 0, dy: -165, pointer: "fine" },
+  { width: 1000, height: 781, axis: "column", dx: 0, dy: -165, pointer: "coarse" },
+])(
+  "walks a long $axis run at $width px under a finger and still selects on tap with a $pointer primary pointer",
+  async ({ width, height, axis, dx, dy, pointer }) => {
+    const { readerStatesPage } = await import("./reader-states.mjs");
+    const threadHtml = await readerStatesPage("packages/app/test/states/squares-reader-1-page.tsx");
+    const page = await browser!.newPage({
+      viewport: { width, height },
+      reducedMotion: "reduce",
+      hasTouch: true,
+      isMobile: true,
+    });
+    try {
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(String(error)));
+      await page.route("**/*", (route) =>
+        route.request().url().startsWith(ORIGIN)
+          ? route.fulfill({ contentType: "text/html", body: threadHtml })
+          : route.abort(),
+      );
+      const mailCount = 160;
+      const start = 80;
+      await page.goto(
+        `${ORIGIN}/?n=${mailCount}&open=${start}&device=phone${pointer === "fine" ? "&fine" : ""}${axis === "column" && pointer === "coarse" ? "&column" : ""}`,
+      );
+      const group = page.getByRole("group", { name: new RegExp(`^${mailCount} messages, \\d+ unread$`) });
+      const here = () => group.locator("[data-here]").getAttribute("data-square").then(Number);
+      await expect.poll(here).toBe(start);
+      expect(await page.locator("html").getAttribute("data-touch")).toBe(pointer === "coarse" ? "1" : "0");
+      expect(await group.getAttribute("data-axis")).toBe(axis);
+      const state = () =>
+        group.evaluate((el) => ({
+          before: Number(el.firstElementChild?.textContent?.replace(/^\+/, "")),
+          scroll: document.querySelector("[data-reading-scroll]")!.scrollTop,
+          background: [window.scrollY, document.querySelector(".fr-list")?.scrollTop ?? 0],
+        }));
+      const before = await state();
+      const cdp = await page.context().newCDPSession(page);
+      const current = (await group.locator("[data-here]").boundingBox())!;
+      const pitch = axis === "head" ? current.width : current.height;
+      const x = current.x + current.width / 2;
+      const y = current.y + current.height / 2;
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+      for (let step = 1; step <= 10; step++) {
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: [{ x: x + (dx * step) / 10, y: y + (dy * step) / 10 }],
+        });
+        if (step === 5) await expect.poll(here).toBe(start + Math.round(Math.hypot(dx, dy) / 2 / pitch));
+      }
+      const end = start + Math.round(Math.hypot(dx, dy) / pitch);
+      await expect.poll(here).toBe(end);
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      const after = await state();
+      expect(after.scroll).toBeGreaterThan(before.scroll);
+      expect(after.before).toBeGreaterThan(before.before);
+      expect(after.background).toEqual(before.background);
+      expect(await page.getByRole("dialog", { name: "More" }).count()).toBe(0);
+      await page.evaluate(
+        () => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))),
+      );
+      await group.locator(`[data-square="${end - 1}"]`).tap();
+      await expect.poll(here).toBe(end - 1);
+      expect(errors).toEqual([]);
+    } finally {
+      await page.close();
+    }
+  },
+  25_000,
+);
+
+it.each(["no-preference", "reduce"] as const)(
+  "uses the Calendar column motion on Mail entry with motion preference %s",
+  async (reducedMotion) => {
+    const { readerStatesPage } = await import("./reader-states.mjs");
+    const threadHtml = await readerStatesPage("packages/app/test/states/squares-reader-1-page.tsx");
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion });
+    try {
+      await page.addInitScript(() => {
+        const animate = Element.prototype.animate;
+        Element.prototype.animate = function (...args: Parameters<typeof animate>) {
+          const result = animate.apply(this, args);
+          if (this.matches(".fr-main > :is(.fr-list, .fr-reading, .fr-wide)")) {
+            const effect = result.effect as KeyframeEffect;
+            this.dispatchEvent(
+              new CustomEvent("column-arrival", {
+                bubbles: true,
+                detail: { frames: effect.getKeyframes(), timing: effect.getTiming() },
+              }),
+            );
+          }
+          return result;
+        };
+        const arrivals: unknown[] = [];
+        Object.assign(window, { arrivals });
+        document.addEventListener("column-arrival", (event) => arrivals.push((event as CustomEvent).detail));
+      });
+      await page.route(`${ORIGIN}/**`, (route) =>
+        route.fulfill({ contentType: "text/html", body: threadHtml }),
+      );
+      const arrivals = () =>
+        page.evaluate(
+          () =>
+            (window as Window & { arrivals?: { frames: ComputedKeyframe[]; timing: EffectTiming }[] })
+              .arrivals ?? [],
+        );
+      await page.goto(`${ORIGIN}/?switch&motion=full&n=6`);
+      const open = page.getByRole("button", { name: "Q3 plan" });
+      await open.waitFor();
+      const boot = reducedMotion === "reduce" ? 0 : 2;
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      await expect.poll(async () => (await arrivals()).length).toBe(boot);
+
+      await open.click();
+      await page.getByRole("heading", { name: "Q3 plan" }).waitFor();
+      expect(await arrivals()).toHaveLength(boot);
+
+      await page.getByRole("button", { name: "Calendar", exact: true }).click();
+      await page.getByRole("heading", { name: "Calendar week" }).waitFor();
+      await expect.poll(async () => (await arrivals()).length).toBe(boot + 1);
+      await page.getByRole("button", { name: "Mail", exact: true }).click();
+      await page.getByRole("heading", { name: "Q3 plan" }).waitFor();
+      await expect.poll(async () => (await arrivals()).length).toBe(boot + 3);
+
+      const entries = await arrivals();
+      const [calendar, mail, reader] = entries.slice(boot);
+      expect(mail).toEqual(calendar);
+      if (boot) expect(entries.slice(0, boot)).toEqual([mail, reader]);
+      expect(reader?.timing.delay).toBe(2 * (mail?.timing.delay ?? 0));
+      if (reducedMotion === "reduce") {
+        expect(mail?.frames.map((frame) => frame.transform)).toEqual([undefined, undefined]);
+      } else {
+        expect(mail?.frames[0]?.transform).toBe("translateY(8px)");
+      }
+    } finally {
+      await page.close();
+    }
+  },
+  60_000,
+);
+
+it("anchors the reader menu when opened during Mail entry", async () => {
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  try {
+    await page.addInitScript(() => {
+      const animate = Element.prototype.animate;
+      Element.prototype.animate = function (...args: Parameters<typeof animate>) {
+        const result = animate.apply(this, args);
+        if (this.matches(".fr-main > .fr-reading")) {
+          result.pause();
+          result.currentTime = 100;
+        }
+        return result;
+      };
+    });
+    await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto(`${ORIGIN}/?open=lt-journal&screen=reading&motion=full`);
+    const button = page.getByRole("button", { name: "Resurface", exact: true });
+    const reader = page.getByRole("region", { name: "Reading", exact: true });
+    const entryPaused = () =>
+      reader.evaluate((node) => node.getAnimations().some((animation) => animation.playState === "paused"));
+    await expect.poll(entryPaused).toBe(true);
+    await button.evaluate((node) => {
+      const column = node.closest('[aria-label="Reading"]')!;
+      node.addEventListener(
+        "pointerdown",
+        (event) => {
+          if (event.isTrusted) node.setAttribute("data-press-transform", getComputedStyle(column).transform);
+        },
+        { once: true },
+      );
+    });
+    await button.click();
+    expect(await entryPaused()).toBe(false);
+    const menu = page.getByRole("menu", { name: "Resurface", exact: true });
+    await menu.waitFor();
+    expect(
+      await menu.evaluate((node) => {
+        const { x, y, width, height } = node.parentElement!.getBoundingClientRect();
+        return { x, y, width, height };
+      }),
+    ).toEqual({ x: 0, y: 0, width: 1440, height: 900 });
+    await expect
+      .poll(async () => {
+        const box = (await button.boundingBox())!;
+        const overlay = (await menu.boundingBox())!;
+        return Math.abs(overlay.x - box.x);
+      })
+      .toBeLessThanOrEqual(1);
+    expect(await button.getAttribute("data-press-transform")).toBe("none");
+  } finally {
+    await page.close();
+  }
+}, 20_000);
+
+it.each([
+  ["phone", 390, 844],
+  ["fold", 719, 841],
+] as const)(
+  "opens Mail on %s without sliding the whole frame",
+  async (device, width, height) => {
+    const page = await browser!.newPage({ viewport: { width, height }, reducedMotion: "no-preference" });
+    try {
+      await page.addInitScript(() => {
+        const animate = Element.prototype.animate;
+        Element.prototype.animate = function (...args: Parameters<typeof animate>) {
+          const result = animate.apply(this, args);
+          if (this.matches(".fr-frame")) result.pause();
+          return result;
+        };
+      });
+      await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+      await page.goto(`${ORIGIN}/?device=${device}&open=lt-journal&screen=reading&motion=full`);
+      await page.getByRole("toolbar", { name: "Actions" }).waitFor();
+      const moving = await page.locator(".fr-frame").evaluate(
+        (frame) =>
+          new Promise<number>((done) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => done(frame.getAnimations().length)));
+          }),
+      );
+      expect(moving).toBe(0);
+    } finally {
+      await page.close();
+    }
+  },
+  20_000,
+);

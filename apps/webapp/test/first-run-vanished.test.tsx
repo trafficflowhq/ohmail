@@ -167,7 +167,7 @@ describe("and no cursor can walk around it", () => {
 
   it("POSITIVE CONTROL — with the row present the same re-run opens on the consent statement", async () => {
     const s = await mount({ facts: held(), rerun: true, mailboxId: "mb-1" });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     expect(s.text()).not.toContain(t.vanishedTitle);
   });
 

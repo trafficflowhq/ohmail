@@ -156,7 +156,7 @@ describe("the organizer notice, on screen — one block per kind", () => {
     const got = blocks(el);
     expect(got.map(noticeKind)).toEqual(["stopped"]);
     expect(got[0]!.textContent).toContain("2 mailboxes are no longer being organized.");
-    expect((await showNotice(el, "elsewhere")).textContent).toContain("3 mailboxes are organized elsewhere now.");
+    expect((await showNotice(el, "elsewhere")).textContent).toContain("3 mailboxes are organized elsewhere now");
     expect(blocks(el).map((block) => block.textContent).join(""), "a closed block listed its mailboxes").not.toContain("@example.com");
   });
 
@@ -183,7 +183,7 @@ describe("the organizer notice, on screen — one block per kind", () => {
   it("one mailbox keeps the named sentence and no count", async () => {
     const el = await mountNotice([fact()], async () => {});
     expect(blocks(el)).toHaveLength(1);
-    expect(el.textContent).toContain("ohmail Cloud organizes person@example.com now.");
+    expect(el.textContent).toContain("ohmail Cloud organizes person@example.com now");
     expect(within(el).queryByRole("button", { name: en.mailboxes.noticeCountShow })).toBeNull();
     expect(within(el).getByRole("button", { name: en.mailboxes.noticeOpenMailboxes })).toBeTruthy();
   });
@@ -201,7 +201,7 @@ describe("the organizer notice, on screen — one block per kind", () => {
     await press(await showNotice(el, "elsewhere"), en.mailboxes.noticeDismiss);
     const back = blocks(el).find((b) => noticeKind(b) === "elsewhere");
     expect(back, "a stamp that was never written was reported as one").toBeDefined();
-    expect(back!.textContent).toContain("Another ohmail install organizes home@example.com now.");
+    expect(back!.textContent).toContain("Another ohmail organizes home@example.com now");
   });
 
   it("A NEW CHANGE ON A MAILBOX DISMISSED EARLIER SHOWS AGAIN while another block keeps the notice mounted", async () => {
@@ -293,7 +293,7 @@ describe("a refused Dismiss says why, under the notice that stays (NOTICE-DISMIS
         expect(withNotice(el).map((item) => item.textContent).join(""), "an acknowledged notice stayed").toBe("");
         return;
       }
-      expect(el.textContent, "a refused write took the notice off screen").toContain("ohmail Cloud organizes person@example.com now.");
+      expect(el.textContent, "a refused write took the notice off screen").toContain("ohmail Cloud organizes person@example.com now");
       expect(line(el), "a refused write put the notice back with no sentence").toBe(said);
     });
   }
@@ -438,6 +438,9 @@ async function mountQueue(engine: OhmailEngine, queued: PendingDecision[] = []) 
   return within(el);
 }
 
+const namedPending = en.screener.pendingHeading.replace("{name}", "ohmail Cloud");
+const unknownPending = en.screener.pendingHeading.replace("{name}", en.screener.pendingHolderUnknown);
+
 describe("a decision queued with the organizer does not revert on its own confirm", () => {
   beforeEach(() => { seq = 0; sent.length = 0; });
 
@@ -451,7 +454,7 @@ describe("a decision queued with the organizer does not revert on its own confir
     await shellTick(60_000);
     expect(sent, "the decision never reached the wire").toHaveLength(1);
     const updated = within(view.getByRole("listbox", { name: en.screener.title }));
-    const finished = within(updated.getByRole("group", { name: en.screener.pendingHeading }));
+    const finished = within(updated.getByRole("group", { name: namedPending }));
     expect(finished.getAllByRole("option"), "the decided sender is not accounted for anywhere").toHaveLength(1);
     expect(updated.getAllByRole("option"), "the sender came back to the waiting queue").toHaveLength(1);
     const decided = finished.getByRole("option", { name: (name) => name.startsWith(HELD.from.address) });
@@ -465,13 +468,13 @@ describe("a decision queued with the organizer does not revert on its own confir
   it("A DOMAIN-SCOPE decision excludes the domain, which is what the organizer will apply", async () => {
     const view = await mountQueue(queueingEngine(await freshStore()));
     await shellAct(async () => { view.getByRole("button", { name: en.screener.barScopeAria }).click(); });
-    await shellAct(async () => { within(document.body).getByRole("menuitemradio", { name: "whole domain" }).click(); });
+    await shellAct(async () => { within(document.body).getByRole("menuitemradio", { name: /^Whole domain/i }).click(); });
     await shellAct(async () => {
       within(view.getByRole("toolbar", { name: en.screener.place.panel })).getByRole("button", { name: en.screener.pileOhbox }).click();
     });
     await shellTick(60_000);
     expect(sent).toContainEqual(expect.objectContaining({ kind: "screener_decide", scope: "domain" }));
-    expect(view.getByRole("group", { name: en.screener.pendingHeading })).toBeTruthy();
+    expect(view.getByRole("group", { name: namedPending })).toBeTruthy();
   });
 
   it("a decision the SERVER already knows about excludes the sender before any press", async () => {
@@ -480,7 +483,7 @@ describe("a decision queued with the organizer does not revert on its own confir
     ]);
     const list = within(view.getByRole("listbox", { name: en.screener.title }));
     expect(list.getAllByRole("option")).toHaveLength(1);
-    expect(within(list.getByRole("group", { name: en.screener.pendingHeading })).getAllByRole("option")).toHaveLength(1);
+    expect(within(list.getByRole("group", { name: unknownPending })).getAllByRole("option")).toHaveLength(1);
   });
 });
 
@@ -541,8 +544,8 @@ describe("what the pane says about a decision the organizer has not carried out"
   it("waiting: it names the machine that owes it, and the sender sits under its own heading", async () => {
     const el = await mountDecided(decided());
     const text = el.textContent ?? "";
-    expect(text).toContain(en.screener.pendingHeading);
-    expect(within(el).queryByRole("group", { name: en.screener.pendingHeading }), "the decided row is not marked as one").not.toBeNull();
+    expect(text).toContain(namedPending);
+    expect(within(el).queryByRole("group", { name: namedPending }), "the decided row is not marked as one").not.toBeNull();
     expect(text).toContain("ohmail Cloud");
   });
 
@@ -555,8 +558,8 @@ describe("what the pane says about a decision the organizer has not carried out"
     const text = el.textContent ?? "";
     expect(text, "the refusal is not explained").toContain(en.screener.pendingReason_conflict);
     expect(text, "a refused sender was filed under the decided heading")
-      .not.toContain(en.screener.pendingHeading);
-    expect(within(el).queryByRole("group", { name: en.screener.pendingHeading }), "a refused sender was drawn as a decided one")
+      .not.toContain(namedPending);
+    expect(within(el).queryByRole("group", { name: namedPending }), "a refused sender was drawn as a decided one")
       .toBeNull();
     expect(within(el).queryByText(en.screener.pendingReason_conflict, { exact: false }),
       "the refusal was not set apart from a decision still waiting").not.toBeNull();

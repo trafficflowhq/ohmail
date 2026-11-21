@@ -350,8 +350,7 @@ describe("Answer Later is reachable from the keyboard", () => {
     await key("?", { shiftKey: true });
     const shown = sheet();
     expect(shown, "the shortcut sheet did not open").not.toBeNull();
-    expect(shown!.textContent ?? "", "the sheet does not mention the Answer Later binding")
-      .toContain("Queue it for the Reply Run");
+    expect(within(shown!).getByText("Later", { exact: true })).toBeTruthy();
   });
 });
 

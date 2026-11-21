@@ -405,9 +405,8 @@ describe("News and Receipts on their own seats, over the mail ground", () => {
     expect(within(menu).getAllByRole("menuitem")[0]?.textContent).toContain("Ohbox");
     fireEvent.keyDown(menu, { key: "Escape" });
     fireEvent.click(
-      within(screen.getByRole("toolbar", { name: "Actions" })).getByRole("button", { name: "More" }),
+      within(screen.getByRole("toolbar", { name: "Actions" })).getByRole("button", { name: "Move" }),
     );
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move" }));
     menu = screen.getByRole("menu", { name: "Move" });
     expect(within(menu).getAllByRole("menuitem")[0]?.textContent).toContain("Ohbox");
   });
@@ -746,10 +745,7 @@ describe("News and Receipts on their own seats, over the mail ground", () => {
     );
     expect(address.read()).toBe(at);
     const panel = within(screen.getByRole("toolbar", { name: "Actions" }));
-    fireEvent.click(panel.getByRole("button", { name: "More" }));
-    fireEvent.click(
-      within(screen.getByRole("menu", { name: "More" })).getByRole("menuitem", { name: "Move" }),
-    );
+    fireEvent.click(panel.getByRole("button", { name: "Move" }));
     fireEvent.click(
       within(screen.getByRole("menu", { name: "Move" })).getByRole("menuitem", { name: "Ohbox" }),
     );
@@ -1058,7 +1054,7 @@ describe("News and Receipts on their own seats, over the mail ground", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Mark all 3 unread messages read" }));
     await settle();
     expect(sent(mail)).toEqual(["mark_seen n3,n2,n1 read", "feed_mark_seen reads up to n3"]);
-    expect(said()).toBe("3 items marked read");
+    expect(said()).toBe("3 read");
     press("z");
     await settle();
     expect(sent(mail).slice(2, 3)).toEqual(["mark_seen n3,n2,n1 unread"]);
@@ -1649,7 +1645,7 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     const expectClosedAfterLanding = () => {
       drain();
       expect(expanded(), "a pending jump cannot reopen the letter after Back").toBe("false");
-      expect(screen.queryByRole("toolbar", { name: "Actions" })).toBeNull();
+      expect(screen.getAllByRole("toolbar", { name: "Actions" })).toHaveLength(1);
       expect(address.read()).toBe("#/reads");
       expect(address.writes).toEqual([]);
       act(() => void vi.advanceTimersByTime(2000));
@@ -2263,7 +2259,7 @@ it("moves only the selected account-authored News card on a phone and undoes tha
   const bar = within(screen.getByRole("toolbar", { name: "Selection" }));
   fireEvent.click(bar.getByRole("button", { name: "Move" }));
   fireEvent.click(
-    within(screen.getByRole("dialog", { name: "move to" })).getByRole("menuitem", { name: "Ohbox" }),
+    within(screen.getByRole("dialog", { name: "Move" })).getByRole("menuitem", { name: "Ohbox" }),
   );
   await settle();
 
@@ -2296,10 +2292,12 @@ it("screens only the selected Ohbox letter when its sender has another listed le
     within(screen.getByRole("toolbar", { name: "Selection" })).getByRole("button", { name: "Screening" }),
   );
   fireEvent.click(
-    within(screen.getByRole("dialog", { name: "screen to" })).getByRole("menuitem", { name: "News" }),
+    within(screen.getByRole("dialog", { name: "Screen to" })).getByRole("menuitem", { name: "News" }),
   );
   fireEvent.click(
-    within(screen.getByRole("dialog", { name: "Screening" })).getByRole("menuitem", { name: "Screen them" }),
+    within(screen.getByRole("dialog", { name: /senders? · News\./ })).getByRole("menuitem", {
+      name: "Screen them",
+    }),
   );
   await settle();
 

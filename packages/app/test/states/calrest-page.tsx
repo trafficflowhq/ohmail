@@ -160,7 +160,7 @@ const made = fakeHost({
   calendar: entry,
   products: "both",
   wires: { calendar: world.port },
-  window: fakeWindow({ ...room, posture: "flat", reducedMotion: true }),
+  window: fakeWindow({ ...room, posture: "flat", reducedMotion: q.get("motion") !== "full" }),
   address: fakeAddress(addressOf()),
   appearance: fakeAppearance(look),
 });

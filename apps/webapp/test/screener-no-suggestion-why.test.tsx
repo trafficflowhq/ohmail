@@ -172,7 +172,8 @@ describe("why a waiting sender has no suggestion", () => {
   it("PENDING — nobody has asked, and that is the one state that may say 'yet'", async () => {
     await mountView(MANY);
     expect(why()).toBe("pending");
-    expect(text()).toContain("No suggestion yet for this sender");
+    expect(text()).not.toContain("No suggestion yet for this sender");
+    expect(within(host!).getByRole("button", { name: "Choose where this sender's mail goes" }).textContent).toBe("a place");
   });
 
   it("NO_AUTO_AI — nothing was suggested by itself, and the row says that instead of 'yet'", async () => {
@@ -230,7 +231,11 @@ describe("why a waiting sender has no suggestion", () => {
     // The first row was in the asked set, so it now carries the run’s reason and this branch is
     // not rendered at all.
     expect(why()).toBeNull();
-    expect(text()).toContain("AI is switched off or unavailable for this account");
+    const sender = model.model.waiting.find((row) => row.from.address === selected);
+    expect(sender?.ai?.noAnswer).toBe("spend_unavailable");
+    const reading = within(within(host!).getByRole("region", { name: "Reading" }));
+    expect(reading.getByText(messages.screener.aiNoAnswerChip)).toBeTruthy();
+    expect(reading.queryByText(/AI is switched off or unavailable for this account/)).toBeNull();
   });
 });
 
@@ -253,7 +258,7 @@ describe("the coming state — a run is buying this sender", () => {
     await mountView(MANY, { optedIn: true });
     expect(purchases, "the batch left — this case would measure nothing").toBe(1);
     expect(why()).toBe("coming");
-    expect(text()).toContain("A suggestion is coming for this sender");
+    expect(text()).not.toContain("A suggestion is coming for this sender");
   });
 
   it("an opted-in account with no run buying the row promises nothing", async () => {
@@ -293,7 +298,9 @@ describe("the coming state — a run is buying this sender", () => {
     // The selected row is in the front ten, so it now carries an answer: the coming sentence is
     // gone and the chip's own block renders in its place.
     expect(why()).toBeNull();
-    expect(text()).toContain("“stranger”");
+    const reading = within(within(host!).getByRole("region", { name: "Reading" }));
+    expect(reading.getByText("stranger", { exact: true })).toBeTruthy();
+    expect(reading.queryByText("“stranger”", { exact: true })).toBeNull();
   });
 });
 
@@ -391,7 +398,8 @@ describe("a refused suggest request sets the standing, and the row says why", ()
     suggestReply = () => { throw new TypeError("Failed to fetch"); };
     await mountView(MANY, { optedIn: true });
     expect(purchases).toBe(1);
-    expect(text()).toContain(messages.screener.noSuggestion);
+    expect(text()).not.toContain("No suggestion yet for this sender");
+    expect(text()).not.toContain("AI suggestions are not available");
     expect(why()).toBe("pending");
   });
 
@@ -417,7 +425,8 @@ describe("a refused suggest request sets the standing, and the row says why", ()
     await mountView(MANY, { optedIn: true });
     expect(purchases).toBe(1);
     await flush();
-    expect(text()).toContain(messages.screener.noSuggestion);
+    expect(text()).not.toContain("No suggestion yet for this sender");
+    expect(text()).not.toContain("AI suggestions are not available");
     expect(why()).toBe("pending");
   });
 });
@@ -497,7 +506,12 @@ describe("the whole-domain card names the other senders before the press", () =>
     expect(text()).not.toContain(reach);
     await press("Decision scope");
     const menu = within(document.body).getByRole("menu", { name: "Decision scope" });
-    await act(async () => { within(menu).getByRole("menuitemradio", { name: "whole domain" }).click(); });
-    expect(within(host!).getByText(reach).textContent).toBe(reach);
+    await act(async () => { within(menu).getByRole("menuitemradio", { name: /^Whole domain/i }).click(); });
+    expect(text()).not.toContain(reach);
+    const sender = model.model.waiting.find((row) => row.from.address === selected)!;
+    expect(model.model.reachOf(sender, "domain").others).toEqual([
+      expect.objectContaining({ count: 1 }),
+    ]);
+    expect(within(host!).getByRole("button", { name: "Decision scope" }).textContent).toBe("whole domain");
   });
 });

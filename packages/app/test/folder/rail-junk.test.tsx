@@ -17,13 +17,14 @@ afterEach(cleanup);
 it.each([
   { folders: ["INBOX/Spam"], expected: "Spam folder is not listed here" },
   { folders: ["Spam", "Junk"], expected: "junk folder is not listed here" },
-])("explains mail excluded from the Folder rail", async ({ folders, expected }) => {
+])("leaves the provider Junk explanation out of the Folder rail", async ({ folders, expected }) => {
   listSeat({
     letters: [],
     first: "#/ohbox",
     consent: FOLDERS_ON,
     mailboxes: async () => folders.map((name, index) => mailbox(String(index), name)),
   });
-  expect(await screen.findByText((text) => text.includes(expected))).toBeTruthy();
+  await screen.findByRole("navigation", { name: "Places" });
+  expect(screen.queryByText((text) => text.includes(expected))).toBeNull();
   expect(screen.queryByText("Read it under Junk in the Screener.")).toBeNull();
 });

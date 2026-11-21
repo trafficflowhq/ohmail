@@ -144,18 +144,18 @@ async function mount(props: Record<string, unknown> = { initialCode: "", publicS
 describe("the join's page over its ceremony", () => {
   it("a stranger: the stations under the setup's name, the account from three blanks, the mail said sent", async () => {
     const ui = await mount();
-    expect(ui.heading()).toBe(J.step_account_title);
-    const stations = ui.host.querySelector(`ol[aria-label="${J.progress}"]`);
+    expect(ui.heading()).toBe(J.account.replace("<name>,</name>", `${J.nameLabel},`).replace("<email>,</email>", `${J.emailLabel},`).replace("<password></password>.", J.passwordLabel));
+    const stations = ui.host.querySelector('[role="img"][aria-label^="Step 1 of 5, Account"]');
     expect(stations, "no list named by the setup's progress").not.toBeNull();
-    expect(stations!.textContent).toContain(J.rail_account);
+    expect(stations!.getAttribute("aria-label")).toContain(J.rail_account);
     await ui.type(J.emailLabel, " pat@family.example ");
     await ui.type(J.nameLabel, "Pat");
     await ui.type(J.passwordLabel, PASSWORD);
-    await ui.press(J.createAccount);
+    await ui.press(J.continue);
     const register = sent.find((s) => s.path === "/auth/register");
     expect(register?.body).toMatchObject({ email: "pat@family.example", displayName: "Pat", password: PASSWORD, locale: "en" });
-    expect(ui.heading()).toBe(J.step_sent_title);
-    expect(ui.host.textContent).toContain(J.step_sent_lead.replace("{email}", "pat@family.example"));
+    expect(ui.heading()).toContain(J.openLink.split("<a>")[0]!.trim());
+    expect(ui.host.textContent).toContain(J.openLink.replace("<a>{email}</a>.", "pat@family.example"));
   });
 
   it("the authenticator: its picture, and its code taken as six digits and sent as typed", async () => {
@@ -163,8 +163,8 @@ describe("the join's page over its ceremony", () => {
     document.cookie = "tf_owner=a1; Path=/";
     session = () => json(200, { user: user({ totp: false, recoveryCodes: false }), scope: "enrollment", familyId: "enroll-fixture" });
     const ui = await mount();
-    expect(ui.heading()).toBe(J.step_factor_title);
-    await ui.press(J.useTotp);
+    expect(ui.heading()).toBe(J.lockWith.replace("<how></how>.", J.factorPasskeyWord));
+    await ui.press(J.factorApp);
     expect(ui.host.querySelector(`[aria-label="${J.totpQrAria}"]`), "no picture of the enrolment").not.toBeNull();
     expect(ui.host.textContent).toContain(SEED.match(/.{4}/g)!.join(" "));
     await ui.type(J.totpLabel, "12a 345-6");
@@ -180,7 +180,7 @@ describe("the join's page over its ceremony", () => {
   it("the plan: one way on, a link to the account page the service mints; no Not now", async () => {
     session = () => json(200, { user: user({ totp: true, recoveryCodes: true }), scope: "full" });
     const ui = await mount();
-    expect(ui.heading()).toBe(J.step_plan_title);
+    expect(ui.heading()).toBe(J.startTrialTitle.replace(/\.$/, ""));
     expect(ui.button(J.planLater), "Not now is offered").toBeNull();
     expect(ui.host.textContent).not.toContain(J.planLaterHint);
     const plan = [...ui.host.querySelectorAll("a")].find((a) => a.textContent === J.planStartTrial);
@@ -190,7 +190,7 @@ describe("the join's page over its ceremony", () => {
   it("the codes: Download hands this device a text file of them, with its header, and nothing leaves", async () => {
     session = () => json(200, { user: user({ totp: true, recoveryCodes: false }), scope: "full" });
     const ui = await mount();
-    expect(ui.heading()).toBe(J.step_codes_title);
+    expect(ui.heading()).toBe(J.step_codes_title.replace(/\.$/, ""));
     const files: Array<{ name: string; href: string }> = [];
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       files.push({ name: this.download, href: this.getAttribute("href") ?? "" });
@@ -236,8 +236,8 @@ describe("the join's mailbox step: the one connect form under the wizard", () =>
       imap: { host: FASTMAIL.imap.host, port: FASTMAIL.imap.port, secure: FASTMAIL.imap.secure, user: ADDRESS, pass: PASSWORD },
       smtp: { host: FASTMAIL.smtp.host, port: FASTMAIL.smtp.port, secure: FASTMAIL.smtp.secure, user: ADDRESS, pass: PASSWORD },
     }]);
-    expect(ui.heading()).toBe(J.step_connected_title);
-    expect(ui.host.textContent).toContain(J.mailboxConnected.replace("{address}", ADDRESS));
+    expect(ui.heading()).toBe(J.myMailboxes.replace(/\.$/, ""));
+    expect(ui.host.textContent).toContain(ADDRESS);
   });
 
   it("a browser now signed in as somebody else sends nothing, says the wizard's sentence, and keeps what was typed", async () => {
@@ -259,7 +259,7 @@ describe("the join's mailbox step: the one connect form under the wizard", () =>
     entitled = false;
     await ui.press(J.connectMailbox);
     expect(posts()).toHaveLength(1);
-    expect(ui.heading()).toBe(J.step_plan_title);
+    expect(ui.heading()).toBe(J.startTrialTitle.replace(/\.$/, ""));
     expect(ui.host.textContent).toContain(said);
   });
 

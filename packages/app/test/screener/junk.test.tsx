@@ -107,8 +107,8 @@ describe("the third section with the mail server's Junk handed", () => {
     expect(screen.getByRole("button", { name: "Junk" }).textContent).toBe("Junk");
     const rows = screen.getByRole("listbox", { name: "Junk" });
     expect(within(rows).getAllByRole("option")).toHaveLength(2);
-    expect(rows.textContent).toContain("your verdict");
-    expect(rows.textContent).toContain("filed by your mail server");
+    expect(rows.textContent).toContain("Your verdict");
+    expect(rows.textContent).toContain("Mail server");
     expect(screen.queryByText("Spammy Sender")).toBeNull();
   });
 
@@ -144,7 +144,12 @@ describe("the third section with the mail server's Junk handed", () => {
     const { junk, got } = junkOf();
     const world = mountJunk(junk);
     const panel = () => within(reading()).getByRole("toolbar", { name: "Actions" });
-    fireEvent.click(within(panel()).getByRole("button", { name: "Not junk" }));
+    const junkSlot = within(reading()).getByRole("button", { name: "Junk actions" });
+    fireEvent.click(junkSlot);
+    const menu = within(screen.getByRole("menu", { name: "Junk actions" }));
+    expect(menu.getByRole("menuitem", { name: "Not junk, always allow" })).toBeTruthy();
+    expect(got.rescued).toEqual([]);
+    fireEvent.click(menu.getByRole("menuitem", { name: "Not junk" }));
     expect(got.rescued).toEqual([[1, false]]);
     /* The shell draws again when its window's busy set changes: the letter being recorded takes no second verb. */
     world.again(modelOf(asked, { spam: SPAM as never }));
@@ -297,7 +302,7 @@ describe("Search Junk", () => {
     expect(got.queries).toEqual(["prize"]);
     expect(got.server).toBe(0);
     expect(screen.getByText("Nothing loaded here matches “zzz”.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Also search your mail server's Junk folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Also search your mail server" }));
     expect(got.server).toBe(1);
   });
 
@@ -337,9 +342,7 @@ describe("Junk on one column", () => {
   it("speaks German", () => {
     const { junk } = junkOf();
     mountJunk(junk, { lang: "de" });
-    expect(screen.getByRole("listbox", { name: "Spam-Ordner" }).textContent).toContain(
-      "von deinem Mailserver",
-    );
+    expect(screen.getByRole("listbox", { name: "Spam-Ordner" }).textContent).toContain("Mailserver");
   });
 });
 

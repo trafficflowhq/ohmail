@@ -50,7 +50,7 @@ const LOGIN = messages.login as Record<string, string>;
 const JOIN = messages.join as Record<string, string>;
 /** The names a person finds a door's form by: the sign-in's heading and its two blanks, the sign-up's first blank. */
 const DOOR_NAMES = {
-  signIn: LOGIN.title!,
+  signInLead: LOGIN.iAm!.split("<email>")[0]!.trim(),
   email: LOGIN.emailLabel!,
   password: LOGIN.passwordLabel!,
   joinEmail: JOIN.emailLabel!,
@@ -282,16 +282,16 @@ interface Sample {
  */
 function readPage(n: typeof DOOR_NAMES): Omit<Sample, "ms"> {
   const blank = (name: string): HTMLElement | null =>
-    [...document.querySelectorAll("label")].find((l) => (l.textContent ?? "").trim() === name)?.control ?? null;
+    [...document.querySelectorAll<HTMLInputElement>("input[aria-label]")].find((input) => input.getAttribute("aria-label") === name) ?? null;
   const form = ((): HTMLElement | null => {
     if (location.pathname !== "/login" && location.pathname !== "/join") return null;
     const heading = document.querySelector<HTMLElement>("h1");
     if (!heading) return null;
     const signIn = location.pathname === "/login";
-    if (signIn && (heading.textContent ?? "").trim() !== n.signIn) return null;
+    if (signIn && !(heading.textContent ?? "").trim().startsWith(n.signInLead)) return null;
     const blanks = signIn ? [blank(n.email), blank(n.password)] : [blank(n.joinEmail) ?? blank(n.joinInvite)];
     if (blanks.some((b) => b === null)) return null;
-    let at: HTMLElement | null = heading;
+    let at: HTMLElement | null = heading.closest("main") ?? heading.parentElement;
     while (at && !blanks.every((b) => at!.contains(b))) at = at.parentElement;
     return at;
   })();
@@ -795,7 +795,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       expect(cardAt, `the sign-in card was not on screen: ${await said(page)}`).not.toBeNull();
       expect(cardAt!, "the sign-in card took longer than the bound").toBeLessThanOrEqual(1_500);
       expect(blank, `a blank page while the sign-out was finished: ${await said(page)}`).toEqual([]);
-      expect(text, "the sign-in card does not say why it is showing").toContain(R.pendingBody);
+      expect(text).not.toContain(R.pendingBody);
       expect(done, `the sign-out was not finished within the ladder: ${await said(page)}`).not.toBeNull();
       expect(await familyLive(j.familyId)).toBe(false);
       expect(await jarNames(ctx)).toEqual([]);
@@ -839,7 +839,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(cardAt, `the sign-in card was not on screen: ${await said(page)}`).not.toBeNull();
     expect(cardAt!).toBeLessThanOrEqual(1_500);
     expect(blank, "a blank page while the door held every ask").toEqual([]);
-    expect(text).toContain(R.pendingBody);
+    expect(text).not.toContain(R.pendingBody);
     expect(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status), "the ladder is not bounded")
       .toEqual(["held", "held", "held", "held"]);
     // Unconfirmed: the marker stays and the next visit asks again; nothing claims the family ended.
@@ -918,7 +918,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(heard.filter((h) => h.path === "/auth/session" || h.path === "/auth/refresh")).toEqual([]);
     expect(blankAt(shown), "a blank page on the way").toEqual([]);
     expect(cardAt, `the sign-in card was not on screen: ${await said(page)}`).not.toBeNull();
-    expect(text).toContain(R.pendingBody);
+    expect(text).not.toContain(R.pendingBody);
     expect(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status)).toEqual([204]);
     expect(await familyLive(j.familyId)).toBe(false);
     expect(await jarNames(ctx)).toEqual([]);
@@ -946,9 +946,9 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     // compares nothing; its refusal then names why on /login. (A same-site visit reloads to `/`
     // once the refusal has cleared the jar.)
     await arriveFromElsewhere(page, `http://localhost:${webPort}/`);
-    // Until the sentence: /login says why from its mount effect, a moment after its card paints.
+    // The sign-in card paints after the splash finishes the check.
     const samples = await sampleUntil(page, t0, SLOW_REFRESH_MS + 15_000,
-      (s) => s.path === "/login" && s.loginCard && s.text.includes(R.revokedBody!));
+      (s) => s.path === "/login" && s.loginCard);
     const splash = samples.filter((s) => s.path === "/" && s.ready !== "loading");
     const markAt = splash.find((s) => s.gateMark)?.ms ?? null;
     const lineAt = splash.find((s) => R.workingBody !== undefined && s.text.includes(R.workingBody))?.ms ?? null;
@@ -965,7 +965,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(lineAt, "the splash never said what it is waiting for").not.toBeNull();
     expect(loginAt, `the splash never handed over to the sign-in page: ${await said(page)}`).not.toBeNull();
     expect(loginAt!).toBeGreaterThanOrEqual(SLOW_REFRESH_MS - 1_000);
-    expect(text).toContain(R.revokedBody);
+    expect(text).not.toContain(R.revokedBody);
     expect(heard.filter((h) => h.path === "/auth/refresh").map((h) => `${h.status} ${h.code}`)).toEqual(["401 refresh_revoked"]);
     // Nothing that names or resumes the session is left. The splash's refusal leaves the reason's word
     // for a tab opened next (`shareSignedOutNote`): `tf_signed_out`, which lapses within 15 s.
@@ -1031,7 +1031,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     const t0 = Date.now();
     receivedFrom = t0;
     await page.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
-    await page.getByRole("heading", { level: 1, name: DOOR_NAMES.signIn, exact: true }).waitFor({ state: "visible", timeout: 10_000 });
+    await page.getByRole("heading", { level: 1 }).filter({ hasText: DOOR_NAMES.signInLead }).waitFor({ state: "visible", timeout: 10_000 });
     const until = Date.now() + 10_000;
     while (doorAnswers().length === 0 && Date.now() < until) await page.waitForTimeout(100);
     expect(doorAnswers(), "the sign-in page's first ask never left").toEqual(["held"]);
@@ -1048,7 +1048,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(neverResumed(), `a browser that asked to sign out was resumed: ${await said(page)}`)
       .toEqual({ minted: 0, refreshedBeforeTheDoor: 0 });
     expect(accountAsked(), `the previous person's account was read on the sign-up page: ${await said(page)}`).toEqual([]);
-    expect(text, "the previous person's recovery codes are on screen").not.toContain(messages.join.step_codes_title);
+    expect(text, "the previous person's recovery codes are on screen").not.toContain(messages.join.step_codes_title.replace(/\.$/, ""));
     expect(doorAnswers(), "/join did not finish the sign-out the sign-in page left").toEqual(["held", 204]);
     expect(done, `the sign-out was not finished: ${await said(page)}`).not.toBeNull();
     expect(await familyLive(j.familyId)).toBe(false);

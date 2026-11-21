@@ -6,6 +6,34 @@
     overflow: hidden;
     background: var(--stage);
   }
+  .oh-opening[data-kind="web"] {
+    min-height: calc(100dvh / var(--ui-zoom, 1));
+    display: grid;
+    place-items: center;
+    padding: var(--s4);
+  }
+  .oh-opening-web {
+    display: grid;
+    justify-items: center;
+    gap: var(--s4);
+    text-align: center;
+  }
+  .oh-opening-title {
+    margin: 0;
+    font-size: var(--t-title);
+  }
+  .oh-opening-web[data-late] {
+    visibility: hidden;
+    animation-name: oh-opening-reveal;
+    animation-delay: var(--d-opening-reload);
+    animation-fill-mode: forwards;
+  }
+  @keyframes oh-opening-reveal {
+    to {
+      visibility: visible;
+    }
+  }
+
   .oh-opening-sheet .oh-shapebar {
     background: var(--soft-sheet);
   }

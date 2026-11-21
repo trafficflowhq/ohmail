@@ -76,7 +76,7 @@ describe("the password step", () => {
   it("is named by its heading, and takes the email and the password by their names", () => {
     const { door, acts } = doorOf(password());
     draw(door);
-    expect(screen.getByRole("heading", { level: 1, name: L.title })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: /^I’m / })).toBeTruthy();
     const email = screen.getByRole("textbox", { name: L.emailLabel }) as HTMLInputElement;
     const pw = screen.getByLabelText(L.passwordLabel) as HTMLInputElement;
     expect([email.autocomplete, pw.autocomplete, pw.type]).toEqual([
@@ -120,6 +120,7 @@ describe("the password step", () => {
     expect(acts.begin).not.toHaveBeenCalled();
     const email = screen.getByRole("textbox", { name: L.emailLabel }) as HTMLInputElement;
     expect(document.activeElement).toBe(email);
+    expect(document.getElementById(email.getAttribute("aria-describedby")!)?.textContent).toBe(L.emailWanted);
     expect(email.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByText(L.emailWanted)).toBeTruthy();
     expect(screen.queryByText(L.passwordWanted)).toBeNull();
@@ -155,20 +156,19 @@ describe("the password step", () => {
     );
   });
 
-  it("says which sentence about invite codes is true here, and offers an account only where anyone may make one", () => {
-    for (const [note, line, create] of [
-      ["managed-invite", L.inviteOnlyBeta, false],
-      ["managed-open", L.inviteOnly, true],
-      ["selfhost", L.inviteOnlySelfhost, false],
+  it("names the service and keeps the route to account setup for each posture", () => {
+    for (const [note, service] of [
+      ["managed-invite", L.whereCloud],
+      ["managed-open", L.whereCloud],
+      ["selfhost", L.whereServer],
     ] as const) {
-      const { door } = doorOf(password(), { note });
-      const view = draw(door);
-      expect(view.container.textContent, note).toContain(line);
-      /* The ways to the join are links to the address the host handed, as the card's were. */
-      const create_ = screen.queryByRole("link", { name: L.createAccount });
-      expect(create_ !== null, note).toBe(create);
-      if (create_) expect(create_.getAttribute("href")).toBe("/join");
-      expect(screen.getByRole("link", { name: L.haveInvite }).getAttribute("href")).toBe("/join");
+      const view = draw(doorOf(password(), { note }).door);
+      expect(view.container.textContent).toContain(service);
+      expect(view.container.textContent).not.toMatch(
+        /invite code is not required|accounts are by invitation/i,
+      );
+      expect(screen.getByRole("link", { name: L.createAccount }).getAttribute("href")).toBe("/join");
+      expect(screen.queryByRole("link", { name: "Have an invite code?" })).toBeNull();
       cleanup();
     }
   });
@@ -178,9 +178,8 @@ describe("the password step", () => {
     const { door } = doorOf(password(), { note: "managed-open", join: { press: join } });
     draw(door);
     expect(screen.queryByRole("link")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: L.haveInvite }));
     fireEvent.click(screen.getByRole("button", { name: L.createAccount }));
-    expect(join).toHaveBeenCalledTimes(2);
+    expect(join).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -214,10 +213,12 @@ describe("the password step", () => {
     expect(acts.begin).not.toHaveBeenCalled();
   });
 
-  it("says why it is showing and where it carries on, in one line over the sentence", () => {
+  it("leaves the reason and continuation sentences off the sign-in form", () => {
     const { door } = doorOf(password(), { why: "expired", continues: "manage" });
     draw(door);
-    expect(screen.getByRole("status").textContent).toBe(`${en.resume.expiredBody} ${L.continueManage}`);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.body.textContent).not.toContain(en.resume.expiredBody);
+    expect(screen.getByRole("button", { name: L.continue })).toBeTruthy();
   });
 
   it("a sign-out that ended unconfirmed is said, with Sign out to ask again, and holds Continue", () => {
@@ -252,14 +253,16 @@ describe("the second factor", () => {
   it("a passkey: Continue with passkey runs it; the other factors and Start over stand beside it", () => {
     const { door, acts } = doorOf(factor("passkey"));
     const view = draw(door);
-    expect(view.container.textContent).toContain(L.passkeyNote);
+    expect(view.container.textContent).toContain(L.confirmWith.replace("<how></how>.", L.factorPasskey));
+    expect(view.container.textContent).not.toContain("nothing to type and nothing to leak");
     fireEvent.click(screen.getByRole("button", { name: L.passkey }));
     expect(acts.passkey).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: L.totpToggle }));
+    fireEvent.click(screen.getByRole("button", { name: L.factorPasskey }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: L.factorCode }));
     expect(acts.use).toHaveBeenCalledWith("code");
     fireEvent.click(screen.getByRole("button", { name: L.startOver }));
     expect(acts.restart).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("button", { name: L.usePasskey })).toBeNull();
+    expect(screen.queryByRole("menuitemradio", { name: L.factorPasskey })).toBeNull();
   });
 
   it.each([
@@ -294,8 +297,8 @@ describe("the second factor", () => {
   it("offers only the factors the door offers", () => {
     const { door } = doorOf({ at: "factor", factor: "code", offered: ["code"], busy: false, refusal: null });
     draw(door);
-    expect(screen.queryByRole("button", { name: L.usePasskey })).toBeNull();
-    expect(screen.queryByRole("button", { name: L.useRecovery })).toBeNull();
+    expect(screen.queryByRole("menuitemradio", { name: L.factorPasskey })).toBeNull();
+    expect(screen.queryByRole("menuitemradio", { name: L.factorRecovery })).toBeNull();
   });
 
   it.each([
@@ -311,12 +314,12 @@ describe("with no server behind the build", () => {
   it("says so, and opens the demo where there is one: a link to the address the host handed, or a press", () => {
     const { door } = doorOf({ at: "unavailable" });
     const view = draw(door);
-    expect(view.container.textContent).toContain(L.betaBody);
-    expect(screen.getByRole("link", { name: L.betaCta }).getAttribute("href")).toBe("/?demo=1");
+    expect(view.container.textContent).toContain(en.gate.body);
+    expect(screen.getByRole("link", { name: en.gate.openDemo }).getAttribute("href")).toBe("/?demo=1");
     cleanup();
     const demo = vi.fn();
     draw(doorOf({ at: "unavailable" }, { demo: { press: demo } }).door);
-    fireEvent.click(screen.getByRole("button", { name: L.betaCta }));
+    fireEvent.click(screen.getByRole("button", { name: en.gate.openDemo }));
     expect(demo).toHaveBeenCalledTimes(1);
     cleanup();
     draw(NONE);
@@ -341,7 +344,7 @@ describe("its states and its German", () => {
   it("says the German catalogue's words, with no key on the page", () => {
     const { door } = doorOf({ at: "password", busy: false, refusal: { word: "slowed" } });
     const view = draw(door, de as unknown as Words, "de");
-    expect(screen.getByRole("heading", { level: 1, name: de.login.title })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: /^Ich bin / })).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toBe(de.login.signInSlowed);
     expect(view.container.textContent).not.toMatch(/\blogin\.[a-zA-Z]+/);
   });

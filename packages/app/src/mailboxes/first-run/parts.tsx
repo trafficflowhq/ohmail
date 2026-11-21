@@ -3,8 +3,8 @@
  * are the kit's dialog. A page's sentence is the kit's `Sentence` handed whole. No look of their own; their placement
  * is `placement.css`.
  */
-import type { ReactNode } from "react";
-import { Button, Dialog, StepDots } from "@ohmail/ui/base";
+import { useRef, useState, type ReactNode } from "react";
+import { Button, Dialog, Menu, MenuItem, StepDots, type PageProps } from "@ohmail/ui/base";
 import type { OnboardingDoor } from "@ohmail/app-logic/doors/onboarding";
 import type { Said as SaidLine } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import type { FirstRun } from "@ohmail/app-logic/mailboxes/first-run/use-first-run";
@@ -37,15 +37,24 @@ export function wordsOf(said: SaidLine, say: Say): string {
     : say(`${said.ns}.${said.key}`, said.values ? { ...said.values } : undefined);
 }
 
-/** How far the run is, with a dot per phase and a screen count for phases with several screens. */
-export function Progress({ run, say }: { run: FirstRun; say: Say }): ReactNode {
-  const { path, rail, railAt, step } = run.cursor;
-  const current = rail[railAt];
-  const phase = say(`onboarding.rail_${current?.id ?? "mailbox"}`);
-  const screens = path.filter((screen) => current?.steps.includes(screen));
+const STAGES = [
+  { id: "mailbox", steps: ["mailbox", "elsewhere"] },
+  { id: "organize", steps: ["consent", "window", "ai", "provider"] },
+  { id: "pull", steps: ["pull"] },
+  { id: "decide", steps: ["decide", "summary", "pair"] },
+] as const;
+
+function Progress({ run, say }: { run: FirstRun; say: Say }): ReactNode {
+  const { step, path } = run.cursor;
+  const stage = Math.max(
+    0,
+    STAGES.findIndex(({ steps }) => steps.some((screen) => screen === step)),
+  );
+  const current = STAGES[stage]!;
+  const screens = path.filter((screen) => current.steps.some((candidate) => candidate === screen));
   const screen = step === null ? 0 : screens.indexOf(step) + 1;
   const hasCount = screens.length > 1 && screen > 0;
-  const values = { n: railAt + 1, total: rail.length, phase };
+  const values = { n: stage + 1, total: STAGES.length, phase: say(`onboarding.rail_${current.id}`) };
   return (
     <StepDots
       label={
@@ -53,11 +62,75 @@ export function Progress({ run, say }: { run: FirstRun; say: Say }): ReactNode {
           ? say("onboarding.railSaidSub", { ...values, screen, screens: screens.length })
           : say("onboarding.railSaid", values)
       }
-      steps={rail.length}
-      at={railAt}
+      steps={STAGES.length}
+      at={stage}
       sub={hasCount ? `${screen}/${screens.length}` : undefined}
     />
   );
+}
+
+function SetupMenu({ run, say, cancel }: { run: FirstRun; say: Say; cancel: boolean }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const setup = say("onboarding.setupMenu");
+  return (
+    <span className="mbx-run-row">
+      <Progress run={run} say={say} />
+      <Button
+        kind="quiet"
+        size="s"
+        icon="more"
+        label={setup}
+        ref={anchor}
+        opens="menu"
+        expanded={open}
+        disabled={run.writes.busy}
+        onPress={() => setOpen(!open)}
+      />
+      <Menu open={open} anchor={anchor} label={setup} onClose={() => setOpen(false)} right>
+        <MenuItem
+          onPress={() => {
+            setOpen(false);
+            run.acts.restart();
+          }}
+        >
+          {say("onboarding.restart")}
+        </MenuItem>
+        {cancel ? (
+          <MenuItem
+            keyHint="Esc"
+            onPress={() => {
+              setOpen(false);
+              run.setConfirm("cancel");
+            }}
+          >
+            {say("onboarding.cancel")}
+          </MenuItem>
+        ) : null}
+      </Menu>
+    </span>
+  );
+}
+
+export function stepTop(
+  run: FirstRun,
+  say: Say,
+  { back = false, cancel = true }: { back?: boolean; cancel?: boolean } = {},
+): Pick<PageProps, "back" | "aside"> {
+  const previous = run.cursor.back;
+  return {
+    back:
+      back && previous !== undefined ? (
+        <Button
+          kind="quiet"
+          icon="back"
+          label={say("onboarding.back")}
+          disabled={run.writes.busy}
+          onPress={() => run.acts.goTo(previous)}
+        />
+      ) : undefined,
+    aside: <SetupMenu run={run} say={say} cancel={cancel} />,
+  };
 }
 
 /** The step's refusal lines: its own write's, or a factor that landed after Cancel and ran nothing. */
@@ -65,39 +138,6 @@ export function refusalOf(run: FirstRun, say: Say): readonly [string] | undefine
   if (run.gated.state.nothingRan) return [say("mailboxes.cancelledNothingChanged")];
   const problem = run.confirm === "restart" && run.forgetRefused ? null : run.writes.problem;
   return problem === null ? undefined : [wordsOf(problem, say)];
-}
-
-/**
- * THE FOOT, the same on every screen: the step's one forward verb, Back where the walk has one, and the two verbs that
- * ask before they act (Close setup, Start over). `cancel: false` where leaving is the step's own verb.
- */
-export function Foot(p: {
-  run: FirstRun;
-  say: Say;
-  primary?: ReactNode;
-  back?: boolean;
-  cancel?: boolean;
-}): ReactNode {
-  const { run, say } = p;
-  const busy = run.writes.busy;
-  return (
-    <div className="mbx-run-acts">
-      {p.primary}
-      {p.back && run.cursor.back ? (
-        <Button kind="two" disabled={busy} onPress={() => run.acts.goTo(run.cursor.back!)}>
-          {say("onboarding.back")}
-        </Button>
-      ) : null}
-      {p.cancel === false ? null : (
-        <Button kind="quiet" disabled={busy} keyHint="esc" onPress={() => run.setConfirm("cancel")}>
-          {say("onboarding.cancel")}
-        </Button>
-      )}
-      <Button kind="quiet" disabled={busy} onPress={run.acts.restart}>
-        {say("onboarding.restart")}
-      </Button>
-    </div>
-  );
 }
 
 /**
@@ -151,7 +191,6 @@ export function Confirms({ run, say }: { run: FirstRun; say: Say }): ReactNode {
     run.setConfirm(null);
   };
   if (run.confirm === "cancel") {
-    const mb = run.facts.mailbox;
     return (
       <Dialog
         key="cancel"
@@ -159,9 +198,6 @@ export function Confirms({ run, say }: { run: FirstRun; say: Say }): ReactNode {
         onClose={takeBack}
         title={say("onboarding.cancel")}
         hot
-        line={say(
-          mb && !mb.organizeConsentedAt ? "onboarding.cancelWhatNothingAgreed" : "onboarding.cancelWhat",
-        )}
         confirm={{
           label: say("onboarding.cancelConfirm"),
           onPress: run.acts.close,

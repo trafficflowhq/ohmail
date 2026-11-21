@@ -214,18 +214,14 @@ function noticeOf(
         kind,
         title: t("connection.signedOut.title"),
         hot: true,
-        line: t(recovers ? "connection.signedOut.line" : "connection.signedOut.restart"),
+        ...(recovers ? {} : { line: t("connection.signedOut.restart") }),
       };
     case "offline":
       return { kind, title: offlineTitle(input.copyAsOf, t, timeZone) };
     case "ownerLost":
+      return { kind, title: t("connection.ownerLost.title"), line: t("connection.ownerLost.line") };
     case "noMailbox":
-      return {
-        kind,
-        title: t(`connection.${kind}.title`),
-        hot: kind === "noMailbox",
-        line: t(`connection.${kind}.line`),
-      };
+      return { kind, title: t("connection.noMailbox.title"), hot: true };
     case "hostQuiet":
       return { kind, title: input.host?.words.title ?? "", line: input.host?.words.detail };
     case "mailServerDown":

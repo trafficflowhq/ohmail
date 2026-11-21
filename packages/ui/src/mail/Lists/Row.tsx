@@ -225,6 +225,7 @@ export function Row(props: RowProps) {
       data-receded={props.receded ? "" : undefined}
       data-own={own ? "" : undefined}
       data-tick={tick ? "" : undefined}
+      data-swipe-right={props.swipe?.right ? "" : undefined}
       data-swiping={swipe.moving ? "" : undefined}
       aria-selected={listing ? listing.selected : picked ? true : undefined}
       inert={!slotted && leaving !== undefined}
@@ -263,18 +264,7 @@ export function Row(props: RowProps) {
 }
 
 /** The circle or circles, the sign of a section, and the check a pick turns it into. */
-function RowFace({
-  people,
-  peopleMore,
-  peopleLabel,
-  sign,
-  entry,
-  unread,
-  tick,
-  stream,
-  selection,
-  picked,
-}: RowProps) {
+function RowFace({ people, peopleMore, peopleLabel, sign, entry, unread, tick, stream, picked }: RowProps) {
   const [lead, second] = people;
   const face = (
     <>
@@ -304,11 +294,7 @@ function RowFace({
       {face}
     </span>
   );
-  return (
-    <span className="oh-row-face">
-      {picked || (selection?.active && lead) ? <SelectionMark picked={picked ?? false} /> : art}
-    </span>
-  );
+  return <span className="oh-row-face">{picked ? <SelectionMark /> : art}</span>;
 }
 
 /**

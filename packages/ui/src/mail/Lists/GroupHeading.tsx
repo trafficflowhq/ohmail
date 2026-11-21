@@ -14,6 +14,8 @@ export interface GroupHeadingProps {
   expanded?: boolean;
   /** The name opens a menu instead. */
   opensMenu?: boolean;
+  /** Let the tools beside the heading use its end padding. */
+  flushEnd?: boolean;
   /** One word about the whole group, as a label at the heading's end: "Read-only". */
   tag?: string;
   /** A control of the group's own at the line's end: how its rows are ordered. It is no part of the heading's name. */
@@ -23,7 +25,7 @@ export interface GroupHeadingProps {
 
 /** A group's name, its full stop and its count. */
 export function GroupHeading(props: GroupHeadingProps) {
-  const { children, count, hot, expanded, opensMenu, tag, aside, onPress } = props;
+  const { children, count, hot, expanded, opensMenu, flushEnd, tag, aside, onPress } = props;
   const name = (
     <>
       <span>
@@ -35,7 +37,11 @@ export function GroupHeading(props: GroupHeadingProps) {
   );
   const pressed = expanded !== undefined || opensMenu;
   const heading = (
-    <h2 className="oh-text oh-display oh-groupheading" data-tag={tag ? "" : undefined}>
+    <h2
+      className="oh-text oh-display oh-groupheading"
+      data-tag={tag ? "" : undefined}
+      data-flush-end={flushEnd ? "" : undefined}
+    >
       {pressed ? (
         <button
           type="button"

@@ -15,7 +15,7 @@ import { resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { createTranslator, NextIntlClientProvider } from "next-intl";
 import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { Frame } from "../../../packages/app/src/frame/Frame.js";
 import { TextProvider } from "../../../packages/app/src/text/index.js";
@@ -31,6 +31,8 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 const S = en.settings;
+const settings = createTranslator({ locale: "en", messages: en, namespace: "settings" });
+const sweepTitle = (count: number): string => settings("reuseSweepsTitle", { count });
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -121,7 +123,7 @@ const settle = (): Promise<void> => act(async () => { for (let i = 0; i < 12; i 
 const namedInList = (): number =>
   (document.querySelector('[role="dialog"]')?.textContent ?? "").split(S.reuseClientWeb).length - 1;
 /** How many times the frame says the sweeps (its notice's sentence): once is shown once. */
-const told = (): number => [...host.querySelectorAll('[role="status"] p')].filter((p) => (p.textContent ?? "").startsWith("ohmail signed out ")).length;
+const told = (): number => [...host.querySelectorAll('[role="status"] p')].filter((p) => (p.textContent ?? "").startsWith(sweepTitle(1))).length;
 const pressOk = async (): Promise<void> => {
   const ok = [...host.querySelectorAll("button")].find((b) => b.textContent === S.reuseSweepsOk);
   expect(ok, "no OK on the strip").toBeDefined();
@@ -144,7 +146,7 @@ describe("the reuse sweeps a new sign-in is told of", () => {
   it("are shown once; OK sends one acknowledgement with the ids, and the strip goes", async () => {
     await read();
     await mount();
-    expect(host.textContent).toContain("ohmail signed out an older copy of your sign-in.");
+    expect(host.textContent).toContain(sweepTitle(1));
     expect(told()).toBe(1);
     await pressOk();
     expect(acks).toEqual([{ ids: [sweep.id] }]);
@@ -210,7 +212,7 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     listed = all;
     await read();
     await mount();
-    expect(host.textContent).toContain("ohmail signed out 4 older copies of your sign-in.");
+    expect(host.textContent).toContain(sweepTitle(4));
     await pressOk();
     expect(acks).toEqual([{ ids: all.map((s) => s.id) }]);
     expect(host.querySelector('[role="status"] button')).toBeNull();
@@ -228,7 +230,7 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     listed = four();
     await read();
     await mount();
-    expect(host.textContent, "the advice stands before Details").toContain(S.reuseSweepsBody);
+    expect(host.textContent, "the advice stands behind Details").not.toContain(S.reuseSweepsBody);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await pressDetails();
     const dialog = document.querySelector('[role="dialog"]')!;
@@ -249,7 +251,7 @@ describe("the reuse sweeps a new sign-in is told of", () => {
  * in the notice slot with its title and available actions.
  */
 describe("the reuse sweeps as the web's notice in the frame", () => {
-  const said = "ohmail signed out an older copy of your sign-in.";
+  const said = sweepTitle(1);
   it("OK takes it away at once, sends one acknowledgement with the ids, and a refusal puts it back", async () => {
     let answer!: (r: Response) => void;
     ackAnswer = () => new Promise<Response>((resolve) => { answer = resolve; });

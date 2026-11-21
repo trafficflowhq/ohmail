@@ -21,11 +21,12 @@ import "./placement.css";
 export function JoinPage({ door }: { door: JoinDoor | None }): ReactNode {
   const join = useText("join");
   const onboarding = useText("onboarding");
-  if (door === NONE) return <Unavailable join={join} demo={NONE} />;
+  const gate = useText("gate");
+  if (door === NONE) return <Unavailable gate={gate} demo={NONE} />;
   const { state } = door;
   switch (state.at) {
     case "unavailable":
-      return <Unavailable join={join} demo={door.demo} />;
+      return <Unavailable gate={gate} demo={door.demo} signIn={door.signIn} />;
     case "resolving":
       return <Resolving onboarding={onboarding} />;
     case "unreachable":
@@ -53,7 +54,8 @@ export function JoinPage({ door }: { door: JoinDoor | None }): ReactNode {
       const full = state.at === "full";
       return (
         <Page
-          refusal={[state.said]}
+          line={state.said}
+          note={!full && state.said === join("expiredOpen") ? join("expiredNote") : undefined}
           acts={
             <WayButton way={full ? door.waitlist : door.signInAgain} size="l">
               {join(full ? "capacityCta" : "signIn")}
@@ -97,19 +99,35 @@ function Steps({ door, join }: { door: JoinDoor; join: Text }): ReactNode {
 }
 
 /** No server behind this build: no account can be made here, and the demo runs the client where there is one. */
-function Unavailable({ join, demo }: { join: Text; demo: DoorWay | None }): ReactNode {
+function Unavailable({
+  gate,
+  demo,
+  signIn,
+}: {
+  gate: Text;
+  demo: DoorWay | None;
+  signIn?: DoorWay;
+}): ReactNode {
   return (
     <Page
-      line={join("unavailableBody")}
+      line={gate("body")}
+      note={gate("note")}
       acts={
-        demo === NONE ? null : (
-          <WayButton way={demo} size="l">
-            {join("openDemo")}
-          </WayButton>
-        )
+        <>
+          {demo === NONE ? null : (
+            <WayButton way={demo} size="l">
+              {gate("openDemo")}
+            </WayButton>
+          )}
+          {signIn === undefined ? null : (
+            <WayButton way={signIn} kind="two" size="l">
+              {gate("signIn")}
+            </WayButton>
+          )}
+        </>
       }
     >
-      <Said text={join("unavailableTitle")} dot="ink" level={1} />
+      <Said text={gate("lede")} dot="ink" level={1} />
     </Page>
   );
 }

@@ -29,7 +29,9 @@ function useNotKeptNotice(): FrameNotice | null {
   return lost
     ? {
         kind: "notKept",
-        title: t("storageRefused"),
+        title: t("storageRefusedTitle"),
+        hot: true,
+        line: t("storageRefused"),
         acts: [{ label: t("storageRefusedDismiss"), onPress: dismissDurabilityLost }],
       }
     : null;

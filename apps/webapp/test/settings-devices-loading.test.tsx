@@ -20,7 +20,7 @@ import messages from "../messages/en.json";
  *     line over a permanent blank;
  *   · the states are exclusive: rows end the sentence, the sentence never renders over rows.
  *
- * The copy goes through the same `t.has` shim `MessagePane.copy` uses, so the locale files own
+ * The copy goes through the same `t.has` shim the shared Reader's `copy` uses, so the locale files own
  * every line the moment the keys land there.
  */
 

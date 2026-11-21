@@ -321,7 +321,7 @@ export function useShellCompose({
   /**
    * WHAT THE OPEN EDITOR IS — a reply, or the inline forward. Set by every open (`openReply`,
    * `openForward`), read only while `replyTo` is non-null (the `replyAll` discipline), and it
-   * decides the editor's face (`InlineReply.mode`), the scratch-buffer key (`replyDraftKey` —
+   * decides the editor's face (the reply editor's mode), the scratch-buffer key (`replyDraftKey` —
    * a half-written reply and a forward note on the SAME message are different texts), and
    * which mutation `sendReply` builds.
    */
@@ -1867,7 +1867,7 @@ export function useShellCompose({
    * the same waistband. It names a mailbox only to OVERRIDE one: a reply sends from the mailbox the message arrived
    * in, already derived by `Engine.enrich` from the parent, so the ordinary case adds nothing. `mailboxId` is
    * attached only when the resolved sender is NOT the parent's — the parent's mailbox is disabled or gone and
-   * `resolveReplyFrom` named a substitute (`InlineReply` saying so on screen), or the reader picked an address in the
+   * `resolveReplyFrom` named a substitute (the reply editor saying so on screen), or the reader picked an address in the
    * From selector (`replyFromId`); wire and sentence come from the same call over the same override.
    */
 
@@ -1971,7 +1971,7 @@ export function useShellCompose({
           body: replyBody.text,
           html: replyBody.html ? replyBody.html : null,
           // The resolved sender, or the receiving mailbox — the editor's lock judged the
-          // same fallback (`InlineReply`), so the button and the wire agree everywhere the
+          // same fallback (the reply editor), so the button and the wire agree everywhere the
           // facts are unreadable.
           mailboxId: from.mailboxId ?? parent.mailboxId,
           ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),

@@ -10,7 +10,6 @@ import { SettingNote } from "@ohmail/ui/mail";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import type { SeedOffer } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 import type { SeedReview as SeedReviewModel } from "@ohmail/app-logic/mailboxes/first-run/use-seed-review";
-import { leadOf } from "./parts.js";
 import type { Say } from "./words.js";
 
 /**
@@ -37,14 +36,14 @@ function People({ review, busy, say }: { review: SeedReviewModel; busy: boolean;
             }
             onPress={() => review.setShown(true)}
           >
-            {say("seed.selectShown", { count: review.actionable.length })}
+            {say("seed.selectShown")}
           </Button>
           <Button
             kind="quiet"
             disabled={busy || review.shownChecked === 0}
             onPress={() => review.setShown(false)}
           >
-            {say("seed.deselectShown", { count: review.shownChecked })}
+            {say("seed.deselectShown")}
           </Button>
         </div>
       ) : null}
@@ -128,15 +127,12 @@ export function SeedReview({
   const { candidates, excluded, truncated, scannedMessages } = phase.review;
   return (
     <Page
-      line={leadOf(say("seed.lede"))}
       {...(failure === null ? {} : { refusal: [say("seed.errorTitle"), failure] as const })}
+      line={truncated ? [{ tag: say("seed.recentSent", { count: scannedMessages }) }] : undefined}
       material={
         <div className="mbx-run-material">
           {/* THE REFUSAL SITS ABOVE THE LIST, NOT INSTEAD OF IT: every tick is still on screen and one press tries again. */}
           {failure === null ? null : <SettingNote>{say("seed.errorRetry")}</SettingNote>}
-          {truncated ? (
-            <SettingNote>{say("seed.truncated", { scanned: scannedMessages })}</SettingNote>
-          ) : null}
           <People review={review} busy={busy} say={say} />
           {excluded.length ? (
             <details className="mbx-run-folded">
@@ -151,7 +147,6 @@ export function SeedReview({
               </ul>
             </details>
           ) : null}
-          <SettingNote>{say("seed.willDo", { count: review.checked.size })}</SettingNote>
         </div>
       }
       acts={

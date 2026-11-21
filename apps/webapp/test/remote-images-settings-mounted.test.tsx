@@ -57,10 +57,8 @@ describe("the Settings copy names the machine that fetches the pictures", () => 
       expect(window.location.hash).toBe("#/settings/general");
       const pane = within(within(frame).getByRole("region", { name: messages.settings.general }));
       const { images, pixels } = messages.settings;
-      expect(pane.getByText(images.microcopy)).toBeTruthy();
-      expect(pane.getByText(images.on)).toBeTruthy();
-      expect(pane.getByText(pixels.off)).toBeTruthy();
 
+      expect(pane.queryByText(/through our proxy|asks first|sender can tell/i)).toBeNull();
       const control = (name: string) => within(pane.getByRole("group", { name })).getByRole("switch");
       expect(control(images.title).getAttribute("aria-checked")).toBe("true");
       expect(control(pixels.title).getAttribute("aria-checked")).toBe("false");

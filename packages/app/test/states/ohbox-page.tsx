@@ -594,7 +594,7 @@ const { host } = fakeHost({
       organizerRole: "organizer",
     },
   ],
-  window: fakeWindow({ ...room, posture: "flat", reducedMotion: true }),
+  window: fakeWindow({ ...room, posture: "flat", reducedMotion: q.get("motion") !== "full" }),
   address: fakeAddress(open ? `#/ohbox/m/${open}` : "#/ohbox"),
   appearance: fakeAppearance(look),
 });

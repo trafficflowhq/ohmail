@@ -37,7 +37,7 @@ export function usePickSet(
      never costs a render. */
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const anchor = useRef<string | null>(null);
-  /** The bulk bar's open sub-row. Same union shape as `MessagePane`'s. */
+  /** The bulk bar's open sub-row. Same union shape as the reader bar's. */
   const [pickPanel, setPickPanel] = useState<PickPanel | null>(null);
 
   const clearPicked = useCallback(() => {

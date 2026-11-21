@@ -45,7 +45,7 @@ async function mountedDeliveries(withhold?: string) {
   });
   const page = await mountMailPage();
   const mounted = new Map<string, Array<{ name: string; actual: string | undefined; expected: string }>>();
-  for (const id of labelPlaces()) {
+  for (const id of [...labelPlaces(), "news" as const]) {
     const fragment = `#/${ADDRESS[id]}`;
     expect(routeOf(fragment).place).toBe(id);
     await act(async () => { window.location.hash = fragment; });
@@ -68,17 +68,19 @@ function labelPlaces() {
 }
 
 function assertLabels(rows: Awaited<ReturnType<typeof mountedDeliveries>>) {
-  expect([...rows.keys()]).toEqual(labelPlaces());
+  expect([...rows.keys()]).toEqual([...labelPlaces(), "news"]);
   for (const [place, options] of rows) {
     expect(options.map(({ expected }) => expected)).toEqual(expect.arrayContaining(BOXES.map((box) => `Delivered to ${box.displayName}`)));
-    for (const { name, actual, expected } of options) expect(actual, `${place}: ${name}`).toBe(expected);
+    for (const { name, actual, expected } of options) {
+      expect(actual, `${place}: ${name}`).toBe(place === "news" ? undefined : expected);
+    }
   }
 }
 
 describe("the shell hands the mailbox label to every view that can draw it", () => {
-  it("the derived set is the two views that take the prop — never empty", async () => {
+  it("the Screener shows both labels and News rows omit them", async () => {
     const mounted = await mountedDeliveries();
-    expect([...mounted.keys()]).toEqual(expect.arrayContaining(["news", "screener"]));
+    expect(labelPlaces()).toEqual(["screener"]);
     assertLabels(mounted);
   });
 
@@ -89,9 +91,9 @@ describe("the shell hands the mailbox label to every view that can draw it", () 
   });
 
   it("…and a render without the attribute is what it refuses", async () => {
-    const mounted = await mountedDeliveries("news");
-    expect(mounted.get("news")).toHaveLength(2);
-    expect(mounted.get("news")!.every(({ actual }) => actual === undefined)).toBe(true);
-    expect(() => assertLabels(mounted)).toThrow(/news: Delivery/);
+    const mounted = await mountedDeliveries("screener");
+    expect(mounted.get("screener")).toHaveLength(2);
+    expect(mounted.get("screener")!.every(({ actual }) => actual === undefined)).toBe(true);
+    expect(() => assertLabels(mounted)).toThrow(/screener: Delivery/);
   });
 });

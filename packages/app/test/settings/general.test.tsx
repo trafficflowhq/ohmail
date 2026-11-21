@@ -54,7 +54,7 @@ describe("General", () => {
     mount(generalState());
     expect(sw("Load images in messages").getAttribute("aria-checked")).toBe("true");
     expect(sw("Block tracking pixels").getAttribute("aria-checked")).toBe("true");
-    expect(screen.getByText(settingsEn.settings.images.on)).toBeTruthy();
+    expect(group("Load images in messages").textContent).toBe("Load images in messages");
   });
 
   it("writes one image switch at a time and says a refusal on the sheet", async () => {
@@ -74,7 +74,7 @@ describe("General", () => {
   it("asks the pixel switch for a block when it is turned on", () => {
     const set = vi.fn(() => Promise.resolve());
     mount({ ...generalState(), pixels: { blocked: false, fromComputer: true, set } });
-    expect(screen.getByText(settingsEn.settings.pixels.offComputer)).toBeTruthy();
+    expect(group("Block tracking pixels").textContent).toBe("Block tracking pixels");
     fireEvent.click(sw("Block tracking pixels"));
     expect(set).toHaveBeenCalledWith(true);
   });

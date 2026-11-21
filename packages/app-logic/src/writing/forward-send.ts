@@ -3,7 +3,7 @@
 /**
  * The inline forward's plan and wire — one derivation for the lock and the send. A forward is the reply editor's
  * sibling now (reported from real use), and this module is the forward's half of the discipline `replyEnvelopePlan`
- * states: `InlineReply` judges the Send lock with these two functions and `AppShell.sendReply`'s forward arm builds
+ * states: the Write editor (`packages/app/src/write`) judges the Send lock with these two functions and `AppShell.sendReply`'s forward arm builds
  * the mutation from them, so the button and the envelope cannot reach different verdicts.
  */
 

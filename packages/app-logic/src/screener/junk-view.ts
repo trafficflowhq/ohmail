@@ -20,13 +20,13 @@ export interface JunkKeyed {
 export const junkKey = (i: JunkKeyed): string => `${i.mailboxId}:${i.uidValidity}:${i.uid}`;
 
 /** What a row says of itself: a standing "not junk" first (what will happen outranks who filed it), else who filed it. */
-export type JunkLabel = "junkRescueQueued" | "junkRescueRefused" | "junkOriginVerdict" | "junkOriginProvider";
+export type JunkLabel = "junkRowMoving" | "junkRowRefused" | "junkOriginVerdict" | "junkOriginProvider";
 export function junkLabelOf(i: {
   readonly rescue?: "queued" | "refused";
   readonly origin: "verdict" | "provider";
 }): JunkLabel {
-  if (i.rescue === "queued") return "junkRescueQueued";
-  if (i.rescue === "refused") return "junkRescueRefused";
+  if (i.rescue === "queued") return "junkRowMoving";
+  if (i.rescue === "refused") return "junkRowRefused";
   return i.origin === "verdict" ? "junkOriginVerdict" : "junkOriginProvider";
 }
 

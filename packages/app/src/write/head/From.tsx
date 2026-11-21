@@ -24,9 +24,8 @@ export function useFromLine(
   const roster = useContext(MailStateContext)?.mailboxes;
   const tag = roster?.find((mailbox) => mailbox.id === from.mailboxId)?.displayName?.trim();
   if (from.address === null) return undefined;
-  const state = from.domainMatched
-    ? t("from.matched")
-    : from.substituted && from.substitutedFrom !== null
+  const state =
+    from.substituted && from.substitutedFrom !== null
       ? t("from.substituted", { was: displayAddress(from.substitutedFrom) })
       : undefined;
   const shown = displayAddress(from.address);
@@ -42,11 +41,18 @@ export function useFromLine(
         >
           {shown}
         </Slot>
-        <Menu open={open} onClose={() => setOpen(false)} anchor={anchor} label={t("from.label")}>
+        <Menu
+          open={open}
+          onClose={() => setOpen(false)}
+          anchor={anchor}
+          label={t("from.label")}
+          title={t("from.label")}
+        >
           {from.choices.map((o) => (
             <MenuItem
               key={o.id}
               checked={o.id === from.mailboxId}
+              note={roster?.find((mailbox) => mailbox.id === o.id)?.displayName?.trim() || undefined}
               onPress={() => {
                 setOpen(false);
                 if (o.id !== from.mailboxId) onPick(o.id);
@@ -60,5 +66,11 @@ export function useFromLine(
     ) : (
       shown
     );
-  return { label: t("from.label"), value, tag, ...(state !== undefined ? { state, stateId } : {}) };
+  return {
+    label: t("from.label"),
+    value,
+    tag,
+    tags: from.domainMatched ? [t("from.matched")] : undefined,
+    ...(state !== undefined ? { state, stateId } : {}),
+  };
 }

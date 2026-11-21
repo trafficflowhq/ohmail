@@ -64,7 +64,14 @@ const answered = async (): Promise<void> => {
   for (let turn = 0; turn < 6; turn += 1) await settle();
 };
 const words = (text: string): RegExp => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
-const press = (name: string | RegExp): void => void fireEvent.click(screen.getByRole("button", { name }));
+const press = (name: string | RegExp): void => {
+  const button = screen.queryByRole("button", { name });
+  if (button) fireEvent.click(button);
+  else {
+    fireEvent.click(screen.getByRole("button", { name: O.setupMenu }));
+    fireEvent.click(screen.getByRole("menuitem", { name }));
+  }
+};
 const type = (label: string, value: string): void =>
   void fireEvent.change(screen.getByLabelText(label), { target: { value } });
 /** The stage's page title, or nothing where no stage is drawn. */
@@ -239,7 +246,7 @@ describe("the first run reads the ground, and draws nothing over a guess", () =>
     const v = verbs();
     seated({ mailboxes: async () => [mailbox("mbx-1")], verbs: v });
     await answered();
-    expect(title()).toBe(O.consentTitle);
+    expect(title()).toBe(O.mapTitle);
     expect(v.organize).not.toHaveBeenCalled();
     /* A step was drawn: this launch has asked the organize decision of the mailbox. */
     expect(decisionAsked(SCOPE)).toBe(true);
@@ -248,12 +255,12 @@ describe("the first run reads the ground, and draws nothing over a guess", () =>
   it("a step drawn for one account marks that account's launch alone: another signed in in the same tab is still to be asked", async () => {
     const made = seated({ mailboxes: async () => [mailbox("mbx-1")] });
     await answered();
-    expect(title()).toBe(O.consentTitle);
+    expect(title()).toBe(O.mapTitle);
     const marks = { first: decisionAsked(SCOPE), second: decisionAsked("acct-2") };
     /* The second account signs in under the same frame and is drawn its own step. */
     made.as("acct-2");
     await answered();
-    expect(title()).toBe(O.consentTitle);
+    expect(title()).toBe(O.mapTitle);
     expect({ ...marks, secondOnceDrawn: decisionAsked("acct-2") }).toEqual({
       first: true,
       second: false,
@@ -292,7 +299,7 @@ describe("while setup stands, the app behind it takes no key", () => {
     const v = verbs();
     seated({ mailboxes: async () => [mailbox("mbx-1")], verbs: v });
     await answered();
-    expect(title()).toBe(O.consentTitle);
+    expect(title()).toBe(O.mapTitle);
     fireEvent.keyDown(document.body, { key: "e" });
     expect(ran).toEqual([]);
 
@@ -310,7 +317,7 @@ describe("while setup stands, the app behind it takes no key", () => {
   it("the app's chords run nothing either while a step is on screen (g o, c, /, z), and run again once setup is closed", async () => {
     seated({ mailboxes: async () => [mailbox("mbx-1")] });
     await answered();
-    expect(title()).toBe(O.consentTitle);
+    expect(title()).toBe(O.mapTitle);
     behind();
     await settle();
     const whileSetup = { ran: [...ran], undo: undone(), title: title() };
@@ -323,7 +330,7 @@ describe("while setup stands, the app behind it takes no key", () => {
     behind();
     await settle();
     expect({ whileSetup, after: { ran: [...ran], undo: undone() } }).toEqual({
-      whileSetup: { ran: [], undo: false, title: O.consentTitle },
+      whileSetup: { ran: [], undo: false, title: O.mapTitle },
       after: { ran: ["archive", "go", "write", "search"], undo: true },
     });
   });
@@ -337,7 +344,7 @@ describe("organizing a mailbox starts once, after the person's yes", () => {
     await answered();
     press(words(O.continue));
     await settle();
-    expect(title()).toBe(O.windowTitle);
+    expect(title()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     expect(v.organize).not.toHaveBeenCalled();
     expect(v.complete).not.toHaveBeenCalled();
 
@@ -353,7 +360,7 @@ describe("organizing a mailbox starts once, after the person's yes", () => {
     await act(async () => answer.resolve("stored"));
     await answered();
     expect(v.organize).toHaveBeenCalledTimes(1);
-    expect(title()).toBe(O.aiTitle);
+    expect(title()).toContain(O.aiSay.split("<on>")[0]!.trim());
   });
 
   it("a refusal that asks for the second factor asks it through the part the host named, and the verified factor sends the same organize once more", async () => {
@@ -433,7 +440,7 @@ describe("a run about another mailbox is a new run: nothing chosen for one stand
     expect(title()).toBe(O.chooseTitle);
     press(words("mb-a@"));
     await answered();
-    expect(title()).toBe(O.elsewhereTitle);
+    expect(title()).toContain(O.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     /* For A the person chooses to organize it here, and goes no further. */
     fireEvent.click(screen.getByRole("radio", { name: words(O.elsewhereChoiceHere) }));
     await settle();
@@ -443,7 +450,7 @@ describe("a run about another mailbox is a new run: nothing chosen for one stand
     expect(title()).toBe(O.chooseTitle);
     press(words("mb-b@"));
     await answered();
-    expect(title()).toBe(O.elsewhereTitle);
+    expect(title()).toContain(O.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     const asked = {
       chosen: screen.queryAllByRole("radio", { checked: true }).length,
       continueOn: !(screen.getByRole("button", { name: words(O.continue) }) as HTMLButtonElement).disabled,
@@ -597,14 +604,18 @@ describe("the guided decision is the Screener's own", () => {
       letters: [letter("m1"), letter("m2")],
     });
     await answered();
-    expect(title()).toBe(O.decideTitle);
+    expect(title()).toContain(O.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
     const stage = within(screen.getByRole("dialog"));
     expect(stage.getByText(/Ben Kiln/)).toBeTruthy();
     expect(mail.mutations).toEqual([]);
 
-    press(words(screenerEn.screener.pileOhbox));
+    fireEvent.click(
+      within(document.querySelector<HTMLElement>(".mbx-run .oh-page-acts")!).getByRole("button", {
+        name: words(screenerEn.screener.pileOhbox),
+      }),
+    );
     await answered();
-    expect(title()).toBe(O.doneTitle);
+    expect(title()).toBe(O.noOneWaits.replace(/\.$/, ""));
     /* The decision is committed with the frame, as one taken in the Screener is: once. */
     unmount();
     await settle();
@@ -638,7 +649,7 @@ describe("what the run says of the account is what the ground holds of it", () =
         ],
       });
       await answered();
-      expect(title(), word).toBe(O.decideTitle);
+      expect(title(), word).toContain(O.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
       const stage = within(screen.getByRole("dialog"));
       expect(stage.getByText(own), word).toBeTruthy();
       expect(stage.queryByText(other), word).toBeNull();
@@ -683,10 +694,10 @@ describe("what the run says of the account is what the ground holds of it", () =
       await answered();
       press(words(O.continue));
       await settle();
-      expect(title()).toBe(O.windowTitle);
+      expect(title()).toContain(O.organizeLast.split("<window>")[0]!.trim());
       /* The one rung that stands chosen, by its own name. */
-      const chosen = screen.getByRole("radio", { checked: true }).textContent ?? "";
-      const read = { year: chosen.startsWith(O.win365), ninety: chosen.startsWith(O.win90) };
+      const chosen = screen.getByRole("heading", { level: 1 }).querySelector(".oh-slot")?.textContent ?? "";
+      const read = { year: chosen.startsWith(O.windowYear), ninety: chosen.startsWith(O.win90) };
       made.unmount();
       localStorage.clear();
       return read;
@@ -728,18 +739,18 @@ describe("what the run says of the account is what the ground holds of it", () =
     press(words(O.continue));
     await settle();
     const onWindow = title();
-    const chosen = screen.getByRole("radio", { checked: true }).textContent ?? "";
+    const chosen = screen.getByRole("heading", { level: 1 }).querySelector(".oh-slot")?.textContent ?? "";
     press(words(O.agree));
     await answered();
     const body = v.organize.mock.calls[0]?.[1] as { screening?: unknown } | undefined;
     expect({
       drawnBeforeTheRow,
       onWindow,
-      chosenAll: chosen.startsWith(O.winAll),
+      chosenAll: chosen.startsWith(O.windowEverything),
       screening: body?.screening,
     }).toEqual({
       drawnBeforeTheRow: null,
-      onWindow: O.windowTitle,
+      onWindow: O.organizeAll.replace("<window></window>.", O.windowEverything),
       chosenAll: true,
       screening: { scope: "all_time" },
     });
@@ -754,7 +765,8 @@ describe("what the run says of the account is what the ground holds of it", () =
     const v = verbs();
     seated({ mailboxes: async () => [elsewhere], verbs: v });
     await answered();
-    expect(title()).toBe(O.elsewhereTitle);
+    expect(title()).toContain(O.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
+    expect(title()).toBe(O.elsewhereSay.replace("{name}", "ohmail Cloud").replace(/\.$/, ""));
     expect(within(screen.getByRole("dialog")).getByText(/Since Nov 1, 2026/)).toBeTruthy();
     /* The claim question is asked: nothing is taken over by standing there. */
     expect(v.organize).not.toHaveBeenCalled();

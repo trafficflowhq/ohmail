@@ -1,0 +1,21 @@
+.write-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 0;
+  padding: 0 var(--s1) var(--s1);
+}
+.write-emoji-button {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: var(--h-m);
+  border: 0;
+  border-radius: var(--r-row);
+  background: transparent;
+  font-size: var(--t-title);
+  cursor: pointer;
+}
+.write-emoji-button:hover,
+.write-emoji-button:focus-visible {
+  background: var(--hover);
+}

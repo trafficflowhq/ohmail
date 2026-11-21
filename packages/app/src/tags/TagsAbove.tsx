@@ -7,20 +7,14 @@ import { useText } from "../text/index.js";
 export function TagsAbove({ model, children }: { model: TagsModel; children: ReactNode }) {
   const t = useText("tags");
   const ohbox = useText("ohbox");
-  const unread = model.tag === null ? model.list.rows.filter((row) => row.unread).length : 0;
-  const label =
-    model.tag === null
-      ? unread > 0
-        ? ohbox("blank.unread", { count: unread })
-        : null
-      : model.empty
-        ? t("empty.tag")
-        : t("count.letters", { count: model.count });
+  const reader = useText("reader");
+  const unread = model.list.rows.filter((row) => row.unread).length;
+  const label = unread > 0 ? ohbox("blank.unread", { count: unread }) : reader("blank.none");
   return (
     <TagsModelContext.Provider value={model}>
       <PlaceMeeting
         visit={model.list.visit}
-        blank={model.loading || label === null ? null : { label, hot: unread > 0 }}
+        blank={model.loading ? null : { label, hot: unread > 0 }}
         steps={{ up: t("step.up"), down: t("step.down") }}
       >
         {children}

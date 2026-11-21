@@ -3,6 +3,7 @@ import type { TagEntity } from "@ohmail/wire";
 import { Dialog, Menu, MenuItem, MenuRule } from "@ohmail/ui/base";
 import { MovePicker } from "@ohmail/ui/mail";
 import type { useResurfaceTime } from "../../frame/room.js";
+import { TagPicker } from "../../tags/TagPicker.js";
 import { useText } from "../../text/index.js";
 import { isCardDeleteKey } from "../keys.js";
 import { ResurfaceMenu } from "./ResurfaceMenu.js";
@@ -21,6 +22,7 @@ interface ActionMenusProps {
   verbs: Verbs;
   behind: readonly Placed[];
   confirm: boolean;
+  separate?: boolean;
   calendarAction?: { label: string; onPress: () => void };
   calendarKeyHint?: string;
 }
@@ -37,12 +39,14 @@ export function ActionMenus({
   verbs,
   behind,
   confirm,
+  separate = false,
   calendarAction,
   calendarKeyHint,
 }: ActionMenusProps) {
   const t = useText("reader");
   const tp = useText("place");
   const more = menu === "more" || menu === "cardDelete";
+  const draft = separate ? null : verbs.draft;
   const beforeRead = behind.filter((verb) => verb.id !== "read");
   const read = behind.filter((verb) => verb.id === "read");
   return (
@@ -55,16 +59,26 @@ export function ActionMenus({
         stored={hour.stored}
         store={hour.store}
       />
-      <Menu open={menu === "tag"} onClose={close} anchor={anchor} label={words.tag} up right>
-        {tags.map((tag) => {
-          const on = verbs.tagged.includes(tag.id);
-          return (
-            <MenuItem key={tag.id} checked={on} onPress={() => verbs.tag?.(tag.id, tag.name, !on)}>
-              {tag.name}
-            </MenuItem>
-          );
-        })}
-      </Menu>
+      {menu === "tag" && verbs.tag !== null ? (
+        <TagPicker
+          anchor={anchor}
+          tags={tags}
+          assigned={verbs.tagged}
+          onToggle={(id, assigned) => {
+            const tag = tags.find((tag) => tag.id === id);
+            if (tag) verbs.tag?.(id, tag.name, assigned);
+          }}
+          onCreate={
+            verbs.createTag === null
+              ? undefined
+              : (name) => {
+                  close();
+                  verbs.createTag?.(name);
+                }
+          }
+          onClose={close}
+        />
+      ) : null}
       <MovePicker
         open={menu === "move"}
         onClose={close}
@@ -93,21 +107,15 @@ export function ActionMenus({
         }}
       >
         {beforeRead.map((v) => (
-          <BehindMore key={v.id} verb={v} close={close} more={anchor} />
+          <BehindMore key={v.id} verb={v} close={close} more={anchor} rule={false} />
         ))}
-        {verbs.moves.length > 0 ? (
-          <MenuItem icon="move" onPress={() => setMenu("move")}>
-            {words.move}
-          </MenuItem>
-        ) : null}
         {read.map((v) => (
-          <BehindMore key={v.id} verb={v} close={close} more={anchor} />
+          <BehindMore key={v.id} verb={v} close={close} more={anchor} rule={false} />
         ))}
-        {verbs.draft && (beforeRead.length > 0 || read.length > 0 || verbs.moves.length > 0) ? (
-          <MenuRule />
-        ) : null}
-        <DraftReplyItem draft={verbs.draft} close={close} words={words} />
-        <MenuItem icon="trash" onPress={confirm ? () => setMenu("confirmDelete") : trash}>
+        {draft && (beforeRead.length > 0 || read.length > 0) ? <MenuRule /> : null}
+        <DraftReplyItem draft={draft} close={close} words={words} />
+        {separate && behind.length > 0 ? <MenuRule /> : null}
+        <MenuItem icon="trash" keyHint="D" onPress={confirm ? () => setMenu("confirmDelete") : trash}>
           {words.delete}
         </MenuItem>
         {calendarAction ? (
@@ -186,21 +194,27 @@ function BehindMore({
   verb,
   close,
   more,
+  rule,
 }: {
   verb: Placed;
   close: () => void;
   more: RefObject<HTMLElement | null>;
+  rule: boolean;
 }) {
   return (
-    <MenuItem
-      icon={verb.icon}
-      onPress={() => {
-        const at = more.current;
-        if (verb.id !== "resurface" && verb.id !== "tag") close();
-        if (at !== null) verb.onPress?.(at);
-      }}
-    >
-      {verb.label}
-    </MenuItem>
+    <>
+      {rule ? <MenuRule /> : null}
+      <MenuItem
+        icon={verb.icon}
+        keyHint={verb.keyHint}
+        onPress={() => {
+          const at = more.current;
+          if (verb.id !== "resurface" && verb.id !== "tag" && verb.id !== "move") close();
+          if (at !== null) verb.onPress?.(at);
+        }}
+      >
+        {verb.label}
+      </MenuItem>
+    </>
   );
 }

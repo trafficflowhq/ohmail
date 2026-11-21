@@ -1,47 +1,29 @@
 /** What every step of the join shares: the progress it lists, the sentences under the page's own, Sign out again. */
 import type { ReactNode } from "react";
-import { Dot } from "@ohmail/ui/base";
+import { StepDots } from "@ohmail/ui/base";
 import type { Text } from "../../text/index.js";
-import type { JoinDoor, JoinState, JoinStation } from "./door.js";
+import type { JoinDoor, JoinState } from "./door.js";
 
 export { refusalOf, SignOutAgain, type Refusal } from "../stage/pending.js";
 
-/** The station the step on screen stands at: the sent mail is the address's station; done is past every one. */
-function stationOf(at: JoinState["at"], stations: readonly JoinStation[]): number {
-  const shown = at === "sent" && stations.includes("verify") ? "verify" : at;
-  return shown === "done" ? stations.length : stations.indexOf(shown as JoinStation);
-}
+/** The account screens share one stage dot. Connecting a mailbox moves to the next stage. */
+const ACCOUNT_PART = { invite: 1, account: 1, sent: 2, verify: 2, factor: 3, codes: 4, plan: 5 } as const;
+const STAGES = ["rail_account", "rail_mailbox", "rail_organize", "rail_read", "rail_decisions"] as const;
 
-/** Where a station stands: behind, the step on screen, or ahead. */
-type Standing = "done" | "now" | "todo";
-const DOT: Readonly<Record<Standing, "ink" | "hot" | "ring">> = { done: "ink", now: "hot", todo: "ring" };
-
-/**
- * HOW FAR THE SETUP IS: the stations this path has, as dots in a list the setup names, each said by its name and
- * carrying where it stands (behind, now, ahead), as the card's list did; the one on screen is the current step, and
- * organizing (the first run's, after this page) ends the list.
- */
 export function Progress({ door, join }: { door: JoinDoor; join: Text }): ReactNode {
-  const { state, stations } = door;
-  const now = stationOf(state.at, stations);
-  const organized: Standing =
-    state.at === "done" && state.mailbox !== null && !state.decisionAhead ? "done" : "todo";
+  const at = door.state.at;
+  const stage =
+    door.state.at === "done" ? (door.state.decisionAhead ? 2 : STAGES.length) : at === "mailbox" ? 1 : 0;
+  const part = stage === 0 && at in ACCOUNT_PART ? ACCOUNT_PART[at as keyof typeof ACCOUNT_PART] : null;
+  if (stage === STAGES.length)
+    return <StepDots label={join("progressComplete")} steps={STAGES.length} at={stage} />;
+  const name = join(STAGES[stage]!);
+  const said =
+    part === null
+      ? join("progressStage", { stage: stage + 1, name })
+      : join("progressAccount", { stage: stage + 1, name, part });
   return (
-    <ol className="way-join-progress" aria-label={join("progress")}>
-      {stations.map((station, i) => {
-        const standing: Standing = i < now ? "done" : i === now ? "now" : "todo";
-        return (
-          <li key={station} data-state={standing} aria-current={standing === "now" ? "step" : undefined}>
-            <Dot kind={DOT[standing]} />
-            <span className="way-unseen">{join(`rail_${station}`)}</span>
-          </li>
-        );
-      })}
-      <li data-state={organized}>
-        <Dot kind={DOT[organized]} />
-        <span className="way-unseen">{join("rail_organize")}</span>
-      </li>
-    </ol>
+    <StepDots label={said} steps={STAGES.length} at={stage} sub={part === null ? undefined : `${part}/5`} />
   );
 }
 

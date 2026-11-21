@@ -20,6 +20,7 @@ export function BulkDecision({ view }: { view: ScreenerView }) {
           ? t("bulkUnsubscribeConfirm", { count: requests })
           : t(screened ? "askScreenPickedNote" : "askAllSpamNote")
       }
+      hot={!screened && !applying}
       keysOn="cancel"
       confirm={{
         label: t(screened ? "pileScreenOut" : applying ? "askApplySuggestionsYes" : "askAllSpamYes", {

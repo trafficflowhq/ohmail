@@ -19,6 +19,7 @@ import {
   type SwipeSides,
   type SwipeTrack,
 } from "@ohmail/app-logic/touch";
+import { startsAtDrawerEdge } from "../frame/rail-gesture.js";
 import { NONE, type None } from "../host/index.js";
 import type { ListPull, RowSides } from "./contract.js";
 
@@ -102,12 +103,17 @@ function swipeListeners(scroller: HTMLElement, press: Press, drawn: Drawn, live:
     const row = target.closest<HTMLElement>("[data-id]");
     const id = row && scroller.contains(row) ? row.dataset.id : undefined;
     const sides = id === undefined ? undefined : drawn.verbs(id);
-    if (id === undefined || !sides || (!sides.right && !sides.left)) return;
+    if (id === undefined || !sides) return;
+    const has = {
+      right: Boolean(sides.right) && !startsAtDrawerEdge(target, event.clientX),
+      left: Boolean(sides.left),
+    };
+    if (!has.right && !has.left) return;
     press.swiping = {
       id,
       pointer: event.pointerId,
       at: cssPoint(event).x,
-      has: { right: Boolean(sides.right), left: Boolean(sides.left) },
+      has,
       track: swipeStart(event.clientX, event.clientY),
     };
   };

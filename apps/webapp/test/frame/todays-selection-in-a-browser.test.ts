@@ -49,12 +49,19 @@ afterAll(async () => {
 });
 
 /** The demo at an address, on a phone under a finger. The page's body is the product layout's. */
-async function demo(at: string, phone = true): Promise<Page> {
+async function demo(at: string, phone = true, look?: { face: string; colorScheme: "light" | "dark" }): Promise<Page> {
   const context = await browser!.newContext({
     viewport: phone ? PHONE : { width: 1440, height: 900 },
     hasTouch: phone,
     isMobile: phone,
+    colorScheme: look?.colorScheme,
   });
+  if (look) {
+    await context.addInitScript(({ face, colorScheme }) => {
+      localStorage.setItem("ohmail.face", face);
+      localStorage.setItem("ohmail.theme", colorScheme);
+    }, look);
+  }
   const page = await context.newPage();
   await page.route(`${ORIGIN}/**`, (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -235,3 +242,116 @@ it.each([["desktop", false], ["phone", true]] as const)(
     }
   },
 );
+
+it.each([["desktop", false], ["phone", true]] as const)(
+  "unselected Ohbox circles keep their contact colours on %s",
+  async (_device, phone) => {
+    const page = await demo("#/ohbox", phone);
+    try {
+      const first = page.getByRole("option", { name: ROW });
+      const other = page.getByRole("option", { name: /Re: Glaze order/ });
+      const circleFor = (row: ReturnType<Page["getByRole"]>) =>
+        row.locator("..").getByRole("button", { name: "Select the message", exact: true });
+      const avatar = other.getByText("G", { exact: true });
+      const draw = () => avatar.evaluate((el) => {
+        const { backgroundColor, color, boxShadow, visibility } = getComputedStyle(el);
+        return { backgroundColor, color, boxShadow, visibility };
+      }, undefined, { timeout: 2000 });
+      const before = await draw();
+      expect(before.visibility).toBe("visible");
+      await circleFor(first).press("Enter");
+      await expect.poll(() => picked(page)).toBe(1);
+      expect(await first.getByText("P", { exact: true }).count()).toBe(0);
+      expect(await draw()).toEqual(before);
+
+      const otherCircle = circleFor(other);
+      if (!phone) {
+        await otherCircle.hover();
+        await expect.poll(async () => (await draw()).boxShadow).not.toBe(before.boxShadow);
+        await page.mouse.move(0, 0);
+        await expect.poll(async () => (await draw()).boxShadow).toBe(before.boxShadow);
+      }
+      await otherCircle.focus();
+      await expect.poll(async () => (await draw()).boxShadow).not.toBe(before.boxShadow);
+      expect((await draw()).backgroundColor).toBe(before.backgroundColor);
+      await page.keyboard.press("Space");
+      await expect.poll(() => picked(page)).toBe(2);
+      expect(await otherCircle.getAttribute("aria-pressed")).toBe("true");
+    } finally {
+      await page.context().close();
+    }
+  },
+);
+
+it.each([
+  { face: "paper", colorScheme: "light" },
+  { face: "paper", colorScheme: "dark" },
+  { face: "ohmarchy", colorScheme: "light" },
+  { face: "ohmarchy", colorScheme: "dark" },
+] as const)("shows keyboard focus on the accessible mail option in $face $colorScheme", async (look) => {
+  const page = await demo("#/ohbox", false, look);
+  try {
+    const rows = page.getByRole("option");
+    const start = rows.filter({ hasText: /Your talk is in/ });
+    await start.focus();
+    const focused = rows.and(page.locator(":focus"));
+    const paint = () => focused.evaluate((option) => {
+      const css = getComputedStyle(option);
+      const canvas = document.createElement("canvas");
+      const sample = canvas.getContext("2d")!;
+      const sheet = css.getPropertyValue("--sheet");
+      const luminance = (colour: string, behind = sheet) => {
+        sample.fillStyle = behind;
+        sample.fillRect(0, 0, 1, 1);
+        sample.fillStyle = colour;
+        sample.fillRect(0, 0, 1, 1);
+        const [r, g, b] = sample.getImageData(0, 0, 1, 1).data;
+        const linear = (c: number) => c / 255 <= 0.04045 ? c / 3294.6 : ((c / 255 + 0.055) / 1.055) ** 2.4;
+        return 0.2126 * linear(r!) + 0.7152 * linear(g!) + 0.0722 * linear(b!);
+      };
+      const colours = css.boxShadow.match(/(?:rgba?|color)\([^)]+\)/g) ?? [];
+      const contrast = (colour: string | undefined, against: string) => {
+        if (!colour) return 0;
+        const [light, dark] = [luminance(colour), luminance(against)].sort((a, b) => b - a);
+        return (light! + 0.05) / (dark! + 0.05);
+      };
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = getComputedStyle(option.parentElement!).getPropertyValue("--row-open");
+      option.parentElement!.append(probe);
+      const openFill = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return {
+        outline: css.outlineStyle,
+        rings: css.boxShadow.match(/inset/g)?.length ?? 0,
+        fillContrast: contrast(colours[0], css.backgroundColor),
+        sheetContrast: contrast(colours[option.hasAttribute("data-open") ? 1 : 0], sheet),
+        shadowCount: colours.length,
+        transition: css.transitionProperty,
+        open: option.hasAttribute("data-open"),
+        background: css.backgroundColor,
+        openFill,
+      };
+    });
+    for (let step = 0; step <= 3; step++) {
+      const current = await paint();
+      expect(current).toMatchObject({ outline: "none", rings: 1 });
+      expect(current.fillContrast).toBeGreaterThanOrEqual(3);
+      expect(current.sheetContrast).toBeGreaterThanOrEqual(3);
+      expect(current.shadowCount).toBe(current.open ? 2 : 1);
+      if (current.open) expect(current.background).toBe(current.openFill);
+      if (step === 3) {
+        expect(current.open).toBe(true);
+        break;
+      }
+      const old = await focused.elementHandle();
+      await page.keyboard.press("ArrowDown");
+      await expect.poll(() => old!.evaluate((row) => row === document.activeElement)).toBe(false);
+      expect(await focused.count()).toBe(1);
+    }
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.keyboard.press("ArrowUp");
+    await expect.poll(async () => (await paint()).transition).toBe("none");
+  } finally {
+    await page.context().close();
+  }
+}, 30_000);

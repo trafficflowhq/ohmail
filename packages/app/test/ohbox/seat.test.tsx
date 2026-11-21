@@ -15,8 +15,8 @@ import { Frame } from "../../src/frame/Frame.js";
 import { NONE } from "../../src/host/index.js";
 import { MailGround, mailPlaces, mailReader } from "../../src/mail/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
-import frameEn from "../../messages/frame.en.json" with { type: "json" };
 import searchEn from "../../messages/search.en.json" with { type: "json" };
+import frameEn from "../../messages/frame.en.json" with { type: "json" };
 import tagsEn from "../../messages/tags.en.json" with { type: "json" };
 import { bodyDouble, fakeMail, letter, WORDS } from "../reader/support/mail.js";
 import { fakeHost } from "../support/fake-host.js";
@@ -181,7 +181,7 @@ describe("the Ohbox row menu on a read conversation with a newer Sent reply", ()
   it("moves only the letter the row opens and Undo puts it back", async () => {
     const { mail, menu } = await contextOnTrip();
     fireEvent.click(menu.getByRole("menuitem", { name: "Move" }));
-    const places = within(screen.getByRole("dialog", { name: "move to" }));
+    const places = within(screen.getByRole("dialog", { name: "Move" }));
     fireEvent.click(places.getByRole("menuitem", { name: "News" }));
     await act(async () => undefined);
     expect(sent(mail)).toEqual(["move trip-latest ohmail/News"]);
@@ -202,8 +202,8 @@ describe("the Ohbox row menu on a read conversation with a newer Sent reply", ()
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const { mail, menu } = await contextOnTrip();
     fireEvent.click(menu.getByRole("menuitem", { name: "Delete" }));
-    const question = within(screen.getByRole("dialog", { name: "Delete this message?" }));
-    fireEvent.click(question.getByRole("menuitem", { name: "Delete" }));
+    const question = within(screen.getByRole("dialog", { name: "Move to Trash." }));
+    fireEvent.click(question.getByRole("menuitem", { name: "Move" }));
     expect(sent(mail)).toEqual([]);
     await act(async () => {
       vi.advanceTimersByTime(UNDO_MS + 2000);
@@ -342,7 +342,11 @@ describe("the Ohbox's own seat, over the mail ground", () => {
       press("e");
       expect(cursorRow(), "the first press did not place the cursor on the first row").toBe("c");
       /* The sentence names the pressed key by its own line of the key sheet. */
-      expect(said()).toBe(frameEn.cursor.placed.replace("{label}", searchEn.shortcuts.park));
+      expect(said()).toBe(
+        frameEn.cursor.placed
+          .replace("{label}", room === "desktop" ? "Park" : searchEn.shortcuts.park)
+          .replace(/\.$/u, ""),
+      );
       /* Where a column stands beside the list the placed row's letter is shown in it, as a selection's is. */
       expect(address.read()).toBe(room === "desktop" ? "#/ohbox/m/c" : "#/ohbox");
       await settle();
@@ -408,7 +412,7 @@ describe("the Ohbox's own seat, over the mail ground", () => {
     const times = mail.mutations.map((m) => (m.kind === "triage_set" ? m.bubbleUpAt : undefined));
     // 08:00 UTC is 09:00 in Zurich on 18 November.
     expect(times).toEqual(["2026-11-18T08:00:00.000Z", "2026-11-18T08:00:00.000Z"]);
-    expect(said()).toBe("2 messages resurface Wed 09:00.");
+    expect(said()).toBe("2 · Wed 09:00");
   });
 
   it("b in the small hours books the coming morning where the reader is, not the day after: either side of midnight", async () => {
@@ -473,7 +477,7 @@ describe("the Ohbox's own seat, over the mail ground", () => {
     press("e");
     await settle();
     expect(sent(mail).sort()).toEqual(["triage_set b set_aside", "triage_set c set_aside"]);
-    expect(said()).toBe("2 messages parked.");
+    expect(said()).toBe("2 · Parked");
   });
 
   it("Mark all read writes the unread letters read and offers a true Undo, which z presses", async () => {
@@ -481,7 +485,7 @@ describe("the Ohbox's own seat, over the mail ground", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mark all 3 unread messages read" }));
     await settle();
     expect(sent(mail)).toEqual(["mark_seen c,b,a read"]);
-    expect(said()).toBe("Marked 3 messages read");
+    expect(said()).toBe("3 read");
     press("z");
     await settle();
     expect(sent(mail).at(-1)).toBe("mark_seen c,b,a unread");
@@ -508,11 +512,11 @@ describe("the Ohbox's own seat, over the mail ground", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /News/ }));
     await act(async () => undefined);
     expect(sent(mail)).toEqual(["move c ohmail/News"]);
-    expect(said()).toBe("Mail from 1 sender now goes to News — 1 message moved.");
+    expect(said()).toBe("1 · News");
     press("z");
     await act(async () => undefined);
     expect(sent(mail)).toEqual(["move c ohmail/News", "move c INBOX"]);
-    expect(said()).toBe("The mail is back where it was, and no rule was made.");
+    expect(said()).toBe("The mail is back where it was, and no rule was made");
     await act(async () => {
       vi.advanceTimersByTime(UNDO_MS + 3000);
     });

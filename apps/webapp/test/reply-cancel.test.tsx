@@ -40,7 +40,7 @@ import { ohboxRow, openLetter, openSubject as subjectShown, readingColumn, repor
  *     scratch, which is what keeps the two rules from becoming one.
  *
  * Driven through the whole shell in demo mode, for the reason `inline-reply.test.ts` gives: the
- * open, the close and the ownership of Escape all live in `AppShell`, and a `MessagePane`
+ * open, the close and the ownership of Escape all live in `AppShell`, and the reader
  * mounted alone could not see any of it.
  *
  * RE-POINTED (share reader-1, the switch's older tests): the whole shell is the new one, through its test door

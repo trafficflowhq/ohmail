@@ -375,7 +375,7 @@ export interface ReplyEnvelopePlan {
 
 /**
  * One envelope for a reply — the computed audience, or the user's edit of it. `composePlan`'s
- * discipline: `InlineReply` judges the lock with this and `AppShell.sendReply` builds the wire from
+ * discipline: the Write editor (`packages/app/src/write`) judges the lock with this and `AppShell.sendReply` builds the wire from
  * it, so the head, the button and the envelope cannot be three opinions. Untouched (`edit ===
  * null`): exactly the derivation `sendReply` always made — `replyAllRecipients`, `replyRecipients`
  * for the self-authored plain case, else `null` so `Engine.enrich` keeps deriving `[parent.from]`;
@@ -409,7 +409,7 @@ export function replyEnvelopePlan(
 
 /**
  * The plan's recipient fields exactly as the mutation carries them. One spread, used by BOTH
- * the lock (`InlineReply` → `canSend`) and the wire (`AppShell.sendReply`) — a key present in
+ * the lock (the Write editor → `canSend`) and the wire (`AppShell.sendReply`) — a key present in
  * one and absent in the other is how a button and an envelope drift apart.
  */
 export function replyEnvelopeOnWire(

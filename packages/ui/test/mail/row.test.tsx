@@ -179,6 +179,37 @@ describe("Row", () => {
     expect(screen.getByRole("img", { name: "Has an attachment" })).toBeTruthy();
   });
 
+  it("keeps the names and initials of an unpicked conversation during selection", () => {
+    const peopleLabel = "2 people: Petra Wyss and Ben Arnold";
+    const other = {
+      ...base,
+      people: [petra, { name: "Ben Arnold", address: ["ben", "kiln.example"].join("@") }],
+      peopleLabel,
+    };
+    function Pair({ active }: { active: boolean }) {
+      return (
+        <>
+          <Row
+            {...base}
+            subject="An invitation"
+            picked={active}
+            selection={{ label: "Select invitation", active, onPress: () => {} }}
+          />
+          <Row {...other} selection={{ label: "Select programme", active, onPress: () => {} }} />
+        </>
+      );
+    }
+    const { rerender } = render(<Pair active={false} />);
+    const faces = screen.getByRole("img", { name: peopleLabel });
+    expect(faces.textContent).toBe("PB");
+
+    rerender(<Pair active />);
+    expect(screen.getByRole("button", { name: "Select invitation", pressed: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Select programme", pressed: false })).toBeTruthy();
+    expect(screen.getByRole("img", { name: peopleLabel })).toBe(faces);
+    expect(faces.textContent).toBe("PB");
+  });
+
   it("draws a row that is no person with its sign, and an amount in place of the time", () => {
     render(<Row who="No recipient yet" people={[]} sign="write" subject="Re: December" amount="CHF 48.00" />);
     const draft = screen.getByRole("button", { name: /No recipient yet/ });

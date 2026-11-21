@@ -1,14 +1,10 @@
 {
   "folder": {
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
-    "emptyTitle": "Nothing in this folder",
+    "emptyTitle": "Nothing here",
     "emptyHint": "It holds no mail. The folder list follows your mail server, so a folder deleted there leaves it.",
     "gone": "“{name}” is no longer on your mail server.",
     "loading": "Loading this folder",
-    "group": {
-      "new": "New",
-      "earlier": "Earlier"
-    },
     "step": {
       "up": "Newer",
       "down": "Older"
@@ -28,7 +24,7 @@
       "allUnread": "All folders, {count} unread",
       "unread": "{name}, {count} unread",
       "find": "Find a folder",
-      "none": "No folder matches.",
+      "none": "No folder matches",
       "expand": "Expand {name}",
       "collapse": "Collapse {name}",
       "menu": "Folder menu for {name}",
@@ -39,7 +35,7 @@
       "menu": "List"
     },
     "move": {
-      "title": "Move to a folder",
+      "title": "Move",
       "moved": "Moved to {name}.",
       "outdated": "{by} organizes this mailbox with an older ohmail, which can't move into folders. Update ohmail there.",
       "outdatedUnknown": "The install that organizes this mailbox runs an older ohmail, which can't move into folders. Update ohmail there.",

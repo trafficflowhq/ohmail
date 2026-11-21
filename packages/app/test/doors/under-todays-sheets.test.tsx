@@ -159,7 +159,11 @@ async function readAt(html: string, room: Room): Promise<Read> {
   const tab = await browser!.newPage({ viewport: { width: room.width, height: room.height } });
   try {
     await tab.setContent(html, { waitUntil: "load" });
-    return await tab.evaluate(() => {
+    return await tab.evaluate(async () => {
+      const finite = document
+        .getAnimations()
+        .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime));
+      await Promise.all(finite.map((animation) => animation.finished.catch(() => undefined)));
       const stage = document.querySelector<HTMLElement>(".way-stage");
       const all = stage ? [stage, ...stage.querySelectorAll<Element>("*")] : [];
       const classes = (el: Element): string => el.getAttribute("class")?.trim() ?? "";
@@ -298,7 +302,7 @@ const INK: Readonly<Record<string, (w: Words) => string>> = {
   setup: (w) => w.setup.createAccount,
   invite: (w) => w.joinInvite.createAccount,
   subscribed: (w) => w.subscribed.open,
-  join: (w) => w.join.createAccount,
+  join: (w) => w.join.continue,
   "step-up": (w) => w.stepUp.passkey,
   approve: (w) => w.approve.confirm,
   "authorize-desktop": (w) => w.authorizeDesktop.confirm,
@@ -307,16 +311,6 @@ const INK: Readonly<Record<string, (w: Words) => string>> = {
   wall: (w) => w.accessLock.subscribe,
 };
 const escaped = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/*
- * OPEN: a form of labelled fields stands taller than the unfolded phone on its side, until its blanks stand in the
- * page's sentence as the design draws them, or the page's foot stays in sight at every size (the design keeps it in
- * sight on the phone alone: a question for the studio). Once either holds, this list shrinks: the email confirmation,
- * the invite and the server setup left it when their blanks moved into the sentence.
- */
-const OPEN_TALLER: Readonly<Record<string, readonly string[]>> = {
-  foldl: ["join"],
-};
 
 /*
  * THE KIT'S SMALLER WINDOWS (its ask to the doors, from its check CHECK-45): three smaller desktop windows, and the web
@@ -466,7 +460,7 @@ describe("a door's one act stands inside the window", () => {
     for (const locale of ["en", "de"] as const)
       it(`${room.name}, ${room.width} by ${room.height}, ${locale}`, async () => {
         const outside = await actsOutside(room, locale);
-        expect(outside.map(doorOf), outside.join("\n")).toEqual(OPEN_TALLER[room.name] ?? []);
+        expect(outside, outside.join("\n")).toEqual([]);
       }, 240_000);
 });
 

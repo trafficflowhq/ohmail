@@ -24,7 +24,7 @@ function Column({
   const name = usePaneName()(pane);
   const { Body } = pane;
   const scroller = useRef<HTMLDivElement>(null);
-  const sheet: PaneSheet = (body, foot) => (
+  const sheet: PaneSheet = (body, foot, count) => (
     <Sheet
       kind="reading"
       foot={foot}
@@ -33,7 +33,7 @@ function Column({
       scroller={scroller}
       focused={keysHere}
       back={back ? { word: t("title"), label: t("back"), onPress: back } : undefined}
-      head={<SettingsHead title={name} hot={summary?.hot} count={summary?.count} />}
+      head={<SettingsHead title={name} hot={summary?.hot} count={count ?? summary?.count} />}
     >
       {body}
     </Sheet>

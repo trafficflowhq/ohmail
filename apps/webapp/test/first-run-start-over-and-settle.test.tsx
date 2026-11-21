@@ -65,7 +65,7 @@ it("the create's re-read is AWAITED — the form does not come back", async () =
   expect(page.queryByLabelText(t.address)).toBeNull();
   expect(page.queryByRole("button", { name: t.connect })).toBeNull();
   await stage.move([stageRow({ id: mailboxId })]);
-  expect(stage.heading()).toBe(printed(t.consentTitle));
+  expect(stage.heading()).toBe(printed(t.mapTitle));
   expect(wire.of("connect")).toHaveLength(1);
 });
 
@@ -132,6 +132,10 @@ async function mount(o: {
     text: () => (el.textContent ?? "").replace(/\s+/g, " "),
     has: (label) => find(label) !== undefined,
     press: async (label) => {
+      if (label === t.restart) {
+        await st.press(label);
+        return;
+      }
       const b = find(label);
       if (!b) {
         throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `

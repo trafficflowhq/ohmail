@@ -1,3 +1,4 @@
+import type { supportContact } from "@ohmail/app-logic/writing/support";
 import type { DeviceBuild } from "../../host/index.js";
 
 /**
@@ -19,10 +20,10 @@ export type HelpWrite =
 
 export interface HelpModel {
   readonly write: HelpWrite;
-  /** The running release, or `null` where the build does not say. */
-  readonly version: string | null;
-  /** The commit it was built from, or `null`. */
-  readonly commit: string | null;
+  readonly facts: Pick<
+    ReturnType<typeof supportContact>["facts"],
+    "version" | "commit" | "os" | "osVersion" | "surface" | "account" | "mailboxes"
+  >;
 }
 
 /**

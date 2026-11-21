@@ -66,10 +66,18 @@
   }
 
   .oh-contactcard-title {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--s1);
     padding: var(--s2) var(--s3) var(--s1);
     color: var(--ink2);
     font-size: var(--t-meta);
     font-weight: var(--w-bold);
+  }
+
+  .oh-contactcard-title > [role="status"] {
+    font-weight: var(--w-text);
   }
 
   .oh-contactcard-places {

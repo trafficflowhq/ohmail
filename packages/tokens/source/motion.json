@@ -3,6 +3,7 @@
   "slick": {
     "d-press": "calc(100ms * var(--m-time))",
     "d-hover": "calc(120ms * var(--m-time))",
+    "d-key-focus": "var(--d-hover)",
     "d-fade": "calc(150ms * var(--m-time))",
     "d-knob": "calc(180ms * var(--m-time))",
     "d-dot": "calc(200ms * var(--m-time))",
@@ -24,6 +25,7 @@
     "d-top": "calc(280ms * var(--m-time))",
     "d-pull": "calc(640ms * var(--m-time))",
     "d-activity-line": "2400ms",
+    "d-opening-reload": "10000ms",
     "e-activity-line": "ease-in-out",
     "activity-line-height": "2px",
     "activity-line-opacity": "0.4",
@@ -95,6 +97,7 @@
     "sel-gulp": "0"
   },
   "reduced": {
+    "d-key-focus": "0ms",
     "d-fold": "0ms",
     "d-sheet": "0ms",
     "d-panel": "0ms",

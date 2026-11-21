@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { SearchHit } from "@ohmail/client-engine";
 import { substringOpen } from "@trafficflow/core/search-rank";
 import { atStamp } from "../engine/context.js";
-import { ADDRESS_QUERY, OPERATOR_WORD } from "./constants.js";
+import { ADDRESS_QUERY } from "./constants.js";
 import { useSearchCursor } from "./cursor.js";
 import { filterOf, NONE_PRESSED, pressOf, useFacets, type Pressed } from "./facets.js";
 import { useSearchKeys } from "./keys.js";
@@ -34,10 +34,7 @@ export function useSearchList(input: SearchListInput): SearchListModel {
   const trimmed = wordsAsked(query, searchBy);
   const resting = query.trim() === "" && !isNarrowed;
   const mailboxTotal = useMailboxTotal(scope, input.readMailboxTotal);
-  const overviewPeople = usePeopleOverview(
-    engine,
-    searchBy === "people" && resting ? input.people : undefined,
-  );
+  const overviewPeople = usePeopleOverview(engine, searchBy === "people" ? input.people : undefined);
   const [sort, setSort] = useSearchSort(scope, trimmed === "" && isNarrowed);
   const { result, tookMs } = useLocalPass(engine, trimmed, narrowing.person);
   const store = useStorePass(engine, trimmed, sort, storeFilters, result, isNarrowed);
@@ -62,7 +59,6 @@ export function useSearchList(input: SearchListInput): SearchListModel {
   });
   /** Slots in the list: the store's walked rows once it answered, else the device's paint. */
   const length = storeReady ? storeLength : paint.shown.length;
-  const egg = trimmed.toLowerCase() === "blanc" && length === 0;
   /** The count on the result line: the store's own once it answered, else the rows on screen. */
   const found = storeReady && pressed.length === 0 ? Math.max(ready.total, length) : length;
   // A new query, order or pressed facet is a new question: the cursor starts at the top.
@@ -117,9 +113,6 @@ export function useSearchList(input: SearchListInput): SearchListModel {
     addressOnly: ADDRESS_QUERY.test(trimmed),
     listing: storeReady ? "store" : "device",
     similarFrom: similarStart(storeReady, similarOn, paint),
-    /* Where the server takes them, a typed operator becomes its filter (the screen's); elsewhere it is said. */
-    operatorsTyped: searchBy === "words" && OPERATOR_WORD.test(trimmed),
-    egg,
     ...q.model,
     open: onOpen,
     type: (typed) => {
@@ -127,7 +120,9 @@ export function useSearchList(input: SearchListInput): SearchListModel {
       onQuery(typed);
     },
     submit: () => {
-      if ((trimmed || isNarrowed) && !egg && store.available) store.retry();
+      // Preserve the existing empty-answer retry behavior for this query.
+      if (trimmed.toLowerCase() === "blanc" && length === 0) return;
+      if ((trimmed || isNarrowed) && store.available) store.retry();
     },
   };
 }
@@ -191,6 +186,7 @@ function useSearchInteraction(
   };
   useSearchKeys({
     t,
+    searchBy: input.searchBy,
     /* Escape clears the field as it stands, an operator still being typed too. */
     text: query.trim(),
     onQuery,

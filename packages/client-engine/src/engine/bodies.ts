@@ -161,7 +161,7 @@ export abstract class EngineBodies extends EngineWindowed {
     if (msg.body !== undefined) return { kind: "skip" };
     /**
      * A PROTECTED MESSAGE HAS NO BODY TO ASK FOR — AND MUST HOLD NONE AT REST. Its surface renders `ProtectedBlock`
-     * and no text whatever the mirror holds (`MessagePane` is where that decision lives), so a fetch here could only
+     * and no text whatever the mirror holds (the shared Reader is where that decision lives), so a fetch here could only
      * ever produce a record nothing reads. Skipping it also keeps the demo's one body-less fixture from churning a
      * loading record every time it is selected. The second clause is the at-rest half. A message that cached a body
      * while it was ORDINARY and then became protected is the raw secret sensitive mail is redacted to avoid, sitting
@@ -990,6 +990,40 @@ export abstract class EngineBodies extends EngineWindowed {
     this.notify();
   }
 
+  /** Open the Screener's catch-up pass. Later gate arrivals and completed decisions use the same door. */
+  fileHeldDecisions(filing: { canFile: () => boolean; onFailure: () => void }): void {
+    if (!this.adapter.releaseHeld) return;
+    const h = this.heldRelease;
+    h.filing = filing;
+    h.requested = true;
+    h.armed = true;
+    this.ringHeldReleaseBell();
+  }
+
+  private async releaseDecidedGroups(filing: { canFile: () => boolean; onFailure: () => void }): Promise<void> {
+    const h = this.heldRelease;
+    while (h.filing === filing && filing.canFile()) {
+      // Name only fresh server rule groups. A contact line would make a new decision, and an
+      // omitted list would reach rules we have not read. The server rechecks every named group.
+      const ids = this.read().list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE)
+        .filter((g) => {
+          const rule = this.store.record("rule", g.id)?.entity as RuleDTO | undefined;
+          return g.sender === undefined && !h.attempted.has(g.id)
+            && rule?.subjectContains == null && rule?.bodyContains == null;
+        })
+        .map((g) => g.id);
+      if (ids.length === 0) return;
+      for (const id of ids) h.attempted.add(id);
+      try {
+        // This action also reads the next set. A group that still appears cannot loop this pass.
+        await this.releaseHeldMail(ids);
+      } catch {
+        if (h.filing === filing && filing.canFile()) filing.onFailure();
+        return;
+      }
+    }
+  }
+
   /**
    * MAIL THAT LANDED AT THE GATE IN THIS PAGE, by sender — collected only once a surface asked, and
    * judged at the settle ({@link ringHeldReleaseBell}) against the rules the mirror holds then, so
@@ -1003,7 +1037,9 @@ export abstract class EngineBodies extends EngineWindowed {
       if (ch.type !== "message" || ch.op === "delete" || h.arrivals.size >= HELD_ARRIVALS_MAX) continue;
       const m = ch.entity as EngineMessage | undefined;
       const address = m?.from?.address;
-      if ((ch.move?.to ?? m?.folder) === FOLDER_OF_VIEW.screener && address) h.arrivals.add(address);
+      if ((ch.move?.to ?? m?.folder) !== FOLDER_OF_VIEW.screener || !address) continue;
+      const before = this.store.record("message", ch.id)?.entity as EngineMessage | undefined;
+      if (h.filing === null || before?.folder !== FOLDER_OF_VIEW.screener) h.arrivals.add(address);
     }
   }
 
@@ -1039,10 +1075,28 @@ export abstract class EngineBodies extends EngineWindowed {
       h.arrivals.clear();
     }
     if (!h.armed || h.bell !== null) return;
-    if (!h.owed && h.rang === h.answered && this.settingsStamp() === h.stamp) return;
+    const filing = h.filing;
+    const rang = h.rang;
+    const newArrivals = filing !== null && rang !== h.filedThrough;
+    if (!h.requested && !newArrivals && !h.owed && rang === h.answered && this.settingsStamp() === h.stamp) return;
+    if (h.requested || newArrivals) h.attempted.clear();
+    h.requested = false;
+    const seq = h.seq + 1;
+    let read = false;
     h.bell = this.refreshHeldReleases()
-      .catch(() => { /* an offer: the next settle asks again */ })
-      .finally(() => { h.bell = null; });
+      .then(async () => {
+        if (h.seq !== seq) return;
+        read = true;
+        if (filing) {
+          h.filedThrough = rang;
+          await this.releaseDecidedGroups(filing);
+        }
+      })
+      .catch(() => { h.owed = true; })
+      .finally(() => {
+        h.bell = null;
+        if (h.requested || (read && filing !== null && h.rang !== rang)) this.ringHeldReleaseBell();
+      });
   }
 
   /**
@@ -1067,8 +1121,17 @@ export abstract class EngineBodies extends EngineWindowed {
         continue;
       }
       const removed = ch.type === MAILBOX_TYPE && ch.op === "delete";
-      const walked = ch.type === "rule" && settled(this.store.record("rule", ch.id)?.entity as RuleDTO | undefined)
-        !== settled(ch.op === "delete" ? null : ch.entity as RuleDTO | undefined);
+      const before = ch.type === "rule" ? this.store.record("rule", ch.id)?.entity as RuleDTO | undefined : undefined;
+      const after = ch.type === "rule" && ch.op !== "delete" ? ch.entity as RuleDTO | undefined : undefined;
+      const walked = ch.type === "rule" && settled(before) !== settled(after);
+      const changedDecision = settled(after) && after !== undefined && before !== undefined
+        && (before.kind !== after.kind || before.match !== after.match || before.destination !== after.destination
+          || before.subjectContains !== after.subjectContains || before.bodyContains !== after.bodyContains
+          || before.priority !== after.priority);
+      if (changedDecision && this.heldRelease.filing !== null) {
+        this.heldRelease.attempted.delete(ch.id);
+        this.heldRelease.owed = true;
+      }
       if (!removed && !walked) continue;
       this.heldRelease.owed = true;
       u.owed = true;

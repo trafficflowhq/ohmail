@@ -26,6 +26,7 @@ export function SelectionCircle({
       style={style}
       aria-label={selection.label}
       aria-pressed={picked}
+      data-selection-active={selection.active ? "" : undefined}
       onClick={(event) => {
         event.stopPropagation();
         selection.onPress(event.shiftKey);
@@ -39,10 +40,10 @@ export function SelectionCircle({
   );
 }
 
-export function SelectionMark({ picked }: { picked: boolean }) {
+export function SelectionMark() {
   return (
-    <span className="oh-selection-circle-mark" data-picked={picked ? "" : undefined} aria-hidden="true">
-      {picked ? <Icon name="check" size={18} /> : null}
+    <span className="oh-selection-circle-mark" aria-hidden="true">
+      <Icon name="check" size={18} />
     </span>
   );
 }

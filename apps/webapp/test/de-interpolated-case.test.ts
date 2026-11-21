@@ -141,24 +141,12 @@ function entries(node: unknown, path = "", out: [string, string][] = []): [strin
 
 const ALL = entries(de);
 
-/**
- * THE SUBJECT IS A KEY WITH A CALLER. This read `ohbox.toastMoved` — the single row's old
- * "Moved to {place}." — which lost its last caller when the press started speaking from the
- * Screener's own answer, and a guard whose subject nothing renders is a guard about a string.
- * `ohbox.toastBulkMovedSenders` is the selection's Move saying the same thing, dispatched from
- * `onBulkAction`; its German names the place first, behind a dash, which governs no case either.
- */
 describe("the moved toast names the folder without declining it", () => {
-  const ARGS = { place: PLACE, senders: 1, count: 1 };
+  const args = { place: PLACE, count: 1 };
 
-  it("names the folder behind a dash — which governs no case", () => {
-    expect(t("ohbox.toastBulkMovedSenders", ARGS))
-      .toBe(`${PLACE} — Mails von 1 Absender landen ab jetzt dort, 1 Nachricht verschoben.`);
-  });
-
-  it("the English string is untouched — only the German had the case problem", () => {
-    expect(tEn("ohbox.toastBulkMovedSenders", ARGS))
-      .toBe(`Mail from 1 sender now goes to ${PLACE} — 1 message moved.`);
+  it("gives the count followed by the folder name in German and English", () => {
+    expect(t("ohbox.toastBulkMovedSenders", args)).toBe(`1 · ${PLACE}`);
+    expect(tEn("ohbox.toastBulkMovedSenders", args)).toBe(`1 · ${PLACE}`);
   });
 });
 

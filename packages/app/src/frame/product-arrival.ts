@@ -27,57 +27,88 @@ function playKnob(rail: HTMLElement): Animation | undefined {
   return knob.animate(frames, { duration: motionMs(knob, "--d-knob") });
 }
 
-/** A committed product change plays on the mounted shell, including switches made with keys or browser history. */
+function settleOnActivation(shell: HTMLElement, animations: Animation[]): () => void {
+  const listeners = new AbortController();
+  const settle = () => {
+    listeners.abort();
+    for (const animation of animations) animation.cancel();
+  };
+  const options = { capture: true, signal: listeners.signal };
+  const doc = shell.ownerDocument;
+  // Release the translated containing block before a control measures a fixed overlay's anchor.
+  doc.addEventListener("pointerdown", settle, options);
+  doc.addEventListener("contextmenu", settle, options);
+  doc.addEventListener("click", settle, options);
+  doc.addEventListener("keydown", settle, options);
+  void Promise.allSettled(animations.map((animation) => animation.finished)).then(() => listeners.abort());
+  return settle;
+}
+
+function playArrival(shell: HTMLElement, device: LayoutPlan["device"], switching: boolean): () => void {
+  const easing = motionEase(shell, "--e-arrive");
+  const arrive = (el: Element, transform: string, duration: number, delay = 0) =>
+    el.animate(
+      transform === "none"
+        ? [{ opacity: 0 }, { opacity: 1 }]
+        : [
+            { transform, opacity: 0 },
+            { transform: "none", opacity: 1 },
+          ],
+      { duration, easing, delay, fill: "backwards" },
+    );
+
+  if (device !== "desktop") {
+    const animation = arrive(shell, motionShape(shell, "--x-app-open"), motionMs(shell, "--d-slide"));
+    return settleOnActivation(shell, [animation]);
+  }
+
+  const rail = shell.querySelector<HTMLElement>(".oh-rail");
+  const knob = switching && rail ? playKnob(rail) : undefined;
+  const transform = motionShape(shell, "--x-in");
+  const duration = motionMs(shell, "--d-in");
+  const stagger = motionMs(shell, "--d-product-stagger");
+  const animations: Animation[] = knob ? [knob] : [];
+  for (const group of rail?.querySelectorAll(".oh-rail-group:not(:empty), :scope > .oh-rail-scroll ~ *") ??
+    []) {
+    animations.push(arrive(group, transform, duration));
+  }
+  const columns = shell.querySelectorAll(".fr-main > :is(.fr-list, .fr-reading, .fr-wide)");
+  columns.forEach((column, index) => {
+    animations.push(arrive(column, transform, duration, stagger * (index + 1)));
+  });
+  return settleOnActivation(shell, animations);
+}
+
+/** The first desktop Mail open and each committed product switch use the same entry motion. */
 export function useProductArrival(
   frame: RefObject<HTMLDivElement | null>,
   device: LayoutPlan["device"],
   product: Product,
-  resumed: boolean,
+  staged: boolean,
 ): void {
-  const previous = useRef(product);
+  const previous = useRef<Product | null>(null);
   useLayoutEffect(() => {
-    if (previous.current === product) return;
-    previous.current = product;
+    if (staged || previous.current === product) return;
     const shell = frame.current;
     if (!shell || typeof shell.animate !== "function") return;
 
-    const easing = motionEase(shell, "--e-arrive");
-    const arrive = (el: Element, transform: string, duration: number, delay = 0) =>
-      el.animate(
-        [
-          { transform, opacity: 0 },
-          { transform: "none", opacity: 1 },
-        ],
-        {
-          duration,
-          easing,
-          delay,
-          fill: "backwards",
-        },
-      );
-
-    if (device !== "desktop") {
-      if (resumed) return;
-      const animation = arrive(shell, motionShape(shell, "--x-app-open"), motionMs(shell, "--d-slide"));
-      return () => animation.cancel();
+    if (previous.current === null && product === "mail" && device === "desktop") {
+      const view = shell.ownerDocument.defaultView;
+      if (!view) return;
+      // The root stamps its appearance and reduced-motion attributes after its children commit.
+      let stop: (() => void) | undefined;
+      const start = view.requestAnimationFrame(() => {
+        previous.current = product;
+        if (!motionReduced(shell)) stop = playArrival(shell, device, false);
+      });
+      return () => {
+        view.cancelAnimationFrame(start);
+        stop?.();
+      };
     }
 
-    const rail = shell.querySelector<HTMLElement>(".oh-rail");
-    const knob = rail ? playKnob(rail) : undefined;
-    if (resumed) return () => knob?.cancel();
-
-    const transform = motionShape(shell, "--x-in");
-    const duration = motionMs(shell, "--d-in");
-    const stagger = motionMs(shell, "--d-product-stagger");
-    const animations: Animation[] = knob ? [knob] : [];
-    for (const group of rail?.querySelectorAll(".oh-rail-group:not(:empty), :scope > .oh-rail-scroll ~ *") ??
-      []) {
-      animations.push(arrive(group, transform, duration));
-    }
-    const columns = shell.querySelectorAll(".fr-main > :is(.fr-list, .fr-reading, .fr-wide)");
-    columns.forEach((column, index) => {
-      animations.push(arrive(column, transform, duration, stagger * (index + 1)));
-    });
-    return () => animations.forEach((animation) => animation.cancel());
-  }, [device, frame, product, resumed]);
+    const switching = previous.current !== null;
+    previous.current = product;
+    if (switching) return playArrival(shell, device, true);
+  }, [device, frame, product, staged]);
 }

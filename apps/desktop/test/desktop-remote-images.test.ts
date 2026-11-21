@@ -199,7 +199,8 @@ describe("a picture the desktop already holds the bytes of", () => {
 /**
  * ── A HELD LETTER'S SHOW IMAGES, DOWN THE PIPE ──────────────────────────────────────────────
  *
- * `MessagePane`'s wiring over the desktop's own api-client and its two image wires, driven through
+ * The shared Reader's (`packages/app/src/reader`) wiring over the desktop's own api-client and
+ * its two image wires, driven through
  * a stand-in shell. A sender not let in loads nothing on open, so the press is the one road to its
  * pictures, on both window origins: `http://tauri.localhost` (WebView2, Windows) and
  * `tauri://localhost` (WebKit, macOS and Linux), where the proxy has no source a frame could name.
@@ -264,7 +265,7 @@ function tauriProxyFor(id: string): (url: string) => string {
 /** The desktop's two wires as its host hands them: one pipe. */
 const DESKTOP_PIPE = { fetch: localImageWire, record: localLoadRemote };
 
-/** `MessagePane`'s lines for one held letter, over the desktop's wires. */
+/** The shared Reader's (`packages/app/src/reader`) lines for one held letter, over the desktop's wires. */
 function Pane({ tauri, failed, notices, html }: { tauri: boolean; failed: string[]; notices: (string | null)[]; html: string }) {
   const real = useRemoteImages({
     onFailed: (sentence) => { failed.push(sentence); }, mode: "auto", loadPixels: false,

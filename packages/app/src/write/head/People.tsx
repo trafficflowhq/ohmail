@@ -145,7 +145,7 @@ export function People({
   /** The subject line and its change; left out, none is drawn. */
   subject?: {
     value: string;
-    onChange: (subject: string) => void;
+    onChange?: (subject: string) => void;
     /** Escape in the subject: a reply's way back to its text. */
     onEscape?: () => void;
   };

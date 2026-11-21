@@ -52,7 +52,8 @@ export interface SubjectRulePartProps {
   readonly open: boolean;
   readonly onOpen: () => void;
   readonly onClose: () => void;
-  readonly children: (action?: ReactNode) => ReactNode;
+  readonly onBack?: () => void;
+  readonly children: (actions?: { subject?: ReactNode; seeAll?: () => void }) => ReactNode;
 }
 
 /**

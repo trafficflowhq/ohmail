@@ -1,5 +1,4 @@
 import type { CalendarNoticeKind, NoticeChoices } from "@ohmail/client-engine";
-import { Fragment } from "react";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import { DELIVERY_SENTENCE, NOTIFY_ROWS, type NotificationsModel } from "./model.js";
@@ -32,40 +31,54 @@ export function NotificationsPane({ model, calendar }: NotificationsPaneProps) {
   const rows = NOTIFY_ROWS.filter((row) => carries.includes(row.key));
   const calendarRows = CALENDAR_ROWS.filter(([kind]) => carries.includes(kind));
   const blocked = permission === "denied";
+  const showCalendar = live && calendar && calendarRows.length > 0;
+  const unsupported = permission === "unsupported";
+  const deliveryWord =
+    delivery === "no_server_key"
+      ? n("onlyWhileOpen")
+      : delivery === "not_registered"
+        ? n("notRegistered")
+        : undefined;
+  const wants = blocked
+    ? { word: n("blocked"), line: t("notifyDenied") }
+    : unsupported
+      ? { word: n("noCentre"), line: t("notifyUnsupported") }
+      : delivery && deliveryWord
+        ? { word: deliveryWord, line: t(DELIVERY_SENTENCE[delivery]) }
+        : undefined;
   return (
     <>
-      <SettingsSheet wants={blocked ? { word: n("blocked"), line: t("notifyDenied") } : undefined}>
+      <SettingsSheet wants={wants}>
         <SettingLine
           label={t("notifyMaster")}
+          tag={n("thisDevice")}
           off={blocked || permission === "unsupported"}
           toggle={{
             on: channels.master && permission === "granted",
             onChange: (want) => model.pressMaster(want),
           }}
         />
-        <SettingNote>{t("notifyMasterWhy")}</SettingNote>
-        {permission === "unsupported" ? <SettingNote>{t("notifyUnsupported")}</SettingNote> : null}
         {permission === "default" && !osHolds ? <SettingNote>{t("notifyAskFirst")}</SettingNote> : null}
         {osHolds ? <SettingNote>{t("notifyOsHeld")}</SettingNote> : null}
-        {delivery ? <SettingNote warn>{t(DELIVERY_SENTENCE[delivery])}</SettingNote> : null}
+        {delivery && (delivery === "row_remains" || (delivery === "unsupported" && !unsupported)) ? (
+          <SettingNote warn>{t(DELIVERY_SENTENCE[delivery])}</SettingNote>
+        ) : null}
       </SettingsSheet>
       {live && rows.length > 0 ? (
-        <SettingsSheet title={n("about")}>
+        <SettingsSheet title={n(showCalendar ? "mail" : "about")}>
           {rows.map((row) => (
-            <Fragment key={row.key}>
-              <SettingLine
-                label={t(row.label)}
-                toggle={{
-                  on: channels[row.key],
-                  onChange: (on) => model.set({ ...channels, [row.key]: on }),
-                }}
-              />
-              <SettingNote>{t(row.why)}</SettingNote>
-            </Fragment>
+            <SettingLine
+              key={row.key}
+              label={t(row.label)}
+              toggle={{
+                on: channels[row.key],
+                onChange: (on) => model.set({ ...channels, [row.key]: on }),
+              }}
+            />
           ))}
         </SettingsSheet>
       ) : null}
-      {live && calendar && calendarRows.length > 0 && (
+      {showCalendar && (
         <>
           <SettingsSheet title={n("calendar")}>
             {calendarRows.map(([kind, label]) => (
@@ -84,11 +97,6 @@ export function NotificationsPane({ model, calendar }: NotificationsPaneProps) {
           </SettingsSheet>
         </>
       )}
-      <SettingsSheet>
-        <SettingNote>{t("notifyReach")}</SettingNote>
-        <SettingNote>{t("notificationPrivacy")}</SettingNote>
-        <SettingNote>{t("badgeRule")}</SettingNote>
-      </SettingsSheet>
     </>
   );
 }

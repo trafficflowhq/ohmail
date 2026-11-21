@@ -38,8 +38,10 @@ export function ListMenu({
   items = [],
   mail = false,
   anchorRef,
+  size,
 }: {
   label: string;
+  size?: "s";
   items?: readonly ListMenuItem[];
   /** Use the mail ground's pull in registered places that offer it. */
   mail?: boolean;
@@ -55,7 +57,7 @@ export function ListMenu({
       ? { label: t("list.pull"), keyHint: "p", busy: groundPull.pulling, onPress: groundPull.pull }
       : null);
   const [open, setOpen] = useState(false);
-  const checked = useLastMailCheckLabel(open && pull !== null && mail);
+  const checked = useLastMailCheckLabel(open && pull !== null);
   const own = useRef<HTMLButtonElement>(null);
   const anchor = anchorRef ?? own;
   const all: ListMenuItem[] = [
@@ -78,6 +80,7 @@ export function ListMenu({
       <Button
         ref={anchor}
         kind="quiet"
+        size={size}
         icon="more"
         label={label}
         opens="menu"

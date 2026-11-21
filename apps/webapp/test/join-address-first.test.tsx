@@ -333,7 +333,7 @@ describe("the account step", () => {
     session = NO_SESSION;
     const ui = await mount();
     expect(ui.field("join-email")).toBeTruthy();
-    const link = [...ui.host.querySelectorAll("a")].find((a) => a.textContent === en.join.accountSignIn);
+    const link = [...ui.host.querySelectorAll("a")].find((a) => a.textContent === en.join.signIn);
     expect(link?.getAttribute("href")).toBe("/login");
   });
 });

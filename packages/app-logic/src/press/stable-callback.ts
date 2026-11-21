@@ -31,7 +31,7 @@
 /**
  * What the stable identity does NOT license: treating the function as a reactive value — it never changes, so listing
  * it in a dependency array communicates nothing, and an array that relied on it has quietly stopped re-running
- * (`StreamCardMemo`'s comparator is the worked example: three mutable fields went missing for as long as a shifting
+ * (`packages/app/src/stream`'s card comparator is the worked example: three mutable fields went missing for as long as a shifting
  * `onAction` re-rendered the card anyway).
  */
 

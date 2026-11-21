@@ -50,6 +50,7 @@ interface HeldLetterProps {
   invites: boolean;
   onPerson: (anchor: HTMLElement) => void;
   onRetry: (id: string) => void;
+  onUnsubscribed?: () => void;
 }
 
 export function HeldLetter(props: HeldLetterProps) {
@@ -95,6 +96,7 @@ function HeldLetterContent({
   invites,
   onPerson,
   onRetry,
+  onUnsubscribed,
   letters,
 }: HeldLetterProps & { letters: HeldParts | typeof NONE }) {
   const t = useText("screener");
@@ -137,29 +139,21 @@ function HeldLetterContent({
       />
     );
   }
+  const blockedImages = notice ? (
+    <BlockedImages
+      describe
+      caption={notice.caption}
+      sentence={notice.text}
+      open={noticeOpen}
+      onOpen={() => setNoticeOpen(true)}
+      onClose={() => setNoticeOpen(false)}
+    />
+  ) : undefined;
   return (
     <Message
       id={heldMark(letter.id)}
       position={position}
-      head={
-        <HeldHead
-          letter={letter}
-          from={from}
-          onPerson={onPerson}
-          note={
-            notice ? (
-              <BlockedImages
-                describe
-                caption={notice.caption}
-                sentence={notice.text}
-                open={noticeOpen}
-                onOpen={() => setNoticeOpen(true)}
-                onClose={() => setNoticeOpen(false)}
-              />
-            ) : undefined
-          }
-        />
-      }
+      head={<HeldHead letter={letter} from={from} onPerson={onPerson} note={blockedImages} />}
       subject={letter.subject}
       lead={
         <>
@@ -201,7 +195,12 @@ function HeldLetterContent({
       {text}
       {/* A kept-out sender's letter, once its text (and so its headers' posture) has arrived. */}
       {segment !== "waiting" && body.state === "full" ? (
-        <HeldUnsubscribe messageId={letter.id} state={body.unsubscribe} url={body.unsubscribeUrl} />
+        <HeldUnsubscribe
+          messageId={letter.id}
+          state={body.unsubscribe}
+          url={body.unsubscribeUrl}
+          onSent={onUnsubscribed}
+        />
       ) : null}
     </Message>
   );

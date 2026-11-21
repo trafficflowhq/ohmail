@@ -2,7 +2,6 @@
 
 import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import { ActivityLine } from "@ohmail/ui/base";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "@ohmail/app-logic/doors/app-update";
@@ -12,6 +11,7 @@ import { isCalendarFragment, routeOf, type AnyPlaceId } from "@ohmail/app/frame"
 import { useLocalCopyPending } from "@ohmail/app-logic/engine/context";
 import { wakeProofHolds } from "../../shell/notification-settings";
 import { MailFrame, useBrowserMail } from "../../shell/browser-mail";
+import { MailboxOpening } from "../../shell/BootSkeleton";
 import { EngineProvider, useEngine, useResolvedDemoMode, useResolvedDemoModeFrom } from "../../shell/engine";
 import { DemoFrame, DemoShell } from "../demo/DemoShell";
 import { sendSurfaceFor } from "./send-surface";
@@ -111,7 +111,7 @@ export function WakeMailboxEntry() {
     );
     return () => abort.abort();
   }, []);
-  if (session === undefined) return <WaitGate />;
+  if (session === undefined) return <MailboxOpening />;
   if (session === null || readOwner() !== session.owner || readSessionFamily() !== session.family) {
     return <AccountChangedGate />;
   }
@@ -327,7 +327,7 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
   if (signedOutHere && accountCleanup) return <AccountCleanupGate cleanup={accountCleanup} />;
   if (signingOut) return <SigningOutGate />;
   if (signedOutHere || revokedHere) return <div className="gate" aria-busy="true" />;
-  if (joinWait) return <WaitGate />;
+  if (joinWait) return <MailboxOpening />;
 
   // The payment and erasure answers replace the mail frame entirely. The locale decorator has the same
   // account stamp as the frame, so a pending language choice cannot outlive that account's session.
@@ -346,10 +346,9 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
     );
   }
 
-  /* The server's frame and the client's first are the gate the shell has always opened with,
-     empty but for the late Reload; the verdict is asked only after hydration, behind the wordmark. */
-  if (firstPaint === "hydrating") return <FirstFrame />;
-  if (firstPaint === "asking") return <WaitGate />;
+  // The server's opening frame offers Reload if the scripts never run. Hydration starts the verdict check.
+  if (firstPaint === "hydrating") return <MailboxOpening serverFrame />;
+  if (firstPaint === "asking") return <MailboxOpening />;
 
   /* THE DEMO, booted by `?demo=1`: the invented world's host, never the hosted wires (`demo/host.ts`). */
   if (resolvedDemo) return <DemoShell serverDemo={demo} says={DEMO_SAYS} />;
@@ -410,10 +409,10 @@ function SignedInFrame({ words }: { words: WebWords }) {
   }, [engine, account, scope]);
   // Keep an incoming Calendar link while the handshake and this mirror's sign-in are being confirmed.
   if (isCalendarFragment(fragment) &&
-      (words.server.calendar === null || (words.server.calendar === true && words.account === null))) return <WaitGate />;
+      (words.server.calendar === null || (words.server.calendar === true && words.account === null))) return <MailboxOpening />;
   if (localCopyPending) {
     const { place, stage } = routeOf(fragment);
-    if (stage === null && LOCAL_LISTS.has(place)) return <WaitGate />;
+    if (stage === null && LOCAL_LISTS.has(place)) return <MailboxOpening network={false} />;
   }
   return <MailFrame host={host} />;
 }
@@ -428,35 +427,6 @@ function SigningOutGate() {
 function AccountChangedGate() {
   const t = useTranslations("frame.connection.signedOut");
   return <div className="gate" role="status">{t("title")}</div>;
-}
-
-/**
- * The server's frame and the client's first. A page whose script never runs (a chunk a changing
- * network dropped) stays on it, so the server's copy carries a Reload, which needs no script;
- * `.gate-late` holds it back for the first seconds. Hydration reads the server's snapshot, so the
- * line hydrates as drawn; a client render (and the next one) leaves it out.
- */
-function FirstFrame() {
-  const t = useTranslations("session");
-  const ta = useTranslations("appError");
-  const served = useSyncExternalStore(noSubscription, () => false, () => true);
-  return (
-    <div className="gate" aria-busy="true" aria-live="polite">
-      {served ? <p className="gate-late">{t("opening")} <a href="/">{ta("reload")}</a></p> : null}
-    </div>
-  );
-}
-
-/** The card a browser waits behind before anything of the account paints. */
-function WaitGate() {
-  return (
-    <main className="gate" aria-busy="true">
-      <div className="gate-card">
-        <span className="wordmark"><b><em>oh</em>mail</b></span>
-        <ActivityLine />
-      </div>
-    </main>
-  );
 }
 
 export function useCloudMailHost(

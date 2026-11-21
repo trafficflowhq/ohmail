@@ -86,7 +86,6 @@ export function useSweepsFrameNotice(shown: readonly ReuseSweepLine[], ok: () =>
   return {
     kind: "signInCopies",
     title: t("reuseSweepsTitle", { count: shown.length }),
-    line: t("reuseSweepsBody"),
     acts: [{ label: t("reuseSweepsOk"), onPress: ok }],
     more: {
       label: t("reuseSweepsDetails"),

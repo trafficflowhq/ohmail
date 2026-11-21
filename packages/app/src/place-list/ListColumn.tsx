@@ -43,7 +43,6 @@ export function ListColumn({
   label,
   cursor = null,
   showEdges = false,
-  cursorTint = false,
   rootRef,
   scrollerRef,
   manualScrollAnchor,
@@ -57,8 +56,6 @@ export function ListColumn({
   /** The cursor's row among the column's rows, where the list walks by key: kept in view, the keyboard with it. */
   cursor?: string | null;
   showEdges?: boolean;
-  /** Give a selected row the open row's background while it is still only selected. */
-  cursorTint?: boolean;
   rootRef?: Ref<HTMLDivElement>;
   scrollerRef?: Ref<HTMLDivElement>;
   /** The list compensates for the rows its window inserts or remeasures. */
@@ -115,7 +112,6 @@ export function ListColumn({
   return (
     <div
       className="pl-list"
-      data-cursor-tint={cursorTint ? "" : undefined}
       data-scroll-edges={showEdges ? "" : undefined}
       ref={rootRef}
       role={label === undefined ? undefined : "region"}

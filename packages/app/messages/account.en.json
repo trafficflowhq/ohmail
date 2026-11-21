@@ -2,7 +2,7 @@
   "invites": {
     "title": "Invites",
     "intro": "Invite someone onto this server. Everyone you invite gets their own account — their own sign-in, their own mail.",
-    "mintFor": "Who is it for?",
+    "mintFor": "Who is it for",
     "mintAction": "Make an invite link",
     "mintHint": "You get a link that works once and expires in seven days. Send it to them, or let them scan it from your screen.",
     "working": "One moment…",
@@ -19,7 +19,10 @@
     "rowMeta": "Made {created} · expires {expires}",
     "revoke": "Revoke",
     "revoked": "Invite revoked.",
-    "stepUpExpired": "Your confirmation window has closed. Sign in again, then retry."
+    "stepUpExpired": "Your confirmation window has closed. Sign in again, then retry.",
+    "namePlaceholder": "Name",
+    "onceSevenDays": "Once · 7 days",
+    "expires": "Expires"
   },
   "devices": {
     "title": "Devices",
@@ -54,7 +57,7 @@
     "mintedName": "ohmail for {kind}",
     "deviceMeta": "{kind} · added {created} · last seen {seen}",
     "remove": "Sign out",
-    "removeAsk": "Sign out {name}?",
+    "removeAsk": "Sign out {name}",
     "removeWhat": "It loses access with its next request. You can pair it again with a new code.",
     "removed": "Device signed out.",
     "cancel": "Cancel",
@@ -78,12 +81,22 @@
     "webGroup": "{count, plural, one {# other web session} other {# other web sessions}}",
     "webGroupMeta": "Browser sign-ins that aren't this one · last seen {seen}. Signing them out won't touch your paired devices.",
     "webGroupAction": "Sign out all",
-    "webGroupAsk": "Sign out {count, plural, one {# web session} other {# web sessions}}?",
+    "webGroupAsk": "Sign out {count, plural, one {# web session} other {# web sessions}}",
     "webGroupWhat": "Each loses access with its next request. This browser and your paired devices stay signed in.",
     "webGroupDone": "Signed out {count, plural, one {# web session} other {# web sessions}}.",
     "loading": "Loading your devices…",
     "loadFailed": "Your devices could not be loaded.",
-    "retry": "Try again"
+    "retry": "Try again",
+    "whoseDevice": "Whose device",
+    "namePlaceholder": "Name",
+    "newDevice": "New device",
+    "onceUntil": "Once · until {time}",
+    "scanWith": "Scan with",
+    "scanApp": "ohmail on the device",
+    "webGroupScope": "Not this browser, not your paired devices.",
+    "copyPairingFailed": "The link couldn’t be copied. Scan the code instead.",
+    "pairing": "Pairing",
+    "revokePairingLink": "Revoke pairing link"
   },
   "account": {
     "title": "Delete your account",
@@ -138,11 +151,11 @@
   },
   "passwordChange": {
     "title": "Change your password",
-    "lead": "Every other session, on every device, is signed out when it changes, and any sign-in still waiting to finish is cancelled. This one stays signed in.",
+    "lead": "Changing it signs out every other session on every device and cancels any sign-in still waiting to finish. This one stays signed in.",
     "currentLabel": "Current password",
     "nextLabel": "New password",
     "repeatLabel": "New password, once more",
-    "nextHint": "At least 12 characters.",
+    "nextHint": "12 characters or more",
     "submit": "Change password",
     "working": "Changing…",
     "needCurrent": "Type your current password first. Nothing was changed.",
@@ -155,7 +168,7 @@
     "slowed": "Password checks for this account are slowed after many failed attempts. Wait a few minutes and try again.",
     "conflict": "The password was changed from another session a moment ago, so this change was not made.",
     "refused": "The password was not changed. Try again in a moment.",
-    "done": "Your password has been changed. {count, plural, =0 {No other session was signed in.} one {# other session was signed out.} other {# other sessions were signed out.}}",
+    "done": "Your password has been changed{count, plural, =0 {. No other session was signed in.} one {, and # other session was signed out.} other {, and # other sessions were signed out.}}",
     "confirmTitle": "Confirm it is you",
     "factorBody": "The next successful factor changes the password. There is no further step after it.",
     "cancelled": "Nothing was changed. You cancelled before the check finished."
@@ -183,16 +196,23 @@
     "totpRemove": "Remove authenticator",
     "totpScan": "Scan this in your authenticator, or type the key in by hand:",
     "totpCodeLabel": "Enter the 6-digit code",
-    "totpActivate": "Turn it on"
+    "totpActivate": "Turn it on",
+    "codesReplaceTitle": "Replace the codes",
+    "codesReplaceLine": "The ten you saved stop working.",
+    "shownOnce": "Shown once",
+    "totpSixDigits": "6-digit code"
   },
   "accountLifecycle": {
     "graceEnds": "Your trial ended. ohmail keeps organizing until {date}.",
     "paymentFailed": "Your last payment failed. Fix it by {date} to keep ohmail organizing.",
-    "trialEnds": "Your trial ends on {date}.",
+    "trialEnds": "Trial ends {date}",
     "subscribe": "Subscribe",
     "fixPayment": "Fix payment",
-    "later": "Later",
-    "caughtUp": "ohmail is catching up on mail that arrived since {date}.",
-    "dismiss": "Got it"
+    "later": "Not now",
+    "caughtUp": "Catching up since {date}",
+    "dismiss": "Dismiss",
+    "trialEnded": "Trial ended",
+    "paymentFailedTitle": "Payment failed",
+    "organizingUntil": "Organizing until {date}."
   }
 }

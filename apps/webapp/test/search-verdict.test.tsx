@@ -97,17 +97,22 @@ const text = (): string => host.textContent ?? "";
 
 const SENTENCES = {
   searching: "Searching your whole mailbox…",
-  matched: /Searched your whole mailbox — [\d,]+ matched|(At least|About) [\d,]+ matched in your whole mailbox\./,
-  nothing: "Searched your whole mailbox — nothing matched",
-  unanswered: "Your server did not answer — showing the recent mail this device holds.",
-  failed: "Your server could not run this search — showing the recent mail this device holds.",
+  matched: /(At least|About) [\d,]+ matched in your whole mailbox\./,
+  nothing: "Nothing matched",
+  unanswered: "Your server did not answer, so these are from the recent mail this device holds.",
+  failed: "Your server could not run this search, so these are from the recent mail this device holds.",
 } as const;
 /** Which of the four sentences are on screen — exactly one is the invariant. */
 function verdicts(): string[] {
   const t = text();
-  return Object.entries(SENTENCES)
-    .filter(([, s]) => (typeof s === "string" ? t.includes(s) : s.test(t)))
-    .map(([k]) => k);
+  const states = Object.entries(SENTENCES)
+    .filter(([state, sentence]) => state !== "nothing" &&
+      (typeof sentence === "string" ? t.includes(sentence) : sentence.test(t)))
+    .map(([state]) => state);
+  if (states.length) return states;
+  if (t.includes(SENTENCES.nothing)) return ["nothing"];
+  const query = (within(host).getByRole("textbox", { name: "Search" }) as HTMLInputElement).value;
+  return query.length >= 2 && within(host).queryByRole("heading", { name: /^Results/ }) ? ["matched"] : [];
 }
 const logged = (): string[] => warn.mock.calls.map((c: unknown[]) => c.join(" ")).filter((l: string) => l.startsWith("[search]"));
 /** The one press that asks the whole mailbox again: the line's own verb, found by its role and name. */
@@ -179,7 +184,7 @@ describe("the whole-mailbox verdict always renders", () => {
     expect(verdicts()).toEqual(["searching"]);
     await act(async () => { settle!({ items: [msg("wire", "Quarterly letter")], total: 3, tier: "exact" }); });
     expect(verdicts()).toEqual(["matched"]);
-    expect(text()).toContain("Searched your whole mailbox — 3 matched");
+    expect(within(host).getByRole("heading", { name: "Results 3" })).toBeTruthy();
   });
 
   it("a CUT page says at least N, the estimate about N, and the exact count replaces it in place", async () => {
@@ -204,7 +209,7 @@ describe("the whole-mailbox verdict always renders", () => {
     expect(text()).toContain(messages.search.saidAbout.replace("{total}", "7,874"));
     expect(verdicts()).toEqual(["matched"]);
     await act(async () => { count!({ items: [], total: 7_901, totalExact: true, ms: 40 }); });
-    expect(text()).toContain("Searched your whole mailbox — 7,901 matched · ");
+    expect(within(host).getByRole("heading", { name: "Results 7,901" })).toBeTruthy();
     expect(text()).not.toContain("about 7,874");
     expect(verdicts()).toEqual(["matched"]);
   });
@@ -231,7 +236,7 @@ describe("the whole-mailbox verdict always renders", () => {
     await advance(SETTLED);
     await advance(SETTLED);
     expect(asked).toEqual(["page", "estimate"]);
-    expect(text()).toContain("Searched your whole mailbox — 38 matched · ");
+    expect(within(host).getByRole("heading", { name: "Results 38" })).toBeTruthy();
   });
 
   it("an exact estimate asks no summary, and a count that fails leaves the lower bound", async () => {
@@ -248,7 +253,8 @@ describe("the whole-mailbox verdict always renders", () => {
     await advance(SETTLED);
     // The estimate is always the second response — it carries the facets; exact, it is the last.
     expect(asked).toEqual(["exact:page", "exact:estimate"]);
-    expect(text()).toContain("Searched your whole mailbox — 4 matched · ");
+    expect(text()).not.toContain(SENTENCES.searching);
+    expect(text()).not.toContain("Searched your whole mailbox");
     await render(engine, "cut");
     await advance(SETTLED);
     // An estimate with no `totalEstimate` says nothing about how many: the lower bound stands.

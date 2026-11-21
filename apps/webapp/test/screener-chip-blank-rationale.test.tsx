@@ -76,12 +76,13 @@ describe("a synced chip with no rationale", () => {
     const sender = await openSender("");
     const destination = sender.getByRole("button", { name: words.screener.rowMoreAria });
     expect(destination.textContent).toBe(words.screener.pileOhbox);
-    expect(sender.getByText("90% sure")).toBeTruthy();
+    expect(sender.getByTitle(words.screener.place.confidence).textContent).toBe("90%");
     expect(sender.queryAllByText(/^“.*”$/)).toHaveLength(0);
   });
 
   it("the positive control: a rationale that exists is quoted", async () => {
     const sender = await openSender("because");
-    expect(sender.getAllByText("“because”")).toHaveLength(1);
+    expect(sender.getAllByText("because", { exact: true })).toHaveLength(1);
+    expect(sender.queryByText("“because”", { exact: true })).toBeNull();
   });
 });

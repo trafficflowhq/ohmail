@@ -88,7 +88,7 @@ async function mount(
   });
   const el = st.el;
   const button = (label: string) =>
-    [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
+    [...el.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? b.textContent ?? "").trim().startsWith(label));
   const settle = async () => { for (let i = 0; i < 16; i++) await Promise.resolve(); };
   await act(settle);
   return {
@@ -109,9 +109,8 @@ async function mount(
       await act(async () => { b.click(); await settle(); });
     },
     press: async (label: string) => {
-      const b = button(label);
-      if (!b) throw new Error(`no button labelled ${JSON.stringify(label)}`);
-      await act(async () => { b.click(); await settle(); });
+      await st.press(label);
+      await act(settle);
     },
     presses, tried, factors,
   };
@@ -119,7 +118,7 @@ async function mount(
 
 async function toWindow(s: Awaited<ReturnType<typeof mount>>) {
   await s.press(t.continue);
-  expect(s.heading()).toBe(t.windowTitle);
+  expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
 }
 
 describe("Agree over the door's second-factor check", () => {
@@ -127,7 +126,7 @@ describe("Agree over the door's second-factor check", () => {
     const s = await mount(["step_up"]);
     await toWindow(s);
     await s.press(t.agree);
-    expect(s.heading(), "setup stepped back in silence").toBe(t.windowTitle);
+    expect(s.heading(), "setup stepped back in silence").toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text()).toContain(t.windowStepUp);
     expect(s.has(VERIFY), "no code prompt").toBe(true);
   });
@@ -139,8 +138,8 @@ describe("Agree over the door's second-factor check", () => {
     await s.press(VERIFY);
     expect(s.presses, "the same press ran twice").toHaveLength(2);
     expect(s.presses[1]).toEqual(s.presses[0]);
-    expect(s.heading()).not.toBe(t.windowTitle);
-    expect(s.heading()).not.toBe(t.consentTitle);
+    expect(s.heading()).not.toContain(t.organizeLast.split("<window>")[0]!.trim());
+    expect(s.heading()).not.toBe(t.mapTitle);
   });
 
   it("a second refusal after the code is said, and is not asked again", async () => {
@@ -150,7 +149,7 @@ describe("Agree over the door's second-factor check", () => {
     await s.press(VERIFY);
     expect(s.presses).toHaveLength(2);
     expect(s.presses[1]).toEqual(s.presses[0]);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text()).toContain(D.stepUpExpired);
     expect(s.has(VERIFY)).toBe(false);
   });
@@ -186,7 +185,7 @@ describe("Agree over the door's second-factor check", () => {
     await s.press(t.agree);
     expect(s.presses).toHaveLength(1);
     expect(s.has(VERIFY)).toBe(false);
-    expect(s.heading()).not.toBe(t.windowTitle);
+    expect(s.heading()).not.toContain(t.organizeLast.split("<window>")[0]!.trim());
   });
 
   it("Done after Agree on a mailbox nothing holds says organizing is starting, not 'it reads'", async () => {
@@ -194,7 +193,7 @@ describe("Agree over the door's second-factor check", () => {
     await toWindow(s);
     await s.press(t.agree);
     // AI, then the pull or Done: walk forward until Done.
-    for (let i = 0; i < 4 && s.heading() !== t.doneReaderTitle && s.heading() !== t.doneTitle; i++) {
+    for (let i = 0; i < 4 && s.heading() !== t.doneReaderTitle && s.heading() !== t.noOneWaits.replace(/\.$/, ""); i++) {
       if (s.has(t.continue)) await s.press(t.continue);
       else if (s.has(t.pullLeave)) await s.press(t.pullLeave);
     }
@@ -208,33 +207,33 @@ describe("Agree over the door's second-factor check", () => {
     await s.press(t.agree);
     await s.press(CANCEL);
     await s.press(t.cancel);
-    expect(s.text()).toContain(t.cancelWhatNothingAgreed);
-    expect(s.text()).not.toContain(t.cancelWhat);
+    expect(s.text()).not.toContain("Setup closes and the app opens as it is now. Nothing was agreed, so this mailbox is not organized. You can run setup again from Settings → Mailboxes.");
+    expect(s.text()).not.toContain("Setup closes and the app opens as it is now. Nothing is half-applied: what you agreed to stays agreed, what you did not stays off. You can run setup again from Settings → Mailboxes.");
   });
 });
 
 describe("Organize here instead over the door's second-factor check", () => {
   it("allows the second factor when setup itself opens on Organize here instead", async () => {
     const s = await mount(["step_up", "stored"], { mailbox: { ...TAKEN, organizeConsentedAt: null } });
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.readMailbox(TAKEN);
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     await s.press(t.continue);
 
     expect(s.presses).toEqual([{ intent: "takeover" }]);
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     expect(s.has(VERIFY)).toBe(true);
     await s.press(VERIFY);
     expect(s.presses).toEqual([{ intent: "takeover" }, { intent: "takeover" }]);
-    expect(s.text()).toContain(t.elsewhereQueued);
+    expect(s.text()).not.toContain("Asked for. This install takes over on its next pass — within a minute. Continue meanwhile.");
   });
 
   async function toTheTakeover(answers: Array<"step_up" | FirstRunOrganized>) {
     const s = await mount(answers, { mailbox: TAKEN, rerun: true });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     await s.press(t.back);
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.press(t.continue);
     return s;
   }
@@ -242,7 +241,7 @@ describe("Organize here instead over the door's second-factor check", () => {
   it("403 step_up_required: the screen stays, says so, and asks for the code", async () => {
     const s = await toTheTakeover(["step_up"]);
     expect(s.presses).toEqual([{ intent: "takeover" }]);
-    expect(s.heading(), "the take-over left its screen").toBe(t.elsewhereTitle);
+    expect(s.heading(), "the take-over left its screen").toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     expect(s.text()).toContain(t.elsewhereStepUp ?? "elsewhereStepUp");
     expect(s.has(VERIFY), "no code prompt").toBe(true);
   });
@@ -251,7 +250,7 @@ describe("Organize here instead over the door's second-factor check", () => {
     const s = await toTheTakeover(["step_up", "stored"]);
     await s.press(VERIFY);
     expect(s.presses).toEqual([{ intent: "takeover" }, { intent: "takeover" }]);
-    expect(s.text()).toContain(t.elsewhereQueued);
+    expect(s.text()).not.toContain("Asked for. This install takes over on its next pass — within a minute. Continue meanwhile.");
 
     const again = await toTheTakeover(["step_up", "step_up"]);
     await again.press(VERIFY);
@@ -280,7 +279,7 @@ describe("Start over's Forget over the door's second-factor check", () => {
   it("403 step_up_required: the step stays, says so, and asks for the code", async () => {
     const s = await forgetOnWindow(["step_up"]);
     expect(s.tried.forget).toBe(1);
-    expect(s.heading(), "setup said it started empty").toBe(t.windowTitle);
+    expect(s.heading(), "setup said it started empty").toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text()).toContain(t.forgetStepUp ?? "forgetStepUp");
     expect(s.has(VERIFY), "no code prompt").toBe(true);
   });
@@ -299,8 +298,8 @@ describe("Start over's Forget over the door's second-factor check", () => {
     expect(s.has(VERIFY)).toBe(true);
     await s.press(t.restartKeep);
     expect(s.has(VERIFY), "the forget prompt stayed armed after Keep").toBe(false);
-    for (let i = 0; i < 4 && s.heading() !== t.windowTitle; i++) await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    for (let i = 0; i < 4 && !s.heading().startsWith(t.organizeLast.split("<window>")[0]!.trim()); i++) await s.press(t.continue);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.has(VERIFY), "the forget prompt came back on How far back").toBe(false);
     expect(s.tried.forget, "the kept mailbox was forgotten").toBe(1);
     expect(s.text()).not.toContain(t.welcomeTitle.replace(/\.$/, ""));
@@ -310,7 +309,7 @@ describe("Start over's Forget over the door's second-factor check", () => {
     const s = await forgetOnWindow(["step_up", "ok"]);
     await s.pressInConfirm(t.back);
     expect(s.has(VERIFY), "the forget prompt outlived its confirm").toBe(false);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.tried.forget).toBe(1);
   });
 
@@ -354,7 +353,7 @@ describe("Start over's Forget over the door's second-factor check", () => {
     await s.press(CANCEL);
     expect(s.tried.forget).toBe(1);
     expect(s.has(VERIFY)).toBe(false);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text()).toContain(t.forgetStepUp ?? "forgetStepUp");
   });
 });

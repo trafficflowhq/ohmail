@@ -14,7 +14,7 @@ const settle = (): Promise<void> => act(async () => {});
 const open = (address: string): void =>
   void fireEvent.click(screen.getByRole("button", { name: new RegExp(address.replace(".", "\\.")) }));
 const named = (name: string) => screen.queryAllByRole("button", { name });
-const VERBS_THAT_CHANGE = [M.edit, M.remove, M.connect, M.oauthReconnect, M.setupAgainAction, M.organizeHere];
+const VERBS_THAT_CHANGE = [M.edit, M.remove, M.connect, M.oauthReconnect, M.setupAgain, M.organizeHere];
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
@@ -45,7 +45,7 @@ describe("the capability decides what the pane offers", () => {
     expect(named(M.edit)).toHaveLength(1);
     expect(named(M.remove)).toHaveLength(2);
     expect(named(M.connect)).toHaveLength(1);
-    expect(named(M.setupAgainAction)).toHaveLength(1);
+    expect(named(M.setupAgain)).toHaveLength(1);
   });
 
   it("resyncAndOut: no control named edit, remove or connect is in the tree; the re-sync and the way out are", async () => {

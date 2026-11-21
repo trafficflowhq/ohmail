@@ -2,7 +2,7 @@
 
 /**
  * WHICH STREAM CARDS ARE NEAR THE SCREEN — the cards that mount their rendered viewer
- * (`StreamCardMemo.viewer`). Every mounted card used to build one: a sanitize pass and a framed
+ * (the stream card's viewer, `packages/app/src/stream`). Every mounted card used to build one: a sanitize pass and a framed
  * document per card, forty-five frames in the commit a press into News made. Now a card builds
  * its viewer once the stream's lookahead (`StreamShell.onApproach`, one viewport each way) has
  * reported it, and keeps it while it stays mounted; a card the window sheds leaves the set.

@@ -18,10 +18,38 @@
   overflow-y: auto;
 }
 .sc-tools {
+  --oh-soft: var(--soft-sheet);
+
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--oh-layer-raised);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s1);
+  min-block-size: var(--group);
+  padding-inline-end: var(--s3);
+  background: var(--sheet);
+}
+.sc-tool-heading {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  white-space: nowrap;
+}
+.sc-tools > [data-kind] {
+  margin-block-start: var(--s1);
+}
+.sc-tools > [data-bare] {
+  color: var(--ink2);
+}
+:root[data-device="phone"] .sc-tools {
+  padding-inline-end: var(--s2);
+}
+:root[data-device="phone"][data-face="ohmarchy"] .sc-scroll {
+  margin-block-start: var(--ringw);
+}
+:root[data-device="phone"][data-face="ohmarchy"] .sc-tools {
+  padding-inline: var(--s2);
 }
 .sc-sentence-tools {
   display: flex;

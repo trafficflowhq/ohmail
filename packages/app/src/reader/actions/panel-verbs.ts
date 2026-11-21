@@ -34,14 +34,14 @@ export type OpenPanel = Exclude<PanelMenu, "screening"> | "tag" | "confirmDelete
  * read slot gives up its word first, then Forward, then Reply; on a foldable the read slot gives it up before
  * anything folds. On a phone and on the upright foldable Reply all and Tag stand behind More, and on a phone the
  * read slot too. Done leads on a resurfaced letter, with its filing verbs behind More on a phone.
- * Tag stands only where the account has tags.
+ * Tag stands where the reader can assign or create one.
  */
 export function panelVerbs(
   t: ReturnType<typeof useText>,
   words: ActionWords,
   ohbox: ReturnType<typeof useText>,
   verbs: Verbs,
-  tagged: boolean,
+  canTag: boolean,
   toggle: (which: Exclude<OpenPanel, null>) => (at: HTMLElement) => void,
   room: PanelRoom,
   hints: ReturnType<typeof usePanelHints>,
@@ -55,7 +55,7 @@ export function panelVerbs(
     id,
     label: words[id],
     icon,
-    segment: "file",
+    segment: "defer",
     rank,
     behind: done && room === "phone",
     pressed: filed === (id === "later" ? "reply_later" : "set_aside"),
@@ -114,20 +114,19 @@ export function panelVerbs(
       id: "resurface",
       label: words.resurface,
       icon: "resurface",
-      segment: "file",
+      segment: "defer",
       rank: 4,
       behind: done && room === "phone",
       pressed: filed === "bubbled_up",
       ...hints.resurface,
       onPress: toggle("resurface"),
     },
-    ...(tagged
+    ...(canTag
       ? [
           {
             id: "tag",
             label: words.tag,
             icon: "tags" as const,
-            segment: "file",
             apart: done,
             rank: 5,
             behind: compact,
@@ -142,6 +141,7 @@ export function panelVerbs(
             id: "screening",
             label: screening.label,
             icon: "screener" as const,
+            segment: "file",
             rank: 6,
             behind: compact,
             ...hints.screening,
@@ -150,6 +150,7 @@ export function panelVerbs(
           },
         ]
       : []),
+    ...(verbs.moves.length === 0 ? [] : [moveVerb(words.move, compact, hints.move, toggle("move"))]),
     ...readVerb(t, verbs, room, hints.read, conversation),
   ];
 }
@@ -163,6 +164,7 @@ export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean, canA
   const aside = useBinding("e");
   const resurface = useBinding("b");
   const tag = useBinding("t");
+  const move = useBinding("m");
   const screening = useBinding("s");
   const calendar = useBinding("v");
   const read = useBinding(readSlot === "markRead" ? "shift+i" : "u");
@@ -181,6 +183,7 @@ export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean, canA
     aside: hint(aside),
     resurface: hint(resurface),
     tag: hint(tag),
+    move: hint(move),
     screening: hint(screening),
     read: hint(read),
     calendar: hint(calendar),
@@ -216,4 +219,23 @@ function readVerb(
       onPress: () => act("unread"),
     },
   ];
+}
+
+function moveVerb(
+  label: string,
+  compact: boolean,
+  hint: ReturnType<typeof usePanelHints>["move"],
+  onPress: Placed["onPress"],
+): Placed {
+  return {
+    id: "move",
+    label,
+    icon: "move",
+    segment: "file",
+    rank: 7,
+    behind: compact,
+    ...hint,
+    keyHint: hint.keyHint ?? "M",
+    onPress,
+  };
 }

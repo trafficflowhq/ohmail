@@ -5,7 +5,7 @@ import type { OhboxRow as OhboxRowGroup, ThreadMark } from "@ohmail/client-engin
 import type { ListVisit } from "../reading/list-meeting.js";
 import type { MessageAction } from "../press/actions.js";
 import type { ScreeningDest } from "../press/sender-screening.js";
-import type { OhboxListInput, OhboxListModel, OhboxStep } from "./types.js";
+import type { OhboxListInput, OhboxListModel, OhboxStep, TagMenuPoint } from "./types.js";
 
 /** The model's fields a row's verbs answer. */
 export type RowVerbs = Pick<
@@ -111,7 +111,8 @@ export function ohboxRowVerbs(
         };
   const actOn: OhboxListModel["actOn"] = (g, action, ...moveSubject) =>
     onAction(action, g.openTarget, ...moveSubject);
-  const tagRow = (g: OhboxRowGroup, anchor: HTMLElement | null): void => onAddTag(g.openTarget.id, anchor);
+  const tagRow = (g: OhboxRowGroup, anchor: HTMLElement | null, point?: TagMenuPoint): void =>
+    onAddTag(g.openTarget.id, anchor, point);
   const tagPicked = (anchor: HTMLElement | null): void =>
     bulk.tag(pickedIds, anchor ?? input.anchors.pickTag());
   const doneOffered = (g: OhboxRowGroup): boolean =>

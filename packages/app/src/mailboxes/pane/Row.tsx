@@ -3,12 +3,11 @@ import { AccountRow } from "@ohmail/ui/mail";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { drawsTakeover } from "@ohmail/app-logic/mailboxes/pane/organizer";
 import { statusKey } from "@ohmail/app-logic/mailboxes/pane/rows";
-import { providerName, rowStateOf, standingOf } from "@ohmail/app-logic/mailboxes/pane/said";
+import { rowStateOf, standingOf } from "@ohmail/app-logic/mailboxes/pane/said";
 import type { MailboxRow } from "@ohmail/app-logic/mailboxes/pane/types";
 import type { PaneModel } from "@ohmail/app-logic/mailboxes/pane/use-pane";
 import type { PaneVerbs } from "@ohmail/app-logic/mailboxes/pane/verbs";
 import { NONE, type ConnectWire, type None } from "../../host/index.js";
-import { useText } from "../../text/index.js";
 import type { CalendarHalfSlot, ConnectAsk, FactorSlot } from "../connect/contract.js";
 import { RowLines } from "./RowLines.js";
 import { useFigure, useSay, useStamps } from "./say.js";
@@ -38,7 +37,6 @@ export interface RowProps {
 export function Row(props: RowProps): ReactNode {
   const { m, model, verbs } = props;
   const say = useSay();
-  const picker = useText("providerPicker");
   const stamps = useStamps();
   const figure = useFigure();
   const state = rowStateOf(m, {
@@ -50,16 +48,24 @@ export function Row(props: RowProps): ReactNode {
     queued: model.acts.queued.has(m.id),
     importingSole: props.importingSole,
   });
-  const provider = providerName(m) ?? picker("otherLabel");
+  const standing = standingOf(m);
   const counted = typeof m.messageCount === "number" && !m.erasure;
   const facts = [
     ...(state.kind === "none" ? [] : [state.text]),
-    provider,
     ...(counted ? [say({ key: "messageCount", values: { count: m.messageCount! } })] : []),
+    ...(standing.organizerBlock && !standing.stranded
+      ? [say({ key: props.filer === "cloud" ? "organizerNameCloud" : "organizerNameServer" })]
+      : []),
   ];
-  const standing = standingOf(m);
   const released = standing.standDown === "released" && verbs.organize && drawsTakeover(m);
   const name = displayAddress(m.address);
+  const stateKey = m.erasure
+    ? "status_erasing"
+    : m.syncBlockedReason === "mailbox_full"
+      ? "status_full"
+      : m.status === "error" && m.errorCode === "imap_auth"
+        ? "status_auth"
+        : statusKey(m);
   const gate = model.gated.state;
   /* The take-over is under way after its own press; once the server took it, the press is spent until the row's role moves. */
   const running = gate.at === "trying" && gate.act.verb === "organize" && gate.act.id === m.id;
@@ -74,7 +80,7 @@ export function Row(props: RowProps): ReactNode {
       name={name}
       address={m.address}
       facts={facts}
-      state={say({ key: statusKey(m) })}
+      state={say({ key: stateKey })}
       {...(released ? { offer } : {})}
       expanded={props.open}
       onToggle={props.onToggle}

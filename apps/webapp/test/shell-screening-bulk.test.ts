@@ -169,7 +169,7 @@ const barLabels = (): string[] => barButtons().map((b) => (b.textContent ?? "").
 /** A bar control by the START of its label — the labels carry keycaps and arrows. */
 const barButton = (label: string): HTMLButtonElement | undefined =>
   barButtons().find((b) => (b.textContent ?? "").trim().startsWith(label));
-/** A place Screening's question offers, by its name: the question is titled "screen to", as Move's is "move to". */
+/** A place Screening's question offers, by its name: the question is titled "Screen to", as Move's is "Move". */
 const screenTo = (place: string): HTMLButtonElement | undefined =>
   [...document.querySelectorAll<HTMLButtonElement>(`[role=dialog][aria-label="${messages.ohbox.bar.screenTo}"] [role=menuitem]`)]
     .find((b) => (b.textContent ?? "").trim().startsWith(place));
@@ -412,7 +412,7 @@ describe("a sender's screening, from a list row", () => {
       const sheet = within(within(document.body).getByRole("dialog", { name: sheetName }));
       await click(sheet.getByRole("radio", { name: /^News/ }));
       await act(async () => { await vi.advanceTimersByTimeAsync(250); });
-      expect(reportSays()).toContain("goes there, and so does future mail.");
+      expect(reportSays()).toContain("goes there, and so does future mail");
       const moves = () => writes.filter((path) => path.endsWith("/move"));
       expect(moves()).toEqual(["/api/messages/opened-letter/move"]);
       expect(ruleWrites).toEqual([]);
@@ -426,7 +426,7 @@ describe("a sender's screening, from a list row", () => {
       expect(writes.filter((path) => path.startsWith("/api/screener"))).toEqual([]);
       expect(moves()).toEqual(["/api/messages/opened-letter/move"]);
       expect(reportSays()).toContain("1 is in News · 1 is still in Ohbox.");
-      expect(reportSays()).toContain("ohmail is applying the rule to the rest of their mail in your mailbox.");
+      expect(reportSays()).toContain("ohmail is applying the rule to the rest of their mail in your mailbox");
     }, "backlog");
   });
 
@@ -470,7 +470,7 @@ describe("a sender's screening, from a list row", () => {
       };
       expect(ruleWrites).toEqual([creation]);
       const settled = `The 1 message from ${personalAt("fixture.ada", "sender.example")} is in Ohbox.`;
-      expect(reportSays()).toBe(settled);
+      expect(reportSays()).toBe(settled.replace(/\.$/u, ""));
 
       await pressOhbox();
       expect(ruleWrites).toEqual([creation]);
@@ -480,10 +480,10 @@ describe("a sender's screening, from a list row", () => {
         body: expect.objectContaining({ destination: "INBOX", applyRetro: true }),
       })]);
       expect(reportSays()).toContain("a rule was already sending their future mail there.");
-      expect(reportSays()).toContain("ohmail is now applying it to the mail it has already filed for you.");
+      expect(reportSays()).toContain("ohmail is now applying it to the mail it has already filed for you");
       const rearmed = [...ruleWrites];
       await finishBacklog();
-      expect(reportSays()).toBe(settled);
+      expect(reportSays()).toBe(settled.replace(/\.$/u, ""));
       expect(ruleWrites).toEqual(rearmed);
       expect(writes.filter((path) => path.endsWith("/move"))).toEqual([]);
     }, "new-rule");
@@ -571,7 +571,7 @@ describe("marking a selection read is ONE request", () => {
     await key("x");
     await click(barButton("Read")); // the read PAIR's first direction — "Read | Unread"
     expect(saying(), "one sentence, not N").toHaveLength(1);
-    expect(said()).toContain("2 messages");
+    expect(said()).toContain("2 · Read");
   });
 
   it("u marks a message unread and the 2 s dwell does NOT undo it", async () => {
@@ -702,9 +702,8 @@ describe("a selection offers the verbs a single message does", () => {
       .toEqual(["ohmail/News"]);
     expect(new Set(moves.map((m) => m.messageId)).size, "one message was moved twice").toBe(3);
 
-    // One sentence for the whole press, counting both.
-    expect(said())
-      .toMatch(/Mail from [1-9]\d* senders? now goes to News — [1-9]\d* messages? moved\./);
+    expect(saying(), "one report for the selection").toHaveLength(1);
+    expect(said()).toContain("3 · News");
   });
 
   /**
@@ -772,7 +771,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await pick(2);
     await click(barButton("Screening"));
     await click(screenTo("News"));
-    expect(confirmRow()).toContain("No rule is made");
+    expect(confirmRow()).toContain("and no rule is made.");
     expect(confirmRow()).not.toContain("There is no undo");
   });
 
@@ -811,7 +810,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await click(barButton("Screening"));
     await click(screenTo("Ohbox"));
 
-    expect(confirmRow()).toContain("already in Ohbox");
+    expect(confirmRow()).toContain("Already there.");
     expect(barButton("Screen them")?.disabled, "an inert action was offered as live").toBe(true);
 
     sent = [];
@@ -872,7 +871,6 @@ describe("tags over a selection", () => {
     });
     await mountShell();
     await pick(2);
-    const firstPicked = pickedRows()[0]!.dataset.id;
     await click(barButton("Tag"));
     const empty = within(within(document.body).getByRole("menu", { name: messages.tag.pickerAria }));
     expect(empty.queryAllByRole("menuitemcheckbox")).toEqual([]);
@@ -881,8 +879,8 @@ describe("tags over a selection", () => {
       fireEvent.change(empty.getByRole("textbox", { name: messages.tag.pickerPlaceholder }), { target: { value: name } });
     });
     sent = [];
-    await click(empty.getByRole("menuitem", { name: `Create “${name}”` }));
-    expect(kinds("tag_assign")).toEqual([expect.objectContaining({ messageId: firstPicked, assigned: true, createName: name })]);
+    expect(empty.queryByRole("menuitem", { name: `Create “${name}”` })).toBeNull();
+    expect(kinds("tag_assign")).toEqual([]);
 
   });
 });

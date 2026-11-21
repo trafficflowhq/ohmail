@@ -58,7 +58,7 @@ describe("the server render, where there is no sanitizer", () => {
     expect(out).not.toContain(`src="${OWNER_TRACKING_PIXEL}"`);
     // The words the reader can have, plus a line saying which rendition this is.
     expect(out).toContain("Your organization has reached its usage credits spend limit");
-    expect(out).toContain("Showing the plain-text version of this message.");
+    expect(out).toContain("You are reading this message&#x27;s plain text.");
     // No frame either: an empty `srcdoc` frame server-rendered and then replaced on hydration
     // is a flash of nothing where the message should be.
     expect(out).not.toContain("<iframe");
@@ -69,6 +69,6 @@ describe("the server render, where there is no sanitizer", () => {
       React.createElement(MessageBody, { owner: null, text: "First.\n\nSecond.", html: null }),
     );
     expect(out).toContain('class="msg-p msg-plain"');
-    expect(out).not.toContain("Showing the plain-text version");
+    expect(out).not.toContain("You are reading this message's plain text.");
   });
 });

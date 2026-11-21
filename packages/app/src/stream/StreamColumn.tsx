@@ -1,6 +1,6 @@
 /**
  * THE STREAM: one sheet per item on the reading column's ground, the line "Seen up to here" between new and seen,
- * the action panel of the item last opened at the column's foot. The read rule listens on this scroller alone
+ * the focused item's actions at the column's foot. The read rule listens on this scroller alone
  * (`@ohmail/app-logic/streams`). The item's words are the engine's plain text, a stand-in until the reader hands
  * its own letter: no anchor, nothing that opens by itself. Each item is clipped until it is pressed: a press on it
  * opens it whole, its Expand and Collapse open and shut it; on a phone's width its control is Read in full and the
@@ -24,6 +24,7 @@ import { useHoldForReply, useStreamClips, useStreamViewport } from "./use-stream
 
 import type { RowSelection } from "../place-list/use-row-selection.js";
 import { StreamItem } from "./StreamItem.js";
+import { StreamBackToTop } from "./StreamBackToTop.js";
 import { StreamReplyContext } from "./StreamAbove.js";
 
 interface StreamColumnProps {
@@ -39,7 +40,8 @@ export function StreamColumn(props: StreamColumnProps) {
 }
 
 function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
-  const state = useStreamColumnModel({ phone, keysHere });
+  const showActions = !selection?.active;
+  const state = useStreamColumnModel({ phone, keysHere, showActions });
   const {
     model,
     t,
@@ -47,7 +49,6 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
     locale,
     now,
     lineStamp,
-    host,
     commands,
     reader,
     reply,
@@ -68,7 +69,7 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
   // On a phone the opening slice can paint early if it is where the visit starts.
   const drawCards = armed || (phone && !restores);
   const shown = drawCards ? model.items.slice(start, end) : [];
-  const panel = streamPanel(state, phone);
+  const panel = streamPanel(state, phone, showActions);
   return (
     <Sheet
       kind="reading"
@@ -77,6 +78,10 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
       manualScrollAnchor={shown.length > 0}
       extendTop={!phone}
       foot={panel}
+      coverFoot
+      jump={
+        <StreamBackToTop scroller={model.scroller} keysHere={keysHere} onPress={() => backToTop(model)} />
+      }
     >
       <div
         ref={column}
@@ -134,6 +139,7 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
                 enter={model.read.enter}
                 hydrateOpened={model.hydrateOpened}
                 setWhole={clip.set}
+                markUnread={model.markUnread}
                 conversation={conversation}
               />
               {replyHost === m.id ? reply?.sheet(panelKeys && actionId === m.id) : null}
@@ -144,37 +150,57 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
           <div aria-hidden data-stream-tail style={{ height: padBottomPx }} />
         ) : null}
       </div>
-      {armed &&
-      model.place === "receipts" &&
-      host.features.places.search !== NONE &&
-      model.items.length > 0 &&
-      end === model.items.length ? (
-        <Button kind="quiet" size="s" onPress={() => commands.go({ place: "search" })}>
-          {t("search.older")}
-        </Button>
-      ) : null}
+      {phone ? olderReceiptsLink(state) : null}
     </Sheet>
   );
 }
 
-function streamPanel(state: ReturnType<typeof useStreamColumnModel>, phone: boolean) {
-  const { model, reader, panelId, panelKeys, actionId, keyboardOpened, whole, inline, replyHost, showPanel } =
-    state;
-  return reader !== NONE && panelId !== null && (!phone || inline) ? (
+function backToTop(model: StreamModel): void {
+  model.read.moved();
+  model.read.own(() => model.scroller?.scrollTo({ top: 0, behavior: "instant" }));
+}
+
+function olderReceiptsLink({ model, host, viewport, commands, t }: ReturnType<typeof useStreamColumnModel>) {
+  return viewport.armed &&
+    model.place === "receipts" &&
+    host.features.places.search !== NONE &&
+    model.items.length > 0 &&
+    viewport.end === model.items.length ? (
+    <div className="st-search-tail">
+      <Button kind="quiet" size="s" icon="search" onPress={() => commands.go({ place: "search" })}>
+        {t("search.older")}
+      </Button>
+    </div>
+  ) : null;
+}
+
+function streamPanel(state: ReturnType<typeof useStreamColumnModel>, phone: boolean, visible: boolean) {
+  const { model, reader, panelId, panelKeys, actionId, keyboardOpened, whole, canAnswerFromPanel } = state;
+  return reader !== NONE && panelId !== null && visible ? (
     <reader.Actions
       messageId={panelId}
       deleteKeyId={model.openId ?? panelId}
       canDeleteKey={model.canDeleteKey}
       canAnswerKey={model.canAnswerKey}
+      watchAnswerKey={model.scroll.watchPosition}
       keysHere={panelKeys && actionId !== null}
       focus={keyboardOpened?.id === panelId && whole.has(panelId)}
-      showPanel={showPanel}
+      room={phone ? "phone" : undefined}
+      canAnswerFromPanel={canAnswerFromPanel}
       markUnread={model.markUnread}
     />
   ) : undefined;
 }
 
-function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: boolean }) {
+function useStreamColumnModel({
+  phone,
+  keysHere,
+  showActions,
+}: {
+  phone: boolean;
+  keysHere: boolean;
+  showActions: boolean;
+}) {
   const model = useStreamModel();
   const t = useStreamText(model.place);
   /* The blank of an empty stream is the Ohbox's own word, "All read". */
@@ -182,16 +208,15 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
   const locale = useLocale();
   const { host, commands, route } = useFrame();
   const now = useDayClock(null, useTimeZone());
-  const lineStamp =
-    model.place === "news" && model.lineAt ? lineStampOf(model.lineAt, now, locale) || undefined : undefined;
+  const lineStamp = model.lineAt ? lineStampOf(model.lineAt, now, locale) || undefined : undefined;
   const reader = host.features.reader;
-  const { actionId } = model;
   const inline = phone && keysHere && model.addressedId !== null;
   const panelKeys = phone ? inline : keysHere;
   const reply = useContext(StreamReplyContext);
   useHoldForReply(model, reply);
   const [replyCard, setReplyCard] = useState<HTMLDivElement | null>(null);
   const replyHost = !phone || inline ? (reply?.messageId ?? null) : null;
+  const actionId = replyHost ?? model.actionId;
   useSelectionBar(inline && reader !== NONE);
   useOptionalKeyBindings(
     inline && replyHost === null
@@ -237,14 +262,18 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
     route.open === null && restored !== null && whole.has(restored) && scroll.onScreen(restored)
       ? restored
       : null;
-  const panelId = actionId ?? fallback;
-  const showPanel =
-    panelId !== null &&
-    collapsedAction !== panelId &&
-    (model.actionVisit || whole.has(panelId) || replyHost === panelId);
+  const addressedPanelId = actionId ?? fallback;
+  const panelId = actionId ?? fallback ?? model.standingId;
+  const canAnswerFromPanel =
+    addressedPanelId !== null &&
+    collapsedAction !== addressedPanelId &&
+    (model.actionVisit || whole.has(addressedPanelId) || replyHost === addressedPanelId);
   useEffect(() => {
-    toolbar.current = showPanel ? panelId : null;
-  }, [toolbar, panelId, showPanel]);
+    toolbar.current = showActions && reader !== NONE ? panelId : null;
+    return () => {
+      toolbar.current = null;
+    };
+  }, [toolbar, panelId, reader, showActions]);
 
   return {
     model,
@@ -259,11 +288,10 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
     reply,
     replyHost,
     setReplyCard,
-    inline,
     panelKeys,
     actionId,
     panelId,
-    showPanel,
+    canAnswerFromPanel,
     keyboardOpened,
     whole,
     clip,

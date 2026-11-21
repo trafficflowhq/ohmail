@@ -36,7 +36,7 @@
     "discardRefusedUnnamed": "Das hat nicht geklappt, und der Server hat nicht gesagt warum. Der Entwurf liegt weiter hier.",
     "discardQueued": "Noch nicht verworfen: Dieser Browser konnte deinen Account nicht erreichen. Wir versuchen es weiter.",
     "discardAwaitingOrganizer": "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn beim nächsten Durchlauf.",
-    "emptyTitle": "Nichts halb Geschriebenes",
+    "emptyTitle": "Keine Entwürfe",
     "emptyHint": "Fang eine Nachricht an — nach einem Moment liegt sie hier, auf diesem Gerät und auf allen anderen.",
     "scheduledTitle": "Geplant",
     "scheduledWhen": "Wird gesendet: {when}",
@@ -55,6 +55,8 @@
     "heldItWasSent": "Es wurde gesendet",
     "reportDiscarded": "Verworfen",
     "reportUndo": "Rückgängig",
-    "listMenu": "Liste"
+    "listMenu": "Liste",
+    "emptyWrite": "Schreiben",
+    "heldLabel": "Unbestätigt"
   }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import type { EngineMessage } from "@ohmail/wire";
-import { isOwnOutbound } from "@ohmail/client-engine";
+import { threadMarkOf } from "@ohmail/client-engine";
 
 /**
  * THE OPEN CONVERSATION'S PLACE, shared by its two sets of squares: the column beside the reader
@@ -39,9 +39,8 @@ export interface ThreadWalkChannel {
   clear(): void;
 }
 
-const kindOf = (m: EngineMessage): string => (m.unread ? "u" : isOwnOutbound(m) ? "m" : "r");
 const keyOf = (s: ThreadWalkSnapshot): string =>
-  `${s.messages.map((m) => `${m.id}:${kindOf(m)}`).join(" ")}|${s.here ?? ""}|${s.openedId ?? ""}`;
+  `${s.messages.map((m) => `${m.id}:${threadMarkOf(m)}`).join(" ")}|${s.here ?? ""}|${s.openedId ?? ""}`;
 
 export function createThreadWalkChannel(): ThreadWalkChannel {
   let snap: ThreadWalkSnapshot | null = null;

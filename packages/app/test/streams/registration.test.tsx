@@ -136,14 +136,51 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
       search: hitAt("receipts", "n1"),
     });
     const stream = screen.getByRole("region", { name: "Receipts stream" });
-    fireEvent.click(within(stream).getByRole("button", { name: "Older in Search" }));
+    expect(within(stream).queryByRole("button", { name: "Older in Search" })).toBeNull();
+    const list = screen.getByRole("region", { name: "Receipts" });
+    fireEvent.click(within(list).getByRole("button", { name: "Older in Search" }));
     expect(address.read()).toMatch(/^#\/search/);
   });
 
   it("offers older receipts only when the host mounts Search", () => {
     mountStream({ place: "receipts", input: streamInput(LETTERS, said()) });
-    const stream = screen.getByRole("region", { name: "Receipts stream" });
-    expect(within(stream).queryByRole("button", { name: "Older in Search" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Older in Search" })).toBeNull();
+  });
+
+  it("shows the same time on the Receipts waterline in both columns", () => {
+    const input = streamInput(LETTERS, said(), { fresh: 2 });
+    const waterline = { ...input.partition.waterline!, at: "2026-11-09T17:40:00.000Z" };
+    mountStream({ place: "receipts", input: { ...input, partition: { ...input.partition, waterline } } });
+    const label = { name: /Seen up to here/ };
+    const stamp = (region: string) =>
+      within(screen.getByRole("region", { name: region })).getByRole("heading", label).textContent;
+    expect(stamp("Receipts")).toMatch(/\d{2}:40/);
+    expect(stamp("Receipts stream")).toBe(stamp("Receipts"));
+  });
+
+  it.each(["news", "receipts"] as const)(
+    "keeps Mark all read disabled in the clear %s list menu",
+    (place) => {
+      const seen = said();
+      mountStream({ place, input: streamInput([], seen) });
+      fireEvent.click(screen.getByRole("button", { name: "List" }));
+      const action = screen.getByRole("menuitem", { name: "Mark all read" });
+      expect(action.matches(':disabled, [aria-disabled="true"]')).toBe(true);
+      fireEvent.click(action);
+      expect(seen.all).toEqual([]);
+    },
+  );
+
+  it("puts Older in Search at the end of the phone stream", () => {
+    const { address } = mountStream({
+      place: "receipts",
+      input: streamInput(LETTERS, said()),
+      search: hitAt("receipts", "n1"),
+      window: fakeWindow("phone"),
+    });
+    const stream = within(screen.getByRole("region", { name: "Receipts stream" }));
+    fireEvent.click(stream.getByRole("button", { name: "Older in Search" }));
+    expect(address.read()).toMatch(/^#\/search/);
   });
 
   it("an empty stream says All read in its reading column, as the reference draws it, in both languages", () => {
@@ -222,11 +259,16 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
     expect(seen.all).toEqual([[]]);
   });
 
-  it("offers no Mark all read with nothing unread and no row above the line", () => {
+  it("keeps Mark all read disabled when all rows are below the line and read", () => {
     const read = LETTERS.map((m) => ({ ...m, unread: false }));
-    mountStream({ place: "news", input: streamInput(read, said(), { fresh: 0 }) });
+    const seen = said();
+    mountStream({ place: "news", input: streamInput(read, seen, { fresh: 0 }) });
     const head = within(screen.getByRole("region", { name: "News" })).getByRole("banner");
-    expect(within(head).queryByRole("button", { name: "List" })).toBeNull();
+    fireEvent.click(within(head).getByRole("button", { name: "List" }));
+    const action = screen.getByRole("menuitem", { name: "Mark all read" });
+    expect(action.matches(':disabled, [aria-disabled="true"]')).toBe(true);
+    fireEvent.click(action);
+    expect(seen.all).toEqual([]);
   });
 
   it("says nothing of the pile while the mailbox is not settled", () => {

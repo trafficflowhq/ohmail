@@ -10,7 +10,7 @@ import {
 import { FIXED_NOW, makeDeps, seedMailbox, seedScreenerHeld, seedSession } from "../../../packages/api/test/helpers.js";
 import en from "../../../packages/app/messages/screener.en.json";
 import de from "../../../packages/app/messages/screener.de.json";
-import { NO_RUN, suggestionWords } from "@ohmail/app-logic/screener";
+import { NO_RUN, senderCheckSentence, suggestionWords } from "@ohmail/app-logic/screener";
 
 /**
  * THE "DID NOT CONFIRM" LINE NAMES WHAT THE ADDRESS SAYS — from the real route, through the mirror,
@@ -63,8 +63,8 @@ async function mirrorOf(letters: ReadonlyArray<{ from: string; verdict: string |
       expect(message!.senderCheck ?? null).toBeNull();
       return null;
     }
-    const said = suggestionWords(sender, NO_RUN).lines.find((word) => word.key.startsWith("senderCheck."));
-    return said === undefined ? null : t(said.key, said.values);
+    expect(suggestionWords(sender, NO_RUN).lines).toEqual([]);
+    return sender.checked?.reason === "unverified" ? senderCheckSentence(t, sender.checked) : null;
   };
   return { waiting, line };
 }

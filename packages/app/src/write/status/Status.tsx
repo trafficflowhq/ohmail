@@ -74,6 +74,7 @@ export function Status({
   if (where === null || (at !== "one" && at !== where)) return null;
   if (locked !== null) return <SendStatus place="top">{locked}</SendStatus>;
   const line = beside.sendLine(send, sendingLong(send))!;
+  if (line.key === "statusSending") return null;
   const place = at === "one" ? "top" : where;
   const offline = send.phase === "queued" && send.accepted !== true && !beside.online();
   const words = offline ? t("status.offline") : statusWords(t, line.key, beside);

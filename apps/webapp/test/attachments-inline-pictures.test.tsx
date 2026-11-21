@@ -23,7 +23,7 @@ import { useMessageAttachments } from "@ohmail/app-logic/reader/attachments";
  *
  * ── WHY THIS MOUNTS BOTH COMPONENTS ─────────────────────────────────────────────────────
  *
- * The harness below is `MessagePane`'s own wiring — the strip fed by the shell hook's `itemsOf`
+ * The harness below is the shared Reader's own wiring — the strip fed by the shell hook's `itemsOf`
  * with `{ includeInlineParts: true }`, beside the body that renders the same message — so the
  * assertions are about what a reader gets, not about the engine's filter in isolation.
  */
@@ -43,7 +43,7 @@ afterEach(async () => {
   host = null;
 });
 
-/** `MessagePane`'s wiring of the two components, copied verbatim. */
+/** The shared Reader's wiring of the two components, copied verbatim. */
 function Harness({ engine, messageId, text, html }: {
   engine: OhmailEngine;
   messageId: string;

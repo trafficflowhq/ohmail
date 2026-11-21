@@ -274,7 +274,6 @@ describe("a reply, written inside its thread", () => {
 });
 
 describe("a reply's send, with the send held on the wire", () => {
-  const said = (): string => screen.queryAllByRole("status").map((n) => n.textContent ?? "").join(" | ");
   function holdTheSend(s: DraftShell): () => void {
     let release!: () => void;
     s.sendGate.wait = new Promise<void>((r) => { release = r; });
@@ -301,9 +300,8 @@ describe("a reply's send, with the send held on the wire", () => {
       const release = holdTheSend(s);
       await press(within(reader()).getByRole("button", { name: "Send" }), "Send");
       await waitFor(() => sends(s).length === 1, "the send on the wire");
-      /* The send line's words: the new Write's one send line (its catalogue's \`write.status.sending\`). */
-      const onItsWay = (): boolean => said().includes(messages.write.status.sending);
-      await waitFor(onItsWay, "the notice slot says the reply is on its way");
+      const onItsWay = (): boolean => within(reader()).queryByRole("button", { name: "Send", busy: true }) !== null;
+      await waitFor(onItsWay, "the Send button reports the reply is on its way");
       await act(async () => { release(); });
       await waitFor(() => !onItsWay(), "the send answered");
       await rounds(10);

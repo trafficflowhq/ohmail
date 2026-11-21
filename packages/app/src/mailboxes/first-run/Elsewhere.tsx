@@ -4,13 +4,13 @@
  * holder. A holder that stopped checking in takes the stopped twin of every sentence.
  */
 import type { ReactNode } from "react";
-import { Page, RadioLines, Sentence } from "@ohmail/ui/base";
-import { SettingLine, SettingNote } from "@ohmail/ui/mail";
+import { Page, RadioLines, Sentence, Tag } from "@ohmail/ui/base";
+import { SettingLine } from "@ohmail/ui/mail";
 import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 import { holderName } from "@ohmail/app-logic/mailboxes/first-run/rules";
 import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
 import { holderSentence, readerHolder } from "@ohmail/app-logic/reading/reader-holder";
-import { Foot, Next, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
+import { Next, StepForm, refusalOf, stepTop, type StepProps } from "./parts.js";
 import { HOLDER_MANAGED, type Say } from "./words.js";
 
 /** Who holds the mailbox, as a label and a sentence: the elsewhere screen's and the reader summary's, one table. */
@@ -59,59 +59,37 @@ export function Elsewhere({ run, say, service }: StepProps): ReactNode {
     managed: HOLDER_MANAGED[service],
     stopped,
   });
-  const title = say(stopped ? "onboarding.elsewhereTitleStopped" : "onboarding.elsewhereTitle");
+  const title = say(stopped ? "onboarding.elsewhereSayStopped" : "onboarding.elsewhereSay", { name });
   return (
     <StepForm run={run} submit={run.acts.answerClaim}>
       <Page
-        line={leadOf(say(stopped ? "onboarding.elsewhereLeadStopped" : "onboarding.elsewhereLead"))}
+        {...stepTop(run, say, { back: true })}
+        trail={run.mailbox === null ? undefined : <Tag>{run.mailbox.address}</Tag>}
         refusal={refusalOf(run, say)}
         material={
-          <div className="mbx-run-material">
-            <SettingLine label={label} />
-            <SettingNote>{line}</SettingNote>
-            <RadioLines<"here" | "read" | "">
-              label={title}
-              value={run.agree.choice ?? ""}
-              onChange={(v) => {
-                if (v !== "") run.agree.choose(v);
-              }}
-              options={[
-                {
-                  value: "here",
-                  label: say(
-                    stopped ? "onboarding.elsewhereChoiceHereStopped" : "onboarding.elsewhereChoiceHere",
-                  ),
-                  note: say(
-                    stopped
-                      ? "onboarding.elsewhereChoiceHereStoppedWhy"
-                      : "onboarding.elsewhereChoiceHereWhy",
-                    { name },
-                  ),
-                },
-                {
-                  value: "read",
-                  label: say("onboarding.elsewhereChoiceRead"),
-                  note: stopped
-                    ? say("onboarding.elsewhereChoiceReadStoppedWhy")
-                    : say("onboarding.elsewhereChoiceReadWhy", { name }),
-                },
-              ]}
-            />
-            {run.agree.claimed ? <SettingNote>{say("onboarding.elsewhereQueued")}</SettingNote> : null}
-          </div>
-        }
-        acts={
-          <Foot
-            run={run}
-            say={say}
-            back
-            primary={<Next label={say("onboarding.continue")} disabled={run.agree.choice === null} />}
+          <RadioLines<"here" | "read" | "">
+            label={title}
+            value={run.agree.choice ?? ""}
+            onChange={(value) => {
+              if (value !== "") run.agree.choose(value);
+            }}
+            options={[
+              {
+                value: "here",
+                label: say(
+                  stopped ? "onboarding.elsewhereChoiceHereStopped" : "onboarding.elsewhereChoiceHere",
+                ),
+              },
+              { value: "read", label: say("onboarding.elsewhereChoiceRead") },
+            ]}
           />
         }
+        acts={<Next label={say("onboarding.continue")} disabled={run.agree.choice === null} />}
       >
         <Sentence size="xl" level={1} end="hot">
           {title}
         </Sentence>
+        <SettingLine label={label} value={line} />
       </Page>
     </StepForm>
   );

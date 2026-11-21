@@ -11,16 +11,34 @@ import { useFrame } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
 import { useText } from "../../text/index.js";
 import type { RowProps } from "./Row.js";
-import { useSay, useStamps } from "./say.js";
+import { useStamps } from "./say.js";
 
 /** The check against the mail server, one press and one sentence back; and the filings that wait, with their two presses. */
 export function Checks(props: RowProps): ReactNode {
   const { m, model, verbs } = props;
-  const say = useSay();
   const t = useText("mailboxes");
   const checks = useSelfChecks(model.wire.selfCheck);
   const press = checks.press(m.id);
-  const sentence = selfCheckPressSentence((key, values) => t(key, values), press, selfCheckWaiting(m));
+  const stamps = useStamps();
+  const waiting = selfCheckWaiting(m);
+  const report = selfCheckPressSentence((key, values) => t(key, values), press);
+  const settled = press.k === "read" && report === t("selfCheckInStep");
+  const time = settled && press.check.checkedAt ? stamps.when(press.check.checkedAt, model.list.now) : "";
+  const value =
+    press.k === "busy"
+      ? t("checkBusy")
+      : settled
+        ? time
+          ? t("checkInStepAt", { time })
+          : t("checkInStep")
+        : press.k === "rest"
+          ? t("checkNotRun")
+          : undefined;
+  const sentence = settled
+    ? waiting > 0
+      ? t("selfCheckWaiting", { count: waiting })
+      : null
+    : selfCheckPressSentence((key, values) => t(key, values), press, waiting);
   // A block shown in this visit stays to say what its press did, after its filings have cleared.
   const waits = filingWaits(m);
   const [kept, setKept] = useState(false);
@@ -29,9 +47,9 @@ export function Checks(props: RowProps): ReactNode {
   }, [waits]);
   return (
     <>
-      <SettingLine label={say({ key: "selfCheckTitle" })}>
+      <SettingLine label={t("mailServerCheck")} value={value} valueStatus>
         <Button kind="quiet" size="s" disabled={press.k === "busy"} onPress={() => checks.run(m.id)}>
-          {say({ key: press.k === "busy" ? "selfCheckChecking" : "selfCheckAction" })}
+          {t("checkAction")}
         </Button>
       </SettingLine>
       {sentence !== null ? (

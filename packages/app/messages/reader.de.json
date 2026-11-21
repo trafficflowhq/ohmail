@@ -15,15 +15,15 @@
       "none": "Nichts geöffnet"
     },
     "key": {
-      "reply": "In der Nachricht antworten",
-      "replyAll": "Allen auf der Nachricht antworten",
-      "forward": "Nachricht weiterleiten",
-      "answerLater": "Für die Antwortrunde vormerken",
-      "park": "Parken (aus dem Weg, aber weiter da)",
-      "resurface": "Später wieder auftauchen lassen",
-      "move": "An einen anderen Ort verschieben",
-      "deleteAsk": "Löschen — fragt zuerst",
-      "deleteKey": "In den Papierkorb verschieben"
+      "reply": "Antworten",
+      "replyAll": "Allen antworten",
+      "forward": "Weiterleiten",
+      "answerLater": "Später",
+      "park": "Parken",
+      "resurface": "Wieder auftauchen",
+      "move": "Verschieben",
+      "deleteAsk": "In den Papierkorb",
+      "deleteKey": "In den Papierkorb"
     },
     "verb": {
       "reply": "Antworten",
@@ -52,19 +52,17 @@
       "prevMonth": "Vormonat",
       "nextMonth": "Nächster Monat",
       "month": "{month, date, ::MMMMyyyy}",
-      "weekday": "{day, date, ::EEEEE}",
-      "skip": "{horizon}: {booked}, die Uhren überspringen {asked} in dieser Nacht."
+      "weekday": "{day, date, ::EEEEE}"
     },
     "toast": {
-      "queued": "In „Später antworten“ vorgemerkt",
+      "queued": "Später",
       "aside": "Geparkt",
-      "unqueued": "Aus „Später antworten“ entfernt",
+      "unqueued": "Aus Später entfernt",
       "unparked": "Nicht mehr geparkt",
-      "resurfaces": "Taucht {when} wieder auf",
-      "resurfaceNow": "Wieder ganz oben"
+      "resurfaces": "{when}",
+      "resurfaceNow": "Wieder aufgetaucht"
     },
     "squares": "{count} Nachrichten, {unread, plural, =0 {alle gelesen} other {# ungelesen}}",
-    "protected": "Diese Nachricht enthält einen Bestätigungscode. Er wird hier nicht gezeigt.",
     "from": "Von",
     "sent": "Gesendet",
     "views": "Wie dieser Brief erscheint",
@@ -81,7 +79,8 @@
       "you": "dich",
       "youSender": "Du",
       "yesterday": "gestern {time}",
-      "menu": "Nachricht"
+      "menu": "Nachricht",
+      "sensitive": "Bestätigungscode · von KI ausgenommen"
     }
   },
   "body": {
@@ -197,10 +196,10 @@
     "sheetCaption": "Stylesheet blockiert",
     "show": "Bilder anzeigen",
     "frameTitle": "Nachrichteninhalt",
-    "unsupported": "Hier steht die Nur-Text-Fassung dieser Nachricht.",
+    "unsupported": "Du liest den Klartext dieser Nachricht.",
     "sheetOne": "Ein externes Stylesheet wurde blockiert, diese Nachricht kann also schlicht aussehen.",
     "sheetMany": "{n} externe Stylesheets wurden blockiert, diese Nachricht kann also schlicht aussehen.",
-    "oversize": "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Hier steht die Nur-Text-Fassung.",
+    "oversize": "Das Layout dieser Nachricht ist zu groß für eine sichere Darstellung. Du liest den Klartext.",
     "picture": "Bild",
     "darkOriginal": "Original",
     "darkAdapt": "An Dunkel anpassen",
@@ -212,7 +211,8 @@
     "plainTitle": "Diese Nachricht als Text in der Schrift der App anzeigen",
     "linkAskTitle": "Diesen Link öffnen?",
     "linkAskElsewhere": "Der Text dieses Links nennt eine andere Website.",
-    "linkAskGoes": "Er führt zu {host}.",
+    "linkAskGoes": "Dieser Link führt zu {host}.",
+    "linkAskHeading": "Dieser Link führt zu {host}",
     "linkAskOpen": "{host} öffnen",
     "linkAskCancel": "Abbrechen",
     "linkAskStay": "Um zu bleiben, schließ diesen Tab.",
@@ -225,7 +225,7 @@
     "more": "Mehr anzeigen ({percent} % angezeigt)"
   },
   "attachments": {
-    "count": "{count, plural, one {# Anhang} other {# Anhänge}}",
+    "count": "{count, plural, one {# Anhang} other {# Anhänge}} · {size}",
     "groupAria": "Anhänge",
     "downloadAll": "Alle herunterladen",
     "downloadingAll": "Wird geholt …",
@@ -247,7 +247,6 @@
     "faultOffline": "ohmail war nicht erreichbar — prüf deine Verbindung",
     "faultSignedOut": "Deine Sitzung ist beendet — melde dich neu an",
     "faultRetry": "versuch es nochmal",
-    "faultRetrying": "Ohmail versucht es gleich noch einmal. {reason}.",
     "tooLarge": "{size} · zu groß, um sie zu holen",
     "listFailed": "Die Dateien dieser Nachricht ließen sich nicht laden.",
     "listOffline": "ohmail war nicht erreichbar — prüf deine Verbindung.",

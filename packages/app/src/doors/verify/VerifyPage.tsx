@@ -101,7 +101,6 @@ function VerifyForm(p: {
         back={<ColdMark />}
         refusal={refusalOf(pending, state.refusal)}
         line={verify("line")}
-        note={verify("passwordHint")}
         acts={
           <>
             <Button type="submit" size="l" keyHint="↵" disabled={dead || state.busy || pending.signingOut}>

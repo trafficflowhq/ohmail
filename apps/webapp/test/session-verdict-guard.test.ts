@@ -300,18 +300,18 @@ describe("the copy on the unconfirmed surface is not a verdict", () => {
       const messages = JSON.parse(readRaw(`../messages/${locale}.json`)) as {
         session: Record<string, string>;
       };
-      const keys = ["unconfirmedTitle", "unconfirmedBody", "unconfirmedBodyWarm", "tryAgain"];
+      const keys = ["unconfirmedTitle", "unconfirmedLine", "unconfirmedBodyWarm", "tryAgain"];
       for (const key of keys) {
         expect(messages.session[key], `${locale}.session.${key} is missing`).toBeTruthy();
       }
-      for (const key of ["unconfirmedTitle", "unconfirmedBody", "unconfirmedBodyWarm"]) {
+      for (const key of ["unconfirmedTitle", "unconfirmedLine", "unconfirmedBodyWarm"]) {
         const text = messages.session[key]!.toLowerCase();
         expect(text, `${locale}.session.${key} claims a sign-out`).not.toContain("signed out");
         expect(text, `${locale}.session.${key} claims a sign-out`).not.toContain("abgemeldet");
       }
       // And the two body strings must say what actually happened rather than only what did
       // not: a title alone would let the bodies drift back into verdict language.
-      expect(messages.session.unconfirmedBody).toBeTruthy();
+      expect(messages.session.unconfirmedLine).toBeTruthy();
       expect(messages.session.unconfirmedBodyWarm, `${locale} warm body does not mention the device`)
         .toMatch(locale === "en" ? /device/i : /Gerät/i);
     }

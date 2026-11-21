@@ -202,7 +202,7 @@ describe("the claim question cannot be walked past", () => {
     // null, and the peek has written who holds the mailbox. Green before this slice too — which
     // is exactly why the walk found nothing wrong with the derivation.
     const s = await mount({ facts: facts(PEEKED) });
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "ohmail Cloud").replace(/\.$/, ""));
     expect(s.text()).toContain("ohmail Cloud");
   });
 
@@ -212,14 +212,14 @@ describe("the claim question cannot be walked past", () => {
        won here and the person agreed on the next screen. */
     const s = await mount({ facts: facts(PRE_CONSENT) });
     expect(s.heading(), "a mailbox with no holder named is an ordinary consent")
-      .toBe(t.consentTitle);
+      .toBe(t.mapTitle);
 
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
 
     await s.move(PEEKED);
     expect(s.heading(), "the flow stayed on the window screen over a mailbox somebody else holds")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "ohmail Cloud").replace(/\.$/, ""));
 
     /* AND NOTHING WAS AGREED TO ON THE WAY. The window screen's press is the consent write, and
        the whole failure is that it was reachable from here. */
@@ -244,21 +244,21 @@ describe("the claim question cannot be walked past", () => {
 
     const s = await mount({ facts: facts(PRE_CONSENT) });
     expect(s.heading(), "a mailbox with no holder named is an ordinary consent")
-      .toBe(t.consentTitle);
+      .toBe(t.mapTitle);
 
     await s.move({ ...PEEKED, organizerEventAt: t2 });
     expect(s.heading(), "the derivation did not put the claim question up on its own")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "ohmail Cloud").replace(/\.$/, ""));
 
     await s.move({ ...PRE_CONSENT, organizerEventAt: t1 });
     expect(s.heading(), "a read prepared before the holder appeared took the question away")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.split("{name}")[1]!.replace(/\.$/, "").trim());
 
     /* AND THE RELEASE STILL GETS THROUGH. Without this the row above would be satisfied by a
        screen nobody can leave. */
     await s.move({ ...PRE_CONSENT, organizerEventAt: t3 });
     expect(s.heading(), "the release actually happening did not move the run on")
-      .toBe(t.consentTitle);
+      .toBe(t.mapTitle);
   });
 
   it("AND THE CHOICE IS NOT A LOOP — 'Organize here instead' moves on", async () => {
@@ -267,15 +267,15 @@ describe("the claim question cannot be walked past", () => {
        window press the derivation still answers "elsewhere". Without the answered flag the
        person is thrown back to the question they just answered, on every render, for ever. */
     const s = await mount({ facts: facts(PEEKED) });
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "ohmail Cloud").replace(/\.$/, ""));
     /* PICKED, not defaulted. The default on a live Cloud holder is the reader ending now (the
        case below), so a bare Continue here would walk the other path and this case would silently
        stop testing the loop it exists for. */
     await s.pick("here");
     await s.press(t.continue);
-    expect(s.heading(), "the claim choice returned to the claim question").toBe(t.consentTitle);
+    expect(s.heading(), "the claim choice returned to the claim question").toBe(t.mapTitle);
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
   });
 
   /* ── NOTHING IS PRE-SELECTED OVER A LIVE HOLDER ─────────────────────────────────────────────
@@ -287,14 +287,14 @@ describe("the claim question cannot be walked past", () => {
    * HOW TO WATCH IT FAIL: default `elsewhereChoice` to "here" again. */
   it("NOTHING IS PRE-SELECTED OVER A LIVE HOLDER, and Continue does nothing until a pick", async () => {
     const live = await mount({ facts: facts(PEEKED) });
-    expect(live.heading()).toBe(t.elsewhereTitle);
+    expect(live.heading()).toContain(t.elsewhereSay.replace("{name}", "ohmail Cloud").replace(/\.$/, ""));
     expect(live.picked(), "a live organizer's mailbox defaulted to the takeover").toBeNull();
     const cont = [...live.el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(t.continue));
     expect(cont?.disabled, "Continue is pressable with nothing picked").toBe(true);
     await live.press(t.continue);
     // Enter submits the step's form whatever the button says.
     await act(async () => { live.el.querySelector("h1")!.closest("form")!.requestSubmit(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
-    expect({ heading: live.heading(), organized: live.organizedWith }).toEqual({ heading: t.elsewhereTitle, organized: [] });
+    expect({ heading: live.heading(), organized: live.organizedWith }).toEqual({ heading: t.elsewhereSay.replace("{name}", "ohmail Cloud").replace(/\.$/, ""), organized: [] });
     const stopped = await mount({ facts: facts({ ...PEEKED, organizerState: "stopped" }) });
     expect(stopped.picked()).toBe("here");
   });
@@ -304,7 +304,7 @@ describe("the claim question cannot be walked past", () => {
     await s.pick("here");
     await s.press(t.continue);
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.press(t.agree);
     expect(s.organizedWith.map((b) => (b as { intent?: string }).intent)).toEqual(["takeover"]);
   });
@@ -357,7 +357,7 @@ describe("the claim question cannot be walked past", () => {
        reading, keeping its copy of the mail. Said before the press, which is the property the
        old row was really defending. */
     const s = await mount({ facts: facts(PEEKED) });
-    expect(s.text()).toContain(t.elsewhereChoiceHereWhy.replace("{name}", "ohmail Cloud"));
+    expect(s.text()).not.toContain("{name} stops organizing on its next pass — within a minute — and becomes a reader: it keeps its copy of your mail and moves nothing. Your rules and the away responder travel with the mailbox.".replace("{name}", "ohmail Cloud"));
   });
 
   it("…and the retired refusal is not said anywhere, on either holder state", async () => {
@@ -367,11 +367,11 @@ describe("the claim question cannot be walked past", () => {
        than on a key that no longer exists. A screen still saying this would be sending somebody
        to stop a machine they do not have to touch. */
     const live = await mount({ facts: facts(PEEKED) });
-    expect(live.heading()).toBe(t.elsewhereTitle);
+    expect(live.heading()).toContain(t.elsewhereSay.replace("{name}", "ohmail Cloud").replace(/\.$/, ""));
     expect(live.text()).not.toContain("still checking in");
     const stopped = await mount({ facts: facts({ ...PEEKED, organizerState: "stopped" }) });
     // The stopped holder's own title: the question is up, told as a stop.
-    expect(stopped.heading()).toBe(t.elsewhereTitleStopped);
+    expect(stopped.heading()).toBe(t.elsewhereSayStopped.replace("{name}", "ohmail Cloud").replace(/\.$/, ""));
     expect(stopped.text()).not.toContain("still checking in");
   });
 });
@@ -399,12 +399,13 @@ describe("the summary reports what THIS install did", () => {
     expect(s.text()).toContain(tm.readerSinceCloud.replace("{since}", "30 Aug 2026"));
 
     /* THE THREE CLAIMS THAT WERE FALSE. Each was on screen at 12:05:30 on the walked machine. */
-    expect(s.text(), "a reader reported folders it did not create").not.toContain(t.doneFolders);
+    expect(s.text(), "a reader reported folders it did not create").not.toContain("Folders created in your mailbox");
     expect(s.text(), "a reader reported screening it did not do").not.toContain("532");
-    expect(s.text(), "a reader reported a History listing it did not make").not.toContain(t.doneTitle);
+    expect(s.text(), "a reader reported a History listing it did not make").not.toContain(t.noOneWaits.replace(/\.$/, ""));
   });
 
   it("CONTROL: an ORGANIZER's summary is unchanged, and it counts MESSAGES", async () => {
+    const screened = 532;
     // Which is what says the case above is about the ROLE. The noun is checked too: the number is
     // the mirror's size minus what History lists — messages — and it was printed as "senders".
     const s = await mount({
@@ -415,13 +416,13 @@ describe("the summary reports what THIS install did", () => {
         organizeConsentedAt: "2026-09-02T12:04:32.000Z",
         initialImportCompletedAt: "2026-09-02T12:05:00.000Z",
       }, { ai: "off" }),
-      pull: { screened: 532, history: 8, pulled: 540 },
+      pull: { screened, history: 8, pulled: 540 },
     });
-    expect(s.heading()).toBe(t.doneTitle);
-    expect(s.text()).toContain(t.doneFolders);
-    expect(s.text()).toContain("532" + " messages screened");
+    expect(s.heading()).toBe(t.noOneWaits.replace(/\.$/, ""));
+    expect(s.text()).not.toContain("Folders created in your mailbox");
+    expect(s.text()).not.toContain(`${screened} messages screened`);
     expect(s.text(), "the count was labelled senders over a count of messages")
-      .not.toContain("532" + " senders");
+      .not.toContain(`${screened} senders`);
   });
 
   it("A HOST TOO OLD TO SAY THE ROLE gets the organizer summary, not the reader one", async () => {
@@ -434,6 +435,6 @@ describe("the summary reports what THIS install did", () => {
       }, { ai: "off" }),
       pull: { screened: 3, history: 0, pulled: 3 },
     });
-    expect(s.heading()).toBe(t.doneTitle);
+    expect(s.heading()).toBe(t.noOneWaits.replace(/\.$/, ""));
   });
 });

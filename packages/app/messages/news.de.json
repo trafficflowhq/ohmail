@@ -3,8 +3,6 @@
     "title": "News",
     "waterline": "Bis hierher gesehen",
     "waterlineMeta": "letzter Besuch · {stamp}",
-    "aiApprove": "Passt",
-    "aiCorrect": "Korrigieren",
     "streamAria": "News-Strom",
     "keyNext": "Weiter im Strom",
     "keyPrev": "Zurück im Strom",
@@ -20,7 +18,7 @@
     },
     "markAll": {
       "label": "Alles als gelesen markieren",
-      "done": "{count, plural, one {1 Beitrag} other {# Beiträge}} als gelesen markiert",
+      "done": "{count, number} gelesen",
       "undo": "Rückgängig"
     },
     "list": {

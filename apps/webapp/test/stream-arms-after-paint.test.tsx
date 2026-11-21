@@ -47,7 +47,8 @@ for (const [name, route, make] of views) {
       expect(list.getByRole("heading", { name })).toBeTruthy();
       expect(list.getAllByRole("option").length).toBeGreaterThan(0);
       expect(stream.queryAllByRole("article")).toEqual([]);
-      expect(stream.getByRole("heading", { name })).toBeTruthy();
+      expect(stream.queryByRole("heading", { name })).toBeNull();
+      expect(stream.getAllByRole("toolbar", { name: "Actions" })).toHaveLength(1);
 
       act(() => {
         for (const [id, frame] of [...frames]) {

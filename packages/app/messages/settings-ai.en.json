@@ -3,6 +3,11 @@
     "notRead": "Not read",
     "notChanged": "Not changed",
     "on": "On",
-    "off": "Off"
+    "off": "Off",
+    "notSetUp": "Not set up",
+    "model": "Model",
+    "where": "Where the model runs",
+    "cloud": "ohmail Cloud",
+    "working": "Working"
   }
 }

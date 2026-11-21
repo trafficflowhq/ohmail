@@ -12,7 +12,6 @@ import type {
   MailboxFixture,
   MessageFixture,
   NotificationSettingsFixture,
-  ReadsAiChipFixture,
   ReceiptsGroupFixture,
   ScreenedSenderFixture,
   ScreenerEmptyState,
@@ -518,15 +517,6 @@ export const readsWaterline: WaterlineFixture = {
   meta: "last visit · Mon 18:40",
 };
 
-export const readsAiChip: ReadsAiChipFixture = {
-  afterId: "f1",
-  label: "News — AI 0.87: newsletter fingerprint",
-  confidence: 0.87,
-  reason: "newsletter fingerprint",
-  approvedLabel: "Approved — saved as a rule",
-  correctedLabel: "Corrected — goes to Ohbox next time",
-};
-
 /* ------------------------------------------------------------ receipts */
 
 export const receipts: MessageFixture[] = [
@@ -874,7 +864,6 @@ export const search: SearchDemoFixture = {
       who: "Giulia Ferrari",
       where: "Ohbox · 09:12",
       subject: "Re: Glaze order #2214 🎉",
-      fuzzyNote: "fuzzy match — “invoice”",
     },
     {
       who: "Atelier Erdton",
@@ -986,7 +975,6 @@ export function getFixtures(): Fixtures {
     ohbox,
     reads,
     readsWaterline,
-    readsAiChip,
     receipts,
     receiptsGroups,
     screener: {

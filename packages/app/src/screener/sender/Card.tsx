@@ -4,25 +4,32 @@
  * An install that may not decide shows who it is and nothing to choose.
  */
 import type { ScreenerSenderDTO } from "@ohmail/wire";
-import { useState, type ReactNode, type RefObject } from "react";
+import { useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { RETRO_DEFAULT_ON } from "@ohmail/app-logic/press/sender-screening";
 import {
   DECISION_KEY,
   DECISION_ORDER,
   isSharedDomain,
-  PILE_KEY,
+  PILE_VERB_KEY,
   refused,
-  senderCheckSentence,
   suggestionWords,
   type DecisionDestination,
   type ScreenerView,
 } from "@ohmail/app-logic/screener";
 import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
+import { MenuItem, Tag } from "@ohmail/ui/base";
+import { formatRecipientLine } from "@ohmail/app-logic/writing/compose-from";
 import { ContactCard } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import { useNoAdvice, useScreener } from "../contract.js";
-import { IdentityNotice } from "./IdentityNotice.js";
-import { whoOf } from "./Sentence.js";
+import { useFrame } from "../../frame/commands.js";
+import { NONE } from "../../host/index.js";
+import { lookalikeBrand, whoOf } from "./Sentence.js";
+
+export interface CardActions {
+  subject?: ReactNode;
+  seeAll?: () => void;
+}
 
 interface CardProps {
   view: ScreenerView;
@@ -30,16 +37,18 @@ interface CardProps {
   anchor: RefObject<Element | null>;
   /** A waiting sender this install may decide. */
   choosing: boolean;
-  subjectAction?: ReactNode;
+  actions?: CardActions;
 }
 
 export function Card(props: CardProps) {
   return props.view.shown === "card" ? <OpenCard key={props.sender.id} {...props} /> : null;
 }
 
-function OpenCard({ view, sender, anchor, choosing, subjectAction }: CardProps) {
+function OpenCard({ view, sender, anchor, choosing, actions }: CardProps) {
   const t = useText("screener");
   const screening = useText("screening");
+  const message = useText("message");
+  const { host } = useFrame();
   const [applyRetro, setApplyRetro] = useState(RETRO_DEFAULT_ON);
   const model = useScreener();
   const { role } = model;
@@ -56,50 +65,61 @@ function OpenCard({ view, sender, anchor, choosing, subjectAction }: CardProps) 
           senders: domainSenders,
         })
       : undefined;
+  const place =
+    view.segment === "waiting"
+      ? screening("placeScreener")
+      : t(view.segment === "screened" ? "pileScreened" : "pileSpam");
+  const clipboard = host.features.reader === NONE ? NONE : (host.features.reader.copy ?? NONE);
+  const close = () => view.show(null);
+  const address = sender.from.address;
+  const claim = lookalikeBrand(sender);
   return (
     <ContactCard
       open
-      onClose={() => view.show(null)}
+      onClose={close}
       anchor={anchor}
       label={t("place.keyCard")}
       closeWhenFull={screening("auditClose")}
-      onKey={
-        may
-          ? (event) => {
-              if (
-                event.key !== DECISION_KEY.spam ||
-                event.repeat ||
-                event.nativeEvent.isComposing ||
-                event.ctrlKey ||
-                event.metaKey ||
-                event.altKey ||
-                event.shiftKey
-              )
-                return false;
-              event.preventDefault();
-              view.decide("spam", false, applyRetro);
-              return true;
-            }
-          : undefined
-      }
+      onKey={may ? (event) => spamKey(event, () => view.decide("spam", false, applyRetro)) : undefined}
       person={{ name: whoOf(sender), address: displayAddress(sender.from.address) }}
+      copy={
+        clipboard === NONE
+          ? undefined
+          : {
+              label: message("copyAddress"),
+              onPress: () => {
+                void clipboard(address).catch(() => false);
+                close();
+              },
+            }
+      }
       notice={
-        sender.checked ? <IdentityNotice>{senderCheckSentence(t, sender.checked)}</IdentityNotice> : undefined
+        claim || shared ? (
+          <div className="sc-sentence-tools">
+            {claim ? <Tag>{t("senderCheck.chip", { brand: claim })}</Tag> : null}
+            {shared ? (
+              <>
+                <Tag>{t("place.sharedProvider")}</Tag>
+                <Tag>{t("place.perAddress")}</Tag>
+              </>
+            ) : null}
+          </div>
+        ) : undefined
       }
       scope={
         may && !shared
           ? {
-              label: t("barScopeAria"),
+              label: screening("scopeAria"),
               value: scope,
               options: [
                 {
                   value: "sender",
-                  label: t("barScopeSender"),
+                  label: screening("scopeAddress"),
                   note: screening("scopeCountOne", { count: sender.held.length }),
                 },
                 {
                   value: "domain",
-                  label: t("wholeDomain", { domain: displayDomainLabel(sender.from.address) }),
+                  label: screening("scopeDomain", { domain: displayDomainLabel(address) }),
                   note: domainCount,
                 },
               ],
@@ -107,20 +127,97 @@ function OpenCard({ view, sender, anchor, choosing, subjectAction }: CardProps) 
             }
           : undefined
       }
-      more={subjectAction}
+      now={{
+        line: screening("cardNowIn", { place }),
+        place,
+        all: { label: screening("cardSeeAll"), onPress: actions?.seeAll ?? close },
+      }}
       switches={
-        may ? [{ label: screening("retroToggleAria"), on: applyRetro, onChange: setApplyRetro }] : undefined
+        may
+          ? [
+              {
+                label: screening("cardExisting"),
+                ariaLabel: screening("retroToggleAria"),
+                on: applyRetro,
+                onChange: setApplyRetro,
+              },
+            ]
+          : undefined
       }
       goes={
         may
           ? {
               label: t("place.goesLabel"),
               value: proposed ?? undefined,
-              places: DECISION_ORDER.map((dest) => ({ value: dest, label: t(PILE_KEY[dest]) })),
+              places: DECISION_ORDER.map((dest) => ({ value: dest, label: t(PILE_VERB_KEY[dest]) })),
               onChange: (value) => view.decide(value as DecisionDestination, false, applyRetro),
             }
           : undefined
       }
-    />
+    >
+      {host.features.places.write !== NONE || host.features.places.address !== NONE || actions?.subject ? (
+        <CardWays sender={sender} close={close}>
+          {actions?.subject}
+        </CardWays>
+      ) : null}
+    </ContactCard>
+  );
+}
+
+function spamKey(event: KeyboardEvent, decide: () => void): boolean {
+  if (
+    event.key !== DECISION_KEY.spam ||
+    event.repeat ||
+    event.nativeEvent.isComposing ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.shiftKey
+  )
+    return false;
+  event.preventDefault();
+  decide();
+  return true;
+}
+
+function CardWays({
+  sender,
+  close,
+  children,
+}: {
+  sender: ScreenerSenderDTO;
+  close: () => void;
+  children: ReactNode;
+}) {
+  const { host, commands } = useFrame();
+  const message = useText("message");
+  const address = sender.from.address;
+  return (
+    <>
+      {host.features.places.write !== NONE ? (
+        <MenuItem
+          icon="write"
+          onPress={() => {
+            const recipient = formatRecipientLine([{ name: sender.from.name, address }]);
+            close();
+            commands.write({ to: [recipient], cc: [], bcc: [], subject: "", body: "" });
+          }}
+        >
+          {message("write")}
+        </MenuItem>
+      ) : null}
+      {host.features.places.address !== NONE ? (
+        <MenuItem
+          icon="go"
+          onPress={() => {
+            close();
+            commands.go({ place: "address", sub: address });
+          }}
+        >
+          {message("contactAllMail")}
+        </MenuItem>
+      ) : null}
+      {children}
+    </>
   );
 }

@@ -123,7 +123,7 @@ async function mountedRules({
   const pane = within(within(frame).getByRole("region", { name: settings.rules }));
   const revoke = () => pane.getByRole<HTMLButtonElement>("button", { name: R.revoke });
   expect(pane.getAllByRole<HTMLButtonElement>("button", { name: R.revoke }).every((button) => !button.disabled)).toBe(true);
-  const confirm = () => within(screen.getByRole("dialog", { name: R.revokeConfirm }));
+  const confirm = () => within(screen.getByRole("dialog", { name: "Revoke 1 rule" }));
   return { mutations, pane, revoke, confirm, syncedDeletion: () => syncedDeletion };
 }
 
@@ -132,7 +132,7 @@ describe("revoking", () => {
     const { mutations, revoke, confirm } = await mountedRules();
     await click(revoke());
     expect(mutations).toEqual([]);
-    expect(confirm().getByText("This stops the rule deciding new mail. Mail it already filed stays where it is.")).toBeTruthy();
+    expect(confirm().getByText("Mail already filed stays where it is.")).toBeTruthy();
   });
 
   it("dispatches the revoke only on the confirm under that sentence", async () => {
@@ -140,7 +140,7 @@ describe("revoking", () => {
     await click(revoke());
     expect(mutations).toEqual([]);
     expect(confirm().getByText(R.revokeExplain)).toBeTruthy();
-    await click(confirm().getByRole("button", { name: R.revokeConfirm }));
+    await click(confirm().getByRole("button", { name: R.revoke }));
     expect(mutations).toEqual([{ method: "DELETE", path: "/api/rules/r-9" }]);
   });
 
@@ -150,7 +150,7 @@ describe("revoking", () => {
     expect(confirm().getByText(R.revokeExplain)).toBeTruthy();
     await click(confirm().getByRole("button", { name: R.cancel }));
     expect(mutations).toEqual([]);
-    expect(screen.queryByText(/Mail it already filed stays where it is\./)).toBeNull();
+    expect(screen.queryByText(/Mail already filed stays where it is\./)).toBeNull();
     expect(revoke()).toBeTruthy();
   });
 });
@@ -161,7 +161,7 @@ describe("the toast reports the outcome, not the intent", () => {
     const confirmLater = new Promise<void>((resolve) => { accepted = resolve; });
     const { mutations, pane, revoke, confirm, syncedDeletion } = await mountedRules({ confirmLater });
     await click(revoke());
-    await click(confirm().getByRole("button", { name: R.revokeConfirm }));
+    await click(confirm().getByRole("button", { name: R.revoke }));
     expect(mutations).toEqual([{ method: "DELETE", path: "/api/rules/r-1" }]);
     expect(reports()).not.toEqual(expect.arrayContaining([expect.stringContaining("Rule revoked.")]));
     accepted();
@@ -169,15 +169,15 @@ describe("the toast reports the outcome, not the intent", () => {
     expect(syncedDeletion()).toBe(true);
     expect(pane.getByText(/^No rules yet\./)).toBeTruthy();
     expect(pane.queryByRole("button", { name: R.revoke })).toBeNull();
-    expect(reports()).toContain("Rule revoked. Your mail hasn't moved.");
+    expect(reports()).toContain("Revoked");
   });
 
   it("ROLLED BACK never claims the rule was revoked", async () => {
     const { mutations, revoke, confirm } = await mountedRules({ refusals: { "r-1": 403 } });
     await click(revoke());
-    await click(confirm().getByRole("button", { name: R.revokeConfirm }));
+    await click(confirm().getByRole("button", { name: R.revoke }));
     expect(mutations).toEqual([{ method: "DELETE", path: "/api/rules/r-1" }]);
-    expect(screen.getByText("Couldn't revoke that rule. It's still in place.")).toBeTruthy();
+    expect(screen.getByText("Not revoked. The rule is still in place.")).toBeTruthy();
     expect(reports()).not.toEqual(expect.arrayContaining([expect.stringContaining("Rule revoked.")]));
     expect((revoke() as HTMLButtonElement).disabled).toBe(false);
   });
@@ -187,10 +187,10 @@ describe("the toast reports the outcome, not the intent", () => {
     await click(revoke());
     Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
     await act(async () => { window.dispatchEvent(new Event("offline")); });
-    await click(confirm().getByRole("button", { name: R.revokeConfirm }));
-    expect(reports()).toContain("Revoke queued — it'll go through when you're back online.");
-    expect(reports()).not.toContain("Rule revoked. Your mail hasn't moved.");
-    expect(pane.getByText("Revoke not sent yet. Still filing mail until it is.")).toBeTruthy();
+    await click(confirm().getByRole("button", { name: R.revoke }));
+    expect(reports()).toContain("Revoke queued. It goes through when you are back online");
+    expect(reports()).not.toContain("Revoked");
+    expect(pane.getByText(R.queuedRevokeUnsent, { exact: false })).toBeTruthy();
     expect((revoke() as HTMLButtonElement).disabled).toBe(true);
   });
 });
@@ -210,15 +210,15 @@ describe("bulk revoke acts over the FILTERED set, through the per-rule path", ()
     await click(pane.getByRole("button", { name: "Revoke all 2 matching" }));
     const dialog = screen.getByRole("dialog", { name: "Revoke 2 rules" });
     expect(list.contains(dialog)).toBe(false);
-    expect(within(dialog).getByText(/Mail it already filed stays where it is\./)).toBeTruthy();
+    expect(within(dialog).getByText(/Mail already filed stays where it is\./)).toBeTruthy();
     expect(mutations).toEqual([]);
-    await click(within(dialog).getByRole("button", { name: "Revoke 2 rules" }));
+    await click(within(dialog).getByRole("button", { name: "Revoke" }));
     await tick(1500);
     expect(mutations.sort((a, b) => a.path.localeCompare(b.path))).toEqual([
       { method: "DELETE", path: "/api/rules/r1" },
       { method: "DELETE", path: "/api/rules/r2" },
     ]);
-    expect(reports()).toContain("2 rules revoked. Your mail hasn't moved.");
+    expect(reports()).toContain("2 rules revoked. Your mail hasn't moved");
     expect(pane.getAllByRole("listitem")).toHaveLength(2);
     expect(pane.getAllByRole("listitem").map((row) => row.textContent)).toEqual(expect.arrayContaining([
       expect.stringContaining("i1"), expect.stringContaining("i2"),
@@ -230,7 +230,7 @@ describe("bulk revoke acts over the FILTERED set, through the per-rule path", ()
     await click(pane.getByRole("button", { name: "News" }));
     await click(pane.getByRole("button", { name: "Revoke all 2 matching" }));
     const dialog = within(screen.getByRole("dialog", { name: "Revoke 2 rules" }));
-    await click(dialog.getByRole("button", { name: "Revoke 2 rules" }));
+    await click(dialog.getByRole("button", { name: "Revoke" }));
     await tick(1500);
 
     expect(mutations.sort((a, b) => a.path.localeCompare(b.path))).toEqual([
@@ -238,7 +238,7 @@ describe("bulk revoke acts over the FILTERED set, through the per-rule path", ()
       { method: "DELETE", path: "/api/rules/r2" },
     ]);
     expect(pane.getByText("Revoked 1 of 2. The rest are still in place.")).toBeTruthy();
-    expect(reports()).not.toContain("2 rules revoked. Your mail hasn't moved.");
+    expect(reports()).not.toContain("2 rules revoked. Your mail hasn't moved");
     const remaining = pane.getByRole("listitem");
     expect(remaining.textContent).toContain("r2");
     expect(within(remaining).getByRole<HTMLButtonElement>("button", { name: R.revoke }).disabled).toBe(false);
@@ -251,20 +251,20 @@ describe("bulk revoke acts over the FILTERED set, through the per-rule path", ()
     });
     const a = () => within(pane.getByRole("group", { name: /^Mail from a@/ }));
     await click(a().getByRole("button", { name: R.revoke }));
-    const single = within(screen.getByRole("dialog", { name: R.revokeConfirm }));
-    await click(single.getByRole("button", { name: R.revokeConfirm }));
+    const single = within(screen.getByRole("dialog", { name: "Revoke 1 rule" }));
+    await click(single.getByRole("button", { name: R.revoke }));
     await tick(250);
-    expect(a().getByText(R.queuedRevokeFailing)).toBeTruthy();
+    expect(a().getByText(R.queuedRevokeFailing, { exact: false })).toBeTruthy();
     expect(mutations).toEqual([{ method: "DELETE", path: "/api/rules/a" }]);
 
     await click(pane.getByRole("button", { name: "Revoke all 2 matching" }));
     const bulk = within(screen.getByRole("dialog", { name: "Revoke 2 rules" }));
-    await click(bulk.getByRole("button", { name: "Revoke 2 rules" }));
+    await click(bulk.getByRole("button", { name: "Revoke" }));
     await tick(1500);
     expect(mutations.map(({ method, path }) => `${method} ${path}`).sort()).toEqual([
       "DELETE /api/rules/a", "DELETE /api/rules/b", "DELETE /api/rules/c",
     ]);
-    expect(reports()).toContain("2 rules revoked. Your mail hasn't moved.");
+    expect(reports()).toContain("2 rules revoked. Your mail hasn't moved");
     expect(pane.getByRole("listitem").textContent).toContain(R.queuedRevokeFailing);
   });
 
@@ -273,7 +273,7 @@ describe("bulk revoke acts over the FILTERED set, through the per-rule path", ()
     await click(pane.getByRole("button", { name: "News" }));
     await click(pane.getByRole("button", { name: "Revoke all 2 matching" }));
     const dialog = within(screen.getByRole("dialog", { name: "Revoke 2 rules" }));
-    const confirm = dialog.getByRole("button", { name: "Revoke 2 rules" });
+    const confirm = dialog.getByRole("button", { name: "Revoke" });
 
     // Hold the competing owner at confirmation. Restore this account before the next
     // browser poll so the same pane can display the outcome of the refused press.
@@ -284,8 +284,8 @@ describe("bulk revoke acts over the FILTERED set, through the per-rule path", ()
     rememberOwner();
     await tick(1500);
     expect(mutations).toEqual([]);
-    expect(reports()).toContain(R.bulkToastUnsent);
-    expect(reports()).not.toContain("2 rules revoked. Your mail hasn't moved.");
+    expect(reports()).toContain(R.bulkToastUnsent.replace(/\.$/u, ""));
+    expect(reports()).not.toContain("2 rules revoked. Your mail hasn't moved");
     expect(pane.getAllByRole("listitem").map((row) => row.textContent)).toEqual(expect.arrayContaining([
       expect.stringContaining("r1"), expect.stringContaining("r2"),
     ]));
@@ -307,13 +307,13 @@ describe("both spellings of the News pile are ONE chip", () => {
     await click(pane.getByRole("button", { name: "Revoke all 10 matching" }));
     const dialog = within(screen.getByRole("dialog", { name: "Revoke 10 rules" }));
     expect(mutations).toEqual([]);
-    await click(dialog.getByRole("button", { name: "Revoke 10 rules" }));
+    await click(dialog.getByRole("button", { name: "Revoke" }));
     await tick(1500);
 
     expect(mutations).toHaveLength(10);
     expect(mutations.map(({ method, path }) => `${method} ${path}`).sort()).toEqual(
       [...legacy.map((item) => `DELETE /api/rules/${item.id}`), "DELETE /api/rules/n0"],
     );
-    expect(reports()).toContain("10 rules revoked. Your mail hasn't moved.");
+    expect(reports()).toContain("10 rules revoked. Your mail hasn't moved");
   });
 });

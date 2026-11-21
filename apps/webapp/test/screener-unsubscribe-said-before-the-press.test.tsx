@@ -169,7 +169,9 @@ async function click(el: HTMLElement): Promise<void> {
 const cardLine = (): string | null => {
   const card = screen().queryByRole("region", { name: messages.frame.landmark.reading })
     ?? screen().queryByRole("dialog", { name: messages.frame.landmark.reading });
-  return (card ? within(card) : screen()).queryByText(/^(Screen out and Spam also (?:send|ask to unsubscribe)|Where .* offers one-click unsubscribe)/)?.textContent ?? null;
+  const words = card ? within(card) : screen();
+  expect(words.queryByText(/^(Screen out and Spam also (?:send|ask to unsubscribe)|Where .* offers one-click unsubscribe)/)).toBeNull();
+  return words.queryByText(copy.unsubOffered, { exact: true })?.textContent ?? null;
 };
 const capsule = (label: RegExp) => within(screen().getByRole("toolbar", { name: copy.place.panel }))
   .getByRole("button", { name: label });
@@ -225,14 +227,15 @@ describe("a claim through a list's address: Screen out files those letters alone
   it("a list the person let in: the card says what Screen out files, promises no rule and names no unsubscribe, nor does the press", async () => {
     await mount({ held: [{ id: "l1", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: CLAIM }], width: 1280, claimsOnly: [ONE_CLICK] });
     expect(cardLine()).toBeNull();
-    expect(screen().getByText(
+    expect(screen().queryByText(
       "Screen out and Spam are the exception here: they set aside only the messages that claim to be PostFinance, and make no rule.",
-    )).toBeTruthy();
+    )).toBeNull();
+    expect(screen().getAllByText("Not PostFinance").length).toBeGreaterThan(0);
     expect(genericRuleLine()).toBeNull();
-    expect(screen().getByText(`Ohbox, News and Receipts become a rule — future mail from ${ONE_CLICK} files automatically. Screen out and Spam write no rule here.`)).toBeTruthy();
+    expect(screen().queryByText(`Ohbox, News and Receipts become a rule — future mail from ${ONE_CLICK} files automatically. Screen out and Spam write no rule here.`)).toBeNull();
     await click(capsule(/^Screen out/));
     expect(page().queryByRole("dialog", { name: copy.place.unsub.screened })).toBeNull();
-    expect(report()).toBe(`Screened out — only the messages from ${ONE_CLICK} that claim to be PostFinance. No rule was made, so the list's other mail stays where it is.`);
+    expect(report()).toBe(`Screened out — only the messages from ${ONE_CLICK} that claim to be PostFinance. No rule was made, so the list's other mail stays where it is`);
     await expectScreenOutRequest("l1");
     const destinations = [
       ["Ohbox", "INBOX"], ["News", "ohmail/News"], ["Receipts", "ohmail/Receipts"], ["Spam", "ohmail/Quarantine"],
@@ -241,14 +244,14 @@ describe("a claim through a list's address: Screen out files those letters alone
       await teardownConfirmEnv();
       vi.unstubAllGlobals();
       await mount({ held: [{ id: "l1", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: CLAIM }], width: 1280, claimsOnly: [ONE_CLICK] });
-      expect(screen().getByText(`Ohbox, News and Receipts become a rule — future mail from ${ONE_CLICK} files automatically. Screen out and Spam write no rule here.`)).toBeTruthy();
+      expect(screen().queryByText(`Ohbox, News and Receipts become a rule — future mail from ${ONE_CLICK} files automatically. Screen out and Spam write no rule here.`)).toBeNull();
       await click(capsule(new RegExp(`^${name}$`)));
       expect(page().queryByRole("dialog", { name: /unsubscribe/i })).toBeNull();
       expect(writes).toEqual([]);
       const spam = name === "Spam";
       expect(report()).toBe(spam
-        ? `Marked spam — only the messages from ${ONE_CLICK} that claim to be PostFinance. No rule was made, so the list's other mail stays where it is.`
-        : `${name} — filed. Future mail from ${ONE_CLICK} files there automatically.`);
+        ? `Marked spam — only the messages from ${ONE_CLICK} that claim to be PostFinance. No rule was made, so the list's other mail stays where it is`
+        : `${name} — filed. Future mail from ${ONE_CLICK} files there automatically`);
       await tick(COMMIT_MS + 800);
       expect(writes).toEqual([{
         path: "/api/screener/l1",
@@ -260,7 +263,7 @@ describe("a claim through a list's address: Screen out files those letters alone
 
   it("CONTROL: a list the person never let in is screened out as an address: the rule, the unsubscribe, and no list-claim line", async () => {
     await mount({ held: [{ id: "l3", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: CLAIM }], width: 1280, claimsOnly: [] });
-    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request for the waiting mail.`);
+    expect(cardLine()).toBe(copy.unsubOffered);
     expect(screen().queryByText(/they set aside only the messages that claim to be/)).toBeNull();
     expect(genericRuleLine()).toBeNull();
     await click(capsule(/^Screen out/));
@@ -284,7 +287,7 @@ describe("a claim through a list's address: Screen out files those letters alone
 
   it("CONTROL: the same claim at an address no list posts as says the unsubscribe, and no list line", async () => {
     await mount({ held: [{ id: "l2", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: { ...CLAIM, list: false } }], width: 1280 });
-    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request for the waiting mail.`);
+    expect(cardLine()).toBe(copy.unsubOffered);
     expect(screen().queryByText(/they set aside only the messages that claim to be/)).toBeNull();
   });
 });
@@ -303,16 +306,21 @@ describe("the row's menu, its Accept and the bulk strip say it before the press 
       width: 1280,
     });
     const oneClick = await menuFor(ONE_CLICK);
-    expect(oneClick.getByText(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request for the waiting mail.`)).toBeTruthy();
+    expect(within(oneClick.getByRole("menuitem", { name: "Screen out" })).getByText(copy.place.plusUnsub)).toBeTruthy();
+    expect(within(oneClick.getByRole("menuitem", { name: "Spam" })).getByText(copy.place.plusUnsub)).toBeTruthy();
+    expect(oneClick.queryByText(/Screen out and Spam also send/)).toBeNull();
     await act(async () => {
-      oneClick.getByRole("menuitem", { name: copy.pileScreened }).dispatchEvent(new KeyboardEvent("keydown", {
+      oneClick.getByRole("menuitem", { name: "Screen out" }).dispatchEvent(new KeyboardEvent("keydown", {
         key: "Escape", bubbles: true, cancelable: true,
       }));
     });
     await tick(50);
     const noOffer = await menuFor(NO_OFFER);
-    expect(noOffer.getByRole("menuitem", { name: copy.pileScreened })).toBeTruthy();
-    expect(noOffer.getByText(`Screen out and Spam also ask to unsubscribe you if the waiting mail from ${NO_OFFER} offers one-click unsubscribe.`)).toBeTruthy();
+    expect(noOffer.getByRole("menuitem", { name: "Screen out" })).toBeTruthy();
+    for (const name of ["Screen out", "Spam"]) {
+      expect(within(noOffer.getByRole("menuitem", { name })).getByText(copy.place.plusUnsub)).toBeTruthy();
+    }
+    expect(noOffer.queryByText(/Screen out and Spam also ask to unsubscribe/)).toBeNull();
   });
 
   it("an Accept that screens out says it unsubscribes; an Accept that keeps says nothing", async () => {

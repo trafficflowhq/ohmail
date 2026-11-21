@@ -39,11 +39,6 @@ const rule = (id: string, who: string, folder: string, more: Partial<RuleItem> =
   outranked: false,
   queued: false,
   places: PLACES.map((p) => ({ ...p, current: p.folder === folder })),
-  refile: {
-    label: "Also move the mail it filed in News",
-    note: "4 messages",
-    on: "Where new mail goes, and the 4 it filed.",
-  },
   finds: who.toLowerCase(),
   ...more,
 });
@@ -59,7 +54,7 @@ const FACETS = [
 ];
 const STATES = rulesStates({
   rules: RULES,
-  intro: r("intro"),
+  intro: null,
   introHeld: "Held by the laptop.",
   facets: FACETS,
   waiting: [
@@ -88,10 +83,10 @@ describe("what the list shows", () => {
 });
 
 describe("the Rules pane", () => {
-  it("says there are no rules, and that nothing counts what a rule filed", () => {
+  it("says there are no rules without the extra note", () => {
     drawn(<RulesPane model={STATES.empty.model} />);
-    expect(seen(r("empty"))).toBe(true);
-    expect(seen(r("noCount"))).toBe(true);
+    expect(seen(r("empty").replace(/\.$/u, ""))).toBe(true);
+    expect(seen("Nothing records how many messages a rule has filed")).toBe(false);
     expect(screen.queryByRole("searchbox")).toBeNull();
   });
 
@@ -100,7 +95,7 @@ describe("the Rules pane", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: r("searchLabel") }), {
       target: { value: "nobody" },
     });
-    expect(seen(r("noMatch"))).toBe(true);
+    expect(seen(r("noMatch").replace(/\.$/u, ""))).toBe(true);
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
     fireEvent.click(
       within(screen.getByRole("group", { name: r("facetLabel") })).getByRole("button", { name: "News" }),
@@ -117,7 +112,7 @@ describe("the Rules pane", () => {
     const ask = screen.getByRole("dialog");
     expect(ask.textContent).toContain(r("revokeExplain"));
     expect(ask.textContent).toContain("Mail from anna@example.org");
-    fireEvent.click(within(ask).getByRole("button", { name: r("revokeConfirm") }));
+    fireEvent.click(within(ask).getByRole("button", { name: r("revoke") }));
     expect(revoke.mock.calls).toEqual([["r1"]]);
   });
 
@@ -127,8 +122,8 @@ describe("the Rules pane", () => {
     drawn(<RulesPane model={model({ rules, revokeAll })} />);
     fireEvent.click(screen.getByRole("button", { name: /Revoke all 3 matching/ }));
     const ask = screen.getByRole("dialog");
-    expect(ask.textContent).toContain("Mail it already filed stays where it is.");
-    fireEvent.click(within(ask).getByRole("button", { name: "Revoke 3 rules" }));
+    expect(ask.textContent).toContain("Mail already filed stays where it is.");
+    fireEvent.click(within(ask).getByRole("button", { name: r("revoke") }));
     expect(revokeAll.mock.calls).toEqual([[["r1", "r2", "r3"]]]);
   });
 
@@ -140,8 +135,8 @@ describe("the Rules pane", () => {
     expect(isOff(screen.getByRole("menuitemradio", { name: "Ohbox" }))).toBe(true);
     fireEvent.click(screen.getByRole("menuitemradio", { name: "News" }));
     fireEvent.click(slot());
-    fireEvent.click(screen.getByRole("switch", { name: "Also move the mail it filed in News" }));
-    expect(seen(r("retargetExplain"))).toBe(true);
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: r("moveAlreadyHere") }));
+    expect(seen("Where new mail matching this rule should go.")).toBe(false);
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Receipts" }));
     expect(retarget.mock.calls).toEqual([
       ["r1", "ohmail/News", true],
@@ -189,7 +184,7 @@ describe("the Rules pane", () => {
 
   it("lists what waits on the install that organizes under its own head", () => {
     drawn(<RulesPane model={STATES.waiting.model} />);
-    expect(seen(r("waitingGroup"))).toBe(true);
+    expect(screen.getByRole("heading", { name: "Waiting on the organizer" })).toBeTruthy();
     expect(seen("Waiting on the laptop since 14 Nov 2026.")).toBe(true);
   });
 
@@ -203,7 +198,7 @@ describe("the Rules pane", () => {
 
   it("reads German where the catalogue is German", () => {
     drawn(<RulesPane model={STATES.empty.model} />, "de");
-    expect(seen(r("empty", "de"))).toBe(true);
+    expect(seen(r("empty", "de").replace(/\.$/u, ""))).toBe(true);
   });
 });
 

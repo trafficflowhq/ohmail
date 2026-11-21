@@ -32,18 +32,15 @@ export function FolderAbove({ model, children }: { model: FolderModel; children:
   );
   const t = useText("folder");
   const reader = useText("reader");
-  const label =
-    model.goneName !== null
-      ? reader("blank.none")
-      : model.empty
-        ? t("emptyTitle")
-        : t("metaCount", { count: model.count });
+  const ohbox = useText("ohbox");
+  const unread = model.list.rows.filter((row) => row.unread).length;
+  const label = unread > 0 ? ohbox("blank.unread", { count: unread }) : reader("blank.none");
   return (
     <FolderModelContext.Provider value={model}>
       <PlaceMeeting
         visit={model.list.visit}
         offMirror={offMirror}
-        blank={model.loading ? null : { label, hot: false }}
+        blank={model.loading ? null : { label, hot: unread > 0 }}
         steps={{ up: t("step.up"), down: t("step.down") }}
       >
         {children}

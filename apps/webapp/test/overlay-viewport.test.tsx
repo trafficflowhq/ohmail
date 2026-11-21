@@ -210,12 +210,13 @@ describe("SubjectRuleSheet is viewport-clamped", () => {
 
   it("destinations are keyboard-operable: Space opens the confirm for that destination", async () => {
     const sheet = await renderSubject();
-    const option = within(sheet).getByRole("option", { name: /^Ohbox(?:\s|$)/ });
+    const option = within(sheet).getByRole("radio", { name: /^Ohbox(?:\s|$)/ });
     expect(option.getAttribute("tabindex")).toBe("0");
     await act(async () => {
-      option.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+      if (fireEvent.keyDown(option, { key: " " })) fireEvent.click(option, { detail: 0 });
     });
-    expect(sheet.querySelector(".sm-confirm")).toBeTruthy();
+    expect(option.getAttribute("aria-checked")).toBe("true");
+    expect(within(sheet).getByRole<HTMLButtonElement>("button", { name: messages.screening.subjectMakeRule }).disabled).toBe(false);
   });
 });
 

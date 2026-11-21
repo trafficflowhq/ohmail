@@ -8,7 +8,7 @@
  * and no way to open the message. Answering something parked meant remembering where it was
  * and finding it again in the Ohbox.
  *
- * `TriageView` now composes `ListPane` + `MessagePane` — the same two components the Ohbox,
+ * `TriageView` now composes `ListPane` + the shared Reader — the same two components the Ohbox,
  * Tag and History compose — so reading a triage message is the same act, with the same verbs,
  * as reading an Ohbox message.
  *

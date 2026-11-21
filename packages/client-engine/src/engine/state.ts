@@ -339,7 +339,12 @@ export abstract class EngineState {
   protected heldRelease: {
     armed: boolean; stamp: string | null; owed: boolean; seq: number; bell: Promise<void> | null;
     arrivals: Set<string>; rang: number; answered: number;
-  } = { armed: false, stamp: null, owed: false, seq: 0, bell: null, arrivals: new Set(), rang: 0, answered: 0 };
+    filing: { canFile: () => boolean; onFailure: () => void } | null;
+    attempted: Set<string>; requested: boolean; filedThrough: number;
+  } = {
+    armed: false, stamp: null, owed: false, seq: 0, bell: null, arrivals: new Set(), rang: 0, answered: 0,
+    filing: null, attempted: new Set(), requested: false, filedThrough: 0,
+  };
   /**
    * The store's waiting queue, beside its one door ({@link refreshScreenerWaiting}). `armed`: a
    * surface asked. `dirty`: a page since the last ask touched the gate, a rule, the settings or a

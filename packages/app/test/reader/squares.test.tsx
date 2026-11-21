@@ -86,6 +86,24 @@ describe("the squares", () => {
     expect(screen.queryByRole("group", { name: /messages/ })).toBeNull();
   });
 
+  it("keeps the sent square named as sent when it is current and distinguishes read and unread messages", () => {
+    const letters = [
+      { ...LETTERS[0]!, unread: false },
+      { ...LETTERS[1]!, folder: "Sent", unread: true },
+      LETTERS[2]!,
+    ];
+    mountReader({ letters, open: "a" });
+    layOut(letters);
+    const group = screen.getByRole("group", { name: "3 messages, 1 unread" });
+    const sent = screen.getByRole("button", { name: "Message 2 of 3, sent by you" });
+    expect(screen.getByRole("button", { name: /^Message 1 of 3 .*?, read$/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Message 3 of 3 .*?, unread$/ })).toBeTruthy();
+
+    fireEvent.click(sent);
+    expect(screen.getByRole("button", { name: "Message 2 of 3, sent by you", current: true })).toBe(sent);
+    expect(group.getAttribute("aria-label")).toBe("3 messages, 1 unread");
+  });
+
   it("a press on a square brings that letter up to the reading line; the first, back to the top", () => {
     mountReader({ letters: LETTERS, open: "c" });
     const scroller = layOut();

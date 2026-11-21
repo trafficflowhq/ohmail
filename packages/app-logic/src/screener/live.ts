@@ -20,6 +20,7 @@ import { autoUnsubscribeConfirms, mirrorSuggestionIdOf, screeningDegrade } from 
 import { useConsent } from "../consent/consent-row.js";
 import { usePartition } from "../consent/partition.js";
 import { useDemoMode, useDerivedVersion, useEngine, useResolvedDemoMode } from "../engine/index.js";
+import { pileOrganizer } from "../lists/pile-note.js";
 import { useMailState } from "../mail-state/mail-state-binding.js";
 import { screenerMode } from "../mail-state/mail-state.js";
 import { screeningShown, screeningVerdict } from "../press/press-verdict.js";
@@ -65,6 +66,7 @@ export interface ScreenerLiveInput {
    * the row is not read for it: a suggestion is bought on a press of the control and never otherwise.
    */
   readonly unpressed: boolean;
+  readonly cloud?: boolean;
 }
 
 /** What a mounted frame holds of the Screener: its one model, and what runs beside it. */
@@ -99,6 +101,7 @@ export function useScreenerLive({
   suggestControl,
   ownSuggest = false,
   unpressed,
+  cloud = false,
 }: ScreenerLiveInput): ScreenerLive {
   const engine = useEngine();
   const version = useDerivedVersion();
@@ -175,6 +178,7 @@ export function useScreenerLive({
     decisionVerdict,
     releaseWindow: press.screenerRelease ?? null,
     drawKeptFirst: at.screener,
+    screenedBy: pileOrganizer(facts, cloud),
   });
   const junk = useJunkHere(
     press,

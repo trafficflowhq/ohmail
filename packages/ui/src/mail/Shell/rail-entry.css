@@ -15,7 +15,7 @@
     --oh-railentry-step: 12px;
     --oh-railentry-depth: 0;
     --oh-railentry-lead: calc(var(--s3) + var(--oh-railentry-step) * var(--oh-railentry-depth));
-    --oh-railentry-cursor: inset 0 0 0 2px var(--focus);
+    --oh-railentry-cursor: var(--key-focus-ring);
     --oh-railentry-takes: inset 0 0 0 1.5px var(--ctl-ring);
 
     box-sizing: border-box;
@@ -38,7 +38,7 @@
     text-align: inherit;
     white-space: nowrap;
     cursor: pointer;
-    transition: background-color var(--d-fade) var(--e-std);
+    transition: background-color var(--d-key-focus) var(--e-std);
     -webkit-tap-highlight-color: transparent;
   }
 
@@ -50,12 +50,9 @@
     outline: none;
   }
 
-  .oh-railentry:focus-visible {
-    outline: 2px solid var(--focus);
-    outline-offset: -2px;
-  }
-
   .oh-railentry[aria-current="page"] {
+    --oh-railentry-cursor: var(--key-focus-nav-ring);
+
     background: var(--nav-on);
     color: var(--on-nav-on);
     font-weight: var(--w-bold);
@@ -212,7 +209,7 @@
   }
 
   /* The keys are on it. */
-  .oh-railentry[data-cursor] {
+  .oh-railentry:is([data-cursor], :focus-visible) {
     box-shadow: var(--oh-railentry-cursor);
   }
 
@@ -290,7 +287,6 @@
     --oh-railentry-gap: var(--s2);
     --oh-railentry-lead: calc(var(--s4) + var(--oh-railentry-step) * var(--oh-railentry-depth));
     --oh-railentry-ground: var(--oh-hover, var(--hover));
-    --oh-railentry-cursor: inset 0 0 0 1px var(--focus);
     --oh-railentry-mark: -3px;
 
     padding-right: var(--s2);

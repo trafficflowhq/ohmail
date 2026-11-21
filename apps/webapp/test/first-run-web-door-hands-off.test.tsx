@@ -56,7 +56,7 @@ describe("the mailbox step with no mailbox", () => {
   it("on the Cloud door is a hand-off to the setup page, not a form", async () => {
     const s = await mount({ door: "cloud", web: true });
     expect(s.el.querySelector("h1")?.textContent).toBe(t.mailboxTitle);
-    expect(s.el.textContent).toContain(t.mailboxHandoffLead);
+    expect(s.el.textContent).not.toContain("You connect it on the setup page, where you pick your provider and confirm it is you.");
     expect(formOf(s.el), "the connect form is still here").toBeNull();
     await s.press(t.mailboxHandoffGo);
     expect(s.resumes()).toBe(1);
@@ -65,18 +65,18 @@ describe("the mailbox step with no mailbox", () => {
 
   it("on a self-hosted server too", async () => {
     const s = await mount({ door: "selfhost", web: true });
-    expect(s.el.textContent).toContain(t.mailboxHandoffLead);
+    expect(s.el.textContent).not.toContain("You connect it on the setup page, where you pick your provider and confirm it is you.");
   });
 
   it("the desktop's stage keeps its form", async () => {
     const s = await mount({ door: "local", web: false });
-    expect(s.el.textContent).not.toContain(t.mailboxHandoffLead);
+    expect(s.el.textContent).not.toContain("You connect it on the setup page, where you pick your provider and confirm it is you.");
     expect(formOf(s.el)).not.toBeNull();
   });
 
   it("an add run keeps its form: the setup page is for a first mailbox", async () => {
     const s = await mount({ door: "cloud", web: true, add: true });
-    expect(s.el.textContent).not.toContain(t.mailboxHandoffLead);
+    expect(s.el.textContent).not.toContain("You connect it on the setup page, where you pick your provider and confirm it is you.");
     expect(formOf(s.el)).not.toBeNull();
   });
 });

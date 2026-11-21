@@ -15,7 +15,7 @@ const REFUSAL_KEY: Record<LiveBodyRefusal, string> = {
 
 /**
  * A LETTER WHOSE TEXT WAS EMPTIED FOR SPACE, where the mail server can still be asked: the sentence,
- * Load it now and Storage settings. Loaded, the text is the reader's (`MessagePane` draws it through
+ * Load it now and Storage settings. Loaded, the text is the reader's (`packages/app/src/reader` draws it through
  * the same body renderer) and this says where it came from. Nothing here writes anything.
  */
 export function EmptiedLetter({ sentence, live, onLoad }: {

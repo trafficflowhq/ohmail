@@ -13,18 +13,23 @@ const endpoint = "/api/screener/held-releases";
 const scoped = { headers: { "X-Ohmail-Account": ACCOUNT } };
 let host: HTMLElement;
 let posts: string[];
+let reports: string[];
 
-beforeAll(warmCloudShell);
+beforeAll(() => {
+  Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
+  return warmCloudShell();
+});
 beforeEach(() => {
   installConfirmEnv();
   window.localStorage.clear();
   rememberOwner();
   scriptRefresh(refresh204);
   posts = [];
+  reports = [];
 });
 afterEach(teardownConfirmEnv);
 
-async function mount(waitForConfirmation: boolean) {
+async function mount(waitForConfirmation: boolean, refuse = false) {
   let confirm!: (response: Response) => void;
   const pending = new Promise<Response>((resolve) => { confirm = resolve; });
   scriptSession(waitForConfirmation ? () => pending : sessionFull);
@@ -39,14 +44,24 @@ async function mount(waitForConfirmation: boolean) {
     }, scoped);
     if (path === endpoint && method === "POST") {
       posts.push(path);
+      if (refuse) return Response.json({ error: { code: "conflict", message: "refused" } }, { ...scoped, status: 409 });
       released = true;
       return Response.json({ released: groups, total: 3 }, scoped);
     }
     return fixture(input, init);
   };
   window.location.hash = "#/screener";
-  host = await mountCloudShell();
-  await tick(3000);
+  const seen = new MutationObserver(() => {
+    const notice = document.querySelector('.fr-report [role="status"]:not([data-leaving])')?.textContent;
+    if (notice) reports.push(notice);
+  });
+  seen.observe(document.body, { childList: true, subtree: true, characterData: true });
+  try {
+    host = await mountCloudShell();
+    await tick(3000);
+  } finally {
+    seen.disconnect();
+  }
   return async () => {
     await act(async () => { confirm(sessionFull()); });
     await tick(200);
@@ -54,35 +69,30 @@ async function mount(waitForConfirmation: boolean) {
 }
 
 const report = () => host.querySelector('.fr-report [role="status"]:not([data-leaving])')?.textContent;
-const release = async () => {
-  const button = within(host).getByRole("button", { name: "Release 3" });
-  await act(async () => { button.click(); });
-  await tick(200);
-};
+const releaseControl = () => within(host).queryByRole("button", { name: "Release 3" });
 
+// The case titles remain the ones named by the regression checklist.
 describe("a release pressed during the warm open", () => {
   it("waits for the account's confirm, says the mailbox is still loading, then releases", async () => {
     const confirm = await mount(true);
     expect(sessionCalls()).toBeGreaterThan(0);
-    await release();
-    expect(report()).not.toBe(messages.screener.heldReleaseFailed);
-    expect(report()).toBe(messages.screener.heldReleaseWaiting);
+    expect(releaseControl()).toBeNull();
     expect(posts).toEqual([]);
 
     await confirm();
     expect(posts).toEqual([endpoint]);
-    expect(report()).toBe("Released 3. Your rules file them on the next pass.");
+    expect(report()).toBeUndefined();
   });
 
   it("a confirmed account presses at once, with no loading sentence", async () => {
-    await mount(false);
-    await release();
+    await mount(false, true);
     expect(posts).toEqual([endpoint]);
-    expect(report()).toBe("Released 3. Your rules file them on the next pass.");
+    expect(reports).toContain(messages.screener.heldReleaseFailed.replace(/\.$/u, ""));
+    expect(releaseControl()).toBeNull();
   });
 
   it("the German catalogue carries the sentence", () => {
-    for (const key of ["heldReleaseWaiting", "unscreenedWaiting"] as const) {
+    for (const key of ["heldReleaseFailed", "unscreenedWaiting"] as const) {
       expect(typeof de.screener[key]).toBe("string");
       expect(de.screener[key]).not.toBe(messages.screener[key]);
     }

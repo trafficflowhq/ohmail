@@ -29,6 +29,7 @@ export type ReportProps = ReportCommon &
   (
     | {
         kind?: undefined;
+        line?: string;
         /** The way back. Left out where there is none. */
         undo?: { label: string; keyHint?: string; onPress: () => void };
       }
@@ -81,6 +82,7 @@ export function Report(props: ReportProps) {
     }
   }, [leaving, children]);
   const press = props.kind === "why" ? props.act : props.undo;
+  const detail = props.kind === "why" ? props.why : props.line;
   /* Said when it appears: its words are given to a screen reader once the region stands; its way back at once. */
   const held = useSaidOnArrival(true) ? true : undefined;
   return (
@@ -89,16 +91,16 @@ export function Report(props: ReportProps) {
       className="oh-report"
       role="status"
       aria-live="polite"
-      aria-label={held ? undefined : children}
-      data-kind={props.kind}
+      aria-label={held ? undefined : props.kind === undefined && detail ? `${children}. ${detail}` : children}
+      data-kind={props.kind ?? (detail ? "detail" : undefined)}
       data-leaving={leaving ? "" : undefined}
     >
-      {props.kind === "why" ? (
+      {detail !== undefined ? (
         <p className="oh-text oh-report-why" aria-hidden={held}>
           <b className="oh-report-verdict">
             <EndDot kind="ink">{children}</EndDot>
           </b>{" "}
-          {props.why}
+          {detail}
         </p>
       ) : (
         <span className="oh-report-said" aria-hidden={held}>

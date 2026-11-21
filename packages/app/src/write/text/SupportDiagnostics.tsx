@@ -38,7 +38,7 @@ export function SupportDiagnostics({
               })
             : null}
       </div>
-      {present ? <p className="support-diag-what">{t("diagWhat")}</p> : null}
+      {present ? <p className="support-diag-what">{t("draftDiagWhat")}</p> : null}
     </div>
   );
 }

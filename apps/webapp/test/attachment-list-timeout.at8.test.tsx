@@ -17,7 +17,7 @@ import { useMessageAttachments } from "../app/shell/attachments.js";
  * for a fast read is the silent one for a hung read, and there is nothing in between.
  *
  * This file drives the REAL path — a real `HttpAdapter` over a `fetch` that never settles, a real
- * `OhmailEngine`, the real hook, the real component, wired the way `MessagePane` wires them. The
+ * `OhmailEngine`, the real hook, the real component, wired the way the shared Reader wires them. The
  * bound lives in the adapter (it is the only layer that can abort), so a fake `listAttachments`
  * would prove nothing here: it would hang after the fix exactly as it hangs before it.
  *
@@ -57,7 +57,7 @@ afterEach(async () => {
 
 const row = (): HTMLElement | null => host!.querySelector<HTMLElement>(".att-list");
 
-/** `MessagePane`'s own wiring, copied verbatim — the same harness the test uses. */
+/** The shared Reader's own wiring, copied verbatim — the same harness the test uses. */
 function Harness({ engine, messageId }: { engine: OhmailEngine; messageId: string }) {
   const attachments = useMessageAttachments(engine, messageId, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return attachments

@@ -69,6 +69,7 @@ export async function startStack(recordAs: string, size: Size): Promise<Bench> {
     has: (need) => need === "pg" || need === "stack" || need === "mail",
     async ask(a, method, path, o = {}) {
       if (o.session === "fresh") throw new Error("the stack signs in by its gate alone: a session made for one request is the web bench's");
+      if (o.body !== undefined) throw new Error("a request body is only supported on the in-process web bench");
       return far.ask(jar(a).cookies, method, path);
     },
     async account() {

@@ -27,7 +27,7 @@ import { menuItem, moreButton, ohboxRows, openLetter } from "./ohbox/_finders.js
  * reply editor and the reader, so the next Escape was spent closing a layer nobody could see:
  * the reader stayed open, and a reader pressing Escape to leave a message got nothing the first
  * time, which is indistinguishable from a key that did not register. The withdrawal effect in
- * `MessagePane` is the fix and it is still there.
+ * The shared Reader is the fix and it is still there.
  *
  * The FLAG is no longer one of the strip's gates. Delete files the message to the mail server's
  * own \Trash — a system folder every account already has, discovered at connect beside \Junk —

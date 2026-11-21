@@ -3,7 +3,7 @@
 /**
  * A press becomes a file. Pressing an attachment saves it, whatever it is
  * ({@link AttachmentsChrome.open}); looking first is a separate control offered only on drawable
- * types, wired in `MessagePane` to `openAttachmentPreview`. The engine holds every attachment's
+ * types, wired in the shared Reader (`packages/app/src/reader`) to `openAttachmentPreview`. The engine holds every attachment's
  * state, mints the Blob URL and retains the typed bytes; this seam is where saving happens.
  * `<a download>` and never `window.open`: a `blob:` URL inherits the app's origin — an
  * `image/svg+xml` attachment executes script as `ohmail.app` with the session cookie in scope, and

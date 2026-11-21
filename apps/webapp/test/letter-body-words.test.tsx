@@ -37,7 +37,7 @@ describe("the body's words", () => {
   it("speaks German through the words handed to it", () => {
     setBodyWords({ locale: "de", translatorOf: german });
     expect(MAIL_BODY_COPY.linkAskTitle).toBe(GERMAN.mailBody!.linkAskTitle);
-    expect(MAIL_BODY_COPY.linkAskGoes("a.example")).toBe("Er führt zu a.example.");
+    expect(MAIL_BODY_COPY.linkAskGoes("a.example")).toBe("Dieser Link führt zu a.example.");
     expect(BODY_TEXT_COPY.show).toBe(GERMAN.bodyText!.show);
   });
 
@@ -91,7 +91,8 @@ describe("the body's words", () => {
       });
       const page = new DOMParser().parseFromString(text, "text/html");
       expect(page.documentElement.getAttribute("lang")).toBe("de");
-      expect(page.querySelector("h1")?.textContent).toBe(GERMAN.mailBody!.linkAskTitle);
+      expect(page.title).toBe(GERMAN.mailBody!.linkAskTitle);
+      expect(page.querySelector("h1")?.textContent).toBe(GERMAN.mailBody!.linkAskGoes.replace("{host}", "example.net"));
     } finally {
       await act(async () => { root.unmount(); });
       host.remove();

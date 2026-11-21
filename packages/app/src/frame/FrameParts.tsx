@@ -51,7 +51,6 @@ import { NoticeMore } from "./NoticeMore.js";
 import { DockRail, SideRail, type RailHostProps } from "./RailHost.js";
 import { ReportHost } from "./ReportHost.js";
 import type { useReportSlot } from "./report-slot.js";
-import { fragmentOf } from "./route.js";
 import { useProductArrival } from "./product-arrival.js";
 import { Stage } from "./Stage.js";
 import { useText } from "../text/index.js";
@@ -285,9 +284,9 @@ export function FrameParts({
   const calendar =
     host.capabilities.products === "both" && host.features.calendar !== NONE ? host.features.calendar : null;
   const inCalendar = isCalendarPlace(route.place) && calendar !== null;
+  const drawerGesture = active && plan.rail !== "words";
   const frame = useRef<HTMLDivElement>(null);
-  const resumed = !inCalendar && letterOpen && inner.readerPosition.current?.address === fragmentOf(route);
-  useProductArrival(frame, plan.device, inCalendar ? "cal" : "mail", resumed);
+  useProductArrival(frame, plan.device, inCalendar ? "cal" : "mail", staged);
   const navigation = (form: CalendarRailProps["form"], notice: ReactNode, phoneMore = false) => (
     <Navigation
       {...rails}
@@ -315,6 +314,7 @@ export function FrameParts({
         className="fr-frame"
         data-rail={plan.rail}
         data-size={plan.size}
+        data-drawer-edge={drawerGesture ? "" : undefined}
         data-letter={letterUp ? "" : undefined}
         inert={held || staged || sheet || undefined}
       >
@@ -349,7 +349,7 @@ export function FrameParts({
       <RailDrawer
         frame={frame}
         open={sheet}
-        enabled={active && !inCalendar && plan.rail !== "words"}
+        enabled={drawerGesture}
         toggle={commands.rail}
         label={t("dock.more")}
       >

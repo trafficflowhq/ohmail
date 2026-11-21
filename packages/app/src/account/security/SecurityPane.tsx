@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { Button, Dialog, Field } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet, type SettingsSheetProps } from "@ohmail/ui/mail";
+import { browserClipboard } from "../../host/browser/index.js";
 import { useText, type Text } from "../../text/index.js";
 import { ACCOUNT_REFUSALS, type FactorSlot } from "../contract.js";
 import type { GatedRefusal } from "../gated.js";
@@ -56,9 +58,9 @@ export function SecurityPane({ model, factor }: SecurityPaneProps) {
       <Dialog
         open={model.codes.at === "asked"}
         onClose={model.cancelNewCodes}
-        title={t(enrolled.recoveryCodes ? "codesReplace" : "codesGenerate")}
+        title={t(enrolled.recoveryCodes ? "codesReplaceTitle" : "codesGenerate")}
         hot
-        line={t("codesReplaceWarning")}
+        line={t(enrolled.recoveryCodes ? "codesReplaceLine" : "codesReplaceWarning")}
         confirm={{
           label: t("codesConfirm"),
           onPress: model.confirmNewCodes,
@@ -165,11 +167,11 @@ function Enrolment({ model }: { readonly model: SecurityModel }) {
 function FreshCodes({ codes, done }: { readonly codes: readonly string[]; readonly done: () => void }) {
   const t = useText("security");
   return (
-    <SettingsSheet title={t("codesTitle")} sign="key" hot>
-      <SettingNote warn>{t("codesShownOnce")}</SettingNote>
+    <SettingsSheet title={t("codesTitle")} sign="key" aside={t("shownOnce")} hot>
       {codes.map((code) => (
         <SettingNote key={code}>{code}</SettingNote>
       ))}
+      <CopySecret value={codes.join("\n")} />
       <Button kind="ink" size="s" onPress={done}>
         {t("codesDone")}
       </Button>
@@ -187,10 +189,12 @@ function NewAuthenticator({ model }: { readonly model: SecurityModel }) {
   const refused = model.problem !== null && saidAtTheCode(model) ? refusalSaid(model.problem.why, t) : null;
   return (
     <SettingsSheet title={t("totpTitle")} sign="shield">
-      <SettingNote>{own("byHand")}</SettingNote>
-      <SettingLine label={own("byHandLabel")} value={key} narrow="detail" />
+      <SettingLine label={own("byHandLabel")} value={key} narrow="detail">
+        <CopySecret value={key} />
+      </SettingLine>
       <Field
-        label={t("totpCodeLabel")}
+        label={t("totpSixDigits")}
+        placeholder="000000"
         value={code}
         onChange={model.typeCode}
         inputMode="numeric"
@@ -215,5 +219,26 @@ function NewAuthenticator({ model }: { readonly model: SecurityModel }) {
         {t("cancel")}
       </Button>
     </SettingsSheet>
+  );
+}
+
+function CopySecret({ value }: { readonly value: string }) {
+  const own = useText("accountSecurity");
+  const [result, setResult] = useState<"copied" | "copyFailed">();
+  return (
+    <>
+      <Button
+        kind="two"
+        size="s"
+        onPress={async (event) => {
+          const win = event.currentTarget.ownerDocument.defaultView;
+          const copied = win ? await browserClipboard(win)(value) : false;
+          setResult(copied ? "copied" : "copyFailed");
+        }}
+      >
+        {own("copy")}
+      </Button>
+      <span role="status">{result ? own(result) : null}</span>
+    </>
   );
 }

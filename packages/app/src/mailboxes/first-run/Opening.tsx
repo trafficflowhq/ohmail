@@ -4,19 +4,18 @@
  * run's mode is `seed`, which reconfigures the install) or a rail: one verb, and it leaves.
  */
 import type { ReactNode } from "react";
-import { Button, Page, Sentence } from "@ohmail/ui/base";
+import { Button, Mark, Page, Sentence } from "@ohmail/ui/base";
 import { Next, StepForm, leadOf, type StepProps } from "./parts.js";
-import { WELCOME_TITLE } from "./words.js";
 
-export function Welcome({ run, say, door }: StepProps): ReactNode {
+export function Welcome({ run, say }: StepProps): ReactNode {
   return (
     <StepForm run={run} submit={run.acts.forward}>
-      <Page
-        line={leadOf(say("onboarding.welcomeLead"))}
-        acts={<Next label={say("onboarding.welcomeStart")} />}
-      >
+      <Page acts={<Next label={say("onboarding.welcomeStart")} />}>
+        <Mark hot bell={{ label: say("onboarding.welcomeRing") }}>
+          oh
+        </Mark>
         <Sentence size="xl" level={1} end="hot">
-          {say(WELCOME_TITLE[door])}
+          {say("onboarding.welcomeTitle")}
         </Sentence>
       </Page>
     </StepForm>

@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { readerZone } from "@ohmail/app-logic/reader";
 import { afterEach, describe, expect, it } from "vitest";
 import { letter, mountPiles, pilesOf } from "./world.js";
 
@@ -76,12 +77,15 @@ describe("the piles", () => {
   });
 
   it("says when a Resurface row is back, and its Done goes through the press seam once per press", () => {
+    const date = "2026-11-20T08:00:00.000Z";
     const { said } = mountPiles({
-      piles: pilesOf({ resurface: LATER }, "2026-11-20T08:00:00.000Z"),
+      piles: pilesOf({ resurface: LATER }, date),
       letters: LATER,
       at: "#/triage/resurface",
     });
-    expect(screen.getAllByText(/^back /)).toHaveLength(2);
+    const clock = new Intl.DateTimeFormat("en-GB", { timeStyle: "short", timeZone: readerZone() });
+    expect(screen.getAllByText((text) => text.endsWith(clock.format(new Date(date))))).toHaveLength(2);
+    expect(screen.queryByText(/^back /)).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: "Done" })[0]!);
     expect(said.actions).toEqual([["resurface_done", "l1"]]);
     expect(said.opened).toEqual([]);

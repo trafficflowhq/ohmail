@@ -76,7 +76,7 @@ export type TrashLiveBodyPhase =
 
 /**
  * WHICH VERBS THE TRASH READING COLUMN OFFERS, decided by which population the open row belongs
- * to. The `none` arm is a named state and not a missing prop: `MessagePane` with no `trash` prop
+ * to. The `none` arm is a named state and not a missing prop: the reader's bar with no `trash` prop
  * renders the FULL eleven-group bar, so omission here would arm every filing verb over a message
  * that is not in the mirror. Both arms are reachable and each has a twin.
  */

@@ -151,7 +151,7 @@ async function commit(latest: () => ScreenerState): Promise<void> {
 const decided = (): string[] =>
   sent.filter((m) => m.kind === "screener_decide").map((m) => m.senderId);
 const wait = (ms: number) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
-const askNow = (): HTMLElement | null => within(document.body).queryByRole("dialog", { name: /waiting senders? as spam/ });
+const askNow = (): HTMLElement | null => within(document.body).queryByRole("dialog", { name: /Mark \d+ as spam/ });
 
 async function markAll(): Promise<void> {
   await click(within(host!).getByRole("button", { name: "List" }));
@@ -169,7 +169,7 @@ describe("s is this sender, and Mark all spam asks first", () => {
     const exiting = () => ["a1", "b1"].filter((id) => latest().isExiting(id));
 
     const ask = await open();
-    expect(ask?.textContent).toContain("Mark all 2 waiting senders as spam?");
+    expect(ask?.textContent).toContain("Mark 2 as spam");
     expect(document.activeElement?.textContent).toBe("Cancel");
     await wait(600);
     expect(exiting()).toEqual([]);
@@ -183,7 +183,7 @@ describe("s is this sender, and Mark all spam asks first", () => {
     expect(exiting()).toEqual([]);
 
     const confirm = await open();
-    await click([...confirm!.querySelectorAll("button")].find((b) => b.textContent === "Mark 2 as spam")!);
+    await click([...confirm!.querySelectorAll("button")].find((b) => b.textContent === "Mark as spam")!);
     await wait(900);
     expect(exiting()).toEqual(["a1", "b1"]);
     await commit(latest);
@@ -194,8 +194,8 @@ describe("s is this sender, and Mark all spam asks first", () => {
     const { latest, arrive } = await mount([msg("a1", "anna@example.test", 9), msg("b1", "bert@example.test", 10)]);
     await markAll();
     await arrive([msg("c1", "cleo@example.test", 11)]);
-    expect(askNow()?.textContent).toContain("Mark all 2 waiting senders as spam?");
-    await click([...askNow()!.querySelectorAll("button")].find((b) => b.textContent === "Mark 2 as spam")!);
+    expect(askNow()?.textContent).toContain("Mark 2 as spam");
+    await click([...askNow()!.querySelectorAll("button")].find((b) => b.textContent === "Mark as spam")!);
     await wait(900);
     await commit(latest);
     expect(decided().sort()).toEqual(["a1", "b1"]);

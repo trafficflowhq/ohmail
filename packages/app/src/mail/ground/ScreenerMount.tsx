@@ -82,6 +82,7 @@ export function ScreenerMount({
     suggestControl: control === "priced" || control === "pressed",
     ownSuggest: ownSuggest !== undefined,
     unpressed: control === "priced",
+    cloud: host.capabilities.service === "managed",
   });
   /* A price in credits is said only where the host is the managed service: nobody else meters a suggestion. */
   const priced = host.capabilities.service === "managed";

@@ -18,7 +18,7 @@ import { settleEditor } from "./_first-paint.js";
  *
  *   · every panel's ⋯ menu dispatched its OWN id (`MessageHeader`, by design), and the shell
  *     faithfully set `replyTo` to it — but the editor dock mounted only when the id was the
- *     FOCUSED message's (`MessagePane`), so Reply on any other panel of a conversation set
+ *     FOCUSED message's (the shared Reader), so Reply on any other panel of a conversation set
  *     state that nothing anywhere rendered. A menu that presses and produces nothing is a
  *     dead menu. Pinned here over a fabricated conversation (the chrome-stubbed mount the
  *     conversation suite uses), because the fixture world holds no multi-message thread.
@@ -116,10 +116,6 @@ const sheet = (): HTMLElement | null =>
   host!.querySelector<HTMLElement>(`${OPEN} section[aria-label="Forward"], ${OPEN} section[aria-label^="Reply to "]`);
 /** The forward, by its name. */
 const forwardSheet = (): HTMLElement | null => host!.querySelector<HTMLElement>(`${OPEN} section[aria-label="Forward"]`);
-/** What the forward says is added when it goes (today's `.reply-forwarding`): its status line. */
-const forwarding = (s: HTMLElement | null): string =>
-  [...(s?.querySelectorAll<HTMLElement>('[role="status"]') ?? [])].map((n) => n.textContent ?? "")
-    .find((text) => text.includes("The original message is added when you send.")) ?? "";
 /** The letter the standing reply or forward answers: the open conversation's last letter (the sheet stands after it). */
 const dockFor = (): string | undefined =>
   sheet() === null ? undefined
@@ -266,9 +262,8 @@ describe("forward is the reply's sibling, inside the reading surface", () => {
     const dock = forwardSheet();
     expect(dock, "the inline dock, in forward mode").toBeTruthy();
 
-    // The honesty line: the note is the body; the quote and the original's attachments are
-    // the server's — the compose surface's own sentence, reused.
-    expect(forwarding(dock)).not.toBe("");
+    expect(dock!.querySelector('[role="textbox"][aria-label="Forward body"]')).not.toBeNull();
+    expect(dock!.textContent).not.toContain("The original message is added when you send.");
 
     // Recipients are the user's to pick: the rows are OPEN at once — no derived audience.
     const toInput = dock!.querySelector<HTMLInputElement>('[role="combobox"][aria-label="To"]');
@@ -382,7 +377,7 @@ describe("forward is the reply's sibling, inside the reading surface", () => {
     expect(window.location.hash, "the pill's Forward navigated away").not.toBe("#/compose");
     const dock = sheet();
     expect(dock, "the pill's Forward opened no dock").toBeTruthy();
-    expect(forwarding(dock) || null, "…and it is in FORWARD mode").toBeTruthy();
+    expect(dock).toBe(forwardSheet());
   });
 
   /* ONE RESOLVER: the bar's Forward docks on the very message the bar's Reply docks on — both
@@ -404,7 +399,7 @@ describe("forward is the reply's sibling, inside the reading surface", () => {
     expect(await waitUntil(() => dockFor() !== undefined), `row ${row}: the bar's Reply opened no dock`).toBe(true);
     const replied = dockFor();
     await pressMenuItem(openPanel(), "Forward");
-    await waitUntil(() => forwarding(sheet()) !== "");
+    expect(await waitUntil(() => forwardSheet() !== null)).toBe(true);
     expect(dockFor(), `row ${row}: Forward and Reply act on different messages`).toBe(replied);
   });
 
@@ -413,16 +408,20 @@ describe("forward is the reply's sibling, inside the reading surface", () => {
     // forward dock closed it instead of replacing it with the reply it asked for.
     await mountShell();
     await pressMenuItem(openPanel(), "Forward");
-    expect(forwarding(sheet()) || null, "forward mode up").toBeTruthy();
+    expect(forwardSheet(), "forward mode up").not.toBeNull();
 
+    const reading = host!.querySelector<HTMLElement>(`${OPEN} [data-reading-scroll]`)!;
+    expect(reading).toBeTruthy();
     await act(async () => {
-      (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true }));
+      reading.focus();
+      expect(document.activeElement).toBe(reading);
+      reading.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true }));
     });
     await settle();
     await settleEditor();
     const dock = sheet();
     expect(dock, "the dock survived the switch").toBeTruthy();
-    expect(forwarding(dock) || null, "…as a REPLY now").toBeNull();
+    expect(forwardSheet()).toBeNull();
   });
 
   it("a LATE forward confirmation never closes the reply opened after it", async () => {
@@ -466,14 +465,14 @@ describe("forward is the reply's sibling, inside the reading surface", () => {
     await settle();
     await pressMenuItem(openPanel(), "Reply");
     expect(sheet(), "the reply is up").toBeTruthy();
-    expect(forwarding(sheet()) || null).toBeNull();
+    expect(forwardSheet()).toBeNull();
 
     // The forward's confirmation lands LATE — the reply must stand.
     await act(async () => { release!(undefined); });
     await settle();
     const after = sheet();
     expect(after, "a late forward settlement closed an unrelated reply").toBeTruthy();
-    expect(forwarding(after) || null).toBeNull();
+    expect(forwardSheet()).toBeNull();
   });
 });
 
@@ -615,7 +614,7 @@ const removeButtons = (): HTMLButtonElement[] =>
 /** Why a press was refused over the forwarded files (today's `.forward-files-refusal`): the forward's other status line. */
 const refusalLine = (): string =>
   [...fwdDock().querySelectorAll<HTMLElement>('[role="status"]')].map((n) => (n.textContent ?? "").trim())
-    .find((text) => text !== "" && !text.includes("The original message is added when you send.")) ?? "";
+    .find((text) => text !== "") ?? "";
 const fwdSend = async (): Promise<Extract<EngineMutation, { kind: "mail_send" }> | undefined> => {
   const send = panelVerb("Send")!;
   await act(async () => { send.click(); });
@@ -656,7 +655,10 @@ describe("the forward dock lists the original's files", () => {
     await mountForwardShell({ supported: false });
     expect(await waitUntil(() => listedParts().length === 3)).toBe(true);
     expect(removeButtons()).toHaveLength(0);
-    expect(fwdDock().textContent).toContain("All of them go with it.");
+    expect(fwdDock().textContent).not.toContain("All of them go with it.");
+    const sent = await fwdSend();
+    expect(sent).toBeDefined();
+    expect(sent).not.toHaveProperty("forwardParts");
   });
 
   it("a calendar body stays in the kept list when another file is removed", async () => {

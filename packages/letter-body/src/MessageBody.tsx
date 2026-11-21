@@ -114,7 +114,7 @@ const EN = {
   plain: "Show as text",
   plainTitle: "Show this message as text, in the app's own type",
   frameTitle: "Message content",
-  unsupported: "Showing the plain-text version of this message.",
+  unsupported: "You are reading this message's plain text.",
   /**
    * SAID AFTER the image sentence, never before it. The browser-level test of the blocking
    * bar reads the FIRST number in it and holds that against the number of remote images the
@@ -125,7 +125,7 @@ const EN = {
   sheetMany: (n: number) =>
     `${n} remote stylesheets were blocked, so this message may look plain.`,
   /** The size fallback. It states the reason, because a bare plain-text render reads as a bug. */
-  oversize: "This message's HTML part is too large to render safely. Showing the plain-text version.",
+  oversize: "This message's design is too large to draw safely, so you are reading its plain text.",
   /** What a screen reader calls a picture the sender gave no alt text. */
   picture: "Picture",
   /**
@@ -135,7 +135,8 @@ const EN = {
    */
   linkAskTitle: "Open this link?",
   linkAskElsewhere: "The text of this link names a different site.",
-  linkAskGoes: (host: string) => `It goes to ${host}.`,
+  linkAskHeading: (host: string) => `This link goes to ${host}`,
+  linkAskGoes: (host: string) => `This link goes to ${host}.`,
   linkAskOpen: (host: string) => `Open ${host}`,
   linkAskCancel: "Cancel",
   linkAskStay: "To stay, close this tab.",
@@ -151,7 +152,7 @@ const EN = {
  */
 export const COPY: typeof EN = bodyCopy("mailBody", EN, {
   blockedMany: ["count"], pixelMany: ["count"], pixelsRefusedMany: ["count"], sheetMany: ["n"],
-  linkAskGoes: ["host"], linkAskOpen: ["host"],
+  linkAskHeading: ["host"], linkAskGoes: ["host"], linkAskOpen: ["host"],
 });
 
 /** The ask page's sentences in the active language (`link-ask.ts`). */

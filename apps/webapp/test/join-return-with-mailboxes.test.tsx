@@ -131,7 +131,7 @@ describe("the paid return for an account that already has a mailbox", () => {
 describe("a signed-in account resuming setup", () => {
   const signUpShown = (c: HTMLElement): boolean =>
     c.querySelector("#join-email") !== null || c.querySelector("#join-code") !== null
-    || c.querySelector("h1")?.textContent === messages.join.step_account_title;
+    || c.querySelector("h1")?.textContent === messages.join.account.replace("<name>,</name>", `${messages.join.nameLabel},`).replace("<email>,</email>", `${messages.join.emailLabel},`).replace("<password></password>.", messages.join.passwordLabel);
   const settle = async (): Promise<void> => {
     for (let i = 0; i < 12; i += 1) await act(async () => { await Promise.resolve(); });
   };

@@ -130,12 +130,12 @@ afterEach(async () => {
 
 /**
  * Mount the REAL `MessageBody` behind the REAL `useRemoteImages`, in a harness that is the
- * two lines `MessagePane` uses and nothing else.
+ * two lines the shared Reader uses and nothing else.
  *
  * A harness rather than the whole `AppShell` because the shell needs an engine, a provider
  * tree and a mailbox; what is under test is the seam between the consent hook and the
  * renderer, and everything that would make this file need a shell is asserted elsewhere.
- * The seam itself is held to `MessagePane`'s source by the last test in this file.
+ * The seam itself is held to the shared Reader's source by the last test in this file.
  */
 /**
  * The wire a case's host hands, as the web's page hands it: its own, through this origin's proxy, where the page has
@@ -153,7 +153,7 @@ function Harness({
 }) {
   const [failed, setFailed] = React.useState<string | null>(null);
   const remoteImages = useRemoteImages({ onFailed: setFailed, mode, loadPixels, wire: wireOver(fetchImage) });
-  // The pipe-door's pair, wired exactly as `MessagePane` wires it; handed down only with a fetcher.
+  // The pipe-door's pair, wired exactly as the shared Reader wires it; handed down only with a fetcher.
   const onRemoteImages = React.useCallback(
     (urls: string[]) => remoteImages?.needRemote(messageId, urls),
     [remoteImages, messageId],
@@ -370,7 +370,7 @@ describe("mail 0048 — images by default, and the pixel that is still never fet
    * request is ours — a mode that loaded them from the sender's host would be the feature every
    * other mail client has, and the one this product exists not to have.
    *
-   * Mutation: drop the `auto` term from the harness's `remoteLoaded` (i.e. from `MessagePane`'s
+   * Mutation: drop the `auto` term from the harness's `remoteLoaded` (i.e. from the reader's
    * three-term OR). Real failure text:
    *   AssertionError: auto mode did not load the message's picture: expected [] to contain
    *   'https://images.newsletter.example/hero.png'
@@ -401,7 +401,7 @@ describe("mail 0048 — images by default, and the pixel that is still never fet
    * GREEN — measured, not assumed, because a guard that survives its own mutation is exactly the
    * decoration this repo keeps finding:
    *
-   *   · `MessagePane` withholds `onLoadRemote` in auto mode, so nothing is handed over; and
+   *   · The reader withholds `onLoadRemote` in auto mode, so nothing is handed over; and
    *   · `MessageBody`'s `canLoad` ands in `!remoteLoaded`, so a handed-over callback is still
    *     not drawn while the images are showing.
    *
@@ -585,7 +585,7 @@ describe("mail 0072 — the pixel switch", () => {
   /**
    * ── THE CHROME'S IDENTITY IS A PERFORMANCE CONTRACT ─────────────────────────────────────
    *
-   * `StreamCardMemo` compares the chrome BY REFERENCE, and `AppShell` passes `onFailed` as an
+   * The stream card (`packages/app/src/stream`) compares the chrome BY REFERENCE, and `AppShell` passes `onFailed` as an
    * inline arrow whose identity changes on every shell render — one per `/sync` apply. If that
    * identity reaches the hook's dependency arrays, every poll hands the stream a fresh chrome,
    * re-rendering every mounted card and re-running the sanitizer over each, which is precisely
@@ -838,7 +838,7 @@ describe("the pane is the consumer, not just the harness", () => {
    * This seam has shipped unsupplied on the LIVE path twice (`fetchBody`, `searchServer`) —
    * every unit test stayed green both times, because tests construct the collaborator
    * directly and the shell is the only place the wire is actually made. The harness above has
-   * exactly that blind spot by construction, so the two ends are pinned here: `MessagePane`
+   * exactly that blind spot by construction, so the two ends are pinned here: the shared Reader
    * passes the props, and `AppShell` supplies the chrome they come from.
    */
   it("MessagePane hands MessageBody the proxy, and AppShell supplies it", async () => {
@@ -1043,7 +1043,7 @@ describe("a picture the desktop fetched is never fetched again", () => {
     `<table width="600"><tr><td><p>hello</p><img src="${PICTURE}" width="600" height="200"></td></tr></table>`;
   function GatedLetter({ mayRead }: { mayRead: () => boolean }) {
     const remoteImages = useRemoteImages({ onFailed: () => {}, mode: "manual", loadPixels: false, wire: wireOver(), mayRead });
-    // `MessagePane`'s lines, its pair included: a no-op where nothing fetches the pictures.
+    // The reader's lines, its pair included: a no-op where nothing fetches the pictures.
     const onRemoteImages = React.useCallback(
       (urls: string[]) => remoteImages?.needRemote("m1", urls),
       [remoteImages],

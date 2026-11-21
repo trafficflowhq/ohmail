@@ -127,7 +127,7 @@ describe("a folder's own seat, over the mail ground", () => {
       });
       await waitFor(() => expect(rows().map((row) => row.dataset.id)).toEqual(["b", "a"]));
       fireEvent.contextMenu(rows()[1]!);
-      const menu = screen.getByRole("menu", { name: "Move to a folder" });
+      const menu = screen.getByRole("menu", { name: "Move" });
       expect(within(menu).getByRole("menuitem", { name: /Archive/ })).toBeTruthy();
       if (change === "opens another folder") {
         act(() => address.visit("#/folder/f2"));
@@ -136,13 +136,13 @@ describe("a folder's own seat, over the mail ground", () => {
         act(() => mail.add(at(10, { id: "a", subject: "Old kiln notes", folder: "INBOX", unread: false })));
         await waitFor(() => expect(rows().map((row) => row.dataset.id)).toEqual(["b"]));
       }
-      const oldMenu = screen.queryByRole("menu", { name: "Move to a folder" });
+      const oldMenu = screen.queryByRole("menu", { name: "Move" });
       if (oldMenu !== null) fireEvent.click(within(oldMenu).getByRole("menuitem", { name: /Archive/ }));
       await settle();
       expect(sent(mail)).toEqual([]);
       expect(oldMenu).toBeNull();
       act(() => address.visit("#/folder/f1"));
-      expect(screen.queryByRole("menu", { name: "Move to a folder" })).toBeNull();
+      expect(screen.queryByRole("menu", { name: "Move" })).toBeNull();
     },
   );
 
@@ -156,7 +156,7 @@ describe("a folder's own seat, over the mail ground", () => {
     });
     await waitFor(() => expect(rows().map((row) => row.dataset.id)).toEqual(["b", "a"]));
     fireEvent.contextMenu(rows()[1]!);
-    const choice = within(screen.getByRole("menu", { name: "Move to a folder" })).getByRole("menuitem", {
+    const choice = within(screen.getByRole("menu", { name: "Move" })).getByRole("menuitem", {
       name: /Archive/,
     });
     act(() => {
@@ -240,15 +240,15 @@ describe("a folder's own seat, over the mail ground", () => {
     await waitFor(() => expect(rows().length).toBe(2));
     await settle();
     fireEvent.contextMenu(rows()[1]!);
-    const menu = screen.getByRole("menu", { name: "Move to a folder" });
+    const menu = screen.getByRole("menu", { name: "Move" });
     /* The folder it is in is not offered. */
     expect(within(menu).queryByRole("menuitem", { name: /Clay/ })).toBeNull();
     await act(async () => {
       fireEvent.click(within(menu).getByRole("menuitem", { name: /Archive/ }));
     });
     expect(sent(mail)).toEqual(["move a Archive"]);
-    await waitFor(() => expect(said()).toBe("Moved to Archive."));
-    expect(screen.queryByRole("menu", { name: "Move to a folder" })).toBeNull();
+    await waitFor(() => expect(said()).toBe("Moved to Archive"));
+    expect(screen.queryByRole("menu", { name: "Move" })).toBeNull();
   });
 
   it("a move the mail server refuses because the folder is gone says so by its name and offers no Undo: one move sent", async () => {
@@ -269,12 +269,12 @@ describe("a folder's own seat, over the mail ground", () => {
     await waitFor(() => expect(rows().length).toBe(2));
     await settle();
     fireEvent.contextMenu(rows()[1]!);
-    const menu = screen.getByRole("menu", { name: "Move to a folder" });
+    const menu = screen.getByRole("menu", { name: "Move" });
     await act(async () => {
       fireEvent.click(within(menu).getByRole("menuitem", { name: /Archive/ }));
     });
     expect(sent(mail)).toEqual(["move a Archive"]);
-    await waitFor(() => expect(said()).toBe("“Archive” is no longer on your mail server."));
+    await waitFor(() => expect(said()).toBe("“Archive” is no longer on your mail server"));
     expect(within(screen.getByRole("status")).queryByRole("button", { name: UNDO })).toBeNull();
   });
 
@@ -289,11 +289,11 @@ describe("a folder's own seat, over the mail ground", () => {
     await waitFor(() => expect(rows().length).toBe(2));
     await settle();
     fireEvent.contextMenu(rows()[1]!);
-    const menu = screen.getByRole("menu", { name: "Move to a folder" });
+    const menu = screen.getByRole("menu", { name: "Move" });
     await act(async () => {
       fireEvent.click(within(menu).getByRole("menuitem", { name: /Archive/ }));
     });
-    await waitFor(() => expect(said()).toBe("Moved to Archive."));
+    await waitFor(() => expect(said()).toBe("Moved to Archive"));
     await act(async () => {
       fireEvent.click(within(screen.getByRole("status")).getByRole("button", { name: UNDO }));
     });
@@ -305,7 +305,7 @@ describe("a folder's own seat, over the mail ground", () => {
     await waitFor(() => expect(rows().length).toBe(2));
     await settle();
     fireEvent.contextMenu(rows()[1]!);
-    const menu = screen.getByRole("menu", { name: "Move to a folder" });
+    const menu = screen.getByRole("menu", { name: "Move" });
     expect(within(menu).queryAllByRole("menuitem")).toEqual([]);
   });
 
@@ -320,7 +320,7 @@ describe("a folder's own seat, over the mail ground", () => {
     await waitFor(() => expect(rows().length).toBe(2));
     await settle();
     fireEvent.contextMenu(rows()[1]!);
-    const menu = screen.getByRole("menu", { name: "Move to a folder" });
+    const menu = screen.getByRole("menu", { name: "Move" });
     expect(within(menu).getByRole("menuitem", { name: /Archive/ })).toBeTruthy();
     expect(within(menu).queryByRole("menuitem", { name: /Junk/ })).toBeNull();
   });

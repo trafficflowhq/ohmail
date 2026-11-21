@@ -171,10 +171,10 @@ describe("changing where a rule files", () => {
   it("with the past-mail switch off it discloses, before the choice, that mail already filed stays", async () => {
     const { openChange, writes } = await mountedRules();
     const menu = await openChange();
-    const movePastMail = menu.getByRole("switch");
+    const movePastMail = menu.getByRole("menuitemcheckbox");
     expect(movePastMail.getAttribute("aria-checked")).toBe("true");
     await click(movePastMail);
-    expect(menu.getByText(/Mail already filed stays where it is\./)).toBeTruthy();
+    expect(menu.queryByText(/Mail already filed stays where it is\./)).toBeNull();
     expect(writes).toEqual([]);
     await click(menu.getByRole("menuitemradio", { name: "News" }));
     await tick(1500);
@@ -186,7 +186,7 @@ describe("changing where a rule files", () => {
   it("dispatches the chosen folder as a canonical path, not a label", async () => {
     const { openChange, writes } = await mountedRules({ item: testRule({ id: "r-3" }) });
     const menu = await openChange();
-    expect(menu.getByRole("switch").getAttribute("aria-checked")).toBe("true");
+    expect(menu.getByRole("menuitemcheckbox").getAttribute("aria-checked")).toBe("true");
     await click(menu.getByRole("menuitemradio", { name: "News" }));
     await tick(1500);
     expect(writes).toEqual([{
@@ -255,9 +255,9 @@ describe("a change that moves mail says so before and after, with Undo", () => {
   it("before the press: the count and the switch, on by default", async () => {
     const { openChange, writes } = await mountedRules(filedRule);
     const menu = await openChange();
-    expect(menu.getByRole("switch").getAttribute("aria-checked")).toBe("true");
-    expect(menu.getByText(/^5 messages ohmail has synced were filed in Screened out by this rule/)).toBeTruthy();
-    expect(menu.getByText(/ohmail also moves the mail it filed in Screened out/)).toBeTruthy();
+    expect(menu.getByRole("menuitemcheckbox").getAttribute("aria-checked")).toBe("true");
+    expect(menu.queryByText(/^5 messages ohmail has synced were filed in Screened out by this rule/)).toBeNull();
+    expect(menu.queryByText(/ohmail also moves the mail it filed in Screened out/)).toBeNull();
     expect(menu.queryByText(/Mail already filed stays where it is\./)).toBeNull();
     expect(writes).toEqual([]);
   });
@@ -271,7 +271,7 @@ describe("a change that moves mail says so before and after, with Undo", () => {
       method: "PATCH", path: "/api/rules/r-1", body: { destination: "INBOX", applyRetro: false, refile: true },
     }]);
     expect(reports()).toEqual(expect.arrayContaining([expect.stringContaining(
-      "Ohbox — the rule files there now, and ohmail is moving the 5 messages it filed in Screened out there too.",
+      "Ohbox — the rule files there now, and ohmail is moving the 5 messages it filed in Screened out there too",
     )]));
     expect(pane.getByRole("button", { name: "Files into Ohbox" })).toBeTruthy();
 
@@ -281,22 +281,22 @@ describe("a change that moves mail says so before and after, with Undo", () => {
     expect(writes[1]).toEqual({
       method: "PATCH", path: "/api/rules/r-1", body: { destination: "ohmail/Screened", applyRetro: false },
     });
-    expect(reports()).toContain("The rule files into Screened out again, and nothing moved.");
+    expect(reports()).toContain("The rule files into Screened out again, and nothing moved");
     expect(pane.getByRole("button", { name: "Files into Screened out" })).toBeTruthy();
   });
 
   it("with the switch off nothing already filed is asked for, and the pane says so", async () => {
     const { openChange, writes } = await mountedRules(filedRule);
     const menu = await openChange();
-    await click(menu.getByRole("switch"));
-    expect(menu.getByText(/Mail already filed stays where it is\./)).toBeTruthy();
+    await click(menu.getByRole("menuitemcheckbox"));
+    expect(menu.queryByText(/Mail already filed stays where it is\./)).toBeNull();
     await click(menu.getByRole("menuitemradio", { name: "Ohbox" }));
     await tick(750);
     expect(writes).toEqual([{
       method: "PATCH", path: "/api/rules/r-1", body: { destination: "INBOX", applyRetro: false },
     }]);
     expect(reports()).toEqual(expect.arrayContaining([expect.stringContaining(
-      "New mail matching this rule will go to Ohbox. Mail already filed stays where it is.",
+      "New mail matching this rule will go to Ohbox. Mail already filed stays where it is",
     )]));
   });
 
@@ -305,7 +305,7 @@ describe("a change that moves mail says so before and after, with Undo", () => {
       ...filedRule, item: { ...filedRule.item, bodyContains: "invoice" },
     });
     const menu = await openChange();
-    expect(menu.getByText("The text is matched when mail is filed, so this device cannot count it.")).toBeTruthy();
+    expect(menu.queryByText("The text is matched when mail is filed, so this device cannot count it.")).toBeNull();
     expect(menu.queryByText(/\d+ messages? ohmail has synced/)).toBeNull();
     await click(menu.getByRole("menuitemradio", { name: "Ohbox" }));
     await tick(750);
@@ -313,7 +313,7 @@ describe("a change that moves mail says so before and after, with Undo", () => {
       method: "PATCH", path: "/api/rules/r-1", body: { destination: "INBOX", applyRetro: false, refile: true },
     }]);
     expect(reports()).toEqual(expect.arrayContaining([expect.stringContaining(
-      "Ohbox — the rule files there now, and ohmail is moving the mail it filed in Screened out there too.",
+      "Ohbox — the rule files there now, and ohmail is moving the mail it filed in Screened out there too",
     )]));
   });
 });
@@ -348,18 +348,18 @@ describe("a Change says it moves the rule's pile, and nothing else", () => {
   it("names News and one message, re-files it on the press, and Undo moves nothing", async () => {
     const { pane, openChange, writes } = await mountedRules({ item: nora, seededMail: mail, otherRules: [weekly] });
     const menu = await openChange("News", pane.getByRole("group", { name: `Mail from ${match}` }));
-    expect(menu.getByText(/ohmail also moves the mail it filed in News/)).toBeTruthy();
-    expect(menu.getByText(/^1 message ohmail has synced was filed in News by this rule/)).toBeTruthy();
+    expect(menu.queryByText(/ohmail also moves the mail it filed in News/)).toBeNull();
+    expect(menu.queryByText(/^1 message ohmail has synced was filed in News by this rule/)).toBeNull();
     await choose(menu, "Receipts");
     expect(writes).toEqual([patch("ohmail/Receipts", { applyRetro: false, refile: true })]);
-    report("Receipts — the rule files there now, and ohmail is moving the 1 message it filed in News there too.");
+    report("Receipts — the rule files there now, and ohmail is moving the 1 message it filed in News there too");
 
     await undo();
     expect(writes).toEqual([
       patch("ohmail/Receipts", { applyRetro: false, refile: true }),
       patch("ohmail/News", { applyRetro: false }),
     ]);
-    report("The rule files into News again, and nothing moved.");
+    report("The rule files into News again, and nothing moved");
     const sibling = pane.getByRole("group", { name: /Mail from .*weekly/ });
     expect(within(sibling).getByRole("button", { name: "Files into News" })).toBeTruthy();
   });
@@ -369,7 +369,7 @@ describe("a Change says it moves the rule's pile, and nothing else", () => {
       item: outstanding("ohmail/News"), seededMail: mail, otherRules: [weekly],
     });
     const menu = await openChange("Receipts");
-    expect(menu.getByText(/ohmail also moves the mail it filed in News/)).toBeTruthy();
+    expect(menu.queryByText(/ohmail also moves the mail it filed in News/)).toBeNull();
     await choose(menu, "Screened out");
     expect(writes).toEqual([patch("ohmail/Screened", { applyRetro: false, refile: true })]);
     await undo();
@@ -377,7 +377,7 @@ describe("a Change says it moves the rule's pile, and nothing else", () => {
       patch("ohmail/Screened", { applyRetro: false, refile: true }),
       patch("ohmail/Receipts", { applyRetro: false, refile: true }),
     ]);
-    report("The rule files into Receipts again, and ohmail is moving the mail it filed in News there.");
+    report("The rule files into Receipts again, and ohmail is moving the mail it filed in News there");
   });
 
   it("a walk still owed is named and counted as the walk, and Undo asks for it again", async () => {
@@ -386,18 +386,18 @@ describe("a Change says it moves the rule's pile, and nothing else", () => {
       item: outstanding(null), seededMail: [placed, mail[2]!, mail[3]!],
     });
     const menu = await openChange("Receipts");
-    expect(menu.getByText(/ohmail also moves the mail it matches, except messages you replied to, filed yourself here/)).toBeTruthy();
-    expect(menu.getByText(/^2 messages ohmail has synced match this rule/)).toBeTruthy();
+    expect(menu.queryByText(/ohmail also moves the mail it matches, except messages you replied to, filed yourself here/)).toBeNull();
+    expect(menu.queryByText(/^2 messages ohmail has synced match this rule/)).toBeNull();
     expect(menu.queryByText(/on its way/)).toBeNull();
     await choose(menu, "News");
     expect(writes).toEqual([patch("ohmail/News", { applyRetro: false, refile: true })]);
-    report("News — the rule files there now, and ohmail is moving the 2 messages it matches there too.");
+    report("News — the rule files there now, and ohmail is moving the 2 messages it matches there too");
     await undo();
     expect(writes).toEqual([
       patch("ohmail/News", { applyRetro: false, refile: true }),
       patch("ohmail/Receipts", { applyRetro: true }),
     ]);
-    report("The rule files into Receipts again, and ohmail is moving the mail it matches there.");
+    report("The rule files into Receipts again, and ohmail is moving the mail it matches there");
   });
 
   it("a re-filing under way is named by the rule's own place, and Undo moves nothing", async () => {
@@ -405,7 +405,7 @@ describe("a Change says it moves the rule's pile, and nothing else", () => {
       item: outstanding("ohmail/Receipts"), seededMail: [testMessage("filed", match, "ohmail/Receipts")],
     });
     const menu = await openChange("Receipts");
-    expect(menu.getByText(/ohmail also moves the mail it filed in Receipts/)).toBeTruthy();
+    expect(menu.queryByText(/ohmail also moves the mail it filed in Receipts/)).toBeNull();
     await choose(menu, "Screened out");
     expect(writes).toEqual([patch("ohmail/Screened", { applyRetro: false, refile: true })]);
     await undo();
@@ -413,7 +413,7 @@ describe("a Change says it moves the rule's pile, and nothing else", () => {
       patch("ohmail/Screened", { applyRetro: false, refile: true }),
       patch("ohmail/Receipts", { applyRetro: false }),
     ]);
-    report("The rule files into Receipts again, and nothing moved.");
+    report("The rule files into Receipts again, and nothing moved");
   });
 
   it("back to the place the re-filing started from: the mail is already there", async () => {
@@ -422,7 +422,7 @@ describe("a Change says it moves the rule's pile, and nothing else", () => {
     });
     await choose(await openChange("Receipts"), "News");
     expect(writes).toEqual([patch("ohmail/News", { applyRetro: false, refile: true })]);
-    report("News — the rule files there now. The mail it filed is already there.");
+    report("News — the rule files there now. The mail it filed is already there");
   });
 });
 
@@ -435,7 +435,7 @@ describe("the toast reports the outcome, not the intent", () => {
     expect(writes).toEqual([{
       method: "PATCH", path: "/api/rules/r-1", body: { destination: "ohmail/News", applyRetro: false, refile: true },
     }]);
-    expect(screen.getByText("Couldn't change that rule. Nothing has changed.")).toBeTruthy();
+    expect(screen.getByText("Not changed. The rule files where it did.")).toBeTruthy();
     expect(screen.queryByText(/will go to News|the rule files there now/)).toBeNull();
     expect(pane.getByRole("button", { name: "Files into Ohbox" })).toBeTruthy();
   });
@@ -444,7 +444,7 @@ describe("the toast reports the outcome, not the intent", () => {
     const { pane, writes, match } = await mountPublishedRules(true);
     await click(pane.getByRole("button", { name: "Files into News" }));
     const menu = within(screen.getByRole("dialog", { name: rules.change }));
-    await click(menu.getByRole("switch"));
+    await click(menu.getByRole("menuitemcheckbox"));
     await click(menu.getByRole("menuitemradio", { name: "Ohbox" }));
     await tick(1500);
     expect(writes).toEqual([{
@@ -454,8 +454,8 @@ describe("the toast reports the outcome, not the intent", () => {
         destination: "INBOX", priority: 5, applyRetro: false,
       },
     }]);
-    expect(reports()).toContain("Queued for Studio laptop — the rule is unchanged, and still filing mail, until its next pass.");
-    expect(pane.getByText(/^Change to Ohbox waits on Studio laptop/)).toBeTruthy();
+    expect(reports()).toContain("Queued for Studio laptop. The rule is unchanged, and still files mail, until Studio laptop checks this mailbox next");
+    expect(pane.getByText(/Change to Ohbox waits on Studio laptop/)).toBeTruthy();
     expect(pane.getByRole("button", { name: "Files into News" })).toBeTruthy();
     expect(pane.queryByRole("button", { name: "Files into Ohbox" })).toBeNull();
     expect(screen.queryByRole("button", { name: rules.undo })).toBeNull();
@@ -567,7 +567,7 @@ async function mountPublishedRules(
 describe("a reader-only install lists the organizer's copy", () => {
   it("a rule made there can be lifted over its domain's, and its controls wait outside posture pending", async () => {
     const pending = await mountPublishedRules(true);
-    expect(pending.pane.getByText(/Studio laptop organizes your mail/)).toBeTruthy();
+    expect(pending.pane.getByRole("heading", { name: "Studio laptop" })).toBeTruthy();
     await click(pending.pane.getByRole("button", { name: rules.liftAction }));
     await tick(1500);
     expect(pending.writes).toEqual([{
@@ -613,7 +613,7 @@ describe("a reader-only install lists the organizer's copy", () => {
 
   it("names the holder; a rule made there has Change and Revoke and takes part in a bulk revoke", async () => {
     const { pane, writes } = await mountPublishedRules(true, { local, published });
-    expect(pane.getByText(/^Studio laptop organizes your mail, and these are the rules it files by\./)).toBeTruthy();
+    expect(pane.getByText(/^It organizes your mail, and these are the rules it files by\./)).toBeTruthy();
     const row = within(pane.getByRole("group", { name: names.bob }));
     expect(row.getByRole<HTMLButtonElement>("button", { name: "Files into News" }).disabled).toBe(false);
     expect(row.getByRole<HTMLButtonElement>("button", { name: rules.revoke }).disabled).toBe(false);
@@ -622,7 +622,7 @@ describe("a reader-only install lists the organizer's copy", () => {
     await click(pane.getByRole("button", { name: "Revoke all 4 matching" }));
     const dialog = within(screen.getByRole("dialog", { name: "Revoke 4 rules" }));
     expect(writes).toEqual([]);
-    await click(dialog.getByRole("button", { name: "Revoke 4 rules" }));
+    await click(dialog.getByRole("button", { name: "Revoke" }));
     await tick(1500);
     expect(writes).toHaveLength(4);
     expect(writes).toEqual(expect.arrayContaining([
@@ -632,7 +632,7 @@ describe("a reader-only install lists the organizer's copy", () => {
       { method: "DELETE", path: `/api/rules/${PUBLISHED_RULE_ID}`, body: { key: keyOf(cy) } },
     ]));
     expect(screen.queryAllByRole("status").map((status) => status.textContent)).toContain(
-      "Queued for Studio laptop — the rule is unchanged, and still filing mail, until its next pass.",
+      "Queued for Studio laptop. The rule is unchanged, and still files mail, until Studio laptop checks this mailbox next",
     );
     expect(revoked()).toBe(false);
     expect(pane.getAllByRole("listitem")).toHaveLength(4);
@@ -642,11 +642,11 @@ describe("a reader-only install lists the organizer's copy", () => {
     const { pane, writes } = await mountPublishedRules(true, { local, published });
     const row = within(pane.getByRole("group", { name: names.alice }));
     await click(row.getByRole("button", { name: rules.revoke }));
-    const dialog = within(screen.getByRole("dialog", { name: rules.revokeConfirm }));
-    await click(dialog.getByRole("button", { name: rules.revokeConfirm }));
+    const dialog = within(screen.getByRole("dialog", { name: "Revoke 1 rule" }));
+    await click(dialog.getByRole("button", { name: rules.revoke }));
     await tick(1500);
     expect(writes).toEqual([{ method: "DELETE", path: "/api/rules/local-1", body: null }]);
-    expect(within(pane.getByRole("group", { name: names.alice })).getByText(/^Removal waits on Studio laptop/)).toBeTruthy();
+    expect(within(pane.getByRole("group", { name: names.alice })).getByText(/Removal waits on Studio laptop/)).toBeTruthy();
     expect(revoked()).toBe(false);
   });
 
@@ -658,9 +658,9 @@ describe("a reader-only install lists the organizer's copy", () => {
     ];
     const { pane, writes } = await mountPublishedRules(true, { local, published, waiting });
     const row = within(pane.getByRole("group", { name: names.alice }));
-    expect(row.getByText(/^Change to Ohbox waits on Studio laptop/)).toBeTruthy();
+    expect(row.getByText(/Change to Ohbox waits on Studio laptop/)).toBeTruthy();
     expect(row.queryByText(/^Removal waits/)).toBeNull();
-    expect(pane.getByText(/^Removal waits on Studio laptop/)).toBeTruthy();
+    expect(pane.getByText(/Removal waits on Studio laptop/)).toBeTruthy();
     expect(pane.queryByText(/Removed here/)).toBeNull();
     expect(writes).toEqual([]);
   });

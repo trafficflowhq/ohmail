@@ -75,7 +75,7 @@ export interface TimeGridProps {
   scrollGestures?: Pick<
     HTMLAttributes<HTMLDivElement>,
     "onPointerDown" | "onPointerCancel" | "onPointerUp" | "onClickCapture"
-  >;
+  > & { "data-calendar-swipe"?: string };
   onScroll?: UIEventHandler<HTMLDivElement>;
 }
 

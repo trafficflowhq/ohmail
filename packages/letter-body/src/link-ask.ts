@@ -88,9 +88,8 @@ export function askPage(url: string, copy: AskCopy): string {
   if (title) head.append(title);
   add(head, "style", {}, ASK_PAGE_CSS);
   const main = add(doc.body, "main");
-  add(main, "h1", {}, copy.title);
+  add(main, "h1", {}, copy.goes(host));
   add(main, "p", {}, copy.elsewhere);
-  add(main, "p", {}, copy.goes(host));
   add(main, "p", { class: "url" }, url);
   const go = add(main, "a", { href: url, rel: "noopener noreferrer" });
   const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");

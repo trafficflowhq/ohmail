@@ -6,7 +6,7 @@
 import type { RefObject } from "react";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { MOVE_TARGETS, type MoveTarget } from "@ohmail/app-logic/press/actions";
-import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
+import { EndDot, Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
 import { useText } from "../text/index.js";
 
 const ICON = {
@@ -30,7 +30,10 @@ export function OhboxMoveAsk({
   const close = () => model.setPickPanel(null);
   const place = (to: MoveTarget) => places(to);
   const plan = panel?.kind === "confirm" ? model.screenPreview(panel.dest) : null;
-  /* One menu of places for both questions, titled for the one asked: Move's "move to", Screening's "screen to". */
+  const title =
+    plan && panel?.kind === "confirm"
+      ? t("bar.screenTitle", { senders: plan.senders, place: place(panel.dest) })
+      : undefined;
   const asked = panel?.kind === "screen" ? t("bar.screenTo") : t("moveLabel");
   return (
     <>
@@ -53,7 +56,7 @@ export function OhboxMoveAsk({
                 : model.runBulk(`move:${to}`)
             }
           >
-            {place(to)}
+            {panel?.kind === "screen" && to === "screened" ? t("bar.screenOut") : place(to)}
           </MenuItem>
         ))}
       </Menu>
@@ -63,30 +66,24 @@ export function OhboxMoveAsk({
         anchor={foot}
         up
         kind="ask"
-        label={t("bar.screen")}
+        label={title ?? t("bar.screen")}
       >
-        {plan && panel?.kind === "confirm" ? (
+        {plan && panel?.kind === "confirm" && title ? (
           <>
+            <h4 className="oh-text oh-menu-title">
+              <EndDot kind="hot">{title.slice(0, -1)}</EndDot>
+            </h4>
             <MenuNote>
               {plan.senders === 0
-                ? t("bar.screenNothing", { place: place(panel.dest) })
-                : plan.rules > 0
-                  ? t("bar.screenConfirmRules", {
-                      place: place(panel.dest),
-                      senders: plan.senders,
-                      count: plan.messages,
-                      rules: plan.rules,
-                    })
-                  : t("bar.screenConfirm", {
-                      place: place(panel.dest),
-                      senders: plan.senders,
-                      count: plan.messages,
-                    })}
+                ? t("bar.screenNothing")
+                : t(plan.rules > 0 ? "bar.screenConfirmRules" : "bar.screenConfirm", {
+                    count: plan.messages,
+                  })}
             </MenuNote>
-            <MenuItem onPress={close}>{t("moveCancel")}</MenuItem>
-            <MenuItem dot="hot" disabled={plan.senders === 0} onPress={() => model.screenPicked(panel.dest)}>
+            <MenuItem disabled={plan.senders === 0} onPress={() => model.screenPicked(panel.dest)}>
               {t("bar.screenCommit")}
             </MenuItem>
+            <MenuItem onPress={close}>{t("moveCancel")}</MenuItem>
           </>
         ) : null}
       </Menu>

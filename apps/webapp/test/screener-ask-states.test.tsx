@@ -56,7 +56,7 @@ describe("the ask well's state", () => {
     expect(dialog().queryByRole("button", { name: /^Suggest for / })).toBeNull();
     expect(dialog().getAllByText("3 of 40 suggested…", { exact: true })).toHaveLength(1);
     expect(dialog().queryByText("40 senders · 40 credits", { exact: true })).toBeNull();
-    for (const rung of dialog().queryAllByRole<HTMLButtonElement>("button", { name: /^(?:10|25|50|all 74)$/ })) {
+    for (const rung of dialog().queryAllByRole<HTMLButtonElement>("button", { name: /^(?:10|25|50|All 74)$/ })) {
       expect(rung.disabled).toBe(true);
     }
     expect(control.choose).not.toHaveBeenCalled();
@@ -79,12 +79,12 @@ describe("the ask well's state", () => {
   it("the size choices are grouped and Suggest is beside Apply", () => {
     const closed = mount({ phase: "closed" });
     expect(screen.getByRole("button", { name: S.open, expanded: false })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Apply 1 —/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Apply 1$/ })).toBeTruthy();
     closed.view.unmount();
 
     mount({ quote: { senders: 12, credits: 12 } });
     const sizes = within(dialog().getByRole("group", { name: S.aria }));
-    expect(sizes.getAllByRole("button").map((button) => button.textContent)).toEqual(["10", "25", "50", "all 74"]);
+    expect(sizes.getAllByRole("button").map((button) => button.textContent)).toEqual(["10", "25", "50", "All 74"]);
     expect(sizes.getByRole("button", { name: "25", pressed: true })).toBeTruthy();
   });
 });

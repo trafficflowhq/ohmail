@@ -39,7 +39,6 @@ describe("the answer Search shows", () => {
     expect(count.textContent).toBe("Results936");
     const wait = await within(search.parentElement!).findByText("109 ms", { exact: true });
     expect(wait.closest("[hidden], [aria-hidden=true]")).toBeNull();
-    const answer = within(search.closest<HTMLElement>("[data-filter-list]")!).getByRole("status");
-    expect(answer.textContent).toBe("Searched your whole mailbox — 936 matched · 109 ms");
+    expect(within(search.closest<HTMLElement>("[data-filter-list]")!).queryByRole("status")).toBeNull();
   });
 });

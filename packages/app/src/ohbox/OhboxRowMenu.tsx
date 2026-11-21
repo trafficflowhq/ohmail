@@ -13,6 +13,7 @@ export function OhboxRowMenu({
   model,
   row,
   at,
+  anchor,
   onClose,
   onScreen,
   onAsk,
@@ -21,6 +22,7 @@ export function OhboxRowMenu({
   model: OhboxListModel;
   row: OhboxRow;
   at: { x: number; y: number };
+  anchor: HTMLElement;
   onClose: () => void;
   onScreen?: () => void;
   onAsk?: (ask: RowAsk) => void;
@@ -59,7 +61,7 @@ export function OhboxRowMenu({
         {t("actionResurface")}
       </MenuItem>
       <MenuRule />
-      <MenuItem icon="tags" keyHint="t" onPress={run(() => model.tagRow(row, null))}>
+      <MenuItem icon="tags" keyHint="t" onPress={run(() => model.tagRow(row, anchor, at))}>
         {t("actionTag")}
       </MenuItem>
       {onScreen ? (

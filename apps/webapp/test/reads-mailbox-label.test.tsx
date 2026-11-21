@@ -60,12 +60,12 @@ const rowBadges = (): string[] =>
 const cardBadges = (): string[] =>
   [...card().querySelectorAll<HTMLElement>(".badge.place")].map((b) => b.textContent ?? "");
 
-/* ══ TWO MAILBOXES — both surfaces name the one that received it ═══════════════════════════ */
+/* ══ TWO MAILBOXES — the card names the one that received it ═══════════════════════════ */
 
 describe("a two-mailbox account is told which of its addresses received the message", () => {
-  it("the row wears the mailbox's own label", async () => {
+  it("the row has no delivery badge", async () => {
     await mountReads(message("mb-work"), TWO);
-    expect(rowBadges()).toContain("Work");
+    expect(rowBadges()).toEqual([]);
   });
 
   it("the card wears it too, in the head", async () => {
@@ -79,7 +79,7 @@ describe("a two-mailbox account is told which of its addresses received the mess
 
   it("a mailbox with no label falls back to its ADDRESS, never its id", async () => {
     await mountReads(message("mb-home"), TWO);
-    expect(rowBadges()).toContain("h@x.invalid");
+    expect(rowBadges()).toEqual([]);
     expect(cardBadges()).toContain("h@x.invalid");
     for (const face of [...rowBadges(), ...cardBadges()]) {
       expect(face, "a raw mailbox id reached the surface").not.toContain("mb-");
@@ -90,30 +90,31 @@ describe("a two-mailbox account is told which of its addresses received the mess
     // Addressed to a list the account does not hold, delivered to the labelled mailbox: a
     // header-derived answer has nothing to say here, and this is the case the item is about.
     await mountReads(message("mb-work", [{ name: null, address: "list@elsewhere.invalid" }]), TWO);
-    expect(rowBadges()).toContain("Work");
+    expect(rowBadges()).toEqual([]);
     expect(cardBadges()).toContain("Work");
   });
 
-  it("the row SPEAKS the delivery, as a sentence and not a bare word", async () => {
+  it("the row omits the delivery from its spoken description", async () => {
     await mountReads(message("mb-work"), TWO);
     const said = rowButton().getAttribute("aria-description") ?? "";
-    expect(said).toContain("Work");
-    expect(said).toContain("Delivered to Work");
+    expect(said).not.toContain("Work");
+    expect(said).not.toContain("Delivered to Work");
   });
 
   it("the German window says it in German", async () => {
     await mountReads(message("mb-work"), TWO, "de");
-    expect(rowBadges()).toContain("Work");
-    expect(rowButton().getAttribute("aria-description") ?? "").toContain("Zugestellt an Work");
+    expect(rowBadges()).toEqual([]);
+    expect(rowButton().getAttribute("aria-description") ?? "").not.toContain("Zugestellt an Work");
     expect(card().querySelector<HTMLElement>(".oh-messagehead .badge.place")!.getAttribute("title"))
       .toBe("Zugestellt an Work");
   });
 
-  it("the badge carries the whole phrase as its title on both surfaces", async () => {
+  it("the card badge carries the whole phrase as its title", async () => {
     await mountReads(message("mb-work"), TWO);
-    const titles = [...host!.querySelectorAll<HTMLElement>(".badge.place")]
+    expect(rowBadges()).toEqual([]);
+    const titles = [...card().querySelectorAll<HTMLElement>(".badge.place")]
       .map((b) => b.getAttribute("title"));
-    expect(titles.length).toBeGreaterThanOrEqual(2);
+    expect(titles).toHaveLength(1);
     for (const t of titles) expect(t).toBe("Delivered to Work");
   });
 });

@@ -79,7 +79,7 @@ function adapterWith(over: Partial<EngineAdapter> = {}): EngineAdapter {
   };
 }
 
-/** `MessagePane`'s own wiring, exactly as `attachment-list-state.at6.test.ts` mirrors it. */
+/** The shared Reader's own wiring, exactly as `attachment-list-state.at6.test.ts` mirrors it. */
 function Harness({ engine, messageId }: { engine: OhmailEngine; messageId: string }) {
   const attachments = useMessageAttachments(engine, null, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return attachments

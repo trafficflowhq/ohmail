@@ -7,14 +7,15 @@
  * section is listed only where that is the answer. The card that sends a person to the browser and the host's own
  * pane on a computer that serves are a host's doors of their own, not these parts.
  */
-import type { ReactNode } from "react";
+import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { useFrame } from "../../frame/index.js";
-import type { HostContract } from "../../host/index.js";
-import type { SettingsPane } from "../../settings/contract.js";
+import { confirmedAccountForScope, type HostContract } from "../../host/index.js";
+import type { PaneBodyProps, PaneSheet, PaneSummary, SettingsPane } from "../../settings/contract.js";
 import { PANE_FACTS, paneOf } from "../../settings/facts.js";
 import { accountBodies } from "../bodies.js";
 import type { FactorSlot, QrSlot } from "../contract.js";
-import { DevicesPane } from "./DevicesPane.js";
+import { useLocale, useText } from "../../text/index.js";
+import { DevicesPane, deviceKindText } from "./DevicesPane.js";
 import type { DevicesDoor } from "./model.js";
 import { useDevices } from "./use-devices.js";
 
@@ -35,16 +36,55 @@ const draws = (host: HostContract): boolean => accountBodies(host).devices === "
 
 /** The Devices section over one host's parts. Call it once per mount: a registration made again is a pane mounted again. */
 export function devicesPane(parts: DevicesPaneParts): SettingsPane {
-  function Drawn(): ReactNode {
+  let snapshot: { owner: string; summary: PaneSummary } | null = null;
+  const listeners = new Set<() => void>();
+  const read = () => snapshot;
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  function useSummary() {
+    const owner = confirmedAccountForScope(useFrame().host);
+    const seen = useSyncExternalStore(subscribe, read, () => null);
+    return seen && seen.owner === owner ? seen.summary : null;
+  }
+  function Drawn({ sheet }: { sheet?: PaneSheet }): ReactNode {
     const door = parts.useDoor();
     const watch = parts.useWatch?.();
-    return <DevicesPane model={useDevices(door, watch)} factor={parts.factor} qr={parts.qr} />;
+    const model = useDevices(door, watch);
+    const owner = confirmedAccountForScope(useFrame().host);
+    const t = useText("devices");
+    const locale = useLocale();
+    const pairing = model.made !== null;
+    useEffect(() => {
+      if (owner === null || model.list.at !== "read") return;
+      const { devices, webGroup } = model.list;
+      const count = new Intl.NumberFormat(locale).format(devices.length + (webGroup?.count ?? 0));
+      const detail = devices.map((device) => deviceKindText(device.kind, t)).join(" · ") || undefined;
+      snapshot = {
+        owner,
+        summary: { count, detail, hot: pairing, value: pairing ? t("pairing") : undefined },
+      };
+      for (const listener of listeners) listener();
+    }, [locale, model.list, owner, pairing, t]);
+    useEffect(
+      () => () => {
+        if (snapshot?.owner !== owner || !snapshot.summary.hot) return;
+        snapshot = { owner: snapshot.owner, summary: { ...snapshot.summary, hot: false, value: undefined } };
+        for (const listener of listeners) listener();
+      },
+      [owner],
+    );
+    return <DevicesPane model={model} factor={parts.factor} qr={parts.qr} sheet={sheet} />;
   }
-  function Body(): ReactNode {
-    return draws(useFrame().host) ? <Drawn /> : null;
+  function Body({ sheet }: PaneBodyProps): ReactNode {
+    return draws(useFrame().host) ? <Drawn sheet={sheet} /> : null;
   }
   return {
-    ...paneOf("devices", { Body }),
+    ...paneOf("devices", { Body, useSummary }),
+    hasFoot: true,
     listed: (host) => PANE_FACTS.devices.listed(host) && draws(host),
   };
 }

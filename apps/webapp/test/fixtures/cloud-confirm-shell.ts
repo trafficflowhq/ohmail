@@ -518,11 +518,11 @@ const textOf = (el: HTMLElement): string => el.textContent ?? "";
 
 /** The verdict pane — `session.endedBody`. The sentence this slice exists to stop showing. */
 export const showsEnded = (el: HTMLElement): boolean =>
-  textOf(el).includes(messages.session.endedBody);
+  textOf(el).includes(messages.session.endedLine);
 
 /** The end of the ladder — `session.unconfirmedTitle`. */
 export const showsUnconfirmed = (el: HTMLElement): boolean =>
-  textOf(el).includes(messages.session.unconfirmedTitle);
+  textOf(el).includes(messages.session.unconfirmedTitle.replace(/\.$/, ""));
 
 /** The mailbox itself: the frame's root node, which `isSameNode` comparisons hang off. */
 export const shellRoot = (el: HTMLElement): HTMLElement | null =>
@@ -530,7 +530,7 @@ export const shellRoot = (el: HTMLElement): HTMLElement | null =>
 
 /** The blocking overlay's node, `SessionEnded`'s markup — present only at `unconfirmed`. */
 export const overlay = (el: HTMLElement): HTMLElement | null =>
-  el.querySelector<HTMLElement>(".session-end");
+  el.querySelector<HTMLElement>('[role="alertdialog"]');
 
 /** The `Try again` button, wherever it is rendered. */
 export function tryAgainButton(el: HTMLElement): HTMLButtonElement {

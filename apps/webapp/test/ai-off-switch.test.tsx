@@ -172,13 +172,11 @@ describe("the promise the switch exists for", () => {
     // …and the pane that keeps it true has every key it reads, in both languages.
     for (const locale of ["en", "de"]) {
       const settings = catalogue(locale).settings!;
-      for (const key of ["ai", "aiLabel", "aiSub", "aiOffNote", "aiUnreadable"]) {
+      for (const key of ["ai", "aiLabel", "aiUnreadable"]) {
         expect(settings[key], `${locale}.settings.${key}`).toBeTruthy();
       }
-      // The note is what keeps a rules-only result from reading as an outage, so it has to say
-      // that rather than merely existing.
-      expect(settings.aiOffNote!.length, `${locale} aiOffNote is too short to say anything`)
-        .toBeGreaterThan(40);
+      expect(settings.aiSub).toBeUndefined();
+      expect(settings.aiOffNote).toBeUndefined();
     }
   });
 

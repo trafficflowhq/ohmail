@@ -766,7 +766,7 @@ export function pressSavedRow(engine: OhmailEngine, key: string, fp: string): st
 
 /**
  * A REPLY OR FORWARD DOCK WHOSE SEND IS STILL ON THE DURABLE OUTBOX IS HELD, as the live path holds it
- * (`InlineReply`'s `inFlight`: sending or queued). After a restart the lane's phase is `idle`, so the
+ * (the Write editor's `inFlight`: sending or queued). After a restart the lane's phase is `idle`, so the
  * dock was editable while the old words waited, and the ending's clear then took words nobody sent.
  * Held as `queued`, it says what the live path says while it waits, and nothing new can be written.
  */
@@ -872,7 +872,7 @@ export function sendKeyOf(m: MailSend, surface: "compose" | "inline" = "compose"
 /**
  * `localStorage` key for a per-message reply draft.
  *
- * It lives beside the send machine rather than in `InlineReply` because clearing it is part of
+ * It lives beside the send machine rather than in the Write editor because clearing it is part of
  * what "the send landed" MEANS, and that happens in `settle` below — possibly minutes after
  * the editor closed. Keeping the key and the cleanup in one file is also what stops the two
  * from being imported in a cycle.

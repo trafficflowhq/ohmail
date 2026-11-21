@@ -79,7 +79,7 @@ const press = async (name: string) => {
   await settle();
 };
 
-async function walk(pane: ReactNode, factorVerified: () => void): Promise<string[]> {
+async function walk(pane: ReactNode, factorVerified: () => void, codeLabel: string): Promise<string[]> {
   const { unmount } = render(<Words>{pane}</Words>);
   await settle();
   await press(en.security.codesReplace);
@@ -89,7 +89,7 @@ async function walk(pane: ReactNode, factorVerified: () => void): Promise<string
   await press(en.security.codesDone);
   await press(en.security.totpAdd);
   await act(async () => {
-    fireEvent.change(screen.getByLabelText(en.security.totpCodeLabel), { target: { value: "123456" } });
+    fireEvent.change(screen.getByLabelText(codeLabel), { target: { value: "123456" } });
   });
   await press(en.security.totpActivate);
   await press(en.security.totpActivate);
@@ -101,7 +101,7 @@ async function walk(pane: ReactNode, factorVerified: () => void): Promise<string
 
 describe("one visit to Settings › Security asks the server the same things, in the same order", () => {
   it("the shipped section and the new pane", async () => {
-    const before = await walk(<SecuritySection />, () => prompt.verified!());
+    const before = await walk(<SecuritySection />, () => prompt.verified!(), en.security.totpCodeLabel);
     cleanup();
     server.restore();
     server = scripted();
@@ -109,7 +109,7 @@ describe("one visit to Settings › Security asks the server the same things, in
     function Anew() {
       return <SecurityPane model={useSecurity(useSecurityDoor())} factor={factor} />;
     }
-    const after = await walk(<Anew />, () => verify!());
+    const after = await walk(<Anew />, () => verify!(), en.security.totpSixDigits);
 
     expect(before).toEqual([
       `${SESSION} {}`,

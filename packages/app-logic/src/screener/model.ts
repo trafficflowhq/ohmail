@@ -49,6 +49,7 @@ export interface ScreenerModelInput {
   readonly releaseWindow: ScreenerReleaseWindow | null;
   /** The frame opened on Screener itself, where the stored queue should draw immediately. */
   readonly drawKeptFirst?: boolean;
+  readonly screenedBy?: string | null;
 }
 
 export function useScreenerModel(input: ScreenerModelInput): ScreenerState {
@@ -69,5 +70,6 @@ export function useScreenerModel(input: ScreenerModelInput): ScreenerState {
     input.decisionVerdict ?? undefined,
     input.mirrorAccount,
     input.drawKeptFirst,
+    input.screenedBy,
   );
 }

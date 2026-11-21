@@ -6,7 +6,7 @@
  */
 import { useRef, useState } from "react";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
-import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
+import { EndDot, Menu, MenuItem } from "@ohmail/ui/base";
 import { SelectionBar } from "@ohmail/ui/mail";
 import { useText } from "../text/index.js";
 import type { OhboxBeside } from "./beside.js";
@@ -84,14 +84,12 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
         up
         kind="ask"
         label={t("bulkDeleteAsk", { count: letters })}
-        title={t("bulkDeleteAsk", { count: letters })}
       >
-        {/* Where the letters go, said before they go: the shipped ask said it too. */}
-        <MenuNote>{t("deleteNote")}</MenuNote>
+        <h4 className="oh-text oh-menu-title">
+          <EndDot kind="hot">{t("bulkDeleteAsk", { count: letters }).slice(0, -1)}</EndDot>
+        </h4>
+        <MenuItem onPress={() => model.deletePicked()}>{t("deleteConfirm")}</MenuItem>
         <MenuItem onPress={close}>{t("moveCancel")}</MenuItem>
-        <MenuItem dot="hot" onPress={() => model.deletePicked()}>
-          {t("actionDelete")}
-        </MenuItem>
       </Menu>
     </div>
   );

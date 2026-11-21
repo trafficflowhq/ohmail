@@ -209,7 +209,7 @@ it("opens the shelf's Rename and New subfolder editors even when Find has no mat
   ]) {
     const find = within(tree).getByRole<HTMLInputElement>("textbox", { name: "Find a folder" });
     fireEvent.change(find, { target: { value: "unmatched search" } });
-    expect(within(tree).getByText("No folder matches.")).toBeTruthy();
+    expect(within(tree).getByText("No folder matches")).toBeTruthy();
     expect(within(tree).queryByRole("button", { name: "Projects" })).toBeNull();
     fireEvent.contextMenu(screen.getByRole("button", { name: "Projects" }));
     fireEvent.click(screen.getByRole("menuitem", { name: command }));

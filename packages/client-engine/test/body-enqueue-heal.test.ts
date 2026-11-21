@@ -343,7 +343,7 @@ describe("a thread is ONE request when the adapter has a batch route, and N when
 
   it("TWO SIMULTANEOUS opens are still one request — which is the shipped case", async () => {
     /**
-     * `MessagePane` is mounted TWICE while the reader is open, both mounts hold the same message,
+     * The retired web reader mounted its letter twice while it was open, both mounts held the same message,
      * and React invokes effects twice again under StrictMode. So the real number of calls per
      * thread open is two to four, in ONE tick, and the sequential case above says nothing about
      * it: the single-flight entries have to be registered SYNCHRONOUSLY, before the first marker

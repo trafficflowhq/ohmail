@@ -11,7 +11,9 @@
     "replace": "Replace",
     "setUp": "Set up",
     "remove": "Remove",
-    "byHand": "Type this key into your authenticator app.",
-    "byHandLabel": "Key"
+    "byHandLabel": "Or type the key in by hand",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyFailed": "Could not copy"
   }
 }

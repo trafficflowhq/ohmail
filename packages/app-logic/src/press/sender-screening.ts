@@ -88,8 +88,8 @@ export function screeningOrganizerCopy(organizer: { name: string | null; nobody?
  * is about the DEFAULT: an opt-in would have changed nothing about managing a mailbox. The server
  * agrees (absent `applyRetro` is `true`) and the surface sends the value explicitly anyway, so what
  * ships is decided here in one line. The prerequisite is checked, not assumed: a default that
- * creates rules is only safe behind a surface that can take them back — `RulesView` is rendered by
- * `SettingsView` with `onRevoke`/`onRetarget` (`test/rules-surface.test.ts`). Revoking does NOT
+ * creates rules is only safe behind a surface that can take them back — the rule list (`packages/app-logic/src/press/rule-list.ts`) is rendered by
+ * `RulesSettings.tsx` with `onRevoke`/`onRetarget` (`test/rules-surface.test.ts`). Revoking does NOT
  * move mail back, which is why the way back offered here is the count and the opt-out BEFORE the
  * click.
  */
@@ -706,7 +706,7 @@ export function splitRoutingPlan(plan: ScreeningPlan, moves: readonly PressMove[
 
 /**
  * Which sentence the shell is allowed to say, given what the server actually answered. Here and not
- * in `AppShell` for `RulesView`'s reason: a shell that must remember to branch on three statuses
+ * in `AppShell` for the rule list's reason: a shell that must remember to branch on three statuses
  * can ship two — the rules surface's first cut printed "Rule revoked" over a 403 on a live account,
  * green against fixtures that never refuse. This slice makes a claim about FUTURE MAIL, exactly the
  * kind a refusal falsifies. `queued` is not folded into success: the overlay stands, but "future

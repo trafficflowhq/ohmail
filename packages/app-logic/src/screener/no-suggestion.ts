@@ -46,9 +46,9 @@ export type SuggestStanding =
   | "no_budget" | "spend_unavailable" | "ai_disabled" | "ai_unavailable" | "refused";
 
 /** The catalogue key each reason renders, under the `screener` namespace. */
-export const NO_SUGGESTION_KEY: Record<NoSuggestionReason, string> = {
-  pending: "noSuggestion",
-  coming: "noSuggestionComing",
+export const NO_SUGGESTION_KEY: Record<NoSuggestionReason, string | null> = {
+  pending: null,
+  coming: null,
   unavailable: "noSuggestionUnavailable",
   no_auto_ai: "noSuggestionNoAutoAi",
 };
@@ -72,10 +72,10 @@ export function standingKey(standing: SuggestStanding, subscriptionPane = false)
 }
 
 /**
- * The suggest strip's line for a standing, or `null`. Only the empty balance: it waits on the
+ * The Suggest menu's line for a standing, or `null`. Only the empty balance: it waits on the
  * person, where the others are their own switch or a fault. Same pane rule as {@link standingKey}.
  */
-export function stripStandingKey(standing: SuggestStanding | null | undefined, subscriptionPane = false): string | null {
+export function suggestMenuStandingKey(standing: SuggestStanding | null | undefined, subscriptionPane = false): string | null {
   if (standing !== "no_budget") return null;
   return subscriptionPane ? "suggest.noCreditsWhere" : "suggest.noCredits";
 }
@@ -83,7 +83,7 @@ export function stripStandingKey(standing: SuggestStanding | null | undefined, s
 /** The key a row with no advice renders: {@link noSuggestionReason}, with the standing's reason. */
 export function noSuggestionKey(
   reason: NoSuggestionReason, standing: SuggestStanding | null, subscriptionPane = false,
-): string {
+): string | null {
   return reason === "unavailable" && standing !== null
     ? standingKey(standing, subscriptionPane)
     : NO_SUGGESTION_KEY[reason];

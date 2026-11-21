@@ -29,7 +29,7 @@ async function greenAcross(page: Page, y: number): Promise<number> {
 }
 
 async function streamPaint(face: "paper" | "ohmarchy") {
-  const page = await browser.newPage({ viewport: { width: WIDTH, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: WIDTH, height: 900 }, reducedMotion: "reduce" });
   try {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));

@@ -184,7 +184,7 @@ for (const [name, engine] of ENGINES) {
       const askedAt = ask!.url();
       expect(askedAt).toMatch(/^blob:/);
       const said = await ask!.locator("body").innerText();
-      expect(said).toContain("It goes to evil.ohmail.test.");
+      expect(said).toContain("This link goes to evil.ohmail.test.");
       expect(said).toContain("https://evil.ohmail.test/x?n=1");
       expect(said, "the ask page named the decoy").not.toContain("bank.ohmail.test");
       expect(await ask!.locator("a").evaluateAll((as) => as.map((a) => a.getAttribute("href"))))

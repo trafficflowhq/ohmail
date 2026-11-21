@@ -9,7 +9,7 @@ import { PLACES } from "../journeys/vocabulary/places.js";
 import { PEOPLE } from "../journeys/vocabulary/world.js";
 
 type ListPaint = { rows: boolean; waiting: boolean };
-type ObservedWindow = Window & { firstListPaint?: ListPaint; letMirrorOpen?: () => void };
+type ObservedWindow = Window & { firstListPaint?: ListPaint; mirrorAnswerHeld?: boolean; letMirrorOpen?: () => void };
 
 async function watchListPaint(page: Page, listName: string, actionName: string, subject: string) {
   const option = `[role="option"][aria-label*=${JSON.stringify(subject)}]`;
@@ -25,7 +25,10 @@ async function watchListPaint(page: Page, listName: string, actionName: string, 
       if (name.startsWith("ohmail-mirror:")) {
         Object.defineProperty(request, "onsuccess", {
           set(listener: EventListener) {
-            success.set!.call(request, (event: Event) => { void held.then(() => listener.call(request, event)); });
+            success.set!.call(request, (event: Event) => {
+              w.mirrorAnswerHeld = true;
+              void held.then(() => listener.call(request, event));
+            });
           },
         });
       }
@@ -52,10 +55,12 @@ export async function firstCachedOhboxPaint(person: Person, subject: string): Pr
   const actionName = say("ohbox.list.menu", {}, person.lang);
   await watchListPaint(page, listName, actionName, subject);
   await page.reload({ waitUntil: "commit" });
-  await page.getByRole("region", { name: listName, exact: true }).waitFor();
+  // The list itself may wait for storage. Release on the database answer, after giving any
+  // premature list two frames to reveal itself.
+  await page.waitForFunction(() => (window as ObservedWindow).mirrorAnswerHeld === true);
   await page.evaluate(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    (window as ObservedWindow).letMirrorOpen?.();
+    (window as ObservedWindow).letMirrorOpen!();
   });
   await page.getByRole("option", { name: subject }).waitFor();
   await page.waitForFunction(() => (window as ObservedWindow).firstListPaint !== undefined);

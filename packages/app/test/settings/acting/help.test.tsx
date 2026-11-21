@@ -7,7 +7,7 @@ import { drawn, said } from "./words.js";
 afterEach(cleanup);
 
 const seen = (words: string) => (document.body.textContent ?? "").includes(words);
-const build = { version: "2.0.0", commit: "localbuild-two" };
+const build = { facts: HELP_STATES.compose.model.facts };
 
 describe("which way Write to us goes", () => {
   it("opens the composer wherever this door has a mailbox that sends, whatever the build says of links", () => {
@@ -27,7 +27,7 @@ describe("the Help pane", () => {
     drawn(<HelpPane model={{ ...build, write: { kind: "compose", write } }} />);
     fireEvent.click(screen.getByRole("button", { name: said("en", "help", "write") }));
     expect(write).toHaveBeenCalledTimes(1);
-    expect(seen(said("en", "help", "writeWhy"))).toBe(true);
+    expect(seen("From your mailbox.")).toBe(false);
   });
 
   it("is a link to the mail app where nothing here sends", () => {
@@ -35,7 +35,11 @@ describe("the Help pane", () => {
     expect(screen.getByRole("link", { name: said("en", "help", "write") }).getAttribute("href")).toBe(
       "mailto:?subject=Help",
     );
-    expect(seen(said("en", "help", "writeWhyMailto"))).toBe(true);
+    expect(
+      screen
+        .getByRole("toolbar", { name: "Help & contact" })
+        .contains(screen.getByRole("link", { name: said("en", "help", "write") })),
+    ).toBe(true);
   });
 
   it("offers the address and the block to copy where a link would not leave, and says which was copied", () => {
@@ -67,9 +71,21 @@ describe("the Help pane", () => {
     );
   });
 
-  it("says what the diagnostics hold and that nothing is sent on its own", () => {
+  it("shows readable sync errors in both languages", () => {
+    const facts = {
+      ...build.facts,
+      mailboxes: [{ provider: "imap" as const, lastSyncError: "storage" as const }],
+    };
+    drawn(<HelpPane model={{ facts, write: { kind: "compose", write: () => {} } }} />);
+    expect(screen.getByRole("group", { name: "Last sync error" }).textContent).toContain("Mailbox full");
+    cleanup();
+    drawn(<HelpPane model={{ facts, write: { kind: "compose", write: () => {} } }} />, "de");
+    expect(screen.getByRole("group", { name: "Letzter Sync-Fehler" }).textContent).toContain("Postfach voll");
+  });
+
+  it("omits the extra diagnostic notes", () => {
     drawn(<HelpPane model={HELP_STATES.compose.model} />);
-    expect(seen(said("en", "help", "diagWhat"))).toBe(true);
-    expect(seen(said("en", "help", "note"))).toBe(true);
+    expect(seen("Includes your account ID when available.")).toBe(false);
+    expect(seen("Nothing is sent automatically.")).toBe(false);
   });
 });

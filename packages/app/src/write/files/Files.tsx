@@ -142,7 +142,6 @@ export function useFiles({
             {model.level === "none" ? null : (
               <Quality level={model.level} locked={locked} onLevel={model.setLevel} />
             )}
-            {cap.binding === "surface" ? <> {t("files.capSurface")}</> : null}
           </AttachRoom>
         </>
       ),
@@ -291,6 +290,5 @@ function fileNotes(
   if (notes.unreadable) said.push(t("files.unreadable"));
   if (notes.twice.length > 0) said.push(t("files.twice", { filenames: notes.twice.join(", ") }));
   if (notes.qualityKept !== null) said.push(t("files.qualityKept", { size: size(notes.qualityKept) }));
-  if (notes.scope) said.push(t("files.qualityScope"));
   return said;
 }

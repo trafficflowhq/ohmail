@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Button } from "@ohmail/ui/base";
-import { GroupHeading, SettingLine, SettingNote } from "@ohmail/ui/mail";
+import { Button, Dialog } from "@ohmail/ui/base";
+import { ActionPanel, SettingNote } from "@ohmail/ui/mail";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
-import { filerKey } from "@ohmail/app-logic/mail-state/mail-state";
 import { subjectOf } from "@ohmail/app-logic/mailboxes/connect/subject";
 import { FILER_OF_SERVICE, webFilerOf } from "@ohmail/app-logic/mailboxes/pane/organizer";
 import { connectBlock, groupByAddress } from "@ohmail/app-logic/mailboxes/pane/rows";
@@ -44,6 +43,7 @@ export interface MailboxesPaneProps {
   readonly stage: boolean;
   /** Settings lists the Subscription pane beside this one: the refusal's pointer names it. */
   readonly subscriptionPane: boolean;
+  openPlans?(): void;
   /** To the first run's add run, or its run again. */
   go(run: "add" | "again"): void;
   /** The mail state's reading and re-read, and the engine's sync. */
@@ -116,7 +116,6 @@ function Listed(
 
   return (
     <div className="mbx-pane">
-      <GroupHeading>{say({ key: filerKey("heading", filer) })}</GroupHeading>
       <PaneLines model={model} />
       {groups.map(({ shown, superseded }) => (
         <Row
@@ -136,31 +135,33 @@ function Listed(
           editing={editing}
         />
       ))}
-      {model.list.allowanceRead && verbs.connect ? (
-        block !== null ? (
-          <>
-            <SettingNote>{say({ key: `blocked_${block}` })}</SettingNote>
-            {block === "email_unverified" || !props.subscriptionPane ? null : (
-              <SettingNote>{say({ key: "blocked_where" })}</SettingNote>
-            )}
-          </>
-        ) : (
-          <OutlookConnect
-            signIn={signIn}
-            resting={resting}
-            deviceReady={props.deviceReady === true}
-            add={() => props.go("add")}
-            connected={({ connected, created }) => {
-              model.lines.tell({
-                said: {
-                  key: created ? "oauthConnected" : "oauthReconnected",
-                  values: { address: displayAddress(connected.address ?? "") },
-                },
-              });
-              model.wrote();
-            }}
-          />
-        )
+      {model.list.allowanceRead && verbs.connect && block === null ? (
+        <OutlookConnect
+          signIn={signIn}
+          resting={resting}
+          deviceReady={props.deviceReady === true}
+          add={() => props.go("add")}
+          again={verbs.setupAgain && rows !== null && rows.length > 0 ? () => props.go("again") : undefined}
+          connected={({ connected, created }) => {
+            model.lines.tell({
+              said: {
+                key: created ? "oauthConnected" : "oauthReconnected",
+                values: { address: displayAddress(connected.address ?? "") },
+              },
+            });
+            model.wrote();
+          }}
+        />
+      ) : null}
+      {model.list.allowanceRead && verbs.connect && block !== null && block !== "at_limit" ? (
+        <SettingNote>{say({ key: `blocked_${block}` })}</SettingNote>
+      ) : null}
+      {model.list.allowanceRead && verbs.connect && block === "at_limit" ? (
+        <AllowanceDialog
+          count={live ?? 0}
+          limit={allowance?.access?.mailboxes ?? 0}
+          openPlans={props.subscriptionPane ? props.openPlans : undefined}
+        />
       ) : null}
       {verbs.out && wire.out !== NONE ? (
         <div className="mbx-pane-acts">
@@ -169,16 +170,11 @@ function Listed(
           </Button>
         </div>
       ) : null}
-      {verbs.connect ? <SettingNote>{say({ key: "inPlace" })}</SettingNote> : null}
-      {verbs.setupAgain && rows !== null && rows.length > 0 ? (
-        <>
-          <SettingLine label={say({ key: "setupAgain" })}>
-            <Button kind="two" size="s" onPress={() => props.go("again")}>
-              {say({ key: "setupAgainAction" })}
-            </Button>
-          </SettingLine>
-          <SettingNote>{say({ key: "setupAgainWhy" })}</SettingNote>
-        </>
+      {verbs.setupAgain &&
+      rows !== null &&
+      rows.length > 0 &&
+      (!model.list.allowanceRead || !verbs.connect || block !== null) ? (
+        <SetupAgain again={() => props.go("again")} />
       ) : null}
       {/* The removal's confirmation over the window, for the row it was opened on; the factor's dialog over it. */}
       <Removal model={model} verbs={verbs} />
@@ -187,6 +183,65 @@ function Listed(
         ? factor({ ...model.gated.asking, line: say({ key: FACTOR_LINE[model.gated.state.act.verb] }) })
         : null}
     </div>
+  );
+}
+
+function SetupAgain({ again }: { readonly again: () => void }) {
+  const say = useSay();
+  return (
+    <ActionPanel
+      label={say({ key: "setupAgain" })}
+      items={[
+        {
+          id: "setup-again",
+          label: say({ key: "setupAgain" }),
+          icon: "pull",
+          kind: "soft",
+          rank: 0,
+          onPress: again,
+        },
+      ]}
+    />
+  );
+}
+
+function AllowanceDialog({
+  count,
+  limit,
+  openPlans,
+}: {
+  readonly count: number;
+  readonly limit: number;
+  readonly openPlans?: () => void;
+}) {
+  const say = useSay();
+  const [open, setOpen] = useState(false);
+  const add = say({ key: "connect" });
+  return (
+    <>
+      <ActionPanel
+        label={add}
+        items={[{ id: "add", label: add, icon: "plus", kind: "ink", rank: 0, onPress: () => setOpen(true) }]}
+      />
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title={say({ key: "limitTitle", values: { count, limit } })}
+        line={say({ key: "limitLine" })}
+        confirm={
+          openPlans
+            ? {
+                label: say({ key: "plans" }),
+                onPress: () => {
+                  setOpen(false);
+                  openPlans();
+                },
+              }
+            : undefined
+        }
+        cancel={{ label: say({ key: "cancel" }) }}
+      />
+    </>
   );
 }
 

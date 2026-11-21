@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { pileOrganizer } from "@ohmail/app-logic/lists/pile-note";
 import type { UnscreenedPileWire } from "@ohmail/wire";
 import { Frame } from "../../src/frame/Frame.js";
 import { MailGround, mailPlaces } from "../../src/mail/index.js";
@@ -57,13 +58,14 @@ it("the prior account's pending screening answer cannot change the current accou
   expect(first.press.mock.calls).toEqual([["news"]]);
   page.rerender(next.frame);
   expect(await screen.findByRole("button", { name: "Screen 2" })).toBeTruthy();
-  const report = screen.queryByRole("status")?.textContent ?? null;
+  const report = () => document.querySelector('.fr-report [role="status"]')?.textContent ?? null;
+  const priorReport = report();
   await act(async () => {
     finish(7);
   });
-  expect(screen.queryByRole("status")?.textContent ?? null).toBe(report);
+  expect(report()).toBe(priorReport);
   expect(screen.getByRole("note").textContent).toBe(
-    "2 letters here are from senders you never let in.Screen 2",
+    "2 letters here were never let in They are from senders you never let in.Screen 2",
   );
   expect(first.ask.mock.calls).toEqual([["news"]]);
   expect(next.ask.mock.calls).toEqual([["news"]]);
@@ -153,4 +155,21 @@ it("returning to a pile waits for its new count before offering a screening pres
   });
   fireEvent.click(screen.getByRole("button", { name: "Screen 2" }));
   expect(current.press.mock.calls).toEqual([["news"]]);
+});
+
+it("names the organizer eligible to screen the pile when another mailbox is held elsewhere", () => {
+  const here = {
+    status: "active",
+    organizerRole: "organizer",
+    organizerState: "held",
+    organizedBy: { kind: "local", name: "Home desktop", since: null },
+  } as const;
+  const away = {
+    ...here,
+    organizerRole: "reader",
+    organizedBy: { kind: "local", name: "Other laptop", since: null },
+  } as const;
+  expect(pileOrganizer([away, here], false)).toBe("Home desktop");
+  expect(pileOrganizer([away, here], true)).toBe("Home desktop");
+  expect(pileOrganizer([here, { ...away, organizerRole: "organizer" }], true)).toBeNull();
 });

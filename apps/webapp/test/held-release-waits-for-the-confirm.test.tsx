@@ -83,12 +83,12 @@ describe("a release pressed during the warm open", () => {
     try {
       await act(async () => { screen[0]!.click(); });
       await tick(1500);
-      expect(toasts).toContain(messages.screener.unscreenedWaiting);
-      expect(toasts).not.toContain(messages.screener.unscreenedFailed);
+      expect(toasts).toContain(messages.screener.unscreenedWaiting.replace(/\.$/u, ""));
+      expect(toasts).not.toContain(messages.screener.unscreenedFailed.replace(/\.$/u, ""));
       expect(calls).not.toContain("POST /api/screener/unscreened");
       await act(async () => { confirm(sessionFull()); });
       await tick(1500);
-      expect(toasts.at(-1)).toBe("Screened 2. Your organizer moves them on the next pass.");
+      expect(toasts.at(-1)).toBe("Screened 2 Cloud moves them the next time it checks this mailbox.");
       expect(calls).toContain("POST /api/screener/unscreened");
     } finally {
       observer.disconnect();

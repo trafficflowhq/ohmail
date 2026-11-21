@@ -197,3 +197,99 @@ describe("the Ohbox's states page draws both columns", () => {
     expect(read.text, "the reading column is empty").toMatch(/unread/i);
   }, 60_000);
 });
+
+it.each([
+  [600, "paper", "a conversation"],
+  [700, "paper", "a conversation"],
+  [700, "ohmarchy", "a conversation"],
+  [1024, "paper", "a conversation"],
+  [1024, "ohmarchy", "a conversation"],
+  [1600, "paper", "a conversation"],
+  [1600, "ohmarchy", "a conversation"],
+  [1024, "paper", "a single letter"],
+  [1600, "ohmarchy", "a single letter"],
+] as const)(
+  "keeps the design insets at %i px in %s with %s open",
+  async (width, face, scenario) => {
+    const page = await browser!.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+    try {
+      await page.route("**/*", (route) =>
+        new URL(route.request().url()).origin === ORIGIN
+          ? route.fulfill({ contentType: "text/html", body: html })
+          : route.abort(),
+      );
+      const thread = scenario === "a conversation";
+      const open = thread ? "ben-kiln" : "petra-talk";
+      const fold = width < 840;
+      const device = fold ? "fold" : "desktop";
+      await page.goto(`${ORIGIN}/?screen=ohbox&device=${device}&face=${face}&open=${open}&hold=1`);
+      const list = page.getByRole("region", { name: "Messages", exact: true });
+      const reader = page.getByRole("region", { name: "Open message", exact: true });
+      const squares = reader.getByRole("group", { name: /^\d+ messages,/ });
+      const letter = reader.getByRole("article").first();
+      await letter.waitFor({ state: "attached" });
+      if (thread) await squares.waitFor();
+      await page.evaluate(() => document.fonts.ready);
+      expect(await squares.count()).toBe(thread ? 1 : 0);
+
+      const tokens = await reader.evaluate((pane) => {
+        const styles = getComputedStyle(pane);
+        const px = (name: string) => parseFloat(styles.getPropertyValue(name));
+        return {
+          edge: px("--edge"),
+          gap: px("--gap"),
+          gutter: px("--sq-gutter"),
+          measure: px("--readw"),
+          ring: px("--ringw"),
+          inset: px("--sheet-pad"),
+        };
+      });
+      const listBox = (await list.boundingBox())!;
+      const readerBox = (await reader.boundingBox())!;
+      const letterBox = (await letter.boundingBox())!;
+      const side = Math.max(0, (readerBox.width - tokens.measure) / 2 - tokens.ring);
+
+      const listRight = listBox.x + listBox.width;
+      expect(readerBox.x - listRight).toBeCloseTo(tokens.gap - tokens.ring);
+      expect(letterBox.x - listRight).toBeCloseTo(tokens.gap + side + (thread && !fold ? tokens.gutter : 0));
+      expect(width - (letterBox.x + letterBox.width)).toBeCloseTo(tokens.edge + side);
+      if (thread && fold) {
+        const heading = reader.getByRole("heading", { level: 2 }).first();
+        const head = heading.locator("..");
+        const headSquares = head.getByRole("group", { name: /^\d+ messages,/ });
+        const capsule = (await headSquares.boundingBox())!;
+        const bounds = await head.evaluate((node) => {
+          const box = node.getBoundingClientRect();
+          const style = getComputedStyle(node);
+          return [
+            box.left + parseFloat(style.paddingInlineStart),
+            box.right - parseFloat(style.paddingInlineEnd),
+          ];
+        });
+        expect(capsule.x).toBeGreaterThanOrEqual(bounds[0]!);
+        expect(capsule.x + capsule.width).toBeCloseTo(bounds[1]!);
+        const currentSquare = headSquares
+          .getByRole("button")
+          .and(headSquares.locator('[aria-current="true"]'));
+        await currentSquare.click({ trial: true });
+      }
+      if (thread && !fold) {
+        const squaresBox = (await squares.boundingBox())!;
+        expect(squaresBox.width).toBeCloseTo(tokens.gutter - tokens.gap);
+        expect(squaresBox.x - listRight).toBeCloseTo(tokens.gap + side);
+        expect(letterBox.x - (squaresBox.x + squaresBox.width)).toBeCloseTo(tokens.gap);
+        expect(squaresBox.y - listBox.y, "the squares start at the same top inset as the list").toBeCloseTo(
+          0,
+        );
+      }
+      const padding = await letter.evaluate((node) => {
+        const style = getComputedStyle(node);
+        return [parseFloat(style.paddingInlineStart), parseFloat(style.paddingInlineEnd)];
+      });
+      expect(padding).toEqual([tokens.inset, tokens.inset]);
+    } finally {
+      await page.close();
+    }
+  },
+  30_000,
+);

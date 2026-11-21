@@ -1,8 +1,8 @@
-import { Fragment } from "react";
-import { Button, Seg } from "@ohmail/ui/base";
-import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
-import { useText, type Text } from "../../text/index.js";
-import type { PlanInterval, PlanPick, PlansAnswer, SubscriptionModel } from "./model.js";
+import { useState } from "react";
+import { Button, RadioLines, Seg } from "@ohmail/ui/base";
+import { ActionPanel, SettingLine, SettingsSheet } from "@ohmail/ui/mail";
+import { useText } from "../../text/index.js";
+import type { PlanInterval, PlanName, PlanPick, PlansAnswer, SubscriptionModel } from "./model.js";
 
 /** The plans' read, where it answered with plans. */
 export type ReadPlans = Extract<PlansAnswer, { kind: "plans" }>;
@@ -15,12 +15,6 @@ export function readPlansOf(
   return plans.at === "read" && plans.answer.kind === "plans"
     ? { answer: plans.answer, interval: plans.interval }
     : null;
-}
-
-/** An amount as the server said it, for the interval it is for; a price it could not confirm is no figure. */
-function priced(t: Text, price: string | null, interval: PlanInterval): string | undefined {
-  if (price === null) return undefined;
-  return t(interval === "year" ? "storagePriceYear" : "storagePriceMonth", { price });
 }
 
 /**
@@ -48,6 +42,7 @@ function payingVerb(model: SubscriptionModel, read: ReadPlans): "fix" | "subscri
 export function SubscriptionPlans({ model }: { readonly model: SubscriptionModel }) {
   const t = useText("settings");
   const own = useText("accountSubscription");
+  const [selection, select] = useState<PlanName>();
   if (model.plans.at === "unavailable") {
     return (
       <SettingsSheet
@@ -67,9 +62,20 @@ export function SubscriptionPlans({ model }: { readonly model: SubscriptionModel
   const read = readPlansOf(model);
   if (read === null) return null;
   const { answer, interval } = read;
-  const { current, addon } = answer;
+  const { current } = answer;
   const verb = payingVerb(model, answer);
-  const pick: PlanPick = current === null ? { interval } : { plan: current.plan, interval };
+  const selectable = verb === "subscribe";
+  const picked = selectable
+    ? (answer.plans.find(({ plan }) => plan === selection)?.plan ?? current?.plan)
+    : current?.plan;
+  const pick: PlanPick = picked ? { plan: picked, interval } : { interval };
+  const options = answer.plans.map((line) => ({
+    value: line.plan,
+    label: t("storagePlanName", { plan: line.plan }),
+    tag: current?.plan === line.plan ? t("storageTagYours") : undefined,
+    note: own("planFacts", { mailboxes: line.mailboxes, credits: line.credits, storage: line.storage }),
+    figure: line.price[interval] ?? undefined,
+  }));
   return (
     <SettingsSheet
       title={t("storagePlansHead")}
@@ -85,43 +91,46 @@ export function SubscriptionPlans({ model }: { readonly model: SubscriptionModel
         />
       }
     >
-      {answer.plans.map((line) => (
-        <Fragment key={line.plan}>
+      {selectable && options.length > 0 ? (
+        <RadioLines
+          kind="sheet"
+          label={t("storagePlansHead")}
+          options={options}
+          value={picked ?? ""}
+          onChange={(name) => {
+            if (name !== "") select(name);
+          }}
+        />
+      ) : (
+        options.map((line) => (
           <SettingLine
-            label={t("storagePlanName", { plan: line.plan })}
-            tag={current !== null && current.plan === line.plan ? t("storageTagYours") : undefined}
-            value={priced(t, line.price[interval], interval)}
+            key={line.value}
+            label={line.label}
+            tag={line.tag}
+            value={line.note}
+            figure={line.figure}
           />
-          <SettingNote>
-            {own("planFacts", { mailboxes: line.mailboxes, credits: line.credits, storage: line.storage })}
-          </SettingNote>
-        </Fragment>
-      ))}
-      {addon === null ? null : (
-        <>
-          <SettingLine
-            label={t("storageAddonName")}
-            tag={t("storageTagAddon")}
-            value={priced(t, addon.price, "month")}
-          />
-          <SettingNote>{addon.unit}</SettingNote>
-          <SettingNote>{t("storageAddonEach")}</SettingNote>
-          <SettingNote>{t("storageAddonMax", { count: addon.most })}</SettingNote>
-        </>
+        ))
       )}
-      {verb === null ? null : (
-        <Button
-          kind="ink"
-          size="s"
-          disabled={model.opening}
-          onPress={() => (verb === "fix" ? model.manage() : model.manage(pick))}
-        >
-          {verb === "fix"
-            ? own("fixPayment")
-            : current === null
-              ? own("subscribe")
-              : own("subscribeTo", { plan: current.plan })}
-        </Button>
+      {verb === null || model.status?.standing.state === "overdue" ? null : (
+        <ActionPanel
+          label={t("storagePlansHead")}
+          items={[
+            {
+              id: "pay",
+              kind: "ink",
+              rank: 0,
+              disabled: model.opening,
+              label:
+                verb === "fix"
+                  ? own("fixPayment")
+                  : picked
+                    ? own("subscribeTo", { plan: picked })
+                    : own("subscribe"),
+              onPress: () => (verb === "fix" ? model.manage() : model.manage(pick)),
+            },
+          ]}
+        />
       )}
     </SettingsSheet>
   );

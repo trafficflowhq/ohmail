@@ -1,19 +1,20 @@
 /**
- * AN ADDRESS'S LIST: everything from and to one address, as All, From them or To them, each with its count, and the
- * place each letter is in on its row. Its head closes it, back to the list it was opened from.
+ * Everything from and to one address, with the place each letter is in on its row.
  */
 import type { ReactNode } from "react";
 import { useAddressModel, type AddressModel, type AddressSide } from "@ohmail/app-logic/address";
-import { Button, Empty, Seg } from "@ohmail/ui/base";
+import { Button, Empty, FindField, Seg } from "@ohmail/ui/base";
 import { ListHead, ListLine } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
 import { LetterRows, ListColumn } from "../place-list/index.js";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useText, type Text } from "../text/index.js";
+import "../search/search.css";
 
 export function AddressList({ plan }: PaneProps) {
   const model = useAddressModel();
   const t = useText("address");
+  const search = useText("search");
   const sides: readonly AddressSide[] = ["all", "from", "to"];
   const head = (
     <ListHead
@@ -27,21 +28,29 @@ export function AddressList({ plan }: PaneProps) {
         )
       }
       below={
-        <Seg
-          label={t("side.label")}
-          options={sides.map((value) => ({
-            value,
-            label: t(`sideCount.${value}`, { count: model.counts[value] }),
-          }))}
-          value={model.side}
-          onChange={model.choose}
-        />
+        <div className="sr-below">
+          <FindField
+            label={search("aria")}
+            placeholder={search("inTheirMail")}
+            value={model.query}
+            onChange={model.setQuery}
+            clear={{ label: search("clear"), onPress: () => model.setQuery("") }}
+          />
+          <Seg
+            label={t("side.label")}
+            options={sides.map((value) => ({
+              value,
+              label: t(`sideCount.${value}`, { count: model.counts[value] }),
+            }))}
+            value={model.side}
+            onChange={model.choose}
+          />
+        </div>
       }
     />
   );
   return (
     <ListColumn head={head} plan={plan} cursor={model.list.cursor}>
-      <ArchiveScope model={model} t={t} />
       {model.list.rows.length > 0 ? (
         <LetterRows
           label={t(`side.${model.side}`)}
@@ -62,13 +71,16 @@ export function AddressList({ plan }: PaneProps) {
       {model.empty ? (
         <Empty
           label={
-            model.archive
-              ? t(`archive.empty.${model.side}`, { address: displayAddress(model.address) })
-              : t(`empty.${model.side}`)
+            model.query.trim()
+              ? search("nothingMatched")
+              : model.archive
+                ? t(`archive.empty.${model.side}`, { address: displayAddress(model.address) })
+                : t(`empty.${model.side}`)
           }
         />
       ) : null}
       {model.loading ? <Empty label={t("loading")} /> : null}
+      <ArchiveScope model={model} t={t} />
     </ListColumn>
   );
 }
@@ -77,47 +89,44 @@ function ArchiveScope({ model, t }: { model: AddressModel; t: Text }) {
   const view = model.archive;
   if (!view) return null;
   const { archive } = view;
-  const recent = view.indexing
-    ? t("archive.indexing")
-    : t("archive.device", { count: view.counts[model.side === "all" ? "any" : model.side] });
+  const reading = view.indexing ? <ListLine busy>{t("archive.indexing")}</ListLine> : null;
   if (archive.state === "failed") {
     const offline = archive.errorClass.split(" ").includes("offline_read_only");
     return (
-      <ListLine act={offline ? undefined : { label: t("archive.retry"), onPress: archive.retry }}>
-        <span>{recent}</span> ·{" "}
-        <span>
+      <>
+        {reading}
+        <ListLine
+          warn={offline}
+          act={offline ? undefined : { label: t("archive.retry"), onPress: archive.retry }}
+        >
           {offline
             ? t.rich("archive.offline", {
                 device: (name: ReactNode) => <strong style={{ fontWeight: 500 }}>{name}</strong>,
               })
             : t("archive.unanswered")}
-        </span>
-      </ListLine>
+        </ListLine>
+      </>
     );
   }
-  if (archive.state !== "ready")
+  if (archive.state === "searching") {
     return (
-      <ListLine busy={archive.state === "searching"}>
-        <span>{recent}</span> ·{" "}
-        <span>{t(archive.state === "searching" ? "archive.searching" : "archive.unavailable")}</span>
-      </ListLine>
+      <>
+        {reading}
+        <ListLine busy>{t("archive.searching")}</ListLine>
+      </>
     );
+  }
+  if (archive.state !== "ready") return reading;
   const senderOnly = view.coverage === "senders-only";
-  const exact = archive.importing ? "synced" : "whole";
-  const key =
-    senderOnly && model.side === "to"
-      ? "noRecipients"
-      : `${exact}${senderOnly ? "BySender" : ""}${archive.atLeast ? "AtLeast" : ""}`;
-  const why = senderOnly
-    ? t(model.side === "to" ? "archive.noRecipientsWhy" : "archive.bySenderWhy")
-    : undefined;
-  const parts = [recent, t(`archive.${key}`, { count: archive.total })];
-  if (archive.total > archive.items.length) parts.push(t("archive.shown", { shown: archive.items.length }));
-  if (archive.importing) parts.push(t("archive.importing"));
+  if (senderOnly && model.side === "to") return <ListLine fine>{t("archive.noRecipientsWhy")}</ListLine>;
   return (
     <>
-      <ListLine>{parts.join(" · ")}</ListLine>
-      {why ? <ListLine fine>{why}</ListLine> : null}
+      {reading}
+      {senderOnly ? <ListLine fine>{t("archive.bySenderWhy")}</ListLine> : null}
+      {archive.total > archive.items.length ? (
+        <ListLine fine>{t("archive.shown", { shown: archive.items.length })}</ListLine>
+      ) : null}
+      {archive.importing ? <ListLine fine>{t("archive.importing")}</ListLine> : null}
     </>
   );
 }

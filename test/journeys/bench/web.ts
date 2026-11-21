@@ -375,8 +375,13 @@ export async function startBench(f: Flavour, recordAs = "bench", features: ApiFe
       const access = o.session === "fresh"
         ? (await seedSessionFor(api!.db, { accountId: a.accountId, userId: a.userId, now: api!.now(), lastTwofaAt: api!.now() })).token
         : a.access;
+      const headers = new Headers({ cookie: `tf_session=${access}; tf_csrf=${csrfTokenFor(access)}`, "x-csrf-token": csrfTokenFor(access), origin });
+      if (o.body !== undefined) {
+        headers.set("content-type", "application/json");
+        headers.set("idempotency-key", crypto.randomUUID());
+      }
       const res = await fetch(`${origin}/api${path}`, {
-        method, headers: { cookie: `tf_session=${access}; tf_csrf=${csrfTokenFor(access)}`, "x-csrf-token": csrfTokenFor(access), origin },
+        method, headers, body: JSON.stringify(o.body),
       });
       return { status: res.status, body: await res.json().catch(() => null) };
     },

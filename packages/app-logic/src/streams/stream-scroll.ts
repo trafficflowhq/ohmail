@@ -56,6 +56,8 @@ export interface StreamScroll {
   /** Is this card in the port right now? */
   onScreen(id: string): boolean;
   settledInReadView(id: string): boolean;
+  /** Recheck whether a card is readable when scrolling or a landing changes its position. */
+  watchPosition(update: () => void): () => void;
   settledCursorInReadView(id: string): boolean;
   /** Call `cb` once, on the first scroll frame this card is out of the port or unmounted. */
   whenOffScreen(id: string, cb: () => void): void;
@@ -82,6 +84,11 @@ export interface StreamScroll {
 
 /** The handle over one core: stable for the core's life. */
 function handleOf(core: StreamScrollCore): StreamScroll {
+  const listeners = new Set<() => void>();
+  const positionChanged = () => {
+    for (const update of listeners) update();
+  };
+  core.positionChanged = positionChanged;
   const scrollTo = (id: string, onLanded?: () => void): void => landOn(core, id, onLanded);
   return {
     scrollTo,
@@ -92,6 +99,12 @@ function handleOf(core: StreamScrollCore): StreamScroll {
     },
     onScreen: (id) => core.inPort(id),
     settledInReadView: (id) => core.settledInReadView(id),
+    watchPosition: (update) => {
+      listeners.add(update);
+      return () => {
+        listeners.delete(update);
+      };
+    },
     settledCursorInReadView: (id) => core.cur === id && core.settledInReadView(id),
     whenOffScreen: (id, cb) => {
       core.offScreen.set(id, cb);
@@ -145,8 +158,14 @@ function handleOf(core: StreamScrollCore): StreamScroll {
     },
     range: () => ({ ...core.range }),
     resetRange: () => core.resetRange(),
-    endLanded: () => core.endLanded(),
-    judged: () => core.judged(),
+    endLanded: () => {
+      core.endLanded();
+      positionChanged();
+    },
+    judged: () => {
+      core.judged();
+      positionChanged();
+    },
     windowChanged: () => core.respy(),
     readingBlocked: () => core.landing || core.pendingShift() !== 0,
     pendingShift: () => core.pendingShift(),

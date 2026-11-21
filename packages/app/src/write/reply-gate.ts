@@ -3,6 +3,7 @@
  * the draft ceiling; nothing to send); and Send, Send + Done and Discard published to the reading sheet's one panel
  * while the reply stands. Moved out of `Reply.tsx` as they stood.
  */
+import { chordKeys, useModGlyph } from "@ohmail/app-logic/keys";
 import { useEffect, useMemo, useRef } from "react";
 import { inlineForwardKey, SEND_IN_FLIGHT_PHASES } from "@ohmail/app-logic/writing/mail-send";
 import { usePublishVerbs, useWriteBeside, useWriting } from "./above.js";
@@ -104,6 +105,7 @@ function useReplyPanel(p: {
 }): void {
   const t = useText("write");
   const tr = useText("reply");
+  const mod = useModGlyph();
   const { mayGo, tooLong, refused, going, waits, empty, busy } = p.gate;
   const sentence = empty?.sentence;
   const presses = useRef({ send: p.send, done: NOTHING, discard: p.discard });
@@ -119,20 +121,26 @@ function useReplyPanel(p: {
   const discardWord = t("discard");
   const verbs = useMemo(
     () => [
-      sendVerb(sendWord, mayGo, going, () => presses.current.send(), tooLong, {
-        ...(sentence === undefined ? {} : { refused: sentence }),
-        busy,
-      }),
+      {
+        ...sendVerb(sendWord, mayGo, going, () => presses.current.send(), tooLong, {
+          ...(sentence === undefined ? {} : { refused: sentence }),
+          busy,
+        }),
+        keyHint: chordKeys("mod+Enter", mod).join(" "),
+      },
       ...(offersDone
         ? [
-            sendAndDoneVerb(doneWord, mayGo, going, () => presses.current.done(), tooLong, {
-              ...(sentence === undefined ? {} : { refused: sentence }),
-            }),
+            {
+              ...sendAndDoneVerb(doneWord, mayGo, going, () => presses.current.done(), tooLong, {
+                ...(sentence === undefined ? {} : { refused: sentence }),
+              }),
+              keyHint: chordKeys("mod+shift+Enter", mod).join(" "),
+            },
           ]
         : []),
       discardVerb(discardWord, going && !waits, () => presses.current.discard()),
     ],
-    [sendWord, doneWord, discardWord, mayGo, tooLong, going, waits, sentence, busy, offersDone],
+    [mod, sendWord, doneWord, discardWord, mayGo, tooLong, going, waits, sentence, busy, offersDone],
   );
   usePublishVerbs(verbs);
 }

@@ -7,7 +7,7 @@ import type { AriaRole } from "./places.js";
  * code, the invite's link. Found like every control, by role and whole name. These rows pass to the doors'
  * seat when it seats; until then they stand here, apart from the rows the seats own (`controls.ts`).
  */
-export type DoorRole = AriaRole | "code";
+export type DoorRole = AriaRole | "code" | "menuitemradio";
 export type DoorControl = Omit<Control, "role"> & { role: DoorRole };
 
 const d = (id: string, role: DoorRole, key: CatalogueKey | null, more: Partial<DoorControl> = {}): [string, DoorControl] =>
@@ -15,7 +15,8 @@ const d = (id: string, role: DoorRole, key: CatalogueKey | null, more: Partial<D
 
 const entries: Array<[string, DoorControl]> = [
   // The sign-in page, after the password.
-  d("login-code-instead", "button", "login.totpToggle"),
+  d("login-factor-choice", "button", "login.factorPasskey"),
+  d("login-code-instead", "menuitemradio", "login.factorCode"),
   d("login-code", "textbox", "login.totpLabel"),
   d("login-code-verify", "button", "login.totpVerify"),
 
@@ -30,8 +31,8 @@ const entries: Array<[string, DoorControl]> = [
   d("join-email", "textbox", "join.emailLabel"),
   d("join-name", "textbox", "join.nameLabel"),
   d("join-password", "textbox", "join.passwordLabel"),
-  d("join-create", "button", "join.createAccount"),
-  d("join-use-totp", "button", "join.useTotp"),
+  d("join-create", "button", "join.continue"),
+  d("join-use-totp", "radio", "join.factorApp"),
   /** The authenticator's key, as the page writes it for a person to type into their app. */
   d("join-key", "code", null, { nameFrom: "none" }),
   d("join-code", "textbox", "join.totpLabel"),

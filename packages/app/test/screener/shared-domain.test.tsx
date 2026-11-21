@@ -27,7 +27,7 @@ it("a sender at a shared provider's domain is decided alone: no whole-domain rea
     fireEvent.keyDown(document.body, { key: "s" });
   });
   const card = screen.getByRole("dialog", { name: "Change this sender's screening" });
-  expect(within(card).queryByRole("radio", { name: /the whole domain/ })).toBeNull();
+  expect(within(card).queryByRole("radio", { name: /Everyone at/ })).toBeNull();
   fireEvent.click(within(card).getByRole("radio", { name: "Receipts" }));
   expect(asked.decided).toEqual([{ id: "free", dest: "receipts", read: false, scope: "sender" }]);
 });

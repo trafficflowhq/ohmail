@@ -1,13 +1,4 @@
 @layer oh {
-  /* Keep the restoration explanation available to screen readers. */
-  .trash-detail {
-    position: absolute;
-    inline-size: var(--oh-hair);
-    block-size: var(--oh-hair);
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-
   .trash-provider {
     margin-block-start: var(--s3);
   }

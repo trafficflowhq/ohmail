@@ -16,10 +16,12 @@ export function LetterMenu({
   message,
   anchor,
   onClose,
+  markUnread,
 }: {
   message: EngineMessage;
   anchor: HTMLElement | null;
   onClose: () => void;
+  markUnread?: (id: string) => void;
 }) {
   const t = useText("reader");
   const tm = useText("message");
@@ -47,7 +49,13 @@ export function LetterMenu({
         {tm("menuForward")}
       </MenuItem>
       {press !== null && mayMarkUnread(message) ? (
-        <MenuItem icon="unread" onPress={then(() => void markSeenOver(press)([message.id], true))}>
+        <MenuItem
+          icon="unread"
+          onPress={then(() => {
+            if (markUnread) markUnread(message.id);
+            else void markSeenOver(press)([message.id], true);
+          })}
+        >
           {tm("menuMarkUnread")}
         </MenuItem>
       ) : null}

@@ -209,69 +209,46 @@ const link = (name: string) => screen.getByRole("link", { name }) as HTMLAnchorE
 const blank = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
 const type = (label: string, value: string) => fireEvent.change(blank(label), { target: { value } });
 const heading = () => screen.getByRole("heading", { level: 1 }).textContent;
-const progress = () => screen.getByRole("list", { name: J.progress });
+const progress = () => screen.getByRole("img", { name: /^Step \d of 5|^Setup complete$/ });
+const dots = () => [...progress().querySelectorAll(".oh-dot")].map((dot) => dot.getAttribute("data-kind"));
 
 afterEach(cleanup);
 
-describe("the stations", () => {
-  it("lists the path's stations and organizing by name, the step on screen current", () => {
+describe("the stages", () => {
+  it("the second factor is screen three of the Account stage", () => {
     draw({ at: "factor", authenticator: null });
-    const items = within(progress()).getAllByRole("listitem");
-    expect(items.map((li) => li.textContent)).toEqual([
-      J.rail_account,
-      J.rail_verify,
-      J.rail_factor,
-      J.rail_codes,
-      J.rail_plan,
-      J.rail_mailbox,
-      J.rail_organize,
-    ]);
-    expect(items.map((li) => li.getAttribute("aria-current"))).toEqual([
-      null,
-      null,
-      "step",
-      null,
-      null,
-      null,
-      null,
-    ]);
+    expect(progress().getAttribute("aria-label")).toBe("Step 1 of 5, Account, 3 of 5");
+    expect(progress().previousElementSibling?.textContent).toBe("3/5");
+    expect(dots()).toEqual(["hot", "todo", "todo", "todo", "todo"]);
   });
 
-  it("the mail sent stands at the address's station, and set up has none current", () => {
+  it("shows the confirmation as screen two, and completed setup as complete", () => {
     draw({ at: "sent", continuing: false });
-    expect(within(progress()).getAllByRole("listitem")[1]!.getAttribute("aria-current")).toBe("step");
+    expect(progress().getAttribute("aria-label")).toBe("Step 1 of 5, Account, 2 of 5");
     cleanup();
-    draw({ at: "done", mailbox: "mila@example.org", decisionAhead: false });
-    expect(
-      within(progress())
-        .getAllByRole("listitem")
-        .map((li) => li.getAttribute("aria-current")),
-    ).not.toContain("step");
+    draw({ at: "done", mailbox: READY.email, decisionAhead: false });
+    expect(progress().getAttribute("aria-label")).toBe(J.progressComplete);
+    expect(dots()).toEqual(["ink", "ink", "ink", "ink", "ink"]);
   });
 
-  it("each station carries where it stands, as the card's list did: behind, now, ahead", () => {
-    draw({ at: "factor", authenticator: null });
-    expect(
-      within(progress())
-        .getAllByRole("listitem")
-        .map((li) => li.getAttribute("data-state")),
-    ).toEqual(["done", "done", "now", "todo", "todo", "todo", "todo"]);
-    cleanup();
-    draw({ at: "done", mailbox: "mila@example.org", decisionAhead: false });
-    expect(within(progress()).getAllByRole("listitem").at(-1)!.getAttribute("data-state")).toBe("done");
+  it("the organize decision ahead is the third stage", () => {
+    draw({ at: "done", mailbox: READY.email, decisionAhead: true });
+    expect(progress().getAttribute("aria-label")).toBe("Step 3 of 5, Organize");
+    expect(dots()).toEqual(["ink", "ink", "hot", "todo", "todo"]);
   });
 
-  it("an invited path lists the invite first", () => {
+  it("an invite starts the Account stage", () => {
     draw({ at: "invite" }, { invited: true, stations: ["invite", "account", "factor", "codes", "mailbox"] });
-    expect(within(progress()).getAllByRole("listitem")[0]!.textContent).toBe(J.rail_invite);
+    expect(progress().getAttribute("aria-label")).toBe("Step 1 of 5, Account, 1 of 5");
+    expect(dots()).toEqual(["hot", "todo", "todo", "todo", "todo"]);
   });
 });
 
 describe("the invite code and the account", () => {
   it("invite: says which sentence about codes is true here, and Continue hands the code on", () => {
     const { acts } = draw({ at: "invite" }, { invited: true });
-    expect(heading()).toBe(J.step_invite_title);
-    expect(document.body.textContent).toContain(J.step_invite_lead_open);
+    expect(heading()).toBe(J.myInvite.replace("<blank></blank>.", J.inviteLabel));
+    expect(document.body.textContent).not.toMatch(/paste it exactly as your invite mail shows it/i);
     type(J.inviteLabel, INVITE);
     fireEvent.click(button(J.continue));
     expect(acts.type).toHaveBeenCalledWith("code", INVITE);
@@ -280,7 +257,12 @@ describe("the invite code and the account", () => {
 
   it("account: takes three blanks by name; Create account stays off until they are ready, then sends once", () => {
     const { acts } = draw({ at: "account" });
-    expect(heading()).toBe(J.step_account_title);
+    expect(heading()).toBe(
+      J.account
+        .replace("<name>,</name>", `${J.nameLabel},`)
+        .replace("<email>,</email>", `${J.emailLabel},`)
+        .replace("<password></password>.", J.passwordLabel),
+    );
     expect(
       [blank(J.emailLabel), blank(J.nameLabel), blank(J.passwordLabel)].map((f) => [f.type, f.autocomplete]),
     ).toEqual([
@@ -288,23 +270,24 @@ describe("the invite code and the account", () => {
       ["text", "name"],
       ["password", "new-password"],
     ]);
-    expect(document.body.textContent).toContain(J.emailHintOpen);
-    expect(button(J.createAccount).disabled).toBe(true);
+    expect(blank(J.emailLabel).placeholder).toBe(J.emailBlank);
+    expect(document.body.textContent).not.toContain("Where we will reach you about your account.");
+    expect(button(J.continue).disabled).toBe(true);
     type(J.emailLabel, READY.email);
     type(J.nameLabel, READY.name);
     type(J.passwordLabel, READY.password.slice(1));
-    expect(button(J.createAccount).disabled).toBe(true);
+    expect(button(J.continue).disabled).toBe(true);
     type(J.passwordLabel, READY.password);
-    fireEvent.click(button(J.createAccount));
+    fireEvent.click(button(J.continue));
     expect(acts.register).toHaveBeenCalledTimes(1);
   });
 
   it("account, open path: an invite code is one press away, and it opens by itself when one was carried in", () => {
     draw({ at: "account" });
     expect(screen.queryByLabelText(J.inviteLabel)).toBeNull();
-    fireEvent.click(button(J.inviteOptional));
+    fireEvent.click(button(J.inviteLabel));
     expect(blank(J.inviteLabel)).toBeTruthy();
-    expect(button(J.inviteOptional).getAttribute("aria-pressed")).toBe("true");
+    expect(button(J.inviteLabel).getAttribute("aria-pressed")).toBe("true");
     cleanup();
     draw({ at: "account" }, { start: { code: INVITE } });
     expect(blank(J.inviteLabel).value).toBe(INVITE);
@@ -312,8 +295,9 @@ describe("the invite code and the account", () => {
 
   it("account, invited: the address the invite went to, and Back to the code", () => {
     const { acts } = draw({ at: "account" }, { invited: true });
-    expect(document.body.textContent).toContain(J.emailHint);
-    noButton(J.inviteOptional);
+    expect(blank(J.emailLabel)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("Use the address your invite was sent to.");
+    noButton(J.inviteLabel);
     fireEvent.click(button(J.back));
     expect(acts.toInvite).toHaveBeenCalledTimes(1);
   });
@@ -322,7 +306,7 @@ describe("the invite code and the account", () => {
     const { acts } = draw({ at: "account" }, { suggestion: "mila@example.com" });
     fireEvent.click(button(J.didYouMean.replace("{address}", "mila@example.com")));
     expect(acts.takeSuggestion).toHaveBeenCalledTimes(1);
-    expect(link(J.accountSignIn).getAttribute("href")).toBe("/login");
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
   });
 
   it("account: its blanks keep the ids the card's carried, the optional code's too", () => {
@@ -354,17 +338,17 @@ describe("the invite code and the account", () => {
     expect(acts.again).toHaveBeenCalledTimes(1);
     cleanup();
     draw({ at: "account" }, { start: READY, pending: { said: PENDING_SAID, signingOut: true } });
-    expect(button(J.createAccount).disabled).toBe(true);
+    expect(button(J.continue).disabled).toBe(true);
   });
 });
 
 describe("the address", () => {
   it("sent: names the address the mail went to; the address can be mended, or the person signs in", () => {
     const { acts } = draw({ at: "sent", continuing: false }, { start: { email: " mila@example.org " } });
-    expect(heading()).toBe(J.step_sent_title);
-    expect(document.body.textContent).toContain(J.step_sent_lead.replace("{email}", "mila@example.org"));
+    expect(heading()).toContain(J.openLink.split("<a>")[0]!.trim());
+    expect(heading()).toBe(J.openLink.replace("<a>{email}</a>.", "mila@example.org"));
     expect(document.body.textContent).not.toContain(J.sentContinuing);
-    fireEvent.click(button(J.wrongAddress));
+    fireEvent.click(button(J.changeAddress));
     expect(acts.changeAddress).toHaveBeenCalledTimes(1);
     expect(link(J.signIn).getAttribute("href")).toBe("/login");
   });
@@ -376,7 +360,7 @@ describe("the address", () => {
 
   it("verify: I have confirmed it asks again; a new link is asked once", () => {
     const { acts } = draw({ at: "verify", resent: false }, { start: { email: "mila@example.org" } });
-    expect(document.body.textContent).toContain(J.step_verify_lead.replace("{email}", "mila@example.org"));
+    expect(heading()).toBe(J.openLink.replace("<a>{email}</a>.", "mila@example.org"));
     fireEvent.click(button(J.verifyRecheck));
     fireEvent.click(button(J.verifyResend));
     expect([acts.recheck.mock.calls.length, acts.resend.mock.calls.length]).toEqual([1, 1]);
@@ -389,10 +373,10 @@ describe("the address", () => {
 describe("the second factor", () => {
   it("a passkey first, and an authenticator app instead", () => {
     const { acts } = draw({ at: "factor", authenticator: null });
-    expect(heading()).toBe(J.step_factor_title);
-    expect(document.body.textContent).toContain(J.passkeyNote);
+    expect(heading()).toBe(J.lockWith.replace("<how></how>.", J.factorPasskeyWord));
+    expect(document.body.textContent).not.toContain("The key itself never leaves the device.");
     fireEvent.click(button(J.addPasskey));
-    fireEvent.click(button(J.useTotp));
+    fireEvent.click(screen.getByRole("radio", { name: new RegExp(J.factorApp) }));
     expect([acts.addPasskey.mock.calls.length, acts.useAuthenticator.mock.calls.length]).toEqual([1, 1]);
   });
 
@@ -428,7 +412,8 @@ describe("the second factor", () => {
     expect(acts.type).toHaveBeenLastCalledWith("otp", "123456");
     fireEvent.click(button(J.activate));
     expect(acts.activate).toHaveBeenCalledTimes(1);
-    fireEvent.click(button(J.back));
+    fireEvent.click(button(J.factorAppWord));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: J.factorPasskey }));
     expect(acts.leaveAuthenticator).toHaveBeenCalledTimes(1);
   });
 
@@ -451,7 +436,7 @@ describe("the recovery codes", () => {
 
   it("shows the ten once; Continue waits until they are said to be kept", () => {
     const { acts } = draw({ at: "codes", codes: TEN, copied: null, saved: false });
-    expect(heading()).toBe(J.step_codes_title);
+    expect(heading()).toBe(J.step_codes_title.replace(/\.$/, ""));
     expect(
       screen
         .getAllByRole("listitem")
@@ -460,14 +445,16 @@ describe("the recovery codes", () => {
     ).toEqual(TEN);
     fireEvent.click(button(J.codesCopy));
     fireEvent.click(button(J.codesDownload));
-    expect(button(J.continue).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("switch", { name: J.codesConfirm }));
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(acts.codesDone).not.toHaveBeenCalled();
+    fireEvent.click(button(J.codesSaved));
     expect(acts.save).toHaveBeenCalledWith(true);
+    expect(acts.codesDone).toHaveBeenCalledTimes(1);
     expect([acts.copyCodes.mock.calls.length, acts.downloadCodes.mock.calls.length]).toEqual([1, 1]);
     cleanup();
     const again = draw({ at: "codes", codes: TEN, copied: "copied", saved: true });
     expect(button(J.codesCopied)).toBeTruthy();
-    fireEvent.click(button(J.continue));
+    fireEvent.click(button(J.codesSaved));
     expect(again.acts.codesDone).toHaveBeenCalledTimes(1);
   });
 
@@ -509,11 +496,9 @@ describe("the plan, the mailbox and set up", () => {
       waiting: false,
       link: "ready",
     });
-    expect(heading()).toBe(J.step_plan_title);
-    expect(document.body.textContent).toContain(J.step_plan_lead);
-    expect(document.body.textContent).toContain(
-      `${J.planChosenYear.replace("{plan}", "Plus")} ${J.planTrial}`,
-    );
+    expect(heading()).toBe(J.startOn.replace("<plan></plan>.", "Plus"));
+    expect(document.body.textContent).toContain(J.planYearly);
+    expect(document.body.textContent).toContain(J.planNoCard);
     expect(link(J.planStartTrial).getAttribute("href")).toBe(ACCOUNT_PAGE);
     noButton(J.planLater);
     expect(document.body.textContent).not.toContain(J.planLaterHint);
@@ -521,8 +506,8 @@ describe("the plan, the mailbox and set up", () => {
 
   it("the plan with no trial to offer: the account page's own words", () => {
     draw({ at: "plan", trial: false, chosen: CHOSEN, waiting: false, link: "ready" });
-    expect(document.body.textContent).toContain(J.planLeadNoTrial);
-    expect(document.body.textContent).not.toContain(J.planTrial);
+    expect(heading()).toBe(J.step_plan_title);
+    expect(document.body.textContent).not.toContain(J.planNoCard);
     expect(link(J.planContinue).getAttribute("href")).toBe(ACCOUNT_PAGE);
   });
 
@@ -561,9 +546,9 @@ describe("the plan, the mailbox and set up", () => {
 
   it("set up, the organize decision ahead: names the mailbox, and Continue opens the first run", () => {
     draw({ at: "done", mailbox: "mila@example.org", decisionAhead: true });
-    expect(heading()).toBe(J.step_connected_title);
-    expect(document.body.textContent).toContain(J.step_connected_lead);
-    expect(document.body.textContent).toContain(J.mailboxConnected.replace("{address}", "mila@example.org"));
+    expect(heading()).toBe(J.myMailboxes.replace(/\.$/, ""));
+    expect(document.body.textContent).toContain(J.connected);
+    expect(document.body.textContent).toContain("mila@example.org");
     expect(link(J.continue).getAttribute("href")).toBe("/#/first-run");
   });
 
@@ -578,15 +563,16 @@ describe("the pages around the steps", () => {
   it("expired: says why, and Sign in carries the setup on", () => {
     draw({ at: "expired", said: J.expiredOpen });
     expect(heading()).toBe(J.expiredTitle);
-    expect(screen.getByRole("alert").textContent).toBe(J.expiredOpen);
-    expect(screen.queryByRole("list", { name: J.progress })).toBeNull();
+    expect(document.body.textContent).toContain(J.expiredOpen);
+    expect(document.body.textContent).toContain(J.expiredNote);
+    expect(screen.queryByRole("img", { name: /^Step \d of 5/ })).toBeNull();
     expect(link(J.signIn).getAttribute("href")).toBe("/login?next=join");
   });
 
   it("full: the list is the one way on", () => {
     draw({ at: "full", said: J.refusedFull });
-    expect(heading()).toBe(J.capacityTitle);
-    expect(screen.getByRole("alert").textContent).toBe(J.refusedFull);
+    expect(heading()).toBe(J.capacityTitle.replace(/\.$/, ""));
+    expect(document.body.textContent).toContain(J.refusedFull);
     expect(link(J.capacityCta).getAttribute("href")).toBe("/#pricing");
   });
 
@@ -618,19 +604,20 @@ describe("the pages around the steps", () => {
 
   it("unavailable, and a build with no server: no account can be made here; the demo only where there is one", () => {
     draw({ at: "unavailable" });
-    expect(heading()).toBe(J.unavailableTitle);
+    expect(heading()).toBe(en.gate.lede.replace(/\.$/, ""));
     expect(link(J.openDemo).getAttribute("href")).toBe("/?demo=1");
     cleanup();
     draw({ at: "unavailable" }, { demo: false });
     expect(screen.queryAllByRole("button")).toEqual([]);
-    expect(screen.queryAllByRole("link")).toEqual([]);
+    expect(screen.queryByRole("link", { name: en.gate.openDemo })).toBeNull();
+    expect(link(en.gate.signIn).getAttribute("href")).toBe("/login");
     cleanup();
     render(
       <TextProvider locale="en" messages={en as never} timeZone="UTC">
         <JoinPage door={NONE} />
       </TextProvider>,
     );
-    expect(heading()).toBe(J.unavailableTitle);
+    expect(heading()).toBe(en.gate.lede.replace(/\.$/, ""));
     expect(screen.queryAllByRole("button")).toEqual([]);
   });
 
@@ -648,9 +635,14 @@ describe("the pages around the steps", () => {
 
   it("speaks German where the catalogue is German", () => {
     draw({ at: "account" }, {}, de, "de");
-    expect(heading()).toBe(de.join.step_account_title);
+    expect(heading()).toBe(
+      de.join.account
+        .replace("<name>,</name>", `${de.join.nameLabel},`)
+        .replace("<email>,</email>", `${de.join.emailLabel},`)
+        .replace("<password></password>.", de.join.passwordLabel),
+    );
     expect(blank(de.join.passwordLabel)).toBeTruthy();
-    expect(screen.getByRole("list", { name: de.join.progress })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Schritt 1 von 5, Account, 1 von 5" })).toBeTruthy();
   });
 
   it("names its states by the reference's address", () => {

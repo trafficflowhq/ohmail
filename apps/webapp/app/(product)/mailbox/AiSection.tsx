@@ -77,7 +77,7 @@ export function AiSection({ owner }: { owner?: string | null } = {}) {
 
   return (
     <TextFromIntl>
-      <AiPane model={{ enabled, problem: error, noModel, toggle }} noModelSaid={tr("noModel")} />
+      <AiPane model={{ enabled, problem: error, noModel, toggle }} noModelSaid={tr("noModel")} cloudModel={!SELF_HOST_BUILD && owner != null && enabled === true && error === null} />
     </TextFromIntl>
   );
 }

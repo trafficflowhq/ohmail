@@ -42,7 +42,7 @@ const click = async (node: Element | null | undefined) => {
 const contentOption = (el: HTMLElement) =>
   within(el).queryByRole("radio", { name: /in the message text/ });
 const chooseNews = (el: HTMLElement) =>
-  click(within(el).getByRole("option", { name: /^News/ }));
+  click(within(el).getByRole("radio", { name: "News" }));
 
 async function mountSender(list: EngineMessage[], seedId: string, rules: RuleDTO[] = []) {
   installShellEnv();
@@ -116,21 +116,19 @@ describe("the sheet offers the content term", () => {
     await click(contentOption(el));
     await chooseNews(el);
 
-    const confirm = el.querySelector(".sm-confirm p");
-    expect(confirm, "pressing a destination did not open the confirm").toBeTruthy();
-    const text = confirm!.textContent ?? "";
-    expect(text).toContain(SENDER);
-    expect(text).toContain(TOKEN);
-    expect(text).toContain("News");
-    expect(text).toContain("text contains");
-    expect(text).not.toContain("subject contains");
+    const form = within(el);
+    expect(form.getByText(SENDER, { exact: true })).toBeTruthy();
+    expect(contentOption(el)?.getAttribute("aria-checked")).toBe("true");
+    expect(form.getByRole("radio", { name: "News", checked: true })).toBeTruthy();
+    expect(form.getByText("2 of 3 match")).toBeTruthy();
+    expect(form.queryByText(/AND the text contains/)).toBeNull();
 
     expect(ruleWrites()).toEqual([]);
     await click(within(el).getByRole("button", {
-      name: messages.screening.subjectConfirmGo.replace("{dest}", "News"),
+      name: messages.screening.subjectMakeRule,
     }));
     expect(ruleWrites()).toEqual([expect.objectContaining({
-      kind: "rule_create", destination: "ohmail/News", bodyContains: TOKEN, applyRetro: true,
+      kind: "rule_create", match: SENDER, destination: "ohmail/News", bodyContains: TOKEN, applyRetro: true,
     })]);
   });
 
@@ -140,7 +138,7 @@ describe("the sheet offers the content term", () => {
     ]);
     await click(contentOption(el));
     await chooseNews(el);
-    expect(el.querySelector(".sm-confirm")!.textContent).toContain("already have this rule");
+    expect(within(el).getByText(messages.screening.subjectConfirmAlready)).toBeTruthy();
   });
 });
 

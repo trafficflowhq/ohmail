@@ -1,13 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Seg, design, hueStyle } from "@ohmail/ui/base";
-import {
-  LookPicture,
-  SettingLine,
-  SettingNote,
-  SettingsSheet,
-  SettingTile,
-  SettingTiles,
-} from "@ohmail/ui/mail";
+import { LookPicture, SettingLine, SettingsSheet, SettingTile, SettingTiles } from "@ohmail/ui/mail";
 import { useText, type Text } from "../../text/index.js";
 import type { GeneralModel, LookFace, ServerSwitch, ThemeChoice } from "./model.js";
 import { GENERAL_NAMESPACE } from "./namespace.js";
@@ -201,33 +194,21 @@ function SubjectPicture({ each, g }: { each: boolean; g: Text }) {
 
 function ImagesLines({ images, write, t }: { images: ServerSwitch; write: ServerWrite; t: Text }) {
   return (
-    <>
-      <SettingLine
-        label={t("images.title")}
-        off={write.pending}
-        toggle={{ on: !images.blocked, onChange: (load) => write.run(() => images.set(!load)) }}
-      />
-      <SettingNote>
-        {images.blocked ? t("images.off") : t(images.fromComputer ? "images.onComputer" : "images.on")}
-      </SettingNote>
-      <SettingNote>{t(images.fromComputer ? "images.microcopyComputer" : "images.microcopy")}</SettingNote>
-    </>
+    <SettingLine
+      label={t("images.title")}
+      off={write.pending}
+      toggle={{ on: !images.blocked, onChange: (load) => write.run(() => images.set(!load)) }}
+    />
   );
 }
 
 function PixelsLines({ pixels, write, t }: { pixels: ServerSwitch; write: ServerWrite; t: Text }) {
   return (
-    <>
-      <SettingLine
-        label={t("pixels.title")}
-        off={write.pending}
-        toggle={{ on: pixels.blocked, onChange: (block) => write.run(() => pixels.set(block)) }}
-      />
-      <SettingNote>
-        {pixels.blocked ? t("pixels.on") : t(pixels.fromComputer ? "pixels.offComputer" : "pixels.off")}
-      </SettingNote>
-      <SettingNote>{t("pixels.microcopy")}</SettingNote>
-    </>
+    <SettingLine
+      label={t("pixels.title")}
+      off={write.pending}
+      toggle={{ on: pixels.blocked, onChange: (block) => write.run(() => pixels.set(block)) }}
+    />
   );
 }
 

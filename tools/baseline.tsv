@@ -609,7 +609,7 @@ packages/app-logic/src/screener/screener-intents.ts	prettier	1	ruling:lift-b-rem
 packages/app-logic/src/screener/screener-state.ts	max-lines	1	ruling:lift-b-screener
 packages/app-logic/src/screener/screener-state.ts	max-lines-per-function	2	ruling:lift-b-screener
 packages/app-logic/src/screener/screener-state.ts	prettier	1	ruling:lift-b-removals
-packages/app-logic/src/screener/screener-state.ts	react-hooks/exhaustive-deps	13	ruling:lift-b-screener
+packages/app-logic/src/screener/screener-state.ts	react-hooks/exhaustive-deps	10	ruling:lift-b-screener
 packages/app-logic/src/screener/screener-suggest.ts	max-lines	1	ruling:composition-lift
 packages/app-logic/src/screener/screener-suggest.ts	max-lines-per-function	3	ruling:composition-lift
 packages/app-logic/src/screener/screener-suggest.ts	no-restricted-globals	4	ruling:composition-lift

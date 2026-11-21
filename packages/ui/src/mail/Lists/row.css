@@ -49,7 +49,7 @@
     box-shadow: var(--oh-row-cursor);
     text-align: left;
     cursor: pointer;
-    transition: background-color var(--d-hover) var(--e-std);
+    transition: background-color var(--d-key-focus) var(--e-std);
   }
 
   .oh-row:focus {
@@ -83,13 +83,9 @@
     }
   }
 
-  .oh-row:focus-visible {
-    outline: var(--oh-focus) solid var(--focus);
-    outline-offset: calc(var(--oh-focus) * -1);
-  }
-
-  /* Under the pointer: the row, or a verb beside it. */
+  /* The studio uses the same wash under the pointer and the keyboard cursor. */
   .oh-row:is(:hover, :where(.oh-row-slot:hover) > *),
+  .oh-row:focus-visible,
   .oh-row[data-cursor],
   .oh-row[data-picked] {
     --oh-under: var(--hover);
@@ -97,14 +93,27 @@
     background: var(--hover);
   }
 
-  .oh-row[data-open],
-  .oh-row[data-open]:hover {
+  .oh-row[data-open] {
     --oh-under: var(--row-open);
     --oh-row-second: var(--on-row-open2);
     --oh-row-cursor: inset 0 0 0 var(--row-ringw) var(--row-ring);
 
     background: var(--row-open);
     color: var(--on-row-open);
+  }
+
+  .oh-row:is([data-cursor], :focus-visible):not([data-open]) {
+    --oh-row-cursor: var(--key-focus-ring);
+  }
+
+  .oh-row[data-open]:focus-visible {
+    --oh-row-cursor:
+      inset 0 0 0 var(--key-focus-w) var(--on-row-open), 0 0 0 var(--key-focus-w) var(--key-focus);
+  }
+
+  /* Walking the list can also open the letter. Paint the keyboard state in that same frame. */
+  .oh-row[data-open] {
+    --d-key-focus: var(--d-close);
   }
 
   /* The gutter: the lead's circle; a second voice, or the count of the others, merged into its lower right. */
@@ -808,7 +817,7 @@
 
   :root[data-touch="1"]:not([data-rm="1"]) .oh-row {
     transition:
-      background-color var(--d-hover) var(--e-std),
+      background-color var(--d-key-focus) var(--e-std),
       transform var(--d-move) var(--e-out);
   }
 
@@ -896,10 +905,6 @@
     --oh-row-second: var(--ink2);
   }
 
-  :root[data-face="ohmarchy"] .oh-row[data-cursor] {
-    --oh-row-cursor: inset 0 0 0 2px var(--ring-up);
-  }
-
   :root[data-face="ohmarchy"] .oh-row-second {
     display: grid;
     gap: var(--oh-row-between);
@@ -982,35 +987,4 @@
 
 [data-address-rows] .oh-row:not([data-unread], [data-open]) .oh-row-preview {
   color: var(--ink2);
-}
-
-/* The standing row paints as the current item without becoming an opened letter. */
-[data-cursor-tint]:has(> .oh-listhead) .oh-row[aria-selected="true"]:not([data-open]) {
-  --oh-under: var(--row-open);
-  --oh-row-second: var(--on-row-open2);
-  --oh-row-cursor: inset 0 0 0 var(--row-ringw) var(--row-ring);
-
-  background: var(--row-open);
-  color: var(--on-row-open);
-}
-
-[data-cursor-tint]:has(> .oh-listhead)
-  .oh-row[aria-selected="true"]:not([data-open])
-  :is(.oh-row-who, .oh-row-subject) {
-  color: var(--on-row-open);
-}
-
-[data-cursor-tint]:has(> .oh-listhead)
-  .oh-row[aria-selected="true"]:not([data-open])
-  :is(.oh-row-address, .oh-row-preview, .oh-row-file) {
-  color: var(--on-row-open2);
-}
-
-:root[data-face="paper"]
-  [data-cursor-tint]:has(> .oh-listhead)
-  .oh-row[aria-selected="true"]:not([data-open])
-  .oh-row-face-art
-  > .oh-avatar {
-  --oh-avatar-bg: var(--av-open-bg);
-  --oh-avatar-fg: var(--av-open-fg);
 }

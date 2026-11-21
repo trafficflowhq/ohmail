@@ -77,10 +77,10 @@ const press = (el: HTMLElement) => fireEvent.click(el);
 describe("what the pane lists", () => {
   it("at rest: the lead, the name's blank and the verb by the names the journeys find, and that no invite is open", () => {
     drawn(STATES.rest.model);
-    expect(seen(inv("intro"))).toBe(true);
+    expect(seen(inv("intro"))).toBe(false);
     expect((screen.getByRole("textbox", { name: inv("mintFor") }) as HTMLInputElement).maxLength).toBe(100);
     expect(button(inv("mintAction"))).toBeTruthy();
-    expect(seen(inv("mintHint"))).toBe(true);
+    expect(seen(inv("mintHint"))).toBe(false);
     expect(screen.getByRole("heading", { name: inv("liveTitle") })).toBeTruthy();
     expect(seen(own("none"))).toBe(true);
     expect(screen.queryAllByRole("group")).toHaveLength(0);
@@ -116,19 +116,19 @@ describe("the link, shown once", () => {
   it("is drawn as its picture with the name it was made for, and is never printed", () => {
     drawn(STATES.made.model);
     expect(screen.getByRole("heading", { name: "Rahel Beck" })).toBeTruthy();
-    expect(seen(inv("mintedLeadFor", { name: "Rahel Beck" }))).toBe(true);
+    expect(seen(inv("mintedLeadFor", { name: "Rahel Beck" }))).toBe(false);
     expect(pictured).toEqual([{ value: LINK, label: inv("qrAria") }]);
-    expect(seen(inv("mintedOnce"))).toBe(true);
+    expect(seen(inv("onceSevenDays"))).toBe(true);
     expect(document.body.innerHTML).not.toContain(PART);
     expect(button(inv("mintAction"))).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(within(line("Rahel Beck")).getByRole("button", { name: inv("revoke") })).toBeTruthy();
   });
 
-  it("a link made for nobody is named by the fallback and says the plain lead", () => {
+  it("a link made for nobody is named by the fallback and shows the validity", () => {
     drawn({ ...STATES.made.model, made: { link: LINK, name: "" } });
     expect(screen.getByRole("heading", { name: inv("rowFallback") })).toBeTruthy();
-    expect(seen(inv("mintedLead"))).toBe(true);
+    expect(seen(inv("onceSevenDays"))).toBe(true);
   });
 
   it("Copy and Done are the model's two verbs", () => {
@@ -193,7 +193,7 @@ describe("what the last read, verb or copy left to say", () => {
     expect(button(inv("mintAction"))).toBeNull();
     const off = screen.getAllByRole("button") as HTMLButtonElement[];
     expect(off.map((each) => each.disabled)).toEqual([true, true]);
-    expect(off[0]!.textContent).toBe(inv("working"));
+    expect(button(inv("working"))).toBeTruthy();
   });
 });
 

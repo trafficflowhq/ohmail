@@ -552,7 +552,7 @@ export function useMailState(): MailStateBinding {
 
 /**
  * The mailbox facts for a surface that can be mounted OUTSIDE the shell — the one allowed non-throwing
- * sibling of {@link useMailState}. `InlineReply` renders inside `MessagePane`, mounted with no provider
+ * sibling of {@link useMailState}. The reader's `InlineReply` renders inside the shared Reader (`packages/app/src/reader`), mounted with no provider
  * in several harnesses and published to the Desktop mirror; a throw would take an editor down over a
  * decoration. The objection to a non-throwing accessor is answered structurally: `AppShell` renders
  * `MailStateProvider` above `ShellInner` unconditionally, and it is `ShellInner` — through the THROWING

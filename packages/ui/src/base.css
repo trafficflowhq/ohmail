@@ -74,7 +74,13 @@ html.scheme-shift,html.scheme-shift *,html.scheme-shift *::before,html.scheme-sh
 
 /* Reduced motion is not optional: state changes become instant, nothing
    is merely slowed down. Verbatim policy from the prototype. */
+[data-rm="1"] :is(.oh-row, .oh-railentry, .oh-menu-item, .oh-readsquares-slot) {
+  transition-property: none;
+}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;
     transition-duration:.01ms !important}
+  :is(.oh-row, .oh-railentry, .oh-menu-item, .oh-readsquares-slot) {
+    transition-property: none;
+  }
 }

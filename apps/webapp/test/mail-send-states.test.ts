@@ -842,7 +842,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
       await tick(0); await tick(0);
       await render();
       await tick(6_000);
-      expect({ flushes, keys, said }).toEqual({ flushes: 1, keys: ["k1"], said: ["Reply sent."] });
+      expect({ flushes, keys, said }).toEqual({ flushes: 1, keys: ["k1"], said: [messages.reply.toastSent] });
       await unmount();
     } finally {
       vi.useRealTimers();
@@ -927,7 +927,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     await drain();
     expect(rec.mutations.map((m) => m.kind)).toEqual(["mail_send", "triage_set"]);
     expect(rec.mutations[1]).toMatchObject({ messageId: "m1", state: "none" });
-    expect(rec.toasts).toContain("Reply sent.");
+    expect(rec.toasts).toContain(messages.reply.toastSent);
     await beat();
     expect(rec.settled).toEqual(["m1"]);
   });
@@ -1010,9 +1010,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     expect(rec.mutations.map((m) => m.kind)).toEqual(["mail_send"]);
     await beat();
     expect(rec.settled).toEqual(["compose"]);
-    expect(rec.toasts).toContain("Message sent.");
-    // …and it does not claim to have sent a REPLY.
-    expect(rec.toasts).not.toContain("Reply sent.");
+    expect(rec.toasts.filter((line) => line === messages.compose.toastSent)).toHaveLength(1);
   });
 
   /**

@@ -156,11 +156,13 @@ describe("the archive pass has a ceiling", () => {
     } as unknown as Partial<EngineAdapter>);
     await render(engine, "D-U-N-S");
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-    expect(scopeText()).toContain("Searched your whole mailbox");
+    expect(host.querySelector(".oh-empty-label")?.textContent).toBe("Nothing matched");
+    expect(scopeText()).not.toContain("Searching your whole mailbox");
 
     // Well past the ceiling: the settled answer stands, and no timeout sentence appears.
     await act(async () => { await vi.advanceTimersByTimeAsync(ARCHIVE_TIMEOUT_MS * 2); });
-    expect(scopeText()).toContain("Searched your whole mailbox");
+    expect(host.querySelector(".oh-empty-label")?.textContent).toBe("Nothing matched");
+    expect(scopeText()).not.toContain("Searching your whole mailbox");
     expect(scopeText()).not.toContain("Your server did not answer");
   });
 
@@ -174,7 +176,8 @@ describe("the archive pass has a ceiling", () => {
     expect(scopeText()).toContain("Your server did not answer");
 
     await act(async () => { settle!({ items: [], total: 0, tier: "exact" }); });
-    expect(scopeText()).toContain("Searched your whole mailbox");
+    expect(host.querySelector(".oh-empty-label")?.textContent).toBe("Nothing matched");
+    expect(scopeText()).not.toContain("Searching your whole mailbox");
     expect(scopeText()).not.toContain("Your server did not answer");
   });
 });

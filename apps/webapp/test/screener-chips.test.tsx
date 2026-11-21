@@ -95,10 +95,12 @@ async function mount(only?: string[]) {
 
 const filterName = "Show only senders suggested for one pile";
 const rows = () => within(screen.getByRole("listbox", { name: "Screener" })).getAllByRole("option");
-const apply = () => screen.getByRole("button", { name: "Apply 6 — Ohbox, News, Receipts, Screened out & Spam" });
+const apply = () => screen.getByRole("button", { name: "Apply 6" });
+
+const tools = () => within(screen.getByRole("group", { name: "Act on all waiting senders" }));
 
 function menu(current: string) {
-  fireEvent.click(screen.getByRole("button", { name: current }));
+  fireEvent.click(tools().getByRole("button", { name: current }));
   return within(screen.getByRole("menu", { name: filterName }));
 }
 
@@ -149,7 +151,8 @@ describe("the Screener's filter chips", () => {
 
   it("offers no chips at all when there is no partition to make", async () => {
     await mount(["never@example.test", "hold@example.test"]);
-    expect(screen.queryByRole("button", { name: "All 2" })).toBeNull();
+    expect(tools().queryByRole("button", { name: "All 2" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "All 2" })).toBeTruthy();
     expect(screen.queryByRole("menu", { name: filterName })).toBeNull();
     expect(rows()).toHaveLength(2);
   });

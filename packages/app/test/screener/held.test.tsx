@@ -172,11 +172,13 @@ describe("unsubscribe, on a letter of a sender kept out", () => {
       return { messageId: id, posted: true, status: 200, refusal: null, header: "one_click" };
     });
     expect(sent).toEqual([]);
+    expect(within(reading()).queryByText("Unsubscribed", { exact: true })).toBeNull();
     await act(async () => {
       fireEvent.click(within(reading()).getByRole("button", { name: "Unsubscribe" }));
     });
     expect(sent).toEqual(["zed-1"]);
     expect(reading().textContent).toContain("Unsubscribe request sent.");
+    expect(within(reading()).getByText("Unsubscribed", { exact: true })).toBeTruthy();
     expect(within(reading()).queryByRole("button", { name: "Unsubscribe" })).toBeNull();
     expect(asked.decided).toBeUndefined();
   });
@@ -190,6 +192,7 @@ describe("unsubscribe, on a letter of a sender kept out", () => {
       fireEvent.click(within(reading()).getByRole("button", { name: "Unsubscribe" }));
     });
     expect(reading().textContent).toContain("The list did not accept the unsubscribe request.");
+    expect(within(reading()).queryByText("Unsubscribed", { exact: true })).toBeNull();
     expect(within(reading()).queryByRole("button", { name: "Unsubscribe" })).toBeNull();
     world.view.unmount();
     mountKept(full("one_click"), refusedBy("unsubscribe_list_failed"));
@@ -215,7 +218,7 @@ describe("unsubscribe, on a letter of a sender kept out", () => {
     expect(within(reading()).queryByRole("button", { name: "Unsubscribe" })).toBeNull();
     waiting.view.unmount();
     mountKept(full("mailto_only"), send);
-    expect(reading().textContent).toContain("ohmail never sends mail on your behalf");
+    expect(reading().textContent).not.toContain("ohmail never sends mail on your behalf");
     expect(within(reading()).queryByRole("button", { name: "Unsubscribe" })).toBeNull();
   });
 

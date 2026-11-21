@@ -1,14 +1,13 @@
 {
   "receipts": {
     "title": "Receipts",
-    "tail": "Older receipts live in Search.",
     "streamAria": "Reading stream",
     "waterline": {
       "label": "Seen up to here"
     },
     "markAll": {
       "label": "Mark all read",
-      "done": "{count, plural, one {1 item} other {# items}} marked read",
+      "done": "{count, number} read",
       "undo": "Undo"
     },
     "list": {

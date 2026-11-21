@@ -131,11 +131,13 @@ describe("each pile's note on senders nobody let in", () => {
     await live.goTo("reads");
     await live.tick(1_000);
     expect(asks).toEqual(["news"]);
-    expect(within(note()!).getByText("2 letters here are from senders you never let in.")).toBeTruthy();
+    expect(note()?.querySelector("b")?.textContent).toBe("2 letters here were never let in");
+    expect(note()?.textContent).toContain("They are from senders you never let in.");
     await live.goTo("receipts");
     await live.tick(1_000);
     expect(asks).toEqual(["news", "receipts"]);
-    expect(within(note()!).getByText("1 letter here is from a sender you never let in.")).toBeTruthy();
+    expect(note()?.querySelector("b")?.textContent).toBe("1 letter here was never let in");
+    expect(note()?.textContent).toContain("They are from senders you never let in.");
     expect(writes).toEqual([]);
 
     await live.act(async () => { within(note()!).getByRole("button", { name: /screen 1/i }).click(); });
@@ -144,7 +146,8 @@ describe("each pile's note on senders nobody let in", () => {
     expect(note(), "the note outlived the press it answered").toBeNull();
     await live.goTo("reads");
     await live.tick(1_000);
-    expect(within(note()!).getByText("2 letters here are from senders you never let in.")).toBeTruthy();
+    expect(note()?.querySelector("b")?.textContent).toBe("2 letters here were never let in");
+    expect(note()?.textContent).toContain("They are from senders you never let in.");
     expect(writes).toEqual(["receipts"]);
   });
 });

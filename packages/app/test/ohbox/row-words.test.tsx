@@ -99,6 +99,21 @@ describe("what a row says", () => {
     ).toContain("+2");
   });
 
+  it("counts unread received mail separately from a sent reply", () => {
+    const read = msg({ id: "read", threadId: "t", date: at(8), unread: false });
+    const sent = msg({ id: "sent", threadId: "t", date: at(9), folder: "Sent", unread: true });
+    const unread = msg({ id: "unread", threadId: "t", date: at(10) });
+
+    ohbox({
+      newForYou: [unread],
+      selectedId: unread.id,
+      initialSquare: sent.id,
+      conversationOf: () => [read, sent, unread],
+    });
+
+    expect(screen.getByRole("group", { name: "3 messages, oldest first: 1 unread" })).toBeTruthy();
+  });
+
   it("a letter alone on its row wears one circle, its sender's, and names no people", () => {
     ohbox({ newForYou: [msg({ id: "a", from: "Ada Lund", subject: "Kiln" })] });
     const row = screen.getByRole("option", { name: "Ada Lund: Kiln" });

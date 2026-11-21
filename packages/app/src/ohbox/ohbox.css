@@ -32,17 +32,3 @@
 .ob-wait {
   min-height: 0;
 }
-/* What is true instead of the doorbell, printed before its action in the head. */
-.ob-door {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s1);
-  min-width: 0;
-}
-.ob-door-said {
-  font-size: var(--t-meta);
-  color: var(--ink2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}

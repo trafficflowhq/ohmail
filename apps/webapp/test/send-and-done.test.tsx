@@ -148,7 +148,7 @@ afterEach(async () => {
 describe("the second action is offered exactly where the engine offers a plan", () => {
   /**
    * CONTROL. MUTATION WATCHED: hand the editor `onSendAndDone` unconditionally in
-   * `MessagePane` (drop the `chrome.sendReplyAndDone?.(…)` call) and the fresh compose below
+   * the reader (drop the `chrome.sendReplyAndDone?.(…)` call) and the fresh compose below
    * grows a second send button.
    */
   it("a reply to an unread Ohbox row offers it; a fresh compose does not", async () => {
@@ -194,7 +194,7 @@ describe("the second action is offered exactly where the engine offers a plan", 
 
 describe("the press sends, then files, and says so once", () => {
   /**
-   * CONTROL. MUTATION WATCHED: hand the editor a callback unconditionally in `MessagePane`
+   * CONTROL. MUTATION WATCHED: hand the editor a callback unconditionally in the reader
    * (`?? (() => {})`) and this case goes red — the press reaches a lane nobody armed and the
    * pill says "Reply sent." over a message that was never filed.
    */
@@ -206,7 +206,7 @@ describe("the press sends, then files, and says so once", () => {
     await act(async () => { doneButton()!.click(); });
     await settle();
 
-    expect(reports("Sent · marked done")).toHaveLength(1);
+    expect(reports(messages.reply.toastSentAndDone)).toHaveLength(1);
     /* The SETTLED pill. "One press, one sentence" is not readable here — the host renders one
        capsule and both sentences would land in a single React flush, so a displaced one leaves
        nothing to assert on (a per-step sampler was tried and read green under the mutation).
@@ -228,8 +228,8 @@ describe("the press sends, then files, and says so once", () => {
     await act(async () => { sendButton().click(); });
     await settle();
 
-    expect(reports("Reply sent.")).toHaveLength(1);
-    expect(reports("Sent · marked done")).toHaveLength(0);
+    expect(reports(messages.reply.toastSent)).toHaveLength(1);
+    expect(reports(messages.reply.toastSentAndDone)).toHaveLength(0);
   });
 
   /**
@@ -249,7 +249,7 @@ describe("the press sends, then files, and says so once", () => {
       }));
     });
     await settle();
-    expect(reports("Sent · marked done")).toHaveLength(1);
+    expect(reports(messages.reply.toastSentAndDone)).toHaveLength(1);
   });
   /**
    * CONTROL. MUTATION WATCHED: read the plan AFTER the send instead of at the press (move the
@@ -327,6 +327,6 @@ describe("the German catalogue carries both halves", () => {
     await type("Donnerstag passt.");
     await act(async () => { doneButton()!.click(); });
     await settle();
-    expect(reports("Gesendet · erledigt")).toHaveLength(1);
+    expect(reports("Gesendet · Erledigt")).toHaveLength(1);
   });
 });

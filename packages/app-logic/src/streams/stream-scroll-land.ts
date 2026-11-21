@@ -66,6 +66,7 @@ export function landOn(core: StreamScrollCore, id: string, onLanded?: () => void
   if (near) onLanded?.();
   const settle = settler(core, el, { id, near, flying, find, protect, onLanded });
   core.anchor = requestAnimationFrame(settle);
+  core.positionChanged();
 }
 
 interface Flight {
@@ -95,9 +96,11 @@ function settler(core: StreamScrollCore, el: HTMLElement, f: Flight): () => void
   };
   /** The landing is over: the spy and the hold loop take the card from here. */
   const flown = (): void => {
-    if (core.jump?.id !== id) return;
-    core.jump = null;
-    core.spy();
+    if (core.jump?.id === id) {
+      core.jump = null;
+      core.spy();
+    }
+    core.positionChanged();
   };
   const done = (): void => {
     if (!near) {
@@ -111,7 +114,12 @@ function settler(core: StreamScrollCore, el: HTMLElement, f: Flight): () => void
     core.anchor = 0;
     const c = find();
     if (near && (!c || core.hands() !== hands || core.held !== id)) return flown();
-    if (!c) return rest(); // left the stream mid-flight: nothing landed
+    if (!c) {
+      // The card left the stream mid-flight.
+      rest();
+      core.positionChanged();
+      return;
+    }
     const aim = aimTop(c);
     const line = lineOf(c);
     const atLine = Math.abs(rawTop(c) - el.scrollTop) <= ANCHOR_TOLERANCE_PX;

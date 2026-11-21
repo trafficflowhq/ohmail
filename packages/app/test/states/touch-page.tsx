@@ -4,20 +4,31 @@
  * behaviour hook over sixty plain letters, so the list scrolls. What the model is asked to do is counted on
  * `window.touchSaid` for the browser's test to read. Fictional people only.
  */
+import { Sheet } from "@ohmail/ui/mail";
 import type { EngineMessage } from "@ohmail/wire";
+import { Fragment, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { readerZones } from "@ohmail/app-logic/calendar";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
+import { CalendarRail } from "../../src/calendar/CalendarRail.js";
 import { Frame } from "../../src/frame/Frame.js";
-import type { PaneProps, PlaceEntry } from "../../src/frame/contract.js";
+import type { CalendarEntry, PaneProps, PlaceEntry } from "../../src/frame/contract.js";
 import { NONE, type HostContract, type SafeInsets } from "../../src/host/index.js";
+import { MonthView } from "../../src/month/MonthView.js";
 import { OhboxAbove, OhboxList, type OhboxBeside } from "../../src/ohbox/index.js";
+import { paneOf } from "../../src/settings/facts.js";
+import { SettingsMenu } from "../../src/settings/SettingsMenu.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
-import { fakeAppearance, fakeWindow, movable, ROOMS } from "../support/fake-window.js";
+import { fakeAddress, fakeAppearance, fakeWindow, movable, ROOMS } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
+import calendarEn from "../../messages/calendar.en.json" with { type: "json" };
+import calsettingsEn from "../../messages/calsettings.en.json" with { type: "json" };
+import monthEn from "../../messages/month.en.json" with { type: "json" };
 import ohboxEn from "../../messages/ohbox.en.json" with { type: "json" };
 import sharedEn from "../../messages/shared.en.json" with { type: "json" };
+import settingsEn from "../../messages/settings.en.json" with { type: "json" };
 
 export interface TouchSaid {
   marked: Array<{ ids: string[]; unread: boolean }>;
@@ -146,13 +157,119 @@ const ohbox: PlaceEntry = {
   id: "ohbox",
   body: "ohbox",
   rail: { group: "main", icon: "ohbox", label: "title" },
-  panes: { kind: "columns", List: OhboxPane, Reading: () => null },
+  panes: {
+    kind: "columns",
+    List: OhboxPane,
+    Reading: () => (
+      <Sheet kind="reading" label="Reading">
+        <h1>Letter view</h1>
+        <section aria-label="Letter body">
+          <p>The words of the letter are here.</p>
+        </section>
+      </Sheet>
+    ),
+  },
 };
 
+const settings: PlaceEntry = {
+  id: "settings",
+  body: "settings",
+  rail: null,
+  panes: {
+    kind: "wide",
+    Wide: ({ plan }) =>
+      q.has("menu") ? (
+        <SettingsMenu
+          menu={[paneOf("ai", { Body: () => null })]}
+          current={null}
+          phone={plan.columns === 1}
+          go={() => {}}
+        />
+      ) : (
+        <Sheet kind="wide" label="Settings">
+          <h1>Settings view</h1>
+          {q.has("controls") ? (
+            <>
+              <p>
+                <input aria-label="Name" defaultValue="Editable name" />
+              </p>
+              <p>
+                <textarea aria-label="Notes" defaultValue="Editable notes" />
+              </p>
+              <p aria-label="Signature" role="textbox" contentEditable suppressContentEditableWarning>
+                Editable signature
+              </p>
+              <div role="region" aria-label="Preview" style={{ overflowX: "auto" }}>
+                <p style={{ width: 900 }}>A wide preview</p>
+              </div>
+            </>
+          ) : null}
+        </Sheet>
+      ),
+  },
+};
+function CalendarMonth({ plan }: PaneProps) {
+  const today = "2026-08-02";
+  const [anchor, pick] = useState(today);
+  return (
+    <Sheet kind="wide" label="Calendar">
+      <h1>Calendar month</h1>
+      <MonthView
+        input={{
+          events: [],
+          anchor,
+          today,
+          nowMinute: 0,
+          zone: "UTC",
+          zones: readerZones(),
+          weekStart: 0,
+          weekNumbers: false,
+          open: null,
+          device: plan.device,
+        }}
+        acts={{ pick, event: () => {}, view: () => {}, reveal: () => {} }}
+        edge={{ earlier: null, later: null, load: NONE }}
+      />
+    </Sheet>
+  );
+}
+
+const calendar: CalendarEntry = {
+  Above: Fragment,
+  Rail: CalendarRail,
+  places: {
+    month: { id: "month", body: "calendar", rail: null, panes: { kind: "wide", Wide: CalendarMonth } },
+    week: NONE,
+    day: NONE,
+    year: NONE,
+    agenda: NONE,
+    calsearch: NONE,
+    frommail: NONE,
+    calsettings: NONE,
+  },
+  stage: NONE,
+  panels: { agenda: NONE, invitations: NONE },
+  useWants: () => false,
+};
+const place = q.get("place");
+const look = {
+  face: q.get("face") === "ohmarchy" ? "ohmarchy" : "paper",
+  scheme: q.get("scheme") === "dark" ? "dark" : "light",
+} as const;
 const made = fakeHost({
   engine: { ...NO_ENGINE, trashAvailable: () => true },
   service: "self",
   scope: "a",
+  ...(place === "calendar" && { calendar, products: "both" }),
+  address: fakeAddress(
+    place === "calendar"
+      ? "#/cal/month"
+      : place === "settings"
+        ? "#/settings"
+        : place === "reader"
+          ? "#/ohbox/m/m0"
+          : "#/ohbox",
+  ),
   places: q.has("dock")
     ? {
         ohbox,
@@ -172,9 +289,15 @@ const made = fakeHost({
         },
         receipts: { ...ohbox, id: "receipts", rail: { group: "main", icon: "receipts", label: "title" } },
       }
-    : { ohbox },
-  window: fakeWindow({ ...ROOMS.phone, width: innerWidth, posture: "flat", reducedMotion: !q.has("motion") }),
-  appearance: fakeAppearance(),
+    : { ohbox, settings },
+  window: fakeWindow({
+    ...ROOMS.phone,
+    width: innerWidth,
+    height: innerHeight,
+    posture: "flat",
+    reducedMotion: !q.has("motion"),
+  }),
+  appearance: fakeAppearance(look),
 }).host;
 const host: HostContract = {
   ...made,
@@ -186,8 +309,8 @@ const host: HostContract = {
         : NONE,
   },
 };
-document.documentElement.setAttribute("data-face", "paper");
-document.documentElement.setAttribute("data-theme", "light");
+document.documentElement.setAttribute("data-face", look.face);
+document.documentElement.setAttribute("data-theme", look.scheme);
 
 createRoot(document.getElementById("root")!).render(
   <TextProvider
@@ -196,6 +319,10 @@ createRoot(document.getElementById("root")!).render(
       {
         ...FRAME_WORDS.en,
         ...ohboxEn,
+        ...calendarEn,
+        ...calsettingsEn,
+        ...monthEn,
+        ...settingsEn,
         ...sharedEn,
         screener: { title: "Screener" },
         news: { title: "News" },

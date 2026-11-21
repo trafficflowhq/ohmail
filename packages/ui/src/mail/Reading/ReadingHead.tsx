@@ -70,6 +70,11 @@ export function ReadingHead({
       ) : (
         byline
       )}
+      {subject ? (
+        <b className="oh-readinghead-short" aria-hidden="true">
+          <span className="oh-readinghead-short-text">{subject}</span>
+        </b>
+      ) : null}
     </header>
   );
 }

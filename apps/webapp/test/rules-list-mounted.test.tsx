@@ -152,8 +152,8 @@ describe("ruleDate", () => {
     const { pane } = await mountRulesList([older, newer], { keepDates: true });
     const olderRow = within(pane.getByRole("group", { name: sentence(older) }));
     const newerRow = within(pane.getByRole("group", { name: sentence(newer) }));
-    expect(olderRow.getByText("from a Screener decision · 9 Jan 2025")).toBeTruthy();
-    expect(newerRow.getByText("from a Screener decision · 4 Aug 2026")).toBeTruthy();
+    expect(olderRow.getByText("Screener decision · 9 Jan 2025")).toBeTruthy();
+    expect(newerRow.getByText("Screener decision · 4 Aug 2026")).toBeTruthy();
   });
 
   it("dates a rule by the reader's day: made at 00:59 in Zurich it reads that day, not UTC's", async () => {
@@ -162,7 +162,7 @@ describe("ruleDate", () => {
     expect(ruleDate(item.createdAt)).toBe("23 Oct 2026");
     const { pane } = await mountRulesList([item], { keepDates: true });
     const row = within(pane.getByRole("group", { name: sentence(item) }));
-    expect(row.getByText("from a Screener decision · 23 Oct 2026")).toBeTruthy();
+    expect(row.getByText("Screener decision · 23 Oct 2026")).toBeTruthy();
     expect(row.queryByText(/22 Oct 2026/)).toBeNull();
 
     setActiveFormatZone("America/New_York");
@@ -174,7 +174,7 @@ describe("ruleDate", () => {
     expect(ruleDate(item.createdAt)).toBe("");
     const { pane } = await mountRulesList([item], { keepDates: true });
     const row = within(pane.getByRole("group", { name: sentence(item) }));
-    expect(row.getByText(/from a Screener decision/)).toBeTruthy();
+    expect(row.getByText(/Screener decision/)).toBeTruthy();
     expect(row.queryByText(/Invalid Date|not a date/)).toBeNull();
   });
 });
@@ -186,8 +186,8 @@ describe("the pane exists and says what the rule is", () => {
     const { pane } = await mountRulesList([manual, promoted]);
     const userRule = within(pane.getByRole("group", { name: sentence(manual) }));
     const screenerRule = within(pane.getByRole("group", { name: sentence(promoted) }));
-    expect(userRule.getByText(/you made this one/)).toBeTruthy();
-    expect(screenerRule.getByText(/from a Screener decision/)).toBeTruthy();
+    expect(userRule.getByText(/You made this one/)).toBeTruthy();
+    expect(screenerRule.getByText(/Screener decision/)).toBeTruthy();
   });
 
   it("says a paused rule sorts nothing, rather than showing it like a live one", async () => {
@@ -207,7 +207,7 @@ describe("the pane exists and says what the rule is", () => {
     const text = region.textContent ?? "";
     expect(text).not.toMatch(/\b0 messages\b/);
     expect(text).not.toMatch(/\bmessages? filed\b/);
-    expect(text).toContain("Nothing records how many messages a rule has filed");
+    expect(text).not.toContain("Nothing records how many messages a rule has filed");
   });
 
   it("an account with no rules says so, and still says the count is not recorded", async () => {
@@ -215,7 +215,7 @@ describe("the pane exists and says what the rule is", () => {
     expect(syncCalls()).toBeGreaterThan(0);
     expect(view.items()).toEqual([]);
     expect(view.region.textContent).toContain("No rules yet.");
-    expect(view.region.textContent).toContain("Nothing records how many messages a rule has filed");
+    expect(view.region.textContent).not.toContain("Nothing records how many messages a rule has filed");
     expect(view.writes).toEqual([]);
   });
 });
@@ -283,8 +283,9 @@ describe("search over the rules list", () => {
     expect(view.items()).toEqual([sentence(a), sentence(b)]);
     await view.search("nobody-here");
     expect(view.items()).toEqual([]);
-    expect(view.region.textContent).toContain("No rules match.");
-    expect(view.pane.getByText(/^Nothing records how many messages a rule has filed/)).toBeTruthy();
+    expect(view.region.textContent).toContain("No rules match");
+    expect(view.pane.queryByText(/^Nothing records how many messages a rule has filed/)).toBeNull();
+    expect(view.pane.getByText("0")).toBeTruthy();
   });
 });
 

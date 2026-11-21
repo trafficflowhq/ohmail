@@ -64,17 +64,17 @@ const MIB = 1024 * 1024;
  * kit's Attach: "Attach files, at most <size> in all"), the same number its pick refuses at; THE CLAUSE that says why
  * the small one binds stands in Write's room under the files, which Write draws from the first file on (the studio's
  * room), so a case that reads the clause puts one small file on first, in both of its halves. Both sentences are read
- * from Write's own catalogue (`packages/app/messages/write.*.json`, `files.attach`, `files.capSurface`).
+ * from Write's own catalogue (`packages/app/messages/write.*.json`, `files.attach`).
  */
-const writeWords = (locale: "en" | "de"): { letter: string; attach: string; capSurface: string; remove: string } => {
+const writeWords = (locale: "en" | "de"): { letter: string; attach: string; remove: string } => {
   const rel = `packages/app/messages/write.${locale}.json`;
   let text: string;
   try { text = readFileSync(resolve(process.cwd(), rel), "utf8"); }
   catch { text = readFileSync(resolve(process.cwd(), "../..", rel), "utf8"); }
   const write = (JSON.parse(text) as {
-    write: { letter: string; files: { attach: string; capSurface: string; remove: string } };
+    write: { letter: string; files: { attach: string; remove: string } };
   }).write;
-  return { letter: write.letter, attach: write.files.attach, capSurface: write.files.capSurface, remove: write.files.remove };
+  return { letter: write.letter, attach: write.files.attach, remove: write.files.remove };
 };
 /** Write's letter in either language ("New message", "Neue Nachricht": `write.letter`). */
 const LETTER = (["en", "de"] as const).map((l) => `[role="region"][aria-label="${writeWords(l).letter}"]`).join(", ");
@@ -215,11 +215,11 @@ const capText = (scope: string): string => {
   return clip?.getAttribute("aria-label") ?? "";
 };
 
-/** The clause beside the cap (Write's `files.capSurface`, either language), or "" where the surface renders none. */
+/** Find the retired explanation in either locale, if it returns beside the cap. */
 const whyText = (scope: string): string => {
   const region = host!.querySelector(scope);
   if (!region) return "";
-  const clauses = [writeWords("en").capSurface, writeWords("de").capSurface];
+  const clauses = ["Your mail server would take more", "Der Mailserver würde mehr annehmen"];
   const walker = document.createTreeWalker(region, NodeFilter.SHOW_TEXT);
   const said: string[] = [];
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -313,7 +313,7 @@ describe("compose — the stated ceiling follows the surface declaration", () =>
     // "Dateien anhängen, höchstens 19,1 MB insgesamt": the German sentence, read in Write's words.
     expect(capText(LETTER)).toContain("19,1 MB");
     expect(capText(LETTER)).not.toContain("19.1 MB");
-    expect(capText(LETTER)).toMatch(/höchstens/);
+    expect(capText(LETTER)).toMatch(/pro Nachricht/);
   });
 });
 
@@ -428,12 +428,14 @@ describe("one rule, two declarations, and the small number says why", () => {
   it("the paired desktop's smaller cap carries the reason; the hosted tab's larger one does not", async () => {
     await mountShell({ size: ANNOUNCED });
     await goCompose();
-    await attachSmall(LETTER); // Write's room, where the clause stands, is drawn from the first file on
-    expect(whyText(LETTER)).toContain("Your mail server would take more");
+    await attachSmall(LETTER);
+    expect(capText(LETTER)).toContain("3.1 MB");
+    expect(whyText(LETTER)).toBe("");
 
     await mountShell({ size: ANNOUNCED, surface: COMPOSE_ATTACH_STAGED_SURFACE_BYTES });
     await goCompose();
-    await attachSmall(LETTER); // the same room, so its silence is read where the clause would stand
+    await attachSmall(LETTER);
+    expect(capText(LETTER)).toContain("38.3 MB");
     expect(whyText(LETTER)).toBe("");
   });
 
@@ -445,8 +447,9 @@ describe("one rule, two declarations, and the small number says why", () => {
     await mountShell({ size: ANNOUNCED });
     await openReply();
     expect(capText(REPLY)).toContain("3.1 MB");
-    await attachSmall(REPLY); // Write's room, where the clause stands, is drawn from the first file on
-    expect(whyText(REPLY)).toContain("Your mail server would take more");
+    await attachSmall(REPLY);
+    expect(capText(REPLY)).toContain("3.1 MB");
+    expect(whyText(REPLY)).toBe("");
   });
 
   it("the German catalogue carries the sentence", async () => {
@@ -454,9 +457,9 @@ describe("one rule, two declarations, and the small number says why", () => {
     await goCompose();
     // The decimal comma, as the large-value case above reads it.
     expect(capText(LETTER)).toContain("3,1 MB");
-    await attachSmall(LETTER); // Write's room, where the clause stands, is drawn from the first file on
-    expect(whyText(LETTER)).toContain("Der Mailserver");
-    expect(whyText(LETTER)).not.toContain("Your mail server");
+    await attachSmall(LETTER);
+    expect(capText(LETTER)).toContain("3,1 MB");
+    expect(whyText(LETTER)).toBe("");
   });
 });
 

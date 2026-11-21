@@ -134,7 +134,7 @@ async function mount(mail: EngineMessage[], opts: { advice?: ScreenerSuggestionE
 }
 
 const list = () => within(host).getByRole("listbox", { name: "Screener" });
-const pendingGroup = () => within(list()).queryByRole("group", { name: "Waiting for the organizer" });
+const pendingGroup = () => within(list()).queryByRole("group", { name: /^Waiting for / });
 const rowIds = () => {
   const pending = pendingGroup();
   return within(list()).queryAllByRole("option").filter((row) => !pending?.contains(row)).map((row) => row.dataset.id!);
@@ -156,7 +156,7 @@ const press = async (key: string) => {
   await tick(0);
 };
 const commit = () => tick(COMMIT_MS + 1);
-const askNow = () => within(document.body).queryByRole("dialog", { name: /waiting senders? as spam/ });
+const askNow = () => within(document.body).queryByRole("dialog", { name: /Mark \d+ as spam/ });
 
 describe("quick-adjust — the decision on the row", () => {
   it("presses through the decide funnel: pending first, the wire only when the undo window closes", async () => {
@@ -221,7 +221,8 @@ describe("the selection is the person's, not the arrival's", () => {
     const { arrive } = await mount([anna, msg("b1", "bert", 10), cleo], {
       advice: [suggestion(anna, "ohmail/News")],
     });
-    await click(within(host).getByRole("button", { name: /^All/ }));
+    const tools = within(within(host).getByRole("group", { name: "Act on all waiting senders" }));
+    await click(tools.getByRole("button", { name: /^All/ }));
     await click(within(document.body).getByRole("menuitemradio", { name: /No suggestion/ }));
     expect(rowIds()).toEqual(["b1", "c1"]);
     await selectScreenerRow(host, "c1");
@@ -255,12 +256,12 @@ describe("s is this sender, and Mark all spam asks first", () => {
     const { arrive, depart } = await mount([msg("a1", "anna", 9), msg("b1", "bert", 10)]);
     await click(within(host).getByRole("button", { name: "List" }));
     await click(within(document.body).getByRole("menuitem", { name: "Mark all spam" }));
-    expect(askNow()?.textContent).toContain("Mark all 2 waiting senders as spam?");
+    expect(askNow()?.textContent).toContain("Mark 2 as spam");
     await act(async () => { (document.activeElement as HTMLElement | null)?.blur(); });
     await press("o");
-    expect(askNow()?.textContent).toContain("Mark all 2 waiting senders as spam?");
+    expect(askNow()?.textContent).toContain("Mark 2 as spam");
     await depart("b1");
-    expect(askNow()?.textContent).toContain("Mark the 1 waiting sender as spam?");
+    expect(askNow()?.textContent).toContain("Mark 1 as spam");
     await depart("a1");
     expect(askNow()).toBeNull();
     await commit();

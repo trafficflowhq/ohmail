@@ -162,10 +162,12 @@ describe("Drafts lists the sends set for later first, then the drafts", () => {
     const seen = fresh();
     const view = draw(<Drafts seen={seen} drafts={[]} settled={false} />);
     expect(document.body.textContent).toContain("Loading your drafts");
-    expect(document.body.textContent).not.toContain("Nothing half-written");
+    expect(document.body.textContent).not.toContain("No drafts");
     view.unmount();
     draw(<Drafts seen={seen} drafts={[]} />);
-    expect(document.body.textContent).toContain("Nothing half-written");
+    expect(
+      screen.getAllByRole("paragraph").filter((paragraph) => paragraph.textContent === "No drafts"),
+    ).toHaveLength(1);
   });
 
   it("speaks German", () => {
@@ -318,7 +320,7 @@ describe("a send nobody could confirm", () => {
     );
     const view = draw(show("h1"));
     expect(screen.getByRole("option", { name: /Sent or not/ }).getAttribute("aria-description")).toBe(
-      words.drafts.heldChecking,
+      `Unconfirmed, ${words.drafts.heldChecking}`,
     );
     expect(
       screen.getByRole("option", { name: /Another letter/ }).getAttribute("aria-description"),
@@ -337,10 +339,10 @@ describe("a send nobody could confirm", () => {
     const show = (open: string) => <Drafts seen={seen} drafts={drafts} open={open} />;
     const view = draw(show("recent"));
     expect(screen.getByRole("option", { name: /Recent/ }).getAttribute("aria-description")).toBe(
-      words.drafts.heldChecking,
+      `Unconfirmed, ${words.drafts.heldChecking}`,
     );
     expect(screen.getByRole("option", { name: /Earlier/ }).getAttribute("aria-description")).toBe(
-      words.drafts.heldNotInSent,
+      `Unconfirmed, ${words.drafts.heldNotInSent}`,
     );
     answers(words.drafts.heldChecking);
     view.rerender(inWords(show("old")));
@@ -352,14 +354,15 @@ describe("a send nobody could confirm", () => {
   function expectHeldAnswers(status: EngineDraft["status"], updatedAt: string, sentence: string): void {
     const seen = fresh();
     const drafts = [
-      draft({ id: "h1", subject: "Held letter", status, updatedAt }),
+      draft({ id: "h1", subject: "Held letter", body: "The held letter body", status, updatedAt }),
       draft({ id: "p1", subject: "Ordinary draft" }),
     ];
     const show = (open: string) => <Drafts seen={seen} open={open} drafts={drafts} />;
     const view = draw(show("h1"));
     expect(screen.getByRole("option", { name: /Held letter/ }).getAttribute("aria-description")).toBe(
-      sentence,
+      `Unconfirmed, ${sentence}`,
     );
+    expect(screen.getByRole("article").textContent).toContain("The held letter body");
     answers(sentence);
     fireEvent.click(screen.getByRole("button", { name: words.drafts.sendAgain }));
     expect(seen.again).toEqual(["h1"]);

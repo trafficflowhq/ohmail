@@ -2,7 +2,7 @@
 
 import { useMemo, type ReactNode } from "react";
 import { CloudStorageNotice } from "./CloudStorageNotice";
-import { SubscriptionSection } from "./SubscriptionSection";
+import { MountedSubscriptionSection } from "./SubscriptionSection";
 import type { FeatureEntry } from "@ohmail/app/host";
 import type { WebFeatureCards } from "./web-supplies";
 
@@ -13,7 +13,7 @@ export function useWebFeatureCards(withdrawManage: () => void): WebFeatureCards 
   return useMemo(() => ({
     // The Settings pane registry owns Mailboxes. This feature supplies its notices.
     mailboxes: card("mailboxes", null),
-    subscription: card("subscription", <SubscriptionSection onNowhere={withdrawManage} />),
+    subscription: card("subscription", <MountedSubscriptionSection onNowhere={withdrawManage} />),
     storageCard: card("storageCard", <CloudStorageNotice />),
   }), [withdrawManage]);
 }

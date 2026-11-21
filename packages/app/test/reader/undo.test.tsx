@@ -25,9 +25,7 @@ describe("undo in the reader", () => {
       );
     });
     await waitFor(() =>
-      expect(
-        screen.getAllByRole("status").some((s) => s.textContent?.includes("Queued in Answer Later")),
-      ).toBe(true),
+      expect(screen.getAllByRole("status").some((s) => s.textContent?.startsWith("Later"))).toBe(true),
     );
     expect(screen.getByRole("button", { name: /Undo/ })).toBeTruthy();
     await act(async () => {
