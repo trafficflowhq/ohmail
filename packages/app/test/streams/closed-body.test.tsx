@@ -86,17 +86,31 @@ it.each([
     expect(mail.bodyAsks).toEqual(requested);
     expect([...cache.keys()]).toEqual(requested);
     expect(stream.queryByRole("button", { name: "Collapse" })).toBeNull();
-    expect(stream.getByText("snippet of first")).toBeTruthy();
-    expect(stream.getByText("snippet of second")).toBeTruthy();
-    expect(region.querySelector(`iframe, img[src="${remote}"]`)).toBeNull();
+    // A closed card draws a fetched body's preview inside its shut clip, its remote pictures held back.
+    const shut = (id: string) =>
+      region.querySelector(`[data-stream-item="${id}"] .oh-message-clip[data-shut]`)!;
+    for (const letter of letters) {
+      const frame = shut(letter.id).querySelector("iframe");
+      if (requested.includes(letter.id)) {
+        expect(frame?.srcdoc).toContain(`Full body for ${letter.id}`);
+        expect(frame?.srcdoc).toContain("img-src data: blob:");
+      } else {
+        expect(frame).toBeNull();
+        expect(within(shut(letter.id) as HTMLElement).getByText(`snippet of ${letter.id}`)).toBeTruthy();
+      }
+    }
+    expect(region.querySelector(`img[src="${remote}"]`)).toBeNull();
     expect(fetchRemote).not.toHaveBeenCalled();
     expect(mail.mutations).toEqual([]);
 
     fireEvent.click(stream.getByRole("heading", { name: letters.find(({ id }) => id === cursor)!.subject! }));
     expect(stream.getByRole("button", { name: "Collapse" })).toBeTruthy();
-    await waitFor(() => expect(region.querySelector("iframe")?.srcdoc).toContain(`Full body for ${cursor}`));
-    expect(region.querySelectorAll("iframe")).toHaveLength(1);
-    expect(stream.getByText(route === "reads" ? "snippet of second" : "snippet of first")).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        region.querySelector<HTMLIFrameElement>(".oh-message-clip:not([data-shut]) iframe")?.srcdoc,
+      ).toContain(`Full body for ${cursor}`),
+    );
+    expect(region.querySelectorAll(".oh-message-clip:not([data-shut]) iframe")).toHaveLength(1);
     expect(mail.bodyAsks).toEqual(requested);
     expect(fetchRemote).not.toHaveBeenCalled();
   },

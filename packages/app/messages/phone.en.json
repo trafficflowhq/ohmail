@@ -316,6 +316,7 @@
     "bootLocalEngineOffOrigin": "ohmail was asked to open the mailbox on this phone and a server at once, so it opened neither.",
     "bootMirrorFailed": "The copy of your mail on this phone could not be opened: {0}",
     "bootNeedsCredential": "A credential and an account id are both required.",
+    "calendarCopyRemains": "The calendar this phone copied could not be removed yet. ohmail will try again the next time it starts.",
     "composeEarlierWent": "This message had already been sent. Your newer text was not sent as a second copy.",
     "composeKept": "Kept in Drafts.",
     "composeKeptChangedElsewhere": "This draft was changed on another device. What you typed here is kept as a new draft.",

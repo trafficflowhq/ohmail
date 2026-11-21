@@ -310,6 +310,7 @@
     "removeReconnect": "Du kannst dieses Postfach später wieder verbinden.",
     "removeConfirm": "Postfach entfernen",
     "removeCancel": "Behalten",
+    "removeCancelKey": "Esc",
     "removeWorking": "Wird entfernt…",
     "factorBodyRemove": "Beim Entfernen eines Postfachs wird das dafür gespeicherte Passwort gelöscht, deshalb verlangt dein Account vorher einen frischen zweiten Faktor.",
     "removeKeepChoice": "Entfernen und die Kopie der E-Mails bei ohmail behalten",
@@ -713,6 +714,9 @@
   },
   "mailboxFilings": {
     "title": "Wartet aufs Einsortieren · {mailbox}",
+    "waiting": "Wartet auf Ablage",
+    "waitingValue": "{count} für {folder}",
+    "waitingSince": "Wartet seit {since}.",
     "group": "{count, plural, one {1 Nachricht wartet} other {# Nachrichten warten}} seit {since} aufs Einsortieren: {folder}",
     "why": "Grund: {reasons}",
     "reasonCounted": "{reason} ({count})",

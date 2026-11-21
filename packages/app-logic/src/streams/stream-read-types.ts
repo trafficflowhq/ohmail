@@ -54,12 +54,7 @@ export interface StreamReadRule {
   /** The application finished a landing: record the displayed screen. */
   settled(l: StreamLook): void;
   /** Fired STREAM_REST_MS after the last scroll: the item the stream rests on, read now. */
-  rest(
-    l: StreamLook,
-    restingId: string | null,
-    openId?: string | null,
-    snippetRested?: boolean,
-  ): readonly string[];
+  rest(l: StreamLook, restingId: string | null, openId?: string | null): readonly string[];
   /** Observe pending previews, or clear their dwell when attention leaves. */
   previewDwell(look: StreamLook | null, judged?: JudgedReadPhase | null): readonly string[];
   readonly previewDue: number | null;

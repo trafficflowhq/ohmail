@@ -17,7 +17,7 @@
 import type { ReactNode } from "react";
 import { SeedOfferContext } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 import { SeedReviewContext } from "@ohmail/app-logic/mailboxes/first-run/use-seed-review";
-import { FaceHoldContext, useFaceAtBoot } from "./boot-face.js";
+import { FaceHoldContext, useFaceAtBoot } from "../../settings/general/boot-face.js";
 import { useLocaleAtBoot } from "./boot-locale.js";
 import { useStartupMarks } from "./boot-marks.js";
 import { SetupHrefContext, useSetupAtBoot } from "./boot-setup.js";

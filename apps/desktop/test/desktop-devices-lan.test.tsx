@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -170,7 +171,9 @@ describe("the serving LAN row and its honest copy", () => {
     shell({ hostState: BOTH, tailscale: RUNNING, routes: EMPTY_LISTS });
     await mount();
     expect(text()).toContain(enHost.lanTitle!);
-    expect(text()).toContain("The mail API is served at https://192.168.1.23:47800");
+    expect(within(hostEl).getByRole("group", { name: enHost.lanPick }).textContent)
+      .toContain("https://192.168.1.23:47800");
+    expect(text()).toContain("For apps on your network, while this computer is awake.");
     expect(text()).toContain("while this computer is awake");
     // The honesty line, verbatim from the catalog: the capability is the API, not a browser.
     expect(text()).toContain(enHost.lanBrowserNote!);
@@ -182,7 +185,9 @@ describe("the serving LAN row and its honest copy", () => {
     shell({ hostState: LAN_ONLY, tailscale: RUNNING, routes: EMPTY_LISTS });
     await mount();
     expect(text()).toContain(enHost.guideNoCli!);
-    expect(text()).toContain("The mail API is served at https://192.168.1.23:47800");
+    expect(within(hostEl).getByRole("group", { name: enHost.lanPick }).textContent)
+      .toContain("https://192.168.1.23:47800");
+    expect(text()).toContain("For apps on your network, while this computer is awake.");
     expect(text()).toContain(enHost.lanBrowserNote!);
   });
 
@@ -210,7 +215,7 @@ describe("the serving LAN row and its honest copy", () => {
     });
     await mount();
     // 1. THE CLAIM IS GONE. This is the assertion the defect would fail.
-    expect(text()).not.toContain("The mail API is served at");
+    expect(text()).not.toContain("For apps on your network, while this computer is awake.");
     // 2. The truth, naming the firewall and the port, in the operator's language.
     expect(text()).toContain("this computer's firewall is not letting anything through to port 47800");
     // 3. The remedy, verbatim and runnable — the command that made it work when measured.
@@ -248,7 +253,9 @@ describe("the serving LAN row and its honest copy", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
     await flush();
     expect(text()).not.toContain("sudo ufw allow 47800/tcp");
-    expect(text()).toContain("The mail API is served at https://192.168.1.23:47800");
+    expect(within(hostEl).getByRole("group", { name: enHost.lanPick }).textContent)
+      .toContain("https://192.168.1.23:47800");
+    expect(text()).toContain("For apps on your network, while this computer is awake.");
   }, 20_000);
 
   it("the serving sentence no longer promises reachability it has not checked", async () => {
@@ -319,7 +326,9 @@ describe("the ceremony's LAN option", () => {
     const arm = asked.find((a) => a.command === "tailscale_serve_arm");
     expect(arm?.payload).toMatchObject({ lan: "192.168.1.23" });
     // The answer is the LAN-only state: degraded tailnet, serving LAN — both rendered.
-    expect(text()).toContain("The mail API is served at https://192.168.1.23:47800");
+    expect(within(hostEl).getByRole("group", { name: enHost.lanPick }).textContent)
+      .toContain("https://192.168.1.23:47800");
+    expect(text()).toContain("For apps on your network, while this computer is awake.");
   });
 
   it("the no-Tailscale ceremony shows the start-at-login choice, visible and honoured", async () => {
@@ -372,7 +381,7 @@ describe("pairing in LAN-only mode — the door must be enterable, not just addr
     // key fingerprint, and the ohmail app's own scanner is the only hand-over that does not
     // involve somebody re-typing it. (The old rule — no QR, because a camera opens a phone
     // BROWSER — was about the OS camera app, not about this app's scanner.)
-    expect(hostEl.querySelector(".join-qr svg")).not.toBeNull();
+    expect(hostEl.querySelector(".oh-code-tile svg")).not.toBeNull();
     await click(button(enHost.copyLink!));
     // `https`, and the fragment carries the pin the phone will hold the door to. The scheme is
     // the whole of the guarantee: an `http` link here is a link a release build of the app
@@ -396,7 +405,7 @@ describe("pairing in LAN-only mode — the door must be enterable, not just addr
     expect(text()).toContain(enHost.mintNoPin!);
     // …and nothing was minted: no lead, no QR, no code burned.
     expect(text()).not.toContain(enHost.lanMintedLead!);
-    expect(hostEl.querySelector(".join-qr svg")).toBeNull();
+    expect(hostEl.querySelector(".oh-code-tile svg")).toBeNull();
   });
 
   it("REFUSES a malformed fingerprint too — the shape is checked, not merely the presence", async () => {
@@ -419,6 +428,6 @@ describe("pairing in LAN-only mode — the door must be enterable, not just addr
     await click(button(enHost.addAction!));
     // The browser flow's lead and the QR stand exactly as the Devices pane first shipped them.
     expect(text()).toContain(enHost.mintedLead!);
-    expect(hostEl.querySelector(".join-qr svg")).not.toBeNull();
+    expect(hostEl.querySelector(".oh-code-tile svg")).not.toBeNull();
   });
 });

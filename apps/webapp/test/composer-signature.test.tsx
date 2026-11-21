@@ -159,7 +159,7 @@ describe("the per-message editor meta — the reopen scratch the subject and the
  * mailbox to name one), Write's own model answers (`writeBesideOf(...).signature`, what the block draws from).
  */
 beforeAll(async () => {
-  await (await import("../../../packages/app/src/mail/write-entry.js")).prepareWriting();
+  await (await import("../../../packages/app/src/write/rich-entry.js")).prepareWriting();
 });
 
 afterEach(async () => {

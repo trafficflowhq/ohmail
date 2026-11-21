@@ -3,7 +3,7 @@
 import { useContext, type ReactNode } from "react";
 import { useFrame } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
-import { MailRichEditor } from "../../mail/write-entry.js";
+import { MailRichEditor } from "../../write/rich-entry.js";
 import { useNoticesVersion, writeCalendarNotice } from "@ohmail/app-logic/notices/browser-channels";
 import { isDemoOwned } from "@ohmail/app-logic/storage/storage-owner";
 import { useConsent } from "@ohmail/app-logic/consent";

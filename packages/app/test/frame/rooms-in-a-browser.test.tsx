@@ -15,6 +15,7 @@ import { chromium, entryPageOf, pageOf } from "../support/browser-page.js";
 import { fakeHost, NO_ENGINE, type FakeHostInput } from "../support/fake-host.js";
 import { fakeAddress, fakeWindow, ROOMS } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
+import { letter, mountReader } from "../reader/support/mail.js";
 
 function List(_: PaneProps) {
   return <div style={{ height: 3000 }}>the list</div>;
@@ -430,5 +431,67 @@ describe("what a shell stands above the panes", () => {
       expect(under.landmarks).toEqual(bare.landmarks);
       expect(under.pageHeight).toBe(bare.pageHeight);
     });
+  }
+});
+
+it("adds one spacing token above the first ohmarchy letter on desktop and phone", async () => {
+  for (const room of ["desktop", "phone"] as const) {
+    mountReader({ letters: [letter("m1")], open: "m1", size: room });
+    const page = await browser!.newPage({ viewport: ROOMS[room] });
+    try {
+      await page.setContent(
+        pageOf({ html: document.body.innerHTML, root: `data-device="${room}"` }, "", [
+          "packages/app/src/reader/column.css",
+        ]),
+      );
+      const [difference, spacing] = await page.locator("[data-read-column] .oh-sheet-run").evaluate((run) => {
+        const first = run.querySelector(".oh-message")!;
+        const top = () => first.getBoundingClientRect().top - run.getBoundingClientRect().top;
+        const paper = top();
+        document.documentElement.dataset.face = "ohmarchy";
+        return [top() - paper, parseFloat(getComputedStyle(run).getPropertyValue("--s3"))];
+      });
+      expect(difference).toBeCloseTo(spacing);
+    } finally {
+      await page.close();
+      cleanup();
+    }
+  }
+});
+
+it("fades the reduced-motion drawer without travel and keeps drag previews still", async () => {
+  const page = await browser!.newPage({ viewport: ROOMS.phone, reducedMotion: "reduce" });
+  try {
+    await page.setContent(
+      pageOf(
+        {
+          html: '<div class="fr-railsheet"></div><div class="fr-railsheet fr-rail-preview"></div>',
+          root: 'data-device="phone" data-rm="1"',
+        },
+        ".fr-railsheet { animation-play-state: paused }",
+        ["packages/tokens/src/design/motion.css"],
+      ),
+    );
+    const [arrived, preview] = await page.locator(".fr-railsheet").evaluateAll((drawers) =>
+      drawers.map((drawer) => {
+        const effect = drawer.getAnimations()[0]?.effect;
+        return effect instanceof KeyframeEffect
+          ? {
+              duration: effect.getTiming().duration,
+              frames: effect.getKeyframes().map(({ opacity, transform }) => ({ opacity, transform })),
+            }
+          : null;
+      }),
+    );
+    expect(arrived).toEqual({
+      duration: 150,
+      frames: [
+        { opacity: "0", transform: undefined },
+        { opacity: "1", transform: undefined },
+      ],
+    });
+    expect(preview).toBeNull();
+  } finally {
+    await page.close();
   }
 });

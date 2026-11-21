@@ -58,6 +58,7 @@ const PLAIN: ReadonlyMap<string, PlaceId> = new Map([
   ["compose", "write"],
   ["drafts", "drafts"],
   ["trash", "trash"],
+  ["tag", "tags"],
 ]);
 const PILES: ReadonlyMap<string, PlaceId> = new Map([
   ["reply", "later"],
@@ -65,6 +66,17 @@ const PILES: ReadonlyMap<string, PlaceId> = new Map([
   ["resurface", "resurface"],
 ]);
 const SEGMENTS: ReadonlySet<string> = new Set(["screened", "spam"]);
+
+/** The frame location of a mail view name supplied by the engine. */
+export function locationOfMailView(view: string | null): Pick<Route, "place" | "sub"> | null {
+  if (view === null) return null;
+  if (view === ADDRESS.screener || SEGMENTS.has(view)) {
+    return { place: "screener", sub: view === ADDRESS.screener ? null : view };
+  }
+  const place = PLAIN.get(view);
+  return place ? { place, sub: null } : null;
+}
+
 /** Settings' sections the route knows (`#/settings/<pane>`). */
 export const PANES: ReadonlySet<string> = new Set([
   "general",
@@ -182,6 +194,7 @@ export function fragmentOf(to: Route): string {
   const head = ADDRESS[to.place];
   switch (to.place) {
     case "tags":
+      return to.sub === null ? `#/${head}${tail}` : `#/${head}/${to.sub}${tail}`;
     case "folder":
       return `#/${head}/${to.sub ?? ""}${tail}`;
     case "address":

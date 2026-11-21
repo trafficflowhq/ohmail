@@ -905,6 +905,8 @@ const TABLE = {
   forgetKeystoreRefused: (detail: string) =>
     `This phone would not let go of the pairing (${detail}). `
     + "Revoke this device from the server's Devices list, which ends the session wherever it is held.",
+  calendarCopyRemains:
+    "The calendar this phone copied could not be removed yet. ohmail will try again the next time it starts.",
   forgetMailRemains: (detail: string) =>
     "The pairing is removed, but the mail this phone had copied could not be deleted "
     + `(${detail}). ohmail will try again the next time it starts.`,

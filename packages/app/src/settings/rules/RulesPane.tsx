@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useContext, useEffect, useRef, useState, type RefObject } from "react";
 import { useListWindow } from "@ohmail/app-logic/lists";
 import { Button, Dialog, Empty, Field, Menu, MenuItem, Seg, Slot, Switch } from "@ohmail/ui/base";
 import {
@@ -9,9 +9,11 @@ import {
   SettingNote,
   SettingsSheet,
 } from "@ohmail/ui/mail";
+import { FrameContext } from "../../frame/commands.js";
 import { useText } from "../../text/index.js";
 import { rulesByDecider, rulesRevokable, rulesShown, type RuleItem, type RulesModel } from "./model.js";
 import { RULES_NAMESPACE } from "./namespace.js";
+import "./rule-facets.css";
 
 /**
  * Settings › Rules: every rule as its sentence, searchable by sender or domain and filtered by where it files. A
@@ -308,21 +310,63 @@ function RulesFilters({
           }
         >
           {showFacets ? (
-            <Seg
-              label={t("facetLabel")}
+            <DestinationFilter
+              model={model}
               value={at}
               onChange={(next) => {
                 setFacet(next);
                 toTop();
               }}
-              options={[
-                { value: "all", label: t("facetAll") },
-                ...model.facets.map((f) => ({ value: f.folder, label: f.name })),
-              ]}
             />
           ) : null}
         </SettingFilter>
       ) : null}
     </SettingsSheet>
+  );
+}
+
+function DestinationFilter({
+  model,
+  value,
+  onChange,
+}: {
+  model: RulesModel;
+  value: RulesModel["facets"][number]["folder"] | "all";
+  onChange: (value: RulesModel["facets"][number]["folder"] | "all") => void;
+}) {
+  const t = useText("rules");
+  const touch = (useContext(FrameContext)?.api.plan.device ?? "desktop") !== "desktop";
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const options = [
+    { value: "all", label: t("facetAll") },
+    ...model.facets.map((facet) => ({ value: facet.folder, label: facet.name })),
+  ];
+  const label = t("facetLabel");
+  useEffect(() => {
+    if (!touch) setOpen(false);
+  }, [touch]);
+  if (!touch) return <Seg label={label} value={value} onChange={onChange} options={options} />;
+  return (
+    <div className="rules-facet">
+      <span className="rules-facet-key">{t("facetKey")}</span>
+      <Slot ref={anchor} label={label} expanded={open} onPress={() => setOpen(!open)}>
+        {options.find((option) => option.value === value)?.label ?? t("facetAll")}
+      </Slot>
+      <Menu open={open} onClose={() => setOpen(false)} anchor={anchor} label={label} title={t("facetKey")}>
+        {options.map((option) => (
+          <MenuItem
+            key={option.value}
+            checked={option.value === value}
+            onPress={() => {
+              setOpen(false);
+              onChange(option.value);
+            }}
+          >
+            {option.label}
+          </MenuItem>
+        ))}
+      </Menu>
+    </div>
   );
 }

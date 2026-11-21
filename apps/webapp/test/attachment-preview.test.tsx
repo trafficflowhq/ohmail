@@ -1,34 +1,16 @@
 /** @vitest-environment jsdom */
 import type { ComposeAttachment } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import * as React from "react";
 import { useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { OhmailEngine, type EngineAdapter, threadOf } from "@ohmail/client-engine";
-import { useMessageAttachments } from "../app/shell/attachments.js";
-import { AttachmentPreview, isPreviewable, previewKind } from "../app/components/AttachmentPreview.js";
+import { AttachmentPreview } from "../app/components/AttachmentPreview.js";
 import { AttachThumb } from "../app/components/compose-attach-look.js";
 import type { AttachmentItem } from "../app/components/AttachmentStrip.js";
 import { KeymapContext, useKeymapStore } from "@ohmail/app-logic/keys";
-
 /**
- * ═══ pdf.js STANDS IN, AND THE STAND-IN IS HELD TO THE REAL LIBRARY'S SHAPE ═══════════════
- *
- * The real thing cannot run here — it needs a canvas 2D context and a worker, and jsdom has
- * neither — so the module is replaced. The replacement is only worth something if it is
- * shaped like pdf.js actually is, which is why `THE pdf.js TEARDOWN CONTRACT` below reads the
- * installed package's own type declarations and fails if these two ever part company:
- *
- *   · the LOADING TASK owns `destroy()` — it aborts the load and terminates the worker;
- *   · the DOCUMENT the task resolves to does NOT have one.
- *
- * Getting that backwards is what put "Application error: a client-side exception has occurred"
- * on screen every time somebody closed a PDF preview.
- *
- * Like the library, `getDocument` takes the `PDFWorker` built on a port in `src.worker`, and the
- * worker under it is a module Worker the page builds (`FakeWorker` below, which jsdom lacks).
+ * These compose cases still exercise the historical thumbnail and preview. The live Reader
+ * cases and the installed PDF contract live in the sandboxed viewer's own test files.
  */
 /** What the teardown did, in order: the task, the PDFWorker, the worker. */
 const pdfEvents: string[] = [];
@@ -104,19 +86,6 @@ class FakeWorker extends EventTarget {
   }
 }
 
-/**
- * ═══ QUICK LOOK — THE OVERLAY, IN A REAL DOM ══════════════════════════════════════════════
- *
- * pdf.js cannot run in jsdom (no canvas 2d, no worker), so PDF RASTERISATION is proven on the
- * live host. What is proven here is everything a jsdom test CAN bite:
- *
- *  · the cost invariant — one `cost:"connection"` fetch for the item on screen, and NOT its
- *    neighbours: a speculative prefetch of the whole set would be a real regression;
- *  · the type dispatch — an SVG is never fetched to be rendered, it downloads;
- *  · the two inert render shapes jsdom can see — an image `<img>` and a text `<pre>`;
- *  · the keyboard — Esc closes, ← / → move, through the registry's `overlay` scope.
- */
-
 // jsdom's Blob predates the async accessors every real browser has had for years; the component
 // reads text with `blob.text()`. Shim it (via jsdom's FileReader) so the render path this test
 // exercises matches the browser it ships to. Real browsers need no shim.
@@ -160,127 +129,16 @@ function FrameKeys({ children }: { children?: React.ReactNode }): React.ReactEle
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-interface WireOver {
-  filename?: string;
-  contentType?: string;
-  sizeBytes?: number;
-  inline?: boolean;
-}
-function wire(id: string, over: WireOver = {}) {
-  return {
-    id,
-    filename: over.filename ?? `${id}.png`,
-    contentType: over.contentType ?? "image/png",
-    sizeBytes: over.sizeBytes ?? 1000,
-    inline: over.inline ?? false,
-    messageId: "m1",
-  };
-}
-
-function adapterWith(over: Partial<EngineAdapter> = {}): EngineAdapter {
-  return {
-    sync: async () => ({ changes: [], cursor: "1", hasMore: false }) as never,
-    mutate: async () => ({ changes: [], seq: null }),
-    withdrawSend: async () => ({ outcome: "unsupported" as const }),
-    fetchBody: async () => null,
-    listAttachments: async () => [wire("a1"), wire("a2"), wire("a3")],
-    fetchAttachment: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
-    fetchAllAttachments: async () => new Blob(["PK"], { type: "application/zip" }),
-    ...over,
-  };
-}
-
-let closed: boolean;
-let navCalls: string[];
-
-function Harness({ engine, initialId }: { engine: OhmailEngine; initialId: string }) {
-  const chrome = useMessageAttachments(engine, "m1", { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
-  const [activeId, setActiveId] = useState(initialId);
-  // `includeInlineParts: true` — the overlay must be able to find the id it was opened on, and an
-  // inline image is a real clickable tile in the strip. This mirrors `AppShell`'s overlay mount.
-  const view = chrome?.itemsOf("m1", { includeInlineParts: true });
-  const items = view?.state === "ready" ? view.items : [];
-  if (!chrome || items.length === 0) return null;
-  return h(AttachmentPreview, {
-    items,
-    activeId,
-    onActiveIdChange: (id: string) => {
-      navCalls.push(id);
-      setActiveId(id);
-    },
-    ensure: (aid: string, opts?: { retry?: boolean }) => chrome.ensure("m1", aid, opts),
-    blobOf: (aid: string) => chrome.blobOf("m1", aid),
-    onDownload: (aid: string) => chrome.open("m1", aid),
-    onClose: () => {
-      closed = true;
-    },
-  });
-}
-
-const App = (props: { engine: OhmailEngine; initialId: string }) =>
-  h(FrameKeys, null, h(Harness, props));
-
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-
-async function mount(engine: OhmailEngine, initialId = "a1"): Promise<void> {
-  // Prime the metadata so the overlay mounts on a ready list on its first render.
-  await engine.loadAttachments("m1");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => root!.render(h(App, { engine, initialId })));
-  await act(async () => {}); // flush the fetch the overlay starts for the active item
-}
 
 function key(name: string): void {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true }));
 }
 
-/**
- * THE OVERLAY UNDER SOMETHING THAT CAN CATCH — the production arrangement, in miniature.
- *
- * Closing is a state change in an ancestor, not `root.unmount()`, because that is what the
- * shell does and because the difference is the whole bug: React hands a throw from an effect
- * CLEANUP to the nearest error boundary, and in the shipped app the nearest one is the
- * framework's, whose error page replaced the entire client.
- */
-let boundaryCaught: unknown[] = [];
-
-class Boundary extends React.Component<{ children: React.ReactNode }, { err: unknown }> {
-  override state = { err: null as unknown };
-  static getDerivedStateFromError(err: unknown) {
-    boundaryCaught.push(err);
-    return { err };
-  }
-  override render() {
-    return this.state.err
-      ? h("p", { className: "boundary-tripped" }, "the app fell over")
-      : (this.props.children as React.ReactElement);
-  }
-}
-
-function ClosingHarness({ engine, initialId }: { engine: OhmailEngine; initialId: string }) {
-  const chrome = useMessageAttachments(engine, "m1", { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
-  const [openId, setOpenId] = useState<string | null>(initialId);
-  const view = chrome?.itemsOf("m1", { includeInlineParts: true });
-  const items = view?.state === "ready" ? view.items : [];
-  if (!chrome || items.length === 0 || !openId) return h("p", { className: "overlay-closed" }, "closed");
-  return h(AttachmentPreview, {
-    items,
-    activeId: openId,
-    onActiveIdChange: (id: string) => setOpenId(id),
-    ensure: (aid: string, opts?: { retry?: boolean }) => chrome.ensure("m1", aid, opts),
-    blobOf: (aid: string) => chrome.blobOf("m1", aid),
-    onDownload: (aid: string) => chrome.open("m1", aid),
-    onClose: () => setOpenId(null),
-  });
-}
+const pdfCard = (): string => host!.querySelector(".ap-card")?.textContent ?? "";
 
 beforeEach(() => {
-  closed = false;
-  navCalls = [];
-  boundaryCaught = [];
   pdfDestroy.mockClear();
   pdfLoads.mockClear();
   pdfEvents.length = 0;
@@ -310,298 +168,6 @@ afterEach(async () => {
 async function until(ready: () => boolean): Promise<void> {
   for (let i = 0; i < 40 && !ready(); i += 1) await act(async () => {});
 }
-
-describe("previewKind / isPreviewable — the dispatch that keeps a document from rendering", () => {
-  it("renders the four raster images, PDF and text; refuses everything else", () => {
-    expect(previewKind("image/png")).toBe("image");
-    expect(previewKind("image/jpeg")).toBe("image");
-    expect(previewKind("application/pdf")).toBe("pdf");
-    expect(previewKind("text/plain; charset=utf-8")).toBe("text");
-    // SVG is a document that executes script — never rendered, always downloaded.
-    expect(previewKind("image/svg+xml")).toBe("other");
-    expect(previewKind("application/octet-stream")).toBe("other");
-    expect(isPreviewable("image/svg+xml")).toBe(false);
-    expect(isPreviewable("application/pdf")).toBe(true);
-    expect(isPreviewable("text/csv")).toBe(true);
-  });
-});
-
-describe("an INLINE image opens in the overlay (item 4 — the Webshop PNG)", () => {
-  it("clicking a message's only attachment — an inline png — opens the overlay and shows it", async () => {
-    // THE BUG: the overlay built its item list without inline images, so a message whose only
-    // attachment is an INLINE picture (`Content-Disposition: inline`, shown in the body) produced
-    // an EMPTY list and the overlay silently declined to open — clicking did nothing. Mutation:
-    // drop `{ includeInlineParts: true }` from the harness's `itemsOf` (as `AppShell` used to) and
-    // `items` is empty, `Harness` returns null, and `img.ap-img` is never rendered.
-    const fetchAttachment = vi.fn(async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
-    const engine = new OhmailEngine({
-      adapter: adapterWith({
-        listAttachments: async () => [wire("pic", { inline: true, filename: "pasted.png" })],
-        fetchAttachment,
-      }),
-    });
-    await mount(engine, "pic");
-
-    const img = host!.querySelector("img.ap-img") as HTMLImageElement | null;
-    expect(img, "the inline image never reached the overlay").not.toBeNull();
-    expect(img!.getAttribute("src")).toContain("blob:");
-    expect(fetchAttachment).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("the cost invariant — one connection for the item on screen, never its neighbours", () => {
-  it("opens fetching ONLY the active attachment", async () => {
-    const fetchAttachment = vi.fn(async () => new Blob([new Uint8Array([1])], { type: "image/png" }));
-    const engine = new OhmailEngine({ adapter: adapterWith({ fetchAttachment }) });
-    await mount(engine, "a1");
-    expect(fetchAttachment, "the overlay prefetched neighbours").toHaveBeenCalledTimes(1);
-    // the active image reached `<img>`
-    const img = host!.querySelector("img.ap-img") as HTMLImageElement | null;
-    expect(img?.getAttribute("src")).toContain("blob:");
-  });
-
-  it("moving to the next attachment fetches exactly it — two total, never three", async () => {
-    const fetchAttachment = vi.fn(async () => new Blob([new Uint8Array([1])], { type: "image/png" }));
-    const engine = new OhmailEngine({ adapter: adapterWith({ fetchAttachment }) });
-    await mount(engine, "a1");
-    await act(async () => key("ArrowRight"));
-    await act(async () => {});
-    expect(navCalls).toEqual(["a2"]);
-    expect(fetchAttachment).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("the type dispatch inside the overlay", () => {
-  it("an SVG landed on by ← / → is never fetched — it offers a download", async () => {
-    const fetchAttachment = vi.fn(async () => new Blob(["<svg/>"], { type: "image/svg+xml" }));
-    const engine = new OhmailEngine({
-      adapter: adapterWith({
-        listAttachments: async () => [wire("s1", { contentType: "image/svg+xml", filename: "x.svg" })],
-        fetchAttachment,
-      }),
-    });
-    await mount(engine, "s1");
-    expect(fetchAttachment, "a non-previewable type was fetched for a render").not.toHaveBeenCalled();
-    expect(host!.querySelector(".ap-card")).not.toBeNull();
-  });
-
-  it("a text part renders as escaped text", async () => {
-    const engine = new OhmailEngine({
-      adapter: adapterWith({
-        listAttachments: async () => [wire("t1", { contentType: "text/plain", filename: "note.txt" })],
-        fetchAttachment: async () => new Blob(["hello <b>world</b>"], { type: "text/plain" }),
-      }),
-    });
-    await mount(engine, "t1");
-    const pre = host!.querySelector("pre.ap-text");
-    expect(pre?.textContent).toContain("hello <b>world</b>");
-    // It is a text node, not parsed markup — the <b> is literal.
-    expect(pre?.querySelector("b")).toBeNull();
-  });
-});
-
-const pdfEngine = () =>
-  new OhmailEngine({
-    adapter: adapterWith({
-      listAttachments: async () => [wire("p1", { contentType: "application/pdf", filename: "report.pdf" })],
-      fetchAttachment: async () => new Blob(["%PDF-1.4"], { type: "application/pdf" }),
-    }),
-  });
-
-async function mountClosing(engine: OhmailEngine): Promise<void> {
-  await engine.loadAttachments("m1");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () =>
-    root!.render(h(FrameKeys, null, h(Boundary, null, h(ClosingHarness, { engine, initialId: "p1" })))),
-  );
-  await act(async () => {}); // the fetch the overlay starts
-  await act(async () => {}); // `getDocument().promise`, which is what makes a document to tear down
-}
-
-const pdfCard = (): string => host!.querySelector(".ap-card")?.textContent ?? "";
-const pdfDrawn = (): boolean => host!.querySelector("canvas.ap-canvas") !== null;
-
-describe("the PDF is parsed in a worker the page builds and hands pdf.js as a port", () => {
-  /* Left to start one itself, pdf.js answers a refused worker by parsing the bytes on the page's
-     own thread, the one holding the session. Mutations: the library's getDocument called directly
-     → the first four; the race on the worker's error dropped → the dead worker; terminate dropped
-     → the teardown; the library's workerSrc set → the last. */
-  it("one module worker from the content-named worker, and pdf.js is handed the PDFWorker on it", async () => {
-    await mountClosing(pdfEngine());
-    await until(pdfDrawn);
-    expect(pdfDrawn(), "the PDF never reached the canvas").toBe(true);
-    expect(FakeWorker.built.map((w) => [String(w.url), w.options])).toEqual([["/pdf.worker.0613f41490dd6aac.min.mjs", { type: "module" }]]);
-    const src = pdfLoads.mock.calls[0]![0] as { worker?: { port?: unknown } };
-    expect(src.worker?.port, "pdf.js was left to start a worker of its own").toBe(FakeWorker.built[0]);
-  });
-
-  it("pdf.js reads the standard fonts from this origin on the page, never the machine's own fonts", async () => {
-    await mountClosing(pdfEngine());
-    await until(pdfDrawn);
-    expect(pdfLoads.mock.calls[0]![0]).toMatchObject({
-      standardFontDataUrl: "/pdfjs/standard_fonts/", useSystemFonts: false, useWorkerFetch: false,
-    });
-  });
-
-  it("a worker the page refuses says it cannot show the PDF, and pdf.js is never asked", async () => {
-    FakeWorker.refuse = new Error("refused by worker-src");
-    await mountClosing(pdfEngine());
-    await until(() => pdfCard() !== "");
-    expect(pdfCard()).toContain("Can't show this PDF here");
-    expect(pdfLoads, "the bytes reached pdf.js with no worker under it").not.toHaveBeenCalled();
-  });
-
-  it("a worker that dies fails the load instead of leaving it pending", async () => {
-    pdfHeld = new Promise(() => {});
-    await mountClosing(pdfEngine());
-    await until(() => pdfLoads.mock.calls.length > 0);
-    expect(FakeWorker.built, "no worker was built for the PDF").toHaveLength(1);
-    expect(pdfCard()).toBe("");
-    await act(async () => {
-      FakeWorker.built[0]!.dispatchEvent(new Event("error"));
-    });
-    await until(() => pdfCard() !== "");
-    expect(pdfCard(), "a dead worker left the load hanging").toContain("Can't show this PDF here");
-  });
-
-  it("closing tears down the task, then the PDFWorker, then the worker", async () => {
-    await mountClosing(pdfEngine());
-    await until(pdfDrawn);
-    await act(async () => host!.querySelector<HTMLButtonElement>("button.ap-close")!.click());
-    await until(() => pdfEvents.length >= 3);
-    expect(pdfEvents).toEqual(["task.destroy", "pdfWorker.destroy", "worker.terminate"]);
-  });
-
-  it("never points the library at a worker of its own, nor sets the main-thread worker global", async () => {
-    await mountClosing(pdfEngine());
-    await until(pdfDrawn);
-    expect(pdfDrawn()).toBe(true);
-    expect(pdfWorkerOptions.workerSrc).toBe("");
-    expect("pdfjsWorker" in globalThis).toBe(false);
-  });
-});
-
-describe("closing a PDF preview tears the document down without taking the app with it", () => {
-  it("THE REGRESSION: the close button does not throw out of the teardown", async () => {
-    await mountClosing(pdfEngine());
-
-    // The preconditions, asserted rather than assumed. Without a LOADED document there is
-    // nothing to destroy, the cleanup never runs, and a broken teardown would pass here.
-    expect(pdfLoads, "no document was ever loaded — this test cannot see the defect").toHaveBeenCalledTimes(1);
-    expect(host!.querySelector("canvas.ap-canvas"), "the PDF panel never rendered").not.toBeNull();
-
-    const close = host!.querySelector<HTMLButtonElement>("button.ap-close")!;
-    await act(async () => close.click());
-    await act(async () => {});
-
-    expect(
-      boundaryCaught.map(String),
-      "closing the preview threw into the error boundary — this is the client-side exception",
-    ).toEqual([]);
-    expect(host!.querySelector(".boundary-tripped")).toBeNull();
-    expect(host!.querySelector(".overlay-closed"), "the overlay did not actually close").not.toBeNull();
-  });
-
-  it("…and the worker is really terminated, through the LOADING TASK", async () => {
-    // The half a `try {} catch {}` around the cleanup would silently lose: a preview session
-    // that never destroys anything leaves a pdf.js worker per PDF alive in the tab.
-    await mountClosing(pdfEngine());
-    expect(pdfDestroy).not.toHaveBeenCalled();
-    const close = host!.querySelector<HTMLButtonElement>("button.ap-close")!;
-    await act(async () => close.click());
-    await act(async () => {});
-    expect(pdfDestroy, "the pdf.js loading task was never destroyed").toHaveBeenCalledTimes(1);
-  });
-
-  it("Escape takes the same path", async () => {
-    await mountClosing(pdfEngine());
-    await act(async () => key("Escape"));
-    await act(async () => {});
-    expect(boundaryCaught.map(String)).toEqual([]);
-    expect(pdfDestroy).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("THE pdf.js TEARDOWN CONTRACT — what the stand-in above is held to", () => {
-  /**
-   * Read from the INSTALLED package, so a `pdfjs-dist` bump that moves `destroy()` fails here
-   * rather than in a browser. The declarations are the right source: the crash was a
-   * hand-written interface asserting a method the library does not have, reached through
-   * `as unknown as`, so the compiler compared it with nothing.
-   */
-  const api = (): string => {
-    const require = createRequire(import.meta.url);
-    return readFileSync(require.resolve("pdfjs-dist/types/src/display/api.d.ts"), "utf8");
-  };
-  const classBody = (src: string, name: string): string => {
-    const from = src.indexOf(`export class ${name} `);
-    expect(from, `pdfjs-dist no longer declares ${name}`).toBeGreaterThan(-1);
-    const next = src.indexOf("\nexport class ", from + 1);
-    return src.slice(from, next < 0 ? src.length : next);
-  };
-
-  it("PDFDocumentLoadingTask.destroy() is the teardown", () => {
-    expect(classBody(api(), "PDFDocumentLoadingTask")).toMatch(/\bdestroy\(\): Promise<void>;/);
-  });
-
-  it("PDFDocumentProxy has NO destroy — calling one is the client-side exception", () => {
-    expect(
-      classBody(api(), "PDFDocumentProxy"),
-      "pdfjs-dist grew PDFDocumentProxy.destroy — the mock above is now weaker than reality",
-    ).not.toMatch(/^\s*destroy\(/m);
-  });
-});
-
-describe("the keyboard, through the registry's overlay scope", () => {
-  it("Escape closes", async () => {
-    const engine = new OhmailEngine({ adapter: adapterWith() });
-    await mount(engine, "a1");
-    expect(closed).toBe(false);
-    await act(async () => key("Escape"));
-    expect(closed).toBe(true);
-  });
-
-  it("← / → move between attachments and wrap", async () => {
-    const engine = new OhmailEngine({ adapter: adapterWith() });
-    await mount(engine, "a1");
-    await act(async () => key("ArrowLeft")); // wraps to the last
-    expect(navCalls[navCalls.length - 1]).toBe("a3");
-  });
-});
-
-describe("the desktop's staged preview, from the overlay's side", () => {
-  async function render(items: import("../app/components/AttachmentStrip.js").AttachmentItem[], onRelease: () => void, downloads: string[]) {
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => root!.render(h(FrameKeys, null, h(AttachmentPreview, {
-      items, activeId: items[0]!.id, onActiveIdChange: () => {}, ensure: () => {}, blobOf: () => undefined,
-      onDownload: (id: string) => downloads.push(id), onClose: () => {}, onRelease,
-    }))));
-  }
-
-  it("a text over the shell's cap says too large and offers the save", async () => {
-    const downloads: string[] = [];
-    await render([{ id: "t1", filename: "big.log", mimeType: "text/plain", sizeBytes: 40 << 20, state: "ready", previewTooLarge: true }], () => {}, downloads);
-    const card = host!.querySelector(".ap-card");
-    expect(card?.textContent).toContain("Too large to preview");
-    expect(card?.textContent).toContain("Save it instead.");
-    await act(async () => (card!.querySelector("button") as HTMLButtonElement).click());
-    expect(downloads).toEqual(["t1"]);
-  });
-
-  it("closing the overlay releases what it staged, once", async () => {
-    const released = vi.fn();
-    await render([{ id: "a1", filename: "p.png", mimeType: "image/png", sizeBytes: 9, state: "ready", objectUrl: "attachment-preview://localhost/x" }], released, []);
-    expect(host!.querySelector("img.ap-img")?.getAttribute("src")).toBe("attachment-preview://localhost/x");
-    expect(released).not.toHaveBeenCalled();
-    await act(async () => root!.unmount());
-    root = null;
-    expect(released).toHaveBeenCalledTimes(1);
-  });
-});
 
 describe("the overlay without a Download — the compose preview's own bytes", () => {
   async function show(items: AttachmentItem[], blobOf: (id: string) => Blob | undefined = () => undefined): Promise<void> {
@@ -786,19 +352,5 @@ describe("a PDF attached to a message being written shows its first page", () =>
     expect(pdfLoads).not.toHaveBeenCalled();
     expect(pictures()).toEqual([]);
     expect(host!.querySelector(".att-leaf svg")).not.toBeNull();
-  });
-});
-
-/* LAST in the file: it swaps the library's mock for a fresh copy of the overlay's module. */
-describe("a pdf.js chunk that failed to load", () => {
-  it("is asked for again by the next PDF, not refused for the rest of the session", async () => {
-    vi.resetModules();
-    vi.doMock("pdfjs-dist", () => {
-      throw new Error("the pdf.js chunk did not load");
-    });
-    const fresh = await import("../app/components/AttachmentPreview.js");
-    await expect(fresh.loadPdfjs()).rejects.toThrow();
-    vi.doMock("pdfjs-dist", () => ({ seam: true, getDocument: () => ({}) }));
-    await expect(fresh.loadPdfjs(), "one failed chunk load refused every later PDF").resolves.toBeTypeOf("function");
   });
 });

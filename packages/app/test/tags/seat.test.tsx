@@ -306,3 +306,24 @@ describe("a letter dragged from a list onto a tag in the rail", () => {
     expect(sent(mail).filter((s) => s.startsWith("tag_assign"))).toEqual([]);
   });
 });
+
+it("the undivided Tags address keeps account order and leaves the reader neutral", () => {
+  const { address } = listSeat({ letters: LETTERS, more: MORE, first: "#/tag" });
+  expect(address.read()).toBe("#/tag");
+  const invoices = screen.getByRole("region", { name: "Invoices" });
+  const family = screen.getByRole("region", { name: "Family" });
+  expect(invoices.compareDocumentPosition(family) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(invoices).getByText("News")).toBeTruthy();
+  expect(within(invoices).getByText("Ohbox")).toBeTruthy();
+  expect(document.querySelector(".oh-blankcolumn-label")?.textContent).toBe("3 unread");
+  const rail = within(screen.getByRole("navigation", { name: "Places" }));
+  expect(rail.getByRole("button", { name: "Tags" }).getAttribute("aria-current")).toBe("page");
+  expect(rail.getByRole("button", { name: "Tags" }).hasAttribute("data-current-mark")).toBe(true);
+  const fold = within(invoices).getByRole("button", { name: /Invoices/ });
+  fireEvent.click(fold);
+  expect(within(invoices).queryAllByRole("option")).toHaveLength(0);
+  fireEvent.click(fold);
+  expect(within(invoices).getAllByRole("option")).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "List" }));
+  expect(screen.getByRole("menuitem", { name: "New tag" })).toBeTruthy();
+});

@@ -225,8 +225,13 @@ describe("reconcileWakeRegistration", () => {
         unsubscribe: () => { held = null; return Promise.resolve(true); },
       } as { endpoint: string }),
     };
+    const registration = { pushManager };
     Object.defineProperty(navigator, "serviceWorker", {
-      configurable: true, value: { register: () => Promise.resolve({ pushManager }) },
+      configurable: true,
+      value: {
+        register: () => Promise.resolve(registration),
+        getRegistration: () => Promise.resolve(registration),
+      },
     });
     const switches = (over: object): void =>
       window.localStorage.setItem(CHANNELS_KEY, JSON.stringify({ ...JSON.parse(ALL_ON), ...over }));

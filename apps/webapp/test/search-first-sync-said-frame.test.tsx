@@ -109,7 +109,7 @@ describe("mid-import, the result line states the scope it searched", () => {
     const text = await said("delivery window 2059", CLOSEST, true);
     expect(text).toContain("Searched the mail synced so far — 2,526 with a close word · ");
     expect(syncing()?.textContent?.trim()).toBe(REST);
-    expect(within(host).getByRole("heading", { name: "Similar" })).toBeTruthy();
+    expect(within(host).getByRole("heading", { name: "Similar 2,526" })).toBeTruthy();
     expect(within(host).getByText(messages.search.similarHintSynced)).toBeTruthy();
     expect(within(host).getByText(messages.search.saidPart)).toBeTruthy();
     expect(text).not.toContain("whole mailbox");
@@ -135,7 +135,7 @@ describe("the complete-store control: the same answers without the field read as
     expect(syncing()).toBeNull();
     expect(text).not.toContain("synced so far");
     if (parts === CLOSEST) {
-      expect(within(host).getByRole("heading", { name: "Similar" })).toBeTruthy();
+      expect(within(host).getByRole("heading", { name: "Similar 2,526" })).toBeTruthy();
       expect(within(host).getByText(messages.search.similarHint)).toBeTruthy();
       expect(within(host).getByText(messages.search.saidPart)).toBeTruthy();
     }
@@ -151,10 +151,10 @@ const MIRROR = { page: { ...CUT.page, answeredFrom: "mirror" }, estimate: { ...C
 
 describe("a count at its cap is grouped as every other count", () => {
   it.each([
-    ["en whole", "en", CUT, false, "Searched your whole mailbox — at least 2,000 matched · "],
+    ["en whole", "en", CUT, false, messages.search.saidAtLeast.replace("{total}", "2,000")],
     ["en synced", "en", CUT, true, "Searched the mail synced so far — at least 2,000 matched · "],
     ["en mirror", "en", MIRROR, false, "Search covers the mail on this computer while ohmail Cloud is unreachable — at least 2,000 matched · "],
-    ["de whole", "de", CUT, false, "Dein ganzes Postfach wurde durchsucht — mindestens 2.000 gefunden · "],
+    ["de whole", "de", CUT, false, de.search.saidAtLeast.replace("{total}", "2.000")],
     ["de synced", "de", CUT, true, "Bisher synchronisierte Mails durchsucht: mindestens 2.000 gefunden · "],
     ["de mirror", "de", MIRROR, false, "Durchsucht werden die Mails auf diesem Computer, solange ohmail Cloud nicht erreichbar ist: mindestens 2.000 gefunden · "],
   ] as const)("%s", async (_arm, locale, parts, importing, line) => {

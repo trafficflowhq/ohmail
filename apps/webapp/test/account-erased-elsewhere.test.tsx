@@ -118,7 +118,7 @@ async function holdCopyOf(owner: string): Promise<{ keys: string[]; prefs: strin
   for (const k of keys) localStorage.setItem(k, "account data");
   const { foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
   const { seedNotNowKey } = await import("@ohmail/app-logic/mailboxes/first-run/seed-offer");
-  const { imageQualityKeyFor } = await import("../app/components/image-quality.js");
+  const { imageQualityKeyFor } = await import("@ohmail/app-logic/write/image-quality");
   // The impersonation mark is the Screener's (#777), by name until its builder is on main.
   const prefs = [
     searchSortKey(owner), seedNotNowKey(owner), imageQualityKeyFor(owner), `ohmail.screener.impersonationSeen.${owner}`,

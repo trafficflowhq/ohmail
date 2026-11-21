@@ -1,5 +1,14 @@
 {
   "host": {
+    "copyOrigin": "Copy",
+    "thisComputer": "This computer",
+    "hostOff": "Off",
+    "hostServing": "Serving",
+    "hostNotServing": "Not serving",
+    "hostStarting": "Starting",
+    "reachAt": "Your devices reach it at",
+    "servingDetail": "While this computer is awake.",
+    "lanServingDetail": "For apps on your network, while this computer is awake. If a device can't reach it, check that this computer's firewall allows port {port}.",
     "title": "Devices",
     "lead": "Turn this computer into your own mail server. Your other devices connect to it directly — nothing goes through the cloud.",
     "story": "It works over Tailscale, a private tunnel between your own devices. Nothing is opened to the internet.",

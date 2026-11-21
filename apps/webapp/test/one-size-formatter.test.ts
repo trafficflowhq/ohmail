@@ -25,14 +25,11 @@ const APP = resolve(join(import.meta.dirname, "..", "app"));
  */
 const OWN_CONVENTION = ["shell/storage-state.ts"];
 
-/** The three surfaces that name a file's size, and there are exactly three. */
+/** The live surfaces that name a file's size. */
 const CALLERS = [
   "components/AttachmentPreview.tsx",
   "components/AttachmentStrip.tsx",
   "components/ComposeAttach.tsx",
-  // A forward's original files and the sentence under them.
-  "shell/ForwardFiles.tsx",
-  "shell/SendStatus.tsx",
   "app/mail/ground/writing-words.ts",
 ];
 

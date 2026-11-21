@@ -1,8 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { and, eq } from "drizzle-orm";
-import { assertBinding, users } from "@trafficflow/db";
 import {
-  ServiceError, IdempotencyRaceLost, resolveSession, sha256, isAllowedOrigin, PRESS_AGE_MAX_MS, pressIsAged,
+  ServiceError, IdempotencyRaceLost, resolveSession, sessionEmailVerifiedAt, sha256, isAllowedOrigin, PRESS_AGE_MAX_MS, pressIsAged,
 } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
 // The reader refusal, from the package that throws it — see the envelope arm below for why it
@@ -589,20 +587,14 @@ export const withStepUp: Middleware = (next, route) => async (req, deps, params)
  */
 export const withSpendGate: Middleware = (next, route) => async (req, deps, params) => {
   const session = deps.session;
-  if (deps.requireVerifiedForProduct !== false && session && !unverifiedMayReach(route.cost)) {
-    // withSession has bound the request's handle to the account the session row named.
-    assertBinding(deps.db, session.accountId);
-    const [user] = await deps.db.select({ emailVerifiedAt: users.emailVerifiedAt })
-      .from(users)
-      .where(and(eq(users.id, session.userId), eq(users.accountId, session.accountId)))
-      .limit(1);
-    if (user?.emailVerifiedAt == null) {
-      return errorResponse(
-        "email_unverified", 403,
-        "Confirm your email address first. We sent a link when you signed up — " +
-        "open it, or ask for a new one, and then try again.",
-      );
-    }
+  // withSession has bound the request's handle to the account the session row named.
+  if (deps.requireVerifiedForProduct !== false && session && !unverifiedMayReach(route.cost)
+    && (await sessionEmailVerifiedAt(deps.db, session)) == null) {
+    return errorResponse(
+      "email_unverified", 403,
+      "Confirm your email address first. We sent a link when you signed up — " +
+      "open it, or ask for a new one, and then try again.",
+    );
   }
   /**
    * The access arm — one place, so a refused account meets the same answer at every door. 402 and

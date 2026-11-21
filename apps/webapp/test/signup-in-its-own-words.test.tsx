@@ -26,6 +26,7 @@ const ENROLLING = {
     twofaEnrolled: { webauthn: false, totp: false, recoveryCodes: false },
   },
   scope: "enrollment",
+  familyId: "f1",
 };
 const UNVERIFIED = {
   user: { ...ENROLLING.user, emailVerified: false, twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: true } },
@@ -62,6 +63,8 @@ beforeEach(() => {
 afterEach(async () => {
   if (unmount) await unmount();
   unmount = null;
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
 });
@@ -180,6 +183,7 @@ describe("the authenticator step's refusal, in the screen's words", () => {
   for (const messages of [de, en]) {
     it(`${messages === de ? "de" : "en"}: a code that did not match`, async () => {
       session = { status: 200, body: ENROLLING };
+      document.cookie = "tf_family=f1; Path=/";
       answers["/auth/2fa/totp/activate"] = refusal(422, "unprocessable", "invalid TOTP code");
       const ui = await render(messages, "join");
       await ui.press(messages.join.useTotp);

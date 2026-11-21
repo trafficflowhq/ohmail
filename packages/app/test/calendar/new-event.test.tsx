@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CalendarAct, CalendarSettingsWire } from "@ohmail/app-logic/calendar";
+import { letter } from "../reader/support/mail.js";
 import { fieldsOfDraft, startDraft } from "../../src/calendar/event-draft.js";
 import {
   calendarRecord,
@@ -75,6 +76,377 @@ it("creates in the explicitly chosen writable calendar and keeps the words when 
   ]);
   act(() => w.put("calendar", "cal-1", calendarRecord({ access: "reader" })));
   expect((form.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("adds and edits invitees in a new draft and asks before sending invitations", async () => {
+  const w = world();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Planning" } });
+  fireEvent.click(form.getByRole("button", { name: "Invitees" }));
+  const picker = within(screen.getByRole("dialog", { name: "Add invitees" }));
+  const address = ["Mara <mara", "example.test>"].join("@");
+  fireEvent.change(picker.getByRole("textbox", { name: "Name or email address" }), {
+    target: { value: address },
+  });
+  fireEvent.click(picker.getByRole("button", { name: "Add person" }));
+  fireEvent.click(form.getByRole("button", { name: /^Mara/ }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "Optional" }));
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).not.toHaveBeenCalled();
+  const question = within(screen.getByRole("dialog", { name: "Invite Mara?" }));
+  fireEvent.click(question.getByRole("button", { name: "Invite" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        invitees: [{ name: "Mara", address: ["mara", "example.test"].join("@"), role: "optional" }],
+      }),
+    }),
+  );
+  await act(async () => {});
+});
+
+it("saves a new event with the selected alert in place of the calendar default", async () => {
+  const w = world();
+  w.put(
+    "calendar",
+    "personal",
+    calendarRecord({
+      id: "personal",
+      name: "Personal",
+      defaultAlarms: [{ method: "notice", minutesBefore: 15 }],
+    }),
+  );
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Planning" } });
+  fireEvent.click(form.getByRole("button", { name: "Alert" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "30 minutes before" }));
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: expect.objectContaining({ alarms: [30] }),
+    }),
+  );
+  await act(async () => {});
+});
+
+it("can remove an extra alert after switching the draft to a calendar that accepts one", async () => {
+  const w = world();
+  w.put("calendar_connection", "conn-work", connectionRecord({ id: "conn-work", provider: "microsoft" }));
+  w.put("calendar", "work", calendarRecord({ id: "work", name: "Work", connectionId: "conn-work" }));
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Planning" } });
+  fireEvent.click(form.getByRole("button", { name: "Alert" }));
+  fireEvent.click(form.getByRole("button", { name: "Alert" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "15 minutes before" }));
+  fireEvent.click(form.getByRole("button", { name: "and another" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "30 minutes before" }));
+  fireEvent.click(form.getByRole("button", { name: "Calendar" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "Work" }));
+  expect(form.getByRole("button", { name: "Add" })).toHaveProperty("disabled", true);
+  fireEvent.click(form.getByRole("button", { name: "and another" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "None" }));
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      calendarId: "work",
+      event: expect.objectContaining({ alarms: [15] }),
+    }),
+  );
+  await act(async () => {});
+});
+
+it.each(["Pizza tomorrow", "Pizza morgen"])("saves %s as a whole day", async (title) => {
+  const w = world();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new&slot=540-600", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: title } });
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        title: "Pizza",
+        start: { kind: "date", value: "20261117" },
+        end: { kind: "date", value: "20261118" },
+      }),
+    }),
+  );
+  await act(async () => {});
+});
+
+it.each([
+  ["Dentist tomorrow 3pm", "Dentist", "15:00", "20261117T150000", null],
+  ["Abholung morgen um 15 Uhr", "Abholung", "15:00", "20261117T150000", null],
+])("fills a new event from the typed line %s", async (typed, title, clock, start, repeat) => {
+  const w = world();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: typed } });
+  expect(form.getByLabelText("Start time")).toHaveProperty("value", clock);
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: expect.objectContaining({ title, start: expect.objectContaining({ value: start }), repeat }),
+    }),
+  );
+  await act(async () => {});
+});
+
+it("keeps an explicit time after changing the parsed draft in the form", async () => {
+  const w = world();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), {
+    target: { value: "Dentist tomorrow 3pm" },
+  });
+  fireEvent.change(form.getByLabelText("Start time"), { target: { value: "14:30" } });
+  expect(form.getByLabelText("End time")).toHaveProperty("value", "16:00");
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        title: "Dentist",
+        start: expect.objectContaining({ value: "20261117T143000" }),
+      }),
+    }),
+  );
+  await act(async () => {});
+});
+
+it("keeps words about recurrence in the entered title", async () => {
+  const w = world();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  const title = form.getByRole("textbox", { name: "Event title" });
+  fireEvent.change(title, { target: { value: "Dentist tomorrow 3pm weekly" } });
+  fireEvent.change(form.getByLabelText("Start time"), { target: { value: "14:30" } });
+  expect(title).toHaveProperty("value", "Dentist weekly");
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        title: "Dentist weekly",
+        repeat: null,
+        start: expect.objectContaining({ value: "20261117T143000" }),
+      }),
+    }),
+  );
+  await act(async () => {});
+});
+
+it("takes a place suggested by the account service and keeps its attribution with the rows", async () => {
+  const w = world();
+  const ask = vi.fn(async () => ({
+    state: "ok",
+    credit: "osm",
+    places: [{ kind: "venue", first: "Library", second: "Central district", country: null, lat: 0, lon: 0 }],
+  }));
+  Object.assign(w.engine, { suggestPlaces: ask });
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.click(form.getByRole("button", { name: "Place" }));
+  const place = form.getByLabelText("Place");
+  fireEvent.change(place, { target: { value: "Li" } });
+  expect(ask).not.toHaveBeenCalled();
+  fireEvent.change(place, { target: { value: "Lib" } });
+  const list = await screen.findByRole("listbox", { name: "Place suggestions" });
+  expect(ask).toHaveBeenCalledWith(
+    { text: "Lib", lang: "en" },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  expect(screen.getByText("© OpenStreetMap contributors")).toBeTruthy();
+  fireEvent.click(within(list).getByRole("option", { name: /Lib\s*rary/ }));
+  expect(place).toHaveProperty("value", "Library, Central district");
+  expect(screen.queryByText("© OpenStreetMap contributors")).toBeNull();
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Planning" } });
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({ event: expect.objectContaining({ place: "Library, Central district" }) }),
+  );
+  await act(async () => {});
+});
+
+it("keeps a typed place when the account's suggestion service is off", async () => {
+  const w = world();
+  const ask = vi.fn(async () => ({ state: "off", places: [], credit: null }));
+  Object.assign(w.engine, { suggestPlaces: ask });
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.click(form.getByRole("button", { name: "Place" }));
+  const place = form.getByLabelText("Place");
+  fireEvent.change(place, { target: { value: "The rooftop" } });
+  await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole("listbox", { name: "Place suggestions" })).toBeNull();
+  expect(place).toHaveProperty("value", "The rooftop");
+});
+
+it("fills a run of whole days and its place from a typed line", async () => {
+  const w = world();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), {
+    target: { value: "Makersfest 20.–22. Nov in Zürich" },
+  });
+  expect(form.getByRole("switch", { name: "All day" }).getAttribute("aria-checked")).toBe("true");
+  expect(form.getByLabelText("Place")).toHaveProperty("value", "Zürich");
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        title: "Makersfest",
+        start: { kind: "date", value: "20261120" },
+        end: { kind: "date", value: "20261123" },
+        place: "Zürich",
+      }),
+    }),
+  );
+  await act(async () => {});
+});
+
+it.each([false, true])("only includes a proposed guest if accepted (%s)", async (accept) => {
+  const w = world();
+  const contact = ["ben", "example.test"].join("@");
+  w.put("message", "from-ben", letter("from-ben", { from: { name: "Ben Arnold", address: contact } }));
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), {
+    target: { value: "Lunch with Ben tomorrow 1pm" },
+  });
+  const proposal = form.getByRole("button", { name: "Ben Arnold", exact: true });
+  expect(press).not.toHaveBeenCalled();
+  if (accept) fireEvent.click(proposal);
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  if (accept) {
+    expect(press).not.toHaveBeenCalled();
+    const question = within(screen.getByRole("dialog", { name: "Invite Ben Arnold?" }));
+    fireEvent.click(question.getByRole("button", { name: "Invite" }));
+  }
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        title: "Lunch with Ben",
+        invitees: accept ? [{ address: contact, name: "Ben Arnold", role: "required" }] : [],
+      }),
+    }),
+  );
+  await act(async () => {});
+});
+
+it("reads a bare hour as a morning hour in a typed line", async () => {
+  const w = world();
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Flight at 6" } });
+  expect(form.getByLabelText("Start time")).toHaveProperty("value", "06:00");
+});
+
+it("passes through the calendar's own Microsoft alerts when they were never edited", async () => {
+  const w = world();
+  w.put("calendar_connection", "conn-1", connectionRecord({ provider: "microsoft" }));
+  w.put(
+    "calendar",
+    "personal",
+    calendarRecord({
+      id: "personal",
+      name: "Personal",
+      defaultAlarms: [
+        { method: "notice", minutesBefore: 15 },
+        { method: "notice", minutesBefore: 30 },
+      ],
+    }),
+  );
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Planning" } });
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({ event: expect.objectContaining({ alarms: [15, 30] }) }),
+  );
+  await act(async () => {});
+});
+
+it("puts an untitled draft with an explicit alert on Undo", async () => {
+  const w = world();
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.click(form.getByRole("button", { name: "Alert" }));
+  fireEvent.click(form.getByRole("button", { name: "Alert" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "15 minutes before" }));
+  fireEvent.click(form.getByRole("button", { name: "Close" }));
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(
+    within(screen.getByRole("dialog", { name: "New event" })).getByText("15 minutes before"),
+  ).toBeTruthy();
+});
+
+it("restores a guest on Undo before asking to send the invitation", async () => {
+  const w = world();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  const address = ["mara", "example.test"].join("@");
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const draft = () => within(screen.getByRole("dialog", { name: "New event" }));
+  await draft().findByText("Personal");
+  fireEvent.click(draft().getByRole("button", { name: "Invitees" }));
+  const picker = within(screen.getByRole("dialog", { name: "Add invitees" }));
+  fireEvent.change(picker.getByRole("textbox", { name: "Name or email address" }), {
+    target: { value: `Mara <${address}>` },
+  });
+  fireEvent.click(picker.getByRole("button", { name: "Add person" }));
+  fireEvent.click(draft().getByRole("button", { name: "Close" }));
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(draft().getByRole("button", { name: /^Mara/ })).toBeTruthy();
+  expect(press).not.toHaveBeenCalled();
+  fireEvent.change(draft().getByRole("textbox", { name: "Event title" }), { target: { value: "Planning" } });
+  fireEvent.click(draft().getByRole("button", { name: "Add" }));
+  const question = within(screen.getByRole("dialog", { name: "Invite Mara?" }));
+  expect(press).not.toHaveBeenCalled();
+  fireEvent.click(question.getByRole("button", { name: "Invite" }));
+  expect(press).toHaveBeenCalledTimes(1);
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: expect.objectContaining({ invitees: [{ name: "Mara", address, role: "required" }] }),
+    }),
+  );
+  await act(async () => {});
 });
 
 it("keeps the same submission while its receipt is pending", async () => {

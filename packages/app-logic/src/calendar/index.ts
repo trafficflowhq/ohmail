@@ -8,7 +8,14 @@ export type {
   CalendarSettingsWire,
 } from "@ohmail/wire";
 export { calendarPortOf, refusalWordOf, type PortParts } from "./port-of.js";
-export { deleteAudienceOf, eventTimeOf, parseRRule, wallInstants, weekOf } from "@ohmail/cal-core";
+export {
+  deleteAudienceOf,
+  eventTimeOf,
+  parseRRule,
+  storedTimeOf,
+  wallInstants,
+  weekOf,
+} from "@ohmail/cal-core";
 export { hueOf, viewOnlyOf } from "./offers.js";
 export { calendarInviteeSuggestions } from "./invitee-suggestions.js";
 export { calEventOf, keyTimeOf, recordAtOccurrence, seriesOfRecords, type RecordSeries } from "./records.js";
@@ -27,3 +34,4 @@ export { calendarRefusalSentence, pressAndHear, sentenceOf, type Heard } from ".
 export { moveTime, reschedule, resizeSlot, resizeTime } from "./reschedule.js";
 export * from "./grid/index.js";
 export * from "./spans/index.js";
+export { readQuickEntry } from "./quick-entry.js";

@@ -12,6 +12,7 @@ import { useKeyBindings, useKeymap } from "@ohmail/app-logic/keys";
 import { setComposeDoor } from "@ohmail/app-logic/writing/compose-door";
 import { RailEntry } from "@ohmail/ui/mail";
 import { Frame } from "../../src/frame/Frame.js";
+import { calendar } from "../../src/calendar/entry.js";
 import { placeChords } from "../../src/frame/chords.js";
 import { useFrame, useRailFoot } from "../../src/frame/commands.js";
 import {
@@ -344,3 +345,31 @@ describe("the way to write passes the composer's door", () => {
     expect(made.address.writes[before]?.next, "the first address written").toBe("#/compose");
   });
 });
+
+it.each([false, true])(
+  "orders Write before Calendar in phone More and shows waiting invitations (%s)",
+  (wants) => {
+    mount({
+      window: fakeWindow("phone"),
+      products: "both",
+      calendar: {
+        ...calendar,
+        useSwitchOffered: () => true,
+        useSwitchHome: () => undefined,
+        useWants: () => wants,
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    const drawer = within(screen.getByRole("dialog", { name: "More" }));
+    const rail = within(drawer.getByRole("navigation", { name: "Places" }));
+    const buttons = rail.getAllByRole("button");
+    expect(buttons.slice(0, 2)).toEqual([
+      rail.getByRole("button", { name: "Write" }),
+      rail.getByRole("button", { name: "Calendar" }),
+    ]);
+    const destination = buttons[1]!;
+    expect(Boolean(destination.querySelector("[data-product=cal]"))).toBe(wants);
+    expect(Boolean(destination.getAttribute("aria-describedby"))).toBe(wants);
+    expect(rail.queryByRole("button", { name: "Mail", exact: true })).toBeNull();
+  },
+);

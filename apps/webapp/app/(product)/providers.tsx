@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { ConfirmBrowserFaceOwner } from "./confirm-browser-face-owner";
 import { ThemeProvider, themeInitScript } from "@ohmail/ui";
 import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { columnsBootScript } from "@ohmail/app-logic/lists/column-store";
@@ -39,7 +40,10 @@ export function AppearanceBoot({ nonce, deferLinuxFace, owner = null }: Appearan
 
 export function Providers({ children, nonce, deferLinuxFace, owner = null }: AppearanceProps & { children: ReactNode }) {
   const currentOwner = useSyncExternalStore(listenBrowserSession, currentFaceOwner, () => owner);
-  const storage = useMemo(() => accountThemeDoor(owner), [owner]);
+  const [confirmed, confirm] = useState<string | null>(null);
+  const verified = confirmed ?? owner;
+  const faceOwner = verified === currentOwner ? verified : null;
+  const storage = useMemo(() => accountThemeDoor(faceOwner), [faceOwner]);
   return (
     <>
       {/* Restore the column widths before the first server-drawn controls. */}
@@ -50,11 +54,13 @@ export function Providers({ children, nonce, deferLinuxFace, owner = null }: App
         faces
         deferLinuxFace={deferLinuxFace}
         preferAccountFace={deferLinuxFace}
-        accountFaceScope={currentOwner}
+        accountFaceScope={faceOwner}
         storage={storage}
       >
         <portalRenderer.Provider value={createPortal}>
-          {children}
+          <ConfirmBrowserFaceOwner.Provider value={confirm}>
+            {children}
+          </ConfirmBrowserFaceOwner.Provider>
         </portalRenderer.Provider>
       </ThemeProvider>
     </>

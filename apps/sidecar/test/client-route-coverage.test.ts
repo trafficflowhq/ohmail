@@ -245,6 +245,7 @@ const FORWARDED_IN_CLOUD_MODE = [
   "POST /calendar/connections/x/check",
   "POST /calendar/connections/x/sign-in",
   "PATCH /calendar/calendars/x",
+  "PATCH /calendar/suggestions/x",
   /* THE PLACE FIELD'S QUESTION. The geocoder is the account's server's, set by its operator; this
      copy holds none and answers none, so the question is relayed whole and its answer returned. */
   "POST /calendar/places/suggest",
@@ -461,6 +462,7 @@ const CALENDAR_HOSTED_DOOR_ONLY = [
   "POST /calendar/connections/x/check",
   "POST /calendar/connections/x/sign-in",
   "PATCH /calendar/calendars/x",
+  "PATCH /calendar/suggestions/x",
   "POST /calendar/places/suggest",
 ] as const;
 

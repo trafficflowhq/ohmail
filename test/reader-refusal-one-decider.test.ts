@@ -177,9 +177,9 @@ const SITES: Site[] = [
   { file: SHELL_DISPATCH, fn: "refusalSentence",
     keys: ['"ohbox.refusedOrganized"', '"ohbox.refusedOrganizedUnknown"', '"ohbox.refusedNobody"'],
     calls: [{ file: SHELL_DISPATCH, fn: "refusalSentence", call: /\borganizerRefusalOf\(err\)/ }] },
-  { file: "apps/webapp/app/views/ScreenerView.tsx",
-    keys: ['"moveBarWhy"', '"moveBarWhyUnknown"', '"moveBarWhyNobody"', '"readerBarWhy"', '"readerBarWhyUnknown"'],
-    calls: [{ file: "apps/webapp/app/views/ScreenerView.tsx", call: /reader=\{readerHolder\(state\.role\)\}/ }] },
+  { file: "packages/app/src/screener/sender/holder.ts", fn: "decidesNote",
+    keys: ['"place.decides"', '"place.decidesUnknown"'],
+    calls: [{ file: "packages/app/src/screener/sender/holder.ts", fn: "decidesNote", call: /\breaderHolder\(role\)/ }] },
   { file: "packages/app-logic/src/press/sender-screening.ts", fn: "screeningOrganizerCopy",
     keys: ['"orgPending"', '"orgPendingUnnamed"', '"orgNobody"'],
     calls: [
@@ -384,7 +384,7 @@ describe("every sentence that names who organizes a mailbox asks the same decide
       if (/Organized by \$\{name\}|\$\{name\} (?:organizes|is organizing|keeps organizing)\b/.test(m[2]!)) found.push(`Copy.${m[1]}`);
     }
     // The reach first: a scan that found nothing classifies nothing.
-    expect(found.length).toBe(28);
+    expect(found.length).toBe(26);
     const registered = new Set(SITES.flatMap((s) => s.keys));
     const unclassified = found.filter((path) => {
       const leaf = path.slice(path.lastIndexOf(".") + 1);

@@ -113,7 +113,6 @@ const SURVIVES_SIGN_OUT = new Set([
   "ohmail.desktopCtaDismissed", // "you dismissed this banner"; a browser preference
   "ohmail.junkSweepDismissedAt", // a dismissal timestamp, no mail in it
   "ohmail.ui.seed.notNow.", // "Not now" on the sent-mail review, owner-keyed, no mail in it
-  "ohmail.reply.panelHeight", // a pane size
   "ohmail.ui.mail.original.", // "show original" toggle, per account: an erasure takes it
   "ohmail.ui.rail.foldersOpen", // rail disclosure state
   "ohmail.ui.rail.foldersOpened.", // the opened folder branches, per account: an erasure takes them

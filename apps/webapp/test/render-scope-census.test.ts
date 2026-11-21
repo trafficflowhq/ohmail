@@ -69,7 +69,7 @@ const SHELL_FRAMES: readonly string[] = [
   `${GROUND_DIR}/MailKeys.tsx`, `${GROUND_DIR}/MailNotices.tsx`, `${GROUND_DIR}/MailConnection.ts`,
   `${GROUND_DIR}/MailRail.ts`, `${GROUND_DIR}/MailBadge.ts`, `${GROUND_DIR}/MailSystemNotices.ts`,
   /* The hook modules the pieces call. */
-  `${GROUND_DIR}/boot-face.ts`, `${GROUND_DIR}/boot-locale.ts`, `${GROUND_DIR}/boot-marks.ts`,
+  "packages/app/src/settings/general/boot-face.ts", `${GROUND_DIR}/boot-locale.ts`, `${GROUND_DIR}/boot-marks.ts`,
   `${GROUND_DIR}/boot-setup.ts`, `${GROUND_DIR}/boot-visit.ts`, `${GROUND_DIR}/boot-wake.ts`,
   `${GROUND_DIR}/door-inputs.ts`, `${GROUND_DIR}/first-run-owed.ts`, `${GROUND_DIR}/send-notices.ts`,
   `${GROUND_DIR}/update-notice.ts`, `${GROUND_DIR}/writing-inputs.ts`,

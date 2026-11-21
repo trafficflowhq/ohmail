@@ -8,7 +8,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type RefObject, type UIEvent } from "react";
 import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { Button, RefusalLine } from "@ohmail/ui/base";
-import { GroupHeading, ListHead } from "@ohmail/ui/mail";
+import { GroupHeading, ListHead, Row as MailRow } from "@ohmail/ui/mail";
 import { AgendaRow, MiniMonth, SidePanel } from "@ohmail/ui/calendar";
 import {
   addDays,
@@ -30,6 +30,12 @@ import {
   type RangeInput,
   type ViewEvent,
 } from "@ohmail/app-logic/calendar";
+import { useGroundPiles, usePileCount } from "@ohmail/app-logic/piles";
+import { usePresented, usePresentedMirror } from "@ohmail/app-logic/reading";
+import { useDayClock } from "@ohmail/app-logic/session/day-clock";
+import { stampOver } from "@ohmail/app-logic/text/format";
+import type { EngineMessage } from "@ohmail/wire";
+import { useFrame } from "../frame/commands.js";
 import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
 import { HeldNotice } from "../calendar/HeldNotice.js";
 import { useLocale, useText } from "../text/index.js";
@@ -210,9 +216,47 @@ function agendaGroups({
         ) : (
           <p className="cal-ag-none">{g.today ? t("nothingToday") : t("nothing")}</p>
         )}
+        {g.today && <AnswerLaterGroup zone={input.zone} />}
       </section>
     );
   });
+}
+
+function AnswerLaterGroup({ zone }: { zone: string }) {
+  return usePresentedMirror() === null ? null : <AnswerLaterRows zone={zone} />;
+}
+
+function AnswerLaterRows({ zone }: { zone: string }) {
+  const t = useText("agenda");
+  const { commands } = useFrame();
+  const mirror = usePresented();
+  const count = usePileCount("later");
+  const stamp = stampOver(useDayClock(null, zone));
+  const letters = useGroundPiles().replyLater.flatMap(({ messageId }) => {
+    const message = messageId ? mirror.get<EngineMessage>("message", messageId) : undefined;
+    return message ?? [];
+  });
+  return letters.length ? (
+    <section aria-label={t("answerLater")}>
+      <GroupHeading count={count ? t("count", { count }) : undefined}>{t("answerLater")}</GroupHeading>
+      <div className="cal-ag-rows" role="list">
+        {letters.map((message) => {
+          const name = message.from.name?.trim() || message.from.address;
+          return (
+            <MailRow
+              key={message.id}
+              who={name}
+              people={[{ name, address: message.from.address }]}
+              subject={message.subject}
+              when={message.date ? stamp(message.date) : undefined}
+              unread={message.unread}
+              onOpen={() => commands.go({ place: "later", open: message.id }, { entered: true })}
+            />
+          );
+        })}
+      </div>
+    </section>
+  ) : null;
 }
 
 function AgendaTop({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {

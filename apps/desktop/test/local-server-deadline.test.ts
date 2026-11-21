@@ -272,6 +272,10 @@ describe("the census — every bridge call to a route that probes rides the loca
   const files = [
     ...sources(DESKTOP_SRC),
     {
+      file: "packages/app-logic/src/consent/consent-wire.ts",
+      code: readFileSync(new URL("../../../packages/app-logic/src/consent/consent-wire.ts", import.meta.url), "utf8"),
+    },
+    {
       file: "packages/core/src/suggestion-consent.ts",
       code: readFileSync(new URL("../../../packages/core/src/suggestion-consent.ts", import.meta.url), "utf8"),
     },

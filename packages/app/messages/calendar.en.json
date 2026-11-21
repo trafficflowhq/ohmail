@@ -2,6 +2,7 @@
   "calendar": {
     "connect": "Connect a calendar",
     "actions": {
+      "openLetter": "Open the letter",
       "resizeTimeStart": "Resize start",
       "resizeTimeEnd": "Resize end",
       "resizeStart": "Change first day",
@@ -69,6 +70,19 @@
       "keepTheirs": "Keep theirs",
       "discard": "Discard changes"
     },
+    "call": {
+      "label": "Call",
+      "join": "Join",
+      "copy": "Copy",
+      "copied": "Copied"
+    },
+    "location": {
+      "own": "Your places",
+      "suggestions": "Place suggestions",
+      "credit": "© OpenStreetMap contributors",
+      "maps": "Open in Maps",
+      "mapsTitle": "Opens openstreetmap.org"
+    },
     "create": {
       "endDate": "End date",
       "nextDay": "next day",
@@ -99,6 +113,7 @@
     "placeCount": "{place}, {count}",
     "fromMail": "From mail",
     "more": "More",
+    "letters": "Letters",
     "people": "People",
     "atTime": "{day}, {time}",
     "interval": "{first} – {last}",

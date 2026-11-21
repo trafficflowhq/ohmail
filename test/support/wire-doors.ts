@@ -196,10 +196,6 @@ function admitted(login: "api" | "worker", door: Door, table: string, verb: Verb
  */
 export const OWED: readonly OwedRow[] = [
   // ── The API's login ────────────────────────────────────────────────────────────────────────
-  // The session's look-up.
-  owed("api", "credential", "read", "users", "server", "lock",
-    "packages/services/src/auth/resolve-session.ts",
-    "the session's look-up joins the user's row by id under the token's digest, and the lock compares `users` by address only: its list needs an arm for the holder of that user's session token"),
   // The staff door.
   owed("api", "staff", "read", "mailboxes", "server", "console",
     "packages/api/src/staff-audit.ts (staffActOn)",

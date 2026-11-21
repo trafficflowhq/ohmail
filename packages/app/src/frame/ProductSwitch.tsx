@@ -1,6 +1,6 @@
 import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { Switcher, type SwitcherProps } from "@ohmail/ui/mail";
-import { NONE, type None } from "../host/index.js";
+import { NONE, type None } from "../host/contract.js";
 import { useText } from "../text/index.js";
 import { useFrame } from "./commands.js";
 import type { PlaceEntry, Product } from "./contract.js";
@@ -25,7 +25,7 @@ function useSwitchOffered() {
   return product === "cal" || available;
 }
 
-export function ProductSwitch({ kind, onRail }: { kind: "pair" | "round"; onRail?: boolean }) {
+export function ProductSwitch({ kind, onRail }: { kind: SwitcherProps["kind"]; onRail?: boolean }) {
   const { host, product, previousProduct } = useFrame();
   const switchProduct = useSwitchProduct();
   const t = useText("frame");

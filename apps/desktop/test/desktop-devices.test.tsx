@@ -414,7 +414,7 @@ describe("add a device — the QR moment", () => {
     const mint = engineAsked.find((r) => r.method === "POST" && r.url === "/pair");
     expect(mint?.body).toEqual({ grant: "device-pair", label: "Mara" });
 
-    const svg = hostEl.querySelector("svg")!;
+    const svg = hostEl.querySelector(".oh-code-tile svg")!;
     expect(decodeQr(matrixFromSvg(svg as unknown as SVGSVGElement))).toBe(`${ORIGIN}/pair#${TOKEN}`);
   });
 
@@ -435,7 +435,7 @@ describe("add a device — the QR moment", () => {
 
     await click(button(enHost.mintedDone!));
     expect(text()).not.toContain(TOKEN);
-    expect(hostEl.querySelector("svg")).toBeNull();
+    expect(hostEl.querySelector(".oh-code-tile svg")).toBeNull();
   });
 
   it("a rejected clipboard is said, with the scan as the way that still works — never a false `copied`", async () => {
@@ -910,7 +910,7 @@ describe("the copy bar: awake-qualified, never unqualified always-on", () => {
   it("the German pane serves with the qualifier rendered", async () => {
     installShell({ hostState: SERVING, tailscale: RUNNING, routes: EMPTY_LISTS });
     await mount(de as never);
-    expect(text()).toContain("solange dieser Computer wach ist");
+    expect(text()).toContain("Solange dieser Computer wach ist");
     expect(text()).toContain(ORIGIN);
   });
 });

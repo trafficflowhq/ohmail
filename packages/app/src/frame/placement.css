@@ -211,8 +211,8 @@
 .fr-rail-preview {
   animation-name: none;
 }
-:root[data-rm="1"] .fr-railsheet {
-  animation: none;
+:root[data-rm="1"] .fr-railsheet:not(.fr-rail-preview) {
+  animation: fr-rail-fade-in var(--d-reduced) var(--e-std) backwards;
 }
 [data-drawer-dock],
 [data-drawer-toggle] {
@@ -223,9 +223,15 @@
     transform: translateX(-100%);
   }
 }
+@keyframes fr-rail-fade-in {
+  from {
+    opacity: 0;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .fr-railsheet {
-    animation: none;
+  .fr-railsheet:not(.fr-rail-preview) {
+    animation: fr-rail-fade-in var(--d-reduced) var(--e-std) backwards;
+    animation-duration: var(--d-reduced) !important;
   }
 }
 

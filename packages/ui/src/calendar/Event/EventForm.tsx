@@ -74,7 +74,7 @@ export type EventFormItem =
       remove?: { label: string; onPress?: () => void };
     }
   /** A word that leads out: Open in Maps. */
-  | { kind: "link"; text: string; onPress?: () => void }
+  | { kind: "link"; text: string; title?: string; onPress?: () => void }
   /** Takes away what the row holds: the call. */
   | { kind: "remove"; label: string; onPress?: () => void };
 
@@ -291,7 +291,13 @@ function item(it: EventFormItem, key: number): ReactNode {
       return held(it, key);
     case "link":
       return (
-        <button key={key} type="button" className="oh-control oh-evform-link" onClick={it.onPress}>
+        <button
+          key={key}
+          type="button"
+          className="oh-control oh-evform-link"
+          title={it.title}
+          onClick={it.onPress}
+        >
           {it.text}
         </button>
       );

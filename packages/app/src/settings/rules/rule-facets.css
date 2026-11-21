@@ -1,0 +1,9 @@
+.rules-facet {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.rules-facet-key {
+  font-weight: var(--w-mid);
+}

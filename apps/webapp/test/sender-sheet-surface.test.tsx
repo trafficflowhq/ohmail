@@ -23,6 +23,7 @@ const SHEETS = [
   "packages/tokens/src/design/tokens.css",
   "packages/ui/src/base.css",
   "apps/webapp/app/app.css",
+  "packages/app/src/frame/seam.generated.css",
   "apps/webapp/app/shell/sender-sheet.css",
 ].map(css).join("\n");
 
@@ -63,7 +64,7 @@ describe("the sender sheet covers the list beneath it", () => {
       try {
         await page.setContent(`<!doctype html><html data-device="${width < 700 ? "phone" : "desktop"}"><head><style>${SHEETS}</style>
           <style>*{animation:none!important}.list-row{position:fixed;inset:0;background:repeating-linear-gradient(red 0 30px,blue 30px 60px)}</style>
-          </head><body><div class="list-row">List row</div>${sheet}</body></html>`);
+          </head><body><div class="fr-root"><div class="list-row">List row</div>${sheet}</div></body></html>`);
         const dialog = page.getByRole("dialog");
         const surface = await dialog.evaluate((box) => {
           const rect = box.getBoundingClientRect();

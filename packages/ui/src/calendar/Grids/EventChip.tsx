@@ -1,3 +1,4 @@
+import { createContext, useCallback, useContext, useLayoutEffect, useRef } from "react";
 import type {
   CSSProperties,
   KeyboardEventHandler,
@@ -239,11 +240,45 @@ function ResizeEdge({
   );
 }
 
+/** One arrival for the editor's draft, across every position and size in the grid. */
+export const DraftChipArrival = createContext<{ played: boolean } | null>(null);
+
+function ArrivingDraft(props: EventChipProps) {
+  const { ref } = props;
+  const arrival = useContext(DraftChipArrival);
+  const chip = useRef<HTMLButtonElement | null>(null);
+  const attach = useCallback(
+    (node: HTMLButtonElement | null) => {
+      chip.current = node;
+      if (typeof ref === "function") return ref(node);
+      if (ref) ref.current = node;
+    },
+    [ref],
+  );
+  useLayoutEffect(() => {
+    const button = chip.current;
+    if (!button || !arrival) return;
+    if (!arrival.played) {
+      arrival.played = true;
+      button.dataset.born = "";
+    }
+    if (!button.hasAttribute("data-born")) return;
+    const finish = () => delete button.dataset.born;
+    button.addEventListener("animationend", finish, { once: true });
+    return () => button.removeEventListener("animationend", finish);
+  }, [arrival]);
+  return <Chip {...props} ref={attach} />;
+}
+
 /**
  * One event: its calendar's square and its title. It is one component in three sizes: a block of a
  * time grid, a pill of the all-day lane, a line of a month. One set of states for all three.
  */
 export function EventChip(p: EventChipProps) {
+  return p.state === "draft" && p.drag !== "copy" ? <ArrivingDraft {...p} /> : <Chip {...p} />;
+}
+
+function Chip(p: EventChipProps) {
   if (p.size === "block") return <Block {...p} />;
   if (p.size === "pill") {
     return (

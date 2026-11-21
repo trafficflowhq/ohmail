@@ -1,3 +1,4 @@
+/** @vitest-environment jsdom */
 /**
  * THE DOOR'S HOST, over a connection double and the real seams around it: the page's requests go through the bridge's
  * native end and the door's own guard, the tickets give leases back through the pairing's own `discardAdmission`
@@ -5,17 +6,22 @@
  * organizer session's own launch slot. What must hold: the redeem is reachable only by a ticket; no answer, event or
  * state carries a code, a refresh token or a password; the standalone order, and its slot given back on a throw.
  */
+import { act, createElement as h } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   armConsentPress, forgetOrganizerSessionForTests, organizerDoor, organizerRestrictedSaid, standaloneLaunchGeneration,
   takeConsentPress,
 } from "../src/engine/organizer-session";
 import type { StandaloneEngine, StartPhoneEngine, StoreMigrating } from "../src/engine/standalone-door";
-import type { Attempt, ConnectionState, ForgetAttempt } from "../src/net/connection";
+import { ConnectionProvider, useConnection, type Attempt, type Connection, type ConnectionState, type ForgetAttempt } from "../src/net/connection";
+import type { MobileEngineDeps } from "../src/engine/boot";
 import { installPinning, type PinningNative } from "../src/net/host-pinning";
 import type { Negotiation, PairAdmission, ProbeOutcome, ShellSession } from "../src/net/pairing";
-import { refuse } from "../src/refusal";
-import type { ServerProfile } from "../src/state/servers";
+import { setActiveLocale } from "../src/i18n/locale";
+import { refuse, sayRefusal } from "../src/refusal";
+import { ServerProfileStore, type ServerProfile } from "../src/state/servers";
+import { mount } from "./_rendered-dom";
+import { listen, pairServer, sqlWorld } from "./helpers/pair-server";
 import type { DoorAt, DoorConfig, DoorEvent, DoorKind, DoorRequests, DoorState, Rect } from "../src/shell/door-kinds";
 import { DoorHost, SCAN_REARM_MS, type DoorConnection } from "../src/shell/door-host";
 import { said } from "../src/shell/door-state";
@@ -31,6 +37,28 @@ vi.mock("../src/net/server-base", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/net/server-base")>();
   return { ...real, addressProblem: (typed: string) => (typed === drift.letThrough ? null : real.addressProblem(typed)) };
 });
+
+const phone = vi.hoisted(() => ({
+  profiles: null as unknown,
+  engineDeps: null as unknown,
+  revokeCalendar: vi.fn(async (_id: string) => false),
+}));
+vi.mock("react-native", () => ({
+  AppState: { currentState: "active", addEventListener: () => ({ remove: () => undefined }) },
+  Platform: { OS: "android", select: (options: Record<string, unknown>) => options.android ?? options.default },
+}));
+vi.mock("expo", () => ({
+  requireOptionalNativeModule: (name: string) => name === "OhmailSwitch" ? { appId: "app.ohcal" } : null,
+}));
+vi.mock("expo-crypto", () => ({}));
+vi.mock("../src/state/servers-native", () => ({
+  nativeServerProfiles: () => phone.profiles,
+  nativeFamilyDigest: async () => "",
+  secureKV: () => null,
+}));
+vi.mock("../src/engine/native", () => ({ nativeEngineDeps: () => phone.engineDeps }));
+vi.mock("../src/calendar/calendar-native", () => ({ calendarLifecycle: () => ({ revoke: phone.revokeCalendar }) }));
+vi.mock("../src/switch/switch-native", () => ({ switchNative: () => null }));
 
 const ORIGIN = "https://appassets.androidplatform.net";
 const LOCAL = "http://sidecar";
@@ -692,6 +720,64 @@ describe("the door's host: the list of servers", () => {
     await w.ask("settings.open", { what: "notifications" });
     await w.ask("ready", {});
     expect(w.log).toEqual(["switch:row-2", "switch:row-9", "sync", "wake", "disconnect", "settings:notifications", "ready"]);
+  });
+
+  it("explains the copied calendar that remained after disconnect in either language", async () => {
+    const server = pairServer({ flavor: "selfhost", accountId: "account-1", sessionRoute: true });
+    const origin = await listen(server.server);
+    const rows = new Map<string, string>();
+    const profiles = new ServerProfileStore({
+      get: async (key) => rows.get(key) ?? null,
+      set: async (key, value) => { rows.set(key, value); },
+      remove: async (key) => { rows.delete(key); },
+    });
+    const sql = sqlWorld();
+    const deps: MobileEngineDeps = {
+      openExecutor: sql.open,
+      deleteDatabase: sql.drop,
+      uuid: () => "00000000-0000-4000-8000-000000000000",
+    };
+    phone.profiles = profiles;
+    phone.engineDeps = deps;
+    phone.revokeCalendar.mockClear();
+    let view: ReturnType<typeof mount> | undefined;
+    try {
+      const connection: { current?: Connection } = {};
+      function Probe() {
+        connection.current = useConnection();
+        return null;
+      }
+      await act(async () => { view = mount(h(ConnectionProvider, null, h(Probe))); });
+      await vi.waitFor(() => expect(connection.current?.state.k).toBe("idle"));
+      server.mintPairToken(CODE_TYPED);
+      const offered = await connection.current!.probePair(origin);
+      if (offered.kind !== "offers") throw new Error("the server did not offer pairing");
+      await act(async () => {
+        expect(await connection.current!.pairConfirmed(offered.admission, CODE_TYPED)).toEqual({ ok: true });
+      });
+      expect(connection.current!.state.k).toBe("shell");
+      const paired = (await profiles.active())!;
+      expect(paired).not.toBeNull();
+      const w = world();
+      w.conn.disconnect = () => connection.current!.disconnect();
+      await act(async () => { await w.ask("disconnect", {}); });
+      expect(phone.revokeCalendar.mock.calls).toEqual([[paired.id]]);
+      expect(await profiles.active()).toMatchObject({ id: paired.id });
+      const state = connection.current!.state;
+      expect(state.k).toBe("refused");
+      if (state.k !== "refused") throw new Error("the disconnect did not report the cleanup refusal");
+
+      setActiveLocale("en");
+      expect(sayRefusal(state.reason)).toMatch(/calendar.*next time it starts/i);
+      expect(sayRefusal(state.reason)).not.toContain("undefined");
+      setActiveLocale("de");
+      expect(sayRefusal(state.reason)).toMatch(/Kalender.*nächsten Start/i);
+      expect(sayRefusal(state.reason)).not.toContain("undefined");
+    } finally {
+      setActiveLocale("en");
+      view?.unmount();
+      server.server.close();
+    }
   });
 
   it("a sync stopped by a handshake crosses as which of the two it is, never in the platform's words", async () => {

@@ -18,7 +18,7 @@ apps/desktop/src/DesktopFrame.tsx	ohmail/package-borders:apps/webapp	7	ruling:fr
 apps/desktop/src/DesktopGate.tsx	ohmail/package-borders:apps/webapp	7	desktop-layer
 apps/desktop/src/DesktopLocale.tsx	ohmail/package-borders:apps/webapp	4	desktop-layer
 apps/desktop/src/DesktopMailboxes.tsx	ohmail/declared-dependency	1	desktop-layer
-apps/desktop/src/DesktopMailboxes.tsx	ohmail/package-borders:apps/webapp	6	desktop-layer
+apps/desktop/src/DesktopMailboxes.tsx	ohmail/package-borders:apps/webapp	4	desktop-layer
 apps/desktop/src/DesktopScreening.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/DesktopScreeningWords.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/src/DesktopScreeningWords.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
@@ -57,7 +57,6 @@ apps/desktop/src/sign-in-again-server.ts	ohmail/package-borders:apps/webapp	1	de
 apps/desktop/src/trash-wire.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/update-answer-door.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/window-pdfjs.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
-apps/desktop/test/_window-keys.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/test/ai-model-picker-matches-the-engine.test.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/ai-model-picker-matches-the-engine.test.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/test/ai-provider-draft-disclosure.test.ts	ohmail/package-borders:apps/webapp	2	desktop-layer
@@ -71,7 +70,6 @@ apps/desktop/test/desktop-ai-verdict.test.tsx	ohmail/declared-dependency	1	deskt
 apps/desktop/test/desktop-ai-verdict.test.tsx	ohmail/package-borders:apps/webapp	3	desktop-layer
 apps/desktop/test/desktop-ai.test.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/desktop-ai.test.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
-apps/desktop/test/desktop-attach-cap.test.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/test/desktop-attachment-preview.test.ts	ohmail/package-borders:apps/webapp	2	desktop-layer
 apps/desktop/test/desktop-attachment-spotlight.test.tsx	ohmail/package-borders:apps/webapp	2	desktop-layer
 apps/desktop/test/desktop-auto-act.test.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
@@ -390,7 +388,6 @@ apps/webapp/app/(product)/verify-email/use-verify-door.ts	eslint:unused-directiv
 apps/webapp/app/components/AttachmentPreview.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/components/ComposeAttach.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/error-report.ts	eslint:unused-directive	1	removals
-apps/webapp/app/shell/ThreadMarks.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/shell/engine-config.ts	ohmail/package-borders:testing	1	removals
 apps/webapp/app/shell/face-mirror.ts	ohmail/owner-lookup	1	ruling:scope-switch-settings
 apps/webapp/test/api-rewrite.test.ts	ohmail/package-borders:apps/api-vercel	1	lift-a
@@ -713,11 +710,11 @@ packages/app/src/frame/seam.generated.css	prettier	1	ruling:frame-seam
 packages/app/src/frame/seam.generated.css	stylelint:color-no-hex	23	ruling:frame-seam
 packages/app/src/frame/seam.generated.css	stylelint:function-disallowed-list	12	ruling:frame-seam
 packages/app/src/frame/seam.generated.css	stylelint:selector-disallowed-list	12	ruling:frame-seam
+packages/app/src/frame/touch-keys.css	stylelint:selector-max-type	5	ruling:lift-b-search
 packages/app/src/host/features.ts	prettier	1	lift-a
 packages/app/src/host/panes.ts	prettier	1	lift-a
 packages/app/src/host/session.ts	prettier	1	lift-a
 packages/app/src/host/wires.ts	prettier	1	lift-a
-packages/app/src/keys/touch-keys.css	stylelint:selector-max-type	5	ruling:lift-b-search
 packages/app/src/mail/ground/MailStateMount.tsx	prettier	1	ruling:composition-lift
 packages/app/src/mail/ground/MailStateMount.tsx	react-hooks/exhaustive-deps	2	ruling:composition-lift
 packages/app/src/write/editor/commands.ts	prettier	1	ruling:write-lift

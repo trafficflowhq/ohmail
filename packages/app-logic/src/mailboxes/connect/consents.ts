@@ -167,32 +167,45 @@ export type ConsentLine =
       readonly sha256: string;
     };
 
+/** The offered plaintext choices, grouped when both connections use the same server. */
+export function plaintextConsentLines(
+  offer: Protocols,
+  checked: Protocols,
+  sameHost: boolean,
+): ConsentLine[] {
+  if (sameHost && (offer.imap || offer.smtp))
+    return [{ kind: "plain", legs: "both", on: checked.imap && checked.smtp }];
+  return LEGS.flatMap((leg) => (offer[leg] ? [{ kind: "plain", legs: leg, on: checked[leg] }] : []));
+}
+
+/** The offered certificates, with each choice ticked only for the fingerprint shown. */
+export function certificateConsentLines(
+  offer: TrustOffer,
+  ticked: TrustOffer,
+  sameHost: boolean,
+): ConsentLine[] {
+  const both = oneLine(offer, sameHost);
+  if (both !== null)
+    return [
+      { kind: "certificate", legs: "both", on: ticked.imap === both && ticked.smtp === both, sha256: both },
+    ];
+  return LEGS.flatMap((leg) => {
+    const sha256 = offer[leg];
+    return sha256 === undefined
+      ? []
+      : [{ kind: "certificate", legs: leg, on: ticked[leg] === sha256, sha256 }];
+  });
+}
+
 /** The lines to draw for the servers the form holds now: one for both legs where they are one server. */
 export function linesOf(consents: Consents, now: HostsNow): ConsentLine[] {
   const both = oneHost(now);
-  const lines: ConsentLine[] = [];
   const plain = plainNow(consents, now);
-  if (both && (plain.offer.imap || plain.offer.smtp))
-    lines.push({ kind: "plain", legs: "both", on: plain.checked.imap && plain.checked.smtp });
-  else
-    for (const leg of LEGS)
-      if (plain.offer[leg]) lines.push({ kind: "plain", legs: leg, on: plain.checked[leg] });
   const trust = trustNow(consents, now);
-  const one = oneLine(trust.offer, both);
-  if (one !== null)
-    lines.push({
-      kind: "certificate",
-      legs: "both",
-      sha256: one,
-      on: trust.ticked.imap === one && trust.ticked.smtp === one,
-    });
-  else
-    for (const leg of LEGS) {
-      const sha256 = trust.offer[leg];
-      if (sha256 !== undefined)
-        lines.push({ kind: "certificate", legs: leg, sha256, on: trust.ticked[leg] === sha256 });
-    }
-  return lines;
+  return [
+    ...plaintextConsentLines(plain.offer, plain.checked, both),
+    ...certificateConsentLines(trust.offer, trust.ticked, both),
+  ];
 }
 
 /**

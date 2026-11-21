@@ -6,7 +6,8 @@
  */
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { foldLineOf } from "@ohmail/app-logic/touch";
-import { NONE, type Signal } from "../host/index.js";
+import { NONE } from "../host/contract.js";
+import type { Signal } from "../host/signals.js";
 import { useFrame, useRailOpen } from "./commands.js";
 import { useSignal } from "./feeds.js";
 import "./foot.css";

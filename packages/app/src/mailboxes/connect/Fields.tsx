@@ -153,7 +153,7 @@ export function Credentials({ d }: { d: Drawn }): ReactNode {
   return (
     <FieldStack>
       {subject !== null ? <EditFields d={d} /> : <NewFields d={d} />}
-      <Consents form={form} words={mailboxes} />
+      <Consents lines={form.lines} tick={form.tick} words={mailboxes} />
     </FieldStack>
   );
 }

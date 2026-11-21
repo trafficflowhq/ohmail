@@ -106,22 +106,23 @@ function catchBodies(src: string): string[] {
   return bodies;
 }
 
-describe("engine.tsx: the verdict is written in four places and only four", () => {
+describe("engine.tsx: the signed-out verdict is named in five places", () => {
   const src = code(ENGINE);
 
-  it("names `unauthenticated` exactly four times", () => {
+  it("names `unauthenticated` exactly five times", () => {
     /*
-     * The four, and what each one is:
+     * The five, and what each one is:
      *   1. the `Binding` union's own arm — the declaration;
      *   2. no `resolveOwner` at all, so this build cannot ask (the desktop's path);
      *   3. the `none` outcome: the SERVER answered that there is no full session;
      *   4. a confirmed owner that is not the account whose mirror is on screen.
+     *   5. a cold open whose confirmed owner is not the edge's owner of this tab.
      *
-     * A fifth is a claim somebody has to argue for in a diff. `unknown`, a thrown
+     * Another is a claim somebody has to argue for in a diff. `unknown`, a thrown
      * `createEngine`, a rejected classifier: none of those may be here.
      */
     const hits = src.match(/status: "unauthenticated"/g) ?? [];
-    expect(hits, "a writer of the signed-out verdict was added or removed").toHaveLength(4);
+    expect(hits, "a writer of the signed-out verdict was added or removed").toHaveLength(5);
   });
 
   it("writes it in NO `.catch(` block", () => {

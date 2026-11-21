@@ -78,7 +78,7 @@ async function depsWith(entitlementsPort: unknown) {
 }
 
 interface Watched {
-  /** Statements this stream's own handle ran: the admission, the first read, one per poll. */
+  /** Statements this stream's own handle ran: the admission, the address check, the first read, one per poll. */
   reads(): number;
   text(): string;
   closedAt(): number | null;
@@ -127,7 +127,7 @@ async function watch(deps: ApiDeps, token: string): Promise<Watched> {
     stop: async () => { await reader.cancel().catch(() => undefined); await ended; },
   };
   watching.push(w);
-  await until(() => reads >= 3 || closedAt !== null, 20 * POLL_MS);
+  await until(() => text.includes("event: ready\n") || closedAt !== null, 20 * POLL_MS);
   expect(closedAt, "the stream ended before its first poll").toBeNull();
   return w;
 }

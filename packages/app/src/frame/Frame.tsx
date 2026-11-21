@@ -27,7 +27,8 @@ import { FocusFollows, KeymapContext, useKeymapStore, ZoneCursor } from "@ohmail
 import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
 import { goCompose } from "@ohmail/app-logic/writing/compose-door";
 import { beginSwitch, placeSwitchKey } from "@ohmail/app-logic/session/ui-vitals";
-import { NONE, type LinkedDraft } from "../host/index.js";
+import { NONE } from "../host/contract.js";
+import type { LinkedDraft } from "../host/signals.js";
 import { useText } from "../text/index.js";
 import { FrameContext, type EnteredTarget, type FrameInner } from "./commands.js";
 import {
@@ -58,7 +59,7 @@ import { useRouteMemory } from "./route-memory.js";
 import { fragmentOf, hasLetterTail, routeOf } from "./route.js";
 import { Scoped } from "./scope.js";
 import { useStageEntry } from "./stage-entry.js";
-import "../keys/touch-keys.css";
+import "./touch-keys.css";
 import "./placement.css";
 import "./seam.generated.css";
 

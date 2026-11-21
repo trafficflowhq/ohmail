@@ -1,12 +1,14 @@
 "use client";
 
 import { leaveForManagePage } from "./manage-navigation";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { SettingsRow, SettingsSection } from "@ohmail/ui";
-import { account, accessFeedFor, apiConfigured, onAccessFeed } from "../../api-client";
-import { SELF_HOST_BUILD } from "../../hello";
-import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { Button } from "@ohmail/ui/base";
+import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
+import { account } from "../../api-client";
+import { useManageOffer } from "./use-manage-offer";
+
+export { useManageOffer };
 
 /**
  * The subscription pane — one control, and nothing else. Whoever operates this service holds the plan,
@@ -50,49 +52,14 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
   }, [onNowhere, lang]);
 
   return (
-    <SettingsSection>
-      {failed ? <p className="acct-warn" role="alert">{t("subscriptionManageFailed")}</p> : null}
-      <SettingsRow
-        label={t("subscription")}
-        control={
-          /* A BUTTON, not the anchor this row used to be: there is no address until the press has
-             been answered, and an anchor with nowhere to point is the control this pane exists to
-             avoid. */
-          <button type="button" className="btn" disabled={busy} onClick={() => { void press(); }}>
-            {t("subscriptionManage")}
-          </button>
-        }
-      />
-    </SettingsSection>
+    <SettingsSheet>
+      {failed ? <p className="oh-text" role="alert">{t("subscriptionManageFailed")}</p> : null}
+      <SettingLine label={t("subscription")} narrow="detail">
+        {/* The link is minted by this press, so the control stays a button. */}
+        <Button kind="quiet" size="s" icon="go" disabled={busy} onPress={() => { void press(); }}>
+          {t("subscriptionManage")}
+        </Button>
+      </SettingLine>
+    </SettingsSheet>
   );
-}
-
-/**
- * DOES THIS DEPLOYMENT OPERATE A SUBSCRIPTION PAGE FOR THIS ACCOUNT — the offer, not the address.
- * It FOLLOWS THE ACCESS FEED (`api-client.ts`): every answer this tab receives, whoever asked, so
- * a read that failed at mount is healed by the next one — the account strip asks on every return
- * to the tab — and a failed read, which publishes nothing, can never take the pane away. `false`
- * for a self-hosted or unmetered install, a demo, and before the first answer: DO NOT OFFER THE
- * PANE, since the alternative is a nav entry above an empty pane. `withdraw` is the press's other
- * outcome: a mint with nowhere to go takes the pane with it for this mount.
- */
-export function useManageOffer(demo: boolean): { manageOffered: boolean; withdrawManage: () => void } {
-  const entry = useSyncExternalStore(onAccessFeed, () => accessFeedFor(readOwner()), () => null);
-  const [asking, setAsking] = useState(false);
-  const [withdrawn, setWithdrawn] = useState(false);
-  useEffect(() => {
-    // The landing page's mailbox reaches no server and has no account to ask about.
-    // SELF_HOST_BUILD: `metered` stopped meaning "subscription page exists" the day the
-    // self-host table declared its explicit mailbox allowance (`routes/self-host.ts`) —
-    // `accessFor` answers non-null there, so this read would offer a Manage control on a
-    // box with nothing to manage. Billing UI never reaches a self-host surface;
-    // compiled away on managed builds like every other SELF_HOST_BUILD branch.
-    if (SELF_HOST_BUILD || demo || !apiConfigured()) return;
-    setAsking(true);
-    // The first paint joins the shell's own read, or asks it; the feed carries the answer here.
-    void account.access().catch(() => { /* no answer is no offer; the next one brings it */ });
-    return () => { setAsking(false); };
-  }, [demo]);
-  const withdrawManage = useCallback(() => { setWithdrawn(true); }, []);
-  return { manageOffered: asking && entry !== null && entry.answer.metered && !withdrawn, withdrawManage };
 }

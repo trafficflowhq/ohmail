@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { viewOnlyOf, type CalendarConnectionRecord, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useKeyBindings } from "@ohmail/app-logic/keys";
-import { useCalendarGuest, useFrame, type CalendarGuest } from "../frame/commands.js";
+import { useCalendarDraftSeed, useFrame, type CalendarDraftSeed } from "../frame/commands.js";
 import { fragmentOf } from "../frame/route.js";
 import { isCalendarPlace } from "../frame/product.js";
 import { useText } from "../text/index.js";
@@ -9,9 +9,9 @@ import { NONE } from "../host/index.js";
 
 const noChanges = () => () => undefined;
 
-export function useNewEvent(withGuest?: CalendarGuest) {
+export function useNewEvent(seed?: CalendarDraftSeed) {
   const { host, route, commands } = useFrame();
-  const guest = useCalendarGuest();
+  const draftSeed = useCalendarDraftSeed();
   const port = host.wires.calendar;
   const canCreate = useSyncExternalStore(
     port === NONE ? noChanges : port.subscribe,
@@ -45,9 +45,9 @@ export function useNewEvent(withGuest?: CalendarGuest) {
         ...(from !== undefined && to !== undefined && { slot: `${from}-${to}` }),
       },
     };
-    if (guest) guest.current = withGuest ?? null;
+    if (draftSeed) draftSeed.current = seed ?? null;
     commands.go(target, { history: "open-dialog" });
-    if (guest && host.device.address.read() !== fragmentOf(target)) guest.current = null;
+    if (draftSeed && host.device.address.read() !== fragmentOf(target)) draftSeed.current = null;
   };
 }
 

@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { Dialog } from "@ohmail/ui/base";
 import { useConnectForm } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
 import { NONE } from "../../host/contract.js";
-import { useDraftLeave } from "../../settings/use-draft-leave.js";
+import { useDraftLeave } from "../../host/use-draft-leave.js";
 import { useTextLookup } from "../../text/index.js";
 import type { ConnectFormProps, ConnectSubject } from "./contract.js";
 import type { Drawn } from "./drawn.js";

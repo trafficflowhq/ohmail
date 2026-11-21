@@ -1,12 +1,13 @@
 import { useState, type MouseEvent } from "react";
 import { DatePicker } from "./DatePicker.js";
-import { Menu, MenuItem } from "@ohmail/ui/base";
+import { Menu, MenuItem, SuggestionCredit, SuggestionList } from "@ohmail/ui/base";
 import { EventForm, type CalendarTone, type EventFormProps, type EventFormRow } from "@ohmail/ui/calendar";
-import { addDays, dayShort, type CalendarRecord } from "@ohmail/app-logic/calendar";
+import { addDays, clockOf, dayShort, readQuickEntry, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useLocale, useText, type Text } from "../text/index.js";
 import { ZoneMenu } from "./ZoneMenu.js";
 import { useEditorRows, type EditorRows } from "./use-editor-rows.js";
-import { zoneName } from "./zone-names.js";
+import { zoneForCity, zoneName } from "./zone-names.js";
+import { PLACE_CREDIT, useMaps, usePlaceSuggestions } from "./use-place-suggestions.js";
 import { endDayOf, type EventDraft } from "./event-draft.js";
 
 interface Props {
@@ -17,6 +18,7 @@ interface Props {
   readonly choices: readonly CalendarRecord[];
   readonly choose?: (id: string) => void;
   readonly edit?: EditorRows;
+  readonly proposedGuest?: { name: string; take: () => void };
   readonly fixedTime?: string;
   readonly timeZone?: string;
   readonly change: (edit: Partial<EventDraft>) => void;
@@ -101,6 +103,8 @@ function optionalRow(
   draft: EventDraft,
   change: Props["change"],
   t: Text,
+  place?: ReturnType<typeof usePlaceSuggestions>,
+  maps?: ReturnType<typeof useMaps>,
 ): EventFormRow[] {
   const value = draft[id];
   if (value === null) return [];
@@ -114,10 +118,22 @@ function optionalRow(
           value,
           label: t(`create.${id}`),
           onChange: (next: string) => change({ [id]: next }),
+          ...(id === "place" && place ? { suggests: place.field, ref: place.anchor } : {}),
         },
+        ...(maps
+          ? [{ kind: "link" as const, text: maps.label, title: maps.title, onPress: maps.onPress }]
+          : []),
       ],
     },
   ];
+}
+
+function inviteeRows(rows: EventFormRow[], guest: Props["proposedGuest"], t: Text): EventFormRow[] {
+  if (!guest) return rows;
+  const slot = { kind: "take" as const, label: guest.name, value: guest.name, onPress: guest.take };
+  return rows.length
+    ? rows.map((row) => ({ ...row, items: [...row.items, slot] }))
+    : [{ id: "invitees", icon: "people", items: [{ kind: "word", text: t("edit.invite") }, slot] }];
 }
 
 type MenuAnchor = { kind: "date" | "end" | "calendar" | "busy" | "zone"; anchor: HTMLElement };
@@ -135,17 +151,24 @@ export function DraftFields({
   fixedTime,
   timeZone,
   edit,
+  proposedGuest,
 }: Props) {
   const t = useText("calendar");
   const locale = useLocale();
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
   const details = useEditorRows(draft, change, edit);
+  const places = usePlaceSuggestions(draft.place, (place) => change({ place }));
+  const maps = useMaps(draft.place);
   const rows: EventFormRow[] = [
     fixedTime
       ? { id: "when", icon: "clock", items: [{ kind: "word", text: fixedTime }] }
       : whenRow({ draft, today, change }, t, locale, menu, setMenu, timeZone),
   ];
-  rows.push(...details.beforePlace, ...optionalRow("place", draft, change, t), ...details.afterPlace);
+  rows.push(
+    ...inviteeRows(details.beforePlace, proposedGuest, t),
+    ...optionalRow("place", draft, change, t, places, maps),
+    ...details.afterPlace,
+  );
   rows.push({
     id: "calendar",
     mark: tone,
@@ -165,7 +188,7 @@ export function DraftFields({
             label: t("create.calendar"),
             value: calendar?.name ?? "",
           },
-      edit
+      edit && !choose
         ? {
             kind: "slot",
             label: t("create.showAs"),
@@ -177,7 +200,7 @@ export function DraftFields({
       {
         kind: "toggle",
         label: t("create.private"),
-        icon: edit ? "lock" : undefined,
+        icon: edit && !choose ? "lock" : undefined,
         on: draft.private,
         onChange: (value) => change({ private: value }),
       },
@@ -214,6 +237,17 @@ export function DraftFields({
         submit={submit}
         cancel={cancel}
       />
+      {draft.place !== null && (
+        <SuggestionList
+          {...places.list}
+          label={t("location.suggestions")}
+          foot={
+            places.credit ? (
+              <SuggestionCredit href={PLACE_CREDIT}>{t("location.credit")}</SuggestionCredit>
+            ) : null
+          }
+        />
+      )}
       {details.menu}
       {menu && (
         <DraftMenus {...{ draft, today, calendar, choices, choose, change, menu, setMenu, timeZone }} />
@@ -305,4 +339,32 @@ function DraftMenus({
       )}
     </>
   );
+}
+
+export type NewEventDraft = EventDraft & { readonly typed?: true };
+const DAY_MINUTES = 24 * 60;
+
+export function readDraftEntry(written: NewEventDraft, today: string) {
+  const read = written.typed && readQuickEntry(written.title, { today, zoneOf: zoneForCity });
+  if (!read) return null;
+  const day = read.day ?? written.day;
+  const end = read.to ?? 0;
+  const endDay = read.endDay ?? day;
+  const draft: NewEventDraft = {
+    ...written,
+    title: read.title,
+    day,
+    ...(read.from === undefined
+      ? read.day && { endDay: read.endDay ?? null }
+      : {
+          from: clockOf(read.from),
+          to: clockOf(end % DAY_MINUTES),
+          endDay: end >= DAY_MINUTES ? addDays(endDay, Math.floor(end / DAY_MINUTES)) : (read.endDay ?? null),
+        }),
+    allDay: read.allDay ?? written.allDay,
+    place: read.place ?? written.place,
+    zone: read.zone ?? written.zone,
+    alarms: read.alert === undefined ? written.alarms : [read.alert],
+  };
+  return { draft, marks: read.marks, guest: read.guest };
 }

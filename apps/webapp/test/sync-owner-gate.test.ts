@@ -31,6 +31,7 @@ import {
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as scan from "../../../scripts/lib/source-scan.mjs";
+import { createEngine } from "../app/shell/engine-config.js";
 import {
   ForeignSessionError,
   BACKOFF_CAP_MS,
@@ -40,6 +41,7 @@ import {
   WAKE_SAFETY_POLL_MS,
   WAKE_STREAM_CLOSED,
   createSyncGate,
+  confirmSyncOwner,
   registerSyncGate,
   startSyncScheduler,
   syncIdentityOf,
@@ -831,6 +833,7 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     fetchBodies: async () => { reads.push("fetchBodies"); return []; },
     searchServer: async () => { reads.push("searchServer"); return { messages: [], nextCursor: null }; },
     searchPlaces: async () => { reads.push("searchPlaces"); return [{ folder: "Archive/Reports", count: 28 }]; },
+    suggestPlaces: async () => { reads.push("suggestPlaces"); return { state: "off", places: [], credit: null }; },
     listMessages: async () => { reads.push("listMessages"); return { messages: [], nextCursor: null }; },
     requestPull: async () => { reads.push("requestPull"); return { ok: true }; },
     reportSyncFailure: async () => { reads.push("reportSyncFailure"); },
@@ -880,7 +883,7 @@ describe("a CONTRADICTED browser reads nothing either", () => {
    * wrapper. A forward deleted from the literal reddens here by name; a capability added to
    * `EngineAdapter` and forgotten by the wrapper reddens here on its first day.
    */
-  it("forwards every capability the adapter declares", () => {
+  it("forwards every capability the adapter declares", async () => {
     setOwnerCookie(A);
     const gate = createSyncGate(A);
     const guarded = gate.guard(capabilities() as never) as unknown as Record<string, unknown>;
@@ -890,6 +893,27 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     expect(DECLARED, "a name no source declares reached the derived set").not.toContain("transport");
     const missing = DECLARED.filter((k) => typeof guarded[k] !== "function");
     expect(missing, "the gate drops a capability the engine binds").toEqual([]);
+
+    const question = { text: "Library", lang: "en" } as const;
+    const answer = {
+      state: "ok",
+      places: [{ kind: "venue", first: "Library", second: "Central district", country: null, lat: 0, lon: 0 }],
+      credit: "osm",
+    };
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json(answer));
+    const engine = createEngine(false, { NEXT_PUBLIC_API_BASE: "/api" }, A, "places");
+    confirmSyncOwner(engine, A);
+
+    expect(await engine.suggestPlaces(question)).toEqual(answer);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenLastCalledWith(
+      "/api/calendar/places/suggest",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(question) }),
+    );
+
+    setOwnerCookie(B);
+    expect(await engine.suggestPlaces(question)).toEqual({ state: "failed", places: [], credit: null });
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   /**

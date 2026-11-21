@@ -95,8 +95,8 @@ async function underTheShell(locale: "en" | "de", node: React.ReactElement): Pro
 describe("a request that got no answer is said in the reader's language (R20-01)", () => {
   it("Settings → Account, offline, in German", async () => {
     offline();
-    const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-    const text = (await underTheShell("de", h(AccountSection))).textContent ?? "";
+    const { LiveAccountPane } = await import("./fixtures/live-account-pane");
+    const text = (await underTheShell("de", h(LiveAccountPane))).textContent ?? "";
     expect(text).toContain(de.session.refusedOffline);
     expect(text).not.toContain(en.session.refusedOffline);
   });
@@ -112,8 +112,8 @@ describe("a request that got no answer is said in the reader's language (R20-01)
 
   it("control: in English the same panes say the English sentence", async () => {
     offline();
-    const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-    expect((await underTheShell("en", h(AccountSection))).textContent).toContain(en.session.refusedOffline);
+    const { LiveAccountPane } = await import("./fixtures/live-account-pane");
+    expect((await underTheShell("en", h(LiveAccountPane))).textContent).toContain(en.session.refusedOffline);
   });
 
   it("control: with no catalogue handed over yet, the client's own words are the catalogue's English", async () => {

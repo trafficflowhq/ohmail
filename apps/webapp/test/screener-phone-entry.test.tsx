@@ -100,9 +100,9 @@ it("a touch on the sender address opens the full held letter", async () => {
   expect(within(document.body).getByRole("dialog", { name: `Options for ${name}` }).textContent).toContain(address);
 });
 
-it("a touch on the sender avatar opens the same full held letter", async () => {
+it("a touch on the sender avatar selects the held letter", async () => {
   const { shell, row } = await mount();
-  const avatar = within(row).getByRole("button", { name: "Select the message" });
+  const avatar = within(row.closest(".oh-row-slot") as HTMLElement).getByRole("button", { name: "Select the message" });
   await tap(avatar);
   expect(shell.getByRole("listbox", { name: "Screener" })).toBeTruthy();
   expect(row.getAttribute("aria-selected")).toBe("true");

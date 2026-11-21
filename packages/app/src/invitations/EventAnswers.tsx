@@ -11,21 +11,21 @@ import { useKnownOwnAddresses } from "../frame/room.js";
 import { useText } from "../text/index.js";
 import { AnswerChoices } from "./AnswerChoices.js";
 
-export function EventAnswers({ port, recordId }: { readonly port: CalendarPort; readonly recordId: string }) {
+export function useInvitationAnswer(port: CalendarPort) {
   const { host } = useFrame();
   const addresses = useKnownOwnAddresses();
   const own = useMemo(() => addresses && new Set(addresses.map((a) => a.trim().toLowerCase())), [addresses]);
   const report = useReport();
   const e = useText("event");
-  const pending = useRef<symbol | null>(null);
+  const pending = useRef(new Map<string, symbol>());
   useLayoutEffect(
     () => () => {
-      pending.current = null;
+      pending.current.clear();
     },
-    [port, recordId, host.engine],
+    [port, host.engine],
   );
 
-  const invitation = () => {
+  const invitation = (recordId: string) => {
     if (own === null) return null;
     const record = port.events().find((item) => item.record.id === recordId)?.record;
     if (!record || record.heldBack || record.status === "cancelled" || !invitedByOthers(record, own))
@@ -38,20 +38,33 @@ export function EventAnswers({ port, recordId }: { readonly port: CalendarPort; 
     );
     return viewOnlyOf(calendar, connection) ? null : record;
   };
-  const answer = async (value: InvitationAnswer) => {
-    const current = invitation();
-    if (pending.current !== null || !current || current.myAnswer === value) return;
+  const answer = async (recordId: string, value: InvitationAnswer) => {
+    const current = invitation(recordId);
+    if (pending.current.has(recordId) || !current?.myAnswer || current.myAnswer === value) return;
     const request = Symbol();
-    pending.current = request;
+    pending.current.set(recordId, request);
     try {
       const outcome = await pressAnswer(port, { recordId }, value);
-      if (pending.current === request && outcome.pressed && outcome.say !== null) report(e(outcome.say));
+      if (pending.current.get(recordId) === request && outcome.pressed && outcome.say !== null)
+        report(e(outcome.say));
     } catch {
-      if (pending.current === request) report(e("refusal.unknown"));
+      if (pending.current.get(recordId) === request) report(e("refusal.unknown"));
     } finally {
-      if (pending.current === request) pending.current = null;
+      if (pending.current.get(recordId) === request) pending.current.delete(recordId);
     }
   };
-  const record = invitation();
-  return record?.myAnswer ? <AnswerChoices on="sheet" answer={record.myAnswer} onAnswer={answer} /> : null;
+  return { invitation, answer };
+}
+
+export type InvitationActions = ReturnType<typeof useInvitationAnswer>;
+
+export function EventAnswers({ reply, recordId }: { reply: InvitationActions; recordId: string }) {
+  const record = reply.invitation(recordId);
+  return record?.myAnswer ? (
+    <AnswerChoices
+      on="sheet"
+      answer={record.myAnswer}
+      onAnswer={(value) => void reply.answer(recordId, value)}
+    />
+  ) : null;
 }

@@ -14,6 +14,8 @@ export interface SettingNoteProps {
   children: string | readonly SettingNotePart[];
   /** It warns: the warning sign leads it, and it is said when it appears. */
   warn?: boolean;
+  /** Keep a warning readable in place without announcing it when the note appears. */
+  silent?: boolean;
   /** It says that something is being read: said when it appears, and gone when the lines it stands for arrive. */
   busy?: boolean;
   /**
@@ -26,9 +28,9 @@ export interface SettingNoteProps {
 }
 
 /** A note on a sheet of settings: the second ink, under the line it is about, at a reading measure. */
-export function SettingNote({ id, children, warn, busy, said }: SettingNoteProps) {
+export function SettingNote({ id, children, warn, silent, busy, said }: SettingNoteProps) {
   const parts = typeof children === "string" ? [children] : children;
-  const live = Boolean(warn || busy || said);
+  const live = Boolean((warn && !silent) || busy || said);
   /* Said when it appears: by a change inside the region once it stands, never by arriving full. */
   const held = useSaidOnArrival(live);
   return (

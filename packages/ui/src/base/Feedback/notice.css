@@ -50,6 +50,9 @@
     flex-wrap: wrap;
     gap: var(--s1);
   }
+  .oh-notice-related {
+    margin-top: var(--s1);
+  }
   :root[data-face="ohmarchy"] .oh-notice[data-place="rail"] {
     --oh-notice-ring: var(--oh-ring-btn);
   }

@@ -155,7 +155,7 @@ async function hostOf(selfHost: boolean, server = { pairing: true, remoteImages:
 
 describe("the web's host, read back as today's inputs", () => {
   it("hands every hosted wire as the shared file's own object, and the managed service's words", async () => {
-    const { inputs, mailboxFacts, factories } = await inputsOf(false);
+    const { host, read: { inputs, mailboxFacts, factories } } = await hostOf(false);
     const junk = await import("../../app/(product)/mailbox/junk-wire");
     const trash = await import("../../app/shell/trash-window");
     const draft = await import("../../app/(product)/mailbox/draft-reply-wire");
@@ -217,7 +217,10 @@ describe("the web's host, read back as today's inputs", () => {
     expect(inputs.devicesSection).toBeDefined();
     expect(inputs.invitesSection).toBeUndefined();
     // Settings' panes the web fills itself: its Mailboxes (with the filings and the self-check) and About.
+    const { WEB_PANE_PARTS } = await import("../../app/(product)/mailbox/pane-parts");
     expect(inputs.mailboxSection).toBeDefined();
+    expect(host.features.mailboxes).not.toBe(NONE);
+    expect(WEB_PANE_PARTS.mailboxes).not.toBe(NONE);
     expect(inputs.aboutSection).toBeDefined();
     expect(inputs.accountSection).toBeDefined();
     expect(inputs.screeningSection).toBeDefined();

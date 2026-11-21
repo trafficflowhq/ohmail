@@ -2,7 +2,7 @@
 
 /**
  * Settings → Devices — pair another device with this account, see what is signed in, take one back. Two decisions: a
- * stale step-up window is a ceremony, not a dead end — `step_up_required` parks the verb, opens {@link StepUpPrompt}
+ * stale step-up window is a ceremony, not a dead end — `step_up_required` parks the verb, opens {@link StepUp}
  * and re-runs it, and the sign-in-again sentence survives only for a genuinely dead session; plain browser sessions
  * collapse into one group ("N other web sessions"), keyed on the server's `named` discriminator and offered only
  * where `/hello` says the bulk route is mounted.
@@ -33,7 +33,8 @@ import type { ToastFn } from "@ohmail/app-logic/press/report";
 import { useReport } from "@ohmail/app/frame";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
+import { Button, CodeText, CodeTile, Field, RefusalLine } from "@ohmail/ui/base";
+import { SettingActs, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { devicesOf } from "@ohmail/client-engine";
 import { useEngineOrNull } from "@ohmail/app-logic/engine/context";
 import { showDevicesListed, type ToldDevices } from "@ohmail/app-logic/notices/use-notices";
@@ -45,7 +46,7 @@ import { ALLOWED_API_ORIGINS } from "../../api-origin";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { useServerWords } from "../../server-words";
 import { QrCode } from "../../shell/QrCode";
-import { StepUpPrompt } from "./StepUpPrompt";
+import { StepUp } from "./StepUp";
 
 /**
  * Should this client offer the Devices pane? One gate, the server's own runtime word — `features.pairing` from
@@ -107,7 +108,7 @@ export function DevicesSection({ report }: { report: ToastFn }) {
    * dropped. This is the repair for the pane's one dead end: the old answer was "sign in
    * again", a full round trip for someone already in their mailbox.
    */
-  const [stepUp, setStepUp] = useState<{ kind: Exclude<Busy, null>; fn: () => Promise<void> } | null>(null);
+  const [stepUp, setStepUp] = useState<{ kind: Exclude<Busy, null>; fn: () => Promise<void>; opener: HTMLElement | null } | null>(null);
   /**
    * A factor landed after the prompt's Cancel and was discarded, so the parked verb never ran.
    * Said HERE rather than in the prompt: Cancel hands the pane back, so by the time the response
@@ -208,15 +209,16 @@ export function DevicesSection({ report }: { report: ToastFn }) {
 
   /**
    * A step-up-gated call, and the refusal that used to dead-end is now a ceremony:
-   * `step_up_required` PARKS the action and opens the inline factor prompt
-   * ({@link StepUpPrompt}); a verified factor re-runs the exact action, in place, with the
+   * `step_up_required` PARKS the action and opens the factor dialog
+   * ({@link StepUp}); a verified factor re-runs the exact action, in place, with the
    * session the browser already holds. Every OTHER refusal keeps `InvitesSection.run`'s
    * honesty — said, never swallowed — and a genuinely dead session (a plain 401) still gets
    * the sign-in-again sentence, because for that one the round trip IS the remedy. A second
    * `step_up_required` after a verified factor is that sentence too, never a second prompt.
    */
   const run = useCallback(
-    (kind: Exclude<Busy, null>, fn: () => Promise<void>, verified = false) => {
+    (kind: Exclude<Busy, null>, fn: () => Promise<void>, verified = false, press?: HTMLElement) => {
+      const opener = press ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
       void (async () => {
         setBusy(kind);
         setError(null);
@@ -227,7 +229,7 @@ export function DevicesSection({ report }: { report: ToastFn }) {
         } catch (err) {
           if (!alive.current) return;
           if (err instanceof ApiError && err.status === 403 && err.code === "step_up_required" && !verified) {
-            setStepUp({ kind, fn });
+            setStepUp({ kind, fn, opener });
           } else {
             setError(
               err instanceof ApiError && (err.status === 401 || err.status === 403)
@@ -243,7 +245,7 @@ export function DevicesSection({ report }: { report: ToastFn }) {
     [t, sentence],
   );
 
-  const mint = () =>
+  const mint = (press?: HTMLElement) =>
     run("mint", async () => {
       const label = labelDraft.trim();
       const out = await pair.mintDevice(label ? { label } : {});
@@ -253,9 +255,9 @@ export function DevicesSection({ report }: { report: ToastFn }) {
       setMinted({ id: out.id, link: `${pairOrigin()}/pair#${out.token}`, label: out.label });
       setLabelDraft("");
       await refresh();
-    });
+    }, false, press);
 
-  const revokeCode = (id: string) =>
+  const revokeCode = (id: string, press: HTMLElement) =>
     run(`revoke:${id}`, async () => {
       try {
         await pair.revoke(id);
@@ -272,26 +274,26 @@ export function DevicesSection({ report }: { report: ToastFn }) {
       setMinted((cur) => (cur && cur.id === id ? null : cur));
       report(t("revoked"));
       await refresh();
-    });
+    }, false, press);
 
-  const removeDevice = (id: string) =>
+  const removeDevice = (id: string, press: HTMLElement) =>
     run(`remove:${id}`, async () => {
       await devicesApi.revoke(id);
       if (!alive.current) return;
       setRemoving(null);
       report(t("removed"));
       await refresh();
-    });
+    }, false, press);
 
   /** The collapsed group's one verb — every other plain web session, signed out in one act. */
-  const revokeGroup = () =>
+  const revokeGroup = (press: HTMLElement) =>
     run("web-group", async () => {
       const { revoked } = await devicesApi.revokeWebSessions();
       if (!alive.current) return;
       setConfirmingGroup(false);
       report(t("webGroupDone", { count: revoked }));
       await refresh();
-    });
+    }, false, press);
 
   const copy = () => {
     if (!minted) return;
@@ -339,26 +341,21 @@ export function DevicesSection({ report }: { report: ToastFn }) {
   const visibleRows = [...(current ? [current] : []), ...individualOthers];
 
   return (
-    <SettingsSection className="acct">
-      <h2 className="acct-h">{t("title")}</h2>
-      <p className="acct-lead">{t("intro")}</p>
+    <>
+    <SettingsSheet title={t("title")}>
+      <SettingNote>{t("intro")}</SettingNote>
 
       {error ? (
-        <p className="acct-warn" role="alert">
-          {error}
-        </p>
+        <RefusalLine alert>{error}</RefusalLine>
       ) : null}
       {stepUpDiscarded ? (
-        <p className="acct-warn" role="status">
-          {t("stepUpCancelledNothingRan")}
-        </p>
+        <SettingNote said>{t("stepUpCancelledNothingRan")}</SettingNote>
       ) : null}
 
       {stepUp ? (
-        // The inline ceremony. It REPLACES the add-a-device block below while it runs (one
-        // call to action at a time); the lists stay visible, because the person is deciding
-        // about exactly those rows. A verified factor re-runs the parked verb unchanged.
-        <StepUpPrompt
+        <StepUp
+          inline
+          returnFocus={() => stepUp.opener}
           onVerified={() => {
             const parked = stepUp;
             setStepUp(null);
@@ -369,89 +366,69 @@ export function DevicesSection({ report }: { report: ToastFn }) {
         />
       ) : null}
 
-      {stepUp ? null : minted ? (
-        <div className="acct-confirm">
-          <p className="acct-lead">
+      {minted ? (
+        <>
+          <SettingNote>
             {minted.label ? t("mintedLeadFor", { name: minted.label }) : t("mintedLead")}
-          </p>
-          <div className="join-qr">
+          </SettingNote>
+          <CodeTile>
             <QrCode value={minted.link} ariaLabel={t("qrAria")} />
-          </div>
+          </CodeTile>
           {/* The raw link, FOR TYPED ENTRY, beside the QR — a device without a camera path
               types this into the app's server field. Selectable in one press; broken anywhere
               because a pairing token has no natural word boundary. */}
-          <p className="set-note-inline">{t("typedEntry")}</p>
-          <p
-            className="set-note-inline"
-            style={{ wordBreak: "break-all", userSelect: "all", fontFamily: "var(--font-mono, monospace)" }}
-            data-testid="pair-link"
-          >
-            {minted.link}
-          </p>
-          <div className="acct-actions">
-            <Button variant="primary" onClick={copy}>
+          <p className="oh-text">{t("typedEntry")}</p>
+          <div data-testid="pair-link"><CodeText>{minted.link}</CodeText></div>
+          <SettingActs>
+            <Button kind="quiet" size="s" icon="copy" onPress={copy}>
               {t("copyLink")}
             </Button>
             {/* Done re-reads the lists: in the ordinary scan-then-Done sequence the code was
                 just consumed and the paired device just appeared. */}
             <Button
-              onClick={() => {
+              onPress={() => {
                 setMinted(null);
                 void refresh();
               }}
             >
               {t("mintedDone")}
             </Button>
-          </div>
-          <p className="acct-fine">{t("mintedOnce")}</p>
-        </div>
+          </SettingActs>
+          <p className="oh-text">{t("mintedOnce")}</p>
+        </>
       ) : (
         <>
           {/* The add-a-device row — the Invites mint's shape: the (optional) name is the one
               input, the button is the verb, Enter submits. */}
-          <div className="set-row set-tag-edit invites-mint">
-            <input
-              className="join-input set-tag-input"
-              value={labelDraft}
-              placeholder={t("addFor")}
-              aria-label={t("addFor")}
-              maxLength={100}
-              onChange={(e) => setLabelDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  if (busy === null) mint();
-                }
-              }}
-            />
-            <span className="set-tag-acts">
-              <Button variant="primary" onClick={mint} disabled={busy === "mint"}>
-                {busy === "mint" ? t("working") : t("addAction")}
-              </Button>
-            </span>
-          </div>
-          <p className="set-note-inline">{t("addHint")}</p>
+          <Field
+            bare label={t("addFor")} placeholder={t("addFor")} value={labelDraft}
+            maxLength={100} onChange={setLabelDraft} onEnter={() => { if (busy === null) mint(); }}
+          />
+          <SettingActs>
+            <Button onPress={(event) => mint(event.currentTarget)} busy={busy === "mint"}>
+              {busy === "mint" ? t("working") : t("addAction")}
+            </Button>
+          </SettingActs>
+          <SettingNote>{t("addHint")}</SettingNote>
         </>
       )}
 
+    </SettingsSheet>
+
       {codes.length > 0 ? (
-        <>
-          <SettingsSubhead>{t("codesTitle")}</SettingsSubhead>
+        <SettingsSheet title={t("codesTitle")} aside={codes.length}>
           {codes.map((c) => (
-            <SettingsRow
+            <SettingLine
               key={c.id}
               label={c.label || t("codeFallback")}
               description={t("codeMeta", { time: clock(c.expiresAt) })}
-              control={
-                <span className="acct-row-act">
-                  <Button onClick={() => revokeCode(c.id)} disabled={busy === `revoke:${c.id}`}>
+            >
+                  <Button kind="quiet" size="s" onPress={(event) => revokeCode(c.id, event.currentTarget)} busy={busy === `revoke:${c.id}`}>
                     {busy === `revoke:${c.id}` ? t("working") : t("revoke")}
                   </Button>
-                </span>
-              }
-            />
+            </SettingLine>
           ))}
-        </>
+        </SettingsSheet>
       ) : null}
 
       {items == null ? (
@@ -461,29 +438,27 @@ export function DevicesSection({ report }: { report: ToastFn }) {
            surrounding layout never jumps; only the sentence under it swaps. `role="status"` so
            a screen reader hears the wait end. A fetch that FAILED with nothing loaded gets the
            plain sentence and a retry — the top-of-pane `acct-warn` already names the error. */
-        <>
-          <SettingsSubhead>{t("devicesTitle")}</SettingsSubhead>
+        <SettingsSheet title={t("devicesTitle")}>
           {error == null ? (
-            <p className="set-note-inline" role="status">{line("loading", "Loading your devices…")}</p>
+            <p className="oh-text" role="status">{line("loading", "Loading your devices…")}</p>
           ) : (
             <>
-              <p className="set-note-inline">{line("loadFailed", "Your devices could not be loaded.")}</p>
-              <div className="acct-actions">
+              <p className="oh-text">{line("loadFailed", "Your devices could not be loaded.")}</p>
+              <SettingActs>
                 <Button
-                  onClick={() => {
+                  onPress={() => {
                     setError(null);
                     void refresh();
                   }}
                 >
                   {line("retry", "Try again")}
                 </Button>
-              </div>
+              </SettingActs>
             </>
           )}
-        </>
+        </SettingsSheet>
       ) : items.length > 0 ? (
-        <>
-          <SettingsSubhead>{t("devicesTitle")}</SettingsSubhead>
+        <SettingsSheet title={t("devicesTitle")} aside={items.length}>
           {/* Current session pinned first, NAMED devices individually, and — where the server
               mounts the bulk verb (`collapseWeb`) — the plain-browser remainder as ONE group
               row with one sign-out. `named === false` is the server's own discriminator; an
@@ -491,28 +466,24 @@ export function DevicesSection({ report }: { report: ToastFn }) {
               list has always rendered. */}
           {visibleRows.map((d) =>
             removing === d.id ? (
-              <SettingsRow
+              <SettingLine
                 key={d.id}
                 label={t("removeAsk", { name: nameOf(d) })}
                 description={t("removeWhat")}
-                control={
-                  <span className="set-tag-acts">
+              >
                     <Button
-                      variant="primary"
-                      className="danger"
-                      onClick={() => removeDevice(d.id)}
-                      disabled={busy === `remove:${d.id}`}
+                      kind="ink"
+                      onPress={(event) => removeDevice(d.id, event.currentTarget)}
+                      busy={busy === `remove:${d.id}`}
                     >
                       {busy === `remove:${d.id}` ? t("working") : t("remove")}
                     </Button>
-                    <Button variant="ghost" onClick={() => setRemoving(null)}>
+                    <Button kind="quiet" onPress={() => setRemoving(null)}>
                       {t("cancel")}
                     </Button>
-                  </span>
-                }
-              />
+              </SettingLine>
             ) : (
-              <SettingsRow
+              <SettingLine
                 key={d.id}
                 label={nameOf(d)}
                 description={
@@ -520,55 +491,42 @@ export function DevicesSection({ report }: { report: ToastFn }) {
                     ? t("thisDevice")
                     : t("deviceMeta", { kind: kindWord(d.kind), created: day(d.createdAt), seen: day(d.lastSeenAt) })
                 }
-                control={
-                  // The current session's verb already exists and is called signing out; a
-                  // remove here would be the same action wearing a costume.
-                  d.current ? undefined : (
-                    <span className="acct-row-act">
-                      <Button onClick={() => setRemoving(d.id)}>{t("remove")}</Button>
-                    </span>
-                  )
-                }
-              />
+              >
+                {/* The current session's removal is the sign-out action. */}
+                {d.current ? null : <Button kind="quiet" size="s" onPress={() => setRemoving(d.id)}>{t("remove")}</Button>}
+              </SettingLine>
             ),
           )}
           {groupedWeb.length > 0 ? (
             confirmingGroup ? (
-              <SettingsRow
+              <SettingLine
                 key="web-group-confirm"
                 label={t("webGroupAsk", { count: groupedWeb.length })}
                 description={t("webGroupWhat")}
-                control={
-                  <span className="set-tag-acts">
+              >
                     <Button
-                      variant="primary"
-                      className="danger"
-                      onClick={revokeGroup}
-                      disabled={busy === "web-group"}
+                      kind="ink"
+                      onPress={(event) => revokeGroup(event.currentTarget)}
+                      busy={busy === "web-group"}
                     >
                       {busy === "web-group" ? t("working") : t("webGroupAction")}
                     </Button>
-                    <Button variant="ghost" onClick={() => setConfirmingGroup(false)}>
+                    <Button kind="quiet" onPress={() => setConfirmingGroup(false)}>
                       {t("cancel")}
                     </Button>
-                  </span>
-                }
-              />
+              </SettingLine>
             ) : (
-              <SettingsRow
+              <SettingLine
                 key="web-group"
                 label={t("webGroup", { count: groupedWeb.length })}
                 description={t("webGroupMeta", { seen: day(groupedWeb[0]!.lastSeenAt) })}
-                control={
-                  <span className="acct-row-act">
-                    <Button onClick={() => setConfirmingGroup(true)}>{t("webGroupAction")}</Button>
-                  </span>
-                }
-              />
+              >
+                    <Button kind="quiet" size="s" onPress={() => setConfirmingGroup(true)}>{t("webGroupAction")}</Button>
+              </SettingLine>
             )
           ) : null}
-        </>
+        </SettingsSheet>
       ) : null}
-    </SettingsSection>
+    </>
   );
 }

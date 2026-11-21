@@ -6,7 +6,7 @@
  * An address that names a stage wins over what is owed. Where more than one is owed, the order of the stages' list
  * (`STAGE_IDS`) decides. A stage the host does not hand is stood by nothing.
  */
-import { NONE, type None } from "../host/index.js";
+import { NONE, type None } from "../host/contract.js";
 import type { StageOwing } from "./commands.js";
 import { STAGE_IDS, type CalendarEntry, type FrameHost, type Route, type StageEntry } from "./contract.js";
 import { createFeed, useSignal, type Feed } from "./feeds.js";

@@ -1,5 +1,5 @@
 import type { HostAddress } from "../../host/device.js";
-import { useDraftLeave } from "../use-draft-leave.js";
+import { useDraftLeave } from "../../host/use-draft-leave.js";
 import { awayUnsaved, type AwayRules, type AwayState } from "./model.js";
 
 /** The route part of the Away model. The save only releases it when the stored responder confirms the draft. */

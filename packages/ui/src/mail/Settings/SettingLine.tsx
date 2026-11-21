@@ -7,6 +7,8 @@ import "./setting-line.css";
 export interface SettingLineProps {
   /** The setting's name: the line is a group of that name. With a switch it is the switch's name too. */
   label: string;
+  /** The id of a native form control that takes focus when its label is pressed. */
+  htmlFor?: string;
   /** A sign before the name. */
   icon?: IconName;
   /** What leads the name instead of a sign: a mailbox's circle. */
@@ -21,6 +23,8 @@ export interface SettingLineProps {
   describedBy?: string;
   /** The setting's value as text, at the right. */
   value?: string;
+  /** Expose the value in the accessibility tree without announcing each update. */
+  valueStatus?: boolean;
   /** A figure that ends the line, after its value: a plan's price. */
   figure?: string;
   /** On or off, at once: the line draws its switch, and a press anywhere on the line turns it. */
@@ -52,6 +56,7 @@ const CONTROL = "button, a, input, select, textarea, label, .oh-over";
 export function SettingLine(props: SettingLineProps) {
   const {
     label,
+    htmlFor,
     icon,
     lead,
     tag,
@@ -59,6 +64,7 @@ export function SettingLine(props: SettingLineProps) {
     description,
     describedBy,
     value,
+    valueStatus,
     figure,
     toggle,
     onPress,
@@ -108,6 +114,10 @@ export function SettingLine(props: SettingLineProps) {
           >
             {label}
           </button>
+        ) : htmlFor ? (
+          <label className="oh-settingline-label" id={labelId} htmlFor={htmlFor}>
+            {label}
+          </label>
         ) : (
           <span className="oh-settingline-label" id={labelId}>
             {label}
@@ -117,7 +127,15 @@ export function SettingLine(props: SettingLineProps) {
         {info}
       </span>
       <span className="oh-settingline-value">
-        {value ? <span className="oh-settingline-text">{value}</span> : null}
+        {value ? (
+          <span
+            className="oh-settingline-text"
+            role={valueStatus ? "status" : undefined}
+            aria-live={valueStatus ? "off" : undefined}
+          >
+            {value}
+          </span>
+        ) : null}
         {figure ? <b className="oh-settingline-figure">{figure}</b> : null}
         {children}
         {toggle ? <Switch label={label} on={toggle.on} onChange={toggle.onChange} disabled={off} /> : null}

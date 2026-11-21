@@ -40,6 +40,7 @@ export function TagsRail() {
         expanded={open}
         none={tags.length === 0 ? rail("tagEmpty") : undefined}
         current={!open && route.place === "tags"}
+        currentMark={route.place === "tags" && at === null}
         onPress={() => setOpen(!open)}
       >
         {t("title")}

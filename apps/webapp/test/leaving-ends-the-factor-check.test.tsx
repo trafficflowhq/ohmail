@@ -227,14 +227,6 @@ async function changeToThePrompt(c: HTMLElement): Promise<void> {
   await submit(c.querySelector("#pwc-current")!.closest("form")!);
 }
 
-/** Types the code and presses Verify; the answer stays on the wire until `land`. */
-async function verifyHeld(c: HTMLElement): Promise<void> {
-  await waitFor(() => c.querySelector("#stepup-code") != null, "the step-up prompt");
-  await type(c.querySelector<HTMLInputElement>("#stepup-code")!, "123456");
-  await submit(c.querySelector("#stepup-code")!.closest("form")!);
-  await waitFor(() => release !== null, "the step-up answer held on the wire");
-}
-
 /** The factor's dialog: the web's `StepUp` over the door's dialog. */
 const dialog = (c: ParentNode): Element | null => c.querySelector('[role="dialog"]');
 
@@ -280,14 +272,19 @@ describe("the wall's Back while the factor is checked", () => {
     const c = await mountWall();
     await click(button(c, en.accessLock.changePassword));
     await changeToThePrompt(c);
-    await verifyHeld(c);
+    await verifyHeldInDialog(c);
     expect(sent(CHANGE)).toBe(1);
 
-    await click(button(c, en.accessLock.back));
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "Back took the prompt away").toBeNull();
+    expect(button(c, en.accessLock.back).closest("[inert]")).not.toBeNull();
+    await act(async () => {
+      dialog(c)!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(dialog(c), "Escape took the prompt away").toBeNull();
     await land();
 
-    expect(sent(CHANGE), "POST /auth/password went out after Back").toBe(1);
+    expect(sent(CHANGE), "POST /auth/password went out after Escape").toBe(1);
+    await waitFor(() => c.textContent!.includes(en.passwordChange.cancelled), "the discarded factor");
+    await click(button(c, en.accessLock.back));
     button(c, en.accessLock.changePassword);
   });
 
@@ -295,7 +292,7 @@ describe("the wall's Back while the factor is checked", () => {
     const c = await mountWall();
     await click(button(c, en.accessLock.changePassword));
     await changeToThePrompt(c);
-    await verifyHeld(c);
+    await verifyHeldInDialog(c);
     await land();
 
     await waitFor(() => c.textContent!.includes("1 other session was signed out"), "the change's receipt");
@@ -307,13 +304,13 @@ describe("the wall's Back while the factor is checked", () => {
    mailboxes, desktop link, approval, join) leans on this. */
 describe("the prompt itself", () => {
   async function mountPrompt(calls: string[]): Promise<{ c: HTMLElement; drop: () => void }> {
-    const { StepUpPrompt } = await import("../app/(product)/mailbox/StepUpPrompt.js");
+    const { StepUp } = await import("../app/(product)/mailbox/StepUp.js");
     let drop: () => void = () => {};
     function Host(): React.ReactElement | null {
       const [shown, setShown] = React.useState(true);
       drop = () => setShown(false);
       return shown
-        ? h(StepUpPrompt, {
+        ? h(StepUp, {
           onVerified: () => calls.push("verified"),
           onCancel: () => calls.push("cancel"),
           onDiscarded: () => calls.push("discarded"),
@@ -327,7 +324,7 @@ describe("the prompt itself", () => {
   it("taken away while the answer is held, it never calls onVerified", async () => {
     const calls: string[] = [];
     const { c, drop } = await mountPrompt(calls);
-    await verifyHeld(c);
+    await verifyHeldInDialog(c);
 
     await act(async () => {
       drop();
@@ -340,7 +337,7 @@ describe("the prompt itself", () => {
   it("CONTROL: left in place, the same answer calls onVerified once", async () => {
     const calls: string[] = [];
     const { c } = await mountPrompt(calls);
-    await verifyHeld(c);
+    await verifyHeldInDialog(c);
     await land();
 
     expect(calls).toEqual(["verified"]);

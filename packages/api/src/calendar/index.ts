@@ -66,7 +66,7 @@ export const calendarRoutes: Route[] = [
     method: "PATCH",
     pattern: "/calendar/suggestions/:id",
     wire: true,
-    relay: false,
+    relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {

@@ -113,7 +113,7 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
       input: streamInput(LETTERS, said(), { fresh: 2 }),
       window: fakeWindow("phone"),
     });
-    const head = screen.getByRole("heading", { name: "News" }).closest("header")!;
+    const head = screen.getByRole("heading", { name: "News", level: 1 }).closest("header")!;
     expect(within(head).getByText("2 new since you were here")).toBeTruthy();
     expect(within(head).getByRole("button", { name: "List" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "News stream" })).toBeTruthy();
@@ -186,7 +186,9 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
     expect(control("n2").textContent).toContain("Expand");
     fireEvent.click(control("n1"));
     expect(control("n1").textContent).toContain("Expand");
-    expect(address.read()).toBe("#/reads/m/n1");
+    // Collapsing the card it opened takes its actions away and leaves the list on that letter.
+    expect(address.read()).toBe("#/reads");
+    expect(screen.getByRole("option", { name: /Issue 41/ }).getAttribute("aria-selected")).toBe("true");
     // A press on the item itself opens it whole.
     fireEvent.click(within(item("n2")).getByText("The words of n2."));
     expect(address.read()).toBe("#/reads/m/n2");

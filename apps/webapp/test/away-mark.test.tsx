@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { layoutPlan } from "@ohmail/app/frame";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, within } from "@testing-library/react";
@@ -203,10 +204,13 @@ describe("the away-answer mark", () => {
     expect(visible).toBe("Answered by the away responder");
   });
 
-  it("the stylesheet hides `.away-mark .when` under 640px and defines the mark in one ink", () => {
+  it("the stylesheet hides `.away-mark .when` on the phone layout and defines the mark in one ink", () => {
     const css = readFileSync("packages/ui/src/mail/Reading/message-head.css", "utf8");
     expect(css).toContain(".oh-messagehead-mark {");
-    expect(css).toMatch(/@media \(max-width: 640px\) \{\s*\.oh-messagehead-markwhen \{ display: none; \}/);
+    const deviceAt = (width: number) =>
+      layoutPlan({ width, height: 900, pointer: "fine", posture: "flat", reducedMotion: false }).device;
+    expect([640, 699, 700].map(deviceAt)).toEqual(["phone", "phone", "fold"]);
+    expect(css).toMatch(/:root\[data-device="phone"\] \.oh-messagehead-markwhen \{\s*display: none;\s*\}/);
     // One ink, inherited: `.when` declares no colour of its own — a rule restating its parent's
     // is a rule nobody could watch work.
     expect(css).not.toMatch(/\.oh-messagehead-markwhen \{\s*color:/);

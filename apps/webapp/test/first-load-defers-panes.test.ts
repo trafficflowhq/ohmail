@@ -121,7 +121,7 @@ describe("the first-paint bundle defers the Settings and Compose panes and the e
 
   /* The editor is the third deferral, and the cheap reader of it: the editor's own module — and with it TipTap and
      ProseMirror — is reached by a dynamic import or not at all. Re-pointed: today's one door was
-     `RichEditorLazy.tsx`; the new tree's door is whichever module the walk reaches that imports the editor by
+     the editor's former lazy entry. The shared Write entry is the module the walk reaches that imports the editor by
      `import()`. The manifest reader in `first-load-defers-editor.test.ts` is the one that measures the built chunks. */
   it("the editor is behind its door, not statically reachable from the shell", () => {
     const EDITOR = resolve(APP_SRC, "write/editor/RichEditor.tsx");

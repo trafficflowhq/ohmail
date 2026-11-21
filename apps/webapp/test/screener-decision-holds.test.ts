@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  ISO, goTo, installShellEnv, liveAccountFetch, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 import { decideScreenerRow as fileRow, screenerReport, screenerRow, screenerRowIds as rowIds } from "./fixtures/live-screener";
 
@@ -148,7 +148,8 @@ class World {
 let w: World;
 
 function installWorld(): void {
-  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+  const shellFetch = globalThis.fetch;
+  globalThis.fetch = liveAccountFetch(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     const body = (): Record<string, string> => JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
@@ -178,8 +179,8 @@ function installWorld(): void {
       w.posts.push(`move ${mv[1]} → ${body().folder}`);
       return w.moveOne(mv[1]!, body().folder!);
     }
-    return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+    return shellFetch(input, init);
+  });
 }
 
 /** Whether this sender's row has begun the visible exit animation. */

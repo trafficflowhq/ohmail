@@ -2,6 +2,7 @@
   "calendar": {
     "connect": "Einen Kalender verbinden",
     "actions": {
+      "openLetter": "Brief öffnen",
       "resizeTimeStart": "Beginn verschieben",
       "resizeTimeEnd": "Ende verschieben",
       "resizeStart": "Ersten Tag ändern",
@@ -69,6 +70,19 @@
       "keepTheirs": "Andere behalten",
       "discard": "Änderungen verwerfen"
     },
+    "call": {
+      "label": "Anruf",
+      "join": "Teilnehmen",
+      "copy": "Kopieren",
+      "copied": "Kopiert"
+    },
+    "location": {
+      "own": "Deine Orte",
+      "suggestions": "Ortsvorschläge",
+      "credit": "© OpenStreetMap-Mitwirkende",
+      "maps": "In Karte öffnen",
+      "mapsTitle": "Öffnet openstreetmap.org"
+    },
     "create": {
       "endDate": "Enddatum",
       "nextDay": "nächster Tag",
@@ -99,6 +113,7 @@
     "placeCount": "{place}, {count}",
     "fromMail": "Aus E-Mails",
     "more": "Mehr",
+    "letters": "Briefe",
     "people": "Personen",
     "atTime": "{day}, {time}",
     "interval": "{first} – {last}",

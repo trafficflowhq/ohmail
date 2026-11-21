@@ -45,7 +45,7 @@ export {
 // time in `packages/api`, so there stays exactly one TOTP implementation in the repository and
 // the replay guard cannot be re-derived slightly differently by a second caller.
 export { totpNow, newTotpSecret, totpUri, verifyTotp, type TotpVerification } from "./totp.js";
-export { resolveSession, type ResolvedSessionCore, type SessionScope } from "./resolve-session.js";
+export { resolveSession, sessionEmailVerifiedAt, type ResolvedSessionCore, type SessionScope } from "./resolve-session.js";
 export type {
   AuthConfig, AuthDeps,
   SessionUser, TwofaEnrolled, LoginChallenge, SessionEstablished, OAuthTokens,

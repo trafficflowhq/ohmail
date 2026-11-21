@@ -15,9 +15,14 @@
     "MenuRule": "Menu",
     "MenuNote": "Menu",
     "SuggestionCredit": "SuggestionList",
-    "Overlay": "Dialog"
+    "Overlay": "Dialog",
+    "ActivityLine": "Notice"
   },
   "rows": [
+    { "component": "CodeText", "state": "rest", "looks": "all" },
+    { "component": "CodeTile", "state": "rest", "looks": "all" },
+    { "component": "NativeSelect", "state": "rest", "looks": "all" },
+    { "component": "CheckLine", "state": "rest", "looks": "all" },
     { "component": "Button", "state": "ink", "looks": "all" },
     { "component": "Button", "state": "ink-hover" },
     { "component": "Button", "state": "ink-focus" },
@@ -421,6 +426,7 @@
       "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
     },
     { "component": "Notice", "state": "full", "looks": "all" },
+    { "component": "Notice", "state": "progress" },
     {
       "component": "Notice",
       "state": "calm",

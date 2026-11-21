@@ -1,4 +1,4 @@
-import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
+import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "@ohmail/client-engine";
 import { stagingUploadSource } from "../../../staging-origin.mjs";
 
 /**

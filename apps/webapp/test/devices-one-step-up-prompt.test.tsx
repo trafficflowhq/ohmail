@@ -100,7 +100,7 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 const buttonByText = (c: ParentNode, text: string): HTMLButtonElement => {
-  const b = [...c.querySelectorAll("button")].find((x) => x.textContent?.trim() === text);
+  const b = [...c.querySelectorAll("button")].find((x) => x.querySelector("span")?.textContent?.trim() === text || x.textContent?.trim() === text);
   expect(b, `a button reading "${text}"`).toBeTruthy();
   return b!;
 };
@@ -118,15 +118,15 @@ describe("a second step_up_required after a verified factor", () => {
     answers["POST /api/auth/step-up/totp"] = { status: 200, body: { ok: true } };
     const c = await mountSection();
     await click(buttonByText(c, "Add a device"));
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "the first refusal asks for the factor").toBeTruthy();
-    await type(c.querySelector<HTMLInputElement>("#stepup-code")!, "123456");
+    expect(c.querySelector('[role="dialog"]'), "the first refusal asks for the factor").toBeTruthy();
+    await type(c.querySelector<HTMLInputElement>('[role="dialog"] input[autocomplete="one-time-code"]')!, "123456");
     await click(buttonByText(c, "Verify code"));
     for (let i = 0; i < 3; i += 1) await act(async () => { await Promise.resolve(); });
     const mints = calls.filter((r) => r.method === "POST" && r.url.includes("/api/pair"));
     const stepUps = calls.filter((r) => r.method === "POST" && r.url.includes("/api/auth/step-up/"));
     expect(mints.length, "the verified factor re-ran the mint once").toBe(2);
     expect(stepUps.length).toBe(1);
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "a second prompt opened").toBeNull();
+    expect(c.querySelector('[role="dialog"]'), "a second prompt opened").toBeNull();
     expect(c.textContent).toContain(messages.devices.stepUpExpired);
   });
 });

@@ -3,6 +3,8 @@
     "inviteGuest": "{name} einladen",
     "confirmGuest": "Eine Einladung an {name} senden?",
     "cancelGuest": "Abbrechen",
+    "confirmGuests": "Einladungen an {name} senden?",
+    "sendGuests": "Einladungen senden",
     "sendGuest": "Einladung senden",
     "removeGuest": "Gast entfernen",
     "comingHeading": "Demnächst",

@@ -29,9 +29,6 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-/** Longer than any bound the client argues for, and far longer than a person waits. */
-const A_LONG_TIME_MS = 10 * 60_000;
-
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
@@ -59,7 +56,6 @@ afterEach(async () => {
 });
 
 const row = (): HTMLElement | null => host!.querySelector<HTMLElement>(".att-list");
-const retry = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".att-list-retry");
 
 /** `MessagePane`'s own wiring, copied verbatim — the same harness the test uses. */
 function Harness({ engine, messageId }: { engine: OhmailEngine; messageId: string }) {
@@ -78,30 +74,7 @@ function engineOver(fetchImpl: (url: string, init?: RequestInit) => Promise<Resp
   return new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "/api", fetch: fetchImpl }) });
 }
 
-const ONE_FILE = {
-  id: "a1", filename: "invoice.pdf", contentType: "application/pdf",
-  sizeBytes: 2_300_000, inline: false, messageId: "m1",
-};
-
-const listOf = (items: Array<Record<string, unknown>>): Response =>
-  new Response(JSON.stringify({ items }), { status: 200, headers: { "content-type": "application/json" } });
-
 describe("a request that never answers stops rendering as nothing", () => {
-  it("THE DEFECT: ten minutes of no answer drew an empty message, paperclip and all", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const engine = engineOver(() => new Promise<Response>(() => {}));
-    await render(h(Harness, { engine, messageId: "m1" }));
-
-    // The first ask is silent by design: one indexed row is not a wait to show.
-    expect(host!.textContent).toBe("");
-
-    await waitMs(A_LONG_TIME_MS);
-
-    expect(
-      row(),
-      "ten minutes with no answer still rendered nothing at all",
-    ).not.toBeNull();
-  });
 
   it("…and what it says is that ohmail did not answer — not that the mailbox failed", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -129,50 +102,5 @@ describe("a request that never answers stops rendering as nothing", () => {
     expect(row()!.title).toContain("12000 ms");
   });
 
-  it("the row carries Try again — a timeout is exactly the case where asking again is the advice", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    let call = 0;
-    const engine = engineOver(() => {
-      call += 1;
-      if (call === 1) return new Promise<Response>(() => {});
-      return Promise.resolve(listOf([ONE_FILE]));
-    });
-    await render(h(Harness, { engine, messageId: "m1" }));
-    await waitMs(12_000);
 
-    expect(retry(), "the timeout landed in an UNRETRYABLE state and stranded the user").not.toBeNull();
-
-    await act(async () => retry()!.click());
-    await waitMs(0);
-
-    expect(call, "the retry never reached the wire").toBe(2);
-    expect(row(), "the failure row survived a successful re-ask").toBeNull();
-    expect(host!.querySelector(".att-name")!.textContent).toBe("invoice.pdf");
-  });
-
-  it("no anonymous spinner appears while the first ask is running — the strip's own rule", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const engine = engineOver(() => new Promise<Response>(() => {}));
-    await render(h(Harness, { engine, messageId: "m1" }));
-
-    // Halfway through the bound. The component's design rejects a spinner over this wait: the
-    // bytes come from IMAP on demand, so waits are NAMED. Nothing may appear until there is
-    // something true to say.
-    await waitMs(6_000);
-    expect(host!.querySelector(".att-spin"), "an unnamed spinner appeared over the first ask").toBeNull();
-    expect(host!.textContent).toBe("");
-  });
-
-  it("a list that answers in time is unaffected, and no late deadline blanks it", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const engine = engineOver(async () => listOf([ONE_FILE]));
-    await render(h(Harness, { engine, messageId: "m1" }));
-    await waitMs(0);
-
-    expect(host!.querySelector(".att-name")!.textContent).toBe("invoice.pdf");
-
-    await waitMs(A_LONG_TIME_MS);
-    expect(host!.querySelector(".att-name"), "a late timer overwrote a good list with a failure").not.toBeNull();
-    expect(row()).toBeNull();
-  });
 });

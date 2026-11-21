@@ -10,3 +10,11 @@ export function knownZones(): readonly string[] {
   return known;
 }
 export const zoneName = (zone: string) => zone.replaceAll("_", " ");
+
+export function zoneForCity(city: string): string | undefined {
+  const word = city.toLowerCase();
+  if (word === "lissabon") return "Europe/Lisbon";
+  if (word === "zürich") return "Europe/Zurich";
+  if (word === "gmt" || word === "utc") return "UTC";
+  return knownZones().find((zone) => zoneName(zone).split("/").at(-1)?.toLowerCase() === word);
+}

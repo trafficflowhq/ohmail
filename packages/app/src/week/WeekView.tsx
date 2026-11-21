@@ -4,7 +4,7 @@
  * and opens an event through the frame's named command. On a phone's narrow width the week is the picked day's hours,
  * under the head's strip of the week's dates, so it draws no day head of its own.
  */
-import { useMemo } from "react";
+import { createContext, useContext, useMemo, useRef, type KeyboardEvent, type MouseEvent } from "react";
 import {
   AllDayRow,
   EventChip,
@@ -13,7 +13,7 @@ import {
   dayColumn,
   type TimeGridDay as KitDay,
 } from "@ohmail/ui/calendar";
-import { RefusalLine } from "@ohmail/ui/base";
+import { contextTrigger, RefusalLine, type Point } from "@ohmail/ui/base";
 import {
   blockChip,
   clockOf,
@@ -42,6 +42,66 @@ import { HeldNotice } from "../calendar/HeldNotice.js";
 import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
 import { useLocale, useText } from "../text/index.js";
 import "./week.css";
+
+export type WeekContextTarget =
+  | { kind: "event"; id: string; at: Point | Element; opener: HTMLButtonElement }
+  | { kind: "time"; day: string; from: number; to: number; at: Point };
+
+interface WeekContextActions {
+  open: (target: WeekContextTarget) => void;
+  slot: { day: string; from: number; to: number } | null;
+}
+
+export const WeekContextMenu = createContext<WeekContextActions | null>(null);
+
+function useEventContext(menu: WeekContextActions | null) {
+  const events = useRef(new WeakMap<EventTarget, string>());
+  const trigger = (opener: HTMLButtonElement, id: string) =>
+    contextTrigger((at) => menu?.open({ kind: "event", id, at, opener }));
+  return {
+    chip: (event: CalendarEventView) =>
+      menu
+        ? {
+            ref: (opener: HTMLButtonElement | null) => {
+              if (opener) events.current.set(opener, event.id);
+            },
+            onContextMenu: (press: MouseEvent<HTMLButtonElement>) => {
+              press.stopPropagation();
+              press.currentTarget.focus({ preventScroll: true });
+              trigger(press.currentTarget, event.id).onContextMenu(press);
+            },
+          }
+        : undefined,
+    key: (press: KeyboardEvent<HTMLElement>) => {
+      const opener = press.target;
+      if (!menu || !(opener instanceof HTMLButtonElement)) return;
+      const id = events.current.get(opener);
+      if (!id) return;
+      trigger(opener, id).onKeyDown({
+        key: press.key,
+        shiftKey: press.shiftKey,
+        currentTarget: opener,
+        preventDefault: () => {
+          press.preventDefault();
+          press.stopPropagation();
+        },
+      });
+    },
+  };
+}
+
+function timeContext(menu: WeekContextActions, day: string, event: MouseEvent<HTMLDivElement>) {
+  if ((event.target as Element).closest("button, a")) return;
+  const bounds = event.currentTarget.getBoundingClientRect();
+  if (bounds.height <= 0) return;
+  const dayMinutes = 24 * 60;
+  const minute = ((event.clientY - bounds.top) * dayMinutes) / bounds.height;
+  const from = Math.max(0, Math.min(dayMinutes - 30, Math.floor(minute / 30) * 30));
+  const to = Math.min(dayMinutes, from + 60);
+  contextTrigger((at) => {
+    if ("x" in at) menu.open({ kind: "time", day, from, to, at });
+  }).onContextMenu(event);
+}
 
 /** The days the week shows: seven from the week's first day. */
 export function weekSpan(anchor: PlainDate, settings: CalendarViewSettings): readonly PlainDate[] {
@@ -92,12 +152,19 @@ export function WeekView(props: CalendarViewProps) {
   const open = (e: CalendarEventView): void => props.onOpen(e.ref);
 
   const calendar = useText("calendar");
+  const menu = useContext(WeekContextMenu);
+  const slot = menu?.slot;
+  const context = useEventContext(menu);
   const kitDays: KitDay[] = model.days.map((d) => ({
     ...dayHead(d.day, locale),
     id: d.id,
     today: d.today,
     cursor:
-      props.cursor != null && sameDay(d.day, anchor) ? { minutes: props.cursor, length: 60 } : undefined,
+      slot?.day === d.id
+        ? { minutes: slot.from, length: slot.to - slot.from }
+        : props.cursor != null && sameDay(d.day, anchor)
+          ? { minutes: props.cursor, length: 60 }
+          : undefined,
     picked: d.picked,
     above: capsule(d, "above", hours.show, t),
     below: capsule(d, "below", hours.show, t),
@@ -109,6 +176,7 @@ export function WeekView(props: CalendarViewProps) {
         dense={dense}
         label={t("chip", { title: b.item.title, from: clockOf(b.from), to: clockOf(b.to) })}
         onPress={() => open(b.item)}
+        {...context.chip(b.item)}
         {...timedResizeProps(props, b, {
           start: calendar("actions.resizeTimeStart"),
           end: calendar("actions.resizeTimeEnd"),
@@ -117,10 +185,10 @@ export function WeekView(props: CalendarViewProps) {
     )),
   }));
 
-  const lane = weekPills(model.lane.pills, crease, props, t, calendar);
+  const lane = weekPills(model.lane.pills, crease, props, t, calendar, context.chip);
 
   return (
-    <section className="cw-week" aria-label={t("hours")}>
+    <section className="cw-week" aria-label={t("hours")} onKeyDown={context.key}>
       <HeldNotice
         edge={props.edge}
         first={isoOfDay(days[0]!)}
@@ -161,6 +229,7 @@ export function WeekView(props: CalendarViewProps) {
           const day = model.days.find((m) => m.id === id)?.day;
           if (day !== undefined) props.onDay(day);
         }}
+        onDayContextMenu={menu ? (day, event) => timeContext(menu, day, event) : undefined}
         onDayPointerDown={props.onSlot}
         scrollRef={hours.ref}
         scrollGestures={swipe}
@@ -198,6 +267,7 @@ function weekPills(
   props: CalendarViewProps,
   t: ReturnType<typeof useText>,
   calendar: ReturnType<typeof useText>,
+  contextChip: ReturnType<typeof useEventContext>["chip"],
 ) {
   return pills.map((p) => {
     const chip = pillChip(p, p.item.id === props.openId);
@@ -220,6 +290,7 @@ function weekPills(
           gridRow: chip.row + 1,
         }}
         onPress={() => props.onOpen(p.item.ref)}
+        {...contextChip(p.item)}
         onPointerDown={props.onDrag ? (event) => props.onDrag?.(p.item.id, event) : undefined}
       />
     );

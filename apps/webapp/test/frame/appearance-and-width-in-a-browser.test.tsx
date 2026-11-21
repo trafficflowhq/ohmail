@@ -7,12 +7,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import RootLayout from "../../app/(product)/layout";
 import en from "../../messages/en.json";
 
-const request = vi.hoisted(() => ({ signedIn: false }));
+const request = vi.hoisted(() => ({ firstPage: null as "now" | "wait" | null }));
 
 vi.mock("next/headers", () => ({
   headers: () => new Headers({
     "x-nonce": "browser-test",
-    ...(request.signedIn ? { "x-ohmail-first-page": "now", "x-ohmail-first-page-owner": "reader", cookie: "tf_owner=reader" } : {}),
+    ...(request.firstPage ? { "x-ohmail-first-page": request.firstPage, cookie: "tf_owner=reader" } : {}),
+    ...(request.firstPage === "now" ? { "x-ohmail-first-page-owner": "reader" } : {}),
   }),
 }));
 
@@ -153,6 +154,9 @@ const looks = [
   { name: "a signed-in page with another account's saved face",
     key: null, face: "paper", theme: "dark", system: "light", platform: "Linux x86_64",
     ground: "rgb(14, 13, 12)", owner: "previous-reader", deviceFace: null },
+  { name: "a wait document with a saved face and no confirmed owner",
+    key: null, face: "paper", theme: "dark", system: "light", platform: "Linux x86_64",
+    ground: "rgb(14, 13, 12)", owner: "reader", deviceFace: null, firstPage: "wait" },
 ] as const;
 
 describe("the web document's first paint", () => {
@@ -161,11 +165,11 @@ describe("the web document's first paint", () => {
       const signedIn = "owner" in look;
       let rendered = documentHtml;
       if (signedIn) {
-        request.signedIn = true;
+        request.firstPage = "firstPage" in look ? look.firstPage : "now";
         try {
           rendered = "<!doctype html>" + renderToString(await RootLayout({ children: null }));
         } finally {
-          request.signedIn = false;
+          request.firstPage = null;
         }
       }
       const html = withHead(`<style>${css}</style>`, rendered);

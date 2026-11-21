@@ -44,6 +44,13 @@ interface ActionBarProps {
   onScreen?: (anchor: HTMLElement) => void;
   onScreenKey?: () => void;
   screeningDialog?: PanelVerb["dialog"];
+  onCalendar?: () => void;
+}
+
+function openScreening(root: HTMLElement | null, fallback?: () => void): void {
+  const opener = root?.querySelector<HTMLButtonElement>('button[data-id="screening"]:not([hidden])');
+  if (opener) opener.click();
+  else fallback?.();
 }
 
 function menuAnchor(root: HTMLElement | null, which: PanelMenu): HTMLElement | null {
@@ -65,6 +72,7 @@ export function ActionBar({
   onScreen,
   onScreenKey,
   screeningDialog,
+  onCalendar,
 }: ActionBarProps) {
   const t = useText("reader");
   const words = actionWords(t, useText("message"));
@@ -93,8 +101,8 @@ export function ActionBar({
   const tags = verbs.tag === null ? [] : (mirror?.list<TagEntity>("tag") ?? []);
   const cardKeys = card?.keysHere === true && reply === null;
   const hintsActive = card === undefined ? keys != null : cardKeys && showPanel;
-  // The binding owns the hint as soon as the panel opens. It checks visibility when pressed.
-  const hints = usePanelHints(verbs.readSlot, hintsActive);
+  const hints = usePanelHints(verbs.readSlot, hintsActive, card?.canAnswerKey?.(card.letter.id) !== false);
+  const calendarAction = useCalendarVerb(reply === null && run === null ? onCalendar : undefined);
   const all = panelVerbs(
     t,
     words,
@@ -113,14 +121,7 @@ export function ActionBar({
   const behind = all.filter((v) => v.behind || folded.includes(v.id));
   /* A key opens a menu as its button does: out of the verb's own button, else out of More where it stands behind it. */
   const byKey = (which: PanelMenu): void => {
-    if (which === "screening") {
-      const opener = stop.current?.querySelector<HTMLButtonElement>(
-        'button[data-id="screening"]:not([hidden])',
-      );
-      if (opener) opener.click();
-      else onScreenKey?.();
-      return;
-    }
+    if (which === "screening") return openScreening(stop.current, onScreenKey);
     pressed.current = menuAnchor(stop.current, which);
     setMenu((m) => (m === which ? null : which));
   };
@@ -135,6 +136,7 @@ export function ActionBar({
     focus,
     replying: reply !== null,
     screeningLabel: onScreenKey ? shortcuts("screen") : undefined,
+    calendarAction,
     tagLabel: tags.length > 0 && reply === null && run === null ? words.tag : undefined,
   });
   return (
@@ -167,13 +169,19 @@ export function ActionBar({
         tags={tags}
         verbs={verbs}
         behind={behind}
+        calendarAction={calendarAction}
+        calendarKeyHint={hints.calendar.keyHint}
         confirm={card !== undefined}
       />
     </div>
   );
 }
 
-/** Draft reply behind More, where a drafter stands: the reply opened on the letter and the drafter asked. */
+function useCalendarVerb(onPress: (() => void) | undefined) {
+  const t = useText("reader");
+  return onPress ? { label: t("actions.addToCalendar"), onPress } : undefined;
+}
+
 /**
  * The panel for one letter where a list draws it in place: the list's visit where it handed one, else the reader's
  * runners through the room's seam. With neither (no visit, and a place whose room is off) nothing is drawn.
@@ -258,6 +266,7 @@ function usePanelKeyboard({
   focus,
   replying,
   screeningLabel,
+  calendarAction,
   tagLabel,
 }: Pick<ActionBarProps, "card" | "keys" | "verbs"> & {
   cardKeys: boolean;
@@ -267,6 +276,7 @@ function usePanelKeyboard({
   focus: boolean;
   replying: boolean;
   screeningLabel: string | undefined;
+  calendarAction?: { label: string; onPress: () => void };
   tagLabel: string | undefined;
 }): void {
   useCardKeys(
@@ -284,6 +294,7 @@ function usePanelKeyboard({
           verbs,
           menu: byKey,
           screeningLabel: screeningLabel,
+          calendarAction,
           tagLabel: tagLabel,
         },
   );

@@ -6,6 +6,8 @@ import { issue } from "../../../packages/app/test/streams/registered-world.js";
 import { mountCheckedStream } from "./stream-check-frame.js";
 import en from "../../../packages/app/messages/news.en.json";
 import de from "../../../packages/app/messages/news.de.json";
+import readerEn from "../../../packages/app/messages/reader.en.json";
+import readerDe from "../../../packages/app/messages/reader.de.json";
 
 const WORK = { id: "mb-1", address: "work@example.invalid", displayName: "Work" };
 const HOME = { id: "mb-2", address: "home@example.invalid", displayName: null };
@@ -37,8 +39,9 @@ it.each([
   expect(row.getByTitle(title).textContent).toBe(label);
   expect(card.getByTitle(title).textContent).toBe(label);
   const hint = (locale === "de" ? de : en).news.item.keyboardOpen;
+  const unread = (locale === "de" ? readerDe : readerEn).message.rowUnread;
   expect(screen.getByRole("option", { name: /Issue 12/ }).getAttribute("aria-description"))
-    .toBe(`${title}. ${hint}`);
+    .toBe(`${title}. ${hint}. ${unread}`);
   expect(card.queryByText("list@example.invalid")).toBeNull();
 });
 
@@ -52,5 +55,5 @@ it.each([
   expect(row.queryByTitle(/^Delivered to/)).toBeNull();
   expect(card.queryByTitle(/^Delivered to/)).toBeNull();
   expect(screen.getByRole("option", { name: /Issue 12/ }).getAttribute("aria-description"))
-    .toBe(en.news.item.keyboardOpen);
+    .toBe(`${en.news.item.keyboardOpen}. ${readerEn.message.rowUnread}`);
 });

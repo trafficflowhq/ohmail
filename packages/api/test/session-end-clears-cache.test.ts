@@ -15,7 +15,7 @@ import { PNG_2X3 } from "../../core/test/fixtures/images.js";
    The census walks the package's source by a path built at runtime. */
 
 /**
- * A RESPONSE THAT ENDS A BROWSER SESSION EMPTIES THE JAR AND NEVER CARRIES `Clear-Site-Data`.
+ * A RESPONSE THAT CLEARS THE SESSION JAR NEVER CARRIES `Clear-Site-Data`.
  * Chrome holds an answer carrying it, cookie clears included, until it has walked its whole disk
  * cache: the resume splash waited on the refresh door's refusal, the sign-out press on its door's
  * answer, the erase on its receipt. The HTTP cache still goes, a proxied picture is kept a day in
@@ -28,7 +28,7 @@ const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 const CLEARS = "clear-site-data";
 const PURGE = { "x-ohmail-clear": "cache" };
-const SESSION_COOKIES = ["tf_session", "tf_refresh", "tf_csrf", "tf_resume", "tf_owner"];
+const SESSION_COOKIES = ["tf_session", "tf_refresh", "tf_csrf", "tf_resume", "tf_owner", "tf_family"];
 
 /** The cookie jar a signed-in browser presents, CSRF header included. */
 function browser(token: string): { cookie: string; headers: Record<string, string> } {
@@ -39,14 +39,22 @@ function browser(token: string): { cookie: string; headers: Record<string, strin
 async function seedRefresh(
   db: Awaited<ReturnType<typeof makeDeps>>["db"],
   s: { accountId: string; userId: string; sessionId: string },
-): Promise<string> {
+): Promise<{ refresh: string; familyId: string }> {
   const refresh = generateToken();
   const [own] = await db.select({ familyId: sessions.familyId }).from(sessions).where(eq(sessions.id, s.sessionId));
   await db.insert(refreshTokens).values({
     accountId: s.accountId, userId: s.userId, sessionId: s.sessionId, familyId: own!.familyId,
     tokenHash: hashToken(refresh), expiresAt: new Date(FIXED_NOW.getTime() + 2 * 60 * 60 * 1000),
   });
-  return refresh;
+  return { refresh, familyId: own!.familyId };
+}
+
+function clearLogout(familyId: string, jar?: ReturnType<typeof browser>): Request {
+  const markers = `tf_owner=signed_out_pending; tf_family=${familyId}`;
+  return req("POST", "/auth/refresh/logout", {
+    cookie: jar ? `${jar.cookie}; ${markers}` : markers,
+    headers: { ...jar?.headers, "X-Ohmail-Clear-Logout": "1", "X-Ohmail-Expected-Family": familyId },
+  });
 }
 
 /** The whole jar cleared, and nothing a browser would hold the answer for. */
@@ -76,20 +84,24 @@ describe("every response that ends a browser session empties the jar, and none i
   it("the web's sign-out door, its 204; the cache goes at the purge after it", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
-    const refresh = await seedRefresh(db, s);
+    const { refresh, familyId } = await seedRefresh(db, s);
     const jar = browser(s.token);
-    const ended = await H(req("POST", "/auth/refresh/logout", { ...jar, cookie: `${jar.cookie}; tf_refresh=${refresh}` }), deps);
+    jar.cookie += `; tf_refresh=${refresh}`;
+    const ended = await H(req("POST", "/auth/refresh/logout", jar), deps);
     expect(ended.status).toBe(204);
-    expectSessionEnded(ended, "the door's 204");
+    expect(ended.headers.getSetCookie()).toEqual([]);
+    expect(ended.headers.get(CLEARS)).toBeNull();
+    const cleared = await H(clearLogout(familyId, jar), deps);
+    expect(cleared.status).toBe(204);
+    expectSessionEnded(cleared, "the revoked family's serialized clear");
     await expectPurged(await H(req("POST", "/auth/refresh", { headers: PURGE }), deps), "the purge after the sign-out");
   });
 
-  // Its own case: the door's refusal empties the jar at a call site of its own.
-  it("the web's sign-out door, its own 401 with no jar presented", async () => {
+  it("the web clears the pending family after both credentials are gone", async () => {
     const { deps } = await makeDeps();
-    const named = await H(req("POST", "/auth/refresh/logout"), deps);
-    expect(named.status).toBe(401);
-    expectSessionEnded(named, "the door's 401");
+    const cleared = await H(clearLogout(crypto.randomUUID()), deps);
+    expect(cleared.status).toBe(204);
+    expectSessionEnded(cleared, "the credentialless pending family's serialized clear");
   });
 
   it("the erase, its receipt whole", async () => {
@@ -115,7 +127,7 @@ describe("every response that ends a browser session empties the jar, and none i
   ] as const)("a session revoked from another device (%s) is told refresh_revoked, and its cache goes at the purge", async (_door, ask, status) => {
     const { db, deps } = await makeDeps();
     const here = await seedSession(db, { now: FIXED_NOW });
-    const refresh = await seedRefresh(db, here);
+    const { refresh } = await seedRefresh(db, here);
     const elsewhere = await seedSessionFor(db, {
       accountId: here.accountId, userId: here.userId, now: FIXED_NOW, lastTwofaAt: FIXED_NOW,
     });
@@ -137,7 +149,7 @@ describe("every response that ends a browser session empties the jar, and none i
   it("…and a sign-in that lapsed is told refresh_expired, the code that keeps the mailbox behind the sign-in prompt", async () => {
     const { db, deps, clock } = await makeDeps();
     const here = await seedSession(db, { now: FIXED_NOW });
-    const refresh = await seedRefresh(db, here);
+    const { refresh } = await seedRefresh(db, here);
     clock.advance(2 * 60 * 60 * 1000 + 60_000);
     const lapsed = await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${refresh}`, body: "{}" }), deps);
     expect(lapsed.status).toBe(401);
@@ -148,7 +160,7 @@ describe("every response that ends a browser session empties the jar, and none i
   it("an erased account's refresh is told so at once, with no cache clear on the answer", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
-    const refresh = await seedRefresh(db, s);
+    const { refresh } = await seedRefresh(db, s);
     expect((await H(req("DELETE", "/account", { bearer: s.token }), deps)).status).toBe(200);
     const erased = await H(req("POST", "/auth/refresh", {
       cookie: `tf_refresh=${refresh}`, headers: { [ERASED_ANSWER_HEADER]: "account_erased" }, body: "{}",
@@ -161,7 +173,7 @@ describe("every response that ends a browser session empties the jar, and none i
   it("the purge reads no jar: a live session is neither rotated nor ended, and no cookie is set", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
-    const refresh = await seedRefresh(db, s);
+    const { refresh } = await seedRefresh(db, s);
     const jar = browser(s.token);
     await expectPurged(await H(req("POST", "/auth/refresh", {
       cookie: `${jar.cookie}; tf_refresh=${refresh}`, headers: { ...jar.headers, ...PURGE },
@@ -186,7 +198,7 @@ describe("every response that ends a browser session empties the jar, and none i
   it("a response that keeps the session keeps the cache (positive controls)", async () => {
     const { db, deps } = await makeDeps();
     const rotating = await seedSession(db, { now: FIXED_NOW });
-    const refresh = await seedRefresh(db, rotating);
+    const { refresh } = await seedRefresh(db, rotating);
     const rotated = await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${refresh}`, body: "{}" }), deps);
     expect(rotated.status).toBe(204);
     expect(setCookieMap(rotated).tf_session, "the rotation sets a session").toBeTruthy();
@@ -299,8 +311,7 @@ describe("census — every response that empties the jar goes through a helper",
   it("the six jar-emptying calls: four end a session, the refresh door's two refuse one", () => {
     const calls = clearingCalls(files);
     const by = (helper: Helper | null): string[] => calls.filter((c) => c.wrapped === helper).map((c) => c.at.replace(/:\d+$/, "")).sort();
-    // Sign-out, the erase, and the web's sign-out door (its 204 and its own 401): the browser purges
-    // once it holds the answer.
+    // Sign-out, the erase, and both serialized clears at the web's sign-out door.
     expect(by("sessionEnded")).toEqual([
       "routes/account.ts", "routes/session-lifecycle.ts", "routes/session-lifecycle.ts", "routes/session-lifecycle.ts",
     ]);

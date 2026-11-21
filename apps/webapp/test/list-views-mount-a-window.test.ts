@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 
@@ -14,7 +14,6 @@ import ts from "typescript";
  * from the scroller's top and shifts them by whatever stands above.
  */
 
-const VIEWS_DIR = resolve(process.cwd(), "apps/webapp/app/views");
 const TRASH = "TrashList.tsx";
 const JUNK = "Junk.tsx";
 const STREAM = "StreamList.tsx";
@@ -166,8 +165,7 @@ function refusals(file: string, r: Reading): string[] {
   return out;
 }
 
-const viewFiles = readdirSync(VIEWS_DIR).filter((f) => f.endsWith(".tsx")).sort();
-const readings = new Map(viewFiles.map((f) => [f, readListViews(readFileSync(join(VIEWS_DIR, f), "utf8") + (f === "OhboxView.tsx" ? readFileSync(resolve(process.cwd(), "packages/app-logic/src/ohbox/window.ts"), "utf8") : ""), f)]));
+const readings = new Map<string, ReturnType<typeof readListViews>>();
 readings.set(JUNK, readListViews(readFileSync("packages/app/src/screener/list/Junk.tsx", "utf8"), JUNK));
 readings.set(STREAM, readListViews(readFileSync("packages/app/src/stream/StreamList.tsx", "utf8"), STREAM));
 readings.set(TRASH, readListViews(readFileSync("packages/app/src/trash/TrashList.tsx", "utf8"), TRASH));

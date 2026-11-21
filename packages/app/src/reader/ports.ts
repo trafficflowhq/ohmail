@@ -68,6 +68,7 @@ export interface ReaderFile {
   readonly code?: string | null;
   readonly status?: number | null;
   readonly retryable?: boolean;
+  readonly reasking?: boolean;
 }
 
 export type ReaderFileList =

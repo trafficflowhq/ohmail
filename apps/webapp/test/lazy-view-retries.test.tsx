@@ -240,7 +240,7 @@ describe("the editor's door, whose chunk failed once", () => {
   async function mountEditor(): Promise<HTMLElement> {
     const { MailRichEditor } = await import("@ohmail/app/mail");
     const { TextFromIntl } = await import("../app/shell/LocaleContext");
-    const { BrowserChunkLoads } = await import("../app/shell/browser-mail");
+    const { BrowserChunkLoads } = await import("../app/shell/lazy-view");
     const { EMPTY_RICH } = await import("@ohmail/app-logic/writing/rich-text");
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -471,7 +471,6 @@ describe("every lazy view goes through the one helper", () => {
     const at = Object.fromEntries(files.map((f) => [relative(REPO, f), helperCalls(readFileSync(f, "utf8"))]));
     expect(at["packages/app/src/write/entry.tsx"], "Compose").toBe(1);
     expect(at["packages/app/src/mail/panes.ts"], "both Settings columns").toBe(2);
-    expect(at["packages/app/src/mail/write-entry.ts"], "the editor").toBe(1);
-    expect(at["apps/webapp/app/shell/RichEditorLazy.tsx"], "the remaining editor callers").toBe(1);
+    expect(at["packages/app/src/write/rich-entry.ts"], "the editor").toBe(1);
   });
 });

@@ -59,13 +59,15 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
     clip,
     viewport,
   } = state;
-  const { armed, start, end, attach, column, width, padTopPx, padBottomPx, near } = viewport;
+  const { armed, restores, start, end, attach, column, width, padTopPx, padBottomPx, near } = viewport;
   const open = useStableCallback(model.open);
   const closeAddress = useStableCallback((id: string) => {
     if (model.addressedId === id) commands.open(null);
   });
   if (model.mayState && model.items.length === 0) return <BlankColumn>{blank("blank.clear")}</BlankColumn>;
-  const shown = armed ? model.items.slice(start, end) : [];
+  // On a phone the opening slice can paint early if it is where the visit starts.
+  const drawCards = armed || (phone && !restores);
+  const shown = drawCards ? model.items.slice(start, end) : [];
   const panel = streamPanel(state, phone);
   return (
     <Sheet
@@ -83,7 +85,7 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
         data-stream-window=""
         data-receipts={model.place === "receipts" ? "" : undefined}
       >
-        {armed && padTopPx > 0 ? <div aria-hidden data-stream-head style={{ height: padTopPx }} /> : null}
+        {drawCards && padTopPx > 0 ? <div aria-hidden data-stream-head style={{ height: padTopPx }} /> : null}
         {shown.map((m, i) => {
           const conversation = reply?.conversations.get(m.id);
           const pick = selection?.rowProps(m.id);
@@ -139,7 +141,7 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
             </div>
           );
         })}
-        {armed && padBottomPx > 0 ? (
+        {drawCards && padBottomPx > 0 ? (
           <div aria-hidden data-stream-tail style={{ height: padBottomPx }} />
         ) : null}
       </div>
@@ -219,7 +221,7 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
   const cardsMounted = viewport.armed && model.items.length > 0;
   const settleRead = read.settled;
   useLayoutEffect(() => {
-    // Seed the read rule once the opening cards replace the empty scroller.
+    // Seed the read rule after the opening cards have painted.
     if (cardsMounted) settleRead();
   }, [cardsMounted, settleRead]);
   const lastWindow = useRef({ start, end });

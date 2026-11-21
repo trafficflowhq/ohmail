@@ -15,13 +15,14 @@
  *
  * The device counts come from the engine. A focused Devices pane can acknowledge the counts its list actually showed.
  */
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { useHostCalendarNotices } from "@ohmail/app-logic/calendar/alerts";
 import { usePartition } from "@ohmail/app-logic/consent";
 import { useDerivedVersion } from "@ohmail/app-logic/engine";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { noticeReadsOf, useNotices } from "@ohmail/app-logic/notices/use-notices";
 import { usePresented } from "@ohmail/app-logic/reading";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { useFrameElement } from "../../frame/FrameRoot.js";
 import { useFrame, useSignal } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
@@ -40,12 +41,11 @@ export function MailSystemNotices(): null {
   const notifications = host.device.notifications;
   const scope = host.session.scope;
   const choices = notifications === NONE ? undefined : notifications.choices;
-  const owns = useCallback(
+  const owns = useStableCallback(
     () =>
       scope !== null &&
       notifications !== NONE &&
       (!notifications.liveNoticeScope || notifications.liveNoticeScope() === scope),
-    [notifications, scope],
   );
   const emitter = notifications === NONE || choices === undefined || !owns() ? NONE : notifications.emitter;
   const choicesVersion = useSignal(

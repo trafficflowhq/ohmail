@@ -8,6 +8,7 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setFormatWords } from "@ohmail/app-logic/text";
 import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import { Frame } from "../../src/frame/Frame.js";
@@ -105,6 +106,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView ??= () => undefined;
 });
 afterEach(() => {
+  setFormatWords(null);
   cleanup();
   vi.useRealTimers();
 });
@@ -359,6 +361,7 @@ describe("the Ohbox's own seat, over the mail ground", () => {
   });
 
   it("one column, no letter over the list: the cursor row's verbs are the list's own (e parks, a queues, b books tomorrow at the account's hour), each through the one seam with its sentence", async () => {
+    setFormatWords({ locale: () => "en", zone: () => "Europe/Zurich", translatorOf: () => null });
     /* The afternoon where the reader is: "tomorrow" is the next day (the small hours have a case of their own). */
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-17T13:00:00.000Z"));
@@ -391,6 +394,7 @@ describe("the Ohbox's own seat, over the mail ground", () => {
   });
 
   it("b in the small hours books the coming morning where the reader is, not the day after: either side of midnight", async () => {
+    setFormatWords({ locale: () => "en", zone: () => "Europe/Zurich", translatorOf: () => null });
     const zurich = (iso: string) =>
       new Intl.DateTimeFormat("en-GB", {
         timeZone: "Europe/Zurich",

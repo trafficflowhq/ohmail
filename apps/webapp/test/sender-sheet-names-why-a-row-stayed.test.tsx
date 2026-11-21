@@ -90,8 +90,6 @@ async function render(o: {
   const reader = within(frame.getByRole("region", { name: words.frame.landmark.reading }));
   await clickMounted(reader.getByRole("button", { name: (name) => name.startsWith(ADDR) }));
   const page = within(document.body);
-  const contact = page.getByRole("dialog", { name: words.message.contactAria.replace("{who}", ADDR) });
-  await clickMounted(within(contact).getByRole("menuitem", { name: words.screening.action }));
   const el = page.getByRole("dialog", { name: words.screening.aria.replace("{sender}", ADDR) });
   await tick(200);
 
@@ -106,7 +104,7 @@ describe("the sender sheet names why a row stayed", () => {
   it("one line per place and reason, counted as the split counts them", async () => {
     const r = await render({ doneAt: NOW, why: { "news-a": "replied", "news-b": "replied", "news-c": "failed-checks", "rec-a": "filed-elsewhere" } });
     expect(r.stayedFor).toHaveBeenCalledWith(["news-a", "news-b", "news-c", "rec-a"]);
-    expect(r.el.querySelector(".sm-now")!.textContent).toBe("6 messages — News 3 · Ohbox 2 · Receipts 1");
+    expect(r.el.querySelector(".oh-contactcard-line")?.getAttribute("aria-description")).toBe("6 messages — News 3 · Ohbox 2 · Receipts 1");
     expect(r.lines).toEqual([
       { text: "2 stay in News: you replied to them.", move: "Move them too" },
       { text: "1 stays in News: it failed the sender's sign-in checks.", move: null },
@@ -134,7 +132,7 @@ describe("the sender sheet names why a row stayed", () => {
       msg(`bulk-${String(i).padStart(3, "0")}`, "ohmail/Receipts", new Date(Date.UTC(2026, 7, 1, 0, i)).toISOString()));
     const why = Object.fromEntries([...extra.map((m) => m.id), "rec-a"].map((id) => [id, "filed-elsewhere" as const]));
     const r = await render({ doneAt: NOW, why, extra });
-    expect(r.el.querySelector(".sm-now")!.textContent).toBe("156" + " messages — Receipts 151 · News 3 · Ohbox 2");
+    expect(r.el.querySelector(".oh-contactcard-line")?.getAttribute("aria-description")).toBe("156" + " messages — Receipts 151 · News 3 · Ohbox 2");
     expect(r.lines).toEqual([{ text: "151 stay in Receipts: filed in another mail app.", move: "Move them too" }]);
     await clickMounted(within(r.el).getByRole("button", { name: "Move them too" }));
     await tick(1500);

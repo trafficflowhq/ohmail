@@ -39,10 +39,13 @@ type Journey = "list" | "letter" | "body" | "search" | "markRead";
  * handle sent each in one flush (3, 2, 3, 3, 14). Now a statement on the request's bound handle is
  * one flight on both pools (begin, the binder, the statement, commit, written before any answer),
  * a search page is one read-only flight, and a write is one flight whose body follows its start.
+ * A write on the managed pool also asks whether the address is proven, in one flight that names
+ * the session's account (mark-read 14 → 15): the account lock shows a user's row only to its own
+ * account, and the keyed look-up learns the account only from its answer.
  */
 const BURSTS: Record<Pool, Record<Journey, number>> = {
   owned: { list: 4, letter: 3, body: 4, search: 4, markRead: 14 },
-  pooled: { list: 3, letter: 2, body: 3, search: 3, markRead: 14 },
+  pooled: { list: 3, letter: 2, body: 3, search: 3, markRead: 15 },
 };
 
 /** Wait until the wire has been quiet for a moment: work a response leaves behind is its own. */

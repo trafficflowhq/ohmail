@@ -1,7 +1,7 @@
 import { EVIDENCE_WINDOW_MS } from "@ohmail/client-engine";
 import type { JudgedReadPhase } from "./stream-read-types.js";
 import { documentHidden } from "../session/document-hidden.js";
-import { STREAM_REST_MS, STREAM_SNIPPET_REST_MS, type StreamLook, type StreamReadRule } from "./read-rule.js";
+import { STREAM_REST_MS, type StreamLook, type StreamReadRule } from "./read-rule.js";
 
 /** Run the pending-body clock only while the viewport can be attended. */
 export function watchPreviewDwell(
@@ -96,19 +96,14 @@ export function watchPreviewDwell(
   };
 }
 
-/** Check the resting cursor at the body and snippet dwell thresholds. */
-export function watchStreamRest(rest: (snippet: boolean) => void) {
-  let body: ReturnType<typeof setTimeout> | undefined;
-  let snippet: ReturnType<typeof setTimeout> | undefined;
-  const clear = (): void => {
-    clearTimeout(body);
-    clearTimeout(snippet);
-  };
+/** Check the resting cursor after the same dwell for bodies and snippets. */
+export function watchStreamRest(rest: (landed: boolean) => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = (): void => clearTimeout(timer);
   return {
-    arm(): void {
+    arm(landed = false): void {
       clear();
-      body = setTimeout(() => rest(false), STREAM_REST_MS);
-      snippet = setTimeout(() => rest(true), STREAM_SNIPPET_REST_MS);
+      timer = setTimeout(() => rest(landed), STREAM_REST_MS);
     },
     clear,
   };

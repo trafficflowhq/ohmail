@@ -121,7 +121,7 @@ async function mount(selfHost: boolean, messages: AbstractIntlMessages, locale =
 /** The press to the receipt (a fresh step-up window, so the erase runs on the press). */
 async function erase(c: HTMLElement): Promise<void> {
   await field(c, "#acct-typed", "person@example.test");
-  await submit(c.querySelector("form.acct-confirm")!);
+  await submit(c.querySelector("form:has(#acct-typed)")!);
   await waitFor(() => c.textContent!.includes(en.account.doneTitle), "the receipt");
 }
 

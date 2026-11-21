@@ -10,8 +10,7 @@
     display: block;
     width: calc(100% / 3);
     height: 100%;
-    background: var(--hot);
-    opacity: var(--activity-line-opacity);
+    background: color-mix(in srgb, var(--hot) calc(var(--activity-line-opacity) * 100%), transparent);
     transform: translateX(100%);
     animation: oh-activity-pass var(--d-activity-line) var(--e-activity-line) infinite;
   }

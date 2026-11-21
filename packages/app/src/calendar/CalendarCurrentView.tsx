@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+import { DraftChipArrival } from "@ohmail/ui/calendar";
 import { RefusalLine } from "@ohmail/ui/base";
 import type { HeldEdge, RangeActs, RangeInput } from "@ohmail/app-logic/calendar";
 import { useFrame } from "../frame/commands.js";
@@ -35,38 +37,42 @@ export function CurrentView({
   const { place, agenda, span } = where;
   const { commands } = useFrame();
   const t = useText("calendar");
-  return place === "week" ? (
-    <weekView.View {...timeProps} />
-  ) : place === "day" ? (
-    <dayView.View {...timeProps} />
-  ) : place === "month" ? (
-    <MonthView
-      input={input}
-      acts={acts}
-      edge={edge}
-      run={monthRun}
-      {...(timeProps.onDrag ? { onDrag: timeProps.onDrag } : {})}
-    />
-  ) : place === "year" ? (
-    <YearView input={input} acts={acts} edge={edge} />
-  ) : place === "agenda" ? (
-    <AgendaView
-      input={input}
-      acts={acts}
-      edge={edge}
-      days={agenda.days}
-      onMore={agenda.more}
-      keysHere={keysHere && route.open === null}
-    />
-  ) : place === "calsearch" ? (
-    <SearchView
-      input={input}
-      acts={acts}
-      query={route.words.q ?? ""}
-      onQuery={(q) => commands.go({ place: "calsearch", words: q === "" ? {} : { q } })}
-      held={{ from: span.first, to: span.last }}
-    />
-  ) : (
-    <RefusalLine>{t("notHere")}</RefusalLine>
-  );
+  const drafting = route.words.panel === "new";
+  const arrival = useMemo(() => (drafting ? { played: false } : null), [drafting]);
+  const view =
+    place === "week" ? (
+      <weekView.View {...timeProps} />
+    ) : place === "day" ? (
+      <dayView.View {...timeProps} />
+    ) : place === "month" ? (
+      <MonthView
+        input={input}
+        acts={acts}
+        edge={edge}
+        run={monthRun}
+        {...(timeProps.onDrag ? { onDrag: timeProps.onDrag } : {})}
+      />
+    ) : place === "year" ? (
+      <YearView input={input} acts={acts} edge={edge} />
+    ) : place === "agenda" ? (
+      <AgendaView
+        input={input}
+        acts={acts}
+        edge={edge}
+        days={agenda.days}
+        onMore={agenda.more}
+        keysHere={keysHere && route.open === null}
+      />
+    ) : place === "calsearch" ? (
+      <SearchView
+        input={input}
+        acts={acts}
+        query={route.words.q ?? ""}
+        onQuery={(q) => commands.go({ place: "calsearch", words: q === "" ? {} : { q } })}
+        held={{ from: span.first, to: span.last }}
+      />
+    ) : (
+      <RefusalLine>{t("notHere")}</RefusalLine>
+    );
+  return <DraftChipArrival value={arrival}>{view}</DraftChipArrival>;
 }

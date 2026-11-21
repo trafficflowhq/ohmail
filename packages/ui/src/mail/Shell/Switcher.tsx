@@ -4,6 +4,7 @@ import { design } from "../../base/tokens.js";
 import { cssRect, type CssRect } from "../../base/ui-zoom.js";
 import { Icon } from "../../icons/Icon.js";
 import { animate } from "../../motion/motion.js";
+import { RailEntry } from "./RailEntry.js";
 import "./switcher.css";
 
 export type SwitcherProduct = "mail" | "cal";
@@ -25,7 +26,7 @@ export interface SwitcherSide {
 
 export interface SwitcherProps {
   /** `pair`: one capsule of two halves. `round`: one round button that shows where it leads. */
-  kind: "pair" | "round";
+  kind: "pair" | "round" | "entry";
   /** The pair's name: "Mail or Calendar". */
   label: string;
   /** The product you are in. */
@@ -113,9 +114,23 @@ export function Switcher({
     animate(el, "knob", { ease: "--e-knob", keyframes: [{ transform: previous }, { transform: "none" }] });
   }, [current, from]);
 
-  if (kind === "round") {
+  if (kind !== "pair") {
     const to: SwitcherProduct = current === "mail" ? "cal" : "mail";
     const side = sides[to];
+    const waiting = side.wants ? <i className="oh-switcher-wants" data-product={to} aria-hidden /> : null;
+    if (kind === "entry")
+      return (
+        <div className="oh-switcher-entry" style={COLOURS}>
+          <RailEntry
+            kind="place"
+            icon={SIGN[to]}
+            status={waiting ? { mark: waiting, description: side.description } : undefined}
+            onPress={onSwitch && (() => onSwitch(to))}
+          >
+            {side.label}
+          </RailEntry>
+        </div>
+      );
     return (
       <button
         type="button"
@@ -129,7 +144,7 @@ export function Switcher({
         onClick={onSwitch && (() => onSwitch(to))}
       >
         <Icon name={SIGN[to]} size={20} />
-        {side.wants ? <i className="oh-switcher-wants" data-product={to} aria-hidden /> : null}
+        {waiting}
         {side.description ? (
           <span id={descriptionId} hidden>
             {side.description}

@@ -580,6 +580,8 @@ export const DE: Deck = {
   forgetKeystoreRefused: (detail: string) =>
     `Dieses Handy wollte die Kopplung nicht hergeben (${detail}). `
     + "Widerrufe dieses Gerät in der Geräteliste des Servers — das beendet die Sitzung, wo immer sie gehalten wird.",
+  calendarCopyRemains:
+    "Der Kalender, den dieses Handy kopiert hat, ließ sich noch nicht entfernen. ohmail versucht es beim nächsten Start erneut.",
   forgetMailRemains: (detail: string) =>
     "Die Kopplung ist entfernt, aber die Mails, die dieses Handy kopiert hatte, ließen sich nicht "
     + `löschen (${detail}). ohmail versucht es beim nächsten Start erneut.`,

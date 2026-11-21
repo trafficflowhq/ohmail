@@ -2,7 +2,6 @@
   "trash": {
     "listMenu": "List",
     "emptyTitle": "Nothing deleted",
-    "empty": "What you delete in ohmail lands here and can be put back.",
     "foot": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.",
     "footLive": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Under it, what sits in your mail server's Trash: read-only, because nothing here records where that mail came from. Your mail server decides how long Trash keeps it.",
     "deletedAt": "Deleted {when}",

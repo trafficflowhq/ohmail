@@ -158,7 +158,7 @@ async function streamRead(viewport: number, theme: "light" | "dark", panels: num
 describe("a letter answered in its reading stream", () => {
   for (const viewport of STREAM_CASES)
     for (const theme of ["light", "dark"] as const)
-      it(`${viewport}px, ${theme}: the squares beside the panels, the ring whole, the paper still, the cards unmoved`, async () => {
+      it(`${viewport}px, ${theme}: the squares beside the panels, the ring whole and the lone letter aligned with its neighbors`, async () => {
         const two = await streamRead(viewport, theme, 2);
         const one = await streamRead(viewport, theme, 1);
         const rest = await streamRead(viewport, theme, 1, false);
@@ -171,13 +171,15 @@ describe("a letter answered in its reading stream", () => {
         expect(two.ring!, "the ring is cut on the left").toBeGreaterThanOrEqual(ringFrame.left - 0.5);
         expect(two.ringBox!.right, "the ring is cut on the right").toBeLessThanOrEqual(ringFrame.right + 0.5);
         expect(two.panels[0]!.right + 2, "the paper's ring is cut at the reading edge").toBeLessThanOrEqual(two.stream.right + 0.5);
-        expect(two.panels[0]!.left, "the paper moved when the reply joined").toBeCloseTo(one.panels[0]!.left, 1);
         expect([two.resting.left, two.resting.right], "a resting card moved sideways").toEqual([rest.resting.left, rest.resting.right]);
         expect(two.overflow, "the stream scrolls sideways").toBeLessThanOrEqual(0);
         expect(two.pageOverflow, "the page scrolls sideways").toBeLessThanOrEqual(0);
         if (viewport < 700) {
+          expect(two.panels[0]!.left, "the paper moved when the reply joined").toBeCloseTo(one.panels[0]!.left, 1);
           expect(Math.max(...two.squares.map((box) => box.bottom))).toBeLessThanOrEqual(two.panels[0]!.top);
         } else {
+          expect(one.panels[0]!.left, "the single letter starts at the folded card's edge").toBeCloseTo(rest.resting.left, 1);
+          expect(one.panels[0]!.right, "the single letter ends at the folded card's edge").toBeCloseTo(rest.resting.right, 1);
           // The studio's Ohmarchy seam: 18px on either side of the 16px mark ring.
           expect(two.ringBox!.right - two.ringBox!.left, "the mark ring width").toBeCloseTo(16, 1);
           expect(two.ring! - two.list!.right - 2, "list ring → mark ring").toBeCloseTo(18, 1);

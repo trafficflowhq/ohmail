@@ -82,7 +82,7 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
       box.id === message.mailboxId && box.organizerChecked === true && box.status !== "disabled")) return null;
     const address = person.slot === `${message.id} from` ? undefined : person.address;
     const rules = press.routing.planOver.current?.(read);
-    const sender = senderScreening(read, message.id, address, consentView.placeOf, rules);
+    const sender = senderScreening(read, message.id, address, consentView.placeOf, rules, { mailbox: "seed" });
     return sender ? { read, message, address, sender, rules, placeOf: consentView.placeOf } : null;
   };
   const contact = readContact();
@@ -163,7 +163,7 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
     const before = shownNow();
     const args = { sender: who, place };
     const readBack = (retro = applyRetro) =>
-      screeningReadBack(engine.verbRead(), current.message.id, current.address, dest, scope, { ...facts(), retro });
+      screeningReadBack(engine.verbRead(), current.message.id, current.address, dest, scope, { ...facts(), retro }, { mailbox: "seed" });
     const sayVerdict = (back: ReturnType<typeof readBack>, applying?: string) => {
       if (back && back.verdict.key !== "none") {
         const action = verdictAction(back.verdict, { scope, address: current.sender.address });
@@ -177,7 +177,7 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
           onAction: () => {
             if (!ownsEngine()) return;
             const originalMissing = engine.verbRead().get<EngineMessage>("message", current.message.id) === undefined;
-            moveStayed(action.ids, dest, scope, current.sender.address, originalMissing);
+            moveStayed(action.ids, dest, scope, current.sender.address, current.message.mailboxId, originalMissing);
           },
         } : action?.kind === "remove" && keptRule ? {
           action: t("verdictRemoveRule"), duration: 8000,
@@ -300,14 +300,17 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
     });
   };
 
-  const moveStayed = (ids: readonly string[], dest: ScreeningDest, scope: ScreeningScope, address: string, originalMissing = false) => {
+  const moveStayed = (
+    ids: readonly string[], dest: ScreeningDest, scope: ScreeningScope, address: string,
+    seedMailboxId: string, originalMissing = false,
+  ) => {
     if (!ownsEngine()) return;
     const latest = engine.verbRead();
     const domain = scope === "domain" ? domainOf(address) : "";
     const key = senderKey(address);
     const eligible = ids.filter((id) => {
       const letter = latest.get<EngineMessage>("message", id);
-      return letter && letter.accountId === session
+      return letter && letter.accountId === session && letter.mailboxId === seedMailboxId
         && (domain ? domainOf(letter.from.address) === domain : senderKey(letter.from.address) === key)
         && mailboxes?.some((box) => box.id === letter.mailboxId && box.organizerChecked === true && box.status !== "disabled");
     });
@@ -369,7 +372,7 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
     mailboxNameOf={(id) => mailboxWord(id, "label")}
     stayedFor={stayedFor}
     onMoveToo={(ids, dest) => {
-      moveStayed(ids, dest, "domain", sender.address);
+      moveStayed(ids, dest, "domain", sender.address, message.mailboxId);
       onClose();
     }}
     onOpenDetail={setAudit}

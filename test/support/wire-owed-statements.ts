@@ -13,9 +13,6 @@ export const OWED_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "api account write staff_audit_events": [
     "insert into \"staff_audit_events\" (\"id\", \"at\", \"request_id\", \"staff_user_id\", \"staff_session_id\", \"actor_label\", \"roles\", \"action\", \"target_account_id\", \"target_user_id\", \"target_mailbox_id\", \"outcome\", \"refusal_code\", \"reason_code\", \"ticket_ref\", \"result_count\", \"query_hmac\", \"audience\", \"detail\") values (default, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
   ],
-  "api credential read users": [
-    "select \"sessions\".\"id\", \"sessions\".\"family_id\", \"sessions\".\"account_id\", \"sessions\".\"user_id\", \"sessions\".\"last_twofa_at\", \"sessions\".\"scope\", \"users\".\"email_verified_at\", \"sessions\".\"last_synced_at\" from \"sessions\" inner join \"users\" on \"users\".\"id\" = \"sessions\".\"user_id\" where (\"sessions\".\"access_token_hash\" = $1 and \"sessions\".\"revoked_at\" is null and \"sessions\".\"access_expires_at\" > $2) limit $3",
-  ],
   "api nothing read away_responders": [
     "select \"account_id\", \"body\", \"audience\", \"throttle\", \"piles\", \"starts_at\", \"enabled_at\" from \"away_responders\" where (\"away_responders\".\"enabled\" = $1 and \"away_responders\".\"enabled_at\" is not null and (\"away_responders\".\"starts_at\" is null or \"away_responders\".\"starts_at\" <= $2::timestamptz) and (\"away_responders\".\"ends_at\" is null or \"away_responders\".\"ends_at\" >= $3::timestamptz)) order by \"away_responders\".\"last_considered_at\" asc, \"away_responders\".\"enabled_at\" asc, \"away_responders\".\"account_id\" asc limit $4",
   ],

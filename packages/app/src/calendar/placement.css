@@ -48,6 +48,18 @@
   inset-block-end: 0;
 }
 
+.cal-event-panel[data-call] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  padding: var(--s2);
+}
+
+.cal-call-menu-link {
+  text-decoration: none;
+}
+
 .cal-edit-panel {
   --cal-edit-panel-z: 7;
   z-index: var(--cal-edit-panel-z);

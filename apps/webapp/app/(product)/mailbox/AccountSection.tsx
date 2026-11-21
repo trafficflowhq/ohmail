@@ -13,7 +13,7 @@
 
 /**
  * The erase is TRIED on the press. `DELETE /account` is `stepUp: true`, so a closed five-minute
- * window answers `step_up_required` before anything is touched; the pane then shows `StepUpPrompt`,
+ * window answers `step_up_required` before anything is touched; the pane then shows `StepUp`,
  * which re-stamps the session this browser holds, and the verified factor runs the erase once. A
  * fresh window erases on the first press. Nothing here signs in: the erase runs as the session the
  * pane was opened with, so there is no other account it could reach and no check for one. The
@@ -31,9 +31,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { Button, SettingsNote, SettingsSection } from "@ohmail/ui";
+import { Button, Field, RefusalLine, Sentence } from "@ohmail/ui/base";
+import { SettingActs, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { SELF_HOST_BUILD } from "../../hello";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
@@ -48,8 +48,8 @@ import {
   type ErasureResult,
 } from "../../api-client";
 import { useRefusalSentence } from "../refusal-sentence";
-import { useManageOffer } from "./SubscriptionSection";
-import { StepUpPrompt } from "./StepUpPrompt";
+import { useManageOffer } from "./use-manage-offer";
+import { StepUp } from "./StepUp";
 import { gatedRefusal } from "./gated-refusal";
 
 /** `stepup`: the erase was refused for a closed window and waits on the prompt. */
@@ -94,6 +94,7 @@ export function AccountSection() {
   const [typed, setTyped] = useState("");
   const [error, setError] = useState<string | null>(null);
   /** A factor landed after the prompt's Cancel and was discarded: nothing was erased, and it is said. */
+  const erasePress = useRef<HTMLButtonElement>(null);
   const [stepUpDiscarded, setStepUpDiscarded] = useState(false);
   const [result, setResult] = useState<ErasureResult | null>(null);
   /**
@@ -245,23 +246,23 @@ export function AccountSection() {
   // ── The states that are not the ceremony ────────────────────────────────────────────
 
   if (!apiConfigured()) {
-    return <Pane><p className="acct-lead">{t("unavailableBody")}</p></Pane>;
+    return <Pane><p className="oh-text">{t("unavailableBody")}</p></Pane>;
   }
   if (loading) {
-    return <Pane><p className="acct-lead">{t("loading")}</p></Pane>;
+    return <Pane><p className="oh-text">{t("loading")}</p></Pane>;
   }
   /* A failed read is not an empty result — checked BEFORE `!who`, because `who` is null in both states and the one
      below it is the confident claim. A read we could not make says so and offers no remedy,
      since "sign in again" is not the remedy for a 503 and following it would sign a working
      session out. */
   if (sessionFailed !== null) {
-    return <Pane><p className="acct-warn" role="alert">{sessionFailed}</p></Pane>;
+    return <Pane><RefusalLine alert>{sessionFailed}</RefusalLine></Pane>;
   }
   if (!who) {
     return (
       <Pane>
-        <p className="acct-lead">{t("signedOutBody")}</p>
-        <Link className="btn" href="/login">{t("signIn")}</Link>
+        <p className="oh-text">{t("signedOutBody")}</p>
+        <Button kind="two" href="/login">{t("signIn")}</Button>
       </Pane>
     );
   }
@@ -269,30 +270,30 @@ export function AccountSection() {
     const subscription = cancelledEarlier ? "cancelled" : result.subscription;
     return (
       <Pane>
-        <h2 className="acct-h">{t("doneTitle")}</h2>
-        <p className="acct-lead">{t("doneBody")}</p>
+        <Sentence level={2}>{t("doneTitle")}</Sentence>
+        <p className="oh-text">{t("doneBody")}</p>
         {/* The server's own sentence about what survives, verbatim. */}
-        <p className="acct-fine">{result.retained}</p>
+        <p className="oh-text">{result.retained}</p>
         {subscription === "cancelled" ? (
-          <p className="acct-fine">{t("doneSubCancelled")}</p>
+          <p className="oh-text">{t("doneSubCancelled")}</p>
         ) : null}
         {subscription === "cancel_failed" ? (
-          <p className="acct-warn" role="alert">{t("doneSubFailed")}</p>
+          <RefusalLine alert>{t("doneSubFailed")}</RefusalLine>
         ) : null}
         {/* The account is erased and the LOCAL copy is not. Said here, beside the receipt,
             because after an erasure there is no session left to route the reader anywhere
             else with — the remedy has to be one they can perform on this page. */}
         {eraseMirrorBlocked ? (
-          <p className="acct-warn" role="alert">{t("erasedMirrorBlocked")}</p>
+          <RefusalLine alert>{t("erasedMirrorBlocked")}</RefusalLine>
         ) : null}
-        <div className="acct-actions">
+        <SettingActs>
           {/* A full navigation, not a router push: it tears down the engine and its in-memory
               mirror, and the cookies are already cleared, so `/` re-decides and renders the
               marketing page. */}
-          <Button variant="primary" onClick={() => window.location.replace("/")}>
+          <Button onPress={() => window.location.replace("/")}>
             {t(SELF_HOST_BUILD ? "doneHomeSelfHost" : "doneHome")}
           </Button>
-        </div>
+        </SettingActs>
       </Pane>
     );
   }
@@ -311,61 +312,54 @@ export function AccountSection() {
        * server-side and wipes the IndexedDB mirror — and `owner` is captured from state before the
        * call, for the same reason erasure captures it: afterwards there is nobody to ask.
        */}
-      <SettingsSection className="acct acct-session">
-        <h2 className="acct-h">{t("signOutTitle")}</h2>
-        <p className="acct-lead">{t("signedInAs", { email: who.email })}</p>
-        <div className="acct-signout">
+      <SettingsSheet title={t("signOutTitle")}>
+        <p className="oh-text">{t("signedInAs", { email: who.email })}</p>
+        <>
           <div>
-            <p className="acct-fine">{t("signOutBody")}</p>
-            {signOutBlocked ? <p className="acct-fine acct-warn" role="alert">{t("signOutBlocked")}</p> : null}
-            {signOutUnverified ? <p className="acct-fine acct-warn" role="alert">{t("signOutUnverified")}</p> : null}
+            <p className="oh-text">{t("signOutBody")}</p>
+            {signOutBlocked ? <RefusalLine alert>{t("signOutBlocked")}</RefusalLine> : null}
+            {signOutUnverified ? <RefusalLine alert>{t("signOutUnverified")}</RefusalLine> : null}
           </div>
-          {/* `acct-signout-btn` is `flex:0 0 auto` and `white-space:nowrap`. Without it the
-              button is an ordinary flex item beside a paragraph that wants the whole row, so
-              it is squeezed until its two-word label breaks across two lines — which is how
-              this control was reported. The door icon is the conventional mark for leaving a
-              session; the button stays the quiet default variant because signing out is
-              reversible and the card below is where the irreversible control lives. */}
+          <SettingActs>
           <Button
-            className="acct-signout-btn"
-            icon="door"
+            kind="two"
+            icon="go"
             disabled={signingOut}
-            onClick={() => { void doSignOut(who.accountId, who.familyId); }}
+            onPress={() => { void doSignOut(who.accountId, who.familyId); }}
           >
             {signingOut ? t("signOutBusy") : t("signOut")}
           </Button>
-        </div>
-      </SettingsSection>
+          </SettingActs>
+        </>
+      </SettingsSheet>
 
     <Pane>
-      <h2 className="acct-h">{t("title")}</h2>
+      <Sentence level={2}>{t("title")}</Sentence>
       {/* Attached to DELETION and to nothing else. */}
-      <p className="acct-lead">{t("lead")}</p>
+      <p className="oh-text">{t("lead")}</p>
 
-      {error ? <p className="acct-warn" role="alert">{error}</p> : null}
+      {error ? <RefusalLine alert>{error}</RefusalLine> : null}
       {/* Not an error — the person got what they asked for. It is here because after a cancel
           the pane is back at the facts, which on their own look exactly like a pane that erased
           nothing because nothing was ever started. */}
-      {stepUpDiscarded ? <p className="acct-warn" role="status">{t("cancelledNothingErased")}</p> : null}
+      {stepUpDiscarded ? <SettingNote said>{t("cancelledNothingErased")}</SettingNote> : null}
 
       {/* Said once, first, and not repeated: it is the product's central promise and the
           reason erasure can be as blunt as it is. */}
-      <SettingsNote icon="shield">{t("mail")}</SettingsNote>
+      <SettingNote>{t("mail")}</SettingNote>
 
-      <div className="acct-cols">
-        <div>
-          <h3 className="acct-sub">{t("goneTitle")}</h3>
-          <ul className="acct-list">
+      <>
+        <SettingsSheet title={t("goneTitle")}>
+          <ul className="oh-text">
             <li>{t("gone1")}</li>
             <li>{t("gone2")}</li>
             <li>{t("gone3")}</li>
             <li>{t("gone4")}</li>
           </ul>
-          <p className="acct-fine">{t("goneWhen")}</p>
-        </div>
-        <div>
-          <h3 className="acct-sub">{t("keptTitle")}</h3>
-          <ul className="acct-list">
+          <p className="oh-text">{t("goneWhen")}</p>
+        </SettingsSheet>
+        <SettingsSheet title={t("keptTitle")}>
+          <ul className="oh-text">
             {/* What THIS server keeps: the managed sentence names a billing row and a processor a
                 self-hosted database has no table for. */}
             <li>{t(SELF_HOST_BUILD ? "keptSelfHost" : "kept1")}</li>
@@ -382,62 +376,55 @@ export function AccountSection() {
               404 — and this is the deletion flow, the worst place to hand somebody a dead link
               to the explanation of what survives their deletion. Backups on somebody's own
               server are theirs to describe. */}
-          <p className="acct-fine">
+          <p className="oh-text">
             {t("backups")}
             {SELF_HOST_BUILD ? null : <> <a href="/privacy">{t("backupsLink")}</a></>}
           </p>
-        </div>
-      </div>
+        </SettingsSheet>
+      </>
 
-      {stage === "facts" ? (
+      {stage === "facts" || stage === "stepup" || stage === "erasing" ? (
         <form
-          className="acct-confirm"
           onSubmit={(e) => {
             e.preventDefault();
             // The press IS the erase on a fresh window, so the typed address is checked here too,
             // not only by the button it disables.
-            if (typed.trim().toLowerCase() !== who.email.toLowerCase()) return;
+            if (stage !== "facts" || typed.trim().toLowerCase() !== who.email.toLowerCase()) return;
             void erase(who.accountId);
           }}
         >
-          <label className="join-label" htmlFor="acct-typed">
-            {t("typeLabel", { email: who.email })}
-          </label>
-          <input
-            id="acct-typed" className="join-input" autoComplete="off" spellCheck={false}
-            value={typed} onChange={(e) => setTyped(e.target.value)}
+          <Field
+            id="acct-typed" autoComplete="off" label={t("typeLabel", { email: who.email })}
+            value={typed} onChange={setTyped} disabled={stage !== "facts"}
           />
-          <div className="acct-actions">
+          <SettingActs>
             <Button
-              variant="primary" type="submit" className="danger"
+              ref={erasePress} type="submit" busy={stage !== "facts"}
               disabled={typed.trim().toLowerCase() !== who.email.toLowerCase()}
             >
               {t("begin")}
             </Button>
-          </div>
+          </SettingActs>
         </form>
       ) : null}
 
       {stage === "stepup" ? (
-        <div className="acct-confirm">
-          <h3 className="acct-sub">{t("confirmTitle")}</h3>
-          {/* The destructive act is named at the moment it fires — the verified factor sends the
-              DELETE, with no further click. */}
-          <p className="acct-fine">{t("factorBody", { email: who.email })}</p>
-          <StepUpPrompt
-            onVerified={() => { if (alive.current) void erase(who.accountId, true); }}
-            onCancel={() => setStage("facts")}
-            onDiscarded={() => setStepUpDiscarded(true)}
-          />
-        </div>
+        <StepUp
+          inline
+          line={t("factorBody", { email: who.email })}
+          returnFocus={() => erasePress.current}
+          onVerified={() => { if (alive.current) void erase(who.accountId, true); }}
+          onCancel={() => setStage("facts")}
+          onDiscarded={() => setStepUpDiscarded(true)}
+        />
       ) : null}
 
-      {stage === "erasing" ? <p className="acct-lead">{t("erasing")}</p> : null}
+      {stage === "erasing" ? <p className="oh-text">{t("erasing")}</p> : null}
     </Pane>
     </>
   );
 }
 
 function Pane({ children }: { children: React.ReactNode }) {
-  return <SettingsSection className="acct">{children}</SettingsSection>;
+  return <SettingsSheet>{children}</SettingsSheet>;
 }

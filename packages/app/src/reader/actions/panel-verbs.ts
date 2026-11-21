@@ -154,7 +154,7 @@ export function panelVerbs(
   ];
 }
 
-export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean) {
+export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean, canAnswer: boolean) {
   const mod = useModGlyph();
   const reply = useBinding(REPLY_KEY);
   const replyAll = useBinding("shift+r");
@@ -164,6 +164,7 @@ export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean) {
   const resurface = useBinding("b");
   const tag = useBinding("t");
   const screening = useBinding("s");
+  const calendar = useBinding("v");
   const read = useBinding(readSlot === "markRead" ? "shift+i" : "u");
   const hint = (binding: typeof reply) =>
     !active || binding === null
@@ -173,15 +174,16 @@ export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean) {
           shortcut: ariaShortcut(binding.chord, mod),
         };
   return {
-    reply: hint(reply),
-    replyAll: hint(replyAll),
-    forward: hint(forward),
+    reply: canAnswer ? hint(reply) : {},
+    replyAll: canAnswer ? hint(replyAll) : {},
+    forward: canAnswer ? hint(forward) : {},
     later: hint(later),
     aside: hint(aside),
     resurface: hint(resurface),
     tag: hint(tag),
     screening: hint(screening),
     read: hint(read),
+    calendar: hint(calendar),
   };
 }
 

@@ -19,7 +19,7 @@ const replyBuffer = (id: string): string | null => window.localStorage.getItem(r
  *
  * The failure this replaces was structural, not cosmetic: Reply called `go("compose")`, so
  * the route changed, the Ohbox unmounted, and the message being answered left the screen.
- * A test that mounted `MessagePane` alone could not have caught that and cannot catch its
+ * A test that mounted the reader alone could not have caught that and cannot catch its
  * return — the bug lived in the shell's action handler and in who owns Escape. So this
  * mounts the real `AppShell` in demo mode (fixtures, no network — see
  * `demo-zero-network.test.ts`) and drives it with keys, exactly as that change drives
@@ -118,7 +118,7 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
-  // A key can open an editor, and the editor is behind `RichEditorLazy` — one seam, one helper.
+  // A key can open an editor, and the editor loads through Write's lazy entry.
   await settleEditor();
 };
 
@@ -166,7 +166,7 @@ function occurrences(hay: string, needle: string): number {
  * Elements somebody called `scrollIntoView` on, in order.
  *
  * jsdom does not implement it at all, so this is an installed recorder rather than a spy on
- * something real — which is also why `InlineReply` optional-chains the METHOD. A no-op body
+ * something real — which is why the scroll helper checks the method. A no-op body
  * on purpose: a stub that dispatched `scroll` would arm `useSeenOnScroll` sweeps in whatever
  * else the shell has mounted (see `seen-on-scroll-runaway.test.ts` for what that costs).
  */
@@ -283,7 +283,7 @@ describe("Reply opens inside the message", () => {
     // deep thread the conversation is as tall as it is, inside the column that scrolls, so an
     // editor that did not scroll itself into view could open below the fold — and an editor
     // nobody can see is the rejected compose dialog, wearing different clothes.
-    // Drop the `scrollIntoView` call in `InlineReply` and this goes red.
+    // Drop the reply scroll in the shared Write `Reply.tsx` and this goes red.
     await mountShell();
     scrolled.length = 0;
     scrolledArgs.length = 0;

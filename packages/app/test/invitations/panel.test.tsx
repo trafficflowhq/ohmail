@@ -4,7 +4,7 @@
  * only after our server's verdict, the next invitation opened after it, a cancel drawn at once while its row is open,
  * a calendar that can only be looked at offering no press, and the all-clear once nothing waits.
  */
-import type { CalendarAct } from "@ohmail/wire";
+import type { CalendarAct, EngineMessage, MessageInvitationDTO } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
@@ -22,11 +22,20 @@ import invitationsEn from "../../messages/invitations.en.json" with { type: "jso
 import { calendar } from "../../src/calendar/entry.js";
 import { Frame } from "../../src/frame/Frame.js";
 import type { CalendarEntry } from "../../src/frame/contract.js";
+import { readerEntry } from "../../src/reader/index.js";
 import { InvitationsPanel } from "../../src/invitations/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, type FakeAddress } from "../support/fake-window.js";
-import { fakeMail, mountReader, WORDS as readerWords } from "../reader/support/mail.js";
+import {
+  bodyDouble,
+  fakeMail,
+  letter,
+  mountReader,
+  READER_PLACE,
+  WRITE_PLACE,
+  WORDS as readerWords,
+} from "../reader/support/mail.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 
 const ZURICH = "Europe/Zurich";
@@ -368,15 +377,44 @@ describe("the invitations' panel", () => {
 });
 
 describe("an invitation opened in the calendar", () => {
-  function openCard(m: ReturnType<typeof mirror>, readMailboxes: () => Promise<unknown[]> = async () => []) {
-    const address = fakeAddress("#/cal/week/2026-11-18/e/a");
+  function openCard(
+    m: ReturnType<typeof mirror>,
+    readMailboxes: () => Promise<unknown[]> = async () => [],
+    at = "#/cal/week/2026-11-18/e/a",
+    letters: readonly EngineMessage[] = [],
+    copy?: (text: string) => Promise<boolean>,
+    rows?: Readonly<Record<string, unknown>>,
+  ) {
+    const address = fakeAddress(at);
     const engine = Object.assign(fakeMail([]).engine, { store: m.engine.store });
     const mounted = mountReader({
-      letters: [],
+      letters,
+      rows,
       open: null,
       host: {
         engine,
         calendar: withPanel,
+        places: {
+          ohbox: READER_PLACE,
+          write: WRITE_PLACE,
+          news: { ...READER_PLACE, id: "news", rail: null },
+          screener: { ...READER_PLACE, id: "screener", rail: null },
+          folder: { ...READER_PLACE, id: "folder", rail: null },
+        },
+        ...(copy && {
+          reader: {
+            ...readerEntry({
+              body: bodyDouble().body,
+              look: "none",
+              files: "none",
+              pictures: "none",
+              sentCopy: "none",
+              reply: "none",
+              invitation: "none",
+            }),
+            copy,
+          },
+        }),
         products: "both",
         wires: { calendar: m.port },
         mailboxes: readMailboxes,
@@ -391,6 +429,149 @@ describe("an invitation opened in the calendar", () => {
     m.put("calendar", studio.id, studio);
     m.put("calendar_event", "a", invitation("a", "Tech check", "20261118"));
   };
+
+  it("offers a secure external call link in the event card and panel, and copies it on request", async () => {
+    const m = mirror(() => null);
+    const link = new URL("/meeting", "https://calls.example.test").href;
+    m.put("calendar", studio.id, studio);
+    m.put("calendar_event", "a", invitation("a", "Tech check", "20261118", { callLink: link }));
+    const copy = vi.fn(async () => true);
+    openCard(m, undefined, undefined, [], copy);
+    const join = given().getByRole("link", { name: "Join" });
+    expect(join.getAttribute("href")).toBe(link);
+    expect(join.getAttribute("target")).toBe("_blank");
+    expect(join.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(screen.getAllByRole("link", { name: "Join" }).length).toBeGreaterThan(1);
+    fireEvent.click(given().getByRole("button", { name: "Copy" }));
+    await settle();
+    expect(copy).toHaveBeenCalledTimes(1);
+    expect(copy).toHaveBeenCalledWith(link);
+    expect(said()).toContain("Copied");
+  });
+
+  it("offers Join on a readable shared event without exposing busy-only details", () => {
+    const m = mirror(() => null);
+    const link = new URL("/meeting", "https://calls.example.test").href;
+    m.put("calendar", studio.id, { ...studio, access: "reader" });
+    m.put("calendar_event", "a", invitation("a", "Tech check", "20261118", { callLink: link }));
+    openCard(m);
+    expect(given().getByRole("link", { name: "Join" }).getAttribute("href")).toBe(link);
+    expect(given().queryByRole("button", { name: "Copy" })).toBeNull();
+    act(() => m.put("calendar", studio.id, { ...studio, access: "busy" }));
+    expect(screen.queryByRole("link", { name: "Join" })).toBeNull();
+  });
+
+  it("offers Join in the Week menu only for an HTTPS call link", () => {
+    const m = mirror(() => null);
+    m.put("calendar", studio.id, studio);
+    const link = new URL("/meeting", "https://calls.example.test").href;
+    m.put("calendar_event", "a", invitation("a", "Tech check", "20261118", { callLink: link }));
+    openCard(m, undefined, "#/cal/week/2026-11-18");
+    const chip = screen.getByRole("button", { name: /Tech check/ });
+    fireEvent.contextMenu(chip);
+    const menu = () => within(screen.getByRole("menu", { name: "Event actions" }));
+    const join = menu().getByRole("menuitem", { name: "Join" });
+    expect(join.getAttribute("href")).toBe(link);
+    expect(join.getAttribute("rel")).toBe("noopener noreferrer");
+    for (const callLink of [
+      "http:" + link.slice(6),
+      "javascript:void(0)",
+      link + "\t",
+      link.replace("https://", "https:///"),
+      link.replace("https://", "https://user@"),
+    ]) {
+      act(() => m.put("calendar_event", "a", invitation("a", "Tech check", "20261118", { callLink })));
+      expect(menu().queryByRole("menuitem", { name: "Join" })).toBeNull();
+    }
+  });
+
+  it.each([
+    ["card", "INBOX", "#/ohbox/m/matched"],
+    ["menu", "INBOX", "#/ohbox/m/matched"],
+    ["card", "ohmail/News", "#/reads/m/matched"],
+    ["menu", "ohmail/Screened", "#/screener/screened"],
+    ["card", "ohmail/Quarantine", "#/screener/spam"],
+    ["menu", "Archive", "#/folder/chosen/m/matched"],
+    ["card", "Projects/Plans", "#/folder/chosen/m/matched"],
+  ] as const)(
+    "opens the matched invitation letter from the event %s in %s",
+    async (source, folder, target) => {
+      const m = mirror(() => null);
+      place(m);
+      const marker: MessageInvitationDTO = {
+        method: "REQUEST",
+        uid: invitation("a", "Tech check", "20261118").uid,
+        recurrenceId: "",
+        sequence: 0,
+        start: null,
+        startsAt: null,
+        organizer: null,
+        invitedAddress: null,
+        answer: null,
+        answeredAt: null,
+      };
+      const matched = letter("matched", { subject: "An invitation for the check", folder });
+      const rows =
+        folder === "Archive" || folder === "Projects/Plans"
+          ? {
+              "folder:other": { id: "other", name: folder, mailboxId: "another-mailbox", mailbox: "" },
+              "folder:chosen": { id: "chosen", name: folder, mailboxId: matched.mailboxId, mailbox: "" },
+            }
+          : undefined;
+      const letters = [
+        { ...matched, invitation: marker },
+        {
+          ...letter("different", { subject: "A different invitation" }),
+          invitation: { ...marker, uid: "another-event" },
+        },
+      ];
+      const { address } = openCard(
+        m,
+        undefined,
+        source === "card" ? undefined : "#/cal/week/2026-11-18",
+        letters,
+        undefined,
+        rows,
+      );
+      if (source === "card") {
+        expect(given().getByText("Letters")).toBeTruthy();
+        expect(given().queryByText("A different invitation")).toBeNull();
+        fireEvent.click(given().getByRole("button", { name: "An invitation for the check" }));
+      } else {
+        fireEvent.contextMenu(screen.getByRole("button", { name: /Tech check/ }));
+        fireEvent.click(screen.getByRole("menuitem", { name: "Open the letter" }));
+      }
+      await settle();
+      expect(address.read()).toBe(target);
+      expect(m.pressed).toEqual([]);
+    },
+  );
+
+  it("answers from the Week menu and reports the result after the menu closes", async () => {
+    const m = mirror(() => ({ kind: "taken", write: null }));
+    place(m);
+    openCard(m, undefined, "#/cal/week/2026-11-18");
+    await settle();
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Tech check/ }));
+    const menu = within(screen.getByRole("menu", { name: "Event actions" }));
+    fireEvent.click(menu.getByRole("menuitemradio", { name: "Yes" }));
+    expect(screen.queryByRole("menu", { name: "Event actions" })).toBeNull();
+    await settle();
+    expect(m.pressed).toMatchObject([{ kind: "calendar_event_answer", eventId: "a", answer: "accepted" }]);
+    expect(said()).toContain("Answer saved");
+  });
+
+  it("does not offer answers in the Week menu for a view-only calendar", async () => {
+    const m = mirror(() => null);
+    place(m);
+    m.put("calendar", studio.id, { ...studio, access: "reader" });
+    openCard(m, undefined, "#/cal/week/2026-11-18");
+    await settle();
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Tech check/ }));
+    const menu = within(screen.getByRole("menu", { name: "Event actions" }));
+    expect(menu.queryByRole("menuitemradio", { name: "Yes" })).toBeNull();
+    expect(m.pressed).toEqual([]);
+  });
 
   it("changes the answer on the open event, keeps the card in place and sends each choice once", async () => {
     const m = mirror(() => null);

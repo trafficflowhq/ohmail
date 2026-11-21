@@ -5,13 +5,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { TextProvider, useText } from "@ohmail/app/text";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import readerEn from "../../../packages/app/messages/reader.en.json";
+import readerDe from "../../../packages/app/messages/reader.de.json";
 import { DEFAULT_LOCALE, activeTranslator, fillFrom, setActiveCatalog } from "../app/shell/locale";
 import { AGO_COPY, PLACE_LABEL } from "../app/shell/format";
 import { COPY as MAIL_BODY_COPY } from "../../../packages/letter-body/src/MessageBody";
 import { COPY as BODY_TEXT_COPY } from "../../../packages/letter-body/src/BodyText";
-import { COPY as ATTACHMENT_COPY } from "../app/components/AttachmentStrip";
-import { COPY as PREVIEW_COPY } from "../app/components/AttachmentPreview";
-import { COPY as ICS_COPY } from "../app/components/IcsEventCard";
 
 /**
  * THE SURFACES THAT ARE NOT COMPONENTS — and the guard that keeps their English constant and the
@@ -61,9 +60,9 @@ const GERMAN = fillFrom(EN as never, DE as never) as Record<string, Record<strin
 const TABLES: Array<{ name: string; ns: string; table: Record<string, unknown> }> = [
   { name: "MessageBody.COPY", ns: "mailBody", table: MAIL_BODY_COPY },
   { name: "BodyText.COPY", ns: "bodyText", table: BODY_TEXT_COPY },
-  { name: "AttachmentStrip.COPY", ns: "attachments", table: ATTACHMENT_COPY },
-  { name: "AttachmentPreview.COPY", ns: "attachmentPreview", table: PREVIEW_COPY },
-  { name: "IcsEventCard.COPY", ns: "icsEvent", table: ICS_COPY },
+  { name: "Reader files", ns: "attachments", table: readerEn.attachments },
+  { name: "Reader preview", ns: "attachmentPreview", table: readerEn.attachmentPreview },
+  { name: "Reader calendar file", ns: "icsEvent", table: readerEn.icsEvent },
   { name: "format.PLACE_LABEL", ns: "place", table: PLACE_LABEL },
   { name: "format.AGO_COPY", ns: "relativeTime", table: AGO_COPY },
 ];
@@ -170,6 +169,9 @@ describe("the non-hook copy tables and the catalogue say the same thing", () => 
   });
 
   it("and it renders German, so a key the German catalogue lacks cannot hide behind English", () => {
+    expect(readerDe.attachments).toEqual(DE.attachments);
+    expect(readerDe.attachmentPreview).toEqual(DE.attachmentPreview);
+    expect(readerDe.icsEvent).toEqual(DE.icsEvent);
     const keys = Object.keys(EN.away!).sort();
     const german = renderMountedAway("de", DE.away!, keys);
     const baseline = renderAway("de", GERMAN.away, keys);

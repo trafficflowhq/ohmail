@@ -247,12 +247,6 @@ export const STORED_KEYS = [
     words: true, erased: "sign-out", mark: "kept",
   },
   {
-    key: "ohmail.reply.panelHeight", store: "sessionStorage", owner: "web",
-    at: ["apps/webapp/app/shell/InlineReply.tsx"],
-    holds: "the reply panel's height in this tab",
-    words: false, erased: "never", mark: "kept",
-  },
-  {
     key: "ohmail.send.locks.", family: true, store: "localStorage", owner: "web",
     at: ["packages/app-logic/src/writing/send-lock.ts", "apps/mobile/src/shell/kept-families.ts"],
     holds: "the sends in flight and their keys, per account, so a reload resumes the same send",

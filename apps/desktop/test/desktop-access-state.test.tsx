@@ -191,10 +191,10 @@ async function open(status: EngineStatus, locale: "en" | "de" = "en"): Promise<v
 }
 
 const text = (): string => mountPoint?.textContent ?? "";
-const lockCard = (): HTMLElement | null => mountPoint?.querySelector(".gate .gate-card") ?? null;
+const lockCard = (): HTMLElement | null => mountPoint?.querySelector("main.oh-page") ?? null;
 /** The way back: a BUTTON that mints the page's address when pressed (the 402's is never used). */
 const manageDoor = (): HTMLButtonElement | null =>
-  (mountPoint?.querySelector(".gate-actions button.primary") as HTMLButtonElement | null) ?? null;
+  byText("button", LOCK.manage) as HTMLButtonElement | null;
 
 function byText(selector: string, wanted: string): HTMLElement | null {
   return [...(mountPoint?.querySelectorAll<HTMLElement>(selector) ?? [])]
@@ -229,6 +229,8 @@ describe("the window's refused-account screen", () => {
     // running and hand the refusal to whichever pane happened to make the next write.
     expect(mountPoint!.querySelector(".set-nav"), "the settings nav survived the lock").toBeNull();
     expect(mountPoint!.querySelector(".rail"), "the mail rail survived the lock").toBeNull();
+    expect(mountPoint!.querySelector(".fr-frame"), "the mail frame survived the lock").toBeNull();
+    expect(lockCard()?.closest(".app-root"), "the lock is not the window's whole surface").not.toBeNull();
   });
 
   it("says what the API said — the suspended arm is the service's word, not a second taxonomy", async () => {
@@ -262,7 +264,7 @@ describe("the window's refused-account screen", () => {
        assertion that only refuses the working form is one a mutation walks straight through —
        which this one did, green, until it was read this way. */
     expect(
-      byText(".gate-actions a", LOCK.manage),
+      byText("a", LOCK.manage),
       "a dead control stands where the service supplied nowhere to go",
     ).toBeNull();
     expect(text(), "the way-back label is on screen with no way back").not.toContain(LOCK.manage);
@@ -304,6 +306,7 @@ describe("the window's refused-account screen", () => {
     await open(CLOUD_SERVING);
 
     expect(lockCard(), "the window locked the account over a refused request").toBeNull();
+    expect(mountPoint!.querySelector(".fr-frame"), "the mail frame did not mount in the unlocked window").not.toBeNull();
   });
 
   it("a standalone install never locks — it has no hosted account to be refused", async () => {

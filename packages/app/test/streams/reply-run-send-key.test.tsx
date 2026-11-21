@@ -25,7 +25,7 @@ async function readyToSend() {
   const { mail } = listSeat({ first: "#/triage", letters: [laterLetter] });
   fireEvent.click(await screen.findByRole("button", { name: "Reply Run" }));
   const run = await screen.findByRole("dialog", { name: "Reply run" });
-  const body = within(run).getByRole("textbox", { name: "Reply body" });
+  const body = await within(run).findByRole("textbox", { name: "Reply body" });
   await act(async () => {
     (body as HTMLElement & { editor: Editor }).editor.commands.setContent("<p>Thursday works.</p>");
   });

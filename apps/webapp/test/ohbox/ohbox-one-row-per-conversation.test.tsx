@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "@testing-library/react";
+import { act, within } from "@testing-library/react";
 import {
   conversationKeyOf,
   ohboxView,
@@ -222,7 +222,8 @@ describe("the other ways a conversation changes section", () => {
     const live = await mountLive(engine);
     expect(groupsOf(live.frames[0]!, "T")).toEqual(["Resurfaced"]);
     await live.step("done", () => {
-      host!.querySelector<HTMLElement>("[role=listbox] button")!.click();
+      const resurfaced = within(host!).getByRole("listbox", { name: "Resurfaced" });
+      within(resurfaced).getByRole("button", { name: "Done" }).click();
     });
     await live.slide("done-slide");
     assertOnceEverywhere(live.frames);

@@ -141,7 +141,6 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
    * the baseline `'unsafe-inline'` covers the script — never `nonce=""`, which would match nothing.
    */
   const nonce = h.get("x-nonce") ?? undefined;
-  // The mailbox has an account look to resolve. Until then, use the saved face or paper.
   const firstPage = h.get("x-ohmail-first-page");
   const deferLinuxFace = firstPage === "now" || firstPage === "wait";
   const confirmedOwner = h.get(FIRST_PAGE_OWNER_HEADER);
