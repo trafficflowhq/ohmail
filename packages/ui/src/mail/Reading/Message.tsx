@@ -10,6 +10,10 @@ export interface MessageClip {
   word: string;
   /** The press leaves for the letter itself (one column): a way on, with no open state. */
   goes?: boolean;
+  /** How the list opens this folded card from the keyboard. */
+  description?: string;
+  /** A body is arriving and the available preview is still provisional. */
+  pending?: boolean;
   onPress?: () => void;
 }
 
@@ -24,6 +28,8 @@ export interface MessageProps {
   line?: ReactNode;
   /** The message's own subject, where the column's head is out of sight or every message prints its own. */
   subject?: string;
+  /** A receipt amount beside the folded subject, and below it when opened. */
+  amount?: string;
   /** What stands between the subject and the text: an event found in the letter. */
   lead?: ReactNode;
   /** The letter: plain text as a string, or the body the app draws. */
@@ -33,6 +39,8 @@ export interface MessageProps {
   files?: ReactNode;
   /** The element's id, for a jump to this message. */
   id?: string;
+  /** Position in a feed whose other articles can be mounted on demand. */
+  position?: { at: number; total: number };
   /** In a stream: cut until it is opened. A letter that fits, with nothing waiting under it, is whole and has no control. */
   clip?: MessageClip;
 }
@@ -44,28 +52,43 @@ export function Message({
   back,
   line,
   subject,
+  amount,
   lead,
   children,
   after,
   files,
   id,
+  position,
   clip,
 }: MessageProps) {
   const text = typeof children === "string" ? <div className="oh-message-body">{children}</div> : children;
+  const heading = subject ? <h2 className="oh-text oh-display oh-message-subject">{subject}</h2> : null;
+  const amountLine = amount ? <p className="oh-text oh-display oh-message-amount">{amount}</p> : null;
   const cutId = useId();
   const shut = clip ? !clip.open : false;
-  const waits = Boolean(lead || after || files);
+  const waits = Boolean(lead || after || files || clip?.pending);
   const [cut, fits] = useFits(shut);
   return (
     <article
       className="oh-message"
       id={id}
+      aria-description={shut ? clip?.description : undefined}
+      aria-posinset={position?.at}
+      aria-setsize={position?.total}
       data-unread={unread ? "" : undefined}
       data-back={back ? "" : undefined}
     >
       {head}
       {line ? <p className="oh-text oh-message-line">{line}</p> : null}
-      {subject ? <h2 className="oh-text oh-display oh-message-subject">{subject}</h2> : null}
+      {amount ? (
+        <div className="oh-message-heading" data-preview={shut ? "" : undefined}>
+          {shut ? amountLine : null}
+          {heading}
+          {shut ? null : amountLine}
+        </div>
+      ) : (
+        heading
+      )}
       {shut ? null : lead}
       {clip ? (
         <div
@@ -74,6 +97,7 @@ export function Message({
           className="oh-message-clip"
           data-shut={shut ? "" : undefined}
           data-fits={fits ? "" : undefined}
+          data-pending={clip.pending ? "" : undefined}
         >
           {text}
         </div>

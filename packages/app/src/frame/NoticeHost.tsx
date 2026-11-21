@@ -8,12 +8,22 @@ import { NoticeSlot } from "@ohmail/ui/base";
 import type { NoticeStore } from "./notice-store.js";
 import { useText, useTextPending } from "../text/index.js";
 
-export function NoticeHost({ store, place }: { store: NoticeStore; place: "rail" | "bar" }) {
+export function NoticeHost({
+  store,
+  place,
+  feed,
+}: {
+  store: NoticeStore;
+  place: "rail" | "bar";
+  feed?: string;
+}) {
   const t = useText("frame");
   const stored = useSyncExternalStore(store.subscribe, store.read, store.read);
   /* While the catalogue is on its way a notice may have no title yet: it waits, and is drawn with its words. */
   const pending = useTextPending();
-  const notices = pending ? stored.filter((n) => n.title !== "") : stored;
+  const notices = stored.filter(
+    (n) => (feed === undefined || n.feed === feed) && (!pending || n.title !== ""),
+  );
   const [front, setFront] = useState<string | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const standing = front !== undefined && notices.some((n) => n.id === front);

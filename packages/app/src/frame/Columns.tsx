@@ -5,17 +5,19 @@
  * the list lies on one sheet, the frame's, and the list draws on it (a sheet never lies on a sheet); on a phone's
  * width the list is the ground and draws its own. The reading column and a wide pane draw their own.
  *
- * A body a place keeps stands in a box of its own, first in the main landmark and always at that one position: on
- * screen, or hidden and inert while a place of another body is. What a place stands above its two columns wraps them
- * and nothing else: the rail is outside it.
+ * What a place stands above its two columns wraps them and nothing else: the rail is outside it.
  */
-import { Fragment, useRef } from "react";
+import { Fragment, useRef, type KeyboardEvent } from "react";
+import { cycleTab, useOverlayFocus } from "@ohmail/ui/base";
 import { ColumnHandle, Sheet } from "@ohmail/ui/mail";
 import type { ColumnsProps } from "./contract.js";
 import { useColumnWidths } from "./column-widths.js";
 
-export function Columns({ plan, rail, list, listKeys, reading, wide, kept, above, labels }: ColumnsProps) {
+const focusReading = (reading: HTMLElement): HTMLElement => reading;
+
+export function Columns({ plan, rail, list, listKeys, reading, wide, above, labels }: ColumnsProps) {
   const drawn = useRef<HTMLDivElement>(null);
+  const listColumn = useRef<HTMLElement>(null);
   const widths = useColumnWidths(drawn);
   const handle = (column: "rail" | "list") =>
     plan.handles ? (
@@ -26,16 +28,18 @@ export function Columns({ plan, rail, list, listKeys, reading, wide, kept, above
           value={widths[column]}
           min={widths.limits[column].min}
           max={widths.limits[column].max}
+          resizeTarget={column === "list" ? listColumn : undefined}
           onChange={(width) => widths.set(column, width)}
           onReset={() => widths.set(column, undefined)}
         />
       </div>
     ) : null;
   const over = plan.columns === 1 && reading !== null && reading !== undefined;
-  const keptShown = kept !== null && kept.shown;
+  const readingBox = useRef<HTMLElement>(null);
+  useOverlayFocus(over, readingBox, focusReading);
   const columns = (
     <>
-      <section className="fr-list" aria-label={labels.list}>
+      <section ref={listColumn} className="fr-list" aria-label={labels.list} inert={over || undefined}>
         {plan.device === "phone" ? (
           list
         ) : (
@@ -46,7 +50,24 @@ export function Columns({ plan, rail, list, listKeys, reading, wide, kept, above
       </section>
       {handle("list")}
       {plan.columns === 2 || over ? (
-        <section className="fr-reading" aria-label={labels.reading} data-over={over ? "" : undefined}>
+        <section
+          ref={readingBox}
+          className="fr-reading"
+          aria-label={labels.reading}
+          data-over={over ? "" : undefined}
+          /* Over the list on one column the letter covers it: a modal dialog, so a screen reader's walk stays in it, as
+             today's narrow sheet claimed; beside the list it is the region it is. */
+          {...(over
+            ? {
+                role: "dialog",
+                "aria-modal": true,
+                tabIndex: -1,
+                onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+                  if (!event.defaultPrevented) cycleTab(event, event.currentTarget);
+                },
+              }
+            : {})}
+        >
           {reading}
         </section>
       ) : null}
@@ -57,18 +78,13 @@ export function Columns({ plan, rail, list, listKeys, reading, wide, kept, above
       ref={drawn}
       className="fr-columns"
       data-columns={plan.columns}
-      data-wide={keptShown || wide !== null ? "" : undefined}
+      data-wide={wide !== null ? "" : undefined}
       data-norail={rail ? undefined : ""}
     >
       {rail}
       {rail ? handle("rail") : null}
       <main className="fr-main">
-        {kept !== null ? (
-          <div key="kept" className="fr-wide" hidden={!kept.shown} inert={!kept.shown}>
-            {kept.pane}
-          </div>
-        ) : null}
-        {keptShown ? null : wide !== null ? (
+        {wide !== null ? (
           <div key="wide" className="fr-wide">
             {wide}
           </div>

@@ -35,6 +35,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { registeredFeatures } from "./registered-features.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, "..");
@@ -79,6 +80,7 @@ function bundleText(dir) {
 }
 
 const text = bundleText(DIST);
+const registered = registeredFeatures(path.resolve(APP, "../.."), EXPECT);
 
 /**
  * The bridge command is in the WINDOW bundle and cannot be in the host client — the served page
@@ -180,10 +182,8 @@ const NO_FIXTURES_REFUSAL = "ohmail Desktop carries no sample mail";
 const OMARCHY_MAP_MARKER = "OHMARCHY_MAP";
 
 /**
- * PDF.JS — the library and its worker at the window's dist root, byte for byte this package's own
- * `pdfjs-dist` build at the version the manifest pins, and neither in the boot chunk (the globals
- * each file sets name it). The host client carries neither file and keeps the refusing stub
- * (`src/no-pdfjs.ts`), whose sentence the window must not carry.
+ * PDF.js: the library and worker at the artifact root must match the installed pin. Neither
+ * belongs in the boot chunk. The earlier refusing stub is no longer part of either build.
  */
 const PDFJS_FILES = ["pdf.min.mjs", "pdf.worker.min.mjs"];
 const PDFJS_GLOBALS = ["pdfjsLib", "pdfjsWorker"];
@@ -281,7 +281,9 @@ if (wantsEngine) {
   if (absent.length > 0) {
     failures.push(`the window bundle is missing the local-model surface: ${absent.join(", ")}`);
   }
-  if (!hostedSuggestPresent) {
+  if (!registered.hostedSuggest && hostedSuggestPresent) {
+    failures.push("the window carries the hosted suggest transport without a registered Screener or suggestion wire");
+  } else if (registered.hostedSuggest && !hostedSuggestPresent) {
     failures.push(
       "the window bundle has no hosted-account suggest transport in it — an install pointed at a " +
         "hosted account would find the Screener's suggest control missing, which is the state " +
@@ -303,22 +305,7 @@ if (wantsEngine) {
         "ohmarchy look unable to follow a desktop theme, and nothing else would say so.",
     );
   }
-  for (const f of pdfjsFiles) {
-    if (!f.present) {
-      failures.push(`the window bundle has no ${f.name} at its root — the PDF preview has no pdf.js to load (windowPdfjs in vite.config.ts)`);
-    } else if (f.version !== PDFJS_PIN || !f.sameAsInstalled) {
-      failures.push(
-        `${f.name} is not pdfjs-dist ${PDFJS_PIN}'s build byte for byte (stamped ${f.version ?? "nothing"}) — ` +
-          "the window must carry the library and worker the manifest pins, unaltered",
-      );
-    }
-  }
-  if (pdfjsGlobalsInBoot.length > 0) {
-    failures.push(`pdf.js is in the boot chunk (${pdfjsGlobalsInBoot.join(", ")}) — it is loaded on the first PDF, never at boot`);
-  }
-  if (pdfjsStubPresent) {
-    failures.push("the window bundle carries the host client's pdf.js stub — the pdfjs-dist alias in vite.config.ts took the wrong arm");
-  }
+
 } else {
   if (present.length > 0) {
     failures.push(`the served host client carries the local-model surface: ${present.join(", ")}`);
@@ -343,14 +330,20 @@ if (wantsEngine) {
         "shipping.",
     );
   }
-  const pdfjsShipped = pdfjsFiles.filter((f) => f.present).map((f) => f.name);
-  if (pdfjsShipped.length > 0) {
-    failures.push(`the served host client carries ${pdfjsShipped.join(" and ")} — its policy admits no worker, and pdf.js is the window's`);
-  }
-  if (!pdfjsStubPresent) {
-    failures.push("the served host client lost the pdf.js stub's sentence — check the pdfjs-dist alias in vite.config.ts (src/no-pdfjs.ts)");
+}
+
+if (wantsEngine || registered.pdfPreview) {
+  for (const file of pdfjsFiles) {
+    if (!file.present) failures.push(`the artifact has no ${file.name} at its root`);
+    else if (file.version !== PDFJS_PIN || !file.sameAsInstalled) {
+      failures.push(`${file.name} is not pdfjs-dist ${PDFJS_PIN}'s build byte for byte (stamped ${file.version ?? "nothing"})`);
+    }
   }
 }
+if (pdfjsGlobalsInBoot.length > 0) {
+  failures.push(`pdf.js is in the boot chunk (${pdfjsGlobalsInBoot.join(", ")}) — it is loaded on the first PDF`);
+}
+if (pdfjsStubPresent) failures.push("the artifact carries the refusing PDF preview stub");
 
 const which = wantsEngine ? "window bundle (engine)" : "served host client";
 if (failures.length) {

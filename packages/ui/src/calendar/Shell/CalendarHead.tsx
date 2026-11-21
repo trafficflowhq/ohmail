@@ -1,4 +1,4 @@
-import type { MouseEventHandler, ReactNode } from "react";
+import type { MouseEventHandler, ReactNode, Ref } from "react";
 import { Button } from "../../base/Primitives/Button.js";
 import { Dot } from "../../base/Primitives/Dot.js";
 import type { IconName } from "../../icons/Icon.js";
@@ -8,6 +8,7 @@ interface Way {
   label: string;
   disabled?: boolean;
   onPress?: MouseEventHandler<HTMLButtonElement>;
+  ref?: Ref<HTMLButtonElement>;
 }
 
 export interface CalendarHeadProps {
@@ -57,6 +58,7 @@ function tool(
   return (
     <span className="oh-calhead-part" data-part={part}>
       <Button
+        ref={way.ref}
         kind="quiet"
         icon={icon}
         label={way.label}
@@ -99,6 +101,7 @@ export function CalendarHead(p: CalendarHeadProps) {
       <h1 className="oh-text oh-display oh-calhead-title">
         {p.goTo ? (
           <button
+            ref={p.goTo.ref}
             type="button"
             className="oh-control oh-calhead-goto"
             aria-label={p.goTo.label}

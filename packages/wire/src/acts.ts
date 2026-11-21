@@ -89,6 +89,9 @@ export type MessageAct =
        * uses — the surface states it either way.
        */
       applyRetro?: boolean;
+      /** The press can file only these held IDs and does not ask for a retro pass. */
+      confirmedIds?: readonly string[];
+      unsubscribeIds?: readonly string[];
     }
   | {
       kind: "tag_assign";

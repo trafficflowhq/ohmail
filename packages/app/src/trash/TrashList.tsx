@@ -1,33 +1,38 @@
 /**
- * TRASH'S LIST: what ohmail deleted, each row with when and where Restore puts it; under it, the mail server's own
- * Trash, read-only, in each of its states (a failure is said with a way to ask again, never drawn as empty; an empty
- * one says its count of nothing in its heading, with no sentence under it).
+ * TRASH'S LIST: what ohmail deleted, each row with when and where Restore puts it, the cursor's row marked; under it,
+ * the mail server's own Trash, read-only, in each of its states (a failure is said with a way to ask again, never
+ * drawn as empty; an empty one says its count of nothing in its heading, with no sentence under it).
  */
 import { trashLiveKeyOf, useTrashModel, type TrashModel } from "@ohmail/app-logic/trash";
 import { Button, Empty, RefusalLine } from "@ohmail/ui/base";
-import { GroupHeading, ListHead, Row, Rows } from "@ohmail/ui/mail";
+import { GroupHeading, ListHead, ListLine, Row, Rows } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
 import { ListColumn } from "../place-list/index.js";
+import { useCursorWindow } from "../place-list/cursor-window.js";
 import { useText, type Text } from "../text/index.js";
 
 export function TrashList({ plan }: PaneProps) {
   const model = useTrashModel();
   const t = useText("trash");
   const { page } = model;
+  const selected = page.items.findIndex((row) => row.id === model.cursor);
+  const { scroller, window } = useCursorWindow(page.items.length, selected, model.cursor);
   const head = <ListHead title={t("title")} />;
   return (
-    <ListColumn head={head} plan={plan}>
+    <ListColumn head={head} plan={plan} cursor={model.cursor} scrollerRef={scroller}>
       {!page.available ? <Empty label={t("unavailable")} /> : null}
       {page.items.length > 0 ? (
         <Rows label={t("title")}>
-          {page.items.map((r) => {
-            const open = model.openId === r.id;
+          <div aria-hidden data-window-top="" style={{ height: window.padTop }} />
+          {page.items.slice(window.start, window.end).map((r, offset) => {
+            const index = window.start + offset;
+            const open = model.cursor === r.id;
             const who = r.from.name ?? r.from.address;
             const deleted = r.trashedAt ? t("deletedAt", { when: model.stamp(r.trashedAt) }) : undefined;
-            const to = r.restoreTo ? model.placeOf(r.restoreTo) : undefined;
+            const to = model.placeOf(r.restoreTo || "INBOX");
             /* Where Restore puts it, as the design writes it: the arrow back, then the place (a sign, the same in
                every language; the place is the person's own word for it). */
-            const back = to === undefined ? undefined : `← ${to}`;
+            const back = `← ${to}`;
             return (
               <Row
                 key={r.id}
@@ -45,11 +50,13 @@ export function TrashList({ plan }: PaneProps) {
                   spoken: [deleted, to].filter(Boolean).join(", "),
                   selected: open,
                   stop: open,
+                  place: { at: index + 1, of: page.items.length },
                 }}
-                mark={{ id: r.id }}
+                mark={{ id: r.id, index }}
               />
             );
           })}
+          {window.padBottom > 0 ? <div aria-hidden style={{ height: window.padBottom }} /> : null}
         </Rows>
       ) : null}
       {/* A failed read with the server's own sentence says it; with none, the way to ask again stands alone. */}
@@ -61,8 +68,11 @@ export function TrashList({ plan }: PaneProps) {
           {t("liveRetry")}
         </Button>
       ) : null}
-      {page.available && page.items.length === 0 && page.exhausted && page.error === null ? (
-        <Empty label={t("emptyTitle")} />
+      {model.deletedEmpty ? (
+        <>
+          <Empty label={t("emptyTitle")} />
+          <ListLine fine>{t("empty")}</ListLine>
+        </>
       ) : null}
       {page.available && page.loading && page.items.length === 0 ? (
         <div role="status" aria-busy="true" />
@@ -71,6 +81,9 @@ export function TrashList({ plan }: PaneProps) {
         <Button kind="quiet" disabled={page.loading} onPress={page.loadMore}>
           {page.loading ? t("liveOlderLoading") : t("liveOlder")}
         </Button>
+      ) : null}
+      {page.available && !page.loading && page.error === null ? (
+        <ListLine fine>{t(model.live.shown ? "footLive" : "foot")}</ListLine>
       ) : null}
       {model.live.shown ? <LiveSection model={model} t={t} /> : null}
     </ListColumn>
@@ -92,13 +105,7 @@ function LiveSection({ model, t }: { model: TrashModel; t: Text }) {
   return (
     <section aria-label={t("liveHead")}>
       {/* A count only once the last page is read: with older rows to read, the heading says no number. */}
-      <GroupHeading
-        count={
-          (state === "rows" || state === "empty") && live.nextCursor === null
-            ? String(live.items.length)
-            : undefined
-        }
-      >
+      <GroupHeading count={live.count === undefined ? undefined : String(live.count)}>
         {t("liveHead")}
       </GroupHeading>
       {state === "rows" ? (
@@ -106,7 +113,7 @@ function LiveSection({ model, t }: { model: TrashModel; t: Text }) {
           {live.items.map((i) => {
             const key = trashLiveKeyOf(i);
             const who = i.from.name ?? i.from.address;
-            const open = model.openId === key;
+            const open = model.cursor === key;
             return (
               <Row
                 key={key}
@@ -134,6 +141,17 @@ function LiveSection({ model, t }: { model: TrashModel; t: Text }) {
       ) : state === "empty" ? null : (
         <Empty label={said[state]} />
       )}
+      {state === "rows"
+        ? live.mailboxes
+            .filter((mailbox) => mailbox.window !== "ok")
+            .map((mailbox) => (
+              <ListLine fine key={mailbox.id}>
+                {t(mailbox.window === "no_trash_folder" ? "liveNoFolder" : "liveUnreachable", {
+                  address: mailbox.address,
+                })}
+              </ListLine>
+            ))
+        : null}
       {live.nextCursor !== null && (state === "rows" || state === "more_to_read") ? (
         <Button kind="quiet" disabled={live.olderLoading} onPress={live.loadOlder}>
           {live.olderLoading ? t("liveOlderLoading") : t("liveOlder")}

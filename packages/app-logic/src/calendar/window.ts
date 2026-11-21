@@ -93,12 +93,32 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
       (dayNumber(first) < dayNumber(input.query.from) || dayNumber(first) > dayNumber(input.query.to))
     )
       continue;
+    const series = made.masterOf(occurrence.event) ?? null;
+    const key =
+      occurrence.source === "single"
+        ? null
+        : occurrence.source === "override" && !record.thisAndFuture
+          ? record.recurrenceId
+          : recurrenceKeyString(occurrence.key);
+    if (
+      series &&
+      key !== null &&
+      byRecord
+        .get(series.id)
+        ?.removals?.some(
+          (scope) =>
+            scope.kind === "record" ||
+            scope.at === key ||
+            (scope.kind === "following" && /^-?\d+$/.test(key) && Number(key) >= Number(scope.at)),
+        )
+    )
+      continue;
     shown.push({
       occurrence,
-      key: occurrence.source === "single" ? null : recurrenceKeyString(occurrence.key),
+      key,
       day: dayIdOfNumber(dayNumber(first)),
       record,
-      series: made.masterOf(occurrence.event) ?? null,
+      series,
       writes,
       calendar,
     });

@@ -14,11 +14,24 @@ import { chromium } from "@playwright/test";
 import { apiRoutes, createApp, csrfTokenFor, matchRoute, normalizePathname, type ApiDeps } from "@trafficflow/api";
 import { refreshTokens, sessions, users } from "@trafficflow/db";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
-import { makeDeps, seedSession } from "../../../packages/api/test/helpers.js";
+import { makeDeps, seedSession, seedSessionFor } from "../../../packages/api/test/helpers.js";
 import { language } from "../vocabulary/catalogue.js";
 import { apiPlanter, fixturesPlanter } from "../vocabulary/world.js";
 import { fenced, PlaywrightPerson, shown } from "./dom-playwright.js";
-import { benchOf, type Bench, type DoorFault, type Heard, type Setting, type Size } from "./seam.js";
+import { benchOf, type Account, type Bench, type DoorFault, type Heard, type Setting, type Size } from "./seam.js";
+
+/** The jar as a completed sign-in leaves it for `a` on this bench's own name: its five cookies. */
+function signedIn(a: Account) {
+  const expires = Math.floor(Date.now() / 1000) + 3600;
+  const jar = { domain: "localhost", secure: true, expires } as const;
+  return [
+    { ...jar, name: "tf_session", value: a.access, path: "/", httpOnly: true, sameSite: "Strict" as const },
+    { ...jar, name: "tf_csrf", value: csrfTokenFor(a.access), path: "/", httpOnly: false, sameSite: "Strict" as const },
+    { ...jar, name: "tf_refresh", value: a.refresh, path: "/auth/refresh", httpOnly: true, sameSite: "Strict" as const },
+    { ...jar, name: "tf_resume", value: "1", path: "/", httpOnly: true, sameSite: "Lax" as const },
+    { ...jar, name: "tf_owner", value: a.accountId, path: "/", httpOnly: false, sameSite: "Strict" as const },
+  ];
+}
 
 export { journey, journeysOf, personWith, signedIn } from "./journey.js";
 export { HOST } from "./seam.js";
@@ -329,28 +342,31 @@ export async function startBench(f: Flavour, recordAs = "bench", features = { pa
       const [user] = await api.db.select({ email: users.email }).from(users).where(eq(users.id, s.userId));
       return { accountId: s.accountId, userId: s.userId, email: user!.email, access: s.token, refresh, familyId: row!.familyId, planter: apiPlanter(api.db, s, api.now) };
     },
-    async ask(a, method, path) {
+    async ask(a, method, path, o = {}) {
+      if (o.session === "fresh" && !api) throw new Error("a session made for one request needs the API in process");
+      const access = o.session === "fresh"
+        ? (await seedSessionFor(api!.db, { accountId: a.accountId, userId: a.userId, now: api!.now(), lastTwofaAt: api!.now() })).token
+        : a.access;
       const res = await fetch(`${origin}/api${path}`, {
-        method, headers: { cookie: `tf_session=${a.access}; tf_csrf=${csrfTokenFor(a.access)}`, "x-csrf-token": csrfTokenFor(a.access), origin },
+        method, headers: { cookie: `tf_session=${access}; tf_csrf=${csrfTokenFor(access)}`, "x-csrf-token": csrfTokenFor(access), origin },
       });
       return { status: res.status, body: await res.json().catch(() => null) };
+    },
+    async signedInElsewhere(p, a) {
+      if (!people.includes(p as PlaywrightPerson)) throw new Error("signedInElsewhere: a window this bench did not open");
+      await (p as PlaywrightPerson).jarNames(signedIn(a));
     },
     async person(o = {}) {
       if (o.host !== undefined) throw new Error("the web bench serves one name: a foreign host is the stack's");
       const base = f === "demo" ? o.door ?? "/demo" : "/";
       // Everybody starts in English; a person who can reach Settings then chooses the run's language.
       const person = await fenced(browser, { origin, base, lang: "en", size });
-      if (o.account) {
-        const expires = Math.floor(Date.now() / 1000) + 3600;
-        const jar = { domain: "localhost", secure: true, expires } as const;
-        await person.context.addCookies([
-          { ...jar, name: "tf_session", value: o.account.access, path: "/", httpOnly: true, sameSite: "Strict" },
-          { ...jar, name: "tf_csrf", value: csrfTokenFor(o.account.access), path: "/", httpOnly: false, sameSite: "Strict" },
-          { ...jar, name: "tf_refresh", value: o.account.refresh, path: "/auth/refresh", httpOnly: true, sameSite: "Strict" },
-          { ...jar, name: "tf_resume", value: "1", path: "/", httpOnly: true, sameSite: "Lax" },
-          { ...jar, name: "tf_owner", value: o.account.accountId, path: "/", httpOnly: false, sameSite: "Strict" },
-        ]);
+      /* A driven clock is installed before the first page loads, so every timer the app sets is the clock's. */
+      if (o.clock === "driven") {
+        await person.page.clock.install();
+        person.driven = true;
       }
+      if (o.account) await person.jarNames(signedIn(o.account));
       people.push(person);
       const want = o.lang ?? lang;
       // Behind `/?demo=1` the choice does not take today (the page holds no account to write it to),

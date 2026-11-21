@@ -4,13 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { cleanup } from "@testing-library/react";
 import type { ResurfacedThreadRow } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { prepareSeated } from "./ohbox/_today";
-/* The Ohbox as the seated place, its list alone: this file reads no open letter. */
-const OhboxView = await prepareSeated();
-import { KeymapProvider } from "@ohmail/app/keys";
+/* The Ohbox's own list, drawn from its model: this file reads no open letter. */
+import { ohboxList } from "./_ohbox-1-list.js";
 import { ESTIMATED_ROW_PX, useListWindow, WINDOW_TOP } from "@ohmail/app-logic/lists/list-window";
 
 /**
@@ -221,6 +218,10 @@ describe("the window counts its rows from where the first one starts", () => {
  * THE PATH BESIDE IT: every view that scrolls to a slot scrolls to `offsetOf`, which now counts
  * from slot 0's place. The Ohbox's reveal of a deep selection under a pinned Resurfaced group
  * put the row a group's height below where it meant to — off the screen past a tall group.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's harness (`./ohbox/_today` `prepareSeated` under
+ * today's `KeymapProvider`) to the Ohbox's own list drawn from its model (`./_ohbox-1-list.tsx`, the seat's
+ * `useOhboxList` fed the same rows and the same selection). The expectations are as they stood.
  */
 const ISO = "2026-08-04T09:00:00.000Z";
 const message = (i: number): EngineMessage =>
@@ -248,32 +249,18 @@ describe("a jump to a slot lands on it under whatever stands above the rows", ()
     installLayout();
   });
   afterEach(async () => {
-    for (const r of roots) await act(() => r.unmount());
-    roots = [];
+    cleanup();
     document.body.innerHTML = "";
     for (const [target, key, desc] of saved.splice(0).reverse()) Object.defineProperty(target, key, desc);
   });
 
   it("the Ohbox reveals a deep selection on screen below 30 pinned Resurfaced rows", async () => {
     const earlier = Array.from({ length: 600 }, (_, i) => message(i));
-    const host = document.createElement("div");
-    document.body.append(host);
-    const root = createRoot(host);
-    roots.push(root);
-    await act(() => root.render(
-      <NextIntlClientProvider locale="en" messages={messages} now={new Date(ISO)} timeZone="UTC">
-        <KeymapProvider>
-          <OhboxView owed={false} demo={false} newForYou={[]} previouslySeen={earlier}
-            resurfacedRows={Array.from({ length: 30 }, (_, i) => pinned(message(1000 + i)))}
-            tags={[]} now={new Date(ISO)} selectedId="m500" onSelect={none} onEnterReader={none}
-            onMarkSeen={none} readerId={null} readSetFor={(id: string) => [id]} doorbellInitials={[]} doorbellCount={0} settled
-            onDoorbell={none} onAction={none} onAddTag={none}
-            bulk={{ run: () => true, tag: none, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => true }}
-            older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: none }}
-          />
-        </KeymapProvider>
-      </NextIntlClientProvider>,
-    ));
+    const host = ohboxList({
+      newForYou: [], previouslySeen: earlier,
+      resurfacedRows: Array.from({ length: 30 }, (_, i) => pinned(message(1000 + i))),
+      now: new Date(ISO), selectedId: "m500", onSelect: none,
+    }).container;
     for (let k = 0; k < 3; k++) {
       await act(async () => {
         host.querySelector(".scroller, .ob-scroll")!.dispatchEvent(new Event("scroll"));

@@ -1,3 +1,4 @@
+import { calendarSettlementExpiry, type CalendarSettlement } from "./calendar-receipts.js";
 import type { Cursor } from "@ohmail/wire";
 import type { MirrorRecord } from "./apply.js";
 import {
@@ -11,7 +12,7 @@ import {
   type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
 } from "./store.js";
 import { OutboxNoticeBus, outboxNoticeChannel, type NoticeChannel } from "./outbox-notices.js";
-import { OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE } from "./types.js";
+import { CALENDAR_OUTBOX_TYPE, CALENDAR_SETTLEMENT_TYPE, isCalendarQueueType, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE } from "./types.js";
 
 /**
  * WHICH STORE LOST A WRITE, for the notice's log line. The mirror's stable label and not the
@@ -422,14 +423,14 @@ export async function clearAllMirrors(
    * either: it would fence every other account's live store. The named mirror's own connections
    * are fenced by the delete (`onversionchange`), and every other tab runs the same door.
    */
-  opts: { only?: boolean } = {},
+  opts: { only?: boolean; mayDelete?: () => boolean } = {},
 ): Promise<WipeVerdict> {
   const f = factory ?? (typeof indexedDB !== "undefined" ? indexedDB : undefined);
   // No IndexedDB at all: nothing was ever written, so there is nothing to be unsure about.
   if (!f) return { remaining: [], inventory: "complete" };
   if (opts.only === true) {
     if (!owner) return { remaining: [], inventory: "complete" };
-    return clearOneMirror(f, mirrorDbName(owner));
+    return clearOneMirror(f, mirrorDbName(owner), opts.mayDelete);
   }
   // THE EPOCH MOVES FIRST, before anything is enumerated or deleted. Every store instance that
   // existed a moment ago is now fenced, including ones that have not opened yet — which is the
@@ -512,7 +513,8 @@ export async function clearAllMirrors(
  * exists (a name it still lists is still there). `complete` — the question is about ONE name, and
  * both witnesses were asked. Only that name's registry record is dropped, and only once it is gone.
  */
-async function clearOneMirror(f: IDBFactory, name: string): Promise<WipeVerdict> {
+async function clearOneMirror(f: IDBFactory, name: string, mayDelete: () => boolean = () => true): Promise<WipeVerdict> {
+  if (!mayDelete()) return { remaining: [name], inventory: "partial" };
   let here = (await deleteDatabase(f, name)) !== "deleted";
   if (typeof f.databases === "function") {
     try {
@@ -521,7 +523,7 @@ async function clearOneMirror(f: IDBFactory, name: string): Promise<WipeVerdict>
       /* the delete's outcome stands */
     }
   }
-  if (!here) forgetMirrorNames([name]);
+  if (!here && mayDelete()) forgetMirrorNames([name]);
   return { remaining: here ? [name] : [], inventory: "complete" };
 }
 
@@ -782,11 +784,51 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     return out.filter((r) => r.entity !== null);
   }
 
-  /** The compare-and-set behind {@link BaseMirrorStore.decideOutboxRow}, under the generation fence. */
-  protected async decideOnDisk(id: string, act: OutboxRowAct): Promise<{ verdict: OutboxRowVerdict; rec: MirrorRecord | null }> {
+  protected async readCalendarOutboxRange(now: number): Promise<MirrorRecord[] | null> {
+    if (typeof IDBKeyRange === "undefined" || this.fenced) return null;
+    const db = await this.open();
+    const tx = db.transaction([ENTITIES], "readwrite");
+    const entities = tx.objectStore(ENTITIES);
+    const rows: MirrorRecord[] = [];
+    for (const type of [CALENDAR_OUTBOX_TYPE, CALENDAR_SETTLEMENT_TYPE]) {
+      const prefix = `${type}:`;
+      const stored = await requestDone(entities.getAll(IDBKeyRange.bound(prefix, `${prefix}\uffff`))) as MirrorRecord[];
+      for (const row of stored) {
+        if (type === CALENDAR_SETTLEMENT_TYPE && calendarSettlementExpiry(row.entity) <= now) {
+          entities.delete(`${type}:${row.id}`);
+        } else if (row.entity !== null) rows.push(row);
+      }
+    }
+    await txDone(tx);
+    return rows;
+  }
+
+  protected async decideCalendarOnDisk(
+    id: string, decide: (entity: unknown) => unknown, receipt?: CalendarSettlement,
+  ): Promise<{ changed: boolean; rec: MirrorRecord | null }> {
     const db = await this.open();
     const tx = db.transaction([ENTITIES, META], "readwrite");
     const entities = tx.objectStore(ENTITIES);
+    await this.checkGeneration(tx);
+    const key = `${CALENDAR_OUTBOX_TYPE}:${id}`;
+    const prior = await requestDone(entities.get(key)) as MirrorRecord | undefined;
+    const next = decide(prior?.entity ?? null);
+    const rec: MirrorRecord | null = next === undefined ? prior ?? null
+      : next === null ? null : { type: CALENDAR_OUTBOX_TYPE, id, seq: 0, entity: next };
+    if (next === null) {
+      if (receipt !== undefined) {
+        const type = CALENDAR_SETTLEMENT_TYPE;
+        entities.put({ type, id, seq: 0, entity: receipt }, `${type}:${id}`);
+      }
+      entities.delete(key);
+    }
+    else if (next !== undefined) entities.put(rec, key);
+    await commitWrite(tx);
+    if (next === null) this.noticeOutbox([key]);
+    return { changed: next !== undefined, rec };
+  }
+
+  private async checkGeneration(tx: IDBTransaction): Promise<void> {
     const found = generationOf(await requestDone(tx.objectStore(META).get(GEN_KEY)));
     if (found !== this.generation) {
       const expected = this.generation;
@@ -794,6 +836,14 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
       try { tx.abort(); } catch { /* already settled */ }
       throw new MirrorGenerationChanged(expected, found);
     }
+  }
+
+  /** The compare-and-set behind {@link BaseMirrorStore.decideOutboxRow}, under the generation fence. */
+  protected async decideOnDisk(id: string, act: OutboxRowAct): Promise<{ verdict: OutboxRowVerdict; rec: MirrorRecord | null }> {
+    const db = await this.open();
+    const tx = db.transaction([ENTITIES, META], "readwrite");
+    const entities = tx.objectStore(ENTITIES);
+    await this.checkGeneration(tx);
     const key = `${OUTBOX_TYPE}:${id}`;
     const rec = await requestDone(entities.get(key)) as MirrorRecord | undefined;
     const { verdict, next } = decideOutboxRow(rec?.entity ?? null, act);
@@ -966,7 +1016,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     const onDisk = await carriedOnDisk(entities);
     entities.clear();
     // Straight back in, before this transaction commits.
-    for (const rec of wipeKeepUnion(onDisk, keep)) entities.put(rec, `${rec.type}:${rec.id}`);
+    for (const rec of wipeKeepUnion(onDisk, keep.filter((rec) => !isCalendarQueueType(rec.type)))) entities.put(rec, `${rec.type}:${rec.id}`);
     meta.clear();
     // Clearing META drops the stamp too. Re-write it in the SAME transaction: a database
     // that is empty and unowned would be silently claimable by the next account to open

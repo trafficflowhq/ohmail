@@ -17,7 +17,7 @@ import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { IntlProvider } from "use-intl";
 import { TextProvider } from "@ohmail/app/text";
 
-import { LocaleContext, type LocaleControls } from "../../webapp/app/shell/LocaleContext.js";
+import { LocaleContext, useAppLocale, type LocaleControls } from "../../webapp/app/shell/LocaleContext.js";
 import {
   DEFAULT_LOCALE,
   LOCALES,
@@ -49,6 +49,9 @@ const CATALOGUES: Record<AppLocale, Messages> = {
  * mount in `main.tsx` is not an effect either.
  */
 const INITIAL: AppLocale = readStoredLocale() ?? DEFAULT_LOCALE;
+
+/** The controls this provider stands, read where a window's host record hands them to the frame. */
+export { useAppLocale };
 
 export function DesktopLocale({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState<AppLocale>(INITIAL);

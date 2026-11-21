@@ -42,7 +42,9 @@ const files = CLOUD.flatMap((d) => sources(join(ROOT, d))).filter((f) => !DATA.s
 describe("OpenCode Go stays out of the Cloud", () => {
   it("scans the Cloud trees at all", () => {
     expect(files.length).toBeGreaterThan(500);
-    expect(files.some((f) => rel(f) === "apps/webapp/app/shell/AppShell.tsx")).toBe(true);
+    /* The shell every Cloud host mounts, re-pointed by path from today's `AppShell.tsx` (RULING-NEW-SHELL-FIRST D (3)):
+       the new shell's mail ground, which each host hands above every pane. */
+    expect(files.some((f) => rel(f) === "packages/app/src/mail/MailGround.tsx")).toBe(true);
   });
 
   it("no Cloud source names OpenCode, outside the transports' own directory", () => {

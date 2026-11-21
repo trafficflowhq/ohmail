@@ -49,6 +49,7 @@ export interface DesktopFacts {
 export interface DesktopSupplies {
   /** No caller today: the window signs out in its own Settings pane. `none` until the first caller arrives. */
   readonly signOut: HostSession["signOut"];
+  readonly search?: HostContract["capabilities"]["searchBy"];
   /** The account's access answer is read by the window's own panes today; `none` until its first caller. */
   readonly reads: { readonly mailboxes: Supplied<HostReads["mailboxes"]>; readonly copyAge: Supplied<HostReads["copyAge"]>; readonly access: HostReads["access"] };
   /**
@@ -59,7 +60,8 @@ export interface DesktopSupplies {
   readonly wires: Transports<
     | "organizerNotice" | "gapLetters" | "liveBody" | "away" | "profileImport" | "images" | "olderBody" | "junk" | "trash"
     | "suggest" | "draftReply"
-  > & MayBeNone<"firstRun" | "screening" | "autoFiled" | "ownModelAutoSuggest" | "mailboxes"> & {
+  > & MayBeNone<"connect" | "firstRun" | "screening" | "autoFiled" | "ownModelAutoSuggest" | "mailboxes"> & {
+    readonly folderSummary?: Transports["folderSummary"];
     readonly consent: { readonly account: Transports["consent"]; readonly standalone: Transports["consent"] };
   };
   /** The desktop's own feature, Mailboxes, and the ways out to the browser. Never Invites. The reader, what stands above, the overs and the calendar are no entries. */
@@ -68,6 +70,13 @@ export interface DesktopSupplies {
   /** The places, the address bar, the window, the look and the way back. */
   readonly frame: FrameSupplies;
   readonly badge: Supplied<HostDevice["badge"]>;
+  /** The language's controls this window's own provider stands (`DesktopLocale`). */
+  readonly language: HostDevice["language"];
+  /** The way to an address the app itself makes: the window's new-window request, which its shell opens on a press. */
+  readonly openLink: Supplied<HostDevice["openLink"]>;
+  /** The window's shell that saves a letter's file by id and stages it for the look, or none while it is not armed. */
+  readonly pickFile?: HostDevice["pickFile"];
+  readonly saveFile: HostDevice["saveFile"];
   readonly hostConnection: Supplied<HostSignals["hostConnection"]>;
   readonly linkIn: Supplied<HostSignals["linkIn"]>;
 }
@@ -95,9 +104,12 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       confirmed: NONE,
       state: !cloud ? NONE : facts.sessionRefused ? "refused" : "live",
       scope: facts.scope,
+      mirrorAccount: status.accountId ?? null,
       account: facts.account,
+      accountAddress: null,
       signOut: has.signOut,
       recover: has.frame.recover,
+      today: NONE,
     },
     reads: {
       mailboxes: has.reads.mailboxes,
@@ -121,9 +133,9 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       screening: has.wires.screening,
       autoFiled: has.wires.autoFiled,
       seedReview: NONE,
-      folderSummary: NONE,
+      folderSummary: consent === "cloud" ? has.wires.folderSummary ?? NONE : NONE,
       ownModelAutoSuggest: suggest === "local" ? has.wires.ownModelAutoSuggest : NONE,
-      connect: NONE,
+      connect: firstRun ? has.wires.connect : NONE,
       mailboxes: has.wires.mailboxes,
       // A desktop signed in to a server answers its calendar at the seating; one on its own has none.
       calendar: NONE,
@@ -139,15 +151,15 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       imagesFrom: fromComputer ? "computer" : "service",
       unsubscribeFrom: fromComputer ? "computer" : "service",
       foldersStorable: consent === "cloud",
-      suggest: suggest === "local" ? "ownModel" : suggest === "cloud" ? "priced" : CANNOT.suggest,
+      suggest: suggest === "local" ? "ownModel" : suggest === "cloud" ? "pressed" : CANNOT.suggest,
       pairing: hostMode ? "hostMode" : account ? "inBrowser" : CANNOT.pairing,
       account: account ? "inBrowser" : CANNOT.account,
       firstRunDoor: firstRun ? "local" : CANNOT.firstRunDoor,
       // On its own it changes everything; signed in, a re-sync and a way out; paired, a re-sync alone.
       mailboxes: local ? "here" : paired ? "resyncOnly" : cloud ? "resyncAndOut" : CANNOT.mailboxes,
       language: "install",
-      // No hello is held where this is built: no person on the wire until one is.
-      searchBy: CANNOT.searchBy,
+      // The bundled store takes filters. A remote server must advertise the capability.
+      searchBy: local || cloud ? has.search ?? (local ? "people" : CANNOT.searchBy) : CANNOT.searchBy,
       products: CANNOT.products,
     },
     features: {
@@ -170,13 +182,19 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       calendar: has.frame.calendar,
     },
     device: {
-      build: { surface: "desktop", version: facts.build.version, commit: facts.build.commit, mailtoLeaves: false },
+      build: {
+        surface: "desktop",
+        version: facts.build.version,
+        commit: facts.build.commit,
+        mailtoLeaves: false,
+        desktopDownload: null,
+      },
       notifications: has.notifications,
       badge: has.badge,
-      language: NONE,
-      openLink: NONE,
-      pickFile: NONE,
-      saveFile: NONE,
+      language: has.language,
+      openLink: has.openLink,
+      pickFile: has.pickFile ?? NONE,
+      saveFile: has.saveFile,
       defaultMail: NONE,
       address: has.frame.address,
       window: has.frame.window,

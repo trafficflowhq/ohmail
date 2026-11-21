@@ -660,10 +660,20 @@ export abstract class EngineHydration extends EnginePastEnd {
       changes.filter((ch) => ch.type === "message" && ch.op === "delete").map((ch) => ch.id),
     )];
     if (ids.length === 0) return;
+    const latest = new Map<string, SyncChange>();
+    for (const change of changes) {
+      if (change.type !== "message") continue;
+      if ((latest.get(change.id)?.seq ?? this.store.record("message", change.id)?.seq ?? -1) < change.seq)
+        latest.set(change.id, change);
+    }
+    const applied = new Set<string>();
+    for (const change of latest.values()) {
+      if (change.op === "delete") applied.add(change.id);
+    }
     for (const l of this.removalListeners) {
       // A listener that throws is a listener's defect, never a reason to abandon a drain
       // mid-page — the apply below it is what keeps this mirror convergent.
-      try { l(ids); } catch { /* the consumer's own problem */ }
+      try { l(ids, applied); } catch { /* the consumer's own problem */ }
     }
   }
 

@@ -20,15 +20,22 @@
  *  4. **Revoke hits the row's own id and the list refreshes.**
  *  5. **A closed step-up window asks for the factor in place** — `DevicesSection`'s discipline.
  *
- * The real `InvitesSection`, the real `api-client`, only `fetch` (and the clipboard) stubbed —
- * the settings-parity suite's mount, the setup suite's wire recording.
+ * The real Settings registration and API client, with recorded fetch and clipboard calls.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { fireEvent, getByRole, queryByRole, within } from "@testing-library/react";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
+import {
+  installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  sessionFull, teardownConfirmEnv, tick,
+} from "./fixtures/cloud-confirm-shell";
+import { bindApiOwner } from "../app/api-client";
 import { decodeQr, matrixFromSvg } from "./fixtures/qr-decode";
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -36,7 +43,15 @@ process.env.NEXT_PUBLIC_API_BASE = "/api";
 // THE FLAVOR, before any module under test loads — the test-side twin of the build inlining
 // it. One flavor per process, exactly as one flavor per bundle: the MANAGED build's half of
 // the gate lives in `user-invites-managed.test.tsx`.
-process.env.NEXT_PUBLIC_OHMAIL_FLAVOR = "selfhost";
+const originalFlavor = vi.hoisted(() => {
+  const previous = process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
+  process.env.NEXT_PUBLIC_OHMAIL_FLAVOR = "selfhost";
+  return previous;
+});
+afterAll(() => {
+  if (originalFlavor === undefined) delete process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
+  else process.env.NEXT_PUBLIC_OHMAIL_FLAVOR = originalFlavor;
+});
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -51,6 +66,8 @@ let calls: Array<{ method: string; url: string; body: unknown }> = [];
 let originalFetch: typeof globalThis.fetch;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+let mounted = false;
+let originalClipboard: PropertyDescriptor | undefined;
 
 const HELLO = (pairing: boolean): Answer => ({
   status: 200,
@@ -69,6 +86,8 @@ const LIVE_ROW = {
 beforeEach(() => {
   answers = { "GET /api/pair": { status: 200, body: { items: [] } } };
   calls = [];
+  originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  localStorage.clear();
   originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
@@ -90,6 +109,14 @@ beforeEach(() => {
 afterEach(async () => {
   if (root) await act(async () => root!.unmount());
   host?.remove();
+  if (mounted) await teardownConfirmEnv();
+  mounted = false;
+  bindApiOwner(null);
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
+  history.replaceState(null, "", "/");
+  if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+  else Reflect.deleteProperty(navigator, "clipboard");
   root = null;
   host = null;
   globalThis.fetch = originalFetch;
@@ -113,32 +140,42 @@ async function mountNode(node: React.ReactNode): Promise<HTMLElement> {
   return host;
 }
 
-async function mountSection(): Promise<HTMLElement> {
-  const { InvitesSection } = await import("../app/(product)/mailbox/InvitesSection.js");
-  return mountNode(h(InvitesSection));
+async function mountSettings(hash: string, pairing = true, strict = false): Promise<HTMLElement> {
+  const recordedFetch = globalThis.fetch;
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
+  installConfirmEnv();
+  mounted = true;
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  rememberOwner();
+  answers["GET /api/hello"] = HELLO(pairing);
+  const shellFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const { pathname } = new URL(String(input), window.location.origin);
+    return pathname === "/api/hello" || pathname === "/api/pair" || pathname.startsWith("/api/pair/")
+      ? recordedFetch(input, init)
+      : shellFetch(input, init);
+  };
+  window.location.hash = hash;
+  const container = await mountCloudShell(strict ? (shell) => h(React.StrictMode, null, shell) : undefined);
+  await tick(2500);
+  return container;
 }
+
+const mountSection = () => mountSettings("#/settings/invites");
+const settingsMenu = (container: HTMLElement) => within(getByRole(container, "navigation", { name: messages.settings.navAria }));
 
 async function click(el: Element): Promise<void> {
-  await act(async () => {
-    (el as HTMLElement).click();
-    await Promise.resolve();
-  });
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { fireEvent.click(el); });
+  if (mounted) await tick(100);
 }
 
-async function type(input: HTMLInputElement, value: string): Promise<void> {
-  await act(async () => {
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    set.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+async function type(input: HTMLElement, value: string): Promise<void> {
+  await act(async () => { fireEvent.change(input, { target: { value } }); });
 }
 
-const buttonByText = (c: HTMLElement, text: string): HTMLButtonElement => {
-  const b = [...c.querySelectorAll("button")].find((x) => x.textContent?.trim() === text);
-  expect(b, `a button reading "${text}"`).toBeTruthy();
-  return b!;
-};
+const button = (c: HTMLElement, name: string) => getByRole(c, "button", { name });
 
 describe("useUserInvites — the negotiated half of the gate (the compiled half is `user-invites-managed.test.tsx`)", () => {
   /** A probe that renders the hook's answer, so the DOM is the assertion surface. */
@@ -164,8 +201,12 @@ describe("useUserInvites — the negotiated half of the gate (the compiled half 
    */
   it("a demo page issues no /hello at all", async () => {
     answers["GET /api/hello"] = HELLO(true);
-    const c = await mountProbe(true);
-    expect(c.textContent).toContain("invites:off");
+    const { DemoShell } = await import("../app/(product)/demo/DemoShell.js");
+    history.replaceState(null, "", "#/settings");
+    const c = await mountNode(h(DemoShell, {
+      serverDemo: true, says: { service: "self", sendCeiling: "strict" },
+    }));
+    expect(settingsMenu(c).queryByRole("button", { name: "Invites" })).toBeNull();
     expect(calls.filter((x) => x.url.includes("/hello")), "the demo reached the network").toEqual([]);
   });
 
@@ -177,27 +218,17 @@ describe("useUserInvites — the negotiated half of the gate (the compiled half 
 });
 
 describe("the Settings nav — a wired invitesSection is an entry, an absent one is none", () => {
-  async function mountSettings(withInvites: boolean): Promise<HTMLElement> {
-    const { SettingsView } = await import("../app/views/SettingsView.js");
-    return mountNode(
-      h(SettingsView, {
-        notifications: null, tags: [], tagCounts: {},
-        ...(withInvites ? { invitesSection: h("p", { className: "invites-probe" }, "the pane") } : {}),
-      }),
-    );
-  }
-
   it("wired ⇒ an Invites entry that opens the node", async () => {
-    const c = await mountSettings(true);
-    const entry = [...c.querySelectorAll(".set-nav button")].find((b) => b.textContent?.trim() === "Invites");
+    const c = await mountSettings("#/settings");
+    const entry = settingsMenu(c).getByRole("button", { name: "Invites" });
     expect(entry, "the Invites nav entry").toBeTruthy();
-    await click(entry!);
-    expect(c.querySelector(".invites-probe")).toBeTruthy();
+    await click(entry);
+    expect(getByRole(c, "textbox", { name: messages.invites.mintFor })).toBeTruthy();
   });
 
   it("absent ⇒ no entry, structurally", async () => {
-    const c = await mountSettings(false);
-    expect([...c.querySelectorAll(".set-nav button")].map((b) => b.textContent?.trim())).not.toContain("Invites");
+    const c = await mountSettings("#/settings", false);
+    expect(settingsMenu(c).queryByRole("button", { name: "Invites" })).toBeNull();
   });
 });
 
@@ -214,8 +245,8 @@ describe("mint → one link, shown as a QR and a copy button — never as printe
     });
 
     const c = await mountSection();
-    await type(c.querySelector<HTMLInputElement>(".invites-mint input")!, "Mara");
-    await click(buttonByText(c, "Make an invite link"));
+    await type(getByRole(c, "textbox", { name: messages.invites.mintFor }), "Mara");
+    await click(button(c, "Make an invite link"));
 
     const mint = calls.find((r) => r.method === "POST" && r.url.includes("/api/pair") && !r.url.includes("redeem"));
     expect(mint, "the mint left").toBeTruthy();
@@ -225,14 +256,14 @@ describe("mint → one link, shown as a QR and a copy button — never as printe
     // is the spec-derived decoder anchored to a foreign encoder's bytes, so this is the whole
     // chain — mint response → link assembly → encoder → SVG — under one assertion.
     const link = `${window.location.origin}/join/invite#${TOKEN}`;
-    const svg = c.querySelector<SVGSVGElement>(".join-qr svg");
-    expect(svg, "the QR rendered").toBeTruthy();
-    expect(decodeQr(matrixFromSvg(svg!))).toBe(link);
+    const svg: Element = getByRole(c, "img", { name: messages.invites.qrAria });
+    if (!(svg instanceof SVGSVGElement)) throw new Error("the invite QR was not rendered as SVG");
+    expect(decodeQr(matrixFromSvg(svg))).toBe(link);
 
     // The raw token is never PRINTED — scan or copy, per the design rules.
     expect(c.textContent).not.toContain(TOKEN);
 
-    await click(buttonByText(c, "Copy the link"));
+    await click(button(c, "Copy the link"));
     expect(written).toEqual([link]);
     // The toast may only speak AFTER the write fulfilled — see the refusal case below.
     expect(document.body.textContent).toContain("Link copied.");
@@ -252,8 +283,8 @@ describe("mint → one link, shown as a QR and a copy button — never as printe
     });
 
     const c = await mountSection();
-    await click(buttonByText(c, "Make an invite link"));
-    await click(buttonByText(c, "Copy the link"));
+    await click(button(c, "Make an invite link"));
+    await click(button(c, "Copy the link"));
 
     expect(document.body.textContent).not.toContain("Link copied.");
     expect(c.textContent).toContain("scan the code");
@@ -264,13 +295,10 @@ describe("mint → one link, shown as a QR and a copy button — never as printe
       status: 403,
       body: { error: { code: "step_up_required", message: "step-up verification required" } },
     };
-    answers["GET /api/auth/session"] = {
-      status: 200,
-      body: { user: { email: "o@example.test", twofaEnrolled: { webauthn: false, totp: true } }, scope: "full" },
-    };
     const c = await mountSection();
-    await click(buttonByText(c, "Make an invite link"));
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "the refusal was a dead end").toBeTruthy();
+    await click(button(c, "Make an invite link"));
+    const factor = getByRole(c, "dialog");
+    expect(within(factor).getByRole("textbox"), "the refusal was a dead end").toBeTruthy();
     expect(calls.filter((x) => x.method === "POST" && x.url.endsWith("/api/pair"))).toHaveLength(1);
     expect(c.querySelector('[role="alert"]'), "the prompt was answered with an error").toBeNull();
   });
@@ -283,8 +311,7 @@ describe("Strict Mode — development double-mount must not wedge the pane", () 
     // for the whole second life, so every list answer is discarded and the pane sticks
     // empty. Review finding, fixed red-first: the setup must re-arm the ref.
     answers["GET /api/pair"] = { status: 200, body: { items: [LIVE_ROW] } };
-    const { InvitesSection } = await import("../app/(product)/mailbox/InvitesSection.js");
-    const c = await mountNode(h(React.StrictMode, null, h(InvitesSection)));
+    const c = await mountSettings("#/settings/invites", true, true);
     expect(c.textContent).toContain("Mara");
   });
 });
@@ -318,10 +345,11 @@ describe("the list — live invites only, and revoke removes the row it names", 
     expect(c.textContent).toContain("Mara");
 
     answers["GET /api/pair"] = { status: 200, body: { items: [] } };
-    await click(buttonByText(c, "Revoke"));
+    await click(button(c, "Revoke"));
 
     expect(calls.some((r) => r.method === "DELETE" && r.url.includes("/api/pair/pt-1"))).toBe(true);
     expect(c.textContent).not.toContain("Mara");
-    expect(c.textContent).not.toContain("Open invites");
+    expect(queryByRole(c, "button", { name: messages.invites.revoke })).toBeNull();
+    expect(c.textContent).toContain("No invites");
   });
 });

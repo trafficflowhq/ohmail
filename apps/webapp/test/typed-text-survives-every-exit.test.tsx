@@ -140,6 +140,8 @@ const msg = (id: string): EngineMessage => ({
   subject: `Subject ${id}`, from: { address: SENDER, name: "The colleague" },
   to: [{ address: "me@example.invalid", name: "Me" }],
   date: "2026-09-27T08:29:00.000Z", unread: false, updatedAt: "2026-09-27T08:29:00.000Z",
+  /* Made whole by the older tests' sorting (share write-1): the new reader reads a letter's tags and copies. */
+  cc: [], labels: [],
 } as unknown as EngineMessage);
 
 async function storeWith(ids: string[], rows: string[]): Promise<MirrorStore> {
@@ -228,10 +230,13 @@ function engineOver(s: MirrorStore, page: Page): OhmailEngine {
 async function mountShell(opts: {
   hash: string; messages?: string[]; rows?: string[]; store?: MirrorStore;
 }): Promise<Page> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   // The route the page OPENS on, before anything renders: a page does not arrive by navigating.
   window.location.hash = opts.hash;
+  /* The window's width, as the new frame's plan reads it (made whole by the older tests' sorting, share write-1). */
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });
   store = opts.store ?? await storeWith(opts.messages ?? [], opts.rows ?? []);
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -255,7 +260,7 @@ async function mountShell(opts: {
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
   await goHash(opts.hash);
   if (opts.hash === "#/compose") {
-    await waitFor(() => container.querySelector(".view-compose") !== null, "the compose view");
+    await waitFor(() => letterOpen(), "the compose view");
   }
   return page;
 }
@@ -297,20 +302,48 @@ async function goHash(hash: string): Promise<void> {
   for (let i = 0; i < 6; i += 1) await act(async () => { await Promise.resolve(); });
 }
 
-const q = <T extends Element>(sel: string): T | null => container.querySelector<T>(sel);
 
-async function typeInto(sel: string, value: string): Promise<void> {
-  const input = q<HTMLInputElement>(sel)!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+/*
+ * THE NEW SHELL's PARTS, by role and name (re-pointed from today's ids and classes by the older tests' sorting, share
+ * write-1). The new letter is Write's: the region "New message", its combobox "To", its field "Subject", the lines
+ * that say what happened to it its statuses. The letters are opened at the Ohbox (History is not mounted; what these
+ * cases state is the reply's and its send's): the open letter the region "Open message", the reply's words its textbox
+ * "Reply body", its verbs the toolbar "Actions".
+ */
+const LETTER = '[role="region"][aria-label="New message"]';
+const letterOpen = (): boolean => container.querySelector(LETTER) !== null;
+const letterTo = (): HTMLInputElement | null => container.querySelector<HTMLInputElement>(`${LETTER} [role="combobox"][aria-label="To"]`);
+const letterSubject = (): HTMLTextAreaElement | HTMLInputElement | null =>
+  container.querySelector<HTMLTextAreaElement>(`${LETTER} textarea[aria-label="Subject"], ${LETTER} input[aria-label="Subject"]`);
+async function typeInto(field: HTMLInputElement | HTMLTextAreaElement | null, value: string): Promise<void> {
+  const input = field!;
+  const proto = input instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value")!.set!;
   await act(async () => {
     setter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+/** To, as a person writes it: the address typed, then taken onto the line (Enter). */
+async function typeTo(value: string): Promise<void> {
+  await typeInto(letterTo(), value);
+  await act(async () => {
+    letterTo()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+}
+const OPEN = '[role="region"][aria-label="Open message"]';
+const ohboxRow = (id: string): HTMLElement | null =>
+  container.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id="${id}"]`);
+const replySurface = (): HTMLElement | null =>
+  container.querySelector<HTMLElement>(`${OPEN} [role="textbox"][aria-label="Reply body"]`);
+const replySend = (): HTMLButtonElement | null =>
+  [...container.querySelectorAll<HTMLElement>('[role="toolbar"][aria-label="Actions"]')]
+    .flatMap((t) => [...t.querySelectorAll<HTMLButtonElement>("button")]).find((b) => b.getAttribute("aria-label") === "Send") ?? null;
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+    // Keys go where the keys are: the focused row, the letter's or the reply's text.
+    (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
   await settleEditor();
 };
@@ -331,8 +364,10 @@ const pause = async (ms = 80): Promise<void> => {
 type DraftSave = Extract<EngineMutation, { kind: "draft_save" }>;
 const drafts = (): DraftSave[] => sent.filter((m): m is DraftSave => m.kind === "draft_save");
 const subjects = (): string[] => drafts().map((m) => m.subject);
-const subjectShown = (): string => q<HTMLInputElement>("#compose-subject")?.value ?? "";
-const notes = (): string[] => [...container.querySelectorAll(".send-note")].map((n) => n.textContent ?? "");
+const subjectShown = (): string => letterSubject()?.value ?? "";
+/** What the letter says of itself: its status lines, and the frame's reports. */
+const notes = (): string[] =>
+  [...document.querySelectorAll(`${LETTER} [role="status"], ${LETTER} [role="alert"], .fr-report [role="status"]`)].map((n) => n.textContent ?? "");
 
 beforeEach(() => {
   window.location.hash = "";
@@ -389,8 +424,8 @@ describe("a tab that closes inside the autosave window", () => {
   it("leaves the last keystroke in the local unit, and the next open writes it to the account", async () => {
     newTab();
     const first = await mountShell({ hash: "#/compose" });
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "Friday");
+    await typeTo("sam@example.invalid");
+    await typeInto(letterSubject(), "Friday");
     expect(drafts(), "the debounce did not hold — this case measures nothing").toHaveLength(0);
 
     await closeTab(first);
@@ -437,8 +472,8 @@ describe("a duplicated tab", () => {
     await pause();
     expect(subjectShown(), "the duplicate opened the other tab's message").toBe("");
 
-    await typeInto("#compose-to", "bo@example.invalid");
-    await typeInto("#compose-subject", "B's own");
+    await typeTo("bo@example.invalid");
+    await typeInto(letterSubject(), "B's own");
     await waitFor(() => drafts().length > 0, "the duplicate's own save", AUTOSAVE_DELAY_MS + 2000);
     expect(drafts()[0]!.draftId, "the duplicate wrote into the other tab's draft").toBeNull();
     const aUnit = JSON.parse(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.dup-x`) ?? "{}") as { subject?: string };
@@ -463,8 +498,8 @@ describe("a duplicated tab", () => {
     const locks = installLocks();
     tabNamed("reload-y");
     const old = await mountShell({ hash: "#/compose" });
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "mine across the reload");
+    await typeTo("sam@example.invalid");
+    await typeInto(letterSubject(), "mine across the reload");
     // A reload: `pagehide`, and the old page's lock outlives it by a moment.
     await closeTab(old);
     resetComposerForTest();
@@ -519,7 +554,7 @@ describe("a tab that dies without pagehide", () => {
     await mountShell({ hash: "#/history", rows: ["row-x"] });
     await pause(200);
     await goHash("#/compose");
-    await waitFor(() => container.querySelector(".view-compose") !== null, "the compose view");
+    await waitFor(() => letterOpen(), "the compose view");
     expect(subjectShown(), "the dead tab's message was not offered back").toBe("lost in a crash");
     expect(document.body.textContent ?? "", "the message came back without a word")
       .toContain(messages.compose.recoveredFromClosedTab);
@@ -612,11 +647,11 @@ describe("the body ceiling", () => {
       .toBe(true);
     expect(notes().some((n) => n.includes("Too long to save")), "the way to shorten it is not said").toBe(true);
 
-    await act(async () => { q<HTMLButtonElement>(".compose-foot .compose-cancel")!.click(); });
-    const confirm = [...container.querySelectorAll<HTMLButtonElement>(".compose-confirm button")]
-      .find((b) => b.textContent === "Discard message");
-    expect(confirm, "there is no way to discard it").toBeTruthy();
-    await act(async () => { confirm!.click(); });
+    // The letter's Discard acts in one press and offers Undo.
+    const discard = [...container.querySelectorAll<HTMLElement>('[role="toolbar"][aria-label="Send or discard"]')]
+      .flatMap((t) => [...t.querySelectorAll<HTMLButtonElement>("button")]).find((b) => b.getAttribute("aria-label") === "Discard");
+    expect(discard, "there is no way to discard it").toBeTruthy();
+    await act(async () => { discard!.click(); });
     await pause();
     expect(window.location.hash).toBe("#/ohbox");
   });
@@ -628,20 +663,21 @@ describe("a reply whose send was under way when its parent was deleted elsewhere
   async function replySentThenParentGone(text: string): Promise<void> {
     newTab();
     holdSends = true;
-    await mountShell({ hash: "#/history", messages: ["m1", "m2"] });
-    await waitFor(() => container.querySelector('.view-history :is(.row, [role=option])[data-id="m1"]') !== null, "m1 in History");
-    const row = container.querySelector<HTMLElement>('.view-history :is(.row, [role=option])[data-id="m1"]')!;
+    // The letter opened at the Ohbox (re-pointed: History is not mounted; the claim is the reply's and its send's).
+    await mountShell({ hash: "#/ohbox", messages: ["m1", "m2"] });
+    await waitFor(() => ohboxRow("m1") !== null, "m1 in the Ohbox");
+    const row = ohboxRow("m1")!;
     await act(async () => {
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await key("r");
-    const surface = container.querySelector<HTMLElement>(".read-col .msg .rte-surface, .reader .msg .rte-surface");
+    const surface = replySurface();
     expect(surface, "the reply editor never mounted").not.toBeNull();
     await act(async () => { typeIntoEditor(surface!, text); });
     await waitFor(() => (laneBody() ?? "").includes(text), "the reply lane holding the text");
-    await act(async () => { q<HTMLButtonElement>(".reply-actions .btn.primary")!.click(); });
+    await act(async () => { replySend()!.click(); });
     await waitFor(() => heldSend !== null, "the send on the wire");
 
     pending = [{ type: "message", op: "delete", id: "m1", seq: ++seq, updatedAt: NOW.toISOString(), entity: null } as unknown as SyncChange];
@@ -672,19 +708,21 @@ describe("a reply whose send was under way when its parent was deleted elsewhere
   it("is saved as a draft when the send restored at the next open is refused for good", async () => {
     newTab();
     sendMode = "lose";
-    const first = await mountShell({ hash: "#/history", messages: ["m1", "m2"] });
+    // The letter opened at the Ohbox (re-pointed: History is not mounted; the claim is the reply's and its send's).
+    const first = await mountShell({ hash: "#/ohbox", messages: ["m1", "m2"] });
     const kept = store!;
-    const row = container.querySelector<HTMLElement>('.view-history :is(.row, [role=option])[data-id="m1"]')!;
+    await waitFor(() => ohboxRow("m1") !== null, "m1 in the Ohbox");
+    const row = ohboxRow("m1")!;
     await act(async () => {
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await key("r");
-    const surface = container.querySelector<HTMLElement>(".read-col .msg .rte-surface, .reader .msg .rte-surface");
+    const surface = replySurface();
     await act(async () => { typeIntoEditor(surface!, "the answer from yesterday"); });
     await waitFor(() => (laneBody() ?? "").includes("the answer from yesterday"), "the reply lane");
-    await act(async () => { q<HTMLButtonElement>(".reply-actions .btn.primary")!.click(); });
+    await act(async () => { replySend()!.click(); });
     await waitFor(() => sent.some((m) => m.kind === "mail_send"), "the send reaching the wire");
     await pause(100);
     await killTab(first);

@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import type { EngineMutation, MutationAnswer, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -10,12 +11,13 @@ import {
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
-import { composeRowKey } from "@ohmail/app-logic/writing/compose";
+import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
+import { composeSend, composerOn, replySend, toasts } from "./_handoff-steps.js";
+import { letterSubject, letterTo, openReplyOn } from "./_writing-shell.js";
 import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { settleFirstPaint } from "./_first-paint.js";
 import * as shell from "./_draft-shell.js";
 import { typeInto as typeIntoRich } from "./fixtures/rich-editor-driver";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * `if (res.status !== "confirmed") return;` stood at the Drafts list's delete: three of the four
@@ -58,7 +60,7 @@ async function goto(hash: string): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -76,10 +78,9 @@ async function mountShell(): Promise<void> {
   await settle(10);
 }
 
-async function typeInto(sel: string, value: string): Promise<void> {
-  const input = q<HTMLInputElement>(sel)!;
+async function typeInto(input: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
   const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype, "value",
+    Object.getPrototypeOf(input), "value",
   )!.set!;
   await act(async () => {
     setter.call(input, value);
@@ -90,27 +91,39 @@ async function typeInto(sel: string, value: string): Promise<void> {
 /** Write a message on `#/compose` and let the autosave give it a row. Returns the row's id. */
 async function makeADraft(): Promise<string> {
   await goto("#/compose");
-  await typeInto("#compose-to", "lena@atelier.example");
-  await typeInto("#compose-subject", "Bis Montag");
+  await typeInto(letterTo(host!)!, "lena@atelier.example");
+  await typeInto(letterSubject(host!)!, "Bis Montag");
   await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
   await settle(10);
-  const id = window.localStorage.getItem(composeRowKey(storageOwner()));
-  expect(id, "the compose never wrote a row, so there is nothing to press Delete on").not.toBeNull();
-  return id!;
+  await goto("#/drafts");
+  const row = Array.from(host!.querySelectorAll<HTMLElement>('[role="option"][data-id]'))
+    .find((candidate) => candidate.getAttribute("aria-label")?.includes("Bis Montag"));
+  expect(row, "the saved letter must appear in Drafts").toBeDefined();
+  return row!.dataset.id!;
 }
 
-const rowOf = (id: string): HTMLElement | null => q<HTMLElement>(`.draft-row[data-id="${id}"]`);
-const toastText = (): string => q<HTMLElement>(".toast[role='status']")?.textContent ?? "";
+const rowOf = (id: string): HTMLElement | null => q<HTMLElement>(`[role="option"][data-id="${id}"]`);
+const toastText = toasts;
+
+function rowDiscard(root: HTMLElement, id: string): HTMLElement | null {
+  const row = root.querySelector<HTMLElement>(`.dr-row[data-id="${id}"]`);
+  return row ? within(row).queryByRole("button", { name: "Discard" }) : null;
+}
+
+async function finishUndoWindow(): Promise<void> {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, UNDO_MS + 100)); });
+  await settle();
+}
 
 async function pressDelete(id: string): Promise<void> {
-  await press(q<HTMLButtonElement>(`.draft-row[data-id="${id}"] .draft-discard`)!);
-  await settle(4);
-  // By its LABEL: Keep comes first in the confirm on purpose, so "the first button" is the wrong one.
-  const confirm = Array.from(host!.querySelectorAll<HTMLButtonElement>(".draft-confirm button"))
-    .find((b) => (b.textContent ?? "").trim() === messages.drafts.discardConfirm) ?? null;
-  expect(confirm, "the confirm behind Delete did not open, or lost its destructive button").not.toBeNull();
-  await press(confirm!);
-  await settle(12);
+  const button = rowDiscard(host!, id);
+  expect(button, "the row offers Discard").not.toBeNull();
+  await press(button!);
+  expect(rowOf(id)).toBeNull();
+  expect(toastText()).toContain(messages.drafts.reportUndo);
+  expect(discardRequests).toEqual([]);
+  await finishUndoWindow();
+  expect(discardRequests).toEqual([id]);
 }
 
 /**
@@ -121,14 +134,17 @@ type Scripted =
   | { kind: "refuse"; error: MutationRejectedError }
   | { kind: "organizerQueued" };
 let scripted: Scripted | null = null;
+let discardRequests: string[] = [];
 
 beforeEach(() => {
   window.location.hash = "";
   scripted = null;
+  discardRequests = [];
   try { window.localStorage.clear(); } catch { /* blocked storage; the in-memory half still runs */ }
   const real = FixturesAdapter.prototype.mutate;
   vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(
     async function (this: FixturesAdapter, m: EngineMutation, opts: { idempotencyKey: string }) {
+      if (m.kind === "draft_discard") discardRequests.push(m.draftId);
       if (m.kind === "draft_discard" && scripted !== null) {
         if (scripted.kind === "refuse") throw scripted.error;
         /* `EngineAdapter.mutate` answers `MutationAnswer` — outcome OR queued — and the engine
@@ -181,7 +197,6 @@ describe("Every ending of a draft discard says what happened", () => {
   it("says nothing and takes the row when the discard is confirmed", async () => {
     await mountShell();
     const id = await makeADraft();
-    await goto("#/drafts");
     expect(rowOf(id), "the draft that was just written is not in the list").not.toBeNull();
 
     await pressDelete(id);
@@ -202,7 +217,6 @@ describe("Every ending of a draft discard says what happened", () => {
   it("quotes the server when the discard is rolled back", async () => {
     await mountShell();
     const id = await makeADraft();
-    await goto("#/drafts");
     scripted = {
       kind: "refuse",
       error: new MutationRejectedError(
@@ -236,7 +250,6 @@ describe("Every ending of a draft discard says what happened", () => {
   it("says the draft is still here when a refusal names no reason", async () => {
     await mountShell();
     const id = await makeADraft();
-    await goto("#/drafts");
     scripted = {
       kind: "refuse",
       error: new MutationRejectedError("", { status: 500, code: null, retryable: false }),
@@ -264,7 +277,6 @@ describe("Every ending of a draft discard says what happened", () => {
   it("says it has not gone through yet when the verb is queued", async () => {
     await mountShell();
     const id = await makeADraft();
-    await goto("#/drafts");
     scripted = {
       kind: "refuse",
       error: new MutationRejectedError(
@@ -293,7 +305,6 @@ describe("Every ending of a draft discard says what happened", () => {
   it("says it was recorded when the discard waits on the organizer", async () => {
     await mountShell();
     const id = await makeADraft();
-    await goto("#/drafts");
     scripted = { kind: "organizerQueued" };
 
     await pressDelete(id);
@@ -318,32 +329,25 @@ describe("Discard of a draft whose send waits cancels that send first", () => {
   };
   const sends = (s: shell.DraftShell) => s.sent.filter((m) => m.kind === "mail_send").length;
   const discards = (s: shell.DraftShell) => s.sent.filter((m) => m.kind === "draft_discard").length;
-  const said = (): string => [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+  const said = toasts;
   const drafts = messages.drafts as Record<string, string>;
-  const rowState = (s: shell.DraftShell, id: string) => s.el.querySelector(`.draft-row[data-id="${id}"] .draft-state`)?.textContent ?? null;
+  const rowState = (s: shell.DraftShell, id: string) => s.el.querySelector(`[role=option][data-id="${id}"]`)?.getAttribute("aria-description") ?? null;
   const toDrafts = async (): Promise<void> => {
     await shell.act(async () => { window.location.hash = "#/drafts"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
   };
   /** The letter pressed Send on while the mail server answers "try again": its send waits on the outbox. */
   async function waiting(s: shell.DraftShell): Promise<void> {
-    await shell.waitFor(() => s.el.querySelector(`.draft-row[data-id="${D}"] .draft-open`) != null, "the letter in Drafts");
-    await shell.press(s.el.querySelector(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await shell.waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the composer");
+    await composerOn(s, D, "Plans for Friday");
     Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424, retryableFirst: 1 });
-    const send = [...s.el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith("Send") && !/later/i.test(b.textContent ?? ""));
-    await shell.press(send ?? null, "Send");
+    await shell.press(composeSend(s.el) ?? null, "Send");
     await shell.waitFor(() => s.engine.waitingSends().length === 1, "the send waiting");
     s.refuseSend.on = false;
   }
   async function discard(s: shell.DraftShell): Promise<void> {
     await toDrafts();
-    await shell.waitFor(() => s.el.querySelector(`.draft-row[data-id="${D}"] .draft-discard`) != null, "the row's Discard");
-    await shell.press(s.el.querySelector(`.draft-row[data-id="${D}"] .draft-discard`), "Discard");
-    expect(s.el.querySelector(".draft-confirm")?.textContent).toContain(drafts.discardWhatWaiting);
-    const confirm = [...s.el.querySelectorAll<HTMLButtonElement>(".draft-confirm button")].find((b) => (b.textContent ?? "").trim() === drafts.discardConfirm);
-    await shell.press(confirm ?? null, "confirm");
-    await rounds(20);
+    await shell.waitFor(() => rowDiscard(s.el, D) !== null, "the row's Discard");
+    await shell.press(rowDiscard(s.el, D), "Discard");
+    await rounds(2);
   }
   async function reconnect(s: shell.DraftShell): Promise<void> {
     await shell.act(async () => { window.dispatchEvent(new Event("online")); await s.engine.flushPending().catch(() => undefined); });
@@ -357,6 +361,10 @@ describe("Discard of a draft whose send waits cancels that send first", () => {
     await toDrafts();
     await shell.waitFor(() => rowState(s, D) === drafts.waitingToSend, "the row says it waits");
     await discard(s);
+    expect(discards(s)).toBe(0);
+    expect(s.engine.waitingSends()).toHaveLength(0);
+    expect(said()).toContain(drafts.reportUndo);
+    await finishUndoWindow();
     await reconnect(s);
     expect({ sends: sends(s), discards: discards(s), gone: s.store.isTombstoned("draft", D), waiting: s.engine.waitingSends().length, said: said() })
       .toEqual({ sends: 1, discards: 1, gone: true, waiting: 0, said: drafts.discardedNotSent });
@@ -366,7 +374,7 @@ describe("Discard of a draft whose send waits cancels that send first", () => {
     const s = await shell.mountShell("#/drafts", [shell.message("m1")], [letter as never]);
     await waiting(s);
     await discard(s);
-    expect({ discards: discards(s), listed: s.el.querySelector(`.draft-row[data-id="${D}"]`) != null, why: s.el.querySelector(".draft-refusal")?.textContent })
+    expect({ discards: discards(s), listed: s.el.querySelector(`[role=option][data-id="${D}"]`) != null, why: s.el.querySelector(`.dr-row[data-id="${D}"] [role=alert]`)?.textContent })
       .toEqual({ discards: 0, listed: true, why: drafts.discardCancelUnknown });
   }, 60_000);
 
@@ -379,7 +387,7 @@ describe("Discard of a draft whose send waits cancels that send first", () => {
     void s.engine.flushPending().catch(() => undefined);
     await shell.waitFor(() => sends(s) === 2, "the retry on the wire");
     await discard(s);
-    expect({ discards: discards(s), why: s.el.querySelector(".draft-refusal")?.textContent }).toEqual({ discards: 0, why: drafts.discardStillSending });
+    expect({ discards: discards(s), why: s.el.querySelector(`.dr-row[data-id="${D}"] [role=alert]`)?.textContent }).toEqual({ discards: 0, why: drafts.discardStillSending });
     await shell.act(async () => { s.sendGate.wait = null; release(); });
   }, 60_000);
 
@@ -393,25 +401,28 @@ describe("Discard of a draft whose send waits cancels that send first", () => {
     s.withdrawAnswer.outcome = "withdrawn";
     await shell.waitFor(() => s.engine.waitingSends().length === 1, "the restored send waiting");
     await discard(s);
+    expect(discards(s)).toBe(0);
+    expect(s.engine.waitingSends()).toHaveLength(0);
+    expect(said()).toContain(drafts.reportUndo);
+    await finishUndoWindow();
     await reconnect(s);
     expect({ sends: sends(s), discards: discards(s), gone: s.store.isTombstoned("draft", D) }).toEqual({ sends: 0, discards: 1, gone: true });
   }, 60_000);
 
   it("a reply queued offline with no row of its own is not listed in Drafts as an interrupted send", async () => {
-    const s = await shell.mountShell("#/history", [shell.message("m1")]);
-    await shell.waitFor(() => s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await shell.press(s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "the row");
-    await shell.act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true })); });
-    await shell.waitFor(() => shell.replySurface(s.el) != null, "the reply editor");
+    const s = await shell.mountShell("#/ohbox", [shell.message("m1")], [letter as never]);
+    await openReplyOn(s);
     s.offline.on = true;
     await shell.act(async () => { typeIntoRich(shell.replySurface(s.el)!, "See you Thursday"); });
-    const send = [...s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")].find((b) => (b.textContent ?? "").startsWith("Send"));
-    await shell.press(send ?? null, "Send");
+    await shell.press(replySend(s.el) ?? null, "Send");
     await shell.waitFor(() => s.engine.waitingSends().length === 1, "the reply waiting");
     const paint = s.engine.waitingSends()[0]!.paintId;
     await toDrafts();
-    await rounds(10);
-    expect({ rowless: s.engine.waitingSends()[0]!.draftId, listed: [...s.el.querySelectorAll(".draft-row")].map((r) => r.getAttribute("data-id")).includes(paint) })
+    await shell.waitFor(
+      () => s.el.querySelector(`[role="option"][data-id="${D}"]`) !== null,
+      "Drafts shows the saved control letter",
+    );
+    expect({ rowless: s.engine.waitingSends()[0]!.draftId, listed: [...s.el.querySelectorAll("[role=option][data-id]")].map((r) => r.getAttribute("data-id")).includes(paint) })
       .toEqual({ rowless: null, listed: false });
   }, 60_000);
 });

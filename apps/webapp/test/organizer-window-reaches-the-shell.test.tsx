@@ -1,16 +1,18 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 
 /**
- * THE ORGANIZER'S WINDOW REACHES AN OPEN SHELL WITH NO RELOAD (REVIEW-026 H1). The reader's cycle
+ * THE ORGANIZER'S WINDOW REACHES AN OPEN SHELL WITH NO RELOAD. The reader's cycle
  * writes the organizer's document to its mirror and records a `mailbox_profile` change; that row
  * arriving on `/sync` is the doorbell for `GET /consent`, whose `screeningByMailbox` then names the
- * organizer's window. Driven through the shipped shell: the rail's sentence for an unread window
- * is there at boot and gone once the profile row and the new answer arrive — the mirror alone moves.
+ * organizer's window. The mounted Screener reflects the new answer in place.
  */
+
+const UNREAD_SENTENCE = "Studio Mac has not shared its screening settings yet.";
 
 const WINDOW_UNREAD = {
   mb_1: { baselineAt: null, dormancyDays: 60, scope: "all_time", source: "unread", holder: { kind: "local", name: "Studio Mac", since: null }, asOf: null },
@@ -28,8 +30,18 @@ const profileRow = (seq: number) => ({
   entity: { mailboxId: "mb_1", rules: [], asOf: ISO, from: { kind: "local", name: "Studio Mac", since: null }, updatedAt: ISO },
 });
 
-/** Every `title` the shell's nav renders, joined — where the rail carries its sentence. */
-const titles = (el: HTMLElement): string => [...el.querySelectorAll("[title]")].map((n) => n.getAttribute("title") ?? "").join(" | ");
+function windowNotice(el: HTMLElement): HTMLElement | undefined {
+  const messages = within(el).getByRole("region", { name: "Messages" });
+  expect(within(messages).getByRole("heading", { name: "Screener" })).toBeTruthy();
+  return within(messages).queryAllByRole("status").find((status) =>
+    status.textContent?.includes("Everyone in the Screener folder is shown"),
+  );
+}
+
+function openScreener(): Promise<HTMLElement> {
+  window.location.hash = "#/screener";
+  return mountShell([mailbox()]);
+}
 
 /** `GET /consent` asks this mount made — read so a case can tell a re-ask from a boot read. */
 let consentAsks = 0;
@@ -48,7 +60,7 @@ afterEach(async () => {
 });
 
 describe("a mailbox_profile row re-asks GET /consent", () => {
-  it("the unread sentence is gone once the organizer's document is mirrored — no reload", async () => {
+  it("the unread sentence is gone once the organizer's document is mirrored — no reload (approved place.windowNotice.unread)", async () => {
     answerConsentWith({ screeningByMailbox: WINDOW_UNREAD });
     let phase: "boot" | "profile" | "idle" = "boot";
     answerSyncWith(() => {
@@ -56,17 +68,20 @@ describe("a mailbox_profile row re-asks GET /consent", () => {
       if (phase === "profile") { phase = "idle"; return pageOf([profileRow(2)], "c2"); }
       return pageOf([], "cIdle");
     });
-    const el = await mountShell([mailbox()]);
+    const el = await openScreener();
     await tick(30_000);
-    expect(titles(el), "the boot answer's sentence never rendered — the fixture is broken")
-      .toContain("Studio Mac’s screening settings haven’t been read yet");
+    expect(windowNotice(el)?.textContent ?? "", "the boot answer's sentence never rendered — the fixture is broken")
+      .toContain(UNREAD_SENTENCE);
 
+    const settled = consentAsks;
     // The reader's cycle mirrors the organizer's document: the server answers with its window, and
     // the ONLY thing that reaches this shell is the mailbox_profile row on the next drain.
     answerConsentWith({ screeningByMailbox: WINDOW_ORGANIZER });
     phase = "profile";
     await tick(30_000);
-    expect(titles(el), "the shell kept a window the server no longer answers").not.toContain("haven’t been read yet");
+    expect(consentAsks).toBe(settled + 1);
+    expect(windowNotice(el)?.textContent ?? "", "the shell kept a window the server no longer answers")
+      .not.toContain(UNREAD_SENTENCE);
   });
 
   it("a LATER document moves it too: the organizer's window replaced by an older build's, said at once", async () => {
@@ -78,27 +93,30 @@ describe("a mailbox_profile row re-asks GET /consent", () => {
       if (phase === "older") { phase = "idle"; return pageOf([profileRow(5)], "c5"); }
       return pageOf([], "cIdle");
     });
-    const el = await mountShell([mailbox()]);
+    const el = await openScreener();
     await tick(30_000);
     // The organizer's first document is mirrored: the first observed stamp asks once.
     phase = "first";
     await tick(30_000);
-    expect(titles(el)).not.toContain("older ohmail");
+    expect(windowNotice(el)?.textContent ?? "").not.toContain("older ohmail");
     const settled = consentAsks;
     answerConsentWith({ screeningByMailbox: { mb_1: { ...WINDOW_ORGANIZER.mb_1, source: "unstated", scope: "all_time", baselineAt: null } } });
     phase = "older";
     await tick(30_000);
     expect(consentAsks, "the second document did not ring GET /consent").toBe(settled + 1);
-    expect(titles(el), "a second document did not re-ask").toContain("Studio Mac runs an older ohmail");
+    expect(windowNotice(el)?.textContent ?? "", "a second document did not re-ask").toContain("Studio Mac runs an older ohmail");
   });
 
-  it("CONTROL: with no profile row the shell does not re-ask, and the boot answer stands", async () => {
+  it("CONTROL: with no profile row the shell does not re-ask, and the boot answer stands (approved place.windowNotice.unread)", async () => {
     answerConsentWith({ screeningByMailbox: WINDOW_UNREAD });
     answerSyncWith(() => pageOf([], "cIdle"));
-    const el = await mountShell([mailbox()]);
+    const el = await openScreener();
     await tick(30_000);
+    expect(windowNotice(el)?.textContent).toContain(UNREAD_SENTENCE);
+    const settled = consentAsks;
     answerConsentWith({ screeningByMailbox: WINDOW_ORGANIZER });
     await tick(30_000);
-    expect(titles(el)).toContain("haven’t been read yet");
+    expect(consentAsks).toBe(settled);
+    expect(windowNotice(el)?.textContent ?? "").toContain(UNREAD_SENTENCE);
   });
 });

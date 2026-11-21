@@ -1,10 +1,10 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import {
   workflowRuns, workflows as workflowsTbl, UNMETERED, isSpendMetered,
-  type SpendComposition, type Tx,
+  type EntitlementsComposition, type Tx,
 } from "@trafficflow/db";
-import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder, ENTITLEMENTS_CALL_BUDGET_MS } from "@trafficflow/db/cloud";
-import type { SpendPort } from "@trafficflow/db";
+import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder, refundObligationsOn, ENTITLEMENTS_CALL_BUDGET_MS } from "@trafficflow/db/cloud";
+import type { AccessPort, RefundObligationPort, SpendPort } from "@trafficflow/db";
 import { WorkflowExecutor, silentLogger, type DraftPort, type Logger, type WorkflowProposal } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
@@ -34,6 +34,8 @@ export interface WorkflowDrainDeps {
    * be a silent AI action — nothing may act on mail without the user having decided it.
    */
   credits?: SpendPort;
+  access?: AccessPort;
+  consentRefunds?: RefundObligationPort;
   /** Scope the drain to ONE account — the worker loops its served accounts. Omitted ⇒ all accounts. */
   accountId?: string;
   /**
@@ -123,7 +125,7 @@ export async function workflowDrainPass(
     if (!claimed) continue;
 
     await executor.runOne(
-      { db, drafter: deps.drafter, credits: deps.credits, now: () => now },
+      { db, drafter: deps.drafter, credits: deps.credits, access: deps.access, consentRefunds: deps.consentRefunds, now: () => now },
       { id: row.id, accountId: row.accountId, workflowId: row.workflowId, stepCursor: row.stepCursor, status: "running" },
     );
     drained++;
@@ -317,8 +319,9 @@ export async function runWorkflowCron(
         onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
       })
       : undefined;
-    const entitlements: SpendComposition = client ?? UNMETERED;
+    const entitlements: EntitlementsComposition = client ?? UNMETERED;
     const spend = isSpendMetered(entitlements) ? entitlements : undefined;
+    const consentRefunds = spend ? refundObligationsOn(db as unknown as Tx) : undefined;
     // The worker body's usage composition, for this fallback run: workflow lines into a buffer
     // flushed before the pool closes, the relay armed beside the real port.
     const usageRelay = spend && config.drafter ? config.aiUsage : undefined;
@@ -339,7 +342,7 @@ export async function runWorkflowCron(
               : config.drafter ?? unconfiguredDrafter,
             // ONE port for the pass, not a gate per account: the account is an argument to the
             // spend, and the step's terms come from `SPEND_ACTIONS.workflow`.
-            ...(spend ? { credits: spend } : {}),
+            ...(spend ? { credits: spend, access: spend, consentRefunds } : {}),
             accountId,
           },
           now,

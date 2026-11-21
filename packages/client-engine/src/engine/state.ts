@@ -312,7 +312,7 @@ export abstract class EngineState {
   protected followAgain = false;
   protected readonly listeners = new Set<() => void>();
   /** See {@link OhmailEngine.onMessagesRemoved} — told BEFORE the page is written. */
-  protected readonly removalListeners = new Set<(ids: readonly string[]) => void>();
+  protected readonly removalListeners = new Set<(ids: readonly string[], applied: ReadonlySet<string>) => void>();
   protected readonly readerView: OverlayReader;
   /** {@link oneSourceReader} over the overlay — what {@link OhmailEngine.read} hands out. */
   protected readonly resolvedView: EntityReader;
@@ -781,7 +781,10 @@ export abstract class EngineState {
    * create under that key with newer words is the middleware's `idempotency_replay`: the press would
    * end refused, unsaid. Bounded; the oldest goes first.
    */
-  protected readonly confirmedRows = new Map<string, CreatedDraftRow>();
+  protected readonly confirmedRows = new Map<string, {
+    saved?: CreatedDraftRow;
+    delivered?: { id: string; seq: number };
+  }>();
 
   /** Late answers a flush has claimed and not yet handed over — see {@link flushPending}. */
   protected readonly lateClaimed = new Set<string>();

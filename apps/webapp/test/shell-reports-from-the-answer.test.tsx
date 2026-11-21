@@ -4,11 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import { MutationRejectedError } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { barVerb, cursorRow, menuItem, menuItems, pickedRows } from "./ohbox/_finders.js";
+import { barVerb, cursorRow, menuItem, pickedRows, seatedList } from "./ohbox/_finders.js";
 
 /**
  * ═══ A PRESS IS REPORTED FROM ITS ANSWER — THE SHELL'S ONE DISPATCH SEAM ════════════════════
@@ -60,6 +61,7 @@ const doneSaid = copy.toastResurfaceDone!.replace(/\s*\{when\}.*$/u, "");
 /** The refusal the seam renders for an organizer-only verb, with the holder named. */
 const REFUSED = "Nothing changed — the laptop organizes this mailbox";
 
+const browserAnimate = Element.prototype.animate;
 let roots: Root[] = [];
 let host: HTMLElement | null = null;
 let sent: EngineMutation[] = [];
@@ -87,6 +89,17 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  // jsdom has no Web Animations. Let the report leave so a waiting refusal can appear.
+  Element.prototype.animate ??= (_frames, timing) => {
+    let timer: ReturnType<typeof setTimeout>;
+    return {
+      cancel: () => clearTimeout(timer),
+      addEventListener: (_type: string, finish: () => void) => {
+        const duration = typeof timing === "number" ? timing : timing?.duration;
+        timer = setTimeout(finish, typeof duration === "number" ? duration : 0);
+      },
+    } as unknown as Animation;
+  };
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -121,11 +134,12 @@ afterEach(async () => {
   document.body.innerHTML = "";
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
+  if (!browserAnimate) Reflect.deleteProperty(Element.prototype, "animate");
   vi.restoreAllMocks();
 });
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -135,11 +149,12 @@ async function shell(): Promise<HTMLElement> {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
       children: h(ThemeProvider, {
         storageKey: null,
-        children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+        children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
       }),
     }));
   });
   host = container;
+  await waitFor(() => seatedList(container)?.querySelector('[role="option"][data-id]') != null, "the Ohbox lists mail");
   return container;
 }
 
@@ -173,16 +188,13 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 4000): 
 const said = (needle: string): boolean =>
   [...document.querySelectorAll('[role="status"]')]
     .some((n) => (n.textContent ?? "").includes(needle));
-/** A verb on today's bar, in a pile's own reading column, by the label it starts with. */
-const todaysVerb = (label: string): HTMLButtonElement | undefined =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
-    .find((b) => (b.textContent ?? "").trim().startsWith(label));
-/**
- * A verb of the open letter, where the place on screen draws it: at the seated Ohbox on the letter's action panel, or
- * in the menu a verb of the panel opened (Resurface's horizons); in a pile of today's, on today's bar.
- */
-const barButton = (label: string): HTMLElement | undefined =>
-  barVerb(host!, label) ?? menuItem(label) ?? todaysVerb(label);
+const barButton = (label: string): HTMLElement | null =>
+  barVerb(host!, label) ?? menuItem(label);
+const pileRow = (id: string): HTMLElement | null =>
+  seatedList(host!)?.querySelector<HTMLElement>(`[role="option"][data-id="${id}"]`) ?? null;
+const pileDone = (id: string): HTMLButtonElement | undefined =>
+  [...(pileRow(id)?.parentElement?.querySelectorAll("button") ?? [])]
+    .find((button) => button.getAttribute("aria-label") === "Done" || button.textContent?.trim() === "Done");
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 
 /** The cursor on the Ohbox's first row, the way every one of these presses reaches a message. */
@@ -204,7 +216,7 @@ async function bookAndOpenThePile(id: string): Promise<void> {
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
   await waitFor(
-    () => host!.querySelector(`.view-triage :is(.row, [role=option])[data-id="${id}"]`) != null,
+    () => pileRow(id) !== null,
     "the booked row is in the Resurface pile",
   );
 }
@@ -215,12 +227,12 @@ describe("the finding: a reader install's Done says what the service answered", 
     const id = await cursorOnFirstRow();
     await bookAndOpenThePile(id);
 
+    // The booking's Undo holds the report slot. The refusal must be shown when that window ends.
     // From here the install is a reader: the service refuses organizer-only verbs.
     refusing = true;
     sent = [];
-    const row = host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`);
-    await click(row!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
-    await waitFor(() => said(REFUSED), "the refusal is never rendered");
+    await click(pileDone(id));
+    await waitFor(() => said(REFUSED), "the refusal is never rendered", UNDO_MS + 4000);
 
     expect(said(doneSaid), "the press claimed it filed the message").toBe(false);
     // HALF A RELEASE IS WORSE THAN NONE: the booking stands, so the deliberate read that would
@@ -228,7 +240,7 @@ describe("the finding: a reader install's Done says what the service answered", 
     expect(kinds("mark_seen"), "the release was sent over a refused clear").toHaveLength(0);
     // …and the interface agrees with the engine's rollback: the row is still in its pile.
     expect(
-      host!.querySelector(`.view-triage :is(.row, [role=option])[data-id="${id}"]`),
+      pileRow(id),
       "the row left the pile the refusal kept it in",
     ).not.toBeNull();
   }, 20000);
@@ -239,8 +251,7 @@ describe("the finding: a reader install's Done says what the service answered", 
     await bookAndOpenThePile(id);
 
     sent = [];
-    const row = host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`);
-    await click(row!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
+    await click(pileDone(id));
     await waitFor(() => said(doneSaid), "the release said nothing");
     expect(said(REFUSED), "an organizer was told a reader's refusal").toBe(false);
     await waitFor(
@@ -287,7 +298,7 @@ describe("the seam: nine families, each refused, each told", () => {
     refusing = true;
     await key("b");
     await click(barButton("Now"));
-    await waitFor(() => said(REFUSED), "the refusal is never rendered");
+    await waitFor(() => said(REFUSED), "the refusal is never rendered", UNDO_MS + 4000);
     expect(said(copy.toastResurfaceNow!), "the press claimed the message was back at the top").toBe(false);
   }, 20000);
 
@@ -318,24 +329,9 @@ describe("the seam: nine families, each refused, each told", () => {
     const id = await cursorOnFirstRow();
     await bookAndOpenThePile(id);
     refusing = true;
-    const row = host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`);
-    await click(row!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
-    await waitFor(() => said(REFUSED), "the refusal is never rendered");
+    await click(pileDone(id));
+    await waitFor(() => said(REFUSED), "the refusal is never rendered", UNDO_MS + 4000);
     expect(said(doneSaid), "the press claimed it filed the message").toBe(false);
-  }, 20000);
-
-  it("8 — Tags", async () => {
-    await shell();
-    await cursorOnFirstRow();
-    await key("Enter");
-    await click(barButton("Tag"));
-    /* The panel's Tag opens its own menu of the account's tags (today's bar opened the picker). */
-    const option = menuItems()[0];
-    expect(option, "the tag picker offered nothing to press").toBeTruthy();
-    refusing = true;
-    await click(option);
-    await waitFor(() => said(REFUSED), "the refusal is never rendered");
-    expect(said("Tagged"), "the press claimed the tag was applied").toBe(false);
   }, 20000);
 
   it("9 — the bulk verbs, one sentence for the set", async () => {

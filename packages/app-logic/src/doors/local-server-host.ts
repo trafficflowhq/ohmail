@@ -1,5 +1,33 @@
 import { asAuthHint, type AuthHint } from "@ohmail/client-engine/providers";
 
+/** A gateway may hold a sign-in past the form's lifetime. Only its pending flag lives here. */
+let pending = false;
+const listeners = new Set<() => void>();
+export const localTestPending = {
+  read: (): boolean => pending,
+  subscribe(tell: () => void): () => void {
+    listeners.add(tell);
+    return () => { listeners.delete(tell); };
+  },
+};
+
+function setPending(next: boolean): void {
+  pending = next;
+  for (const tell of listeners) tell();
+}
+
+/** The next form can test again when the engine answers or its deadline expires. */
+export async function testWithLocalWait<T>(host: string, probe: () => Promise<T>): Promise<T> {
+  if (pending) throw new Error("A connection test is already in progress.");
+  if (!isLocalServerHost(host)) return probe();
+  setPending(true);
+  try {
+    return await probe();
+  } finally {
+    setPending(false);
+  }
+}
+
 /**
  * IS THIS HOST THIS COMPUTER? The client's copy of `loopbackHarnessReason` (core `imap-types.ts`):
  * 127.0.0.0/8, ::1 (`[::1]` too, which the engine dials at ::1) and the exact name `localhost`,

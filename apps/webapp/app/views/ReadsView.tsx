@@ -27,7 +27,7 @@ import {
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, withheldCopyKey } from "../shell/format";
-import { useSenderCheckWords } from "../shell/sender-check";
+import { useSenderCheckWords } from "../screening/sender-check";
 import { useRowBadgeCopy, useSentLabel } from "../shell/row-copy";
 import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";

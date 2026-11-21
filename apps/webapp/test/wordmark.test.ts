@@ -23,26 +23,24 @@
 import { describe, expect, it } from "vitest";
 import { assertReadsOhmail, marksUnder, renderedText } from "../../../test/support/wordmark.js";
 
+/** Today's first run: it leaves with the switch, and the census does not walk it while it stands. */
+const LEAVING = "apps/webapp/app/shell/FirstRun.tsx";
+
 const marks = [
   ...marksUnder("apps/webapp/app/(product)"),
   // The SHARED shell, which is not in the route group and is not the marketing site
   // either: `shell/engine.tsx` renders the signed-out panel when the API will not confirm
   // whose mailbox this is. It belongs to this test because it is a product
   // screen, and it is listed separately because `apps/desktop` ships this same file.
-  ...marksUnder("apps/webapp/app/shell"),
+  ...marksUnder("apps/webapp/app/shell").filter((m) => m.file !== LEAVING),
 ];
 
 describe("webapp wordmarks", () => {
-  it("finds all six of them", () => {
+  it("finds all five of them", () => {
     expect(marks.map((m) => m.file).sort()).toEqual([
       // The card a signed-in browser waits behind while the account's standing is asked, before
       // any mail paints. No mount of this list reaches it: it stands for at most three seconds.
       "apps/webapp/app/(product)/mailbox/CloudShell.tsx",
-      // THE FIRST-RUN STAGE. The mark sits at the top of the setup card, which on the standalone
-      // door is the very first ohmail screen anybody sees — there is no login page in front of
-      // it. Unreached by any mount for the family's usual reason: the stage renders only behind
-      // a route flag and a door that can make its calls.
-      "apps/webapp/app/shell/FirstRun.tsx",
       // engine.tsx FOUR times, one per card: the signed-out gate (`SessionScreen`), the
       // mid-use re-auth prompt (`SessionEnded`), and the two surfaces that say the session
       // check did not finish — `UnconfirmedOverlay` over a warm mirror and `UnconfirmedGate`

@@ -19,6 +19,8 @@ import {
   newEventComponent,
   occurrenceOf,
   readCalendar,
+  recurrenceKeyOf,
+  recurrenceKeyString,
   sameName,
   seriesOf,
   timeProperty,
@@ -308,6 +310,14 @@ export function dayCancelledText(
   const found = dayOf(stored, was, platform);
   if (found === null) return { ok: false, reason: "not_found" };
   if (found.day === null) return { ok: true, absent: true };
+  const range = found.day.event;
+  if (
+    range.thisAndFuture &&
+    range.recurrenceId &&
+    recurrenceKeyString(recurrenceKeyOf(range.recurrenceId, found.zones)) ===
+      recurrenceKeyString(found.day.key)
+  )
+    return { ok: false, reason: "field_unwritable" };
   const at = changedOccurrence({ ...found.day, event: stored.master }, found.zones).recurrenceId;
   if (at === null) return { ok: false, reason: "field_unwritable" };
   const master = stored.master.component;

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { act, useEffect, useLayoutEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { ViewBoundary } from "../app/shell/ViewBoundary";
+import { ViewBoundary } from "../app/components/ViewBoundary";
 import {
   RENDER_COMMIT_CEILING,
   RenderLoopError,

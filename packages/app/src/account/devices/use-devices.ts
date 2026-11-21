@@ -58,11 +58,15 @@ async function sent(door: DevicesDoor, act: DevicesAct, step: Step): Promise<Gat
  * over still reads. The pairing link lives in this state alone, from the door's answer until Done or until its code
  * is revoked.
  */
-export function useDevices(door: DevicesDoor): DevicesModel {
+export function useDevices(door: DevicesDoor, watch?: (refresh: () => void) => () => void): DevicesModel {
   /** The one place the state lives: each event is stepped from here as it arrives, never inside a state updater. */
   const held = useRef(DEVICES_START);
   const [state, setState] = useState(DEVICES_START);
   const alive = useRef(false);
+  const [shown, setShown] = useState<{
+    door: DevicesDoor;
+    show: NonNullable<DevicesLists["onShown"]>;
+  } | null>(null);
   /** The reads asked so far: an answer is drawn only while no later read was asked. */
   const reads = useRef(0);
 
@@ -79,7 +83,10 @@ export function useDevices(door: DevicesDoor): DevicesModel {
         // A read that gave no answer is a read that failed.
         answer = UNANSWERED;
       }
-      if (asked === reads.current) step({ kind: "read", answer });
+      if (!alive.current || asked !== reads.current) return;
+      const show = answer.ok ? answer.value.onShown : undefined;
+      setShown(show ? { door, show } : null);
+      step({ kind: "read", answer });
     },
     [door],
   );
@@ -116,6 +123,9 @@ export function useDevices(door: DevicesDoor): DevicesModel {
 
   useEffect(() => {
     alive.current = true;
+    const unwatch = watch?.(() => {
+      void read(send);
+    });
     void read(send);
     void door.groupsWebSessions().then(
       (groups) => send({ kind: "groups", groups }),
@@ -124,8 +134,12 @@ export function useDevices(door: DevicesDoor): DevicesModel {
     );
     return () => {
       alive.current = false;
+      ++reads.current;
+      unwatch?.();
     };
-  }, [door, read, send]);
+  }, [door, read, send, watch]);
+
+  useEffect(() => (shown?.door === door ? shown.show() : undefined), [door, shown]);
 
   const ask = useMemo(() => gatedAsk(state.gate, send), [state.gate, send]);
   return useMemo(() => devicesModelOf(state, ask, send), [state, ask, send]);

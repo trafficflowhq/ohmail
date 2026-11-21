@@ -36,7 +36,8 @@ import {
   type HttpResponse,
   type Precondition,
 } from "../request/index.js";
-import { alreadyHolds } from "../write-compare.js";
+import { personalSeriesOf, spelledAs } from "../series.js";
+import { alreadyHolds, sameAudience } from "../write-compare.js";
 import { addressOf, isUnder, leave, propfindOf, scopeOf, type Session } from "./ask.js";
 import {
   answerHolds,
@@ -79,6 +80,39 @@ const answered = (items: readonly ChangeItem[]): WriteAnswer => ({ ok: true, ite
 /** Done by the write's own request: what waits behind it may be re-based onto `items`. */
 const wrote = (items: readonly ChangeItem[]): WriteAnswer => ({ ok: true, items, written: true });
 const failedRead = (v: Fetched | Refusal): v is Refusal => typeof v === "object" && "ok" in v;
+
+/** A rejected conditional write can already be done only for the same series and dates.
+ * A one-date success contains its new override. Compare the dates and recipients of every
+ * component, including properties a server can schedule but the mirror does not understand. */
+function samePersonalDates(wanted: string, found: string): boolean {
+  const signature = (text: string): string | null => {
+    const read = readCalendar(text, DEFAULT_LIMITS);
+    if (!read.ok || read.dropped.length || read.calendar.events.length === 0) return null;
+    const schedule = [
+      "UID",
+      "DTSTART",
+      "DTEND",
+      "DURATION",
+      "RECURRENCE-ID",
+      "RRULE",
+      "RDATE",
+      "EXRULE",
+      "EXDATE",
+      "STATUS",
+      "ATTENDEE",
+      "ORGANIZER",
+    ];
+    const dates = read.calendar.events.map((event) =>
+      event.component.properties
+        .filter((p) => schedule.some((name) => spelledAs(p, name)))
+        .map((p) => JSON.stringify([p.name.toUpperCase(), p.params, p.value]))
+        .sort(),
+    );
+    return JSON.stringify(dates.map((parts) => JSON.stringify(parts)).sort());
+  };
+  const expected = signature(wanted);
+  return expected !== null && expected === signature(found);
+}
 
 /** The write's key as the UUID a member and its UID are named by. */
 function uuidOf(key: WriteKey): string | null {
@@ -268,12 +302,14 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     collection: string,
     member: string,
     change: EventChange | null,
+    wantedSeries?: string,
   ): Promise<WriteAnswer> {
     const now = await readMember(s, collection, member);
     if (failedRead(now)) return now;
     if (now === "gone")
       return change === null ? answered([{ kind: "gone", id: member }]) : refused("event_gone");
-    if (change === null) return refused("version_stale");
+    if (change === null || (wantedSeries && !samePersonalDates(wantedSeries, now.text)))
+      return refused("version_stale");
     const event = heldEvent(now.text);
     return event !== null && alreadyHolds(change, event, deps.zones)
       ? answered(itemsOf(member, now))
@@ -292,11 +328,13 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     member: string,
     was: EventTime,
     change: EventChange | null,
+    wantedSeries?: string,
   ): Promise<WriteAnswer> {
     const now = await readMember(s, collection, member);
     if (failedRead(now)) return now;
     if (now === "gone")
       return change === null ? answered([{ kind: "gone", id: member }]) : refused("event_gone");
+    if (wantedSeries && !samePersonalDates(wantedSeries, now.text)) return refused("version_stale");
     if (change === null && dayOfAnotherCopy(now.text, was, deps.zones)) return refused("version_stale");
     const done =
       change === null ? dayAbsent(now.text, was, deps.zones) : dayHolds(now.text, was, change, deps.zones);
@@ -356,6 +394,23 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       }
       const stood = await standing(s, place.collection, place.member, target);
       if ("ok" in stood) return stood;
+      if (target.personalSeries && !personalSeriesOf(stood.text)) return refused("version_stale");
+      if (target.audience) {
+        const read = readCalendar(stood.text, DEFAULT_LIMITS);
+        const event =
+          read.ok && read.dropped.length === 0 && read.calendar.events.length === 1
+            ? read.calendar.events[0]
+            : null;
+        if (
+          !event ||
+          !sameAudience(
+            target.audience,
+            event,
+            event.component.properties.filter((p) => spelledAs(p, "ATTENDEE")).length,
+          )
+        )
+          return refused("version_stale");
+      }
       const was = target.occurrence;
       // Any other change of an event with invitees is theirs to hear of, from the server alone: only where it tells them. The one
       // change none of them hears of is the account's own reminders.
@@ -373,8 +428,21 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       if ("ok" in res) return res;
       if (res.status === 412)
         return was === null
-          ? afterStale(s, place.collection, place.member, change)
-          : afterStaleDay(s, place.collection, place.member, was, change);
+          ? afterStale(
+              s,
+              place.collection,
+              place.member,
+              change,
+              target.personalSeries ? text.text : undefined,
+            )
+          : afterStaleDay(
+              s,
+              place.collection,
+              place.member,
+              was,
+              change,
+              target.personalSeries ? text.text : undefined,
+            );
       if (res.status !== 200 && res.status !== 201 && res.status !== 204) return refusalOf(res, "event_gone");
       return afterWrite(s, place.collection, place.member, res, text.text);
     },
@@ -483,6 +551,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         if (now === "gone") return refused("event_gone");
         if (
           req.mayBeDone &&
+          (!target.personalSeries || personalSeriesOf(now.text)) &&
           (req.late !== true || now.tag !== target.version) &&
           seriesEndsBefore(now.text, was, deps.zones)
         )
@@ -492,6 +561,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         if (now.tag !== target.version) return refused("version_stale");
         stood = { tag: now.tag, text: now.text };
       }
+      if (target.personalSeries && !personalSeriesOf(stood.text)) return refused("version_stale");
       // The press's own copy ends before that day already: there are no days from it on to let go, and none to make a series of.
       if (seriesEndsBefore(stood.text, was, deps.zones))
         return req.then === null ? answered([]) : refused("event_gone");
@@ -516,7 +586,9 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         const now = await readMember(s, place.collection, place.member);
         if (failedRead(now)) return now;
         if (now === "gone") return refused("event_gone");
-        return req.mayBeDone && seriesEndsBefore(now.text, was, deps.zones)
+        return req.mayBeDone &&
+          (!target.personalSeries || samePersonalDates(text.text, now.text)) &&
+          seriesEndsBefore(now.text, was, deps.zones)
           ? answered(itemsOf(place.member, now))
           : refused("version_stale");
       }
@@ -539,13 +611,20 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       // that goes on from it too (given a new repeat since its end, by the person or by another program) those days stand there,
       // and making them here would make them twice: refused for its copy, nothing sent.
       let from = req.from.text;
-      if (from === null || seriesGoesOnFrom(from, was, deps.zones)) {
+      if (req.from.personalSeries || from === null || seriesGoesOnFrom(from, was, deps.zones)) {
         const now = await readMember(s, source.collection, source.member);
         if (failedRead(now)) return now;
         if (now === "gone") return refused("event_gone");
+        // The two parts are distinct writes. The cached end can have been reversed between them.
+        if (
+          req.from.personalSeries &&
+          (now.tag !== req.from.version || !seriesEndsBefore(now.text, was, deps.zones))
+        )
+          return refused("version_stale");
         if (seriesGoesOnFrom(now.text, was, deps.zones)) return refused("version_stale");
         from = now.text;
       }
+      if (req.from.personalSeries && !personalSeriesOf(from)) return refused("version_stale");
       const made = continuation(cal, from, was, req);
       if ("ok" in made) return made;
       const { collection, member } = made;
@@ -562,6 +641,15 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         const now = await readMember(s, collection, member);
         if (failedRead(now)) return now;
         if (now === "gone") return refused("unknown");
+        if (req.from.personalSeries) {
+          const event = heldEvent(now.text);
+          if (
+            !event ||
+            !samePersonalDates(made.text, now.text) ||
+            !alreadyHolds(req.change, event, deps.zones)
+          )
+            return refused("version_stale");
+        }
         return uidOfText(now.text) === uid ? answered(itemsOf(member, now)) : refused("unknown");
       }
       if (res.status !== 201 && res.status !== 204 && res.status !== 200) return refusalOf(res, "not_found");

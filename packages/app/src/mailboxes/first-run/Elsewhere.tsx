@@ -4,13 +4,13 @@
  * holder. A holder that stopped checking in takes the stopped twin of every sentence.
  */
 import type { ReactNode } from "react";
-import { Page, RadioLines } from "@ohmail/ui/base";
+import { Page, RadioLines, Sentence } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 import { holderName } from "@ohmail/app-logic/mailboxes/first-run/rules";
 import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
 import { holderSentence, readerHolder } from "@ohmail/app-logic/reading/reader-holder";
-import { Foot, Next, Said, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
+import { Foot, Next, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
 import { HOLDER_MANAGED, type Say } from "./words.js";
 
 /** Who holds the mailbox, as a label and a sentence: the elsewhere screen's and the reader summary's, one table. */
@@ -109,7 +109,9 @@ export function Elsewhere({ run, say, service }: StepProps): ReactNode {
           />
         }
       >
-        <Said text={title} />
+        <Sentence size="xl" level={1} end="hot">
+          {title}
+        </Sentence>
       </Page>
     </StepForm>
   );

@@ -1,4 +1,5 @@
-import type { None } from "./contract.js";
+import { mirrorOwnerOf } from "@ohmail/app-logic/session/sync-scheduler";
+import type { HostContract, None } from "./contract.js";
 
 /**
  * Who is signed in, as the server answered. A failure to ask is not an answer: `unknown` says
@@ -26,11 +27,15 @@ export interface HostSession {
    * again, keyed by the scope; today's views read it once, as they mount, and keep it.
    */
   readonly scope: string | null;
+  /** The account ID carried by this host's mirror rows where the storage scope names a different record. */
+  readonly mirrorAccount: string | null;
   /**
    * The ohmail account behind this session, as the server confirmed it: an opaque id, never an address. Null where no
    * account stands behind this shell, and until the answer has come.
    */
   readonly account: string | null;
+  /** Present when the same confirmed session also supplied its address. */
+  readonly accountAddress: string | null;
   /**
    * The way back to a live session: sign in again, or reload the window. `none` withholds the control, and the frame
    * says in words to start ohmail again.
@@ -38,4 +43,15 @@ export interface HostSession {
   readonly recover: ((how: "signIn" | "reload") => void) | None;
   /** Ends the session. No input today: it lives inside the panes each mount hands in. */
   readonly signOut: (() => Promise<void>) | None;
+  /**
+   * The day the host says it is: the demo's frozen day, which its invented letters are dated around. `none` on every
+   * real host: the clock is the device's. The ground reads it for the day clock and for every dated sentence it makes.
+   */
+  readonly today: Date | None;
+}
+
+/** Account operations require the same confirmed account as the frame's storage partition. */
+export function confirmedAccountForScope({ engine, session }: Pick<HostContract, "engine" | "session">): string | null {
+  const owner = mirrorOwnerOf(engine) ?? session.scope;
+  return session.account === owner ? owner : null;
 }

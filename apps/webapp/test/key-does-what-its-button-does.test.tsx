@@ -4,9 +4,12 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { queryAllByRole, queryByRole } from "@testing-library/dom";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import writeEn from "../../../packages/app/messages/write.en.json";
+import { cursorRow, menuItem, openRow, reportPress, reportSays, seatedList } from "./ohbox/_finders.js";
 
 /**
  * A KEY THE SHEET LISTS DOES IN THAT VIEW WHAT ITS BUTTON DOES.
@@ -24,6 +27,8 @@ process.env.NEXT_PUBLIC_API_BASE = "/api";
 };
 Element.prototype.scrollTo ??= function scrollTo() {};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
+/* jsdom runs no animation: the frame's report leaves by one (`Element.animate`), as the frame's own tests stand it. */
+Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -34,6 +39,7 @@ let host: HTMLDivElement | null = null;
 let sent: EngineMutation[] = [];
 
 function setViewport(): void {
+  vi.stubGlobal("innerWidth", 1440);
   (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
     ({
       matches: false, media: query, onchange: null,
@@ -57,7 +63,7 @@ async function settle(n = 8): Promise<void> {
 async function mountShell(hash: string, opts: { faces?: boolean } = {}): Promise<void> {
   await unmount();
   window.location.hash = hash;
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -68,17 +74,17 @@ async function mountShell(hash: string, opts: { faces?: boolean } = {}): Promise
         children: h(ThemeProvider, {
           storageKey: null,
           ...(opts.faces ? { faces: true } : {}),
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
   });
-  await settle();
+  await tick(500);
 }
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+    (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
   await settle(2);
 };
@@ -91,16 +97,19 @@ const click = async (el: Element | null | undefined): Promise<void> => {
   await settle(2);
 };
 
-/** Every bar on screen, by its text — the strip a panel puts in the bar's place included. */
+/** The action panels and the open confirmation or menu, including overlays outside the frame. */
 const bars = (): string[] =>
-  [...host!.querySelectorAll(".abar")].map((b) => (b.textContent ?? "").replace(/\s+/g, " ").trim());
-const barButton = (label: string): HTMLButtonElement | undefined =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
-    .find((b) => (b.textContent ?? "").trim().startsWith(label));
+  queryAllByRole(document.body, "toolbar").concat(
+    queryAllByRole(document.body, "menu"),
+    queryAllByRole(document.body, "alertdialog"),
+  ).map((panel) => (panel.textContent ?? "").replace(/\s+/g, " ").trim());
+const barButton = (label: string): HTMLElement | null =>
+  queryByRole(queryByRole(host!, "toolbar", { name: "Actions" }) ?? host!, "button", { name: label });
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 
 beforeEach(() => {
   vi.useFakeTimers();
+  localStorage.clear();
   setViewport();
   sent = [];
   const real = FixturesAdapter.prototype.mutate;
@@ -116,11 +125,12 @@ beforeEach(() => {
 afterEach(async () => {
   await unmount();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
 /* The shell's first import is paid once here, not inside the first case's five seconds. */
-beforeAll(async () => { await import("./_todays-shell.js"); }, 120_000);
+beforeAll(async () => { await import("./_mail-shell.js"); }, 120_000);
 
 /** `g b`, and the hash change's own task — jsdom dispatches `hashchange` on a timer. */
 async function goToThePile(): Promise<void> {
@@ -129,14 +139,28 @@ async function goToThePile(): Promise<void> {
   await settle();
 }
 
-/** The strip a bar panel puts in the bar's place, by what it asks. */
-const STRIP = { m: /move to/i, d: /Delete this message\?/, b: /Resurface when\?/ } as const;
-const stripShown = (k: keyof typeof STRIP): boolean => bars().some((b) => STRIP[k].test(b));
+/** The menu or confirmation opened by the action. */
+const stripShown = (k: "m" | "d" | "b"): boolean => {
+  if (k === "m") return queryByRole(document.body, "menu", { name: "Move" }) !== null;
+  if (k === "d") {
+    const more = queryByRole(document.body, "menu", { name: "More" });
+    return (more !== null && queryByRole(more, "menuitem", { name: "Delete" }) !== null)
+      || queryByRole(document.body, "dialog", { name: "Move to Trash" }) !== null;
+  }
+  return queryByRole(document.body, "menu", { name: "Resurface" }) !== null;
+};
+
+async function openFirstOhboxLetter(): Promise<void> {
+  const list = seatedList(host!);
+  expect(list, "the Ohbox's message list is mounted").not.toBeNull();
+  await click(queryAllByRole(list!, "option")[0]);
+  await tick(500);
+}
 
 describe("`b` on a booked row opens the chooser its button opens", () => {
   it("in the Resurface pile, `b` offers Now instead of cancelling the booking; Now pins it", async () => {
     await mountShell("#/ohbox");
-    await key("j");
+    await openFirstOhboxLetter();
     await key("b");
     expect(kinds("triage_set").map((m) => (m as { state: string }).state), "the quick default did not book").toEqual(["bubbled_up"]);
     await goToThePile();
@@ -144,26 +168,38 @@ describe("`b` on a booked row opens the chooser its button opens", () => {
     await key("b");
     expect(kinds("triage_set"), "`b` cancelled the booking — the button offers a chooser").toEqual([]);
     expect(stripShown("b"), `no chooser on screen: ${JSON.stringify(bars())}`).toBe(true);
-    await click(barButton("Now"));
+    await click(menuItem("Now"));
     expect(kinds("triage_set").map((m) => (m as { state: string }).state)).toEqual(["resurfaced"]);
   });
 
   it("the control: the bar's own Resurface button opens the same chooser", async () => {
     await mountShell("#/ohbox");
-    await key("j");
+    await openFirstOhboxLetter();
     await key("b");
     await goToThePile();
-    await click(host!.querySelector(".abar-resurface"));
+    await click(barButton("Resurface"));
     expect(stripShown("b"), `no chooser on screen: ${JSON.stringify(bars())}`).toBe(true);
   });
 });
 
-/** Put the stream's cursor on its first card WITHOUT opening it — `j`, as the tester did. */
+/** Put the stream's cursor on its first card without expanding it. */
+async function stepIntoStream(name: string, layOut?: (scroller: HTMLElement) => void): Promise<void> {
+  const stream = queryByRole(host!, "region", { name });
+  expect(stream, "the reading stream is mounted").not.toBeNull();
+  const scroller = stream!.querySelector<HTMLElement>(".oh-sheet-scroll")!;
+  layOut?.(scroller);
+  await act(async () => { scroller.focus(); });
+  await key("j");
+  await tick(50);
+}
+
 async function cursorOnStream(hash: string): Promise<void> {
   await mountShell(hash);
-  await settle();
-  await key("j");
-  await settle();
+  if (hash === "#/ohbox") {
+    await openFirstOhboxLetter();
+  } else {
+    await stepIntoStream(hash === "#/reads" ? "News stream" : "Receipts stream");
+  }
 }
 
 describe("in the streams `m` and `d` open their strip on the card the cursor names", () => {
@@ -202,19 +238,21 @@ describe("the census — every bar-twinned key the sheet lists, pressed in each 
      bound to nothing and then to a binding that raises a strip. A probe that cannot read the
      first as dead would pass every view for nothing. */
   it("the planted control: the probe reads a key bound to nothing as dead, and a live one as live", async () => {
-    const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
-    const { KeymapProvider } = await import("@ohmail/app/keys");
-    function Surface({ live }: { live: boolean }): React.ReactElement {
+    const { KeymapContext, useKeyBindings, useKeymapStore } = await import("@ohmail/app-logic/keys/keymap");
+    /* The frame's own registry: one store under its context, as `OwnKeys` of the frame mounts it. */
+    const Registry = ({ children }: { children: React.ReactNode }): React.ReactElement =>
+      h(KeymapContext.Provider, { value: useKeymapStore() }, children);
+    function Surface({ live }: { live: boolean }): React.ReactElement | null {
       const [open, setOpen] = React.useState(false);
       useKeyBindings([{ chord: "m", group: "message", label: "Move to another place", run: () => { if (live) setOpen(true); } }]);
-      return h("div", { className: "abar" }, open ? "move to → Ohbox" : "Reply Forward");
+      return open ? h("div", { role: "menu", "aria-label": "Move" }, "Ohbox") : null;
     }
     for (const live of [false, true]) {
       await unmount();
       host = document.createElement("div");
       document.body.appendChild(host);
       root = createRoot(host);
-      await act(async () => { root!.render(h(KeymapProvider, { children: h(Surface, { live }) })); });
+      await act(async () => { root!.render(h(Registry, { children: h(Surface, { live }) })); });
       await settle();
       await key("m");
       expect(stripShown("m"), `planted live=${live}`).toBe(live);
@@ -228,7 +266,7 @@ describe("the census — every bar-twinned key the sheet lists, pressed in each 
    then the key — and both must leave the wire empty past the window and say the same sentence. */
 
 /** The Undo capsule's button, while one stands. */
-const undoCapsule = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".toast-held .toast-act");
+const undoCapsule = (): HTMLButtonElement | null => reportPress()?.textContent?.trim().startsWith("Undo") ? reportPress() : null;
 /** Every sentence on screen, the capsule's and the notice's. */
 const said = (): string =>
   [...host!.querySelectorAll('[role="status"]')].map((s) => (s.textContent ?? "").trim()).join(" | ");
@@ -236,9 +274,6 @@ const tick = async (ms: number): Promise<void> => {
   await act(async () => { vi.advanceTimersByTime(ms); });
   await settle();
 };
-const buttonStarting = (label: string): HTMLButtonElement | undefined =>
-  [...host!.querySelectorAll<HTMLButtonElement>("button")]
-    .find((b) => (b.textContent ?? "").trim().startsWith(label));
 
 interface HeldPress {
   name: string;
@@ -254,7 +289,7 @@ interface HeldPress {
 
 /** The Screener's rows, top to bottom. */
 const screenerRows = (): string[] =>
-  [...host!.querySelectorAll(".view-screener .row")].map((r) => r.getAttribute("data-id") ?? "");
+  queryAllByRole(seatedList(host!) ?? host!, "option").map((row) => row.dataset.id ?? "");
 /** Each Screener decision sent, as "sender destination". */
 const decisions = (): string[] =>
   kinds("screener_decide").map((m) => `${(m as { senderId: string }).senderId} ${(m as { dest?: string }).dest}`);
@@ -264,11 +299,12 @@ let asked: string[] = [];
 async function markAllSpamConfirmed(): Promise<void> {
   asked = screenerRows();
   expect(asked.length, "one waiting sender: no pile to mark").toBeGreaterThan(1);
-  await click(buttonStarting(messages.screener.markAllSpam));
-  const ask = host!.querySelector("[role=alertdialog]");
+  await click(queryByRole(seatedList(host!) ?? host!, "button", { name: "List" }));
+  await click(menuItem(messages.screener.markAllSpam));
+  const ask = queryByRole(document.body, "dialog", { name: /waiting senders? as spam/ });
   expect(ask?.textContent?.match(/(\d+) waiting senders? as spam\?/)?.[1], "the question names another number").toBe(String(asked.length));
   const yes = messages.screener.askAllSpamYes.replace("{count}", String(asked.length));
-  await click([...ask!.querySelectorAll("button")].find((b) => b.textContent === yes));
+  await click(ask && queryByRole(ask, "button", { name: yes }));
 }
 
 const HELD: readonly HeldPress[] = [
@@ -290,23 +326,27 @@ const HELD: readonly HeldPress[] = [
     name: "the Move strip (Move → News)",
     press: async () => {
       await mountShell("#/ohbox");
-      await key("j");
-      await click(buttonStarting("Move"));
-      await click(buttonStarting("→ News"));
+      await openFirstOhboxLetter();
+      await click(barButton("More"));
+      await click(menuItem("Move"));
+      await click(menuItem("News"));
     },
     sends: () => sent.filter((m) => m.kind.startsWith("rule_")).length,
     undone: /^The mail is back where it was, and no rule was made/,
   },
   {
     name: "the delete window (Backspace)",
-    press: async () => { await mountShell("#/ohbox"); await key("j"); await key("Backspace"); },
+    press: async () => { await mountShell("#/ohbox"); await openFirstOhboxLetter(); await key("Backspace"); },
     sends: () => kinds("message_delete").length,
     undone: new RegExp(`^${messages.ohbox.deleteUndone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
   },
 ];
 
 /** The notice slot's sentence — where Undo's answer lands once the capsule has gone. */
-const notice = (): string => (host!.querySelector(".toast:not(.toast-held)")?.textContent ?? "").trim();
+const notice = (): string => reportSays() ||
+  (queryAllByRole(document.body, "status")
+    .map((region) => region.textContent?.trim() ?? "")
+    .find((line) => line === messages.shortcuts.nothingToUndo) ?? "");
 
 describe("z takes back what the toast's Undo takes back, inside the window", () => {
   for (const p of HELD) {
@@ -358,7 +398,7 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
 
   it("the newest offer holds the door: z after Park then a Screener decide takes back the decide, not the Park", async () => {
     await mountShell("#/ohbox");
-    await key("j");
+    await openFirstOhboxLetter();
     await key("e");
     expect(kinds("triage_set").map((m) => (m as { state: string }).state)).toEqual(["set_aside"]);
     await key("g"); await key("s");
@@ -381,15 +421,18 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
       /* The head states the count in its Mark all read's name, and draws none once nothing is unread (the design's
          head: studio PARITY 2.1, no "n unread" beside the title; `screens/ohbox.js`, Mark all read only while
          something is unread): no control naming a count is a count of nought. */
-      const unread = () => [...(host!.querySelector(".view-ohbox")?.querySelectorAll("button") ?? [])]
+      /* The Ohbox's list: the frame's list section, found by its name (`ohbox/_finders.ts`); its Undo the capsule's
+         or, at the seated place, the frame's report's press. */
+      const unread = () => [...(seatedList(host!)?.querySelectorAll("button") ?? [])]
         .map((b) => b.getAttribute("aria-label") ?? "").join(" ").match(/(\d+) unread/)?.[1] ?? "0";
       await tick(500);
       const before = unread();
       expect(Number(before), "the Ohbox shows no unread").toBeGreaterThan(0);
-      await click([...document.querySelectorAll<HTMLButtonElement>(".view-ohbox button")].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null);
+      await click([...(seatedList(host!)?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null);
       await tick(500);
       expect(unread()).toBe("0");
-      if (via === "the button") await click(undoCapsule());
+      const undoPress = () => undoCapsule() ?? ((reportPress()?.textContent ?? "").trim().startsWith("Undo") ? reportPress() : null);
+      if (via === "the button") await click(undoPress());
       if (via === "z past the window") await tick(7000);
       if (via !== "the button") await key("z");
       await tick(500);
@@ -408,11 +451,12 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
   for (const via of ["the button", "z"] as const) {
     it(`News's mark all read: ${via} gives back the new count`, async () => {
       await mountShell("#/reads");
-      const fresh = () => (host!.querySelector(".view-reads")?.textContent ?? "").match(/(\d+|Nothing) new since/)?.[1];
+      const fresh = () => (seatedList(host!)?.textContent ?? "").match(/(\d+|Nothing) new since/)?.[1];
       await tick(500);
       const before = fresh();
       expect(Number(before), "News shows nothing new").toBeGreaterThan(0);
-      await click(host!.querySelector(".view-reads .mark-all-read"));
+      await click(queryByRole(seatedList(host!) ?? host!, "button", { name: "List" }));
+      await click(menuItem("Mark all read"));
       await tick(500);
       expect(fresh()).toBe("Nothing");
       if (via === "the button") await click(undoCapsule());
@@ -426,8 +470,10 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
      its own: its Undo raised through the door is live under z, raised beside it is dead. A probe
      that cannot read the second as a miss would pass every press above for nothing. */
   it("the planted control: z reads an offer raised beside the door as dead, and one at the door as live", async () => {
-    const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
-    const { KeymapProvider } = await import("@ohmail/app/keys");
+    const { KeymapContext, useKeyBindings, useKeymapStore } = await import("@ohmail/app-logic/keys/keymap");
+    /* The frame's own registry: one store under its context, as `OwnKeys` of the frame mounts it. */
+    const Registry = ({ children }: { children: React.ReactNode }): React.ReactElement =>
+      h(KeymapContext.Provider, { value: useKeymapStore() }, children);
     const { createUndoDoor } = await import("@ohmail/app-logic/press/undo-door");
     const { useToast } = await import("@ohmail/ui");
     let commits = 0;
@@ -450,7 +496,7 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
       document.body.appendChild(host);
       root = createRoot(host);
       await act(async () => {
-        root!.render(h(ToastHost, { children: h(KeymapProvider, { children: h(Surface, { atDoor }) }) }));
+        root!.render(h(ToastHost, { children: h(Registry, { children: h(Surface, { atDoor }) }) }));
       });
       await settle();
       await tick(1200);
@@ -471,13 +517,15 @@ describe("s in the Screener opens the shown sender's menu, as the row's own butt
     // Off the top row, so the shown sender is not merely the first.
     await key("j");
     const rows = screenerRows();
-    const shown = host!.querySelector(".view-screener :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id");
+    const shown = openRow(host!)?.dataset.id;
     expect(shown, "j showed no second sender").toBe(rows[1]);
     await key("s");
-    const slot = [...host!.querySelectorAll(".view-screener .row-slot")]
-      .find((r) => r.querySelector(".row")?.getAttribute("data-id") === shown);
-    expect(slot?.querySelector(".scn-act-more")?.getAttribute("aria-expanded"), "s opened no menu on the shown sender").toBe("true");
-    expect(host!.querySelectorAll(".scn-act-menu"), "a menu stands on another sender").toHaveLength(1);
+    const cardName = "Change this sender's screening";
+    const cards = queryAllByRole(document.body, "dialog", { name: cardName });
+    expect(cards, "s did not open exactly one sender card").toHaveLength(1);
+    const shownName = openRow(host!)?.getAttribute("aria-label")?.split(":")[0];
+    expect(shownName, "the selected sender has no name").toBeTruthy();
+    expect(cards[0]?.textContent).toContain(shownName);
     await tick(30_000);
     expect(kinds("screener_decide"), "s moved mail").toEqual([]);
     expect(undoCapsule(), "s raised an Undo").toBeNull();
@@ -507,11 +555,13 @@ interface SheetRow { label: string; live: boolean; reason: string | null; chords
 /** The sheet as printed: each row's sentence, whether it is greyed, its reason, its keycaps. */
 async function sheetTable(): Promise<SheetRow[]> {
   await key("?", { shiftKey: true });
-  const rows = [...host!.querySelectorAll(".ks li")].map((li) => ({
-    label: (li.querySelector(".ks-lab")?.textContent ?? "").trim(),
-    live: !li.classList.contains("off"),
-    reason: li.getAttribute("title"),
-    chords: [...li.querySelectorAll(".ks-chord")].map((c) => [...c.querySelectorAll("kbd")].map((k) => k.textContent ?? "")),
+  const sheet = queryByRole(document.body, "dialog", { name: messages.shortcuts.title });
+  const rows = [...(sheet?.querySelectorAll(".oh-keyhelp-row") ?? [])].map((row) => ({
+    label: (row.querySelector(".oh-keyhelp-label")?.textContent ?? "").trim(),
+    live: row.getAttribute("aria-disabled") !== "true",
+    reason: row.getAttribute("title"),
+    chords: [...row.querySelectorAll(".oh-keyhelp-chord")].map((chord) =>
+      [...chord.querySelectorAll("kbd")].map((cap) => cap.textContent ?? "")),
   }));
   await key("Escape");
   return rows;
@@ -551,23 +601,55 @@ const moved = (a: ReturnType<typeof effect>, b: ReturnType<typeof effect>): bool
 
 interface SheetView { name: string; hash: string; cursor: () => Promise<void>; here: string | null }
 const SHEET_VIEWS: readonly SheetView[] = [
-  { name: "News", hash: "#/reads", cursor: () => key("j"), here: messages.shortcuts.goReads },
-  { name: "Receipts", hash: "#/receipts", cursor: () => key("j"), here: messages.shortcuts.goReceipts },
+  { name: "News", hash: "#/reads", cursor: () => stepIntoStream("News stream", layOutStream), here: messages.shortcuts.goReads },
+  { name: "Receipts", hash: "#/receipts", cursor: () => stepIntoStream("Receipts stream", layOutStream), here: messages.shortcuts.goReceipts },
   /* The reading column shows the bin's first row; the Screener selects its first sender. */
   { name: "Trash", hash: "#/trash", cursor: async () => {}, here: messages.shortcuts.goTrash },
   { name: "Spam", hash: "#/screener/spam", cursor: async () => {}, here: null },
 ];
 
+/** jsdom has no viewport. Reply and Forward require the open card to have settled inside it. */
+function layOutStream(scroller: HTMLElement): void {
+  const slots = () => [...scroller.querySelectorAll<HTMLElement>("[data-stream-window-item]")];
+  Object.defineProperty(scroller, "clientHeight", { value: 600 });
+  Object.defineProperty(scroller, "scrollHeight", { get: () => slots().length * 200 });
+  scroller.getBoundingClientRect = () => new DOMRect(0, 0, 640, 600);
+  scroller.scrollTo = (options?: ScrollToOptions | number, y?: number) => {
+    scroller.scrollTop = (typeof options === "number" ? y : options?.top) ?? 0;
+    scroller.dispatchEvent(new Event("scroll"));
+  };
+  for (const [index, slot] of slots().entries()) {
+    const bounds = () => new DOMRect(0, index * 200 - scroller.scrollTop, 640, 200);
+    slot.getBoundingClientRect = bounds;
+    const card = slot.querySelector<HTMLElement>("[data-stream-item]");
+    if (card) card.getBoundingClientRect = bounds;
+  }
+}
+
 /* `faces`, as the product door mounts it: without it `w` switches a layout nothing stamps. */
 async function openOn(v: SheetView): Promise<void> {
   await mountShell(v.hash, { faces: true });
   await tick(2000);
+  const stream = queryByRole(host!, "region", { name: `${v.name} stream` });
+  const port = stream?.querySelector<HTMLElement>("[data-reading-scroll]");
+  if (port) {
+    // jsdom gives every card zero height. Give the real scroll code a viewport and laid-out cards.
+    Object.defineProperty(port, "clientHeight", { value: 600 });
+    port.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600);
+    const cards = [...port.querySelectorAll<HTMLElement>("[data-stream-item]")];
+    cards.forEach((card, index) => {
+      card.getBoundingClientRect = () => new DOMRect(0, index * 240 - port.scrollTop, 800, 240);
+    });
+  }
   await v.cursor();
+  await tick(400);
   await settle();
 }
 
 describe("the sheet's own table in News, Receipts, Trash and Spam", () => {
   beforeEach(() => {
+    vi.stubGlobal("requestAnimationFrame", (run: FrameRequestCallback) => window.setTimeout(() => run(performance.now()), 16));
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
     restored = [];
     adapterProto.listTrash = async () => ({ items: TRASHED, nextCursor: null });
     adapterProto.restoreFromTrash = async (id: string) => { restored.push(id); return { restoreTo: "INBOX", pending: true }; };
@@ -605,7 +687,7 @@ describe("the sheet's own table in News, Receipts, Trash and Spam", () => {
 
     it(`${v.name}: with a row selected, no row tells you to select a message first`, async () => {
       await openOn(v);
-      expect(host!.querySelector(".view :is(.row.sel, [role=option][data-open])"), `${v.name}: no row selected`).toBeTruthy();
+      expect(cursorRow(host!) ?? host!.querySelector("[data-stream-item][data-open]"), `${v.name}: no row selected`).toBeTruthy();
       const table = await sheetTable();
       const promised = table.filter((r) => r.reason === messages.shortcuts.needsCursor).map((r) => r.label);
       expect(promised, `${v.name}: a selection is on screen and these still ask for one`).toEqual([]);
@@ -623,7 +705,7 @@ describe("the sheet's own table in News, Receipts, Trash and Spam", () => {
   it("the control: in the Ohbox with no cursor, the verbs still ask for one", async () => {
     await mountShell("#/ohbox");
     await tick(2000);
-    expect(host!.querySelector(".view :is(.row.sel, [role=option][data-open])"), "a row was selected on arrival").toBeNull();
+    expect(cursorRow(host!), "a row was selected on arrival").toBeNull();
     const table = await sheetTable();
     const move = table.find((r) => r.label === messages.shortcuts.move);
     expect(move?.reason).toBe(messages.shortcuts.needsCursor);
@@ -631,16 +713,23 @@ describe("the sheet's own table in News, Receipts, Trash and Spam", () => {
 });
 
 /** The strip's first destination, and the move it sends. */
-const firstDestination = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".abar-panel button");
+const firstDestination = (): HTMLElement | undefined => {
+  const picker = queryByRole(document.body, "menu", { name: "Move" });
+  return picker ? queryAllByRole(picker, "menuitem")[0] : undefined;
+};
 const moveSent = (): string =>
   JSON.stringify(sent.filter((m) => m.kind === "move").map((m) => (m as { messageIds?: string[]; messageId?: string; to?: string }).messageIds ?? (m as { messageId?: string }).messageId));
 
 describe("the key sends what its button sends", () => {
   /** The card the cursor names, opened the way a click opens it. */
   const openCard = async (id: string): Promise<void> => {
-    await click(host!.querySelector(`.scast[data-sid="${id}"] .sc-x`) ?? host!.querySelector(`.scast[data-sid="${id}"]`));
+    const view = queryByRole(host!, "region", { name: /^(News|Receipts)$/ });
+    expect(view, "the stream's list is mounted").not.toBeNull();
+    await click(view!.querySelector(`[data-id="${CSS.escape(id)}"]`));
+    await tick(50);
   };
-  const cursorId = (): string => host!.querySelector(".view :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? "";
+  const cursorId = (): string =>
+    host!.querySelector<HTMLElement>("[data-stream-item][data-open]")?.dataset.streamItem ?? "";
   /* The verb's writes; reading a card writes `\Seen` beside them on its own clock. */
   const READING = new Set(["mark_seen", "feed_mark_seen"]);
   const wire = () => ({ kinds: sent.map((m) => m.kind).filter((k) => !READING.has(k)), moved: moveSent() });
@@ -661,7 +750,8 @@ describe("the key sends what its button sends", () => {
       await tick(500);
       sent = [];
       await openCard(id);
-      await click(host!.querySelector(".abar-move"));
+      await click(barButton("More"));
+      await click(menuItem("Move"));
       await click(firstDestination());
       await tick(30_000);
       expect(wire()).toEqual(byKey);
@@ -681,9 +771,10 @@ describe("the key sends what its button sends", () => {
       await tick(500);
       sent = [];
       await openCard(id);
-      await click(host!.querySelector(".abar-more"));
+      await click(barButton("More"));
       await click([...document.querySelectorAll("[role=menuitem]")].find((b) => (b.textContent ?? "").trim() === messages.ohbox.actionDelete));
-      await click(host!.querySelector(".abar-delete .abar-danger"));
+      const confirm = queryByRole(document.body, "dialog", { name: "Move to Trash" });
+      await click(confirm && queryByRole(confirm, "button", { name: "Move" }));
       await tick(30_000);
       expect(kinds("message_delete").map((m) => JSON.stringify(m))).toEqual(byKey);
     });
@@ -694,15 +785,18 @@ describe("the key sends what its button sends", () => {
     adapterProto.listTrash = async () => ({ items: TRASHED, nextCursor: null });
     adapterProto.restoreFromTrash = async (id: string) => { restored.push(id); return { restoreTo: "INBOX", pending: true }; };
     try {
-      await mountShell("#/trash");
+      await mountShell("#/trash/m/t1");
       await tick(2000);
-      await click(buttonStarting(messages.trash.restore));
+      await click(barButton(messages.trash.restore));
       await tick(30_000);
       const byButton = [...restored];
       expect(byButton).toEqual(["t1"]);
       restored = [];
-      await mountShell("#/trash");
+      await mountShell("#/trash/m/t1");
       await tick(2000);
+      const restore = barButton(messages.trash.restore);
+      expect(restore, "the keyboard can reach the open row's Restore control").not.toBeNull();
+      await act(async () => { restore!.focus(); });
       await key("Backspace", { shiftKey: true });
       await tick(30_000);
       expect(restored).toEqual(byButton);
@@ -716,9 +810,10 @@ describe("the key sends what its button sends", () => {
 /* ── the palette lists Move where the view can move ────────────────────────────────────────── */
 
 /** The palette's rows, by label — its own list, not the page's. */
-const paletteRow = (label: string): HTMLElement | undefined =>
-  [...document.querySelectorAll<HTMLElement>(".palette li[role=option]")]
-    .find((li) => (li.textContent ?? "").trim().startsWith(label));
+const paletteRow = (label: string): HTMLElement | null => {
+  const palette = queryByRole(document.body, "dialog", { name: messages.palette.ariaLabel });
+  return palette && queryByRole(palette, "option", { name: label });
+};
 
 describe("the palette's Move is the m key", () => {
   for (const [view, hash] of [["the Ohbox", "#/ohbox"], ["News", "#/reads"], ["Receipts", "#/receipts"]] as const) {
@@ -727,7 +822,7 @@ describe("the palette's Move is the m key", () => {
       await key("k", { ctrlKey: true });
       const row = paletteRow(messages.shortcuts.move);
       expect(row, `${view}: the palette has no Move`).toBeTruthy();
-      expect(row!.getAttribute("aria-disabled")).toBeNull();
+      expect(row).toHaveProperty("disabled", false);
       await click(row);
       await settle();
       expect(stripShown("m"), `${view}: the palette's Move opened nothing: ${JSON.stringify(bars())}`).toBe(true);
@@ -742,7 +837,7 @@ describe("the palette's Move is the m key", () => {
       const m = (await sheetTable()).find((r) => r.label === messages.shortcuts.move);
       expect(m?.live).toBe(false);
       await key("k", { ctrlKey: true });
-      expect(paletteRow(messages.shortcuts.move)?.getAttribute("aria-disabled")).toBe("true");
+      expect(paletteRow(messages.shortcuts.move)).toHaveProperty("disabled", true);
     } finally {
       delete adapterProto.listTrash;
       delete adapterProto.restoreFromTrash;
@@ -778,18 +873,26 @@ describe("the sheet's delete keys, Reply to everyone and Send in the views that 
   it("⇧R on a letter from one person opens the reply to that person", async () => {
     await mountShell("#/ohbox");
     await key("j");
-    expect(barButton("Reply all"), "the control: this letter has nobody else on it").toBeUndefined();
-    expect(host!.querySelector(".reply[data-reply-for]")).toBeNull();
+    /* The seated reader draws the letter the cursor opened once its body has come: the control below reads a bar. */
+    await tick(500);
+    const { barVerb: letterVerb, replyEditor } = await import("./ohbox/_finders.js");
+    expect(letterVerb(host!, "Reply all") ?? undefined, "the control: this letter has nobody else on it").toBeUndefined();
+    expect(replyEditor(host!)).toBeNull();
     await key("R", { shiftKey: true });
-    expect(host!.querySelector(".reply[data-reply-for]"), "⇧R opened nothing").toBeTruthy();
+    expect(replyEditor(host!), "⇧R opened nothing").toBeTruthy();
   });
 
   it("the sheet names Ctrl+Enter for what it does outside the Reply Run", async () => {
     await mountShell("#/ohbox");
-    await key("j");
+    await openFirstOhboxLetter();
+    await key("r");
     const table = await sheetTable();
     const labels = table.map((r) => r.label);
-    expect(labels).toContain(messages.shortcuts.sendReply);
+    const send = table.find((row) => row.label === writeEn.write.keys.send);
+    expect(labels).toContain(writeEn.write.keys.send);
+    const { chordKeys } = await import("@ohmail/app-logic/keys/keymap");
+    const { modGlyph } = await import("@ohmail/app-logic/keys/mod-glyph");
+    expect(send?.chords).toContainEqual(chordKeys("mod+Enter", modGlyph()));
     expect(labels, "the Reply Run's line is printed where there is no run").not.toContain(messages.shortcuts.frSend);
   });
 });

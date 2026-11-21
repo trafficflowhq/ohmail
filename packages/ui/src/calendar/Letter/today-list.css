@@ -38,7 +38,7 @@
     margin: var(--oh-today-out);
   }
   .oh-today-head {
-    --oh-today-head-pad: 0;
+    --oh-today-head-pad: 0 var(--s3) var(--s2);
     display: flex;
     align-items: baseline;
     gap: var(--s2);

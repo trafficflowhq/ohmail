@@ -221,9 +221,9 @@ describe("the letter's body brings no sheet of the old kit's ground", () => {
 describe("the panel's menus in a real browser", () => {
   /*
    * A menu comes out of the control that opened it (the kit's K3: a verb's press hands its element): the Tag menu ends
-   * at the Tag button's right edge, the Resurface chooser starts at the Resurface button's left edge, and More's own
-   * menu ends at More; the day picker that "Pick a date" opens stands where the chooser stood. Read at 1440 on a letter
-   * whose panel stands whole.
+   * at its opener's right edge, the Resurface chooser starts at the Resurface button's left edge, and More's own
+   * menu ends at More. The day picker that "Pick a date" opens stands where the chooser stood. At this width Tag
+   * has folded into More, so More is its opener as well.
    */
   it("at 1440 the Tag menu ends at its button, the Resurface chooser starts at its button and its day picker, More's menu ends at More", async () => {
     const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
@@ -242,19 +242,25 @@ describe("the panel's menus in a real browser", () => {
       await page.getByRole("menu").waitFor({ state: "detached" });
       return b;
     };
-    const tag = await box("Tag");
-    const tagMenu = await opened("Tag", "Tag");
+    const more = await box("More");
+    await panel.getByRole("button", { name: "More", exact: true }).click();
+    await page
+      .getByRole("menu", { name: "More", exact: true })
+      .getByRole("menuitem", { name: "Tag", exact: true })
+      .click();
+    const tagMenu = (await page.getByRole("menu", { name: "Tag", exact: true }).boundingBox())!;
     expect(
-      Math.abs(tagMenu.x + tagMenu.width - (tag.x + tag.width)),
-      "the Tag menu ends at its button",
+      Math.abs(tagMenu.x + tagMenu.width - (more.x + more.width)),
+      "the Tag menu ends at the More button that opened it",
     ).toBeLessThanOrEqual(1);
+    await page.keyboard.press("Escape");
+    await page.getByRole("menu").waitFor({ state: "detached" });
     const resurface = await box("Resurface");
     const chooser = await opened("Resurface", "Resurface");
     expect(
       Math.abs(chooser.x - resurface.x),
       "the Resurface chooser starts at its button",
     ).toBeLessThanOrEqual(1);
-    const more = await box("More");
     const moreMenu = await opened("More", "More");
     expect(
       Math.abs(moreMenu.x + moreMenu.width - (more.x + more.width)),

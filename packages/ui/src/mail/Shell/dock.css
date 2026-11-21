@@ -25,6 +25,7 @@
   .oh-dock-places {
     flex: 1 1 auto;
     display: flex;
+    gap: 0;
     align-items: center;
     justify-content: space-between;
     min-width: 0;
@@ -363,5 +364,20 @@
     --oh-dock-pad: var(--s2) var(--s1);
     --oh-dock-entry-in: 0 6px 0 14px;
     --oh-dock-write-in: 0 var(--s2);
+  }
+}
+
+@layer oh {
+  .oh-dock-entry[data-words] {
+    flex: 0 1 auto;
+    max-width: none;
+    min-width: 0;
+    padding-inline: var(--s3);
+  }
+  .oh-dock-entry[data-words]:not([aria-current]) {
+    color: var(--ink2);
+  }
+  .oh-dock-entry[data-words] .oh-dock-word {
+    display: inline;
   }
 }

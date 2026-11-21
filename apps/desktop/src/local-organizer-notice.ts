@@ -9,14 +9,14 @@
  * preference, so a phone, a browser tab and this window agree the change has been seen.
  */
 import { bridgeFetch } from "./bridge-fetch.js";
-import type { OrganizerNoticeTransport } from "../../webapp/app/shell/OrganizerNotice";
+import type { OrganizerNoticeWire } from "../../webapp/app/shell/browser-mail";
 
 /**
  * MUST REJECT on failure — the shell reads a resolved promise as "acknowledged" and takes the
  * line off screen. A refusal has to come back as one, or a stamp that was never written would
  * look like one that was, and the line would return on the next poll with no explanation.
  */
-export const organizerNoticeOverBridge: OrganizerNoticeTransport = async (mailboxId) => {
+export const organizerNoticeOverBridge: OrganizerNoticeWire = async (mailboxId) => {
   const res = await bridgeFetch(
     `/mailboxes/${encodeURIComponent(mailboxId)}/organizer-notice/dismiss`,
     { method: "POST" },

@@ -22,6 +22,7 @@
     "tagNew": "New tag",
     "tagEmpty": "No tags yet.",
     "folders": "Folders",
+    "folderLoading": "Loading folders",
     "folderEmpty": "No folders on your mail server yet.",
     "junkNote": "Your mail server's own {folder} folder is not listed here — ohmail does not mirror it.",
     "junkNoteUnnamed": "Your mail server's own junk folder is not listed here — ohmail does not mirror it.",
@@ -68,6 +69,7 @@
     "search": "Search",
     "settings": "Settings",
     "mailboxes": "Mailboxes",
+    "mailboxCount": "{count, plural, one {1 mailbox} other {# mailboxes}}",
     "ariaMain": "Main",
     "ohboxTitle": "{unread, number} unread",
     "readsTitle": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here",
@@ -77,7 +79,7 @@
     "draftsTitle": "{count, plural, one {1 draft} other {# drafts}}",
     "getDesktop": "Get ohmail for desktop",
     "getDesktopDismiss": "Dismiss",
-    "getDesktopOpen": "Download"
+    "getDesktopOpen": "Get it"
   },
   "cursor": {
     "placed": "First message selected. Press again: {label}"
@@ -87,8 +89,11 @@
     "loadFailed": "This part of ohmail couldn't load. Check the connection and try again.",
     "tryAgain": "Try again",
     "title": "This view didn't load.",
+    "paneTitle": "This view did not load",
     "body": "Something went wrong drawing this screen. Your mail is untouched.",
     "action": "Reload",
+    "details": "{kind} · build {build} · view {place}",
+    "detailsWithVersion": "{kind} · {version} · build {build} · view {place}",
     "copyDetails": "Copy details",
     "copied": "Copied"
   },
@@ -290,6 +295,13 @@
     "copied": "Copied"
   },
   "frame": {
+    "products": {
+      "label": "Mail or Calendar",
+      "mail": "Mail",
+      "cal": "Calendar",
+      "mailWaiting": "Mail is waiting",
+      "calendarWaiting": "Invitations are waiting"
+    },
     "landmark": {
       "places": "Places",
       "fedRail": "Main",
@@ -311,7 +323,8 @@
     },
     "notice": {
       "more": "{count} more",
-      "moreName": "{count, plural, one {# more notice} other {# more notices}}"
+      "moreName": "{count, plural, one {# more notice} other {# more notices}}",
+      "moreClose": "Close"
     },
     "systemNotice": {
       "ohboxTitle": "New mail",

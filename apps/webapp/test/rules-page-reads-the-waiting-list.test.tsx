@@ -1,9 +1,12 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  act, answerSyncWith, goTo, installShellEnv, ISO, mailbox, mountShell, teardownShellEnv, textOf, tick,
+  act, answerSyncWith, goTo, installShellEnv, ISO, liveAccountResponse, mailbox, mountShell, teardownShellEnv, textOf, tick,
 } from "./fixtures/live-walk-shell";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import type { TodaysShellProps } from "./_mail-shell";
 import en from "../messages/en.json";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -32,7 +35,7 @@ function requestsDoor(items: unknown[]): { asks: () => number } {
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     if (String(input).endsWith("/organizer-requests")) {
       asks++;
-      return new Response(JSON.stringify({ items }), { status: 200, headers: { "content-type": "application/json" } });
+      return liveAccountResponse(Response.json({ items }));
     }
     return (base as (i: unknown, n?: RequestInit) => Promise<Response>)(input, init);
   }) as unknown as typeof globalThis.fetch;
@@ -40,10 +43,17 @@ function requestsDoor(items: unknown[]): { asks: () => number } {
 }
 
 async function press(el: HTMLElement, label: string): Promise<void> {
-  const b = [...el.querySelectorAll<HTMLButtonElement>("button")].filter((x) => x.textContent?.trim() === label);
+  const b = within(el).getAllByRole("button", { name: label });
   expect(b.length, `exactly one "${label}" button`).toBe(1);
   await act(async () => { b[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await tick(0);
+}
+
+const ruleList = (root: HTMLElement) => within(root).getByRole("list", { name: en.settings.rules });
+const onlyRule = (root: HTMLElement) => within(ruleList(root)).getByRole("listitem");
+
+function fileDestination(row: HTMLElement): string {
+  return within(row).getByRole("button", { name: /^Files into / }).getAttribute("aria-label") ?? "";
 }
 
 /** The organizer's published copy of Lena's rule on mb_1, or none (`null`). Reset per case. */
@@ -77,7 +87,11 @@ const oneRule = (): Response => new Response(JSON.stringify({
 async function rulesPane(facts: MailboxFacts[], items: unknown[]): Promise<HTMLElement> {
   answerSyncWith(oneRule);
   DOOR = requestsDoor(items);
-  const el = await mountShell(facts);
+  const { WebRulesPane } = await import("../app/(product)/mailbox/WebRulesPane");
+  const settings = mailSettings({ ...NO_PANE_PARTS, rules: WebRulesPane });
+  const el = await mountShell(facts, {
+    wrap: (shell) => React.cloneElement(shell as React.ReactElement<TodaysShellProps>, { places: { settings } }),
+  });
   await tick(50);
   await goTo("settings");
   await tick(10);
@@ -106,7 +120,7 @@ describe("the shell's Rules page lists what waits on the organizer", () => {
       target: { rule: { kind: "sender", match: "lena@atelier.example", subjectContains: null, bodyContains: null } },
     }]);
     await tick(50);
-    const row = el.querySelector<HTMLElement>('[data-rule-id="rule_lena"]')!;
+    const row = onlyRule(el);
     expect(DOOR.asks(), "the shell never asked what waits").toBeGreaterThan(0);
     expect(textOf(row)).toContain("Removal waits on Studio laptop");
   });
@@ -118,14 +132,17 @@ describe("the shell's Rules page lists what waits on the organizer", () => {
     PUBLISHED = { destination: "ohmail/Receipts" };
     const el = await rulesPane(reader(), []);
     await tick(50);
-    const row = el.querySelector<HTMLElement>('[data-rule-id="rule_lena"]')!;
+    const row = onlyRule(el);
     expect(textOf(el)).toContain("Studio laptop organizes your mail");
-    expect(textOf(row)).toContain("Files into Receipts");
-    expect(textOf(row)).not.toContain("Files into News");
-    const buttons = [...row.querySelectorAll("button")];
-    expect(buttons.map((b) => b.textContent?.trim())).toEqual(["Change", "Revoke"]);
+    expect(fileDestination(row)).toContain("Files into Receipts");
+    expect(fileDestination(row)).not.toContain("Files into News");
+    const buttons = [
+      within(row).getByRole<HTMLButtonElement>("button", { name: /^Files into / }),
+      within(row).getByRole<HTMLButtonElement>("button", { name: "Revoke" }),
+    ];
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(["Receipts", "Revoke"]);
     expect(buttons.map((b) => b.disabled), "a holder that takes requests takes this change").toEqual([false, false]);
-    expect(el.querySelectorAll("[data-rule-id]")).toHaveLength(1);
+    expect(within(ruleList(el)).getAllByRole("listitem")).toHaveLength(1);
   });
 
   // Only a live holder that takes requests organizes the mail and takes a change from here. The
@@ -144,9 +161,12 @@ describe("the shell's Rules page lists what waits on the organizer", () => {
     expect(textOf(el)).not.toContain("goes to Studio laptop");
     expect(textOf(el), "the refusal line left the page").toContain(refusal);
     expect(textOf(el)).toContain("These are the rules Studio laptop last published.");
-    const row = el.querySelector<HTMLElement>('[data-rule-id="rule_lena"]')!;
-    expect(textOf(row)).toContain("Files into Receipts");
-    expect([...row.querySelectorAll("button")].map((b) => b.disabled)).toEqual([true, true]);
+    const row = onlyRule(el);
+    expect(fileDestination(row)).toContain("Files into Receipts");
+    expect([
+      within(row).getByRole<HTMLButtonElement>("button", { name: /^Files into / }),
+      within(row).getByRole<HTMLButtonElement>("button", { name: "Revoke" }),
+    ].map((b) => b.disabled)).toEqual([true, true]);
   });
 
   it("an organizing install's row is the mirror's own rule, whatever a published copy says", async () => {
@@ -154,15 +174,15 @@ describe("the shell's Rules page lists what waits on the organizer", () => {
     PUBLISHED = { destination: "ohmail/Receipts" };
     const el = await rulesPane([mailbox({ id: "mb_1", lastSyncAt: ISO })], []);
     await tick(50);
-    const row = el.querySelector<HTMLElement>('[data-rule-id="rule_lena"]')!;
-    expect(textOf(row)).toContain("Files into News");
-    expect(el.querySelectorAll("[data-rule-id]")).toHaveLength(1);
+    const row = onlyRule(el);
+    expect(fileDestination(row)).toContain("Files into News");
+    expect(within(ruleList(el)).getAllByRole("listitem")).toHaveLength(1);
   });
 
   it("CONTROL: an empty list says nothing on the row", async () => {
     const el = await rulesPane(reader(), []);
     await tick(50);
-    expect(textOf(el.querySelector<HTMLElement>('[data-rule-id="rule_lena"]')!)).not.toContain("waits on");
+    expect(textOf(onlyRule(el))).not.toContain("waits on");
   });
 });
 
@@ -210,7 +230,11 @@ describe("a rule made on the organizer is revoked from this page, through the re
       organizedBy: { kind: "local", name: "Studio laptop", since: ISO }, organizerState: "held",
       organizeConsentedAt: ISO, organizerReleasedAt: null, organizerAcceptsRequests: true,
     }] as MailboxFacts[];
-    const { AppShell } = await import("./_todays-shell.js");
+    const [{ MailShell }, { WebRulesPane }] = await Promise.all([
+      import("./_mail-shell.js"),
+      import("../app/(product)/mailbox/WebRulesPane"),
+    ]);
+    const settings = mailSettings({ ...NO_PANE_PARTS, rules: WebRulesPane });
     const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -221,17 +245,25 @@ describe("a rule made on the organizer is revoked from this page, through the re
       root.render(h(NextIntlClientProvider, {
         locale: "en", messages: en, timeZone: "UTC",
         children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, {
-          children: h(AppShell as never, { demo: false, engine, mailboxFacts: async () => roster } as never),
+          children: h(MailShell, {
+            demo: false, engine, scope: s.accountId, mailboxFacts: async () => roster, places: { settings },
+          }),
         }) }),
       }));
     });
-    await waitFor(() => [...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Rules"), "the settings page");
-    await act(async () => { [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Rules")!.click(); });
-    const row = (): HTMLElement | null => container.querySelector<HTMLElement>('[data-rule-id^="held:"]');
+    const settingsNav = () => within(container).queryByRole("navigation", { name: en.settings.navAria });
+    await waitFor(() => settingsNav() !== null, "the settings page");
+    await act(async () => { within(settingsNav()!).getByRole("button", { name: en.settings.rules }).click(); });
+    const row = (): HTMLElement | null => {
+      const list = within(container).queryByRole("list", { name: en.settings.rules });
+      return list ? within(list).queryByRole("listitem") : null;
+    };
     await waitFor(() => row() !== null, "the organizer's rule on the page");
-    expect(textOf(row()!)).toContain("Files into Receipts");
-    await act(async () => { [...row()!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Revoke")!.click(); });
-    await act(async () => { [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Revoke this rule")!.click(); });
+    expect(fileDestination(row()!)).toContain("Files into Receipts");
+    await act(async () => { within(row()!).getByRole("button", { name: "Revoke" }).click(); });
+    await act(async () => {
+      within(within(document.body).getByRole("dialog", { name: "Revoke this rule" })).getByRole("button", { name: "Revoke this rule" }).click();
+    });
     await waitFor(async () => (await db.select().from(organizerRequests)).length > 0, "the request");
     expect((await db.select().from(organizerRequests)).map((r) => [r.kind, r.payload])).toEqual([["rule.delete", {
       key: { kind: "sender", match: "lena@atelier.example", subjectContains: null, bodyContains: null },

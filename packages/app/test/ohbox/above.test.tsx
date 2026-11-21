@@ -1,12 +1,35 @@
 /** @vitest-environment jsdom */
-import { cleanup, render, renderHook } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { OhboxModelContext, useOhboxModel, type OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { useListBlank, useListVisit, type ListVisit } from "@ohmail/app-logic/reading";
+import { EngineContext } from "@ohmail/app-logic/engine";
+import { SYNC_BOOTSTRAPPING, SYNC_SETTLED, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
+import { Frame } from "../../src/frame/Frame.js";
+import { MailGround } from "../../src/mail/index.js";
 import { OhboxAbove, blankOf, ohboxPlace, useOhboxBeside } from "../../src/ohbox/index.js";
 import { TextProvider } from "../../src/text/index.js";
+import { fakeMail, letter, WORDS as MAIL_WORDS } from "../reader/support/mail.js";
+import { fakeHost } from "../support/fake-host.js";
+import { fakeAddress } from "../support/fake-window.js";
 import { beside, WORDS } from "./ohbox-world.js";
+
+/** The letters' sender, admitted by a rule: the partition presents a decided sender's mail in the Ohbox. */
+const ADMITTED = {
+  "rule:r1": {
+    id: "r1",
+    kind: "sender",
+    match: "ben@kiln.example",
+    destination: "INBOX",
+    priority: 0,
+    provenance: "manual",
+    enabled: true,
+    stats: { hits: 0, lastHitAt: null, demotions: 0 },
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  },
+};
 
 afterEach(cleanup);
 
@@ -79,17 +102,43 @@ describe("what stands above the Ohbox's columns", () => {
   });
 
   it("the rail's count is the engine's unread letters, withheld until the Ohbox may state it", () => {
-    let model = { all: rows(3), mayState: false, unreadIds: ["m0", "m1"] } as unknown as OhboxListModel;
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <OhboxModelContext.Provider value={model}>{children}</OhboxModelContext.Provider>
+    /* The count reads the mail ground (the presented mirror, the mail state), never the list's own model: the
+       entry is drawn here while the Ohbox's columns are not on screen. */
+    const mail = fakeMail([letter("m0"), letter("m1"), letter("m2", { unread: false })], [], {}, ADMITTED);
+    const { host } = fakeHost({
+      engine: mail.engine,
+      service: "self",
+      scope: "acct-1",
+      address: fakeAddress("#/history"),
+      places: {
+        ohbox: ohboxPlace,
+        history: {
+          id: "history",
+          body: "history",
+          rail: null,
+          panes: { kind: "wide", Wide: () => <p>History</p> },
+        },
+      },
+      above: MailGround,
+    });
+    const over = (sync: SyncStatus) => (
+      <EngineContext.Provider value={{ engine: mail.engine, demo: false, serverDemo: false, sync }}>
+        <TextProvider locale="en" messages={MAIL_WORDS.en} timeZone="Europe/Zurich">
+          <Frame host={host} />
+        </TextProvider>
+      </EngineContext.Provider>
     );
-    const count = renderHook(() => ohboxPlace.rail!.useCount!(), { wrapper });
-    expect(count.result.current, "a count stated before the Ohbox may").toBeNull();
-    model = { ...model, mayState: true } as OhboxListModel;
-    count.rerender();
-    expect(count.result.current).toEqual({ count: "2", hot: true });
-    model = { ...model, unreadIds: [] } as OhboxListModel;
-    count.rerender();
-    expect(count.result.current).toBeNull();
+    const page = render(over(SYNC_BOOTSTRAPPING));
+    const entry = () => screen.getByRole("button", { name: /^Ohbox/ }).getAttribute("aria-label");
+    expect(entry(), "a count stated before the Ohbox may").toBeNull();
+    page.rerender(over(SYNC_SETTLED));
+    expect(entry()).toBe("Ohbox 2");
+    /* In the demo's rail and dock only the Screener's count is hot (somebody is waiting): the Ohbox's is quiet. */
+    expect(screen.getByText("2").hasAttribute("data-hot"), "the Ohbox's count is drawn hot").toBe(false);
+    act(() => {
+      mail.patch("m0", { unread: false });
+      mail.patch("m1", { unread: false });
+    });
+    expect(entry()).toBeNull();
   });
 });

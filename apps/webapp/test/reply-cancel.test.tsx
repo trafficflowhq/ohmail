@@ -2,13 +2,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import type { Editor } from "@tiptap/react";
-import messages from "../messages/en.json";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
+import { settleEditor } from "./_first-paint.js";
+import { act, message, mountShell as mountDraftShell, press, stubDom, unmountAll, type DraftShell } from "./_draft-shell.js";
+import writeEn from "../../../packages/app/messages/write.en.json" with { type: "json" };
+import { ohboxRow, openLetter, openSubject as subjectShown, readingColumn, reportSays, replyEditor } from "./ohbox/_finders.js";
 
 /**
  * ═══ CANCELLING A REPLY PUTS YOU BACK IN THE MESSAGE, WITH NOTHING LEFT BEHIND ═══════════
@@ -43,63 +42,34 @@ import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
  * Driven through the whole shell in demo mode, for the reason `inline-reply.test.ts` gives: the
  * open, the close and the ownership of Escape all live in `AppShell`, and a `MessagePane`
  * mounted alone could not see any of it.
+ *
+ * RE-POINTED (share reader-1, the switch's older tests): the whole shell is the new one, through its test door
+ * (`_draft-shell.ts`'s `mountShell`: the web's `MailShell`, the frame over the mail ground, the seated Ohbox, the
+ * reader and `write`'s reply, over an engine whose wire this file can take offline). The letter is opened at the
+ * Ohbox (History, where today's demo opened one, is not mounted yet; the cases are the reply's, not History's). The
+ * reply is the one more sheet `write` draws after the conversation (the kit's composer, a section named "Reply to
+ * …"), and THE STUDIO's REPLY HAS NO CANCEL BUTTON: its verbs are Send and Discard (which throws the words away, with
+ * an Undo), and backing out of it is Escape from inside it (`onLeaveKey`: the same `closeReply` today's Cancel ran,
+ * which withdraws a queued send and keeps the words). So every "Cancel" below is that Escape, pressed where the
+ * keyboard is, as a person's is; each expectation as it stood. A park is said by the frame's report. The subject is
+ * one line of the reply's head (no button opens it); the case of Escape in it handing the keyboard to the text is
+ * `write`'s owed key (write HANDOVER, NOT built 3) and stands in a case of its own.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
+/** `write`'s own catalogue: the reply's queued line is read by its key. */
+const WRITE_EN = writeEn as unknown as { write: { status: { queued: string } } };
+let shell: DraftShell | null = null;
+/** The window, as the test door stubs it; `mobile` is a narrow one. */
 function setViewport(mobile: boolean): void {
-  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
-    ({
-      matches: mobile && query.includes("max-width"),
-      media: query, onchange: null,
-      addListener() {}, removeListener() {},
-      addEventListener() {}, removeEventListener() {},
-      dispatchEvent() { return false; },
-    }) as unknown as MediaQueryList;
+  stubDom({ narrow: mobile });
 }
 
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-}
-
-/** The whole client on the fixture world, with a message open in the reading column. */
+/** The whole client over one letter, with that letter open in the reading column. */
 async function mountShell(): Promise<void> {
-  await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
-        }),
-      }),
-    );
-  });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-  // History shows a letter in its column; `j` is the product's own way of stepping to one.
-  await key("j");
-  /* WAITED FOR, not assumed. `j` only opens a message once the fixtures engine has drained,
-     and how many microtasks that takes depends on what else the runner has in flight — this
-     suite failed once, in a nine-file parallel run, and passed alone and in fifteen repeats
-     afterwards. A fixed flush count is a race with an unstated bound; the wait has an explicit
-     one and says so when it expires, so "History never opened a message" stays a loud
-     failure instead of becoming a confusing assertion further down. */
-  await waitFor(() => openSubject() !== "", "History never opened a message");
+  shell = await mountDraftShell("#/ohbox", [message("m1")]);
+  await waitFor(() => ohboxRow(document, "m1") !== null, "the Ohbox never listed its letter");
+  await press(ohboxRow(document, "m1"), "the letter's row");
+  await waitFor(() => openSubject() !== "", "the Ohbox never opened a message");
 }
 
 /** Poll until `ready()`, draining React between attempts; bounded by real time, never a tick count. */
@@ -115,6 +85,7 @@ async function waitFor(ready: () => boolean, why: string, ms = 10_000): Promise<
 async function openReply(): Promise<void> {
   await key("r");
   await waitFor(() => replySurface() !== null, "`r` opened no reply editor");
+  await settleEditor();
 }
 
 const key = async (k: string): Promise<void> => {
@@ -124,20 +95,29 @@ const key = async (k: string): Promise<void> => {
     );
   });
 };
+/** A key pressed where focus is, as a person's keyboard delivers it. */
+const keyAtFocus = async (k: string): Promise<void> => {
+  const at = (document.activeElement ?? document.body) as HTMLElement;
+  await act(async () => {
+    at.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+};
 
-const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
+/** The reply: the one more sheet after the conversation, `write`'s composer named "Reply to …"; null while closed. */
+const reply = (): HTMLElement | null =>
+  readingColumn(document)?.querySelector<HTMLElement>('section[aria-label^="Reply to"]') ?? null;
 
 /**
  * The open reply editor's surface, or null when the editor is closed.
  *
- * Scoped to a RENDERED MESSAGE (`.reader .msg` / `.read-col .msg`) rather than to `.reply`
- * alone, which is `inline-reply.test.ts`'s selector and answers the journey's own question:
- * an editor that is not inside the message it answers is the defect that moved Reply out of
- * Compose in the first place.
+ * Scoped to the OPEN LETTER's sheet (the reading column's region named Open message), the question the journey
+ * asks: an editor that is not inside the message it answers is the defect that moved Reply out of Compose.
  */
-const replySurface = (): HTMLElement | null =>
-  [...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
-    .flatMap((m) => [...m.querySelectorAll<HTMLElement>(".rte-surface")])[0] ?? null;
+const replySurface = (): HTMLElement | null => {
+  const editor = replyEditor(document);
+  return editor !== null && openLetter(document)?.contains(editor) === true ? editor : null;
+};
 
 /** ProseMirror mounts a tick after the commit (`immediatelyRender: false`). */
 async function settle(): Promise<void> {
@@ -147,12 +127,8 @@ async function settle(): Promise<void> {
 /**
  * The reply editor's surface, once ProseMirror has attached its handle to it.
  *
- * POLLED rather than flushed a fixed number of times: `RichEditor` sets
- * `immediatelyRender: false`, so the surface is in the DOM for at least one commit before the
- * handle exists, and how many microtasks that takes depends on what else the shell is
- * draining. The surface — not the `Editor` — is what comes back, because that is what
- * `typeInto` takes; handing it an `Editor` throws the driver's "pass the `.rte-surface`"
- * error, which reads exactly like "the editor never mounted" and is not.
+ * POLLED rather than flushed a fixed number of times: the surface is in the DOM for at least one commit before
+ * the handle exists. The surface — not the `Editor` — is what comes back, because that is what `typeInto` takes.
  */
 async function replyEditorSurface(): Promise<HTMLElement> {
   const handled = (): boolean => !!(replySurface() as unknown as { editor?: Editor } | null)?.editor;
@@ -160,36 +136,31 @@ async function replyEditorSurface(): Promise<HTMLElement> {
   return replySurface()!;
 }
 
-// Selector updated by the viewer redesign — the subject lives in the header's `.msg-subject`
-// line now (SUBJECT-D), not a 24px `h2`; the assertion is untouched.
-const openSubject = (): string =>
-  q(".reader .msg .msg-subject")?.textContent ?? q(".read-col .msg .msg-subject")?.textContent ?? "";
+/** The open letter's subject, as its head says it. */
+const openSubject = (): string => subjectShown(document);
 
-/** The editor's own Cancel — scoped to `.reply-actions`, never a label found anywhere. */
-const replyCancel = (): HTMLButtonElement | undefined =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-    .find((b) => b.textContent === "Cancel");
+/**
+ * THE REPLY's CANCEL: the studio's reply backs out by Escape from inside it (there is no Cancel button), the same
+ * `closeReply` today's Cancel ran. Pressed where the keyboard is; the text takes it back first where focus is elsewhere.
+ */
+const cancelReply = async (): Promise<void> => {
+  const surface = replySurface();
+  expect(surface, "the reply editor is not open to back out of").not.toBeNull();
+  if (!surface!.contains(document.activeElement)) await act(async () => { surface!.focus(); });
+  await keyAtFocus("Escape");
+  await settle();
+};
 
 beforeEach(() => {
   setViewport(false);
-  window.location.hash = "#/history";
+  // jsdom draws no animation: the kit's sheets and lines ask for one as a browser runs it.
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
-  (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
-  const el = Element.prototype as unknown as Record<string, () => void>;
-  el.scrollIntoView = () => {};
-  el.scrollTo = () => {};
-  (globalThis as Record<string, unknown>).IntersectionObserver = class {
-    observe(): void {} unobserve(): void {} disconnect(): void {}
-    takeRecords(): [] { return []; }
-  };
-  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(async () => {
-  await unmount();
-  document.body.innerHTML = "";
-  delete (globalThis as Record<string, unknown>).IntersectionObserver;
-  delete (globalThis as Record<string, unknown>).CSS;
+  await unmountAll();
+  shell = null;
   vi.restoreAllMocks();
 });
 
@@ -207,27 +178,25 @@ describe("Cancel returns to the message and strands nothing", () => {
   it("closes the editor AND takes the dock with it", async () => {
     await mountShell();
     const subject = openSubject();
-    expect(subject, "the demo's History rendered no message").not.toBe("");
-    expect(q(".reply-dock"), "a reply dock exists before a reply was opened").toBeNull();
+    expect(subject, "the Ohbox rendered no message").not.toBe("");
+    expect(reply(), "a reply dock exists before a reply was opened").toBeNull();
 
     await openReply();
-    expect(q(".reply-dock"), "the open editor is not in a dock").not.toBeNull();
+    expect(reply()?.contains(replySurface()), "the open editor is not in a dock").toBe(true);
 
-    const cancel = replyCancel();
-    expect(cancel, "the reply editor offers no Cancel").toBeDefined();
-    await act(async () => { cancel!.click(); });
+    await cancelReply();
 
     expect(replySurface(), "Cancel left the editor open").toBeNull();
     expect(
-      q(".reply-dock"),
+      reply(),
       "the reply dock survived the cancel — an empty sticky strip is pinned across the foot of "
         + "the reading column",
     ).toBeNull();
     // …and it is a RETURN, not a navigation: the message is still the one being read.
     expect(openSubject(), "cancelling the reply took the message off the screen").toBe(subject);
     // The view is unchanged; the open message rides the hash by design (`message-url.test.tsx`).
-    expect(window.location.hash, "cancelling the reply changed the route").toMatch(/^#\/history(\/m\/|$)/);
-    expect(q(".view-compose"), "cancelling the reply landed in Compose").toBeNull();
+    expect(window.location.hash, "cancelling the reply changed the route").toMatch(/^#\/ohbox(\/m\/|$)/);
+    expect(window.location.hash.startsWith("#/write"), "cancelling the reply landed in Compose").toBe(false);
   });
 
   /**
@@ -245,7 +214,7 @@ describe("Cancel returns to the message and strands nothing", () => {
     await settle();
     expect(editorOf(await replyEditorSurface()).getText()).toBe("half a sentence");
 
-    await act(async () => { replyCancel()!.click(); });
+    await cancelReply();
     expect(replySurface()).toBeNull();
 
     await openReply();
@@ -276,13 +245,13 @@ describe("Cancel returns to the message and strands nothing", () => {
     await act(async () => { typeInto(surface, "a queued answer"); });
     await settle();
 
-    /* THE SEND IS MADE TO QUEUE: the fixtures adapter refuses retryably, which is exactly the
-       state Cancel exists for — nothing on the wire, an intent under its key. */
-    const { MutationRejectedError, OhmailEngine } = await import("@ohmail/client-engine");
-    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
-    vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(async () => {
-      throw new MutationRejectedError("offline", { status: 0, code: "network", retryable: true });
-    });
+    /* THE SEND IS MADE TO QUEUE: the route refuses it retryably (the test door's `refuseSend`), which is exactly the
+       state Cancel exists for — an intent under its key, which the next try delivers. The server is reachable, and
+       answers a withdrawal for that key: "withdrawn" (the test door's `withdrawAnswer`). */
+    const { OhmailEngine } = await import("@ohmail/client-engine");
+    shell!.refuseSend.on = true;
+    shell!.refuseSend.retryableFirst = 1000;
+    shell!.withdrawAnswer.outcome = "withdrawn";
     const withdrawals: string[] = [];
     const realWithdraw = OhmailEngine.prototype.withdrawQueued;
     vi.spyOn(OhmailEngine.prototype, "withdrawQueued").mockImplementation(async function (
@@ -292,16 +261,16 @@ describe("Cancel returns to the message and strands nothing", () => {
       withdrawals.push(outcome);
       return outcome;
     });
-    const send = [...host!.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-      .find((b) => (b.textContent ?? "").startsWith("Send"));
-    expect(send, "the reply editor offers no Send").toBeDefined();
+    // The reply's Send stands in the open letter's panel while the reply stands.
+    const send = readingColumn(document)?.querySelector<HTMLButtonElement>('[role="toolbar"][aria-label="Actions"] button[aria-label="Send"]');
+    expect(send, "the reply editor offers no Send").toBeTruthy();
     await act(async () => { send!.click(); });
     await waitFor(
-      () => (send!.getAttribute("data-send") ?? "") === "queued",
+      () => shell!.engine.waitingSends().length > 0 && (reply()?.textContent ?? "").includes(WRITE_EN.write.status.queued),
       "the send never reached the queued state this case is about",
     );
 
-    await act(async () => { replyCancel()!.click(); });
+    await cancelReply();
     await waitFor(() => replySurface() === null, "closing the dock left the editor open");
     await waitFor(
       () => withdrawals.length > 0,
@@ -327,10 +296,12 @@ describe("Cancel returns to the message and strands nothing", () => {
     const subject = openSubject();
     await openReply();
 
-    await key("Escape");
+    // Escape where the keyboard is: in the reply's text, where `r` put it.
+    await keyAtFocus("Escape");
+    await settle();
 
     expect(replySurface(), "Escape left the editor open").toBeNull();
-    expect(q(".reply-dock"), "Escape left the dock behind").toBeNull();
+    expect(reply(), "Escape left the dock behind").toBeNull();
     expect(openSubject(), "Escape closed the message as well as the editor").toBe(subject);
   });
 });
@@ -348,51 +319,60 @@ describe("an open reply keeps the keyboard", () => {
     delete (HTMLElement.prototype as unknown as { isContentEditable?: boolean }).isContentEditable;
   });
 
-  /** A key pressed where focus is, as a person's keyboard delivers it. */
-  const keyAtFocus = async (k: string): Promise<void> => {
-    const at = (document.activeElement ?? document.body) as HTMLElement;
-    await act(async () => {
-      at.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
-    });
-  };
-
   /** Open a reply and attach files to it; they live only in the open editor. */
   async function replyWithFile(names: readonly string[] = ["notes.txt"]): Promise<HTMLElement> {
     await mountShell();
     await openReply();
     const surface = await replyEditorSurface();
-    const input = q<HTMLInputElement>('.reply input[type="file"]');
+    const input = reply()?.querySelector<HTMLInputElement>('input[type="file"]') ?? null;
     expect(input, "the reply drew no attach control").not.toBeNull();
     const files = names.map((n) => new File([new Uint8Array(512)], n, { type: "text/plain" }));
     Object.defineProperty(input!, "files", { value: files, configurable: true });
     await act(async () => { input!.dispatchEvent(new Event("change", { bubbles: true })); });
-    await waitFor(() => names.every((n) => (q(".reply")?.textContent ?? "").includes(n)), "the picked files never showed");
+    await waitFor(() => names.every((n) => (reply()?.textContent ?? "").includes(n)), "the picked files never showed");
     return surface;
   }
 
-  /* The park's own toast — the rail's "Parked" pile carries the same word. */
-  const parked = (): boolean =>
-    [...host!.querySelectorAll(".toast")].some((t) => (t.textContent ?? "").includes("Parked"));
+  /* The park's own answer, said by the frame's report — the rail's "Parked" pile carries the same word. */
+  const parked = (): boolean => reportSays().includes("Parked");
+
+  /** The reply's subject: one line of its head, always drawn (the studio's; today's opened it from a button). */
+  const subjectField = (): HTMLInputElement | null => reply()?.querySelector<HTMLInputElement>('input[aria-label="Subject"]') ?? null;
+  /** Focus the subject as a press does. */
+  const intoSubject = async (): Promise<HTMLInputElement> => {
+    const field = subjectField();
+    expect(field, "the reply drew no subject").not.toBeNull();
+    await act(async () => { field!.focus(); field!.click(); });
+    expect(document.activeElement, "the subject field did not take focus").toBe(field);
+    return field!;
+  };
 
   /* Mutation: drop the body focus from the subject's Escape — focus falls out of the reply to the
-     list, and (with `data-key-writing` gone too) `e` parks the message and drops the file. */
+     list, and (with `data-key-writing` gone too) `e` parks the message and drops the file.
+     Where the subject's Escape hands the keyboard is the case after this one (write's owed key); this one holds what
+     a letter typed after it does. */
   it("Escape in the subject returns to the body; a typed e parks nothing and keeps the file", async () => {
-    const surface = await replyWithFile();
+    await replyWithFile();
     const subject = openSubject();
-    await act(async () => { q<HTMLButtonElement>(".reply .reply-subject")!.click(); });
-    const field = q<HTMLInputElement>(".reply .reply-subject-input");
-    expect(document.activeElement, "the subject field did not take focus").toBe(field);
+    await intoSubject();
 
     await keyAtFocus("Escape");
-    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-    expect(q(".reply .reply-subject-input"), "Escape left the subject field open").toBeNull();
-    expect(surface.contains(document.activeElement), "Escape did not hand focus to the reply's body").toBe(true);
+    expect(replySurface(), "the subject's Escape closed the reply").not.toBeNull();
 
     await keyAtFocus("e");
     expect(parked(), "a letter typed after the subject's Escape parked the message").toBe(false);
     expect(replySurface(), "the letter closed the reply").not.toBeNull();
-    expect(q(".reply")!.textContent, "the attached file was dropped").toContain("notes.txt");
+    expect(reply()!.textContent, "the attached file was dropped").toContain("notes.txt");
     expect(openSubject(), "the message being answered left the screen").toBe(subject);
+  });
+
+  /* SPLIT OUT of the case above, its lines as they stood but the one the studio made void (the subject is always
+     drawn, so Escape cannot close it): the subject's Escape hands the keyboard to the reply's text. */
+  it("Escape in the subject hands the keyboard to the reply's body", async () => {
+    const surface = await replyWithFile();
+    await intoSubject();
+    await keyAtFocus("Escape");
+    expect(surface.contains(document.activeElement), "Escape did not hand focus to the reply's body").toBe(true);
   });
 
   /* Mutation: drop the reply's `data-key-writing` — `e` on a button inside the reply runs the
@@ -400,11 +380,15 @@ describe("an open reply keeps the keyboard", () => {
   it("no mailbox letter runs from a control inside the open reply", async () => {
     await replyWithFile();
     const subject = openSubject();
-    await act(async () => { q<HTMLButtonElement>(".reply .reply-subject")!.focus(); });
+    // A control of the reply's own head: the press that unfolds whom it goes to.
+    const own = reply()?.querySelector<HTMLButtonElement>('button[aria-label="Change recipients"]') ?? null;
+    expect(own, "the reply drew no control of its own").not.toBeNull();
+    await act(async () => { own!.focus(); });
+    expect(document.activeElement, "the reply's control did not take focus").toBe(own);
     await keyAtFocus("e");
     expect(parked(), "e on the reply's own button parked the message").toBe(false);
     expect(replySurface(), "the letter closed the reply").not.toBeNull();
-    expect(q(".reply")!.textContent).toContain("notes.txt");
+    expect(reply()!.textContent).toContain("notes.txt");
     expect(openSubject()).toBe(subject);
   });
 
@@ -413,25 +397,25 @@ describe("an open reply keeps the keyboard", () => {
   it("removing a file by keyboard keeps focus in the reply; a typed e parks nothing", async () => {
     const surface = await replyWithFile(["one.txt", "two.txt"]);
     const subject = openSubject();
-    const remove = q<HTMLButtonElement>('.reply .compose-attach-remove[aria-label*="two.txt"]');
+    const remove = reply()?.querySelector<HTMLButtonElement>('button[aria-label*="two.txt"]') ?? null;
     expect(remove, "no remove control for two.txt").not.toBeNull();
     await act(async () => { remove!.focus(); });
     await act(async () => { remove!.click(); });
     await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-    expect(q(".reply")!.textContent, "the file was not removed").not.toContain("two.txt");
+    expect(reply()!.textContent, "the file was not removed").not.toContain("two.txt");
     expect(surface.contains(document.activeElement), "the removed button's focus left the reply").toBe(true);
 
     await keyAtFocus("e");
     expect(parked(), "a letter typed after removing a file parked the message").toBe(false);
     expect(replySurface(), "the letter closed the reply").not.toBeNull();
-    expect(q(".reply")!.textContent, "the other file was dropped").toContain("one.txt");
+    expect(reply()!.textContent, "the other file was dropped").toContain("one.txt");
     expect(openSubject(), "the message being answered left the screen").toBe(subject);
   });
 
   /* The control: the same `e` parks once the reply is closed, so the cases above measure a claim. */
   it("the mailbox letters come back when the reply closes", async () => {
     await replyWithFile();
-    await act(async () => { replyCancel()!.click(); });
+    await cancelReply();
     expect(replySurface()).toBeNull();
     await key("e");
     await waitFor(parked, "e did not park the message with the reply closed");
@@ -446,14 +430,16 @@ describe("the dock wrapper is conditional at the source", () => {
    * gives about this repo's `grep`.
    */
   it("`ReadingPane` renders `.reply-dock` only when there is a reply", () => {
+    /* RE-POINTED BY PATH: the reply's sheet is `write`'s (`ReplySheet`, which the reader draws in its slot after the
+       conversation's last letter); today's `ReadingPane` and its dock wrapper leave with today's shell. */
     const src = readFileSync(
-      resolve(process.cwd(), fromRootOrApp("packages/ui/src/composites/ReadingPane.tsx")),
+      resolve(process.cwd(), fromRootOrApp("packages/app/src/write/Reply.tsx")),
       "utf8",
     );
     expect(
       src,
       "the reply dock is no longer conditional — it would outlive the editor it wraps",
-    ).toMatch(/\{reply \?\s*<div className="reply-dock">\{reply\}<\/div>\s*:\s*null\}/);
+    ).toMatch(/const reply = w\.reply;\s*if \(reply === null \|\| !letters\.includes\(reply\.messageId\)\) return null;/);
   });
 });
 

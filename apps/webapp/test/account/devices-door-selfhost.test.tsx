@@ -1,11 +1,16 @@
 /** @vitest-environment jsdom */
 import { createHash } from "node:crypto";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { en, json, serve, settle, type Server } from "./account-harness";
-import { hello, qr, scanned, Words } from "./devices-support";
-import { DevicesPane, useDevices } from "../../../../packages/app/src/account/devices/index.js";
-import { useDevicesDoor } from "../../app/(product)/mailbox/devices-door";
+import { en, json, serve, type Server } from "./account-harness";
+import { hello, scanned } from "./devices-support";
+import {
+  act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
+  scriptRefresh, scriptSession, sessionFull, teardownConfirmEnv, tick,
+} from "../fixtures/cloud-confirm-shell";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
+import { bindApiOwner } from "../../app/api-client";
 
 /**
  * THE SELF-HOSTED ARM OF WHERE A PAIRING LINK POINTS. One flavour a process: this file is the self-hosted build,
@@ -39,27 +44,39 @@ beforeEach(() => {
       }),
   });
 });
-afterEach(() => {
-  cleanup();
+afterEach(async () => {
+  await teardownConfirmEnv();
   server.restore();
+  bindApiOwner(null);
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
 });
 
-function Pane() {
-  return <DevicesPane model={useDevices(useDevicesDoor())} factor={() => null} qr={qr} />;
+async function openDevices() {
+  const deviceFetch = globalThis.fetch;
+  installConfirmEnv();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  rememberOwner();
+  const shellFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const { pathname } = new URL(String(input), window.location.origin);
+    return pathname === "/api/devices" || pathname === "/api/pair" || pathname === "/api/hello"
+      ? deviceFetch(input, init)
+      : shellFetch(input, init);
+  };
+  window.location.hash = "#/settings/devices";
+  await mountCloudShell();
+  await tick(2500);
 }
 
 describe("a pairing link made on a self-hosted server", () => {
   it("is on this page's own origin, in the picture and in print, and never on the managed service's", async () => {
-    render(
-      <Words>
-        <Pane />
-      </Words>,
-    );
-    await settle();
+    await openDevices();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: en.devices.addAction }));
     });
-    await settle();
+    await tick(0);
     const link = `${window.location.origin}/pair#${MADE}`;
     expect(scanned()).toBe(link);
     expect(document.body.textContent).toContain(link);

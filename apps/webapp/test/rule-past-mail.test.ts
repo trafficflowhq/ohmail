@@ -8,7 +8,7 @@
 import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { MemoryMirrorStore, mutationEffects, type SyncChange } from "@ohmail/client-engine";
-import { pileOf, rulePastMail, ruleRetarget, walkedMailboxes } from "../app/shell/rule-past-mail";
+import { pileOf, rulePastMail, ruleRetarget, walkedMailboxes } from "@ohmail/app-logic/press/rule-past-mail";
 
 const rule = (over: Partial<RuleDTO> = {}): RuleDTO => ({
   id: "r-1", kind: "sender", match: "knock@door.test", destination: "ohmail/Screened", priority: 0,

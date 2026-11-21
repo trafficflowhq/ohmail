@@ -15,6 +15,8 @@ import {
 import { EngineHydration } from "./hydration.js";
 
 export abstract class EngineAttachments extends EngineHydration {
+  private readonly staging = new Map<string, { messageId: string; attachmentId: string }>();
+
   // ── attachments ──────────────────────────────────────────────────────────
 
   /**
@@ -381,9 +383,23 @@ export abstract class EngineAttachments extends EngineHydration {
     this.patchAttachment(messageId, attachmentId, {
       state: "loading", error: undefined, code: undefined, retryable: undefined, status: undefined,
     });
-    const request = this.partLane.run(this.pressOn(messageId, flightKey), stage)
+    const owner = { messageId, attachmentId };
+    this.staging.set(flightKey, owner);
+    const isCurrent = () => this.staging.get(flightKey) === owner;
+    const request = this.partLane.run(this.pressOn(messageId, flightKey), async () => {
+      if (!isCurrent()) return undefined;
+      const staged = await stage();
+      // A list release may drop the lane's answer too. Dispose of it before handing it back.
+      if (isCurrent()) return staged;
+      if (staged.kind === "url") staged.release();
+      return undefined;
+    })
       .then((staged) => {
-        if (staged === LANE_DROPPED) return;
+        if (staged === undefined || staged === LANE_DROPPED) return;
+        if (!isCurrent()) {
+          if (staged.kind === "url") staged.release();
+          return;
+        }
         this.revokeItem(messageId, attachmentId);
         if (staged.kind === "url") {
           this.objectUrls.adopt(messageId, staged.url, staged.release);
@@ -397,8 +413,12 @@ export abstract class EngineAttachments extends EngineHydration {
           this.patchAttachment(messageId, attachmentId, { state: "ready", previewTooLarge: true });
         }
       })
-      .catch((err: unknown) => this.refuseAttachment(messageId, attachmentId, err))
+      .catch((err: unknown) => {
+        if (isCurrent()) this.refuseAttachment(messageId, attachmentId, err);
+      })
       .finally(() => {
+        if (!isCurrent()) return;
+        this.staging.delete(flightKey);
         this.attachmentRequests.delete(flightKey);
       });
     this.attachmentRequests.set(flightKey, request);
@@ -429,6 +449,7 @@ export abstract class EngineAttachments extends EngineHydration {
    * letter asked for, which the inline pass left to the overlay, is fetched and drawn now.
    */
   releasePreviews(messageId: string): void {
+    this.closeStaging(messageId, true);
     const adopted = new Set(this.objectUrls.adoptedOf(messageId));
     const held = this.attachmentLists.get(messageId);
     for (const url of adopted) this.revokeUrl(url);
@@ -442,6 +463,15 @@ export abstract class EngineAttachments extends EngineHydration {
       }
     }
     if (owed) this.healInlineImages(messageId, false);
+  }
+
+  private closeStaging(messageId: string, keepList: boolean): void {
+    for (const [key, owner] of this.staging) {
+      if (owner.messageId !== messageId) continue;
+      this.staging.delete(key);
+      this.attachmentRequests.delete(key);
+      if (keepList) this.patchAttachment(messageId, owner.attachmentId, { state: "idle" });
+    }
   }
 
   /**
@@ -891,6 +921,7 @@ export abstract class EngineAttachments extends EngineHydration {
   /** The unconditional half of {@link OhmailEngine.releaseAttachments}. */
   protected forceReleaseAttachments(messageId: string): void {
     this.keptListFailures.delete(messageId);
+    this.closeStaging(messageId, false);
     this.stopPartAsks(messageId);
     // ONE drain of the ledger, not a walk of the entries: it holds the seed's compose URLs (a
     // forward still waiting on its parent publishes no list to find them under), the ready items'

@@ -37,9 +37,8 @@ import { Button, SettingsNote, SettingsSection } from "@ohmail/ui";
 import { SELF_HOST_BUILD } from "../../hello";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
-import { forgetThisBrowser, signOut } from "../../sign-out";
+import { forgetThisBrowser, signOut, signOutStayReason } from "../../sign-out";
 import { purgeSiteCache } from "../../session-refresh";
-import { signOutTrouble } from "../../sign-out-trouble";
 import { markAccountErased } from "@ohmail/app-logic/session/account-erased";
 import {
   account,
@@ -64,6 +63,7 @@ function releaseOf(err: unknown): ErasureResult["subscription"] | null {
 
 interface Who {
   accountId: string;
+  familyId?: string;
   email: string;
 }
 
@@ -128,20 +128,20 @@ export function AccountSection() {
    * `location.assign` rather than a router push: the cookie is gone, so the shell must be re-decided by
    * the server — a client-side navigation would keep the signed-in React tree alive on a dead session.
    */
-  const doSignOut = useCallback(async (owner: string) => {
+  const doSignOut = useCallback(async (owner: string, expectedFamily?: string) => {
     setSigningOut(true);
     setSignOutBlocked(false);
     setSignOutUnverified(false);
-    const outcome = await signOut(owner);
+    const outcome = await signOut(owner, { expectedFamily });
     /* If the mail is still here this does not leave: an IndexedDB delete is BLOCKED while another
        tab holds the database open, and leaving would be a silent false promise about mail on a
        borrowed machine. A server half that went unconfirmed DOES leave, for `/`: the browser is
        wiped and marked, and the front door sends it to the sign-in page, which finishes it
        (`session-gate.ts`). */
-    const said = signOutTrouble(outcome);
-    if (said !== null && said.key !== "signOutServerRefused") {
+    const stay = signOutStayReason(outcome);
+    if (stay !== null) {
       if (alive.current) {
-        if (said.key === "signOutUnverified") setSignOutUnverified(true);
+        if (stay === "unverified") setSignOutUnverified(true);
         else setSignOutBlocked(true);
         setSigningOut(false);
       }
@@ -157,10 +157,10 @@ export function AccountSection() {
     }
     void (async () => {
       try {
-        const { user, scope } = await auth.session();
+        const { user, scope, familyId } = await auth.session();
         if (!alive.current) return;
         if (scope === "full" && user?.accountId) {
-          setWho({ accountId: user.accountId, email: user.email });
+          setWho({ accountId: user.accountId, email: user.email, familyId });
         }
       } catch (err) {
         /**
@@ -330,7 +330,7 @@ export function AccountSection() {
             className="acct-signout-btn"
             icon="door"
             disabled={signingOut}
-            onClick={() => { void doSignOut(who.accountId); }}
+            onClick={() => { void doSignOut(who.accountId, who.familyId); }}
           >
             {signingOut ? t("signOutBusy") : t("signOut")}
           </Button>

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
+import { letterShown, lettersShown, menuItem, moreButton, reportSays } from "./ohbox/_finders.js";
 
 /**
  * A MOVE ON OUR OWN LETTER WRITES NO RULE ABOUT OUR OWN ADDRESS, through the shipped
@@ -73,8 +74,8 @@ const row = (host: HTMLElement, id: string): HTMLElement => {
   if (!r) throw new Error(`no row ${id}`);
   return r;
 };
-const toasts = (): string[] =>
-  [...document.querySelectorAll("[class*=toast]")].map((n) => (n.textContent ?? "").trim()).filter(Boolean);
+/** What the press answered: the frame's report at a seated place (today's shell said it in its toast). */
+const toasts = (): string[] => [reportSays()].filter(Boolean);
 
 /** Every write the shell sent, as `METHOD path body`. */
 function writes(): string[] {
@@ -88,11 +89,14 @@ function writes(): string[] {
   });
 }
 
-/** Press the bar's Move, then the place, on what is open. */
+/**
+ * Press the panel's Move, then the place, on what is open. The new reader keeps Move in More (FOR-S3-TO-S8 point
+ * 63 (d)): More, Move, then the place by its name (today's bar wrote "→ News").
+ */
 async function pressMove(host: HTMLElement, place: string): Promise<void> {
-  await click(host.querySelector(".abar-move")!);
-  const target = [...host.querySelectorAll<HTMLButtonElement>(".abar-panel button")]
-    .find((b) => (b.textContent ?? "").includes(`→ ${place}`));
+  await click(moreButton(host)!);
+  await click(menuItem("Move")!);
+  const target = menuItem(place);
   if (!target) throw new Error(`no move target ${place}`);
   await click(target);
 }
@@ -102,8 +106,14 @@ async function moveTo(host: HTMLElement, id: string, place: string): Promise<voi
   await pressMove(host, place);
 }
 const windowCloses = async (): Promise<void> => { for (let i = 0; i < 30; i++) await tick(1000); };
-const focusedPanel = (host: HTMLElement): string | null =>
-  host.querySelector<HTMLElement>(".read-col article.pm[aria-current]")?.dataset.convId ?? null;
+/**
+ * The focused panel: the letter of the open conversation the address names (`#/ohbox/m/<id>`), as
+ * `conversation-bar-acts-on-the-opened-panel` reads the ringed panel at the seated Ohbox; a single letter rings none.
+ */
+const focusedPanel = (host: HTMLElement): string | null => {
+  const id = /^#\/ohbox\/m\/([^/?]+)/.exec(window.location.hash)?.[1] ?? null;
+  return lettersShown(host).length > 1 && id !== null && letterShown(host, id) !== null ? id : null;
+};
 
 beforeEach(() => {
   installShellEnv();

@@ -671,7 +671,7 @@ describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
     const { SEND_LOCKS_PREFIX } = await import("@ohmail/app-logic/writing/send-lock");
     const { COMPOSE_DRAFT_PREFIX } = await import("@ohmail/app-logic/writing/compose");
     const { searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
-    const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
+    const { seedNotNowKey } = await import("@ohmail/app-logic/mailboxes/first-run/seed-offer");
     const keys = [
       `${SEND_LOCKS_PREFIX}${owner}`, `${COMPOSE_DRAFT_PREFIX}${owner}.w1`, `ohmail.boot.ownAddresses.${owner}`,
       searchSortKey(owner), seedNotNowKey(owner), `ohmail.ui.reader.afterVerb:${owner}`,

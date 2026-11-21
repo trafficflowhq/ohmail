@@ -1,7 +1,7 @@
 /**
  * SEARCH'S FIELD: the kit's find field, named Search, in no form and with no name, so what is typed is asked by the
  * app and never kept by the browser. It takes the keyboard when Search opens; Enter asks the whole mailbox at once
- * (the arrows, Enter on a result and Escape are the list's own keys in the registry). The time the answer took
+ * (the arrows, Enter on a result and Escape are the list's own keys in the registry). The time the search took
  * stands at its end. A person set stands before the words as one control that lets them go, and so does Backspace
  * in an empty field; what is typed then searches their mail.
  */
@@ -38,8 +38,8 @@ export function SearchField({
       model.setPerson(null);
     }
   };
-  const took =
-    model.text !== "" && model.headMs !== null ? t("scopeServerMs", { ms: model.headMs }) : undefined;
+  const ms = model.headMs ?? model.tookMs;
+  const took = (model.text !== "" || model.narrowed) && ms > 0 ? t("scopeServerMs", { ms }) : undefined;
   const name = person === null ? null : named;
   return (
     <FindField

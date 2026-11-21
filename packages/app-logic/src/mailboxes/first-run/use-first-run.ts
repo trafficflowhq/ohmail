@@ -110,7 +110,7 @@ function useStageEffects(e: {
   }, [withdraw, step, mailboxId, win, choice]);
   const parkedForget = state.at === "asking" && state.act.verb === "forget";
   useEffect(() => {
-    if (confirm !== "restart" && parkedForget) withdraw();
+    if (confirm !== "restart" && parkedForget) withdraw("forget");
   }, [confirm, parkedForget, withdraw]);
   useEffect(() => {
     if (!open) return;

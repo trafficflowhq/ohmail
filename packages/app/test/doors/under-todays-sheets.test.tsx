@@ -65,8 +65,6 @@ const TODAY = [
   ...sheetsUnder("packages/ui/src", (name) => name === "base"),
   "apps/webapp/app/app.css",
   "apps/webapp/app/zero-layout.css",
-  "apps/webapp/app/shell/today.css",
-  "apps/webapp/app/shell/today-tokens.generated.css",
 ];
 
 type Room = {

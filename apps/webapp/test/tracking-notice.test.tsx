@@ -3,9 +3,11 @@
  * THE TRACKING NOTICE, WORN AS A GLYPH — the reading stream's card says "A tracking pixel was
  * blocked." in its head, not as a bar above the message.
  *
- * Three things are held here, in the order a person meets them:
+ * The census of the captions and the bare viewer's case read only the letter's body, which stays: they
+ * moved to `tracking-notice-body.test.tsx`. This suite exercises the mounted stream cards.
+ * The cases cover three things:
  *
- *  1. THE CENSUS. Every sentence in the `mailBody` namespace that says something was blocked has a
+ *  1. THE CENSUS (now in `tracking-notice-body.test.tsx`). Every sentence in the `mailBody` namespace that says something was blocked has a
  *     caption twin (`NOTICE_CAPTION` in `BlockNotice.tsx`), and every caption it names exists in
  *     both catalogues, is short, and is not a sentence. Red before this slice: no caption keys.
  *  2. THE RENDER. A stream card whose body had a beacon refused carries, in its META LINE, a real
@@ -26,20 +28,22 @@
  *   · remove `sheetOne` from `NOTICE_CAPTION`                           → census (lexical sweep)
  *   · remove `e.stopPropagation()` on `.sc-notice` in `StreamCard`      → the press case
  */
-import type { EngineMessage } from "@ohmail/wire";
+import { fireEvent, within } from "@testing-library/react";
+import { Frame } from "../../../packages/app/src/frame/index.js";
+import { MailGround, mailPlaces } from "../../../packages/app/src/mail/index.js";
+import { readerEntry, type ReaderBody } from "../../../packages/app/src/reader/index.js";
+import { TextProvider } from "../../../packages/app/src/text/index.js";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
+import { issue, receipt } from "../../../packages/app/test/streams/registered-world.js";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { COPY, MessageBody } from "../../../packages/letter-body/src/MessageBody";
-import { CAPTION_KEY, NOTICE_CAPTION, type NoticeKind } from "../../../packages/letter-body/src/BlockNotice";
-import { StreamCardMemo } from "../app/shell/StreamCardMemo";
-import type { RemoteImagesChrome } from "../app/shell/remote-images";
-import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";
+import { COPY } from "../../../packages/letter-body/src/MessageBody";
 
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 /* ── fixtures: the frame's document, with a declared canvas so the viewer FRAMES it ─────────── */
@@ -59,7 +63,6 @@ const PICTURES_AND_BEACON = canvas(
 const SHEET_ONLY = canvas(`<style>@import url("${SHEET}");</style>`);
 
 type Catalogue = Record<string, Record<string, string>>;
-const EN = en as unknown as Catalogue;
 const DE = de as unknown as Catalogue;
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,209 +72,162 @@ const DE = de as unknown as Catalogue;
 const roots: Root[] = [];
 const hosts: HTMLElement[] = [];
 
-async function settle(): Promise<void> {
-  await act(async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); });
-}
-
 afterEach(async () => {
-  for (const r of roots.splice(0)) await act(async () => { r.unmount(); });
-  for (const el of hosts.splice(0)) el.remove();
-  setActiveCatalog(DEFAULT_LOCALE, null);
+  for (const root of roots.splice(0)) await act(async () => { root.unmount(); });
+  for (const host of hosts.splice(0)) host.remove();
+  vi.unstubAllGlobals();
 });
-
-function message(id: string, extra: Partial<EngineMessage> = {}): EngineMessage {
-  return {
-    id, accountId: "a", mailboxId: "mb1", threadId: null, messageIdHeader: null,
-    subject: `Subject ${id}`, from: { name: "Acme Store", address: "orders@acme.example" }, to: [], cc: [],
-    date: "2026-08-01T09:00:00.000Z", folder: "INBOX", snippet: "s", unread: false, labels: [],
-    ...extra,
-  } as unknown as EngineMessage;
-}
 
 interface CardOpts {
   html: string;
   amount?: string;
-  remoteImages?: RemoteImagesChrome;
-  onSelect?: (id: string) => void;
-  locale?: "en" | "de";
+  subject?: string;
 }
 
-/** One or more stream cards, hydrated, as `ReadsView`/`ReceiptsView` mount them. */
-async function mountCards(cards: CardOpts[]): Promise<HTMLElement> {
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  hosts.push(host);
-  const root = createRoot(host);
+async function mountStreamCards(cards: readonly CardOpts[], place: "news" | "receipts", locale: "en" | "de" = "en") {
+  const { letterBody } = await vi.importActual<{ letterBody: ReaderBody }>(
+    "../../../packages/app/src/reader/body/index.js",
+  );
+  const make = place === "news" ? issue : receipt;
+  const letters = cards.map(({ amount, subject }, i) => make(`notice-${i}`, 20 - i, {
+    body: undefined, ...(amount === undefined ? {} : { amount }), ...(subject === undefined ? {} : { subject }),
+  }));
+  const first = letters[0]!;
+  const mail = fakeMail(letters, [], Object.fromEntries(letters.map((message, i) => [
+    message.id, { messageId: message.id, state: "ready", text: "hello", html: cards[i]!.html },
+  ])), {
+    "rule:stream": {
+      id: "stream", kind: "sender", match: first.from.address, destination: first.folder,
+      priority: 0, provenance: "manual", enabled: true,
+    },
+  });
+  const address = fakeAddress(place === "news" ? "#/reads" : "#/receipts");
+  const { host } = fakeHost({
+    engine: mail.engine, service: "self", scope: "tracking-notice",
+    places: mailPlaces(),
+    above: MailGround,
+    reader: readerEntry({
+      body: letterBody, files: "none", pictures: "none", look: "none",
+      sentCopy: "none", reply: "none", invitation: "none",
+    }),
+    window: fakeWindow("desktop"),
+    address,
+  });
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  hosts.push(container);
+  const root = createRoot(container);
   roots.push(root);
-  const now = new Date("2026-08-02T09:00:00.000Z");
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages: en, timeZone: "UTC", now,
-        children: cards.map((c, i) =>
-          h(StreamCardMemo, {
-            key: `m${i}`,
-            m: message(`m${i}`, c.amount ? { amount: c.amount } as Partial<EngineMessage> : {}),
-            now, current: false, expanded: false, viewer: true, unread: false,
-            bodyText: "body", bodyState: "full" as const, bodyHtml: c.html, bodyLoadedRemote: false,
-            remoteImages: c.remoteImages,
-            loadingLabel: "…", failedLabel: "!", withheldKey: "withheld", onReask: () => {},
-            onSelect: c.onSelect ?? (() => {}), onToggle: () => {},
-          })),
-      }),
-    );
-  });
-  await settle();
-  return host;
+  const messages = locale === "en" ? en : de;
+  await act(async () => root.render(
+    <TextProvider locale={locale} messages={messages} timeZone="UTC">
+      <Frame host={host} />
+    </TextProvider>,
+  ));
+  return { region: within(container).getByRole("region", { name: messages[place].stream.label }), address };
 }
 
-/** The glyph in a card's meta line, with what a reader is told about it. */
-function glyphOf(card: Element) {
-  const trigger = card.querySelector<HTMLButtonElement>(".sc-line .sc-notice .gloss-t");
-  if (!trigger) return null;
+async function mountNews(html: string, locale: "en" | "de" = "en") {
+  const { region, address } = await mountStreamCards([{ html }], "news", locale);
+  const card = within(region).getByRole("article").closest<HTMLElement>("[data-stream-item]")!;
+  expect(card).not.toBeNull();
+  return { card, address };
+}
+
+function newsGlyph(card: HTMLElement, caption: string) {
+  const trigger = within(card).getByRole("button", { name: caption });
   const describedBy = trigger.getAttribute("aria-describedby");
-  const tooltip = describedBy ? card.querySelector<HTMLElement>(`[id="${describedBy}"]`) : null;
-  return {
-    trigger,
-    /* With a caption the Gloss NAMES the trigger by the caption and DESCRIBES it by the sentence;
-       the primitive's own suite proves the accname semantics — this reads the wiring. */
-    name: trigger.querySelector(".gloss-cap")?.textContent ?? "",
-    description: tooltip?.textContent ?? null,
-    tooltipRole: tooltip?.getAttribute("role") ?? null,
-    tooltipHidden: tooltip?.hidden ?? null,
-    open: card.querySelector<HTMLElement>(".gloss-pop")?.hidden === false,
-  };
+  const tooltip = describedBy ? document.getElementById(describedBy) : null;
+  return { trigger, tooltip };
 }
-
-/* ── 1. the census ────────────────────────────────────────────────────────────────────────── */
-
-describe("the census: every notice sentence in mailBody has a caption twin", () => {
-  const isSentence = (s: string) => /\.$/.test(s.trim());
-
-  it("every mailBody sentence that says something was blocked is in NOTICE_CAPTION", () => {
-    // LEXICAL, so a sibling added to the bar tomorrow without a row in the table is red: the rule is
-    // "a full sentence in this namespace that names a block is a notice". Captions carry the word
-    // too and are not sentences, which is what the period distinguishes.
-    const notices = Object.entries(EN.mailBody!)
-      .filter(([, v]) => /blocked/i.test(v) && isSentence(v))
-      .map(([k]) => k)
-      .sort();
-    expect(notices.length, "the namespace no longer holds a blocking sentence at all").toBeGreaterThan(0);
-    const missing = notices.filter((k) => !(k in NOTICE_CAPTION));
-    expect(missing, `mailBody notice sentence(s) with no caption twin: ${missing.join(", ")}`).toEqual([]);
-  });
-
-  it("every key the table names exists in both catalogues, and so does every caption", () => {
-    for (const locale of ["en", "de"] as const) {
-      const ns = (locale === "en" ? EN : DE).mailBody!;
-      for (const key of Object.keys(NOTICE_CAPTION)) {
-        expect(ns[key], `${locale}.json mailBody.${key} — the table names a sentence the catalogue lacks`).toBeTypeOf("string");
-      }
-      for (const kind of Object.keys(CAPTION_KEY) as NoticeKind[]) {
-        const cap = ns[CAPTION_KEY[kind]];
-        expect(cap, `${locale}.json mailBody.${CAPTION_KEY[kind]} is missing`).toBeTypeOf("string");
-        expect(cap!.trim().length, `${locale} ${kind} caption is empty`).toBeGreaterThan(0);
-        expect(isSentence(cap!), `${locale} ${kind} caption "${cap}" is a sentence, not a caption`).toBe(false);
-        expect(cap!.split(/\s+/).length, `${locale} ${kind} caption "${cap}" is longer than two words`).toBeLessThanOrEqual(2);
-      }
-    }
-  });
-
-  it("each caption is shorter than every sentence it headlines, in both languages", () => {
-    for (const locale of ["en", "de"] as const) {
-      const ns = (locale === "en" ? EN : DE).mailBody!;
-      for (const [key, kind] of Object.entries(NOTICE_CAPTION)) {
-        const cap = ns[CAPTION_KEY[kind]]!;
-        expect(cap.length, `${locale}: caption "${cap}" is not shorter than ${key}`).toBeLessThan(ns[key]!.length);
-      }
-    }
-  });
-
-  it("the component's own table reads the same captions (the parity oracle's new members)", () => {
-    for (const kind of Object.keys(CAPTION_KEY) as NoticeKind[]) {
-      expect(COPY[CAPTION_KEY[kind]]).toBe(EN.mailBody![CAPTION_KEY[kind]]);
-    }
-  });
-});
 
 /* ── 2. the render ────────────────────────────────────────────────────────────────────────── */
 
 describe("a Reads card with a beacon refused", () => {
   it("carries the glyph in its meta line, called by the caption and described by the sentence — and no bar", async () => {
-    const host = await mountCards([{ html: PIXEL_ONLY }]);
-    const card = host.querySelector(".scast")!;
-    const g = glyphOf(card);
-    expect(g, "the card head carries no notice glyph").not.toBeNull();
-    expect(g!.name).toBe(COPY.pixelCaption);
-    expect(g!.description, "aria-describedby does not resolve to the sentence").toBe(COPY.pixelOnly);
-    expect(g!.tooltipRole).toBe("tooltip");
-    // In the DOM and describable while CLOSED — the fact is stated before anyone hovers.
-    expect(g!.tooltipHidden).toBe(true);
-    expect(g!.trigger.getAttribute("aria-expanded")).toBe("false");
-    // The bar's sentence is gone from the card, and with nothing to load and nothing to adapt the
-    // bar itself is gone: no boxed line.
+    const { card } = await mountNews(PIXEL_ONLY);
+    const { trigger, tooltip } = newsGlyph(card, COPY.pixelCaption);
+    expect(tooltip?.textContent, "aria-describedby does not resolve to the sentence").toBe(COPY.pixelOnly);
+    expect(tooltip?.getAttribute("role")).toBe("tooltip");
+    expect(tooltip?.hidden).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(card.querySelector(".mb-bar-text"), "the sentence is still said as a bar").toBeNull();
     expect(card.querySelector(".mb-bar"), "a bar with nothing in it is still on the card").toBeNull();
-    // The glyph sits BEFORE the time, inside the meta line.
-    const line = card.querySelector(".sc-line")!;
-    const kids = [...line.children].map((el) => el.className.split(" ")[0]);
-    expect(kids.indexOf("sc-notice")).toBe(kids.indexOf("t") - 1);
+    // The glyph and the time are adjacent in the same metadata line.
+    const time = card.querySelector("time")!;
+    expect(trigger.parentElement?.nextElementSibling).toBe(time.parentElement);
   });
 
   it("says it in German when the catalogue is German", async () => {
-    setActiveCatalog("de", fillFrom(en as never, de as never) as never);
-    const host = await mountCards([{ html: PIXEL_ONLY, locale: "de" }]);
-    const g = glyphOf(host.querySelector(".scast")!)!;
-    expect(g.name).toBe(DE.mailBody!.pixelCaption);
-    expect(g.description).toBe(DE.mailBody!.pixelOnly);
+    const { card } = await mountNews(PIXEL_ONLY, "de");
+    const { tooltip } = newsGlyph(card, DE.mailBody!.pixelCaption!);
+    expect(tooltip?.textContent).toBe(DE.mailBody!.pixelOnly);
   });
 });
 
 describe("the three siblings share one component and one caption slot", () => {
   it("pictures refused → Images blocked / the images sentence", async () => {
-    const host = await mountCards([{ html: TWO_PICTURES }]);
-    const g = glyphOf(host.querySelector(".scast")!)!;
-    expect(g.name).toBe(COPY.imagesCaption);
-    expect(g.description).toBe(COPY.blockedMany(2));
+    const { card } = await mountNews(TWO_PICTURES);
+    const { tooltip } = newsGlyph(card, COPY.imagesCaption);
+    expect(tooltip?.textContent).toBe(COPY.blockedMany(2));
   });
 
   it("pictures with a beacon among them → the beacon leads the caption; the sentence keeps both parts", async () => {
-    const host = await mountCards([{ html: PICTURES_AND_BEACON }]);
-    const g = glyphOf(host.querySelector(".scast")!)!;
-    expect(g.name).toBe(COPY.pixelCaption);
-    expect(g.description).toBe(`${COPY.blockedMany(3)} ${COPY.pixelOne}`);
+    const { card } = await mountNews(PICTURES_AND_BEACON);
+    const { tooltip } = newsGlyph(card, COPY.pixelCaption);
+    expect(tooltip?.textContent).toBe(`${COPY.blockedMany(3)} ${COPY.pixelOne}`);
   });
 
   it("a stylesheet refused → Stylesheet blocked / the stylesheet sentence", async () => {
-    const host = await mountCards([{ html: SHEET_ONLY }]);
-    const g = glyphOf(host.querySelector(".scast")!)!;
-    expect(g.name).toBe(COPY.sheetCaption);
-    expect(g.description).toBe(COPY.sheetOne);
+    const { card } = await mountNews(SHEET_ONLY);
+    const { tooltip } = newsGlyph(card, COPY.sheetCaption);
+    expect(tooltip?.textContent).toBe(COPY.sheetOne);
   });
 
   it("a message with nothing refused carries no glyph and no bar", async () => {
-    const host = await mountCards([{ html: canvas("<p>only words</p>") }]);
-    const card = host.querySelector(".scast")!;
-    expect(glyphOf(card)).toBeNull();
+    const { card } = await mountNews(canvas("<p>only words</p>"));
+    for (const caption of [COPY.pixelCaption, COPY.imagesCaption, COPY.sheetCaption]) {
+      expect(within(card).queryByRole("button", { name: caption })).toBeNull();
+    }
+    expect(card.querySelector("[data-noted]")).toBeNull();
     expect(card.querySelector(".mb-bar")).toBeNull();
   });
 });
 
 describe("Reads with ten such messages", () => {
   it("shows ten glyphs and zero boxed lines; a Receipts card (with an amount) is the same card", async () => {
-    const cards: CardOpts[] = Array.from({ length: 10 }, (_, i) => ({
+    vi.stubGlobal("innerHeight", 2_600);
+    const cards = Array.from({ length: 10 }, (_, i) => ({
       html: i % 3 === 0 ? PIXEL_ONLY : i % 3 === 1 ? TWO_PICTURES : PICTURES_AND_BEACON,
       amount: i % 2 === 0 ? "CHF 12.00" : undefined,
     }));
-    const host = await mountCards(cards);
-    expect(host.querySelectorAll(".scast").length).toBe(10);
-    expect(host.querySelectorAll(".sc-line .sc-notice .gloss-t").length, "not every card carries the glyph").toBe(10);
-    expect(host.querySelectorAll(".mb-bar-text").length, "a boxed line survived in the stream").toBe(0);
-    expect(host.querySelectorAll(".mb-bar").length).toBe(0);
-    // The amount and the notice share a line and the time stays last.
-    const receipt = host.querySelectorAll(".scast")[0]!;
-    expect(receipt.querySelector(".sc-line .amt")).not.toBeNull();
-    expect(receipt.querySelector(".sc-line")!.lastElementChild!.classList.contains("t")).toBe(true);
+    const { region } = await mountStreamCards(cards, "news");
+    expect(within(region).getAllByRole("article")).toHaveLength(10);
+    expect(within(region).getAllByRole("button", { name: new RegExp(`^(${COPY.pixelCaption}|${COPY.imagesCaption})$`) })).toHaveLength(10);
+    for (const card of within(region).getAllByRole("article")) {
+      const notices = [COPY.pixelCaption, COPY.imagesCaption]
+        .flatMap((name) => within(card).queryAllByRole("button", { name }));
+      expect(notices, "each card carries one glyph").toHaveLength(1);
+      expect(notices[0]!.parentElement?.nextElementSibling).toBe(card.querySelector("time")?.parentElement);
+    }
+    expect(region.querySelectorAll(".mb-bar, .mb-bar-text")).toHaveLength(0);
+
+    const { region: receipts } = await mountStreamCards([
+      { html: PIXEL_ONLY, amount: "CHF 12.00", subject: "" },
+      { html: PIXEL_ONLY, amount: "CHF 18.00", subject: "Invoice" },
+    ], "receipts");
+    const [withoutSubject, invoice] = within(receipts).getAllByRole("article");
+    const { trigger } = newsGlyph(withoutSubject!, COPY.pixelCaption);
+    const metadata = trigger.parentElement!.parentElement!;
+    const amount = within(withoutSubject!).getByText("CHF 12.00");
+    const time = metadata.querySelector("time")!;
+    expect(metadata.contains(amount)).toBe(true);
+    expect(metadata.lastElementChild).toBe(time.parentElement);
+    expect(amount.compareDocumentPosition(time) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(invoice!).getByRole("heading", { name: "Invoice" }).parentElement
+      ?.contains(within(invoice!).getByText("CHF 18.00"))).toBe(true);
+    expect(newsGlyph(invoice!, COPY.pixelCaption).trigger).toBeTruthy();
+    expect(receipts.querySelectorAll(".mb-bar, .mb-bar-text")).toHaveLength(0);
   });
 });
 
@@ -279,72 +235,16 @@ describe("Reads with ten such messages", () => {
 
 describe("the seams", () => {
   it("a press on the glyph opens the sentence and does not select or expand the card", async () => {
-    const onSelect = vi.fn();
-    const host = await mountCards([{ html: PIXEL_ONLY, onSelect }]);
-    const card = host.querySelector(".scast")!;
-    const g = glyphOf(card)!;
-    await act(async () => { g.trigger.click(); });
-    expect(glyphOf(card)!.open, "the press did not open the sentence").toBe(true);
-    expect(g.trigger.getAttribute("aria-expanded")).toBe("true");
-    expect(onSelect, "asking about the notice selected the card").not.toHaveBeenCalled();
-    expect(card.classList.contains("open"), "asking about the notice expanded the card").toBe(false);
+    const { card, address } = await mountNews(PIXEL_ONLY);
+    const { trigger } = newsGlyph(card, COPY.pixelCaption);
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    const dialog = within(document.body).getByRole("dialog", { name: COPY.pixelCaption });
+    expect(within(dialog).getByRole("note").textContent).toBe(COPY.pixelOnly);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(card.hasAttribute("data-open"), "asking about the notice selected the card").toBe(false);
+    expect(address.read()).toBe("#/reads");
+    expect(card.hasAttribute("data-expanded"), "asking about the notice expanded the card").toBe(false);
   });
 
-  it("\"Show images\" keeps its place above the body, without the box and without the sentence", async () => {
-    /**
-     * THE WHOLE CHROME, not the five members this case read first — and no cast.
-     *
-     * `resolvedFor` is called at RENDER by every card, so a partial double threw
-     * `resolvedFor is not a function` and the case died before asserting anything. The
-     * `as unknown as` is what kept it compiling: the cast, not the double, is why the webapp's
-     * own test typecheck could not name the missing members. Typed and uncast, a member added to
-     * the interface reddens `tsc` rather than the run.
-     */
-    const asked: Array<{ messageId: string; urls: string[] }> = [];
-    const chrome: RemoteImagesChrome = {
-      auto: false,
-      loadPixels: false,
-      proxyFor: () => (url: string) => `/api/img?u=${encodeURIComponent(url)}`,
-      consented: () => false,
-      consent: () => {},
-      /* A PROXY-DOOR CLIENT HOLDS NOTHING: `proxyFor` is the whole mechanism there, and the map
-         is empty everywhere but a pipe-door — the shape this card is actually in. */
-      resolvedFor: () => new Map<string, string>(),
-      needRemote: (messageId, urls) => { asked.push({ messageId, urls: [...urls] }); },
-    };
-    const host = await mountCards([{ html: TWO_PICTURES, remoteImages: chrome }]);
-    const card = host.querySelector(".scast")!;
-    expect(glyphOf(card)!.name).toBe(COPY.imagesCaption);
-    const bar = card.querySelector<HTMLElement>(".mb-bar");
-    expect(bar, "the button lost its row").not.toBeNull();
-    expect(bar!.classList.contains("mb-bar-quiet"), "the controls row is still boxed").toBe(true);
-    expect(bar!.getAttribute("role"), "a row of controls is not a live region").toBeNull();
-    expect(bar!.querySelector(".mb-bar-text")).toBeNull();
-    expect(bar!.querySelector(".mb-bar-icon")).toBeNull();
-    const btn = [...bar!.querySelectorAll("button")].find((b) => b.textContent === COPY.show);
-    expect(btn, "\"Show images\" is gone").toBeTruthy();
-    /* AND NOTHING WAS FETCHED. The reader has not consented, so the viewer blanks the pictures
-       and offers the button — asking for the bytes here would be the button pressing itself.
-       The recording double is what makes that a reading rather than a stub. */
-    expect(asked, "the pictures were fetched before anybody pressed Show images").toEqual([]);
-  });
-
-  it("the same viewer mounted bare — no host meta line — still says the sentence in its bar", async () => {
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    hosts.push(host);
-    const root = createRoot(host);
-    roots.push(root);
-    await act(async () => {
-      root.render(h(MessageBody, { owner: null, messageId: "bare", text: "hello", html: PIXEL_ONLY }));
-    });
-    await settle();
-    const bar = host.querySelector(".mb-bar");
-    expect(bar, "the reading pane lost its bar").not.toBeNull();
-    expect(bar!.getAttribute("role")).toBe("status");
-    expect(bar!.classList.contains("mb-bar-quiet")).toBe(false);
-    expect(host.querySelector(".mb-bar-text")?.textContent).toBe(COPY.pixelOnly);
-    expect(host.querySelector(".mb-bar-icon")).not.toBeNull();
-    expect(host.querySelector(".gloss-t"), "a glyph appeared where no host asked for one").toBeNull();
-  });
 });

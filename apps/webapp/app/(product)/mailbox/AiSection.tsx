@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { SettingsNote, SettingsRow, SettingsSection, Switch } from "@ohmail/ui";
+import { AiPane } from "@ohmail/app/settings/ai";
 import { aiSettings } from "../../api-client";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
+import { TextFromIntl } from "../../shell/LocaleContext";
 import { useRefusalSentence } from "../refusal-sentence";
 
 /**
@@ -17,7 +18,7 @@ import { useRefusalSentence } from "../refusal-sentence";
  * pane: a self-hosted server mounts these routes and has no subscription at all. Nothing here reads
  * a plan, a balance or a price.
  */
-export function AiSection() {
+export function AiSection({ owner }: { owner?: string | null } = {}) {
   const t = useTranslations("settings");
   const tr = useTranslations("aiRefusal");
   const sentence = useRefusalSentence();
@@ -32,18 +33,24 @@ export function AiSection() {
   const [error, setError] = useState<string | null>(null);
   /** The pane can be navigated away from mid-write; nothing may set state after that. */
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, [owner]);
 
   useEffect(() => {
-    void aiSettings.get()
-      .then(({ aiEnabled }) => { if (alive.current) setEnabled(aiEnabled); })
+    if (owner === null) return;
+    let current = true;
+    void aiSettings.get(owner)
+      .then(({ aiEnabled }) => { if (current) setEnabled(aiEnabled); })
       /* Left UNKNOWN rather than guessed. A switch drawn OFF for an account that has it ON is a
          false statement about what that account is doing, on the one screen that exists to state
          it — so an unread flag renders as an unpressable switch and a sentence, not a position.
          The CATALOGUE's sentence, not the error's: a failed read has nothing specific to say and
          the remedy is the same either way. A refused WRITE does, and shows the server's own. */
-      .catch(() => { if (alive.current) setError(t("aiUnreadable")); });
-  }, [t]);
+      .catch(() => { if (current) setError(t("aiUnreadable")); });
+    return () => { current = false; };
+  }, [owner, t]);
 
   useEffect(() => {
     if (!SELF_HOST_BUILD) return;
@@ -51,12 +58,13 @@ export function AiSection() {
   }, []);
 
   const toggle = useCallback((next: boolean) => {
+    if (owner === null) return;
     setError(null);
     const previous = enabled;
     setEnabled(next);                 // optimistic: the switch must answer the press at once
     void (async () => {
       try {
-        const { aiEnabled } = await aiSettings.set(next);
+        const { aiEnabled } = await aiSettings.set(next, owner);
         // THE SERVER'S ANSWER WINS, not ours — it is the value every AI call site will read.
         if (alive.current) setEnabled(aiEnabled);
       } catch (err) {
@@ -65,26 +73,11 @@ export function AiSection() {
         setError(sentence(err));
       }
     })();
-  }, [enabled, sentence]);
+  }, [enabled, owner, sentence]);
 
   return (
-    <SettingsSection>
-      {error ? <p className="acct-warn" role="alert">{error}</p> : null}
-      <SettingsRow
-        label={t("aiLabel")}
-        description={noModel ? <>{t("aiSub")} {tr("noModel")}</> : t("aiSub")}
-        control={
-          <Switch
-            checked={enabled === true}
-            disabled={enabled === null}
-            onChange={toggle}
-            ariaLabel={t("aiLabel")}
-          />
-        }
-      />
-      {/* WHAT TURNING IT OFF ACTUALLY COSTS, said here so a rules-only result never reads as an
-          outage: the deterministic rules run first and handle most mail either way. */}
-      <SettingsNote icon="spark">{t("aiOffNote")}</SettingsNote>
-    </SettingsSection>
+    <TextFromIntl>
+      <AiPane model={{ enabled, problem: error, noModel, toggle }} noModelSaid={tr("noModel")} />
+    </TextFromIntl>
   );
 }

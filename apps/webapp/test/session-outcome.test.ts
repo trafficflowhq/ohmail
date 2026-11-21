@@ -86,6 +86,18 @@ afterEach(async () => {
 });
 
 describe("owner — the server named an account", () => {
+  it("supplies the verified address to the signed-in frame when that frame asks for it", async () => {
+    wire(() => json(fullBody, 200));
+    expect(await resolveOwnerOutcome({ includeAddress: true })).toEqual({
+      kind: "owner", accountId: ACCOUNT, address: fullBody.user.email,
+    });
+  });
+
+  it("withholds an unverified address even when the account itself is confirmed", async () => {
+    wire(() => json({ ...fullBody, user: { ...fullBody.user, emailVerified: false } }, 200));
+    expect(await resolveOwnerOutcome({ includeAddress: true })).toEqual({ kind: "owner", accountId: ACCOUNT });
+  });
+
   it("200 with scope full and an account id", async () => {
     wire(() => json(fullBody, 200));
     expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: ACCOUNT });

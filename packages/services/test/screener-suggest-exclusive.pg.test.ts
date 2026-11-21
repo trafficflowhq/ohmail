@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { accounts, mailboxes, messages, folderState } from "@trafficflow/db";
+import { accountSettings, accounts, mailboxes, messages, folderState } from "@trafficflow/db";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import type { ClassifierPort } from "@trafficflow/core";
@@ -93,6 +93,7 @@ function ctxFor(db: (typeof dbs)[number], accountId: string): ServiceContext {
 async function seedAccount(granted: number, senders: string[]): Promise<{ accountId: string; ids: Map<string, string> }> {
   const accountId = randomUUID();
   await reader.insert(accounts).values({ id: accountId, name: "money1" });
+  await reader.insert(accountSettings).values({ accountId, autoSuggestAt: NOW });
   credits.budget(granted);
   const [mb] = await reader.insert(mailboxes)
     .values({ accountId, provider: "imap", address: `m1-${accountId.slice(0, 8)}@ex.example` }).returning();

@@ -12,7 +12,7 @@ import type { ClassifierPort, ClassifierInput, ClassifierResult } from "@traffic
 import { ScreenerService, pendingKeyTtlMs } from "../src/index.js";
 import { fakeSpendPort, type FakeSpendPort } from "./helpers/spend-port-fake.js";
 import { PLANE_PRICES, PLANE_PRICING } from "./helpers/plane-pricing.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 
 /*
  * the request's Idempotency-Key is claimed BEFORE the first credit is spent.
@@ -44,7 +44,7 @@ function heldClassifier() {
 }
 
 async function world(credits: FakeSpendPort = fakeSpendPort()) {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "key-before-spend" });
   await seedMessage(w.db, w.accountId, w.mailboxId, { from: "alice@ex.example" });
   await seedMessage(w.db, w.accountId, w.mailboxId, { from: "bob@ex.example" });

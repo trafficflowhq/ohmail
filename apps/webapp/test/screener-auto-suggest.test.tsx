@@ -1,17 +1,15 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
-import { beforeEach, afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { useSuggestText } from "../app/shell/suggest-text";
-import {
-  OhmailEngine, MemoryMirrorStore, mutationEffects,
-  type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
+import type { EngineMessage, EngineMutation, Folder, SyncResponse } from "@ohmail/wire";
+import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { createElement, Fragment, useLayoutEffect } from "react";
+import { within } from "@testing-library/react";
+import { OhmailEngine } from "@ohmail/client-engine";
+import * as screener from "@ohmail/app/screener";
 import messages from "../messages/en.json";
-import { settleFirstPaint } from "./_first-paint.js";
+import {
+  ACCOUNT, ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
+  scriptRefresh, scriptSession, scriptSync, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
 /**
  * THE AUTO-SUGGEST OPT-IN, ON THE WIRE — mail 0040.
@@ -45,25 +43,6 @@ import { settleFirstPaint } from "./_first-paint.js";
  * `apps/webapp` typechecks its tests, so the wire shapes below are checked as well as the values.
  */
 
-// See `sync-liveness-shell.test.ts` for why React is published as a global.
-(globalThis as unknown as { React: unknown }).React = React;
-// BEFORE any import of `api-client`: `API_BASE` is read once at module load.
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-
 /**
  * The bound the automatic batch must respect, restated here as a LITERAL.
  *
@@ -73,19 +52,16 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
  */
 const AUTO_BATCH_SIZE = 10;
 
-const NOW = new Date("2026-08-02T12:00:00.000Z");
-let seq = 0;
-
 function msg(id: string, from: string, hour: number, folder: Folder = "ohmail/Screener"): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    id, accountId: ACCOUNT, mailboxId: "mb_1", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
-    date: `2026-08-02T${String(hour).padStart(2, "0")}:00:00.000Z`,
+    date: `2026-09-03T${String(hour).padStart(2, "0")}:00:00.000Z`,
     folder, snippet: `snippet ${id}`, unread: true,
     hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none",
-    updatedAt: "2026-08-02T09:00:00.000Z",
+    updatedAt: "2026-09-03T09:00:00.000Z",
   };
 }
 
@@ -100,8 +76,7 @@ let calls: Recorded[] = [];
 let sent: EngineMutation[] = [];
 /** Everything the surface said out loud. The automatic path's ONLY way to be heard. */
 let toasts: string[] = [];
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
 let suggestReply: (body: { senders: string[]; dryRun?: boolean }, n: number) => Response;
 
 const json = (v: unknown, status = 200) =>
@@ -111,174 +86,127 @@ const json = (v: unknown, status = 200) =>
 const refusal = (status: number, code: string, message: string) =>
   json({ error: { code, message } }, status);
 
-function installFetch(): void {
-  let n = 0;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : String(input);
-    const path = url.replace(/^\/api/, "");
-    const raw = typeof init?.body === "string" ? (JSON.parse(init.body) as Recorded["body"]) : null;
-    const headers = (init?.headers ?? {}) as Record<string, string>;
-    calls.push({
-      method: init?.method ?? "GET", path, body: raw,
-      idempotencyKey: headers["Idempotency-Key"] ?? null,
-    });
-    if (path.startsWith("/screener/suggest")) {
-      n++;
-      return suggestReply(raw as { senders: string[]; dryRun?: boolean }, n);
-    }
-    // The stored-suggestion hydration. Empty, so nothing is already owned.
-    if (path.startsWith("/screener")) {
-      return json({ items: [], nextCursor: null, suggestable: { senders: [], credits: 0, maxPerRequest: 50 } });
-    }
-    return json({});
-  }) as typeof fetch;
-}
-
-const suggestCalls = () => calls.filter((c) => c.path.startsWith("/screener/suggest"));
+const suggestCalls = () => calls.filter((c) => c.path === "/screener/suggest");
 const purchases = () => suggestCalls().filter((c) => c.body?.dryRun !== true);
 const dryRuns = () => suggestCalls().filter((c) => c.body?.dryRun === true);
-/** Every request that is NOT the suggest endpoint or the read that hydrates it. */
-const decides = () => calls.filter((c) => c.method === "POST" && /^\/screener\/[^s]/.test(c.path));
+const decides = () => calls.filter((c) => c.method === "POST" && c.path !== "/screener/suggest");
 
-/**
- * The engine, plus the ONE way this file introduces late mail.
- *
- * `deliver` pushes messages through `engine.syncOnce()` — the engine's own ingest path — rather than
- * writing to the store and poking a subscriber. That matters twice: it is what a warming mirror
- * actually does, and the alternative reached `engine.notify()`, which is private. A harness that
- * has to break encapsulation to simulate an event is usually simulating the wrong event.
- */
-async function engineWith(
-  held: EngineMessage[],
-): Promise<{ engine: OhmailEngine; deliver: (m: EngineMessage[]) => Promise<void> }> {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges(
-    held.map((m): SyncChange => ({
-      type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
-    })),
-  );
-  /** What the next `sync()` hands over. Drained, so a second sync does not replay it. */
-  let pending: EngineMessage[] = [];
-  const engine = new OhmailEngine({
-    store,
-    now: () => NOW,
-    adapter: {
-      sync: async () => {
-        const batch = pending;
-        pending = [];
-        return {
-          changes: {
-            creates: batch.map((m): SyncChange => ({
-              type: "message", op: "create", id: m.id, seq: ++seq,
-              updatedAt: m.updatedAt, entity: m,
-            })),
-            updates: [], moves: [], deletes: [],
-          },
-          cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-        };
-      },
-      mutate: async (m) => {
-        sent.push(m);
-        const changes: SyncChange[] = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++seq}` })
-          .map((e) => ({
-            type: e.type, op: e.move ? "move" : "update", id: e.id, seq: ++seq,
-            updatedAt: NOW.toISOString(), entity: e.entity, ...(e.move ? { move: e.move } : {}),
-          }));
-        await store.applyChanges(changes);
-        return { changes, seq: changes[changes.length - 1]?.seq ?? null };
-      },
-      withdrawSend: async () => ({ outcome: "unsupported" as const }),
-      fetchBody: async () => ({ text: "body", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }),
-    },
-  });
-  const deliver = async (m: EngineMessage[]): Promise<void> => {
-    pending = m;
-    await act(async () => { await engine.syncOnce(); });
-    await flush();
-  };
-  return { engine, deliver };
-}
+let mounted = false;
 
-/**
- * Mount the REAL hooks over the REAL view. Nothing about the purchase is faked but the server.
- *
- * `autoSuggest` is passed exactly as `AppShell` passes it — off the consent state — so what is
- * under test is the wiring a live shell uses and not a switch this harness invented.
- */
 async function mountView(
-  engine: OhmailEngine, opts: { autoSuggest?: boolean; subscriptionPane?: boolean } = {},
-): Promise<{ unsuggested: () => string[]; revisit: () => Promise<void> }> {
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  initial: EngineMessage[],
+  opts: { autoSuggest?: boolean; subscriptionPane?: boolean; forgetOwner?: boolean } = {},
+) {
+  installConfirmEnv();
+  mounted = true;
+  window.localStorage.clear();
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
 
-  let live: { unsuggestedSenders: string[] } | null = null;
-  /** Flips `active`, which is what navigating away from the Screener and back really is. */
-  let setActive: ((on: boolean) => void) | null = null;
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    const [onScreen, setOnScreen] = React.useState(true);
-    setActive = setOnScreen;
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const suggestions = useScreenerSuggestions({
-      text: useSuggestText(),
-      wire: CLOUD_WIRE,
-      active: onScreen,
-      ...(opts.autoSuggest === undefined ? {} : { autoSuggest: opts.autoSuggest }),
-      toast: ((m: string) => { toasts.push(m); }) as never,
-    });
-    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
-    const [sel, setSel] = React.useState<Record<string, string | null>>({
-      waiting: null, screened: null, spam: null,
-    });
-    live = state;
-    return h(ScreenerView, {
-      owed: false,
-      state,
-      suggest: suggestions.forSenders(state.unsuggestedSenders),
-      segment: "waiting", settled: true, selection: sel as never,
-      ...(opts.subscriptionPane === undefined ? {} : { subscriptionPane: opts.subscriptionPane }),
-      onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never);
+  let unsuggested: string[] = [];
+  const Above = screener.ScreenerAbove;
+  function Observe() {
+    const model = screener.useScreener();
+    useLayoutEffect(() => { unsuggested = model.unsuggestedSenders; }, [model]);
+    return null;
   }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(KeymapProvider, { children: h(Probe) }),
-        }),
-      }),
-    );
+  vi.spyOn(screener, "ScreenerAbove").mockImplementation(({ children, ...props }) =>
+    createElement(Above, { ...props, children: createElement(Fragment, null, createElement(Observe), children) }),
+  );
+  const mutate = OhmailEngine.prototype.mutate;
+  vi.spyOn(OhmailEngine.prototype, "mutate").mockImplementation(function (this: OhmailEngine, ...args) {
+    sent.push(args[0]);
+    return mutate.apply(this, args);
   });
-  await flush();
+
+  const mail = [...initial];
+  scriptSync(() => {
+    const creates: SyncResponse["changes"]["creates"] = mail.map((entity, index) => ({
+      type: "message", op: "create", id: entity.id, seq: index + 1, updatedAt: ISO, entity,
+    }));
+    return json({
+      changes: { creates, updates: [], moves: [], deletes: [] },
+      cursor: String(creates.length), hasMore: false, serverTime: ISO,
+    } satisfies SyncResponse);
+  });
+  const fixture = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), window.location.origin);
+    const path = url.pathname.replace(/^\/api/, "");
+    const method = init?.method ?? "GET";
+    if (method === "GET" && path === "/mailboxes") {
+      return json({ items: [{
+        id: "mb_1", address: ["mailbox", "example.invalid"].join("@"), status: "connected",
+        organizerRole: "organizer", initialImportCompletedAt: ISO, organizeConsentedAt: ISO,
+        lastSyncAt: ISO, createdAt: ISO,
+      }] });
+    }
+    if (method === "GET" && path === "/account/access") {
+      return json({ metered: opts.subscriptionPane === true, aiEnabled: true });
+    }
+    if (method === "GET" && path === "/consent") {
+      const base = await (await fixture(input, init)).json();
+      return json({
+        ...base,
+        ...(opts.autoSuggest === undefined ? {} : { autoSuggestAt: opts.autoSuggest ? ISO : null }),
+      });
+    }
+    if (path.startsWith("/screener") || (method !== "GET" && /^\/(rules|messages|contacts)(?:\/|$)/.test(path))) {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Recorded["body"] : null;
+      calls.push({ method, path, body, idempotencyKey: new Headers(init?.headers).get("idempotency-key") });
+      if (path === "/screener/suggest") {
+        return suggestReply(body as { senders: string[]; dryRun?: boolean }, suggestCalls().length);
+      }
+      // The advice read has no stored suggestions. The queue reader falls back to the synced mail.
+      if (method === "GET" && path === "/screener" && !url.searchParams.has("live")) {
+        return json({ items: [], nextCursor: null, suggestable: { senders: [], maxPerRequest: 50 } });
+      }
+    }
+    if (method === "GET" && path.endsWith("/body")) return new Response(null, { status: 503 });
+    return fixture(input, init);
+  };
+
+  window.location.hash = "#/ohbox";
+  host = await mountCloudShell();
+  await tick(3000);
+  sent = [];
+  calls = [];
+  const go = async (place: "Ohbox" | "Screener") => {
+    const rail = within(host!).getByRole("navigation", { name: "Places" });
+    const target = within(rail).getByRole("button", {
+      name: (name) => name === place || name.startsWith(`${place} `),
+    });
+    await act(async () => { target.click(); });
+    await tick(1000);
+  };
+  const readReport = () => {
+    const report = host?.querySelector('.fr-report [role="status"]:not([data-leaving])')?.textContent;
+    if (report) toasts.push(report);
+  };
+  if (opts.forgetOwner) document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  await go("Screener");
+  await tick(1500);
+  readReport();
   return {
-    unsuggested: () => live!.unsuggestedSenders,
-    /** Leave the Screener, then come back. The unit the opt-in is scoped to. */
+    unsuggested: () => unsuggested,
+    deliver: async (next: EngineMessage[]) => {
+      mail.push(...next);
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+      await tick(3000);
+    },
     revisit: async () => {
-      await act(async () => { setActive!(false); });
-      await flush();
-      await act(async () => { setActive!(true); });
-      await flush();
+      await go("Ohbox");
+      await tick(11000);
+      await go("Screener");
+      await tick(1500);
+      readReport();
     },
   };
-  await settleFirstPaint();
 }
 
-async function flush(): Promise<void> {
-  for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
-}
+beforeAll(warmCloudShell);
 
 beforeEach(() => {
   calls = [];
@@ -298,15 +226,15 @@ beforeEach(() => {
       })),
       skipped: [],
     });
-  installFetch();
 });
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
+async function unmountView() {
+  if (mounted) await teardownConfirmEnv();
+  mounted = false;
   host = null;
-});
+}
+
+afterEach(unmountView);
 
 /** Twelve waiting senders, so the batch bound is BELOW the queue and can be observed biting. */
 const TWELVE = Array.from({ length: 12 }, (_, i) =>
@@ -314,28 +242,26 @@ const TWELVE = Array.from({ length: 12 }, (_, i) =>
 
 describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
   it("OFF BY DEFAULT: with the flag absent, not one suggest request is issued", async () => {
-    const { engine } = await engineWith(TWELVE);
-    const view = await mountView(engine);
+    const view = await mountView(TWELVE);
     // The premise, so the assertion cannot pass because there was nothing to buy.
     expect(view.unsuggested().length).toBe(12);
     expect(suggestCalls()).toEqual([]);
   });
 
   it("OFF EXPLICITLY: `autoSuggest: false` is the same silence", async () => {
-    const { engine } = await engineWith(TWELVE);
-    const view = await mountView(engine, { autoSuggest: false });
+    const view = await mountView(TWELVE, { autoSuggest: false });
     expect(view.unsuggested().length).toBe(12);
     expect(suggestCalls()).toEqual([]);
   });
 
   it("ON: exactly ONE purchase, bounded, from the front of the queue, keyed", async () => {
-    const { engine } = await engineWith(TWELVE);
-    const view = await mountView(engine, { autoSuggest: true });
+    const view = await mountView(TWELVE, { autoSuggest: true });
 
     expect(purchases()).toHaveLength(1);
     const posted = purchases()[0]!.body!.senders!;
     expect(posted.length).toBeLessThanOrEqual(AUTO_BATCH_SIZE);
     expect(posted).toHaveLength(AUTO_BATCH_SIZE);
+    expect(posted).toEqual(TWELVE.slice(0, AUTO_BATCH_SIZE).map(({ from }) => from.address));
 
     // A PREFIX of the queue in the queue's own order — not a sample, so the same account in the
     // same state buys the same senders and the next visit continues rather than re-rolls.
@@ -354,8 +280,7 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
   });
 
   it("NOBODY PRESSED IT, AND THE WIRE SAYS SO: `automatic: true` rides the purchase", async () => {
-    const { engine } = await engineWith(TWELVE);
-    await mountView(engine, { autoSuggest: true });
+    await mountView(TWELVE, { autoSuggest: true });
     // Without the flag the server reads a press, which asks about every held sender
     // (the "Sensitive mail" invariant) — the opt-in's batch would send what the always-on pass keeps out.
     expect(purchases()).toHaveLength(1);
@@ -374,8 +299,7 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
         suggestions: asked.map((s) => ({ sender: s, messageId: `m-${s}`, decision: "yes", confidence: 0.9, rationale: "r" })),
       });
     };
-    const { engine } = await engineWith(held);
-    const view = await mountView(engine, { autoSuggest: true });
+    const view = await mountView(held, { autoSuggest: true });
     expect(purchases()[0]!.body!.senders).toEqual(expect.arrayContaining(kept));
     // No chip: the row speaks from its own mirror flag, and the sender stays in the buy list.
     expect(host!.textContent).not.toContain("no_auto_ai");
@@ -388,8 +312,7 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
   });
 
   it("IT SUGGESTS, IT NEVER DECIDES: no decide call, and nothing moves", async () => {
-    const { engine } = await engineWith(TWELVE);
-    await mountView(engine, { autoSuggest: true });
+    await mountView(TWELVE, { autoSuggest: true });
 
     expect(purchases()).toHaveLength(1);
     // `POST /screener/:id` is the decide verb — a rule, a contact, a folder move. The automatic
@@ -405,15 +328,14 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
 
   it("A COLD MIRROR still gets its batch — the queue is empty for the first renders", async () => {
     // Nothing held at mount: exactly what a real account looks like while the mirror fills.
-    const { engine, deliver } = await engineWith([]);
-    const view = await mountView(engine, { autoSuggest: true });
+    const view = await mountView([], { autoSuggest: true });
     expect(view.unsuggested()).toEqual([]);
     // Nothing to buy, so nothing was bought — and, critically, the latch was NOT spent on the
     // empty queue.
     expect(suggestCalls()).toEqual([]);
 
     // The mirror arrives.
-    await deliver(TWELVE);
+    await view.deliver(TWELVE);
 
     expect(view.unsuggested().length).toBeGreaterThan(0);
     expect(purchases()).toHaveLength(1);
@@ -422,14 +344,13 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
 
   it("A REFUSAL DISARMS FOR THE SESSION: leaving and coming back does not retry it", async () => {
     suggestReply = () => refusal(402, "insufficient_credits", "no AI credits remain on this account");
-    const { engine, deliver } = await engineWith(TWELVE);
-    const view = await mountView(engine, { autoSuggest: true });
+    const view = await mountView(TWELVE, { autoSuggest: true });
 
     expect(purchases()).toHaveLength(1);
 
     // New mail changes nothing: the effect's dependencies are four real signals and "the queue
     // grew" is not one of them.
-    await deliver([msg("late", "late@example.com", 5)]);
+    await view.deliver([msg("late", "late@example.com", 5)]);
     expect(purchases()).toHaveLength(1);
 
     // AND THE CASE THAT MAKES THE DISARM LOAD-BEARING. Coming back to the Screener re-arms the
@@ -440,8 +361,7 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
   });
 
   it("A SUCCESSFUL visit re-arms: coming back buys the NEXT few, not the same ones", async () => {
-    const { engine } = await engineWith(TWELVE);
-    const view = await mountView(engine, { autoSuggest: true });
+    const view = await mountView(TWELVE, { autoSuggest: true });
     expect(purchases()).toHaveLength(1);
     const first = purchases()[0]!.body!.senders!;
 
@@ -458,8 +378,7 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
 
   it("A REFUSAL IS SAID OUT LOUD, in the reader's own language", async () => {
     suggestReply = () => refusal(409, "ai_disabled", "managed AI is switched off for this account");
-    const { engine } = await engineWith(TWELVE);
-    await mountView(engine, { autoSuggest: true });
+    await mountView(TWELVE, { autoSuggest: true });
 
     // TOASTED, not merely stored in the panel's `notice`. This assertion is why the
     // implementation toasts at all: the first version only set `notice`, which renders INSIDE the
@@ -482,34 +401,19 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
     // has gone. Disarming on it stopped the automatic pass for the whole mount over a condition
     // the next page load undoes, and the sentence shown was the server's voice for a refusal no
     // server made.
-    const { bindApiOwner } = await import("../app/api-client.js");
-    document.cookie = "tf_owner=; Path=/; Max-Age=0";
-    bindApiOwner("acct_A");
-    try {
-      const { engine } = await engineWith(TWELVE);
-      const view = await mountView(engine, { autoSuggest: true });
+    const view = await mountView(TWELVE, { autoSuggest: true, forgetOwner: true });
+    expect(suggestCalls()).toHaveLength(0);
+    expect(toasts.join(" | ")).toContain(messages.screener.suggest.refusedOwnerAbsent);
+    expect(toasts.join(" | ")).not.toContain("different account");
+    expect(toasts.join(" | ")).not.toContain("This browser has lost the name");
 
-      // It never reached the wire — this is a CLIENT refusal, which is the premise.
-      expect(suggestCalls()).toHaveLength(0);
-      // THE CLIENT'S OWN SENTENCE, from the catalogue, naming the state and the way out.
-      expect(toasts.join(" | ")).toContain(messages.screener.suggest.refusedOwnerAbsent);
-      // And NOT the raw English the gate throws for a generic error path to render.
-      expect(toasts.join(" | ")).not.toContain("different account");
-      expect(toasts.join(" | ")).not.toContain("This browser has lost the name");
-
-      // STILL ARMED. Coming back tries again — the wall the latch exists for is a standing
-      // server condition, and this is not one. The disarm's own case, five above, is the control.
-      const before = toasts.length;
-      await view.revisit();
-      expect(toasts.length, "a client-side refusal disarmed the automatic pass").toBeGreaterThan(before);
-    } finally {
-      bindApiOwner(null);
-    }
+    const before = toasts.length;
+    await view.revisit();
+    expect(toasts.length, "a client-side refusal disarmed the automatic pass").toBeGreaterThan(before);
   });
 
   it("A SUCCESSFUL automatic purchase is said out loud too — money moved with no press", async () => {
-    const { engine } = await engineWith(TWELVE);
-    await mountView(engine, { autoSuggest: true });
+    await mountView(TWELVE, { autoSuggest: true });
     expect(purchases()).toHaveLength(1);
     // The "visible after the fact" half of the opt-in. Nobody pressed anything, so the only
     // record the user gets in the moment is this line, and it names the count and the credits.
@@ -526,38 +430,38 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
  * only where Settings lists the Subscription pane.
  */
 describe("a refused automatic batch stays said", () => {
-  const strip = (): string | null =>
-    host?.querySelector<HTMLElement>(".scn-bulk .scn-ai-credits[role='status']")?.textContent ?? null;
+  const strip = (): string | null => {
+    const tools = within(host!).getByRole("group", { name: messages.screener.bulkAria });
+    return within(tools).queryAllByRole("status")
+      .map((line) => line.textContent)
+      .find((line) => line === messages.screener.suggest.noCredits
+        || line === messages.screener.suggest.noCreditsWhere) ?? null;
+  };
 
   it("402 no credits: the strip says suggestions need credits, and points nowhere it cannot", async () => {
     suggestReply = () => refusal(402, "insufficient_credits", "no AI credits remain on this account");
-    const { engine } = await engineWith(TWELVE);
-    await mountView(engine, { autoSuggest: true });
+    await mountView(TWELVE, { autoSuggest: true });
     expect(purchases(), "premise: the automatic batch went out and was refused").toHaveLength(1);
+    await tick(12000);
     expect(strip(), "the refusal left nothing on screen").toBe(messages.screener.suggest.noCredits);
   });
 
   it("…and names Settings → Subscription where Settings lists it", async () => {
     suggestReply = () => refusal(402, "insufficient_credits", "no AI credits remain on this account");
-    const { engine } = await engineWith(TWELVE);
-    await mountView(engine, { autoSuggest: true, subscriptionPane: true });
+    await mountView(TWELVE, { autoSuggest: true, subscriptionPane: true });
     expect(strip()).toBe(messages.screener.suggest.noCreditsWhere);
     expect(messages.screener.suggest.noCreditsWhere).toContain(messages.settings.billing);
   });
 
   it("control: a funded batch and a switched-off AI say no credits line", async () => {
-    const funded = await engineWith(TWELVE);
-    await mountView(funded.engine, { autoSuggest: true, subscriptionPane: true });
+    await mountView(TWELVE, { autoSuggest: true, subscriptionPane: true });
     expect(purchases()).toHaveLength(1);
     expect(strip()).toBeNull();
-    await act(async () => { root!.unmount(); });
-    host?.remove();
-    root = null;
+    await unmountView();
 
     suggestReply = () => refusal(409, "ai_disabled", "managed AI is switched off for this account");
-    const off = await engineWith(TWELVE);
-    await mountView(off.engine, { autoSuggest: true, subscriptionPane: true });
-    expect(purchases()).toHaveLength(2);
+    await mountView(TWELVE, { autoSuggest: true, subscriptionPane: true });
+    expect(purchases()).toHaveLength(1);
     expect(strip(), "the credits line spoke for a refusal that was not about credits").toBeNull();
   });
 });

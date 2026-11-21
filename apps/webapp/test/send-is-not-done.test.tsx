@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -8,10 +9,10 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
-import { barVerb, cursorRow, menuItem, openLetter, reportPress } from "./ohbox/_finders.js";
+import { cursorRow, openRow } from "./ohbox/_finders.js";
 
 /**
- * SEND IS NOT DONE — through the whole shell (the desktop mounts this same AppShell).
+ * SEND IS NOT DONE — through the mounted mail frame.
  *
  * Reported 2026-10-22: "I had a resurfaced message and clicked only send on it and not send and
  * done and it marked as done!" A plain Send leaves a pinned row under Resurfaced and a booked
@@ -75,7 +76,7 @@ async function settle(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -85,44 +86,39 @@ async function mountShell(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
   });
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-  const { preloadRichEditor } = await import("../app/shell/RichEditorLazy.js");
-  await act(async () => { await preloadRichEditor(); });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
   await key("j");
 }
 
-/** A verb by its name: the seated panel's or its open menu's at the Ohbox, today's bar at a pile. */
-const barButton = (label: string): HTMLElement | undefined =>
-  barVerb(host!, label) ?? menuItem(label) ?? [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
-    .find((b) => (b.textContent ?? "").trim().startsWith(label));
-function idsInGroup(label: string): string[] {
-  const box = host!.querySelector(`[role="listbox"][aria-label="${label}"]`);
-  if (!box) return [];
-  return [...box.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
-}
-const editors = (): HTMLElement[] =>
-  [...(openLetter(host!) ? [openLetter(host!)!] : []), ...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
-    .flatMap((m) => [...m.querySelectorAll<HTMLElement>(".rte-surface")]);
-const doneButton = (): HTMLButtonElement | null =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .reply-send-done");
-const sendButton = (): HTMLButtonElement =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .btn.primary")!;
-const replyFor = (): string =>
-  host!.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? "";
+const page = () => within(host!);
+const reader = () => page().queryByRole("region", { name: "Open message" });
+const barButton = (label: string): HTMLElement | null => {
+  const reading = reader();
+  const item = within(document.body).queryByRole("menuitem", {
+    name: (name) => name === label || name.startsWith(`${label} `),
+  });
+  return item ?? (reading === null ? null : within(reading).queryByRole("button", { name: label }));
+};
 
-/**
- * The pill's Undo: today's capsule's, or at a seated place the frame's report's press (declared), whose
- * text carries its key beside the word.
- */
-const undoPress = (): HTMLButtonElement | undefined =>
-  [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Undo")
-  ?? ((reportPress()?.textContent ?? "").trim().startsWith("Undo") ? reportPress()! : undefined);
+function idsInGroup(label: string): string[] {
+  const box = page().queryByRole("listbox", { name: label });
+  return box === null ? [] : within(box).queryAllByRole("option").map((row) => row.dataset.id!);
+}
+
+const editors = (): HTMLElement[] => {
+  const reading = reader();
+  return reading === null ? [] : within(reading).queryAllByRole("textbox", { name: messages.write.reply.text });
+};
+const doneButton = (): HTMLElement | null => barButton(messages.reply.sendAndDone);
+const sendButton = (): HTMLElement => barButton(messages.write.send)!;
+const replyFor = (): string => editors().length > 0 ? (openRow(host!)?.dataset.id ?? "") : "";
+
+const undoPress = (): HTMLElement | null => page().queryByRole("button", { name: /^Undo\b/ });
 
 async function pinSelected(): Promise<string> {
   const id = cursorRow(host!)?.dataset.id;
@@ -180,9 +176,12 @@ const chord = async (shiftKey: boolean): Promise<void> => {
 };
 const kinds = (): string[] => sent.map((m) => m.kind);
 
-async function openBookedFromThePile(): Promise<string> {
-  const id = cursorRow(host!)?.dataset.id;
+async function openBookedFromThePile(): Promise<{ id: string; name: string }> {
+  const ohboxRow = cursorRow(host!);
+  const id = ohboxRow?.dataset.id;
+  const name = ohboxRow?.getAttribute("aria-label");
   expect(id, "no row under the cursor").toBeTruthy();
+  expect(name, "the booked row has no sender and subject name").toMatch(/.+: .+/);
   await key("Enter");
   await click(barButton("Resurface"));
   await click(barButton("Tomorrow"));
@@ -191,15 +190,14 @@ async function openBookedFromThePile(): Promise<string> {
     window.dispatchEvent(new Event("hashchange"));
   });
   await settle();
-  await click(host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`));
-  await key("Enter");
+  await click(resurfacePile().getByRole("option", { name: name! }));
   await key("r");
   await drain();
   expect(replyFor()).toBe(id);
-  return id!;
+  return { id: id!, name: name! };
 }
-const pile = (): string[] =>
-  [...host!.querySelectorAll<HTMLElement>(".view-triage :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id!);
+const resurfacePile = () =>
+  within(within(host!).getByRole("listbox", { name: messages.resurface.title }));
 
 describe("a plain Send files nothing", () => {
   it("Send on a pinned row puts only the mail on the wire, and the row stays under Resurfaced", async () => {
@@ -233,7 +231,7 @@ describe("a plain Send files nothing", () => {
 
   it("Send from the Resurface pile keeps the booking", async () => {
     await mountShell();
-    const id = await openBookedFromThePile();
+    const { id, name } = await openBookedFromThePile();
     await type("Danke.");
     sent = [];
     await act(async () => { sendButton().click(); });
@@ -244,7 +242,10 @@ describe("a plain Send files nothing", () => {
       window.dispatchEvent(new Event("hashchange"));
     });
     await settle();
-    expect(pile(), "the booked message left the Resurface pile").toContain(id);
+    expect(
+      resurfacePile().getByRole("option", { name }).dataset.id,
+      "the original booked message left the Resurface pile",
+    ).toBe(id);
   });
 });
 

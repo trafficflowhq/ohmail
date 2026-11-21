@@ -26,6 +26,7 @@ import { InvitationsPanel } from "../../src/invitations/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, type FakeAddress } from "../support/fake-window.js";
+import { fakeMail, mountReader, WORDS as readerWords } from "../reader/support/mail.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 
 const ZURICH = "Europe/Zurich";
@@ -129,7 +130,7 @@ function mirror(verdictOf: (act: CalendarAct) => CalendarVerdict | null) {
     return () => void heard.delete(listener);
   };
   const engine = {
-    store: { entries },
+    store: { entries, get: (kind: string, id: string) => kinds.get(kind)?.get(id) },
     subscribe,
     read: () => ({ version: () => version }),
   } as unknown as OhmailEngine;
@@ -363,5 +364,98 @@ describe("the invitations' panel", () => {
     m.put("calendar_event", "b", invitation("b", "Planning call", "20261119", { myAnswer: "declined" }));
     mount(m, "#/cal/week/2026-11-18?panel=invitations");
     expect(within(panel()).getByText(/2 answered/)).toBeTruthy();
+  });
+});
+
+describe("an invitation opened in the calendar", () => {
+  function openCard(m: ReturnType<typeof mirror>, readMailboxes: () => Promise<unknown[]> = async () => []) {
+    const address = fakeAddress("#/cal/week/2026-11-18/e/a");
+    const engine = Object.assign(fakeMail([]).engine, { store: m.engine.store });
+    const mounted = mountReader({
+      letters: [],
+      open: null,
+      host: {
+        engine,
+        calendar: withPanel,
+        products: "both",
+        wires: { calendar: m.port },
+        mailboxes: readMailboxes,
+        address,
+      },
+      words: { ...readerWords.en, ...WORDS },
+    });
+    return { address, unmount: mounted.view.unmount };
+  }
+  const given = () => within(screen.getByRole("dialog", { name: "Tech check" }));
+  const place = (m: ReturnType<typeof mirror>) => {
+    m.put("calendar", studio.id, studio);
+    m.put("calendar_event", "a", invitation("a", "Tech check", "20261118"));
+  };
+
+  it("changes the answer on the open event, keeps the card in place and sends each choice once", async () => {
+    const m = mirror(() => null);
+    place(m);
+    const { address } = openCard(m);
+    const yes = await given().findByRole("button", { name: "Yes" });
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    await settle();
+    expect(yes.getAttribute("aria-pressed")).toBe("true");
+    expect(given().getByText("Not sent yet from this device")).toBeTruthy();
+    const maybe = given().getByRole("button", { name: "Maybe" });
+    fireEvent.click(maybe);
+    await settle();
+    expect(maybe.getAttribute("aria-pressed")).toBe("true");
+    expect(m.pressed).toEqual(
+      ["accepted", "tentative"].map((answer) => ({
+        kind: "calendar_event_answer",
+        eventId: "a",
+        base: UPDATED,
+        scope: { kind: "record" },
+        answer,
+      })),
+    );
+    expect(address.read()).toContain("/e/a");
+  });
+
+  it("waits for the mailbox identity and withdraws the answers when the event becomes view only", async () => {
+    const m = mirror(() => null);
+    place(m);
+    let resolve!: (rows: unknown[]) => void;
+    openCard(
+      m,
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    expect(given().queryByRole("group", { name: "Answer" })).toBeNull();
+    await act(async () => resolve([]));
+    expect(given().getByRole("button", { name: "Yes" })).toBeTruthy();
+    act(() => m.put("calendar", studio.id, { ...studio, access: "reader" }));
+    expect(given().queryByRole("button", { name: "Yes" })).toBeNull();
+    expect(m.pressed).toEqual([]);
+  });
+
+  it("offers no answer on one's own event and says when an invited answer was refused", async () => {
+    const m = mirror(() => ({ kind: "refused", word: "calendar_read_only", details: null }));
+    place(m);
+    const organizer = invitation("a", "Tech check", "20261118").organizer!;
+    openCard(m, async () => [{ address: organizer.address }]);
+    await settle();
+    expect(given().queryByRole("button", { name: "Yes" })).toBeNull();
+    act(() =>
+      m.put(
+        "calendar_event",
+        "a",
+        invitation("a", "Tech check", "20261118", {
+          organizer: { name: "Pat", address: "pat@studio.test" },
+        }),
+      ),
+    );
+    fireEvent.click(await given().findByRole("button", { name: "No" }));
+    await settle();
+    expect(said()).toContain("This calendar can be looked at, not changed.");
+    expect(given().getByRole("button", { name: "No" }).getAttribute("aria-pressed")).toBe("false");
   });
 });

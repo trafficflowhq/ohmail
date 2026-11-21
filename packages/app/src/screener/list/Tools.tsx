@@ -3,7 +3,7 @@
  * first), Suggest (where the shell hands a run: the price before the spend, nothing bought before the confirm), and
  * Apply, which files every sender with a real suggestion where it says, and names those places on its button.
  */
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import {
   PILE_KEY,
   refused,
@@ -11,12 +11,14 @@ import {
   type ScreenerFilterId,
   type ScreenerView,
 } from "@ohmail/app-logic/screener";
+import { stripStandingKey } from "@ohmail/app-logic/screener/no-suggestion";
+import { BulkProgress } from "@ohmail/ui";
 import { Button, Menu, MenuItem, Seg } from "@ohmail/ui/base";
 import { GroupHeading, ListLine } from "@ohmail/ui/mail";
 import { NONE } from "../../host/index.js";
 import { useText, type Text } from "../../text/index.js";
 import { ListMenu } from "./ListMenu.js";
-import { useScreener, useScreenerBeside } from "../contract.js";
+import { useNoAdvice, useScreener, useScreenerBeside } from "../contract.js";
 import type { ScreenerSuggest } from "../ports.js";
 
 /** The places Apply files into, as one phrase: "Ohbox, News & Receipts". */
@@ -87,42 +89,91 @@ function Filter({
   );
 }
 
-function Suggest({ suggest }: { suggest: ScreenerSuggest }) {
+function Suggest({ suggest, allAnswered }: { suggest: ScreenerSuggest; allAnswered: boolean }) {
   const t = useText("screener");
-  const at = useRef<HTMLButtonElement | null>(null);
+  const buyAnchor = useRef<HTMLButtonElement | null>(null);
+  const reaskAnchor = useRef<HTMLButtonElement | null>(null);
   const c = suggest.control;
-  const again = c.available === 0;
-  if (c.available === 0 && c.resuggestable === 0) return null;
+  const open = c.phase !== "closed";
+  const [again, setAgain] = useState(false);
+  if (!open && c.available === 0 && c.resuggestable === 0) return null;
   const price =
-    c.phase === "pricing" || c.quote === null
-      ? t("suggest.pricing")
+    c.quote === null
+      ? undefined
       : suggest.priced
         ? t("suggest.price", { senders: c.quote.senders, credits: c.quote.credits })
         : t("suggest.priceUnmetered", { senders: c.quote.senders });
   const n = c.quote?.senders ?? c.size;
   return (
     <>
-      <Button
-        kind="quiet"
-        size="s"
-        opens="menu"
-        expanded={c.phase !== "closed"}
-        ref={at}
-        onPress={() => (c.phase === "closed" ? (again ? c.openAgain() : c.open()) : c.cancel())}
-      >
-        {again ? t("suggest.again") : t("suggest.open")}
-      </Button>
+      {!open && c.available === 0 && allAnswered ? (
+        <p className="oh-text" role="status">
+          {t("suggest.allSuggested", { count: c.resuggestable })}
+        </p>
+      ) : null}
+      {(open ? !again : c.available > 0) ? (
+        <Button
+          kind="quiet"
+          size="s"
+          opens="menu"
+          expanded={!c.disabled && open}
+          disabled={c.disabled || c.phase === "running"}
+          ref={buyAnchor}
+          onPress={
+            open
+              ? c.cancel
+              : () => {
+                  setAgain(false);
+                  c.open();
+                }
+          }
+        >
+          {t("suggest.open")}
+        </Button>
+      ) : null}
+      {(open ? again : c.resuggestable > 0) ? (
+        <Button
+          kind="quiet"
+          size="s"
+          opens="menu"
+          expanded={!c.disabled && open}
+          disabled={c.disabled || c.phase === "running"}
+          ref={reaskAnchor}
+          onPress={
+            open
+              ? c.cancel
+              : () => {
+                  setAgain(true);
+                  c.openAgain();
+                }
+          }
+        >
+          {t("suggest.again")}
+        </Button>
+      ) : null}
       <Menu
-        open={c.phase !== "closed"}
+        open={!c.disabled && open}
         onClose={c.cancel}
-        anchor={at}
+        anchor={again ? reaskAnchor : buyAnchor}
         label={again ? t("suggest.ariaAgain") : t("suggest.aria")}
         kind="ask"
         title={again ? t("suggest.labelAgain") : t("suggest.label")}
-        aside={c.phase === "running" ? undefined : price}
+        aside={c.phase === "ready" ? price : undefined}
       >
-        {c.phase === "running" && c.progress !== null ? (
-          <p className="oh-text">{t("suggest.progress", c.progress)}</p>
+        {c.phase === "pricing" ? (
+          <p className="oh-text" role="status" aria-busy="true">
+            {t("suggest.pricing")}
+          </p>
+        ) : null}
+        {c.phase === "running" ? (
+          <>
+            {c.progress !== null ? (
+              <BulkProgress label={t("suggest.progress", c.progress)} {...c.progress} />
+            ) : null}
+            <Button kind="ink" size="s" busy disabled>
+              {t("suggest.running")}
+            </Button>
+          </>
         ) : (
           <>
             <Seg
@@ -134,7 +185,13 @@ function Suggest({ suggest }: { suggest: ScreenerSuggest }) {
               }))}
               onChange={(size) => c.choose(Number(size))}
             />
-            <Button kind="ink" size="s" disabled={c.phase !== "ready"} onPress={c.confirm}>
+            {/* Nothing is bought without a price the person saw: no quote, or a set priced at zero, leaves it dead. */}
+            <Button
+              kind="ink"
+              size="s"
+              disabled={c.phase !== "ready" || c.quote === null || c.quote.senders === 0}
+              onPress={c.confirm}
+            >
               {again ? t("suggest.confirmAgain", { n }) : t("suggest.confirm", { n })}
             </Button>
             <Button kind="quiet" size="s" onPress={c.cancel}>
@@ -142,7 +199,7 @@ function Suggest({ suggest }: { suggest: ScreenerSuggest }) {
             </Button>
           </>
         )}
-        {c.notice ? <p className="oh-text">{c.notice}</p> : null}
+        {c.phase !== "running" && c.notice ? <p className="oh-text">{c.notice}</p> : null}
       </Menu>
     </>
   );
@@ -151,11 +208,23 @@ function Suggest({ suggest }: { suggest: ScreenerSuggest }) {
 export function Tools({ view }: { view: ScreenerView }) {
   const t = useText("screener");
   const model = useScreener();
-  const { suggest } = useScreenerBeside();
-  if (view.segment !== "waiting" || model.waitingCount === 0) return null;
+  const { suggest, ownSuggest } = useScreenerBeside();
+  const { standing, subscriptionPane } = useNoAdvice();
+  const standingLine = stripStandingKey(standing, subscriptionPane);
+  if (view.segment !== "waiting") return null;
+  const { applying } = model;
+  const progress = applying === null ? null : <BulkProgress label={t("applying", applying)} {...applying} />;
+  if (model.waitingCount === 0) {
+    // The last decision can remove the last row before the bulk summary arrives.
+    return progress === null ? null : (
+      <div className="sc-tools" role="group" aria-label={t("bulkAria")}>
+        {progress}
+      </div>
+    );
+  }
   const may = !refused(model.role);
   const filtering = view.filter.choices.length > 0;
-  const apply = may && model.suggestedCount > 0 && model.applying === null;
+  const apply = may && model.suggestedCount > 0;
   /* What Spam and Screen out also send is said on any waiting queue this install may decide, tools or none. */
   const unsub =
     may &&
@@ -168,15 +237,18 @@ export function Tools({ view }: { view: ScreenerView }) {
         <GroupHeading count={String(model.waitingCount)}>{t("filterAll")}</GroupHeading>
       )}
       {/* Offered to a reader too, as the released Screener offers it: advice moves no mail. */}
-      {suggest !== NONE ? <Suggest suggest={suggest} /> : null}
-      {model.applying !== null ? (
-        <ListLine>{t("applying", model.applying)}</ListLine>
-      ) : apply ? (
-        <Button kind="quiet" size="s" onPress={() => model.applyAll(view.scopeOf)}>
+      {ownSuggest ??
+        (suggest !== NONE ? (
+          <Suggest suggest={suggest} allAnswered={model.waitingCount === model.suggestedCount} />
+        ) : null)}
+      {apply && applying === null ? (
+        <Button kind="quiet" size="s" onPress={view.askApplySuggestions}>
           {t("applyAll", { count: model.suggestedCount, piles: pileList(model.suggestedDests, t) })}
         </Button>
       ) : null}
+      {progress}
       <ListMenu view={view} />
+      {standingLine ? <ListLine said>{t(standingLine)}</ListLine> : null}
       {unsub ? <ListLine>{t("bulkUnsub")}</ListLine> : null}
     </div>
   );

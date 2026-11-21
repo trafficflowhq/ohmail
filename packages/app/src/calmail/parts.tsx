@@ -4,7 +4,7 @@
  * Both draw nothing where this host has no calendar or nothing is left to list.
  */
 import { TodayList, type TodayListRow } from "@ohmail/ui/calendar";
-import { clockTime, dayLong, dayShort } from "@ohmail/app-logic/calendar";
+import { clockTime, dayShort } from "@ohmail/app-logic/calendar";
 import { comingUpOf, todayRowsOf, type TodayRow } from "@ohmail/app-logic/calendar/beside";
 import { useFrame } from "../frame/commands.js";
 import { useLocale, useText } from "../text/index.js";
@@ -52,7 +52,7 @@ export function TodayBeside() {
     <TodayList
       kind="today"
       label={t("today")}
-      heading={{ title: t("today"), date: dayLong(around.now.day, locale) }}
+      heading={{ title: t("today"), date: dayShort(around.now.day, locale) }}
       rows={rows.slice(0, TODAY_ROWS).map((row) => rowOf(row, false))}
       more={more > 0 ? t("more", { count: more }) : undefined}
     />

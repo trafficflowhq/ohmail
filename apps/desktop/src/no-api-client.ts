@@ -103,6 +103,7 @@ export const pendApiOwner: (owner: string | null) => void = () => {};
 export const blockApiOwner: () => void = () => {};
 
 export const boundApiOwner: () => string | null = () => null;
+export const boundApiFamily: (_owner: string) => string | null = () => null;
 
 /** Mirrors the hosted client's shape so the shared shell's types resolve. Always `public` here. */
 export const apiOwnerBinding: () => { kind: "public" } = () => ({ kind: "public" });
@@ -311,12 +312,16 @@ export const auth: {
         user: SessionUser;
         scope: "full" | "enrollment";
         reuseSweeps?: ReuseSweep[];
+        familyId?: string;
     }>;
     acknowledgeReuseSweeps: (ids: readonly string[]) => Promise<void>;
     logout: (opts?: {
         mayProceed?: () => boolean;
+        expectedFamily?: string;
+        expectedAccount?: string;
     }) => Promise<void>;
-    armLogoutOnLeave: () => void;
+    clearLogoutCookies: (expectedFamily: string) => Promise<void>;
+    armLogoutOnLeave: (expectedFamily?: string, mayProceed?: () => boolean, expectedAccount?: string) => void;
     webauthnRegisterOptions: () => Promise<{
         options: PublicKeyCredentialCreationOptionsJSON;
     }>;
@@ -943,7 +948,7 @@ export const screener: {
     }) => Promise<JunkRescueWire>;
     junkSearch: (q: string) => Promise<JunkSearchWire>;
     junkSweepPreview: () => Promise<JunkSweepWire>;
-    junkSweepRequest: () => Promise<JunkSweepWire>;
+    junkSweepRequest: (confirmation: string) => Promise<JunkSweepWire>;
 } = absent;
 
 export interface JunkRescueWire {
@@ -970,6 +975,7 @@ export interface JunkSweepWire {
     mailboxes: JunkSweepMailboxWire[];
     movable: number;
     pending: boolean;
+    confirmation?: string;
     held?: {
         ids: string[];
         truncated: boolean;

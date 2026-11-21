@@ -6,6 +6,7 @@ import { useRef, useState, type ReactNode } from "react";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { sharedNotOrganizedWhy } from "@ohmail/app-logic/mail-state/mail-state";
 import { Button, Menu, MenuItem } from "@ohmail/ui/base";
+import { ProductSwitch } from "../frame/ProductSwitch.js";
 import { Doorbell, ListHead } from "@ohmail/ui/mail";
 import type { LayoutPlan } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
@@ -25,6 +26,7 @@ export function OhboxHead({
   onMarkAllRead: ((ids: string[]) => void) | null;
 }) {
   const t = useText("ohbox");
+  const locale = useLocale();
   const all = useText("markAll");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
@@ -33,15 +35,12 @@ export function OhboxHead({
   const unread = model.unreadIds.length;
   const pull = beside.pull;
   const markAll = onMarkAllRead && unread > 0 ? () => onMarkAllRead(model.unreadIds) : null;
-  /* The head's Mark all read stands only while there is something to mark, as the shipped head's did: a control that
-     cannot be pressed is no place for the keyboard to stand, nor for a closing layer to give it back to. The list's
-     menu keeps the verb, a word that is off at zero; the number beside it is a count of the mailbox and waits, like
-     the hot dot, until the Ohbox may say it. */
   return (
     <>
       <ListHead
         title={t("title")}
         hot={model.mayState && unread > 0}
+        lead={plan.rail === "dock" ? <ProductSwitch kind="round" /> : undefined}
         aside={
           <>
             <OhboxDoor model={model} beside={beside} />
@@ -81,11 +80,11 @@ export function OhboxHead({
             {t("list.pull")}
           </MenuItem>
         ) : null}
-        {onMarkAllRead ? (
+        {onMarkAllRead !== null ? (
           <MenuItem
             icon="read"
-            note={model.mayState && unread > 0 ? String(unread) : undefined}
             disabled={markAll === null}
+            note={model.mayState && unread > 0 ? unread.toLocaleString(locale) : undefined}
             onPress={() => {
               setMenuOpen(false);
               markAll?.();
@@ -155,8 +154,6 @@ function OhboxDoor({ model, beside }: { model: OhboxListModel; beside: OhboxBesi
     <Doorbell
       count={beside.doorbell.count.toLocaleString(locale)}
       label={t("doorbellAria", { count: beside.doorbell.count })}
-      keyHint="g s"
-      keyShown={beside.keysShown}
       onPress={beside.go.screener}
     />
   );

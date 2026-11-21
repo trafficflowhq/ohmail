@@ -3,6 +3,11 @@
  * A HOST WITH NO SCOPE MOUNTS NOTHING OF TODAY'S VIEWS, and so nothing is kept under the key spaces that name nobody:
  * no frame, no list, no composer, and no key ending in `local` or `anon`, no bare look key, no reply key that names no
  * account. Through the harness, handed `scope: null` with no storage owner named.
+ *
+ * The harness is the new shell's test door (`_todays-shell.js`'s
+ * old name of it); the list is the Ohbox's seated list by its name (the section "Messages", today's `.view-ohbox` drew
+ * nothing over the new shell, so the absence the case asserts read nothing), the composer Write's new letter (the
+ * region "New message") with its Subject; the frame is the new frame's own (`.fr-frame`, FrameParts.tsx).
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
@@ -63,10 +68,12 @@ describe("a host with no scope", () => {
   /** What a mount under a scope draws at the list, then at the composer, each mount alone. */
   async function drawnUnder(scope: string | null): Promise<{ frame: boolean; list: boolean; composer: boolean }> {
     const atList = await mountUnder(scope, "#/ohbox");
-    const list = { frame: atList.querySelector(".fr-frame") !== null, list: atList.querySelector(".view-ohbox") !== null };
+    const list = { frame: atList.querySelector(".fr-frame") !== null, list: atList.querySelector('section[aria-label="Messages"]') !== null };
     for (const root of S.roots.splice(0)) await act(async () => { root.unmount(); });
     const atComposer = await mountUnder(scope, "#/compose");
-    const composer = atComposer.querySelector('input[aria-label="Subject"]') !== null;
+    const composer = atComposer.querySelector(
+      '[role="region"][aria-label="New message"] :is(input, textarea)[aria-label="Subject"]',
+    ) !== null;
     const frame = list.frame || atComposer.querySelector(".fr-frame") !== null;
     for (const root of S.roots.splice(0)) await act(async () => { root.unmount(); });
     return { frame, list: list.list, composer };

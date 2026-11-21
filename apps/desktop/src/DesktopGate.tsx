@@ -57,7 +57,7 @@ import {
 import { DoorChooser, focusFirstControl } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
-import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
+import { readMirrorFreshness } from "./DesktopMailboxes.js";
 import { MailboxSelfCheck } from "../../webapp/app/shell/MailboxSelfCheck";
 import { ReuseSweepNotice } from "../../webapp/app/shell/ReuseSweepNotice";
 import { MailboxFilings } from "../../webapp/app/shell/MailboxFilings";
@@ -103,8 +103,6 @@ import { draftReplyOverBridgeFor } from "./local-draft-reply.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { AiProviderForm } from "./AiProviderForm.js";
 import { useLocalFirstRun } from "./local-first-run.js";
-import { LocalSuggest } from "./local-suggest.js";
-import { CloudSuggest } from "./CloudSuggest.js";
 import {
   claimMailto, offLinkAsk, offLinkRefused, onLinkAsk, onLinkRefused, onMailto, onMenuCommand, onMenuNavigate,
   setBadge, type LinkAsk as HeldPress, type LinkRefusal, type MenuCommand,
@@ -859,7 +857,12 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * shell saying `serving` and the client. The constructor opens nothing; the shared shell
    * starts the engine and drives its sync loop, exactly as for a browser tab.
    */
-  const [live, setLive] = useState<{ key: string; stage: boolean; engine: OhmailEngine } | null>(null);
+  const [live, setLive] = useState<{
+    key: string;
+    stage: boolean;
+    localDoorVersion?: number;
+    engine: OhmailEngine;
+  } | null>(null);
   const gate = gateFor(shell ?? { kind: "none" });
   const mount = mailMount(shell ?? { kind: "none" }, live?.key ?? null);
   /**
@@ -909,9 +912,14 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   // One window, one composer, across restarts — see `setComposerScope`.
   setComposerScope("window");
   // The hosted door stages a large send's bytes through the engine; no other door has storage.
-  const stage = stagesAttachments(shell?.kind === "status" ? shell.status : null);
-  if (mount.kind === "engine" && !copyRemoved && !erased && (live?.key !== mount.key || live.stage !== stage)) {
-    setLive({ key: mount.key, stage, engine: createLocalEngine(mount.key, { stageAttachments: stage }) });
+  const serving = shell?.kind === "status" ? shell.status : null;
+  const stage = stagesAttachments(serving);
+  // The same mailbox can be installed again. Its durable storage key still names the mailbox,
+  // while the in-memory client's roster and pending reads belong to the previous native engine.
+  const localDoorVersion = serving?.mode === "local" ? serving.localDoorVersion : undefined;
+  if (mount.kind === "engine" && !copyRemoved && !erased &&
+      (live?.key !== mount.key || live.stage !== stage || live.localDoorVersion !== localDoorVersion)) {
+    setLive({ key: mount.key, stage, localDoorVersion, engine: createLocalEngine(mount.key, { stageAttachments: stage }) });
   } else if ((mount.kind !== "engine" || copyRemoved || erased) && live !== null) {
     /* Signed out, the door given up, the copy removed or its account erased. Dropping the reference is
        what takes the mirror — a copy of somebody's mail — out of this window's memory; keeping it would

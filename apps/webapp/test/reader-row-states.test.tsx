@@ -1,14 +1,11 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { act, cleanup } from "@testing-library/react";
 import { readerHolder } from "@ohmail/app-logic/reading/reader-holder";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { M, O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * ═══ "ORGANIZED BY ANOTHER INSTALL" WITH NO OTHER INSTALL ══════════════════════════════════
@@ -65,14 +62,19 @@ import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors
  * (a) cases go red naming `mailboxes.readerLabelLegacy` — which is the released behaviour
  * exactly. The (b) and (c) cases are green either way: they are what says this slice changed the
  * state nobody held and nothing else.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`_first-run-stage.tsx`); the mailbox is the ground's row, its holder's date the row's `holderSince`
+ * (the live facts format it only where the instant is written, `live.ts` `rowOf`: the same withholding), and a poll
+ * landing is the ground's rows moved under the run; a choice is the claim question's radio by its name. The holder
+ * row is the step's setting line that names the holder, and its description the note right under it: on the claim
+ * question the first line of the step, on the reader's summary the second. The service is the managed one, the fact
+ * the new stage reads before it names a cloud holder ohmail Cloud. The words are the stage's catalogue.
+ * Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-const t = messages.onboarding;
-const tm = messages.mailboxes;
+const t = O;
+const tm = M;
 
 /** State (a): a consent-less reader, and nothing anywhere has recorded a holder. */
 const NOBODY: OnboardingMailbox = {
@@ -139,7 +141,7 @@ const NAMED_UNDATED: OnboardingMailbox = {
 };
 
 /**
- * WHAT `AppShell` HANDS THE SCREENS for a given row: the holder's instant as a date in words, or
+ * WHAT THE LIVE FACTS HAND THE SCREENS for a given row: the holder's instant as a date in words, or
  * nothing at all. One formatter for the whole file so no case can assert a date the mount would
  * not have produced.
  */
@@ -173,59 +175,40 @@ interface Harness {
   move: (mailbox: OnboardingMailbox) => Promise<void>;
 }
 
-const roots: Root[] = [];
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
-async function mount(initial: OnboardingMailbox): Promise<Harness> {
-  let current = facts(initial);
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
+/** The ground's row for a mailbox, its holder's date withheld exactly where the live facts withhold it. */
+const rowOf = (mailbox: OnboardingMailbox): FirstRunRow => {
+  const since = sinceProp(mailbox);
+  return { id: id("mb-1"), address: "me@example.invalid", ...mailbox, ...(since ? { holderSince: since } : {}) } as FirstRunRow;
+};
 
-  const host: FirstRunHost = {
-    door: "local",
-    ai: "unset",
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async () => "stored",
-    complete: async () => { /* the summary's own verb */ },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
-  let bumpOutside: (() => void) | null = null;
-  const Stage = () => {
-    const [, bump] = React.useState(0);
-    bumpOutside = () => bump((n) => n + 1);
-    return h(FirstRun, {
-      host,
-      facts: current,
-      onRefresh: () => bump((n) => n + 1),
-      onLeave: () => { /* left */ },
-      pull: { screened: 0, history: 0, pulled: 0 },
-      decide: null,
-      mailboxId: "mb-1",
-      /* THE PROP IS DERIVED THE WAY `AppShell` DERIVES IT, INCLUDING THE WITHHOLDING.
-         `AppShell`'s `holderSince` returns `null` for an absent or unparseable instant and the
-         mount then spreads NOTHING (`{...(holderSince ? { organizedSince } : {})}`), so a fixture
-         that hands the screens a placeholder string is a fixture of a state the product cannot be
-         in — and it would hide exactly the defect these cases are about, which is what the sites
-         do when the prop is missing. */
-      ...(sinceProp(current.mailbox) ? { organizedSince: sinceProp(current.mailbox)! } : {}),
-    });
-  };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
+/** The step's setting lines, in order: each a group named by its label, its description the note under it. */
+const linesOf = (el: HTMLElement): HolderRow[] =>
+  [...(el.querySelector("h1")?.closest("form")?.querySelectorAll<HTMLElement>('[role="group"][aria-labelledby]') ?? [])]
+    .map((g) => ({
+      label: (document.getElementById(g.getAttribute("aria-labelledby")!)?.textContent ?? "").trim(),
+      description: (g.nextElementSibling?.textContent ?? "").trim(),
     }));
+
+async function mount(initial: OnboardingMailbox): Promise<Harness> {
+  const st = await mountStage({
+    rows: [rowOf(initial)],
+    door: "local",
+    /* Whose service: today's harness named none and said a cloud holder as ohmail Cloud, which the new stage says
+       only on the managed service (`words.ts` HOLDER_MANAGED): the fact it reads is given. */
+    service: "managed",
+    verbs: {
+      ai: "unset",
+      organize: async () => "stored",
+      complete: async () => { /* the summary's own verb */ },
+      setAiEnabled: async () => { /* answered */ },
+    },
   });
+  const el = st.el;
 
   const press = async (label: string) => {
     const button = [...el.querySelectorAll("button")]
@@ -241,39 +224,27 @@ async function mount(initial: OnboardingMailbox): Promise<Harness> {
   };
 
   const row = (): HolderRow => {
-    /* The banner is the claim question's; the summary has no banner and carries the holder row
+    /* The claim question's holder line is its first; the summary carries the holder row
        SECOND, under "It reads this mailbox". `onSummary` asserts that position once. */
-    const node = el.querySelector(".set-banner")
-      ?? (el.querySelectorAll(".ob-done .set-row")[1] as Element | undefined);
+    const lines = linesOf(el);
+    const node = el.querySelector("[role=radiogroup]") !== null ? lines[0] : lines[1];
     if (!node) {
-      throw new Error("no holder row on screen; rows: "
-        + [...el.querySelectorAll(".set-row .lab b")].map((b) => JSON.stringify(b.textContent))
-          .join(", "));
+      throw new Error("no holder row on screen; rows: " + lines.map((l) => JSON.stringify(l.label)).join(", "));
     }
-    return {
-      label: (node.querySelector(".lab b")?.textContent ?? "").trim(),
-      description: (node.querySelector(".lab span")?.textContent ?? "").trim(),
-    };
+    return node;
   };
 
   return {
     el: () => el,
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    heading: st.heading,
     text: () => el.textContent ?? "",
     row,
     press,
     pick: async (value) => {
-      const radios = [...el.querySelectorAll("input[type=radio]")] as HTMLInputElement[];
-      const radio = radios.find((i) => i.value === value);
-      if (!radio) {
-        throw new Error(`no ${JSON.stringify(value)} option; saw: `
-          + radios.map((i) => JSON.stringify(i.value)).join(", "));
-      }
-      await act(async () => { radio.click(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
+      await st.pick(value === "here" ? t.elsewhereChoiceHere : t.elsewhereChoiceRead);
     },
     move: async (mailbox) => {
-      current = facts(mailbox);
-      await act(async () => { bumpOutside?.(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
+      await st.move([rowOf(mailbox)]);
     },
   };
 }
@@ -297,8 +268,8 @@ async function onSummary(initial: OnboardingMailbox = CLOUD): Promise<Harness> {
   /* THE POSITION `row()` READS, pinned here rather than assumed at every case: a row inserted
      above the holder's would otherwise move every assertion below onto the wrong sentence and
      they would all still pass or all still fail, for the wrong reason. */
-  const first = s.el().querySelectorAll(".ob-done .set-row")[0];
-  expect((first?.querySelector(".lab b")?.textContent ?? "").trim(),
+  const first = linesOf(s.el())[0];
+  expect(first?.label ?? "",
     "the summary's rows moved — `row()` reads the second one").toBe(t.doneReaderReads);
   return s;
 }

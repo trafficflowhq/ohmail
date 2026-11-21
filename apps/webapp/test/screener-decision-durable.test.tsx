@@ -4,7 +4,9 @@ import { rmSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider, createTranslator } from "next-intl";
+import { createTranslator } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine,
   MemoryMirrorStore,
@@ -160,7 +162,6 @@ async function mountState(engine: OhmailEngine, handed?: { scope: string | null 
   bump: () => Promise<void>;
 }> {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { storageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
   let latest: StateLike | null = null;
   let force: (() => void) | null = null;
@@ -179,7 +180,7 @@ async function mountState(engine: OhmailEngine, handed?: { scope: string | null 
         // else exposes `undo`. Capturing the options here is what lets the second case press the
         // real button rather than reach past it into the journal.
         if (opts?.onAction) undoAction = opts.onAction;
-      }) as never, useScreenerText(),
+      }) as never, useScreenerWords(),
     ) as unknown as StateLike;
     counts.push(latest.waitingCount);
     return null;
@@ -190,8 +191,8 @@ async function mountState(engine: OhmailEngine, handed?: { scope: string | null 
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages: en as never, timeZone: "UTC", now: NOW, children: h(Probe),
+      h(TextProvider, {
+        locale: "en", messages: en as never, timeZone: "UTC", children: h(Probe),
       }),
     );
   });

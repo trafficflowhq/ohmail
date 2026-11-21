@@ -27,7 +27,8 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {}, replace: () => {} }),
 }));
 
-vi.mock("../app/sign-out", () => ({
+vi.mock("../app/sign-out", async (original) => ({
+  ...await original<typeof import("../app/sign-out")>(),
   forgetThisBrowser: async () => {
     rig.wipes += 1;
     return { remaining: [], inventoryComplete: true };

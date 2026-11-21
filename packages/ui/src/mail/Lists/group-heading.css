@@ -120,3 +120,28 @@
     font-weight: var(--w-text);
   }
 }
+
+[data-address-rows] .oh-groupheading {
+  --search-group-top: calc(var(--oh-groupheading-top) + var(--s1));
+  padding-top: var(--search-group-top);
+}
+
+[data-address-rows] .oh-groupheading-aside {
+  padding-right: var(--s4);
+  transform: translateY(var(--s1));
+}
+
+[data-address-rows] .oh-groupheading-aside .oh-button {
+  --oh-button-pad: 0 var(--s2);
+  color: var(--ink2);
+  font-size: var(--t-meta);
+}
+
+[data-stream-window-item] > .oh-groupheading-line .oh-groupheading {
+  padding-inline-start: var(--sheet-pad);
+  margin-block-end: var(--gap);
+}
+
+[data-stream-phone-list] [data-stream-window-item] > .oh-groupheading-line .oh-groupheading {
+  padding-inline-start: var(--s2);
+}

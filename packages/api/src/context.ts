@@ -1,5 +1,6 @@
 import { assertBinding, bindDb, bindingOf, BindingRefusedError } from "@trafficflow/db";
-import type { BoundDb, ServiceContext, UnboundDb } from "@trafficflow/services/mail";
+import type { SessionLifecycle } from "@trafficflow/services/auth";
+import { hashToken, type BoundDb, type ServiceContext, type UnboundDb } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 
 /**
@@ -98,6 +99,21 @@ function contextDb(deps: ApiDeps): BoundDb | UnboundDb {
   return db;
 }
 
+/** Bind the digests of the browser's presented credentials within the request's own account scope. */
+export function browserLogoutProofs(
+  deps: ApiDeps, refresh?: string, access?: string,
+): Parameters<SessionLifecycle["assertBrowserLogout"]>[1] {
+  const db = contextDb(deps);
+  const account = deps.session?.accountId ?? null;
+  const proofOf = (presented: string | undefined) => {
+    if (!presented) return null;
+    const digest = hashToken(presented);
+    const proofDb = account === null ? bindDb(db, { account: null, key: digest }) : bindDb(db, { account, key: digest });
+    return { digest, db: proofDb };
+  };
+  return { access: proofOf(access), refresh: proofOf(refresh) };
+}
+
 /**
  * Build the {@link ServiceContext} an AuthService method runs against. Identity comes from
  * `deps.session` (the session row, never the body): protected routes carry
@@ -131,6 +147,9 @@ export function serviceContext(deps: ApiDeps, req: Request): ServiceContext {
     // The one wiring point for the response's account header on the credential routes. Every
     // service that mints or rotates a session reports through this, so a sign-in route added
     // later is covered without remembering to do anything — see `ACCOUNT_HEADER` in `app.ts`.
-    noteCredentialAccount: (accountId: string) => { deps.credentialAccount = accountId; },
+    noteCredentialAccount: (accountId, familyId) => {
+      deps.credentialAccount = accountId;
+      deps.credentialFamily = familyId;
+    },
   };
 }

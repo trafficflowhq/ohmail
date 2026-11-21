@@ -14,5 +14,6 @@ export {
   type SecurityStepped,
 } from "./model.js";
 export { useSecurity } from "./use-security.js";
+export { securityPane, type SecurityPaneParts } from "./pane.js";
 export { securityStates, type SecurityShown } from "./states.js";
 export { SECURITY_NAMESPACE } from "./namespace.js";

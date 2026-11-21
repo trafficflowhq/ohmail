@@ -56,7 +56,7 @@ describe("the account's calendar switch", () => {
   it("answers the defaults before anything was written", async () => {
     const w = await world();
     expect(await calendarSettings(w.ctx)).toEqual({
-      enabledAt: null, secondZone: null, weekNumbers: false, dayFromMinute: null, dayToMinute: null, newEventsCalendarId: null,
+      unconfigured: true, enabledAt: null, secondZone: null, weekNumbers: false, dayFromMinute: null, dayToMinute: null, newEventsCalendarId: null,
     });
     expect(await calendarFeed.enabledAt(w.db, w.accountId)).toBeNull();
   });
@@ -90,6 +90,7 @@ describe("the account's calendar switch", () => {
     await setCalendarSettings(w.ctx, { enabled: true });
     w.tick(60_000);
     expect((await setCalendarSettings(w.ctx, { enabled: false })).settings.enabledAt).toBeNull();
+    expect((await calendarSettings(w.ctx)).unconfigured).toBeUndefined();
     expect(await calendarFeed.enabledAt(w.db, w.accountId)).toBeNull();
     w.tick(60_000);
     const on = await setCalendarSettings(w.ctx, { enabled: true });

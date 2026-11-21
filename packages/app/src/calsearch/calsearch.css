@@ -9,16 +9,19 @@
 }
 .cal-sr-top {
   padding: var(--s3) var(--s3) 0;
-  max-width: 700px;
+  max-inline-size: var(--cal-reading-measure);
+}
+.cal-sr[data-device="phone"] .cal-sr-top {
+  padding-inline: var(--s2);
 }
 .cal-sr-field {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  min-height: 48px;
+  min-height: var(--h-l);
   padding: 0 var(--s2) 0 var(--s4);
   border-radius: var(--r-row);
-  background: var(--ground);
+  background: var(--soft-sheet);
   color: var(--ink2);
   min-width: 0;
 }

@@ -288,4 +288,13 @@
     outline-width: 1px;
     outline-offset: -1px;
   }
+
+  [data-heading-overlay] > .oh-switcher-round {
+    align-self: start;
+    justify-self: start;
+    z-index: var(--oh-layer-raised);
+    --heading-overlay-top: calc((var(--head) + var(--s3) - var(--s1) - var(--h-m)) / 2);
+    margin-block-start: var(--heading-overlay-top);
+    margin-inline-start: var(--heading-switch-start);
+  }
 }

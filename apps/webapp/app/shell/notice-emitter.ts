@@ -31,7 +31,7 @@ export interface NoticePage {
    */
   show(title: string, body: string, tag: string, current?: () => boolean): NoticeTaken | void;
   /** Close every notice of this origin still listed; settles once they are closed. Never rejects. */
-  closeAll(): Promise<void>;
+  closeAll(strict?: boolean): Promise<void>;
 }
 
 /** A sentence of the catalogue's `frame.systemNotice` group, with its values. */
@@ -350,7 +350,7 @@ export const browserNoticePage: NoticePage = {
   focused: () => typeof document !== "undefined" && document.hasFocus(),
   visible: () => typeof document !== "undefined" && document.visibilityState === "visible",
   show: showBrowser,
-  async closeAll() {
+  async closeAll(strict = false) {
     const seat = newGeneration(Math.max(Date.now(), lastDisplayTime));
     generation.latest.clear();
     generation.held.clear();
@@ -359,8 +359,9 @@ export const browserNoticePage: NoticePage = {
     try {
       const listed = await (await registration())?.getNotifications();
       if (seat === generation) closeEarlier(listed ?? [], seat);
-    } catch { /* The browser cannot list this origin's notices. */ }
-    finally { if (sweeping === seat) sweeping = null; }
+    } catch (err) {
+      if (strict) throw err;
+    } finally { if (sweeping === seat) sweeping = null; }
   },
 };
 

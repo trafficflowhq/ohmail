@@ -68,13 +68,26 @@
     font-weight: var(--w-bold);
   }
 
-  .oh-recipients-state {
+  .oh-recipients-line[data-line="from"] > .oh-tag {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .oh-recipients-state,
+  .oh-recipients-stamp {
     flex: none;
     margin-left: auto;
     color: var(--ink2);
     font-size: var(--t-meta);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+
+  .oh-recipients-state:has(+ .oh-recipients-stamp) {
+    flex: 0 1 auto;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   /* The people stand in a column of their own, so a long line wraps under its first person, not under its label. */

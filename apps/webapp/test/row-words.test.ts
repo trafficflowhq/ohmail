@@ -13,9 +13,9 @@ import {
   resurfaceHorizons, resurfaceLabel, rowAddress, rowStamp, scheduleLabel, sendLaterMornings, senderName,
   sentAvatarOf, sentRowRecipient, tagsOfMessage, todayEvening, tomorrowAt, tomorrowNine, waterlineStamp,
   withheldCopyKey, writtenDateTime, writtenInstant, type ResurfaceHorizon,
-} from "../app/shell/format";
+} from "@ohmail/app-logic/text/format";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog, setActiveFormatZone } from "../app/shell/locale";
-import { useRowBadgeCopy, useSentLabel, type RowBadgeCopy, type SentLabel } from "../app/shell/row-copy";
+import { useRowBadgeCopy, useSentLabel, type RowBadgeCopy, type SentLabel } from "@ohmail/app-logic/text/row-copy";
 import { setFormatWords, type Translator } from "@ohmail/app-logic/text";
 import en from "../messages/en.json";
 import de from "../messages/de.json";

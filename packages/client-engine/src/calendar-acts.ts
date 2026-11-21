@@ -11,7 +11,7 @@
  * Behind an entry of its own: the phone's engine, which keeps no calendar, never reaches it.
  */
 import type {
-  CalendarEventAct, CalendarEventFields, CalendarEventRecord, CalendarReason, CalendarTime, CalendarWriteFault, ISODateTime,
+  CalendarEventAct, CalendarRemoveScope, CalendarEventFields, CalendarEventRecord, CalendarReason, CalendarTime, CalendarWriteFault, ISODateTime,
 } from "@ohmail/wire";
 
 /** The instant a record this device made stands at until our server has it. */
@@ -105,7 +105,14 @@ export function applyCalendarActs(records: readonly CalendarEventRecord[], acts:
     if (r === undefined || ("scope" in act && act.scope.kind !== "record")) continue;
     switch (act.kind) {
       case "calendar_event_update": byId.set(r.id, withFields(r, act.change)); break;
-      case "calendar_event_delete": byId.delete(r.id); break;
+      case "calendar_event_delete":
+        byId.delete(r.id);
+        if (r.repeat && r.uid) {
+          for (const child of byId.values()) {
+            if (child.calendarId === r.calendarId && child.uid === r.uid) byId.delete(child.id);
+          }
+        }
+        break;
       case "calendar_event_move": byId.set(r.id, { ...r, calendarId: act.toCalendarId }); break;
       case "calendar_event_answer": byId.set(r.id, { ...r, myAnswer: act.answer }); break;
     }
@@ -127,6 +134,7 @@ export interface EventWithWrites {
   readonly refusal: CalendarWriteFault | CalendarReason | null;
   /** The refused write a view can send again or let go; `null` for a refusal of our server's, which left nothing. */
   readonly refusedWriteId: string | null;
+  readonly removals?: readonly CalendarRemoveScope[];
 }
 
 /**
@@ -143,16 +151,26 @@ export function eventsWithWrites(
     return { r, pending };
   });
   const atProvider = new Set(marked.filter((m) => m.r.writes.some((w) => w.state === "pending")).map((m) => m.r.id));
-  const providerView = marked.map(({ r, pending }) => applyCalendarActs([r], pending)[0] ?? null);
-  const base = providerView.filter((r): r is CalendarEventRecord => r !== null);
+  const pending = marked.flatMap((item) => item.pending);
+  const base = applyCalendarActs(records, pending);
   const onDevice = new Set(device.map((d) => d.act.eventId));
-  const shown = applyCalendarActs(base, device.map((d) => d.act));
+  const local = device.map((d) => d.act);
+  const shown = applyCalendarActs(base, local);
+  const hidden = new Map<string, CalendarRemoveScope[]>();
+  for (const act of [...pending, ...local]) {
+    if (act.kind !== "calendar_event_delete" || act.scope.kind === "record") continue;
+    const scopes = hidden.get(act.eventId);
+    if (scopes) scopes.push(act.scope);
+    else hidden.set(act.eventId, [act.scope]);
+  }
   const original = new Map(records.map((r) => [r.id, r] as const));
   return shown.map((record) => {
     const marks = original.get(record.id)?.writes ?? [];
     const lastRefused = [...marks].reverse().find((w) => w.state === "refused") ?? null;
+    const removals = hidden.get(record.id);
     return {
       record,
+      ...(removals && { removals }),
       waiting: onDevice.has(record.id) ? "device" : atProvider.has(record.id) ? "provider" : null,
       refusal: refused.get(record.id) ?? lastRefused?.reason ?? null,
       refusedWriteId: refused.has(record.id) ? null : lastRefused?.id ?? null,

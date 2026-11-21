@@ -11,7 +11,7 @@ import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import { COMPOSE_SEND_KEY } from "@ohmail/app-logic/writing/mail-send";
 import { act, message, replyDraft, stubDom, waitFor } from "../_draft-shell.js";
 import { letter } from "../_handoff-steps.js";
-import { mountWriting, rounds, unmountWritings } from "./writing-world.js";
+import { mountWriting, rounds, unmountWritings } from "../_write-1-writing.js";
 
 beforeEach(() => {
   try {

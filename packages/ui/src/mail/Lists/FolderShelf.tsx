@@ -1,10 +1,15 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { RailEntry } from "../Shell/RailEntry.js";
 import "./folder-shelf.css";
 
 export interface ShelfFolder {
   id: string;
   name: string;
+  busy?: boolean;
+  title?: string;
+  after?: ReactNode;
+  menu?: boolean;
+  menuButton?: ReactNode;
   /**
    * What tells it from another folder of the same name, small after the name: the folder above it, else its
    * mailbox; for a hit of the find line, its way. Without a `label` it is said with the name, and with the count
@@ -52,23 +57,38 @@ export function FolderShelf(props: FolderShelfProps) {
         {label}
       </RailEntry>
       {expanded
-        ? folders.map((folder) => (
-            <RailEntry
-              key={folder.id}
-              kind="sub"
-              icon="folder"
-              count={folder.count}
-              hint={folder.hint}
-              label={folder.label ?? hintedName(folder)}
-              title={folder.name}
-              current={folder.current}
-              drop={folder.drop}
-              onPress={() => onOpen?.(folder.id)}
-              onMenu={onMenu ? (at) => onMenu(folder.id, at) : undefined}
-            >
-              {folder.name}
-            </RailEntry>
-          ))
+        ? folders.map((folder) => {
+            const entry = (
+              <RailEntry
+                kind="sub"
+                icon="folder"
+                count={folder.count}
+                hint={folder.hint}
+                label={folder.label ?? hintedName(folder)}
+                title={folder.title ?? folder.name}
+                busy={folder.busy}
+                current={folder.current}
+                drop={folder.drop}
+                onPress={() => onOpen?.(folder.id)}
+                onMenu={onMenu && folder.menu !== false ? (at) => onMenu(folder.id, at) : undefined}
+              >
+                {folder.name}
+              </RailEntry>
+            );
+            return (
+              <Fragment key={folder.id}>
+                {folder.menuButton ? (
+                  <div className="oh-foldershelf-row">
+                    {entry}
+                    {folder.menuButton}
+                  </div>
+                ) : (
+                  entry
+                )}
+                {folder.after}
+              </Fragment>
+            );
+          })
         : null}
       {expanded && all ? (
         <span className="oh-foldershelf-all">

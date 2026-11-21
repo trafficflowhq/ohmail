@@ -5,6 +5,10 @@
  * the cascade: a stage drawn inside the held frame took no press and no key, and a foot of the kit's own name stood at
  * the window's corners. Here a person goes through it with the mouse alone and with the keyboard alone, at a wide and a
  * phone's width, and the foot is measured inside the card at every width from 320 to 2560 and at Text size 1.5.
+ *
+ * SORTED (the switch's older tests, sorted once): setup is the frame's stage now, one dialog named as the frame names
+ * its stage, the step saying itself by its heading; the step's card is its own page, the stage's one main landmark,
+ * whose content runs where the step's heading runs. Every expectation as it stood.
  */
 import { createRequire } from "node:module";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -74,7 +78,8 @@ async function setup(width: number, height: number, textSize?: number): Promise<
   return page;
 }
 
-const dialog = (page: Page) => page.getByRole("dialog", { name: new RegExp(`^(${[ORGANIZE, HOW_FAR, AI].map(escape).join("|")})`) });
+/* Setup is the frame's stage: the one dialog, named as the frame names its stage; the step says itself by its heading. */
+const dialog = (page: Page) => page.getByRole("dialog", { name: en.frame.landmark.stage, exact: true });
 const step = (page: Page, title: string) => page.getByRole("heading", { name: title });
 const button = (page: Page, name: string) => dialog(page).getByRole("button", { name: new RegExp(`^${escape(name)}`) });
 function escape(s: string): string {
@@ -202,19 +207,16 @@ describe("setup's foot stands inside its card", () => {
             const r = e!.getBoundingClientRect();
             return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
           };
-          const card = el.closest('[role="dialog"]')!;
+          /* The step's card is its own page, the one main landmark of the stage's dialog. */
+          const card = el.closest("main")!;
           /* Read where the card comes to rest: its entrance moves it. */
           await Promise.all(card.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => undefined)));
           const foot = el.parentElement!;
           foot.scrollIntoView({ block: "end" });
-          /* The card's content box, in the same pixels as its box: its padding times the zoom a Text size puts on it. */
-          const zoom = (card as Element & { currentCSSZoom?: number }).currentCSSZoom ?? 1;
-          const style = getComputedStyle(card);
-          const outer = box(card);
-          const inner = {
-            left: outer.left + parseFloat(style.paddingLeft) * zoom,
-            right: outer.right - parseFloat(style.paddingRight) * zoom,
-          };
+          /* The card's content box, in the same pixels as its box: where the step's heading runs, from edge to edge (the
+             page holds its padding inside, around the step; a Text size's zoom is in the heading's box already). */
+          const heading = box(card.querySelector("h1"));
+          const inner = { left: heading.left, right: heading.right };
           const controls = [...foot.children].filter((c) => c.tagName === "BUTTON").map(box);
           return { card: box(card), inner, foot: box(foot), controls, view: { right: innerWidth, bottom: innerHeight } };
         });

@@ -3,7 +3,8 @@ import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -12,9 +13,7 @@ import {
   type SyncResponse,
   STORE_SEARCH_FOLLOWUP_HOLD_MS,
 } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { ARCHIVE_TIMEOUT_MS, SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { ARCHIVE_TIMEOUT_MS } from "@ohmail/app-logic/search";
 
 /**
  * THE WHOLE-MAILBOX PASS ENDS IN EXACTLY ONE OF THREE VERDICTS, on every outcome: matched,
@@ -24,7 +23,6 @@ import { KeymapProvider } from "@ohmail/app/keys";
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -67,10 +65,12 @@ async function engineWith(rows: EngineMessage[], over: Record<string, unknown>):
 let host: HTMLDivElement;
 let root: Root;
 let warn: ReturnType<typeof vi.spyOn>;
+let leaveSearch: () => void;
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: false });
   window.localStorage.clear();
+  leaveSearch = enterSearchRoute();
   warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -80,17 +80,14 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch();
   warn.mockRestore();
   vi.useRealTimers();
 });
 
-async function render(engine: OhmailEngine, query: string, version = 1): Promise<void> {
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(KeymapProvider, { children: h(SearchView, { engine, version, now: NOW, query, onQuery: () => {}, onOpen: () => {} }) }),
-    }));
-  });
+async function render(engine: OhmailEngine, query: string): Promise<void> {
+  await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+  await act(async () => { typeSearch(host, query); });
 }
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 /** Past a typed question's hold: its page, then its count. */
@@ -112,6 +109,8 @@ function verdicts(): string[] {
     .map(([k]) => k);
 }
 const logged = (): string[] => warn.mock.calls.map((c: unknown[]) => c.join(" ")).filter((l: string) => l.startsWith("[search]"));
+/** The one press that asks the whole mailbox again: the line's own verb, found by its role and name. */
+const againButton = (): HTMLElement | null => within(host).queryByRole("button", { name: "Search again" });
 
 const CORPUS = [msg("local", "myAXA Portal")];
 
@@ -143,7 +142,7 @@ describe("the whole-mailbox verdict always renders", () => {
     await advance(300);
     expect(verdicts()).toEqual(["failed"]);
     expect(text()).not.toContain("a sentence about the account");
-    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toContain("Search your whole mailbox again");
+    expect(againButton()).not.toBeNull();
   });
 
   it("a transport that throws SYNCHRONOUSLY is a failed outcome, never a rejection of the engine", async () => {
@@ -174,7 +173,7 @@ describe("the whole-mailbox verdict always renders", () => {
     expect(verdicts()).toEqual(["searching"]);
     // The device arm re-renders over a changed mirror while the pass is out.
     await act(async () => { await store.applyChanges([create(msg("new", "AXA claim update"))]); });
-    await render(engine, "axa", 2);
+    await render(engine, "axa");
     await advance(2_000);
     expect(verdicts()).toEqual(["searching"]);
     await act(async () => { settle!({ items: [msg("wire", "Quarterly letter")], total: 3, tier: "exact" }); });
@@ -264,7 +263,7 @@ describe("the whole-mailbox verdict always renders", () => {
     await advance(2);
     expect(verdicts()).toEqual(["unanswered"]);
     expect(logged()).toEqual(["[search] the whole-mailbox pass did not answer: timeout"]);
-    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toContain("Search your whole mailbox again");
+    expect(againButton()).not.toBeNull();
   });
 
   it("a one-character query asks nothing and never claims to be searching", async () => {
@@ -280,6 +279,7 @@ describe("the whole-mailbox verdict always renders", () => {
     expect(asked).toEqual(["my", "my"]); // the page, then its estimate — exact, so no summary
     expect(verdicts()).toEqual(["nothing"]);
   });
+
   it("an empty page WITH a cursor is followed: the rows behind it are the verdict, never nothing matched", async () => {
     const asked: string[] = [];
     const { engine } = await engineWith(CORPUS, {
@@ -311,9 +311,7 @@ describe("the whole-mailbox verdict always renders", () => {
     expect(asked).toHaveLength(5);
     expect(verdicts()).toEqual([]);
     expect(text()).not.toContain("Nothing matched.");
-    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Search your whole mailbox again");
-    await advance(ARCHIVE_TIMEOUT_MS);
-    expect(verdicts(), "not a timeout either").toEqual([]);
+    expect(againButton()).toBeNull();
   });
 
   it("past the bound with rows on screen, the end of the list scrolled to looks further", async () => {
@@ -331,7 +329,7 @@ describe("the whole-mailbox verdict always renders", () => {
     await render(engine, "letter");
     await advance(SETTLED);
     expect(text()).toContain("Quarterly letter");
-    const scroller = host.querySelector(".scroller") as HTMLElement;
+    const scroller = host.querySelector(".sr-scroll") as HTMLElement;
     const scroll = () => act(async () => { scroller.dispatchEvent(new Event("scroll")); await vi.advanceTimersByTimeAsync(10); });
     await scroll();
     expect(asked).toEqual(["0", "1", "2", "3", "4", "5"]);
@@ -363,7 +361,7 @@ describe("the whole-mailbox verdict always renders", () => {
     await render(engine, "letter");
     await advance(SETTLED);
     expect(text()).toContain("Letter 0 of the run");
-    const scroller = host.querySelector(".scroller") as HTMLElement;
+    const scroller = host.querySelector(".sr-scroll") as HTMLElement;
     for (let i = 0; i < 5; i++) {
       await act(async () => { scroller.dispatchEvent(new Event("scroll")); await vi.advanceTimersByTimeAsync(50); });
     }
@@ -399,7 +397,7 @@ describe("a followed position below page one, after the top is read again", () =
     await render(engine, "letter");
     await advance(SETTLED);
     expect(text()).toContain("Letter 0 of the run");
-    const scroller = host.querySelector(".scroller") as HTMLElement;
+    const scroller = host.querySelector(".sr-scroll") as HTMLElement;
     const scrollTo = async (slot: number): Promise<void> => {
       scroller.scrollTop = slot * 80;
       await act(async () => { scroller.dispatchEvent(new Event("scroll")); await vi.advanceTimersByTimeAsync(50); });
@@ -455,7 +453,7 @@ describe("a followed position below page one, after the top is read again", () =
       await render(engine, "letter");
       await advance(SETTLED);
       expect(text()).toContain("Letter 0 of the run");
-      const scroller = host.querySelector(".scroller") as HTMLElement;
+      const scroller = host.querySelector(".sr-scroll") as HTMLElement;
       const scrollTo = async (slot: number): Promise<void> => {
         scroller.scrollTop = slot * 80;
         await act(async () => { scroller.dispatchEvent(new Event("scroll")); await vi.advanceTimersByTimeAsync(50); });

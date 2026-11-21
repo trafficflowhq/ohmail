@@ -10,13 +10,15 @@ import type { ComposeAttachment, EngineDraft, EngineMessage } from "@ohmail/wire
 import type { ComponentType } from "react";
 import type { FromOption, SignatureState } from "@ohmail/client-engine";
 import type { ComposeFields, ComposePlan } from "@ohmail/app-logic/writing/compose";
-import type { SendState } from "@ohmail/app-logic/writing/mail-send";
+import type { SupportSeed } from "@ohmail/app-logic/writing/composer-types";
+import type { SendState, ShowSend } from "@ohmail/app-logic/writing/mail-send";
 import type { ComposeElsewhere } from "@ohmail/app-logic/writing/compose-autosave";
 import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
 import type { Pictures, SendSurface } from "@ohmail/app-logic/write/files";
 import type { ComposedTime, ScheduleFiles } from "@ohmail/app-logic/write/later";
 import type { PaneProps } from "../frame/contract.js";
 import type { None } from "../host/contract.js";
+import type { HostDevice } from "../host/device.js";
 import type { ReaderReply } from "../reader/ports.js";
 
 export type { ReaderReply };
@@ -35,11 +37,17 @@ export interface EditorMarks {
   subscribe(changed: () => void): () => void;
   run(id: MarkId): void;
   readonly link: {
-    read(): string | null;
-    set(href: string | null): "ok" | "refused";
+    /** Capture the range before focus leaves the editor. */
+    open(): EditorLink;
     /** Mod+K in the text: `ask` is called as a press on the strip's Link is; the return stops it. */
     onKey(ask: () => void): () => void;
   };
+}
+
+export interface EditorLink {
+  readonly href: string | null;
+  set(href: string | null): "ok" | "refused";
+  restore(): void;
 }
 
 /** What an editor hands the screen once it stands: its marks, and the two moves the screen makes in the text. */
@@ -47,7 +55,11 @@ export interface EditorHandle {
   /** `none`: a plain editor; no strip and no "Aa" is drawn. */
   readonly marks: EditorMarks | "none";
   insert(text: RichValue, how: "replace" | "atCaret"): void;
-  focus(): void;
+  /**
+   * The keys to the text. It never scrolls what the editor stands in (the reading column counts a scroll under a
+   * resting pointer as the person's reading), and every call says so.
+   */
+  focus(how: { readonly preventScroll: true }): void;
 }
 
 export interface EditorProps {
@@ -58,10 +70,10 @@ export interface EditorProps {
   /** False while a send is in flight: the words stay, input is refused. */
   readonly editable: boolean;
   readonly focusAtMount: boolean;
-  /** Mod+Enter inside the text. */
-  readonly onSendKey: () => void;
-  /** Escape the editor did not take. */
-  readonly onLeaveKey: () => void;
+  /** Mod+Enter inside the text. Mod+Shift+Enter is left to the app's binding (Send + Done). */
+  readonly onSendKey?: () => void;
+  /** Escape the editor did not take, where the containing place handles it. */
+  readonly onLeaveKey?: () => void;
   readonly onHandle: (handle: EditorHandle | null) => void;
 }
 
@@ -223,6 +235,8 @@ export interface WriteDiscardRefusal {
 export interface Writing {
   /* The letter. */
   readonly compose: ComposeFields;
+  /** The live binding changes when another letter takes the same composer. */
+  readonly composeEpochNow?: () => number;
   readonly onComposeFields: (next: ComposeFields) => void;
   readonly plan: ComposePlan;
   readonly composeFrom: WriteFrom;
@@ -259,8 +273,19 @@ export interface Writing {
   readonly replyForwardFiles: WriteForwardFiles | null;
   readonly replyBook: readonly { readonly name: string | null; readonly address: string }[];
   readonly replySendState: (lane: string) => SendState;
+  /**
+   * A letter that shows its send registers the send's lane while it stands (the send machine's `showing`): the one
+   * machine then says the send's ending on that letter's line, and in the frame's report only where no letter shows it.
+   */
+  readonly showSend: ShowSend;
   readonly heldReplyRow: (messageId: string) => string | null;
   readonly sendReply: (messageId: string) => void;
+  /**
+   * SEND + DONE for the reply to a letter: the same send, and the letter filed once the send is confirmed. Asked at
+   * every render, of the letters as the Ohbox shows them; `null`: it is not offered there (nothing to finish), and
+   * neither its verb nor its key acts.
+   */
+  readonly sendReplyAndDone: (messageId: string) => (() => void) | null;
   readonly openReply: (messageId: string, all?: boolean) => void;
   readonly openForward: (messageId: string, seed?: EngineMessage) => void;
   readonly confirmForward: () => void;
@@ -274,6 +299,7 @@ export interface Writing {
   readonly draftReplyChrome: WriteDraftChrome;
   readonly openDraft: (draft: EngineDraft, files?: ComposeAttachment[]) => void;
   readonly writeTo: (address: string, name?: string) => void;
+  readonly writeSupport?: (seed: SupportSeed) => void;
 
   /* Derived by the shell's adapter, as today's shell derives them for its views. */
   /** The reply open on a letter, planned; null: none is open, or its letter is not known here. */
@@ -362,6 +388,8 @@ export interface WriteBeside {
   ) => { readonly text: string; readonly html: string | null } | null;
   /** How pictures are sent; `none`: as picked, and no quality control is drawn. */
   readonly pictures: Pictures;
+  /** The desktop's own held-file pick, where its window supplies one. */
+  readonly pickFile?: HostDevice["pickFile"];
   /** What this window can carry in one send, beside the sending mailbox's own ceiling. */
   readonly surface: SendSurface;
   /** The server meters drafting in credits: a draft's price is said before its press. False: none is charged. */

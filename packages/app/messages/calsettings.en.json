@@ -13,6 +13,7 @@
       "microsoft": "Microsoft 365"
     },
     "accounts": {
+      "useCalendar": "Use ohcal",
       "add": "Add a calendar account",
       "none": "No calendar account",
       "noneShort": "None",
@@ -37,7 +38,8 @@
       "removeAsk": "Remove {name}?",
       "rename": "Rename here",
       "nameHere": "Name here",
-      "save": "Save"
+      "save": "Save",
+      "title": "Calendar accounts"
     },
     "view": {
       "newEvents": "New events go to",
@@ -49,13 +51,26 @@
       "hours": "Hours in view",
       "from": "From",
       "to": "To",
+      "hourRange": "{from} – {to}",
+      "summary": "Week · Monday",
+      "scheduleSummary": "{hours} · {calendar}",
+      "hourEarlier": "An hour earlier",
+      "hourLater": "An hour later",
       "endOfDay": "Midnight",
       "time": "Time",
       "zone": "Time zone",
       "zoneNote": "Follows this device.",
       "secondZone": "Second time zone",
       "noSecondZone": "None",
-      "findZone": "Find a time zone"
+      "findZone": "Find a time zone",
+      "title": "View"
+    },
+    "group": "Calendar",
+    "close": "Close Settings",
+    "mail": {
+      "title": "Mail and calendar",
+      "fromMail": "From mail",
+      "open": "Open"
     }
   }
 }

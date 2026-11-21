@@ -3,7 +3,8 @@ import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   MemoryMirrorStore, OhmailEngine, consentPartition, presentationReader,
   type SyncChange,
@@ -111,7 +112,6 @@ interface Observed {
 
 async function mountProbe(engine: OhmailEngine): Promise<Observed> {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let seen: Observed | null = null;
 
   function Probe(): React.ReactElement {
@@ -120,7 +120,7 @@ async function mountProbe(engine: OhmailEngine): Promise<Observed> {
     const reader = engine.read();
     const view = consentPartition(reader, { now: NOW });
     const presented = presentationReader(reader, view);
-    const state = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), undefined, presented);
+    const state = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerWords(), undefined, presented);
     seen = {
       unsuggested: state.unsuggestedSenders,
       waiting: state.waiting.map((x) => ({ address: x.from.address, gatePhysical: x.gatePhysical })),
@@ -132,8 +132,8 @@ async function mountProbe(engine: OhmailEngine): Promise<Observed> {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe),
+    root!.render(h(TextProvider, {
+      locale: "en", messages, timeZone: "UTC", children: h(Probe),
     }));
   });
   await settleFirstPaint();

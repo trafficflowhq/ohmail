@@ -1,15 +1,15 @@
 /**
- * TRASH'S KEYS while its column has the keyboard: `u` presses the read slot and ⇧⌫ Restore, the two keys its panel
- * names, for the deleted letter that stands open. Never in a field, never with Ctrl, Cmd or Alt, never while a dialog
- * or a menu stands over the column; a held ⇧⌫ is one press, as the released Trash had it.
+ * The read slot’s `u` key, and the Restore shortcut listed in the shared registry.
  */
 import { useEffect, useRef } from "react";
-import { chordMatches, isTypingTarget } from "@ohmail/app-logic/keys";
+import { chordMatches, isTypingTarget, useOptionalKeyBindings } from "@ohmail/app-logic/keys";
 import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
+import { useFrame } from "../frame/commands.js";
+import { NONE } from "../host/index.js";
+import { useText } from "../text/index.js";
 
 export interface TrashKeys {
   readonly read: () => void;
-  readonly restore: () => void;
 }
 
 export function useTrashKeys(on: boolean, root: Element | null, keys: TrashKeys | null): void {
@@ -22,16 +22,46 @@ export function useTrashKeys(on: boolean, root: Element | null, keys: TrashKeys 
       const now = latest.current;
       if (now === null || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(e.target) || isModalOpen(win.document)) return;
-      const go = chordMatches("u", e)
-        ? now.read
-        : chordMatches("shift+Backspace", e) && !e.repeat
-          ? now.restore
-          : null;
-      if (go === null) return;
+      if (!chordMatches("u", e)) return;
       e.preventDefault();
-      go();
+      now.read();
     };
     win.addEventListener("keydown", onKey);
     return () => win.removeEventListener("keydown", onKey);
   }, [on, root]);
+}
+
+/** Restore is listed wherever mail stands, and runs only for the open deleted letter. */
+export function useRestoreBinding(listed: boolean, label: string, restore?: () => void): void {
+  useOptionalKeyBindings(
+    listed
+      ? [
+          {
+            chord: "shift+Backspace",
+            group: "message",
+            label,
+            disabled: restore === undefined,
+            when: (event) => {
+              if (event.repeat) return false;
+              const target = event.target;
+              const doc =
+                event.view?.document ??
+                (target instanceof Document ? target : target instanceof Node ? target.ownerDocument : null);
+              return doc !== null && !isModalOpen(doc);
+            },
+            run: () => restore?.(),
+          },
+        ]
+      : [],
+  );
+}
+
+export function RestingRestore(): null {
+  const { route, host, product } = useFrame();
+  const t = useText("trash");
+  useRestoreBinding(
+    product === "mail" && route.place !== "trash" && host.features.places.trash !== NONE,
+    t("restoreKey"),
+  );
+  return null;
 }

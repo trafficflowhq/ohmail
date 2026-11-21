@@ -1,112 +1,64 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FolderView } from "../app/views/FolderView";
-import { TrashView } from "../app/views/TrashView";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { WithListGone } from "./_list-gone";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { ESTIMATED_ROW_PX, MEASURED_FULL_RANGE_MAX_ROWS } from "@ohmail/app-logic/lists/list-window";
+import { Frame } from "@ohmail/app/frame";
+import { TextProvider } from "@ohmail/app/text";
+import { FOLDERS_ON, LIST_WORDS, listFrame } from "../../../packages/app/test/places/list-seat.js";
+import { letter } from "../../../packages/app/test/reader/support/mail.js";
+import trashWords from "../../../packages/app/messages/trash.en.json";
 
-/**
- * ↓ TO A ROW THE WINDOW HAS NOT MOUNTED. A folder or Trash of a few hundred rows is a window now,
- * so the next row can be off the mounted slice when the reader has scrolled away from the
- * selection. The press reaches it through its slot — the scroller moves there, which mounts it —
- * rather than selecting a row that is not on screen.
- */
+afterEach(cleanup);
 
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const ISO = "2026-08-01T09:00:00.000Z";
 const COUNT = 120;
-const rows = Array.from({ length: COUNT }, (_, i) => ({
-  id: `m${i}`, accountId: "acct", mailboxId: "mb1", threadId: null, messageIdHeader: null,
-  subject: `Subject ${i}`, from: { name: null, address: `s${i}@example.com` }, to: [], cc: [],
-  date: new Date(Date.parse(ISO) - i * 60_000).toISOString(), folder: "Projects", snippet: "…",
-  unread: false, hasAttachments: false, attachmentCount: 0,
-  sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-  triage: null, labels: [], remoteContent: "none", updatedAt: ISO, trashedAt: ISO, restoreTo: "INBOX",
+const folder = "Projects" as ReturnType<typeof letter>["folder"];
+const rows = Array.from({ length: COUNT }, (_, i) => letter(`m${i}`, {
+  subject: `Subject ${i}`,
+  date: new Date(Date.UTC(2026, 7, 1, 9, -i)).toISOString(),
+  folder,
+  unread: false,
 }));
-const none = () => {};
 
-let host: HTMLDivElement | null = null;
-let root: Root | null = null;
-/* jsdom has no `CSS` object, and both views find the row to scroll to with `CSS.escape`. */
-const hadCss = typeof (globalThis as unknown as { CSS?: unknown }).CSS !== "undefined";
-beforeEach(() => {
-  vi.spyOn(console, "error").mockImplementation(() => {});
-  if (!hadCss) (globalThis as unknown as { CSS: unknown }).CSS = { escape: (s: string) => s.replace(/["\\]/g, "\\$&") };
-});
-afterEach(async () => {
-  if (root) await act(() => root!.unmount());
-  host?.remove();
-  host = null;
-  root = null;
-  if (!hadCss) (globalThis as unknown as { CSS?: unknown }).CSS = undefined;
-  vi.restoreAllMocks();
-});
-
-async function mount(view: React.ReactElement): Promise<HTMLElement> {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(() => root!.render(
-    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC" now={new Date(ISO)}>
-      <KeymapProvider><WithListGone>{view}</WithListGone></KeymapProvider>
-    </NextIntlClientProvider>,
-  ));
-  return host.querySelector(".scroller") as HTMLElement;
-}
-
-const frame = () => act(async () => { await new Promise((r) => setTimeout(r, 40)); });
-const ids = () => [...host!.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id"));
-const chosen = () => host!.querySelector('.row[data-id][aria-selected="true"]')?.getAttribute("data-id") ?? null;
-
-async function walkPastTheSlice(scroller: HTMLElement): Promise<void> {
-  (host!.querySelector('.row[data-id="m0"]') as HTMLElement).click();
-  await frame();
-  expect(chosen()).toBe("m0");
-  scroller.scrollTop = 90 * ESTIMATED_ROW_PX;
-  await act(async () => { scroller.dispatchEvent(new Event("scroll")); });
-  await frame();
-  expect(ids(), "the window did not move off the selection").not.toContain("m1");
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+async function walkPastTheSlice(place: "folder" | "trash") {
+  const inFolder = place === "folder";
+  const { host } = listFrame({
+    letters: inFolder ? rows : [],
+    first: inFolder ? "#/folder/fd1" : "#/trash",
+    consent: FOLDERS_ON,
+    more: { "folder:fd1": { id: "fd1", name: folder, mailboxId: rows[0]!.mailboxId } },
+    engine: () => ({
+      fetchMessage: async () => ({ state: "failed", errorClass: "network" }),
+      trashAvailable: () => true,
+      listTrash: async () => ({ state: "ready", items: rows, nextCursor: null }),
+    }),
   });
-  await frame();
-  await frame();
+  render(
+    <TextProvider locale="en" messages={{ ...LIST_WORDS, ...trashWords }} timeZone="Europe/Zurich">
+      <Frame host={host} />
+    </TextProvider>,
+  );
+  const first = { name: /Subject 0$/ };
+  const next = { name: /Subject 1$/ };
+  fireEvent.click(await screen.findByRole("option", first));
+  const row = await screen.findByRole("option", { ...first, selected: true });
+  expect(row.dataset.id).toBe("m0");
+  const scroller = row.closest<HTMLElement>('[tabindex="-1"]')!;
+  act(() => { scroller.focus(); });
+  scroller.scrollTop = 90 * ESTIMATED_ROW_PX;
+  fireEvent.scroll(scroller);
+  await waitFor(() => expect(screen.queryByRole("option", next), "the window did not move off the selection").toBeNull());
+  fireEvent.keyDown(scroller, { key: "ArrowDown" });
+  const moved = await screen.findByRole("option", { ...next, selected: true });
+  expect(moved.dataset.id).toBe("m1");
 }
 
 describe("↓ reaches the next row through its slot", () => {
   it(`in a folder of ${COUNT} rows — past the measured floor, a window`, async () => {
     expect(COUNT).toBeGreaterThan(MEASURED_FULL_RANGE_MAX_ROWS);
-    const scroller = await mount(
-      <FolderView onMarkSeen={() => {}}
-        folder={{ id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@example.com" }}
-        messages={rows as never[]}
-        older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: none }}
-        tags={[]} now={new Date(ISO)} onOpen={none} hydrateBody={none} onAction={none} onAddTag={none}
-        onScreen={none} canDelete={() => true} canReplyAll={() => true}
-      />,
-    );
-    await walkPastTheSlice(scroller);
-    expect(ids()).toContain("m1");
-    expect(chosen()).toBe("m1");
+    await walkPastTheSlice("folder");
   });
 
   it(`in a Trash of ${COUNT} rows`, async () => {
-    const scroller = await mount(
-      <TrashView
-        page={{ available: true, items: rows as never[], loading: false, error: null, exhausted: true, loadMore: none }}
-        tags={[]} now={new Date(ISO)} onOpen={none} hydrateBody={none} onAction={none} onAddTag={none}
-        {...({} as Record<string, never>)}
-      />,
-    );
-    await walkPastTheSlice(scroller);
-    expect(ids()).toContain("m1");
-    expect(chosen()).toBe("m1");
+    await walkPastTheSlice("trash");
   });
 });

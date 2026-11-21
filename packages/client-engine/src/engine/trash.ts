@@ -3,6 +3,11 @@ import type { MutationResult } from "./mutation-views.js";
 import { EngineOptimisticMutations } from "./optimistic-mutations.js";
 import type { ListTrashOutcome, RestoreOutcome } from "./server-wire.js";
 
+/** One journaled delete has the same wire identity on its first send and after a restart. */
+export function deleteIntentKey(pressId: string, messageId: string): string {
+  return `delete-replay:${pressId}:${messageId}`;
+}
+
 export abstract class EngineTrash extends EngineOptimisticMutations {
   // ── Trash: mail this account deleted, and putting one back ───────────────
 
@@ -134,7 +139,7 @@ export abstract class EngineTrash extends EngineOptimisticMutations {
   ): Promise<MutationResult> {
     const key = opts.intentId === undefined || opts.intentId === ""
       ? this.uuid()
-      : `delete-replay:${opts.intentId}:${messageId}`;
+      : deleteIntentKey(opts.intentId, messageId);
     if (this.store.isTombstoned("message", messageId)) {
       return { id: this.uuid(), key, status: "confirmed", seq: null };
     }

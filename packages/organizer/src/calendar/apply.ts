@@ -144,6 +144,7 @@ export interface StoredRow {
   readonly recurrenceId: string;
   readonly versionTag: string | null;
   readonly uid: string;
+  readonly partial: boolean;
   /** Whether the row keeps any excluded day. */
   readonly excludes: boolean;
 }
@@ -173,11 +174,11 @@ function united(a: readonly StoredTime[], b: readonly StoredTime[], zones: ZoneS
  * Is an object as a page names it already stored as it is? Every stored row carries the
  * provider's same version, which is not empty, and the rows are the same occurrences.
  */
-export function storedAsIs(rows: readonly MappedRow[], stored: readonly Pick<StoredRow, "versionTag" | "recurrenceId">[]): boolean {
+export function storedAsIs(rows: readonly MappedRow[], stored: readonly Pick<StoredRow, "versionTag" | "recurrenceId" | "partial">[]): boolean {
   const version = rows[0]?.values.versionTag ?? null;
   if (version === null || stored.length !== rows.length) return false;
-  const keys = new Set(rows.map((r) => r.values.recurrenceId));
-  return stored.every((s) => s.versionTag === version && keys.has(s.recurrenceId));
+  const partialByDay = new Map(rows.map((r) => [r.values.recurrenceId, r.values.partial]));
+  return stored.every((s) => s.versionTag === version && partialByDay.get(s.recurrenceId) === s.partial);
 }
 
 /**
@@ -341,7 +342,7 @@ export async function storedRowsOf(
   return inConnection(ctx.db, ctx.key, async ({ tx }) => {
     const pick = {
       id: calEvents.id, providerId: calEvents.providerId, recurrenceId: calEvents.recurrenceId,
-      versionTag: calEvents.versionTag, uid: calEvents.uid, excludes: sql<boolean>`${calEvents.excludedDates} is not null`,
+      versionTag: calEvents.versionTag, uid: calEvents.uid, partial: calEvents.partial, excludes: sql<boolean>`${calEvents.excludedDates} is not null`,
     };
     const mine = and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id));
     const found = new Map<string, StoredRow>();
@@ -496,7 +497,7 @@ function columnsOf(row: MappedRow, excluded: readonly StoredTime[]) {
     repeatRule: v.repeatRule, excludedDates: excluded.length > 0 ? [...excluded] : null,
     addedDates: v.addedDates === null ? null : [...v.addedDates],
     busy: v.busy, private: v.private, organizer: v.organizer, organizerName: v.organizerName,
-    myAnswer: v.myAnswer, original: v.original,
+    myAnswer: v.myAnswer, original: v.original, partial: v.partial,
   };
 }
 
@@ -519,7 +520,7 @@ async function replaceChildren(tx: Tx, ctx: ApplyContext, eventId: string, row: 
 async function lockedRows(tx: Tx, ctx: ApplyContext, where: ReturnType<typeof and>) {
   return dialect(tx).forUpdate(tx.select({
     id: calEvents.id, providerId: calEvents.providerId, recurrenceId: calEvents.recurrenceId,
-    versionTag: calEvents.versionTag, uid: calEvents.uid, excludedDates: calEvents.excludedDates,
+    versionTag: calEvents.versionTag, uid: calEvents.uid, partial: calEvents.partial, excludedDates: calEvents.excludedDates,
   }).from(calEvents).where(and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id), where)), { mode: "update" });
 }
 

@@ -33,8 +33,7 @@
         "packages/services/src/schedule-send-pass.ts",
         "packages/services/src/send-reconcile-pass.ts",
         "packages/services/src/sent-copy-pass.ts",
-        "packages/services/src/storage-mail-pass.ts",
-        "packages/services/src/unsubscribe-service.ts"
+        "packages/services/src/storage-mail-pass.ts"
       ]
     },
     {

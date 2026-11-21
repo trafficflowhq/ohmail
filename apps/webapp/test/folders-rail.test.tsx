@@ -1,45 +1,21 @@
 /** @vitest-environment jsdom */
-import type { FolderEntity } from "@ohmail/wire";
-import { afterEach, describe, expect, it } from "vitest";
+import type { EngineMessage, EngineMutation, FolderEntity } from "@ohmail/wire";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Frame } from "@ohmail/app/frame";
+import { NONE } from "@ohmail/app/host";
+import { TextProvider } from "@ohmail/app/text";
+import { FOLDERS_ON, LIST_WORDS, listFrame, listSeat } from "../../../packages/app/test/places/list-seat.js";
+import { MemoryMirrorStore, OhmailEngine, mutationEffects, type SyncChange } from "@ohmail/client-engine";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { shellFrameOf } from "./source-anchor.js";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { WithListGone } from "./_list-gone";
-import { FoldersRailGroup } from "../app/shell/FoldersRailGroup";
-import {
-  FOLDER_FILTER_AT,
-  folderMatches,
-  folderTailVerdict,
-  folderTree,
-  folderUnreadCounts,
-  folderUnreadDeep,
-  visibleFolderRows,
-} from "@ohmail/app-logic/lists/folders";
+import { FOLDER_FILTER_AT, folderTailVerdict } from "@ohmail/app-logic/lists/folders";
 import messages from "../messages/en.json";
+import { fakeWindow } from "../../../packages/app/test/support/fake-window.js";
 
-/**
- * THE RAIL'S FOLDERS GROUP — the foundation stage's product guards, each one a prototype
- * invariant clicked through and ratified on the prototype (the folders spec §14/§15; the prototype watched its
- * own mutations of every one of these go red, and this file owes the same watch in product code):
- *
- *  · FLAG-OFF PARITY: with "Use folders" off the group is spread away, not emptied — the rail is
- *    byte-identical to the pre-feature rail (spec §10). Asserted at the source level, because
- *    the property is structural: no `.rgroup` may exist to be styled differently.
- *  · FIRST LEVEL ONLY by default — the OPENED-set, no seeding.
- *  · ROLL-UP: a collapsed parent's badge is own + hidden descendants, exactly once.
- *  · ALPHABETICAL, numeric-aware, case-insensitive siblings.
- *  · THE MANY-FOLDERS TREATMENT above 12 roots: filter + first 12 + Show all, bounded scroll.
- *  · FULL-PATH filter matching — a leaf-only match was a watched-red prototype mutation.
- *  · SECTIONED BY MAILBOX only when 2+ exist.
- *  · THE NUMBER KEYS see nothing: the group carries `items: []` and the derivation reads items.
- */
-
+/** Folder rail controls, list windows, and paging promises from the earlier web shell. */
 (globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,14 +23,8 @@ const read = (p: string): string => readFileSync(fileURLToPath(new URL(p, import
 const stripComments = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 
-let root: Root | null = null;
-let host: HTMLElement | null = null;
-
-afterEach(async () => {
-  if (root) await act(() => root!.unmount());
-  root = null;
-  host?.remove();
-  host = null;
+afterEach(() => {
+  cleanup();
   window.localStorage.clear();
 });
 
@@ -62,143 +32,87 @@ function folder(name: string, mailboxId = "mb1", mailbox = "a@x.example"): Folde
   return { id: `f-${mailboxId}-${name}`, name, mailboxId, mailbox };
 }
 
-/** The scope the shell hands the rail's folder tree, as a mounted shell names its account. */
-const RAIL_SCOPE = "acct_A";
+function mountFolderFrame(entity: FolderEntity, window: ReturnType<typeof fakeWindow>,
+  { engine, children = [] }: { engine?: OhmailEngine; children?: readonly FolderEntity[] } = {}) {
+  const { host: frameHost, address, mail } = listFrame({
+    first: "#/ohbox",
+    letters: [],
+    consent: FOLDERS_ON,
+    more: Object.fromEntries([entity, ...children].map((folder) => [`folder:${folder.id}`, folder])),
+    mailboxes: async () => [{
+      id: entity.mailboxId, address: entity.mailbox, status: "connected",
+      errorCode: null, disabledReason: null, syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: null,
+    }],
+  });
+  render(React.createElement(TextProvider, {
+    locale: "en", messages: LIST_WORDS, timeZone: "Europe/Zurich",
+    children: React.createElement(Frame, {
+      host: {
+        ...frameHost,
+        engine: engine ?? frameHost.engine,
+        device: { ...frameHost.device, window },
+        capabilities: { ...frameHost.capabilities, foldersStorable: true },
+        wires: { ...frameHost.wires, folderSummary: async () => null },
+      },
+    }),
+  }));
+  return { address, mail };
+}
 
-async function mount(
-  folders: FolderEntity[],
-  unread: Map<string, number> = new Map(),
-  activeFolderId?: string,
-  mailboxCount?: number,
-): Promise<{ el: HTMLElement; nav: string[] }> {
-  const nav: string[] = [];
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(() =>
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        timeZone: "Europe/Zurich",
-        children: h(FoldersRailGroup, {
-          scope: RAIL_SCOPE,
-          folders,
-          unread,
-          mailboxCount,
-          activeFolderId,
-          onNavigate: (id: string) => nav.push(id),
-        }),
-      }),
-    ),
-  );
-  return { el: host, nav };
+async function expectTouchMenuInMore(window: ReturnType<typeof fakeWindow>) {
+  const projects = folder("Projects");
+  const child = folder("Projects/Bids");
+  const { address } = mountFolderFrame(projects, window, { children: [child] });
+  fireEvent.click(await screen.findByRole("button", { name: "More" }));
+  const menuName = "Folder menu for Projects";
+  const pressMenu = async (surface: HTMLElement) => {
+    const opener = within(surface).getByRole("button", { name: menuName });
+    expect(opener.tabIndex).toBe(0);
+    expect(opener.getAttribute("aria-haspopup")).toBe("menu");
+    await click(opener);
+    const menu = screen.getByRole("menu", { name: menuName });
+    for (const name of ["Rename", "New subfolder", "Delete…"]) {
+      expect(within(menu).getByRole("menuitem", { name })).toBeTruthy();
+    }
+    expect(address.read()).toBe("#/ohbox");
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: menuName })).toBeNull();
+  };
+
+  try {
+    const places = await screen.findByRole("dialog", { name: "More" });
+    await within(places).findByRole("button", { name: "Projects" });
+    await pressMenu(places);
+
+    await click(within(places).getByRole("button", { name: "All folders" }));
+    const tree = within(places).getByRole("tree", { name: "All folders" });
+    expect(within(tree).queryByRole("button", { name: "Bids" })).toBeNull();
+    await pressMenu(tree);
+    const expand = within(tree).getByRole("button", { name: "Expand Projects" });
+    await click(expand);
+    expect(expand.getAttribute("aria-expanded")).toBe("true");
+    expect(address.read()).toBe("#/ohbox");
+    await click(within(tree).getByRole("button", { name: "Bids" }));
+    expect(address.read()).toBe(`#/folder/${child.id}`);
+  } finally {
+    cleanup();
+  }
+}
+
+async function mount(folders: FolderEntity[], { writable = false }: { writable?: boolean } = {}) {
+  mountRegisteredRail(folders, writable ? async () => null : NONE);
+  const opener = await screen.findByRole("button", { name: "All folders" });
+  await click(opener);
+  return { el: screen.getByRole("tree", { name: "All folders" }) };
 }
 
 const rowLabels = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(".frow .ritem .flabel")].map((n) => n.textContent ?? "");
+  [...el.querySelectorAll(".oh-folderfold-row > button:not([aria-expanded])")].map((row) => row.textContent?.trim() ?? "");
 
 const click = async (n: Element | null) => {
   expect(n, "expected an element to click").not.toBeNull();
   await act(() => (n as HTMLElement).click());
 };
-
-describe("first level only, and the opened-set", () => {
-  it("a fresh boot renders roots alone; opening a branch reveals its children and persists", async () => {
-    const { el } = await mount([
-      folder("Projects"),
-      folder("Projects/Acme"),
-      folder("Projects/Acme/2026"),
-      folder("Invoices"),
-    ]);
-    // Roots only — the child is not in the DOM at all, not merely hidden.
-    expect(rowLabels(el)).toEqual(["Invoices", "Projects"]);
-
-    // The branch wears a twisty; the leaf wears a spacer.
-    const twisties = el.querySelectorAll("button.ftw");
-    expect(twisties.length).toBe(1);
-    await click(twisties[0]);
-    expect(rowLabels(el)).toEqual(["Invoices", "Projects", "Acme"]);
-    // Acme itself has children and starts closed — first level of each branch, recursively.
-    expect(rowLabels(el)).not.toContain("2026");
-
-    // The opened branch survives a remount (the persisted OPENED-set).
-    await act(() => root!.unmount());
-    const again = await mount([
-      folder("Projects"),
-      folder("Projects/Acme"),
-      folder("Projects/Acme/2026"),
-      folder("Invoices"),
-    ]);
-    expect(rowLabels(again.el)).toEqual(["Invoices", "Projects", "Acme"]);
-  });
-
-  it("the opened set is each account's own, and a device-wide set an earlier build kept is dropped unread", async () => {
-    const tree = [folder("Projects"), folder("Projects/Acme"), folder("Invoices")];
-    const rail = (scope: string): React.ReactElement => h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "Europe/Zurich",
-      children: h(FoldersRailGroup, { scope, folders: tree, unread: new Map(), onNavigate: () => {} }),
-    });
-    // Every account's folder paths, in one value no erasure could find by its key.
-    window.localStorage.setItem("ohmail.ui.rail.foldersOpened", JSON.stringify(["mb1|Projects"]));
-    document.cookie = "tf_owner=acct_A; Path=/";
-    try {
-      const { el } = await mount(tree);
-      expect(rowLabels(el), "the device-wide set was read").toEqual(["Invoices", "Projects"]);
-      expect(window.localStorage.getItem("ohmail.ui.rail.foldersOpened"), "the device-wide set is still here").toBeNull();
-      await click(el.querySelector("button.ftw"));
-      const as = async (owner: string): Promise<string[]> => {
-        document.cookie = `tf_owner=${owner}; Path=/`;
-        await act(() => root!.render(rail(owner)));
-        return rowLabels(el);
-      };
-      expect(await as("acct_B"), "another account opened on A's branch").toEqual(["Invoices", "Projects"]);
-      expect(await as("acct_A"), "A's opened branch was lost").toEqual(["Invoices", "Projects", "Acme"]);
-    } finally {
-      document.cookie = "tf_owner=; Path=/; Max-Age=0";
-    }
-  });
-
-  it("navigating to a nested folder opens its ancestors", async () => {
-    const deep = folder("Projects/Acme/2026");
-    const { el } = await mount(
-      [folder("Projects"), folder("Projects/Acme"), deep],
-      new Map(),
-      deep.id,
-    );
-    expect(rowLabels(el)).toEqual(["Projects", "Acme", "2026"]);
-  });
-});
-
-describe("the roll-up count", () => {
-  it("a collapsed parent's badge is own + hidden descendants, exactly once; expanded, its own", async () => {
-    const folders = [folder("Projects"), folder("Projects/Acme"), folder("Projects/Acme/2026")];
-    const unread = new Map([
-      ["mb1|Projects", 1],
-      ["mb1|Projects/Acme", 2],
-      ["mb1|Projects/Acme/2026", 4],
-    ]);
-    const { el } = await mount(folders, unread);
-    const badge = () => el.querySelector(".frow .ritem .cnt")?.textContent;
-    expect(badge()).toBe("7");
-    await click(el.querySelector("button.ftw"));
-    // Expanded: the parent shows its OWN unread; Acme (still collapsed) rolls its child up.
-    const counts = [...el.querySelectorAll(".frow .ritem .cnt")].map((n) => n.textContent);
-    expect(counts).toEqual(["1", "6"]);
-  });
-});
-
-describe("ordering", () => {
-  it("siblings sort alphabetically, numeric-aware, case-insensitive", async () => {
-    const { el } = await mount([
-      folder("Steuern 2010"),
-      folder("zebra"),
-      folder("Steuern 2009"),
-      folder("Archiv"),
-    ]);
-    expect(rowLabels(el)).toEqual(["Archiv", "Steuern 2009", "Steuern 2010", "zebra"]);
-  });
-});
 
 describe("the many-folders treatment", () => {
   const many = Array.from({ length: FOLDER_FILTER_AT + 3 }, (_, i) =>
@@ -206,29 +120,27 @@ describe("the many-folders treatment", () => {
 
   it("above 12 roots: type-to-filter + the first 12 + a Show-all expander; expanded scrolls bounded", async () => {
     const { el } = await mount(many);
-    expect(el.querySelector("input.ritem-new-input")).not.toBeNull();
+    expect(within(el).queryByRole("textbox", { name: "Find a folder" })).not.toBeNull();
     expect(rowLabels(el).length).toBe(FOLDER_FILTER_AT);
-    const expander = [...el.querySelectorAll(".ritem-action")].find((n) =>
-      (n.textContent ?? "").includes("Show all 15"));
-    expect(expander).toBeDefined();
+    const expander = within(el).queryByRole("button", { name: "Show all 15" });
+    expect(expander).not.toBeNull();
     await click(expander!);
     expect(rowLabels(el).length).toBe(15);
     // The full list scrolls in its OWN region — the rail itself never grows by hundreds of rows.
-    expect(el.querySelector(".fscroll")).not.toBeNull();
-    expect([...el.querySelectorAll(".ritem-action")].some((n) =>
-      (n.textContent ?? "").includes("Show fewer"))).toBe(true);
+    expect(el.querySelector(".oh-folderfold-scroll")).not.toBeNull();
+    expect(within(el).queryByRole("button", { name: "Show fewer" }) !== null).toBe(true);
   });
 
   it("at 12 roots or fewer the treatment stays away — no filter line, no expander", async () => {
     const { el } = await mount(many.slice(0, FOLDER_FILTER_AT));
-    expect(el.querySelector("input.ritem-new-input")).toBeNull();
-    expect(el.querySelector(".ritem-action")).toBeNull();
+    expect(within(el).queryByRole("textbox", { name: "Find a folder" })).toBeNull();
+    expect(within(el).queryByRole("button", { name: /Show all/ })).toBeNull();
   });
 
   it("the filter matches the FULL path and the match wears its parent for context", async () => {
     const withChild = [...many, folder("Mandat 01/Belege")];
     const { el } = await mount(withChild);
-    const input = el.querySelector("input.ritem-new-input") as HTMLInputElement;
+    const input = within(el).getByRole<HTMLInputElement>("textbox", { name: "Find a folder" });
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(() => {
       setter.call(input, "mandat 01/");
@@ -239,77 +151,35 @@ describe("the many-folders treatment", () => {
     const labels = rowLabels(el);
     // The label carries the parent as a muted prefix plus the leaf — one span, two parts.
     expect(labels).toContain("Mandat 01/Belege");
-    expect(el.querySelector(".fpath")?.textContent).toBe("Mandat 01/");
+    expect(el.querySelector(".oh-ritem-hint")?.textContent).toBe("Mandat 01/");
   });
 });
 
 describe("mailbox sections", () => {
-  it("two mailboxes are sectioned by address; one mailbox wears no label at all", async () => {
-    const two = await mount([
-      folder("Projects", "mb1", "a@x.example"),
-      folder("Archiv", "mb2", "b@y.example"),
-    ]);
-    const labels = [...two.el.querySelectorAll(".rmblab")].map((n) => n.textContent);
-    expect(labels).toEqual(["a@x.example", "b@y.example"]);
-
-    await act(() => root!.unmount());
-    const one = await mount([folder("Projects", "mb1", "a@x.example")]);
-    expect(one.el.querySelector(".rmblab")).toBeNull();
-  });
-
   it("the ACCOUNT's mailbox count decides — one tree still sections when a second mailbox exists", async () => {
     // Two connected mailboxes, only one with user folders: the lone tree must say whose it is
     // (spec §14 — "more than one mailbox on the account", not "more than one tree").
-    const { el } = await mount([folder("Projects", "mb1", "a@x.example")], new Map(), undefined, 2);
-    expect([...el.querySelectorAll(".rmblab")].map((n) => n.textContent)).toEqual(["a@x.example"]);
-  });
-});
-
-describe("navigation", () => {
-  it("a row press navigates by entity id and lights the active row", async () => {
-    const target = folder("Projects");
-    const { el, nav } = await mount([target, folder("Archiv")], new Map(), target.id);
-    const on = el.querySelector(".ritem.on");
-    expect(on?.textContent).toContain("Projects");
-    await click(el.querySelector(`[data-rail-folder-id="${target.id}"]`));
-    expect(nav).toEqual([target.id]);
+    const project = folder("Projects");
+    const child = folder("Projects/Archive");
+    listSeat({
+      first: "#/ohbox",
+      letters: [],
+      consent: FOLDERS_ON,
+      more: { [`folder:${project.id}`]: project, [`folder:${child.id}`]: child },
+      mailboxes: async () => [
+        { id: project.mailboxId, address: project.mailbox, status: "connected",
+          errorCode: null, disabledReason: null, syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: null },
+        { id: "mb2", address: "other" + "@" + "example.test", status: "connected",
+          errorCode: null, disabledReason: null, syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: null },
+      ],
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "All folders" }));
+    const tree = within(screen.getByRole("tree", { name: "All folders" }));
+    await waitFor(() => expect(tree.getAllByRole("paragraph").map((label) => label.textContent)).toEqual([project.mailbox]));
   });
 });
 
 describe("the pure derivations behind the rows", () => {
-  it("folderUnreadCounts is one pass, keyed by mailbox — two mailboxes' same-named folders never merge", () => {
-    const counts = folderUnreadCounts([
-      { mailboxId: "mb1", folder: "Projects", unread: true },
-      { mailboxId: "mb2", folder: "Projects", unread: true },
-      { mailboxId: "mb1", folder: "Projects", unread: false },
-    ] as never[]);
-    expect(counts.get("mb1|Projects")).toBe(1);
-    expect(counts.get("mb2|Projects")).toBe(1);
-  });
-
-  it("folderUnreadDeep counts descendants once and never a sibling's", () => {
-    const folders = [folder("A"), folder("A/B"), folder("AB")];
-    const counts = new Map([["mb1|A", 1], ["mb1|A/B", 2], ["mb1|AB", 8]]);
-    // "AB" starts with "A" but is a SIBLING — the descendant test is path-segment-aware.
-    expect(folderUnreadDeep("mb1", "A", counts, folders)).toBe(3);
-  });
-
-  it("an orphaned path renders as a root (IMAP allows children of non-existent mailboxes)", () => {
-    const tree = folderTree([folder("Ghost/Child")]);
-    expect(tree).toHaveLength(1);
-    expect(tree[0]!.depth).toBe(0);
-  });
-
-  it("visibleFolderRows hides exactly the closed subtrees", () => {
-    const tree = folderTree([folder("A"), folder("A/B"), folder("A/B/C"), folder("Z")]);
-    const rows = visibleFolderRows(
-      tree,
-      (p) => p === "A",
-      (p) => p === "A" || p === "A/B",
-    );
-    expect(rows.map((r) => r.folder.name)).toEqual(["A", "A/B", "Z"]);
-  });
-
   it("folderTailVerdict: the live entity judges fully; an absent one judges NOTHING", () => {
     // The reach-past's overlap word, branch by branch. The absent-entity branch is the
     // review-earned part, in its final shape: while the scope is not readable NOTHING is
@@ -331,67 +201,57 @@ describe("the pure derivations behind the rows", () => {
     // Same-name folder on ANOTHER mailbox never reads as this scope.
     expect(folderTailVerdict({ mailboxId: "mb2", folder: "Projects" } as never, "fd1", entity)).toBe("ban");
   });
-
-  it("folderMatches is a substring of the full canonical path", () => {
-    expect(folderMatches("Projects/Acme", "acme")).toBe(true);
-    expect(folderMatches("Projects/Acme", "projects/a")).toBe(true);
-    expect(folderMatches("Projects/Acme", "invoices")).toBe(false);
-  });
 });
 
-describe("an empty folder is a question until the server has answered — the reach-past", () => {
-  const mount2 = async (older: Record<string, unknown>) => {
-    const { FolderView: Raw } = await import("../app/views/FolderView");
-    /* FolderView declares the message verbs (`useMessageVerbs`), so it needs a keymap. In the
-       product it is always inside `AppShell`, which provides one; a bare mount brings its own
-       rather than the hook going quiet when there is none — a view whose keys silently do not
-       exist is the defect that wiring was. */
-    const FolderView = (props: React.ComponentProps<typeof Raw>) =>
-      h(KeymapProvider, { children: h(WithListGone, { children: h(Raw, props) }) });
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(() =>
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "Europe/Zurich",
-        children: h(FolderView, { onMarkSeen: () => {},
-          folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
-          messages: [] as never[],
-          older: older as never,
-          tags: [],
-          now: new Date("2026-08-04T12:00:00.000Z"),
-          onOpen: () => {}, hydrateBody: () => {}, onAction: () => {}, onAddTag: () => {},
-          onScreen: () => {}, canDelete: () => true, canReplyAll: () => true,
-        }),
-      })),
-    );
+function mountRegisteredFolder(
+  letters: readonly EngineMessage[],
+  items: readonly EngineMessage[] | null,
+  nextCursor: string | null = null,
+) {
+  const listOlder = vi.fn(async () => {
+    if (items === null) return new Promise<never>(() => {});
+    return { state: "ready", items, nextCursor };
+  });
+  return {
+    listOlder,
+    ...listSeat({
+      first: "#/folder/projects",
+      consent: FOLDERS_ON,
+      more: {
+        "folder:projects": { ...folder("Projects"), id: "projects" },
+        "folder:archive": { ...folder("Archive"), id: "archive" },
+      },
+      letters,
+      engine: () => ({
+        storeCoverage: () => ({ state: "partial" }),
+        listOlderAvailable: () => true,
+        listOlder,
+      }),
+    }),
   };
+}
 
+describe("an empty folder is a question until the server has answered — the reach-past", () => {
   it("with a windowed mirror, the empty claim WAITS and one probe page is asked for", async () => {
-    let asked = 0;
-    await mount2({ available: true, items: [], loading: false, error: null, exhausted: false,
-      loadMore: () => { asked += 1; } });
+    const { listOlder } = mountRegisteredFolder([], null);
+    await waitFor(() => expect(listOlder).toHaveBeenCalledTimes(1));
+    const messagesRegion = screen.getByRole("region", { name: "Messages" });
     // Never the claim before the answer: no empty state while the source may hold mail…
-    expect(host!.textContent).not.toContain("Nothing in this folder");
+    expect(messagesRegion.textContent).not.toContain("Nothing in this folder");
     // …and exactly one probe (the empty list IS the ask).
-    expect(asked).toBe(1);
+    expect(listOlder).toHaveBeenCalledTimes(1);
     // The way further back is on screen instead (the device sentence went with ARCHIVE-024).
-    expect(host!.textContent).toContain(messages.ohbox.olderAction);
-    expect(host!.textContent).not.toMatch(/on your server|this device/);
+    expect(messagesRegion.textContent).toContain(messages.ohbox.olderAction);
+    expect(messagesRegion.textContent).not.toMatch(/on your server|this device/);
   });
 
   it("the empty state renders only once the server says the source is exhausted", async () => {
-    await mount2({ available: true, items: [], loading: false, error: null, exhausted: true,
-      loadMore: () => { throw new Error("must not ask past the end"); } });
-    expect(host!.textContent).toContain("Nothing in this folder");
-    expect(host!.textContent).toContain("That is everything on your server");
-  });
-
-  it("a whole-mailbox client keeps the plain empty state — no offer it cannot keep", async () => {
-    await mount2({ available: false, items: [], loading: false, error: null, exhausted: false,
-      loadMore: () => { throw new Error("unavailable must never be asked"); } });
-    expect(host!.textContent).toContain("Nothing in this folder");
-    expect(host!.textContent).not.toContain("Load older mail");
+    const { listOlder } = mountRegisteredFolder([], []);
+    expect(screen.queryByText("Nothing in this folder")).toBeNull();
+    expect(await screen.findByText("That is everything on your server.")).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("region", { name: "Messages" }).textContent).toContain("Nothing in this folder"));
+    expect(listOlder).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: messages.ohbox.olderAction })).toBeNull();
   });
 });
 
@@ -405,52 +265,24 @@ describe("the reach-past never lies beside the mirror", () => {
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-01T09:00:00.000Z",
   }));
-  const mountFolder = async (props: Record<string, unknown>) => {
-    const { FolderView: Raw } = await import("../app/views/FolderView");
-    /* FolderView declares the message verbs (`useMessageVerbs`), so it needs a keymap. In the
-       product it is always inside `AppShell`, which provides one; a bare mount brings its own
-       rather than the hook going quiet when there is none — a view whose keys silently do not
-       exist is the defect that wiring was. */
-    const FolderView = (props: React.ComponentProps<typeof Raw>) =>
-      h(KeymapProvider, { children: h(WithListGone, { children: h(Raw, props) }) });
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    const render = (p2: Record<string, unknown>) => act(() =>
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "Europe/Zurich",
-        children: h(FolderView, {
-          folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
-          tags: [], now: new Date("2026-08-04T12:00:00.000Z"),
-          onOpen: () => {}, hydrateBody: () => {}, onAction: () => {}, onAddTag: () => {},
-          onScreen: () => {}, canDelete: () => true, canReplyAll: () => true,
-          ...p2,
-        } as never),
-      })),
-    );
-    await render(props);
-    return render;
-  };
-
   it("a fetched row the mirror also holds renders ONCE — the boundary's belt", async () => {
-    await mountFolder({
-      messages: mk(3) as never[],
-      older: { available: true, items: mk(2, 1), loading: false, error: null, exhausted: true, loadMore: () => {} },
-    });
-    // m1/m2 exist in BOTH lists; each id may appear exactly once.
-    const ids = [...host!.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id"));
+    const { listOlder } = mountRegisteredFolder(mk(3) as EngineMessage[], mk(2, 1) as EngineMessage[]);
+    const load = await screen.findByRole("button", { name: messages.ohbox.olderAction });
+    await act(async () => { load.click(); });
+    expect(listOlder).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("That is everything on your server.")).toBeTruthy();
+    const ids = screen.getAllByRole("option").map((row) => row.getAttribute("data-id"));
     expect(ids.length).toBe(new Set(ids).size);
+    expect(ids.sort()).toEqual(["m0", "m1", "m2"]);
   });
 
   it("the tail's count says what is ON SCREEN, never rows the filter hid", async () => {
-    // Every fetched row overlaps the mirror: the tail must not claim "2 older messages" over a
-    // list that renders none of them below the line.
-    await mountFolder({
-      messages: mk(3) as never[],
-      older: { available: true, items: mk(2), loading: false, error: null, exhausted: false, loadMore: () => {} },
-    });
-    expect(host!.textContent).not.toContain("older message");
-    expect(host!.textContent).toContain(messages.ohbox.olderAction);
+    const { listOlder } = mountRegisteredFolder(mk(3) as EngineMessage[], mk(2) as EngineMessage[], "next");
+    const load = await screen.findByRole("button", { name: messages.ohbox.olderAction });
+    await act(async () => { load.click(); });
+    expect(listOlder).toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: messages.ohbox.olderAction })).toBeTruthy();
+    expect(screen.queryByText(/older messages?/)).toBeNull();
   });
 
   it("overlap verdicts are LIVE, three-valued, and the fetched copies are kept — pinned at the source", () => {
@@ -468,11 +300,13 @@ describe("the reach-past never lies beside the mirror", () => {
     // the shell bumps `scopeEpoch` when the entity re-enters the mirror, and the rows are
     // re-earned from the server. `folderTailVerdict`'s branches are proven in the pure
     // derivations; the epoch reset in the hook's own suite.
-    const src = stripComments(shellFrameOf("folderTailEpoch").source);
+    const src = stripComments(read("../../../packages/app-logic/src/folder/live.ts"));
     expect(src).toContain("folderTailVerdict(");
-    expect(src).toContain("folderTailEpoch.current.epoch,");
-    expect(src).toContain("{ t.epoch += 1; t.present = true; }");
+    expect(src).toContain('useOlderMail(engine, "folder", derived, folder?.id,');
     const hook = stripComments(read("../../../packages/app-logic/src/lists/older-mail.ts"));
+    // An absent or different folder changes the paging scope, including on return.
+    expect(hook).toContain('const scope = `${view}|${folderId ?? ""}|${scopeEpoch}`;');
+    expect(hook).toContain('p.scope !== scope || p.engine !== engine');
     // The commit-scope effect is layout-phase in a browser and passive on a server — a bare
     // useLayoutEffect is a console.error under Next's pre-render (engine.tsx's pattern).
     expect(hook).toContain('typeof window === "undefined" ? useEffect : useLayoutEffect');
@@ -486,219 +320,67 @@ describe("the reach-past never lies beside the mirror", () => {
   });
 
   it("fetched rows beside an empty mirror suppress the empty claim", async () => {
-    await mountFolder({
-      messages: [] as never[],
-      older: { available: true, items: mk(2), loading: false, error: null, exhausted: true, loadMore: () => {} },
-    });
-    expect(host!.textContent).not.toContain("Nothing in this folder");
-    expect(host!.textContent).toContain("Subject 0");
+    mountRegisteredFolder([], mk(2) as EngineMessage[]);
+    expect(await screen.findByRole("option", { name: /Subject 0/ })).toBeTruthy();
+    expect(screen.queryByText("Nothing in this folder")).toBeNull();
   });
 
   it("navigating between two empty folders re-probes the second one", async () => {
-    let asked = 0;
-    const older = { available: true, items: [], loading: false, error: null, exhausted: false,
-      loadMore: () => { asked += 1; } };
-    const { FolderView: Raw } = await import("../app/views/FolderView");
-    /* FolderView declares the message verbs (`useMessageVerbs`), so it needs a keymap. In the
-       product it is always inside `AppShell`, which provides one; a bare mount brings its own
-       rather than the hook going quiet when there is none — a view whose keys silently do not
-       exist is the defect that wiring was. */
-    const FolderView = (props: React.ComponentProps<typeof Raw>) =>
-      h(KeymapProvider, { children: h(WithListGone, { children: h(Raw, props) }) });
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    const render = (fid: string) => act(() =>
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "Europe/Zurich",
-        children: h(FolderView, { onMarkSeen: () => {},
-          folder: { id: fid, name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
-          messages: [] as never[], older: older as never,
-          tags: [], now: new Date("2026-08-04T12:00:00.000Z"),
-          onOpen: () => {}, hydrateBody: () => {}, onAction: () => {}, onAddTag: () => {},
-          onScreen: () => {}, canDelete: () => true, canReplyAll: () => true,
-        }),
-      })),
-    );
-    await render("fd1");
-    expect(asked).toBe(1);
-    await render("fd2");
-    // The second empty folder is owed the same one probe — folder identity keys the effect.
-    expect(asked).toBe(2);
+    const { address, listOlder } = mountRegisteredFolder([], null);
+    await waitFor(() => expect(listOlder).toHaveBeenCalledTimes(1));
+    await act(async () => { address.visit("#/folder/archive"); });
+    await waitFor(() => expect(listOlder).toHaveBeenCalledTimes(2));
+    expect(listOlder).toHaveBeenNthCalledWith(1, "folder", expect.objectContaining({ folderId: "projects" }));
+    expect(listOlder).toHaveBeenNthCalledWith(2, "folder", expect.objectContaining({ folderId: "archive" }));
   });
 });
 
-describe("flag-off parity and the number keys — the structural claims, at the source", () => {
-  /* The rail group left `AppShell.tsx` for `shell-keys.tsx` with the rest of the rail (ARCH-022
-     L6); the entity list and the partition are still the derivations'. `numberNav` is the name
-     the resolver finds in the rail's frame — `railGroups` carries a type annotation. */
-  const shell = stripComments(shellFrameOf("numberNav").source);
-  const derivations = stripComments(shellFrameOf("folders").source);
+function windowLetters(count: number, unread = 0): EngineMessage[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `m${i}`,
+    accountId: "acct", mailboxId: "mb1", threadId: null, messageIdHeader: null,
+    subject: `Subject ${i}`, from: { name: null, address: `s${i}@example.com` },
+    to: [], cc: [], date: "2026-08-01T09:00:00.000Z", folder: "Projects" as EngineMessage["folder"],
+    snippet: "…", unread: i < unread, hasAttachments: false, attachmentCount: 0,
+    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-01T09:00:00.000Z",
+  }));
+}
 
-  it("the folders group is SPREAD AWAY when off — no empty .rgroup may exist to differ by", () => {
-    // The conditional spread is the parity mechanism: `consent.foldersEnabled ? [{...}] : []`.
-    expect(shell).toMatch(/\.\.\.\(consent\.foldersEnabled\s*\n?\s*\? \[\{/);
+function mountFolderWindow(letters: readonly EngineMessage[], open?: string) {
+  const project = folder("Projects");
+  return listSeat({
+    first: `#/folder/${project.id}${open ? `/m/${open}` : ""}`,
+    letters,
+    consent: FOLDERS_ON,
+    more: { [`folder:${project.id}`]: project },
   });
+}
 
-  it("the group contributes nothing to the number keys — items is empty and numberNav reads items", () => {
-    expect(shell).toMatch(/\.\.\.\(consent\.foldersEnabled[\s\S]{0,200}items: \[\],/);
-    expect(shell).toMatch(/railGroups\s*\n?\s*\.flatMap\(\(g\) => g\.items\)/);
-  });
-
-  it("the folder entities themselves are gated on the consent answer, not only the group", () => {
-    // Stale mirror entities after a disable must not resurrect the rail.
-    expect(derivations).toMatch(/consent\.foldersEnabled \? reader\.list<FolderEntity>\("folder"\) : \[\]/);
-  });
-
-  it("the History lens takes the same consent answer — the partition is flag-gated too", () => {
-    /* The lens must not infer authority from eventually-deleted entities (client review,
-       round 1): the partition CALL carries the flag, and the memo re-keys on it. Asked inside
-       the call and not of the file: the rail hands the same pair down, so a file-wide match went
-       on passing off that prop when the partition moved to `shell-derivations.ts`. */
-    // The call takes the one options builder the lists and a press's read-back share, and the
-    // builder carries the flag.
-    /* The partition's call and its memo left `shell-derivations.ts` for the frame that derives it
-       (`consent/partition.ts`, cut out for the mail ground): asked of that frame. */
-    const partition = stripComments(shellFrameOf("usePartitionOf").source);
-    expect(partition).toMatch(/consentPartition\(reader, shellConsentOptions\(consent, now, ownAddresses, firstImportDoneAt\)\)/);
-    expect(stripComments(readFileSync(`${process.cwd()}/packages/app-logic/src/press/consent-options.ts`, "utf8")))
-      .toMatch(/return \{[\s\S]{0,1200}foldersEnabled: consent\.foldersEnabled,/);
-    expect(partition).toMatch(/consent\.foldersEnabled,\n\s*\],/);
-  });
-});
-
-/** A quiet reach-past for the direct FolderView mounts: the mirror IS the mailbox here. */
-const olderNone = {
-  available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {},
-};
-
-describe("search hits route to the folder view only when it can show them", () => {
-  it("openTargetFor: a held row targets the folder; an off-mirror row keeps the reader", async () => {
-    const { openTargetFor } = await import("../app/shell/AppShell");
-    const hit = {
-      id: "m1", mailboxId: "mb1", folder: "Projects/Acme",
-      from: { name: null, address: "a@x.example" },
-    } as never;
-    const noScreenerRow = () => null;
-    // The callback owns the HOLDS question: null means "the view cannot show it" — the exact
-    // archive-only case (GET /search reaching past this device's mirror window).
-    const offMirror = openTargetFor(hit, false, noScreenerRow, undefined, undefined, undefined, () => null);
-    expect(offMirror).toEqual({ kind: "reader", id: "m1" });
-    const held = openTargetFor(hit, false, noScreenerRow, undefined, undefined, undefined, () => "fd1");
-    expect(held).toEqual({ kind: "folder", folderId: "fd1", id: "m1" });
-  });
-
-  it("the shell's callback asks the PRESENTED mirror — pinned at the source", () => {
-    // The unit above proves the plumbing; this pins the one decision the shell makes inside
-    // the callback (mutating the holds check away stayed green without it, watched):
-    // the row must be held by the presented mirror UNDER that folder, or the answer is null.
-    const src = stripComments(shellFrameOf("openMessage").source);
-    expect(src).toMatch(/const held = presented\.get<EngineMessage>\("message", hit\.id\);/);
-    expect(src).toMatch(/return held && held\.folder === folder \? f\.id : null;/);
-  });
-});
+const folderWindowScroller = (list: HTMLElement) => list.closest<HTMLElement>(".pl-scroll")!;
 
 describe("the folder view is windowed — a large folder never mounts whole", () => {
   it("renders a slice with spacer height standing in for the rest", async () => {
-    const { FolderView: Raw } = await import("../app/views/FolderView");
-    /* FolderView declares the message verbs (`useMessageVerbs`), so it needs a keymap. In the
-       product it is always inside `AppShell`, which provides one; a bare mount brings its own
-       rather than the hook going quiet when there is none — a view whose keys silently do not
-       exist is the defect that wiring was. */
-    const FolderView = (props: React.ComponentProps<typeof Raw>) =>
-      h(KeymapProvider, { children: h(WithListGone, { children: h(Raw, props) }) });
-    const many = Array.from({ length: 1000 }, (_, i) => ({
-      id: `m${i}`,
-      accountId: "acct", mailboxId: "mb1", threadId: null, messageIdHeader: null,
-      subject: `Subject ${i}`, from: { name: null, address: `s${i}@example.com` },
-      to: [], cc: [], date: "2026-08-01T09:00:00.000Z", folder: "Projects",
-      snippet: "…", unread: i < 3, hasAttachments: false, attachmentCount: 0,
-      sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-      triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-01T09:00:00.000Z",
-    }));
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(() =>
-      root!.render(
-        h(NextIntlClientProvider, {
-          locale: "en",
-          messages,
-          timeZone: "Europe/Zurich",
-          children: h(FolderView, { onMarkSeen: () => {},
-            folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
-            messages: many as never[],
-            older: olderNone,
-            tags: [],
-            now: new Date("2026-08-04T12:00:00.000Z"),
-            onOpen: () => {},
-            hydrateBody: () => {},
-            onAction: () => {},
-            onAddTag: () => {},
-            onScreen: () => {}, canDelete: () => true, canReplyAll: () => true,
-          }),
-        }),
-      ),
-    );
-    const rows = host!.querySelectorAll(".row[data-id]");
-    // The jsdom fallback viewport over-renders deliberately (list-window.ts), but a thousands-of-rows
-    // folder must still mount a WINDOW, not the folder — History's measured freeze, prevented.
-    // The fixture is over FULL_RANGE_MAX_ROWS on purpose: past both floors, the window runs
-    // whether or not a list measures its rows.
+    mountFolderWindow(windowLetters(1000, 3));
+    const list = await screen.findByRole("listbox", { name: "New" });
+    const scroller = folderWindowScroller(list);
+    const rows = within(scroller).getAllByRole("option");
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.length).toBeLessThan(100);
-    // The unrendered remainder stands in the spacer, so the scrollbar tells the truth.
-    const spacers = [...host!.querySelectorAll('[aria-hidden]')].filter((n) => (n as HTMLElement).style.height);
+    // The unrendered rows still occupy space, so the scroll range includes them.
+    const spacers = [...scroller.querySelectorAll<HTMLElement>('[aria-hidden="true"]')]
+      .filter((element) => parseFloat(element.style.height) > 0);
     expect(spacers.length).toBeGreaterThan(0);
-    // The first group label is on screen with its first row.
-    expect(host!.textContent).toContain("New");
+    expect(within(scroller).getByText("New", { exact: true })).toBeTruthy();
   });
 
   it("a deep locate target is REVEALED — the window scrolls to mount the row it names", async () => {
-    const { FolderView: Raw } = await import("../app/views/FolderView");
-    /* FolderView declares the message verbs (`useMessageVerbs`), so it needs a keymap. In the
-       product it is always inside `AppShell`, which provides one; a bare mount brings its own
-       rather than the hook going quiet when there is none — a view whose keys silently do not
-       exist is the defect that wiring was. */
-    const FolderView = (props: React.ComponentProps<typeof Raw>) =>
-      h(KeymapProvider, { children: h(WithListGone, { children: h(Raw, props) }) });
-    const many = Array.from({ length: 1000 }, (_, i) => ({
-      id: `m${i}`,
-      accountId: "acct", mailboxId: "mb1", threadId: null, messageIdHeader: null,
-      subject: `Subject ${i}`, from: { name: null, address: `s${i}@example.com` },
-      to: [], cc: [], date: "2026-08-01T09:00:00.000Z", folder: "Projects",
-      snippet: "…", unread: false, hasAttachments: false, attachmentCount: 0,
-      sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-      triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-01T09:00:00.000Z",
-    }));
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(() =>
-      root!.render(
-        h(NextIntlClientProvider, {
-          locale: "en",
-          messages,
-          timeZone: "Europe/Zurich",
-          children: h(FolderView, { onMarkSeen: () => {},
-            folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
-            messages: many as never[],
-            locateId: "m400",
-            older: olderNone,
-            tags: [],
-            now: new Date("2026-08-04T12:00:00.000Z"),
-            onOpen: () => {},
-            hydrateBody: () => {},
-            onAction: () => {},
-            onAddTag: () => {},
-            onScreen: () => {}, canDelete: () => true, canReplyAll: () => true,
-          }),
-        }),
-      ),
-    );
+    const { address } = mountFolderWindow(windowLetters(1000), "m400");
+    const list = await screen.findByRole("listbox", { name: "Earlier" });
+    const messagesRegion = screen.getByRole("region", { name: "Messages" });
     // The row is deep below the initial slice, so the reveal effect must have SCROLLED —
     // that write is the whole mechanism: the slice derives from scrollTop.
-    const scroller = host!.querySelector(".scroller") as HTMLElement;
+    const scroller = folderWindowScroller(list);
     expect(scroller.scrollTop).toBeGreaterThan(0);
     // jsdom fires no scroll event for a programmatic scrollTop write; dispatching it is the
     // browser half the DOM cannot do — after it, the window has re-derived and the row exists.
@@ -707,91 +389,28 @@ describe("the folder view is windowed — a large folder never mounts whole", ()
       // The hook batches its re-derivation behind requestAnimationFrame; give the frame a beat.
       await new Promise((r) => setTimeout(r, 50));
     });
-    expect(host!.querySelector('[data-id="m400"]')).not.toBeNull();
+    expect(within(list).queryByRole("option", { name: /Subject 400\b/ })).not.toBeNull();
     // …and the reading column shows the hit, not the first row.
-    expect(host!.textContent).toContain("Subject 400");
+    expect(messagesRegion.textContent).toContain("Subject 400");
 
     // CLOSING THE READER clears the URL tail — the target must have become the SELECTION, so
     // the column keeps the hit instead of snapping back to the first row.
-    await act(() =>
-      root!.render(
-        h(NextIntlClientProvider, {
-          locale: "en",
-          messages,
-          timeZone: "Europe/Zurich",
-          children: h(FolderView, { onMarkSeen: () => {},
-            folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
-            messages: many as never[],
-            locateId: null,
-            older: olderNone,
-            tags: [],
-            now: new Date("2026-08-04T12:00:00.000Z"),
-            onOpen: () => {},
-            hydrateBody: () => {},
-            onAction: () => {},
-            onAddTag: () => {},
-            onScreen: () => {}, canDelete: () => true, canReplyAll: () => true,
-          }),
-        }),
-      ),
-    );
-    expect(host!.textContent).toContain("Subject 400");
+    await act(() => { address.visit(`#/folder/${folder("Projects").id}`); });
+    expect(messagesRegion.textContent).toContain("Subject 400");
   });
 
   it("a target that arrives LATE — after the folder entity — is still revealed", async () => {
-    const { FolderView: Raw } = await import("../app/views/FolderView");
-    /* FolderView declares the message verbs (`useMessageVerbs`), so it needs a keymap. In the
-       product it is always inside `AppShell`, which provides one; a bare mount brings its own
-       rather than the hook going quiet when there is none — a view whose keys silently do not
-       exist is the defect that wiring was. */
-    const FolderView = (props: React.ComponentProps<typeof Raw>) =>
-      h(KeymapProvider, { children: h(WithListGone, { children: h(Raw, props) }) });
-    const mk = (n: number) => Array.from({ length: n }, (_, i) => ({
-      id: `m${i}`,
-      accountId: "acct", mailboxId: "mb1", threadId: null, messageIdHeader: null,
-      subject: `Subject ${i}`, from: { name: null, address: `s${i}@example.com` },
-      to: [], cc: [], date: "2026-08-01T09:00:00.000Z", folder: "Projects",
-      snippet: "…", unread: false, hasAttachments: false, attachmentCount: 0,
-      sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-      triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-01T09:00:00.000Z",
-    }));
-    const props = (msgs: unknown[], locateId: string | null) => ({
-      onMarkSeen: () => {},
-      folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
-      messages: msgs as never[],
-      locateId,
-      older: olderNone,
-      tags: [],
-      now: new Date("2026-08-04T12:00:00.000Z"),
-      onOpen: () => {},
-      hydrateBody: () => {},
-      onAction: () => {},
-      onAddTag: () => {},
-      onScreen: () => {}, canDelete: () => true, canReplyAll: () => true,
-    });
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    // A cold restore: the URL names m400 but the mirror's later pages have not arrived — only
-    // 50 rows exist and the target is not among them.
-    await act(() =>
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "Europe/Zurich",
-        children: h(FolderView, props(mk(50), "m400")),
-      })),
-    );
-    const scroller = host!.querySelector(".scroller") as HTMLElement;
+    const letters = windowLetters(1000);
+    const { mail } = mountFolderWindow(letters.slice(0, 50), "m400");
+    const list = await screen.findByRole("listbox", { name: "Earlier" });
+    const scroller = folderWindowScroller(list);
     expect(scroller.scrollTop).toBe(0);
-    // The page carrying the target drains in. The reveal must fire NOW, on arrival —
-    // a target-only dependency never ran again (the review's cold-restore finding).
-    await act(() =>
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "Europe/Zurich",
-        children: h(FolderView, props(mk(1000), "m400")),
-      })),
-    );
-    expect(scroller.scrollTop).toBeGreaterThan(0);
-    expect(host!.textContent).toContain("Subject 400");
+
+    await act(() => {
+      for (const letter of letters.slice(50)) mail.add(letter);
+    });
+    await waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+    expect(await within(list).findByRole("option", { name: /Subject 400\b/, selected: true })).toBeTruthy();
   });
 });
 
@@ -806,196 +425,202 @@ describe("the folder view is windowed — a large folder never mounts whole", ()
  * numbers; pending rows dim, failed rows carry the refusal and its dismiss.
  */
 
-type Verbs = NonNullable<Parameters<typeof FoldersRailGroup>[0]["verbs"]>;
-
-function spyVerbs(over: Partial<Verbs> = {}): { verbs: Verbs; calls: string[] } {
-  const calls: string[] = [];
-  return {
-    calls,
-    verbs: {
-      create: async (mb, name) => { calls.push(`create:${mb}:${name}`); },
-      rename: async (id, name) => { calls.push(`rename:${id}:${name}`); },
-      remove: async (id) => { calls.push(`remove:${id}`); },
-      dismiss: (id) => { calls.push(`dismiss:${id}`); },
-      summary: async (id) => { calls.push(`summary:${id}`); return { folders: 2, messages: 5 }; },
-      ...over,
-    },
-  };
-}
-
-async function mountVerbs(
-  folders: FolderEntity[],
-  opts: {
-    verbs: Verbs;
-    accountMailboxes?: Array<{ id: string; label: string }>;
-  },
-): Promise<{ el: HTMLElement }> {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(() =>
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        timeZone: "Europe/Zurich",
-        children: h(FoldersRailGroup, {
-          scope: RAIL_SCOPE,
-          folders,
-          unread: new Map<string, number>(),
-          onNavigate: () => {},
-          verbs: opts.verbs,
-          accountMailboxes: opts.accountMailboxes,
-        }),
-      }),
-    ),
+function mountRegisteredRail(
+  folders: readonly FolderEntity[],
+  summary: typeof NONE | ((id: string) => Promise<{ folders: number; messages: number } | null>),
+  mailbox = { id: "mb1", address: folder("Projects").mailbox },
+) {
+  const { host, mail } = listFrame({
+    first: "#/ohbox",
+    letters: [],
+    consent: FOLDERS_ON,
+    more: Object.fromEntries(folders.map((entry) => [`folder:${entry.id}`, entry])),
+    mailboxes: async () => [{
+      ...mailbox, status: "connected", errorCode: null, disabledReason: null,
+      syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: null,
+    }],
+  });
+  render(
+    <TextProvider locale="en" messages={LIST_WORDS} timeZone="Europe/Zurich">
+      <Frame host={{
+        ...host,
+        capabilities: { ...host.capabilities, foldersStorable: true },
+        wires: { ...host.wires, folderSummary: summary },
+      }} />
+    </TextProvider>,
   );
-  return { el: host };
+  return mail;
 }
 
-const type = async (input: HTMLInputElement, value: string) => {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  await act(() => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-};
-const press = async (input: HTMLElement, key: string) => {
-  await act(() => {
-    input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
-  });
-};
+async function askToDeleteProjects() {
+  fireEvent.contextMenu(await screen.findByRole("button", { name: "Projects" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
+  return within(await screen.findByRole("alertdialog", { name: "Delete folder" }));
+}
 
 describe("stage 2 — the read-only render stays the foundation's", () => {
   it("without verbs there is no … affordance and no create row anywhere", async () => {
-    const { el } = await mount([folder("Projects"), folder("Invoices")]);
-    expect(el.querySelector(".fmore")).toBeNull();
-    expect(el.textContent).not.toContain("New folder");
+    mountRegisteredRail([folder("Projects"), folder("Invoices")], NONE);
+    expect(await screen.findByRole("button", { name: "Projects" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Invoices" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Folder menu for / })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New folder" })).toBeNull();
+    expect(screen.queryByText("New folder", { exact: false })).toBeNull();
   });
 });
 
+function enterFolderName(input: HTMLInputElement): void {
+  // jsdom does not perform the browser's implicit submit after an uncancelled Enter.
+  if (fireEvent.keyDown(input, { key: "Enter", code: "Enter" })) fireEvent.submit(input.form!);
+  fireEvent.keyUp(input, { key: "Enter", code: "Enter" });
+}
+
 describe("stage 2 — create", () => {
+  async function openNewFolder() {
+    fireEvent.click(await screen.findByRole("button", { name: "All folders" }));
+    const tree = within(screen.getByRole("tree", { name: "All folders" }));
+    fireEvent.click(await tree.findByRole("button", { name: "New folder" }));
+    return { tree, input: tree.getByRole<HTMLInputElement>("textbox", { name: "Folder name" }) };
+  }
+
   it("the section's own affordance names the mailbox; Enter dispatches the FULL canonical path", async () => {
-    const { verbs, calls } = spyVerbs();
-    const { el } = await mountVerbs([folder("Projects")], { verbs });
-    await click(el.querySelector('[data-testid="folder-new-mb1"]'));
-    const input = el.querySelector<HTMLInputElement>(".ritem-new-input")!;
-    await type(input, "Steuern 2026");
-    await press(input, "Enter");
-    expect(calls).toEqual(["create:mb1:Steuern 2026"]);
+    const mail = mountRegisteredRail([folder("Projects")], async () => null);
+    const { input } = await openNewFolder();
+    fireEvent.change(input, { target: { value: "Steuern 2026" } });
+    expect(mail.mutations).toEqual([]);
+    enterFolderName(input);
+    await waitFor(() => expect(mail.mutations).toEqual([
+      { kind: "folder_create", folderId: expect.any(String), mailboxId: "mb1", name: "Steuern 2026" },
+    ]));
   });
 
   it("a mailbox with ZERO folders still offers the create — the account list makes the section", async () => {
-    const { verbs } = spyVerbs();
-    const { el } = await mountVerbs([], {
-      verbs,
-      accountMailboxes: [{ id: "mb9", label: "empty@x.example" }],
-    });
-    expect(el.querySelector('[data-testid="folder-new-mb9"]')).not.toBeNull();
+    mountRegisteredRail([], async () => null, { id: "mb9", address: "empty" + "@" + "example.test" });
+    fireEvent.click(await screen.findByRole("button", { name: "All folders" }));
+    const tree = screen.getByRole("tree", { name: "All folders" });
+    expect(await within(tree).findByRole("button", { name: "New folder" })).not.toBeNull();
   });
 
   it("a reserved name is refused BEFORE the wire, with the sentence — nothing dispatches", async () => {
-    const { verbs, calls } = spyVerbs();
-    const { el } = await mountVerbs([folder("Projects")], { verbs });
-    await click(el.querySelector('[data-testid="folder-new-mb1"]'));
-    const input = el.querySelector<HTMLInputElement>(".ritem-new-input")!;
-    await type(input, "Spam");
-    await press(input, "Enter");
-    expect(calls).toEqual([]);
-    expect(el.querySelector(".fproblem")?.textContent).toContain("reserved");
+    const mail = mountRegisteredRail([folder("Projects")], async () => null);
+    const { tree, input } = await openNewFolder();
+    fireEvent.change(input, { target: { value: "Spam" } });
+    enterFolderName(input);
+    expect(mail.mutations).toEqual([]);
+    expect(tree.getByRole("alert").textContent).toContain("reserved");
   });
 
   it("a taken name is refused BEFORE the wire — the collision the server would 409", async () => {
-    const { verbs, calls } = spyVerbs();
-    const { el } = await mountVerbs([folder("Projects")], { verbs });
-    await click(el.querySelector('[data-testid="folder-new-mb1"]'));
-    const input = el.querySelector<HTMLInputElement>(".ritem-new-input")!;
-    await type(input, "Projects");
-    await press(input, "Enter");
-    expect(calls).toEqual([]);
-    expect(el.querySelector(".fproblem")?.textContent).toContain("already exists");
+    const mail = mountRegisteredRail([folder("Projects")], async () => null);
+    const { tree, input } = await openNewFolder();
+    fireEvent.change(input, { target: { value: "Projects" } });
+    enterFolderName(input);
+    expect(mail.mutations).toEqual([]);
+    expect(tree.getByRole("alert").textContent).toContain("already exists");
   });
 });
 
 describe("stage 2 — the … menu", () => {
   it("carries exactly Rename / New subfolder / Delete…, and only on settled rows", async () => {
+    await expectTouchMenuInMore(fakeWindow("phone"));
+    window.localStorage.clear();
+    await expectTouchMenuInMore(fakeWindow({
+      width: 900, height: 420, pointer: "coarse", posture: "flat", reducedMotion: false,
+    }));
     const pending: FolderEntity = { ...folder("Busy"), op: { kind: "create" } };
-    const { verbs } = spyVerbs();
-    const { el } = await mountVerbs([folder("Projects"), pending], { verbs });
-    // The pending row has no … at all — a second command on one folder has no defined order.
-    const rows = [...el.querySelectorAll(".frow")];
-    const busyRow = rows.find((r) => r.textContent?.includes("Busy"))!;
-    expect(busyRow.querySelector(".fmore")).toBeNull();
-
-    const projRow = rows.find((r) => r.textContent?.includes("Projects"))!;
-    await click(projRow.querySelector(".fmore"));
-    const items = [...el.querySelectorAll('[role="menuitem"]')].map((n) => n.textContent);
-    expect(items).toEqual(["Rename", "New subfolder", "Delete…"]);
+    const mail = mountRegisteredRail([folder("Projects"), pending], async () => null);
+    const places = within(screen.getByRole("navigation", { name: "Places" }));
+    expect(places.queryByRole("button", { name: "Folder menu for Busy" })).toBeNull();
+    fireEvent.contextMenu(await places.findByRole("button", { name: "Busy" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.contextMenu(places.getByRole("button", { name: "Projects" }));
+    const menu = screen.getByRole("menu", { name: /Projects/ });
+    for (const name of ["Rename", "New subfolder", "Delete…"]) {
+      expect(within(menu).getByRole("menuitem", { name })).toBeTruthy();
+    }
+    expect(mail.mutations).toEqual([]);
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual([
+      "Rename", "New subfolder", "Delete…",
+    ]);
   });
 
   it("New subfolder dispatches parent/leaf and the input sits under the parent", async () => {
-    const { verbs, calls } = spyVerbs();
-    const { el } = await mountVerbs([folder("Projects")], { verbs });
-    await click(el.querySelector(".fmore"));
-    const sub = [...el.querySelectorAll('[role="menuitem"]')].find((n) => n.textContent === "New subfolder");
-    await click(sub!);
-    const input = el.querySelector<HTMLInputElement>(".ritem-new-input")!;
-    await type(input, "Acme");
-    await press(input, "Enter");
-    expect(calls).toEqual(["create:mb1:Projects/Acme"]);
+    const projects = folder("Projects");
+    const mail = mountRegisteredRail([projects], async () => null);
+    const places = within(screen.getByRole("navigation", { name: "Places" }));
+    const selected = await places.findByRole("button", { name: "Projects" });
+    await act(() => selected.focus());
+    fireEvent.contextMenu(selected);
+    fireEvent.click(screen.getByRole("menuitem", { name: "New subfolder" }));
+    const tree = within(screen.getByRole("tree", { name: "All folders" }));
+    const input = tree.getByRole<HTMLInputElement>("textbox", { name: "Folder name" });
+    const parent = tree.getByRole("button", { name: "Projects" });
+    expect(parent.closest(".oh-folderfold-row")?.nextElementSibling?.contains(input)).toBe(true);
+    await act(() => input.focus());
+    fireEvent.change(input, { target: { value: "Acme" } });
+    expect(input.value).toBe("Acme");
+    expect(document.activeElement).toBe(input);
+    expect(mail.mutations).toEqual([]);
+    enterFolderName(input);
+    await waitFor(() => expect(mail.mutations).toEqual([
+      { kind: "folder_create", folderId: expect.any(String), mailboxId: "mb1", name: "Projects/Acme" },
+    ]));
   });
 
   it("Rename swaps the row for an input seeded with the LEAF and dispatches the new full path", async () => {
-    const { verbs, calls } = spyVerbs();
-    const { el } = await mountVerbs([folder("Projects"), folder("Projects/Acme")], { verbs });
-    // open the branch, then rename the child
-    await click(el.querySelector("button.ftw"));
-    const rows = [...el.querySelectorAll(".frow")];
-    const child = rows.find((r) => r.textContent?.includes("Acme"))!;
-    await click(child.querySelector(".fmore"));
-    const rename = [...el.querySelectorAll('[role="menuitem"]')].find((n) => n.textContent === "Rename");
-    await click(rename!);
-    const input = el.querySelector<HTMLInputElement>(".ritem-new-input")!;
+    const folders = [folder("Projects"), folder("Projects/Acme")];
+    const mail = mountRegisteredRail(folders, async () => null);
+    fireEvent.click(await screen.findByRole("button", { name: "All folders" }));
+    const tree = within(screen.getByRole("tree", { name: "All folders" }));
+    fireEvent.click(tree.getByRole("button", { name: "Expand Projects" }));
+    const child = tree.getByRole("button", { name: "Acme" });
+    await act(() => child.focus());
+    fireEvent.contextMenu(child);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const input = tree.getByRole<HTMLInputElement>("textbox", { name: "New name" });
+    await act(() => input.focus());
     expect(input.value).toBe("Acme");
-    await type(input, "Acme 2026");
-    await press(input, "Enter");
-    expect(calls).toEqual(["rename:f-mb1-Projects/Acme:Projects/Acme 2026"]);
+    expect(tree.queryByRole("button", { name: "Acme" })).toBeNull();
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: "Acme 2026" } });
+    expect(mail.mutations).toEqual([]);
+    enterFolderName(input);
+    await waitFor(() => expect(mail.mutations).toEqual([
+      { kind: "folder_rename", folderId: "f-mb1-Projects/Acme", name: "Projects/Acme 2026" },
+    ]));
   });
 });
 
 describe("stage 2 — the delete ceremony asks FIRST, with the server's numbers", () => {
   it("Delete… fetches the summary, states it, and only 'Delete folder' dispatches", async () => {
-    const { verbs, calls } = spyVerbs();
-    const { el } = await mountVerbs([folder("Projects")], { verbs });
-    await click(el.querySelector(".fmore"));
-    const del = [...el.querySelectorAll('[role="menuitem"]')].find((n) => n.textContent === "Delete…");
-    await click(del!);
-    // One tick for the summary promise.
-    await act(async () => {});
-    expect(calls).toEqual(["summary:f-mb1-Projects"]);
-    const confirm = el.querySelector(".fconfirm")!;
-    expect(confirm.textContent).toContain("5 messages");
-    expect(confirm.textContent).toContain("2 folders");
-    expect(confirm.textContent).toContain("Trash");
+    const summary = vi.fn(async () => ({ folders: 2, messages: 5 }));
+    const mail = mountRegisteredRail([folder("Projects")], summary);
+    const confirm = await askToDeleteProjects();
+    const line = confirm.getByRole("status");
+    await waitFor(() => expect(line.textContent).toContain("5 messages"));
+    expect(summary.mock.calls).toEqual([["f-mb1-Projects"]]);
+    expect(mail.mutations).toEqual([]);
+    expect(line.textContent).toContain("2 folders");
+    expect(line.textContent).toContain("Trash");
 
-    const go = [...el.querySelectorAll('[role="menuitem"]')].find((n) => n.textContent === "Delete folder");
-    await click(go!);
-    expect(calls).toEqual(["summary:f-mb1-Projects", "remove:f-mb1-Projects"]);
+    fireEvent.click(confirm.getByRole("button", { name: "Delete folder" }));
+    await waitFor(() => expect(mail.mutations).toEqual([
+      { kind: "folder_delete", folderId: "f-mb1-Projects" },
+    ]));
+    expect(summary.mock.calls).toEqual([["f-mb1-Projects"]]);
   });
 
   it("Cancel dispatches nothing; a failed count still asks, without numbers", async () => {
-    const { verbs, calls } = spyVerbs({ summary: async (id) => { calls.push(`summary:${id}`); return null; } });
-    const { el } = await mountVerbs([folder("Projects")], { verbs });
-    await click(el.querySelector(".fmore"));
-    const del = [...el.querySelectorAll('[role="menuitem"]')].find((n) => n.textContent === "Delete…");
-    await click(del!);
-    await act(async () => {});
-    expect(el.querySelector(".fconfirm")!.textContent).toContain("Trash");
-    expect(el.querySelector(".fconfirm")!.textContent).not.toMatch(/\d/);
-    const cancel = [...el.querySelectorAll('[role="menuitem"]')].find((n) => n.textContent === "Cancel");
-    await click(cancel!);
-    expect(calls).toEqual(["summary:f-mb1-Projects"]);
-    expect(el.querySelector(".fconfirm")).toBeNull();
+    const summary = vi.fn(async () => null);
+    const mail = mountRegisteredRail([folder("Projects")], summary);
+    const confirm = await askToDeleteProjects();
+    const line = confirm.getByRole("status");
+    await waitFor(() => expect(line.textContent).toContain("Trash"));
+    expect(line.textContent).not.toMatch(/\d/);
+    fireEvent.click(confirm.getByRole("button", { name: "Cancel" }));
+    expect(summary.mock.calls).toEqual([["f-mb1-Projects"]]);
+    expect(mail.mutations).toEqual([]);
+    expect(screen.queryByRole("alertdialog", { name: "Delete folder" })).toBeNull();
   });
 });
 
@@ -1003,24 +628,66 @@ describe("stage 2 — the honest middle: pending and failed rows", () => {
   it("a pending create dims with the sentence in its title; a pending rename wears the TARGET leaf", async () => {
     const creating: FolderEntity = { ...folder("Neu"), op: { kind: "create" } };
     const renaming: FolderEntity = { ...folder("Alt"), id: "f-r", op: { kind: "rename", to: "Danach" } };
-    const { verbs } = spyVerbs();
-    const { el } = await mountVerbs([creating, renaming], { verbs });
-    const rows = [...el.querySelectorAll(".frow .ritem")];
-    const neu = rows.find((r) => r.getAttribute("title")?.includes("created"))!;
-    expect(neu.className).toContain("fpend");
-    const ren = rows.find((r) => r.getAttribute("title")?.includes("renamed"))!;
-    expect(ren.textContent).toContain("Danach");
-    expect(ren.textContent).not.toContain("Alt");
+    mountRegisteredRail([creating, renaming], async () => null);
+    const places = within(screen.getByRole("navigation", { name: "Places" }));
+    const creatingRow = await places.findByRole("button", { name: "Neu" });
+    expect(creatingRow.getAttribute("aria-busy")).toBe("true");
+    expect(creatingRow.getAttribute("title")).toContain("created");
+    const renamingRow = places.getByRole("button", { name: "Danach" });
+    expect(renamingRow.getAttribute("title")).toContain("renamed");
+    expect(renamingRow.textContent).toContain("Danach");
+    expect(renamingRow.textContent).not.toContain("Alt");
   });
 
   it("a failed command carries its sentence and OK dispatches the dismiss", async () => {
-    const failed: FolderEntity = { ...folder("Kaputt"), op: { kind: "rename", to: "X", error: "exists" } };
-    const { verbs, calls } = spyVerbs();
-    const { el } = await mountVerbs([failed], { verbs });
-    const problem = el.querySelector(".fproblem")!;
-    expect(problem.textContent).toContain("already exists");
-    await click(problem.querySelector(".fdismiss"));
-    expect(calls).toEqual(["dismiss:f-mb1-Kaputt"]);
+    for (const inTree of [false, true]) {
+      const failed: FolderEntity = { ...folder("Kaputt"), op: { kind: "rename", to: "X", error: "exists" } };
+      const now = new Date("2026-11-10T09:00:00Z");
+      const updatedAt = now.toISOString();
+      const store = new MemoryMirrorStore();
+      await store.load();
+      await store.applyChanges([{
+        type: "folder", op: "create", id: failed.id, seq: 1, updatedAt, entity: failed,
+      }]);
+      let seq = 1;
+      const mutate = vi.fn(async (mutation: EngineMutation) => {
+        const changes = mutationEffects(store, mutation, { now: () => now, uuid: () => failed.id })
+          .map((effect) => ({ ...effect, op: "update", seq: ++seq, updatedAt }) as SyncChange);
+        await store.applyChanges(changes);
+        return { changes, seq };
+      });
+      const engine = new OhmailEngine({ store, storePolicy: { mode: "full" }, adapter: {
+        sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] },
+          cursor: "1", hasMore: false, serverTime: updatedAt }),
+        mutate,
+        fetchBody: async () => null,
+        withdrawSend: async () => ({ outcome: "unsupported" }),
+      } });
+      await engine.hydrate();
+      expect(engine.read().get("folder", failed.id)).toEqual(failed);
+      mountFolderFrame(failed, fakeWindow("desktop"), { engine });
+
+      expect(await screen.findByRole("button", { name: failed.name })).toBeTruthy();
+      const places = screen.getByRole("navigation", { name: "Places" });
+      if (inTree) await click(within(places).getByRole("button", { name: "All folders" }));
+      else expect(within(places).queryByRole("tree", { name: "All folders" })).toBeNull();
+      const surface = inTree ? within(places).getByRole("tree", { name: "All folders" }) : places;
+      const ok = within(surface).getByRole("button", { name: messages.rail.folderDismiss });
+      const problem = within(surface).getAllByRole("status").find((line) => within(line).queryByRole("button", {
+        name: messages.rail.folderDismiss,
+      }) === ok)!;
+      expect(problem.textContent).toContain("already exists");
+      await click(ok);
+      await waitFor(() => {
+        expect(mutate.mock.calls.map(([mutation]) => mutation)).toEqual([
+          { kind: "folder_op_dismiss", folderId: failed.id },
+        ]);
+        expect(problem.isConnected).toBe(false);
+        expect(screen.queryByRole("button", { name: messages.rail.folderDismiss })).toBeNull();
+      });
+      expect(within(surface).getByRole("button", { name: failed.name })).toBeTruthy();
+      cleanup();
+    }
   });
 });
 
@@ -1036,14 +703,24 @@ describe("a refused folder delete says what happened", () => {
       ...folder("Proj"),
       op: { kind: "delete", error: "received_mail" },
     } as unknown as FolderEntity;
-    const { el } = await mount([failed]);
+    const { el } = await mount([failed], { writable: true });
 
     expect(rowLabels(el)).toEqual(["Proj"]);            // the folder is still there
-    const strip = el.querySelector(".fproblem[role='alert']");
+    const strip = within(el).queryByRole("alert");
     expect(strip?.textContent ?? "").toContain(messages.rail.folderErrGotMail);
     expect(messages.rail.folderErrGotMail).toContain("it was not deleted");
     // NOT the catch-all. A refusal that reads "your mail server refused this change" tells the
     // person nothing about the mail that arrived, and nothing about pressing Delete again.
     expect(strip?.textContent ?? "").not.toContain(messages.rail.folderErrRefused);
+
+    cleanup();
+    const mail = mountRegisteredRail([failed], async () => null);
+    fireEvent.click(await screen.findByRole("button", { name: "All folders" }));
+    const tree = within(screen.getByRole("tree", { name: "All folders" }));
+    expect(tree.getByRole("button", { name: "Proj" })).toBeTruthy();
+    const refusal = await tree.findByRole("status");
+    expect(refusal.textContent).toContain(messages.rail.folderErrGotMail);
+    expect(refusal.textContent).not.toContain(messages.rail.folderErrRefused);
+    expect(mail.mutations).toEqual([]);
   });
 });

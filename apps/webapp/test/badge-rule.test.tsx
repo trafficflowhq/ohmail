@@ -11,6 +11,7 @@
  * length, not a third derivation. The phone tabs read the same engine fields
  * (`(tabs)/_layout.tsx#badgeOf`); their own sentence is the mobile parity lane's row.
  */
+import { within } from "@testing-library/react";
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -25,6 +26,10 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import {
+  installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  scriptSync, sessionFull, syncPage, teardownConfirmEnv,
+} from "./fixtures/cloud-confirm-shell";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -142,7 +147,7 @@ const ROSTER: MailboxFacts[] = [{
 async function shell(
   onUnread: (n: number) => void, engine?: OhmailEngine,
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   engine ??= engineOver(await storeWith());
   const container = document.createElement("div");
@@ -154,7 +159,7 @@ async function shell(
       locale: "en", messages, timeZone: "UTC", now: NOW,
       children: h(ThemeProvider, {
         children: h(ToastHost, {
-          children: h(AppShell as never, {
+          children: h(MailShell as never, {
             demo: false,
             engine,
             onUnread,
@@ -164,7 +169,7 @@ async function shell(
       }),
     }));
   });
-  await waitFor(() => container.querySelectorAll(":is(.row, [role=option])[data-id]").length > 0, "rows in the Ohbox");
+  await waitFor(() => within(container).queryAllByRole("option").length > 0, "rows in the Ohbox");
   return container;
 }
 
@@ -180,15 +185,23 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 describe("the badge rule", () => {
 
   it("the sentence is on the notifications pane, stating the rule", async () => {
-    const container = await shell(() => {});
-    window.location.hash = "#/settings/notifications";
-    await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
-    await waitFor(
-      () => (container.textContent ?? "").includes("The numbers mean the same thing on every device"),
-      "the badge-rule sentence to render",
-    );
-    expect(container.textContent).toContain("unread mail in your Ohbox");
-    expect(container.textContent).toContain("first-time senders waiting");
+    installConfirmEnv();
+    try {
+      scriptSession(sessionFull);
+      scriptRefresh(refresh204);
+      scriptSync(() => syncPage("Badge rule fixture"));
+      rememberOwner();
+      window.location.hash = "#/settings/notifications";
+      const container = await mountCloudShell();
+      await waitFor(
+        () => (container.textContent ?? "").includes("The numbers mean the same thing on every device"),
+        "the badge-rule sentence to render",
+      );
+      expect(container.textContent).toContain("unread mail in your Ohbox");
+      expect(container.textContent).toContain("first-time senders waiting");
+    } finally {
+      await teardownConfirmEnv();
+    }
   });
 
   it("a letter brought back by Resurface > Now counts on the rail as in the header, after a reload too", async () => {
@@ -205,12 +218,12 @@ describe("the badge rule", () => {
       return {
         rail: rail?.querySelector(".oh-railentry-count")?.textContent,
         /* The head's Mark all read, named with the count it marks. */
-        markAll: container.querySelector(".view-ohbox .oh-listhead-aside button[aria-label^='Mark all']")?.getAttribute("aria-label"),
+        markAll: within(container).queryByRole("button", { name: /^Mark all \d+ unread messages read$/ })?.getAttribute("aria-label"),
         sink: calls[calls.length - 1],
       };
     };
     const want = { rail: "2", markAll: "Mark all 2 unread messages read", sink: 2 };
-    await waitFor(() => container.querySelector(":is(.row, [role=option])[data-id=\"m1\"]") !== null, "the resurfaced row listed");
+    await waitFor(() => within(container).queryByRole("option", { name: /Subject m1/ }) !== null, "the resurfaced row listed");
     expect(counts()).toEqual(want);
     // A reload: a fresh engine and shell over the same mirror.
     await act(async () => { roots.pop()!.unmount(); });

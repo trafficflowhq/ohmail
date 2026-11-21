@@ -202,6 +202,7 @@ export interface SaidContext {
   readonly manual: boolean;
   /** The form shows port fields, so a sentence may name a port. */
   readonly ports: boolean;
+  readonly testing?: boolean;
   /** This form offers the provider's own sign-in for this tile. */
   readonly signInArmed: boolean;
   /** The refused press was the one a verified factor sent. */
@@ -240,7 +241,8 @@ function probeSaid(r: Refusal, reason: ProbeReason, ctx: SaidContext): Said {
   const transport = r.details.transport ?? "imap";
   // A form with no port field names none: the server name on the manual entry, nothing behind a preset.
   if (!ctx.ports) {
-    const noPort = noPortProbeSentence(r, ctx.manual);
+    const tlsKinds = ctx.testing && r.details.tls?.kind !== "tls_unavailable" ? "generic" : "own";
+    const noPort = noPortProbeSentence(r, ctx.manual, tlsKinds);
     if (noPort) return mailboxes(noPort.key, { field: noPort.field });
   }
   const tls = reason === "tls" ? r.details.tls : null;

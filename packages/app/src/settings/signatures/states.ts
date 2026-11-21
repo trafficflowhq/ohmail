@@ -33,7 +33,10 @@ export function signaturesState(): SignaturesModel {
         takeoverAsked: false,
       },
     ],
-    write: () => Promise.resolve(),
+    write: async (id, text, html) => ({
+      signatures: { [id]: text ?? "" },
+      signaturesHtml: { [id]: html ?? "" },
+    }),
     refusal: () => null,
     holdLeave: () => () => undefined,
     editor: plainEditor,

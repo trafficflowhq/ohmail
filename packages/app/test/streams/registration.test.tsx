@@ -5,6 +5,7 @@ import { newsPlace } from "../../src/news/index.js";
 import { receiptsPlace } from "../../src/receipts/index.js";
 import { laterPlace, parkedPlace, resurfacePlace } from "../../src/piles/index.js";
 import { fakeWindow } from "../support/fake-window.js";
+import { hitAt } from "./registered-world.js";
 import { letter, mountPiles, mountStream, pilesOf, said, streamInput } from "./world.js";
 
 afterEach(cleanup);
@@ -86,7 +87,7 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
     // The head carries no Mark all read of its own: it stands in the list's menu.
     expect(within(head).queryByRole("button", { name: "Mark all read" })).toBeNull();
     fireEvent.click(within(head).getByRole("button", { name: "List" }));
-    const all = screen.getByRole("menuitem", { name: /Mark all read/ });
+    const all = screen.getByRole("menuitem", { name: "Mark all 3 unread messages read" });
     expect(all.textContent).toContain("3");
     fireEvent.click(all);
     expect(seen.all).toEqual([["n1", "n2", "n3"]]);
@@ -129,10 +130,20 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
   });
 
   it("mounts Receipts alone, with the way to older receipts in Search at its end", () => {
-    const { address } = mountStream({ place: "receipts", input: streamInput(LETTERS, said()) });
+    const { address } = mountStream({
+      place: "receipts",
+      input: streamInput(LETTERS, said()),
+      search: hitAt("receipts", "n1"),
+    });
     const stream = screen.getByRole("region", { name: "Receipts stream" });
     fireEvent.click(within(stream).getByRole("button", { name: "Older in Search" }));
     expect(address.read()).toMatch(/^#\/search/);
+  });
+
+  it("offers older receipts only when the host mounts Search", () => {
+    mountStream({ place: "receipts", input: streamInput(LETTERS, said()) });
+    const stream = screen.getByRole("region", { name: "Receipts stream" });
+    expect(within(stream).queryByRole("button", { name: "Older in Search" })).toBeNull();
   });
 
   it("an empty stream says All read in its reading column, as the reference draws it, in both languages", () => {
@@ -203,7 +214,7 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
     mountStream({ place: "news", input: streamInput(read, seen, { fresh: 2 }) });
     const head = within(screen.getByRole("region", { name: "News" })).getByRole("banner");
     fireEvent.click(within(head).getByRole("button", { name: "List" }));
-    const all = screen.getByRole("menuitem", { name: /Mark all read/ });
+    const all = screen.getByRole("menuitem", { name: "Mark all 2 messages new since you were here as read" });
     expect(all).toHaveProperty("disabled", false);
     fireEvent.click(all);
     expect(seen.all).toEqual([[]]);
@@ -213,8 +224,7 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
     const read = LETTERS.map((m) => ({ ...m, unread: false }));
     mountStream({ place: "news", input: streamInput(read, said(), { fresh: 0 }) });
     const head = within(screen.getByRole("region", { name: "News" })).getByRole("banner");
-    fireEvent.click(within(head).getByRole("button", { name: "List" }));
-    expect(screen.getByRole("menuitem", { name: /Mark all read/ })).toHaveProperty("disabled", true);
+    expect(within(head).queryByRole("button", { name: "List" })).toBeNull();
   });
 
   it("says nothing of the pile while the mailbox is not settled", () => {

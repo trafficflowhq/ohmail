@@ -25,13 +25,18 @@ const NAMERS = new Map<string, Intl.DateTimeFormat>();
 export function named(
   locale: string, opts: Intl.DateTimeFormatOptions, d: Date, zone: string,
 ): string {
-  const key = `${locale}|${zone}|${opts.weekday ?? ""}|${opts.month ?? ""}`;
+  const key = `${locale}|${zone}|${opts.weekday ?? ""}|${opts.month ?? ""}|${opts.dateStyle ?? ""}`;
   let fmt = NAMERS.get(key);
   if (!fmt) {
     fmt = new Intl.DateTimeFormat(locale, { ...opts, timeZone: zone });
     NAMERS.set(key, fmt);
   }
   return fmt.format(d);
+}
+
+/** A calendar date in the reader's locale and zone, with the month written in full. */
+export function longDateStamp(instant: Date, zone: string, locale = "en"): string {
+  return named(locale, { dateStyle: "long" }, instant, zone);
 }
 
 /**

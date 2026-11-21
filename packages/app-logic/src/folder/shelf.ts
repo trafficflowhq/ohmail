@@ -7,6 +7,7 @@
 import type { FolderEntity } from "@ohmail/wire";
 import {
   FOLDER_FILTER_AT,
+  folderParentOf,
   folderLeafOf,
   folderMatches,
   folderTree,
@@ -88,6 +89,7 @@ export interface FoldRow {
 
 /** One mailbox's part of All folders. */
 export interface FoldGroup {
+  /** The first mailbox id represented under this address. */
   readonly mailboxId: string;
   /** The mailbox's address, as the folder records it. */
   readonly mailbox: string;
@@ -97,19 +99,32 @@ export interface FoldGroup {
 /** All folders asks for a line that looks for a folder once there are more than this many. */
 export const FIND_FROM = FOLDER_FILTER_AT;
 
+export function hasManyFolderRoots(folders: readonly FolderEntity[]): boolean {
+  const paths = new Set(folders.map(shelfKeyOf));
+  const roots = new Map<string, number>();
+  for (const { mailboxId, name } of folders) {
+    const parent = folderParentOf(name);
+    if (parent !== null && paths.has(shelfKeyOf({ mailboxId, name: parent }))) continue;
+    const count = (roots.get(mailboxId) ?? 0) + 1;
+    if (count > FIND_FROM) return true;
+    roots.set(mailboxId, count);
+  }
+  return false;
+}
+
 /**
  * All folders as it stands: each mailbox's tree, a branch's folders only while it is opened (`opened` holds their
  * keys). While a name is typed, every folder whose path holds it, flat, the ones whose own name starts with it first.
  */
 export function foldOf(
   folders: readonly FolderEntity[],
-  opened: ReadonlySet<string>,
+  opened: Pick<ReadonlySet<string>, "has">,
   find: string,
 ): FoldGroup[] {
   const looked = find.trim().toLowerCase();
   const mailboxes: string[] = [];
   for (const f of folders) if (!mailboxes.includes(f.mailboxId)) mailboxes.push(f.mailboxId);
-  const groups: FoldGroup[] = [];
+  const groups = new Map<string, FoldGroup>();
   for (const id of mailboxes) {
     const own = folders.filter((f) => f.mailboxId === id);
     const tree = folderTree(own);
@@ -128,7 +143,15 @@ export function foldOf(
         .sort((a, b) => first(a.folder) - first(b.folder))
         .map((row) => ({ folder: row.folder, depth: 0, branch: false }));
     }
-    if (rows.length > 0) groups.push({ mailboxId: id, mailbox: own[0]!.mailbox, rows });
+    if (rows.length === 0) continue;
+    const mailbox = own[0]!.mailbox;
+    const address = mailbox.trim().toLowerCase() || id;
+    const previous = groups.get(address);
+    // A removed copy can have its own folder tree under the same address.
+    groups.set(
+      address,
+      previous ? { ...previous, rows: [...previous.rows, ...rows] } : { mailboxId: id, mailbox, rows },
+    );
   }
-  return groups;
+  return [...groups.values()];
 }

@@ -350,6 +350,33 @@ export function useSwitchEnd(viewKey: string | null): void {
   }, [viewKey]);
 }
 
+/**
+ * WHICH PLACE A SWITCH ASKS FOR, in the new shell: its place and its part, never the letter open in it (reading a
+ * letter inside a list is the open mark). The one spelling both ends use: the frame's `go` starts the mark with it,
+ * and a place's seat ends it with it ({@link useSwitchEnded}).
+ */
+export function placeSwitchKey(at: { readonly place: string; readonly sub: string | null }): string {
+  return at.sub === null ? at.place : `${at.place}/${at.sub}`;
+}
+
+/**
+ * A PLACE'S SEAT ENDS THE SWITCH MARK, once, where it stands: `onScreen` once its own rows, or the empty state that is
+ * its answer, are committed, and `false` while what it shows is still a placeholder. Every seat calls it once with the
+ * address it stands at; the frame's `go` started the mark (the contract's recipe for a seat).
+ */
+export function useSwitchEnded(at: { readonly place: string; readonly sub: string | null }, onScreen: boolean): void {
+  const key = placeSwitchKey(at);
+  useSwitchEnd(onScreen ? key : null);
+  /* A seat that leaves takes its place off the screen: a way back to it is a switch again, whether or not the place
+     between called this hook yet. */
+  useCommitEffect(
+    () => () => {
+      if (viewShown === key) viewShown = null;
+    },
+    [key],
+  );
+}
+
 /** A search was submitted; {@link endSearch} runs when its first results are on screen. */
 export function beginSearch(): void {
   const at = nowMs();

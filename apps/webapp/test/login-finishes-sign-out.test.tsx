@@ -51,6 +51,8 @@ const full = (): Response => json({
 /** `null` from a script entry HOLDS the request open until its signal aborts. */
 let doorScript: Array<() => Response | null> = [];
 let sessionScript: Array<() => Response> = [];
+const purgeAccepted = (): Response => new Response(null, { status: 202, headers: { "Clear-Site-Data": '"cache"' } });
+let purgeReply: () => Response | Promise<Response>;
 let wire: string[] = [];
 let replaced: string[] = [];
 let roots: Root[] = [];
@@ -69,6 +71,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-10-18T14:00:00.000Z"));
   doorScript = [noContent];
   sessionScript = [full];
+  purgeReply = purgeAccepted;
   wire = [];
   replaced = [];
   sessionStorage.clear();
@@ -84,12 +87,18 @@ beforeEach(() => {
       else signal?.addEventListener("abort", stop);
     });
     if (url.endsWith("/auth/refresh/logout")) {
+      if (new Headers(init?.headers).get("X-Ohmail-Clear-Logout") === "1") {
+        wire.push("clear");
+        document.cookie = "tf_owner=; Path=/; Max-Age=0";
+        document.cookie = "tf_family=; Path=/; Max-Age=0";
+        return noContent();
+      }
       wire.push("door");
       const answer = doorScript[Math.min(count("door"), doorScript.length) - 1]!();
       return answer === null ? held("door") : answer;
     }
     // The cache purge after a confirmed sign-out presents nothing: answered apart, never a renewal.
-    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") { wire.push("purge"); return new Response(null, { status: 202 }); }
+    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") { wire.push("purge"); return purgeReply(); }
     if (url.endsWith("/auth/refresh")) { wire.push("refresh"); return revoked(); }
     if (url.includes("/auth/session")) {
       wire.push("session");
@@ -110,20 +119,21 @@ afterEach(async () => {
   roots = [];
   document.body.innerHTML = "";
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
   globalThis.fetch = originalFetch;
   Reflect.deleteProperty(globalThis.navigator, "locks");
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-async function mountLogin(): Promise<HTMLElement> {
+async function mountLogin(options?: { locale: "en" | "de"; messages: import("../i18n/catalog").Messages }): Promise<HTMLElement> {
   const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   roots.push(root);
   await act(async () => {
-    root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(LoginScreen, {}) }));
+    root.render(h(NextIntlClientProvider, { locale: options?.locale ?? "en", messages: options?.messages ?? messages, timeZone: "UTC", children: h(LoginScreen, {}) }));
   });
   await tick(0);
   return container;
@@ -199,8 +209,17 @@ function installLocks(): void {
   Object.defineProperty(globalThis.navigator, "locks", { value: { request }, configurable: true });
 }
 
+function installKnownPendingFamily(): void {
+  installLocks();
+  document.cookie = "tf_family=fixture-family; Path=/";
+  localStorage.setItem("ohmail.session.pendingSignOut", JSON.stringify({
+    press: "fixture-press", account: "acct_1", family: "fixture-family",
+  }));
+}
+
 describe("a pending sign-out is finished behind the sign-in form", () => {
   it("the door is asked, never the session read nor the refresh; the form is up and says why", async () => {
+    installKnownPendingFamily();
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const el = await mountLogin();
     await tick(1_000);
@@ -215,6 +234,7 @@ describe("a pending sign-out is finished behind the sign-in form", () => {
   });
 
   it("the family already ended (the door's coded 401): finished at the first ask", async () => {
+    installKnownPendingFamily();
     doorScript = [revoked];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     await mountLogin();
@@ -225,6 +245,7 @@ describe("a pending sign-out is finished behind the sign-in form", () => {
   });
 
   it("a busy door twice, then 204: asked again on the ladder, never at once", async () => {
+    installKnownPendingFamily();
     doorScript = [db503, db503, noContent];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const el = await mountLogin();
@@ -245,6 +266,7 @@ describe("a pending sign-out is finished behind the sign-in form", () => {
   });
 
   it("a door that keeps failing: the ladder is bounded, the marker kept, and the refusal is SAID with Sign out", async () => {
+    installKnownPendingFamily();
     doorScript = [db503];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const el = await mountLogin();
@@ -267,6 +289,7 @@ describe("a pending sign-out is finished behind the sign-in form", () => {
   });
 
   it("Sign out, pressed: the ladder again, and a door that answers ends it and the sentence with it", async () => {
+    installKnownPendingFamily();
     doorScript = [db503, db503, db503, db503, noContent];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const el = await mountLogin();
@@ -283,6 +306,7 @@ describe("a pending sign-out is finished behind the sign-in form", () => {
   });
 
   it("a door that hangs, then a submit: no further ladder attempt, and no sign-in beside the live family", async () => {
+    installKnownPendingFamily();
     doorScript = [() => null];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const el = await mountLogin();
@@ -314,11 +338,12 @@ describe("a pending sign-out is finished behind the sign-in form", () => {
     expect(wire.indexOf("door:aborted")).toBeLessThan(wire.lastIndexOf("door"));
     expect(wire.lastIndexOf("door")).toBeLessThan(wire.indexOf("login"));
     expect(count("door"), "the ladder went on behind a sign-in").toBe(2);
-    expect(document.cookie).not.toContain(PENDING);
+    expect(document.cookie).toContain(PENDING);
+    expect(count("clear") + count("purge")).toBe(0);
   });
 
   it("an attempt still out at the submit is ordered BEFORE the sign-in by the cookie lock", async () => {
-    installLocks();
+    installKnownPendingFamily();
     doorScript = [() => null, noContent];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const el = await mountLogin();
@@ -339,6 +364,7 @@ describe("a pending sign-out is finished behind the sign-in form", () => {
 
 describe("a sign-in never starts beside a sign-out the server has not confirmed", () => {
   it("the ladder ran out: the submit asks the door once more, and a refusal keeps the ceremony from starting", async () => {
+    installKnownPendingFamily();
     doorScript = [db503];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const el = await mountLogin();
@@ -354,6 +380,7 @@ describe("a sign-in never starts beside a sign-out the server has not confirmed"
   });
 
   it("…and once the door answers, the same submit finishes the sign-out, then signs in", async () => {
+    installKnownPendingFamily();
     doorScript = [db503, db503, db503, db503, noContent];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const el = await mountLogin();
@@ -369,6 +396,7 @@ describe("a sign-in never starts beside a sign-out the server has not confirmed"
   });
 
   it("a submit in the ladder's wait stops the ladder; the one ask it makes decides", async () => {
+    installKnownPendingFamily();
     doorScript = [db503];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const el = await mountLogin();
@@ -452,4 +480,85 @@ describe("THE CONTROL — no pending sign-out, the confirm runs as before", () =
     expect(count("door")).toBe(0);
     expect(text(el)).not.toContain(R.pendingBody);
   });
+});
+
+describe.each(["en", "de"] as const)("web recovery copy in %s", (locale) => {
+  async function screen() {
+    const { loadCatalog } = await import("../i18n/catalog");
+    const { firstScreenCatalog } = await import("../i18n/first-screen");
+    return mountLogin({ locale, messages: firstScreenCatalog(await loadCatalog(locale)) });
+  }
+
+  it.each([true, false])("reports server refusal after verified cleanup %s", async (verified) => {
+    if (verified) installKnownPendingFamily();
+    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    doorScript = [db503];
+    const el = await screen();
+    await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
+    const expected = locale === "en"
+      ? verified ? "You were signed out on this device and its cached mail was removed."
+        : "ohmail could not verify that all cached mail was removed."
+      : verified ? "Du wurdest auf diesem Gerät abgemeldet und die zwischengespeicherten Mails wurden entfernt."
+        : "ohmail konnte nicht bestätigen, dass alle zwischengespeicherten Mails entfernt wurden.";
+    expect(alertText(el)).toContain(expected);
+  });
+
+  it("shows a whole sentence while cache cleanup is pending", async () => {
+    installLocks();
+    localStorage.setItem("ohmail.session.pendingSignOut", JSON.stringify({
+      press: "prior-tab", account: "acct_1", family: "fixture-family", revoked: true, cachePending: true,
+    }));
+    let release!: (response: Response) => void;
+    purgeReply = () => new Promise<Response>((resolve) => { release = resolve; });
+    const el = await screen();
+    try {
+      expect(alertText(el)).toBe(locale === "en"
+        ? "This device was signed out. Browser cleanup is still in progress."
+        : "Du wurdest auf diesem Gerät abgemeldet. Die Bereinigung des Browsers läuft noch.");
+    } finally {
+      release(purgeAccepted());
+      await tick(0);
+    }
+  });
+});
+
+it("the recovery finisher announces pending cleanup while its purge response is held", async () => {
+  installKnownPendingFamily();
+  document.cookie = `tf_owner=${PENDING}; Path=/`;
+  let release!: (response: Response) => void;
+  purgeReply = () => new Promise<Response>((resolve) => { release = resolve; });
+  const el = await mountLogin();
+  try {
+    expect(count("door")).toBe(1);
+    expect(count("purge")).toBe(1);
+    expect(alertText(el)).toBe("This device was signed out. Browser cleanup is still in progress.");
+  } finally {
+    release(purgeAccepted());
+    await tick(0);
+  }
+  expect(alertText(el)).toBeNull();
+});
+
+it("the manual recovery retry returns to an actionable pending state while its purge response is held", async () => {
+  installLocks();
+  sessionScript = [() => json({ scope: "enrollment" }, 200)];
+  localStorage.setItem("ohmail.session.pendingSignOut", JSON.stringify({
+    press: "prior-tab", account: "acct_1", family: "fixture-family", revoked: true, cachePending: true,
+  }));
+  purgeReply = () => new Response(null, { status: 503 });
+  const el = await mountLogin();
+  expect(alertText(el)).toBe(A.signOutUnverified);
+  let release!: (response: Response) => void;
+  purgeReply = () => new Promise<Response>((resolve) => { release = resolve; });
+  await press(signOutButton(el)!);
+  await tick(0);
+  try {
+    expect(count("purge")).toBe(3);
+    expect(alertText(el)).toBe("This device was signed out. Browser cleanup is still in progress.");
+    expect(signOutButton(el)?.disabled).toBe(false);
+  } finally {
+    release?.(purgeAccepted());
+    await tick(0);
+  }
+  expect(alertText(el)).toBeNull();
 });

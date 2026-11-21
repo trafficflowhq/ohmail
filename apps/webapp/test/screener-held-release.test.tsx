@@ -3,6 +3,7 @@ import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { fireEvent, within } from "@testing-library/dom";
 import { NextIntlClientProvider } from "next-intl";
 import {
   OhmailEngine, MemoryMirrorStore,
@@ -11,7 +12,7 @@ import {
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { createEngine } from "../app/shell/engine-config.js";
-import { settleFirstPaint } from "./_first-paint.js";
+import { ROSTER } from "./_draft-shell.js";
 
 /**
  * "N HELD MESSAGES FROM SENDERS YOU ALREADY DECIDED" — THE ROW A PERSON PRESSES.
@@ -53,6 +54,8 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
     dispatchEvent() { return false; },
   })) as never;
 
+const OWN_ADDRESS = "me@example.test";
+const roster = async () => [{ ...ROSTER[0]!, id: "mb", address: OWN_ADDRESS }];
 const NOW = new Date("2026-09-12T12:00:00.000Z");
 let seq = 0;
 
@@ -139,27 +142,9 @@ async function flush(): Promise<void> {
 }
 
 async function mount(door: Door | null, engineOverride?: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { MailShell } = await import("./_mail-shell.js");
   const engine = engineOverride ?? await engineWith(door);
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
-    const [sel, setSel] = React.useState<Record<string, string | null>>({
-      waiting: null, screened: null, spam: null,
-    });
-    return h(ScreenerView, {
-      owed: false,
-      state,
-      segment: "waiting", settled: true, selection: sel as never,
-      onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never);
-  }
+  window.location.hash = "#/screener";
 
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -170,24 +155,28 @@ async function mount(door: Door | null, engineOverride?: OhmailEngine): Promise<
         locale: "en", messages, timeZone: "UTC", now: NOW,
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(KeymapProvider, { children: h(Probe) }),
+          children: h(MailShell, {
+            engine, mailboxFacts: roster, consentTransport: "none", suggestWire: "none", junkWire: "none",
+          }),
         }),
       }),
     );
   });
   await flush();
-  await settleFirstPaint();
 }
 
-const row = (): HTMLElement | null => host!.querySelector(".scn-held");
-const rowButtons = (): HTMLElement[] => [...(row()?.querySelectorAll<HTMLElement>("button") ?? [])];
-/** The named verb, by its whole text — two buttons share the row, so "first button" is a guess. */
-const buttonNamed = (text: string): HTMLElement => {
-  const hits = rowButtons().filter((b) => (b.textContent ?? "").trim().startsWith(text));
-  if (hits.length !== 1) throw new Error(`${hits.length} buttons read "${text}"`);
-  return hits[0]!;
-};
-const pressButton = (): HTMLElement => buttonNamed("Release");
+const heldLine = /messages? from senders? you already decided about/;
+const row = (): HTMLElement | null =>
+  within(host!).queryAllByRole("status").find((notice) =>
+    notice.textContent?.includes("held, already decided") ||
+    within(notice).queryByRole("button", { name: /^Release \d+$/ }),
+  ) ?? null;
+function ruleLine(): string {
+  const notice = row();
+  return notice ? within(notice).getByText(heldLine).textContent ?? "" : "";
+}
+const buttonNamed = (name: string | RegExp): HTMLElement => within(host!).getByRole("button", { name });
+const pressButton = (): HTMLElement => buttonNamed(/^Release \d+$/);
 
 const DOOR: Door = {
   groups: [
@@ -245,7 +234,7 @@ describe("the row renders through the engine the product actually builds", () =>
     const engine = createEngine(false, ARMED);
     await mount(null, engine);
     expect(calls, "the panel never asked the door").toContain("GET /api/screener/held-releases");
-    const text = row()?.querySelector(".scn-held-lead")?.textContent ?? "";
+    const text = ruleLine();
     expect(text, "the held-release row did not render on the live path").toContain("9");
     await act(async () => { pressButton().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await flush();
@@ -256,7 +245,7 @@ describe("the row renders through the engine the product actually builds", () =>
 describe("the held-release row in the Screener header", () => {
   it("states the server's distinct number, not the sum of the groups", async () => {
     await mount(DOOR);
-    const text = row()?.querySelector(".scn-held-lead")?.textContent ?? "";
+    const text = ruleLine();
     expect(text).toContain("9");
     expect(text).not.toContain("12");
     expect(text.toLowerCase()).toContain("already decided");
@@ -264,8 +253,9 @@ describe("the held-release row in the Screener header", () => {
 
   it("is one sentence and two verbs — the per-rule list is gone", async () => {
     await mount(DOOR);
-    expect(host!.querySelector(".scn-held-groups"), "the per-rule list came back").toBeNull();
-    expect((row()?.textContent ?? "")).not.toContain("paper.test");
+    expect(within(host!).queryAllByText(heldLine), "the per-rule list came back").toHaveLength(1);
+    expect(host!.textContent).not.toContain("paper.test");
+    expect(within(row()!).getAllByRole("button")).toHaveLength(2);
     expect(buttonNamed("Release 9")).toBeTruthy();
     expect(buttonNamed("Not now")).toBeTruthy();
   });
@@ -290,7 +280,7 @@ describe("the held-release row in the Screener header", () => {
   it("a server that keeps no dismissal gets no 'Not now' — the release verb stays", async () => {
     await mount({ ...DOOR, fingerprint: "" });
     expect(buttonNamed("Release 9")).toBeTruthy();
-    expect(rowButtons().filter((b) => (b.textContent ?? "").includes("Not now"))).toEqual([]);
+    expect(within(host!).queryAllByRole("button", { name: "Not now" })).toEqual([]);
   });
 
   it("releases nothing until the press, and then presses for every group", async () => {
@@ -313,7 +303,7 @@ describe("the held-release row in the Screener header", () => {
      names every line it showed. */
   it("one line per contact nobody wrote a rule for, and the press names each one", async () => {
     await mount({ groups: [], total: 0, fingerprint: "v1-0000000000000138", senders: [{ sender: "ana@friends.test", count: 2 }] });
-    const lines = [...(row()?.querySelectorAll(".scn-held-lead") ?? [])].map((p) => p.textContent ?? "");
+    const lines = within(host!).queryAllByText(/messages?.*still in the Screener/).map((p) => p.textContent ?? "");
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("ana@friends.test");
     expect(lines[0]).toContain("2 messages");
@@ -326,7 +316,7 @@ describe("the held-release row in the Screener header", () => {
 
   it("rule groups and contact lines share one press, and the rules' sentence keeps its number", async () => {
     await mount({ ...DOOR, senders: [{ sender: "ana@friends.test", count: 2 }] });
-    const lines = [...(row()?.querySelectorAll(".scn-held-lead") ?? [])].map((p) => p.textContent ?? "");
+    const lines = within(host!).queryAllByText(/messages?.*still in the Screener/).map((p) => p.textContent ?? "");
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("9");
     expect(lines[1]).toContain("ana@friends.test");
@@ -346,17 +336,16 @@ describe("the held-release row in the Screener header", () => {
  * alone — one `move` out of the gate, never a rule, a decision or a contact.
  */
 describe("a held letter its provider failed, in the Screener header", () => {
-  const ME = "me@example.test";
   let sent: EngineMutation[] = [];
   afterEach(() => { sent = []; });
 
   async function engineWithForgery(stranger = true): Promise<OhmailEngine> {
     const store = new MemoryMirrorStore();
     await store.load();
-    const letters = [{ ...held("forged", ME, 10), authVerdict: "fail" as const }, ...(stranger ? [held("m0", "stranger@example.test", 9)] : [])];
+    const letters = [{ ...held("forged", OWN_ADDRESS, 10), authVerdict: "fail" as const }, ...(stranger ? [held("m0", "stranger@example.test", 9)] : [])];
     await store.applyChanges([
       ...letters.map((m) => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })),
-      { type: "mailbox", op: "create", id: "mb", seq: ++seq, updatedAt: NOW.toISOString(), entity: { id: "mb", address: ME } },
+      { type: "mailbox", op: "create", id: "mb", seq: ++seq, updatedAt: NOW.toISOString(), entity: { id: "mb", address: OWN_ADDRESS } },
     ] as SyncChange[]);
     return new OhmailEngine({
       store, now: () => NOW,
@@ -370,19 +359,26 @@ describe("a held letter its provider failed, in the Screener header", () => {
       } as never,
     });
   }
-  const block = (): HTMLElement | null => host!.querySelector(".scn-failed");
-  const verb = (text: string): HTMLElement => [...block()!.querySelectorAll<HTMLElement>("button")]
-    .find((b) => (b.textContent ?? "").trim() === text)!;
+  const failedList = () => within(host!).queryByRole("listbox", { name: "Messages that failed the sender check" });
+  const block = () => within(host!).queryByRole("toolbar", { name: "Messages that failed the sender check" });
+  const verb = (name: string) => within(block()!).getByRole("button", { name });
+
+  async function openFailed(): Promise<void> {
+    await act(async () => { fireEvent.click(within(failedList()!).getByRole("option")); });
+    await flush();
+  }
 
   it("says the check that failed and offers the two verbs", async () => {
     await mount(null, await engineWithForgery());
-    expect(block()?.textContent).toContain(`Your mail provider checked whether this message is from ${ME}, and the check failed.`);
+    await openFailed();
+    expect(within(host!).queryByRole("region", { name: "The sender check failed" })?.textContent).toContain(`Your mail provider checked whether this message is from ${OWN_ADDRESS}, and the check failed.`);
     expect([...block()!.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Not from you", "It's from you"]);
   });
 
   for (const [press, folder] of [["Not from you", "ohmail/Quarantine"], ["It's from you", "INBOX"]] as const) {
     it(`"${press}" is one move out of the gate and nothing else`, async () => {
       await mount(null, await engineWithForgery());
+      await openFailed();
       await act(async () => { verb(press).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
       await flush();
       expect(sent).toEqual([{ kind: "move", messageId: "forged", folder, from: "ohmail/Screener" }]);
@@ -391,11 +387,13 @@ describe("a held letter its provider failed, in the Screener header", () => {
 
   it("is said with nobody waiting", async () => {
     await mount(null, await engineWithForgery(false));
-    expect(block()?.textContent).toContain(`Your mail provider checked whether this message is from ${ME}, and the check failed.`);
+    await openFailed();
+    expect(within(host!).queryByRole("region", { name: "The sender check failed" })?.textContent).toContain(`Your mail provider checked whether this message is from ${OWN_ADDRESS}, and the check failed.`);
   });
 
   it("CONTROL: a mirror with no failed letter draws no such block", async () => {
     await mount(DOOR);
+    expect(failedList()).toBeNull();
     expect(block()).toBeNull();
   });
 });

@@ -7,7 +7,7 @@
  * port takes. Held at the type level, by the type checker that reads the web's tests (`tsc -p
  * apps/webapp/tsconfig.json`): a member the reader comes to require that today's door lacks is red there.
  *
- * AND OVER THE REAL OLD SHELL, the reader's parts do what today's reader does, at the seated Ohbox as every web host
+ * AND OVER THE NEW SHELL (the door `_mail-shell.tsx`), the reader's parts do what today's reader does, at the seated Ohbox as every web host
  * hands it: the Ohbox's own place, the reader's column beside its list, the reader the shell's (`todaysReader`), fed
  * by the composition above the panes (its one file door and one picture door, its one look, its one composer's
  * Reply, the presented mirror its lists read). A reply is written inside its thread and leaves once with the letter it answers; a forward carries its files;
@@ -51,7 +51,7 @@ describe("today's doors and the reader's ports", () => {
   });
 });
 
-/* ── the real old shell, at the seated Ohbox ──────────────────────────────────────────────────────────────────── */
+/* ── the new shell, at the seated Ohbox ──────────────────────────────────────────────────────────────────── */
 
 /* The pictures' door exists only where the page has a proxy to name: this page has one, unless a case says none
    (a host that fetches pictures through a door of its own names no proxy). */
@@ -78,7 +78,7 @@ interface Seated {
   readonly sent: EngineMutation[];
 }
 
-/** The real old shell over a memory mirror, at the seated Ohbox, the address naming the open letter. */
+/** The new shell over a memory mirror, at the seated Ohbox, the address naming the open letter. */
 async function seat(o: {
   letters: EngineMessage[];
   hash: string;
@@ -127,7 +127,7 @@ async function seat(o: {
   S.store = store;
   S.engine = engine;
   window.location.hash = o.hash;
-  const { AppShell } = await import("../_todays-shell.js");
+  const { MailShell: AppShell } = await import("../_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -243,7 +243,9 @@ describe("a reply, written inside its thread", () => {
     expect(editor(), "the menu's Reply answers THIS letter: it never closes its editor").not.toBeNull();
     expect(editor()!.textContent, "and what was typed is there").toContain("Half a thought");
 
-    await press(within(panel()).getByRole("button", { name: "Reply" }), "Reply on the panel again");
+    /* While a reply stands the panel is the reply's (Send, Discard: the studio's); its own close is Escape in it
+       (the switch's Write, as `inline-reply`'s re-pointed cases): it closes the editor it opened. */
+    await act(async () => { fireEvent.keyDown(editor()!, { key: "Escape" }); });
     await waitFor(() => editor() === null, "the panel's Reply closes the editor it opened");
   }, 30_000);
 
@@ -255,10 +257,12 @@ describe("a reply, written inside its thread", () => {
     await waitFor(() => within(reader()).queryByRole("textbox", { name: "Forward body" }) !== null, "the forward");
     /* The letter's own tile, and the forward's list of the files it carries. */
     await waitFor(() => within(reader()).queryAllByText("plan.pdf").length > 1, "the letter's files in the forward");
+    /* The people line's field, the kit's: a person is made of what was typed by Enter. */
     const to = within(reader()).getByRole("combobox", { name: "To" }) as HTMLInputElement;
     await act(async () => {
       fireEvent.change(to, { target: { value: "mila@example.invalid, " } });
     });
+    await act(async () => { fireEvent.keyDown(to, { key: "Enter" }); });
     await act(async () => { typeInto(within(reader()).getByRole("textbox", { name: "Forward body" }), "For you"); });
     await press(within(reader()).getByRole("button", { name: "Send" }), "Send");
     await waitFor(() => sends(s).length > 0, "the send");
@@ -297,7 +301,8 @@ describe("a reply's send, with the send held on the wire", () => {
       const release = holdTheSend(s);
       await press(within(reader()).getByRole("button", { name: "Send" }), "Send");
       await waitFor(() => sends(s).length === 1, "the send on the wire");
-      const onItsWay = (): boolean => said().includes(messages.reply.statusSending);
+      /* The send line's words: the new Write's one send line (its catalogue's \`write.status.sending\`). */
+      const onItsWay = (): boolean => said().includes(messages.write.status.sending);
       await waitFor(onItsWay, "the notice slot says the reply is on its way");
       await act(async () => { release(); });
       await waitFor(() => !onItsWay(), "the send answered");
@@ -339,6 +344,7 @@ describe("a reply's send, with the send held on the wire", () => {
     await waitFor(() => within(reader()).queryByRole("textbox", { name: "Forward body" }) !== null, "the forward");
     const to = within(reader()).getByRole("combobox", { name: "To" }) as HTMLInputElement;
     await act(async () => { fireEvent.change(to, { target: { value: "mila@example.invalid, " } }); });
+    await act(async () => { fireEvent.keyDown(to, { key: "Enter" }); });
     await act(async () => { typeInto(within(reader()).getByRole("textbox", { name: "Forward body" }), "For you"); });
     await press(within(reader()).getByRole("button", { name: "Send" }), "Send");
     await waitFor(() => sends(s).length > 0, "the send");

@@ -62,6 +62,8 @@ export interface EventRowValues {
   readonly organizer: string | null;
   readonly organizerName: string | null;
   readonly myAnswer: "none" | "accepted" | "declined" | "tentative" | "delegated" | null;
+  /** The provider audience could not be kept in full. */
+  readonly partial: boolean;
   /** The object's whole text where the provider keeps one (CalDAV, a subscription), on one row of it. */
   readonly original: string | null;
 }
@@ -268,6 +270,8 @@ function rowOf(item: Upsert, ctx: MapContext, original: string | null): MappedRo
       organizer: e.organizer?.email ?? null,
       organizerName: e.organizer?.email == null ? null : e.organizer.name,
       myAnswer: mine === undefined ? null : ANSWER[mine.partstat ?? "NEEDS-ACTION"] ?? "none",
+      partial: item.audienceIncomplete === true ||
+        e.attendees.some((a) => a.email === null || !fitsCalendarBytes(a.email, CALENDAR_ADDRESS_MAX_BYTES)),
       original,
     },
     invitees,

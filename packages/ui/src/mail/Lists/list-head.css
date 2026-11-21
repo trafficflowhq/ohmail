@@ -326,4 +326,31 @@
     --oh-listhead-lead: calc(var(--flush) + var(--s2));
     --oh-listhead-pad: var(--s3) var(--s3) var(--s1) var(--oh-listhead-lead);
   }
+
+  [data-heading-overlay]:has(> .oh-switcher-round) > .oh-listhead {
+    --heading-overlay-start: calc(var(--heading-switch-start) + var(--h-m) + var(--s4));
+    padding-inline-start: var(--heading-overlay-start);
+  }
+
+  /* Keep the count in its place when the host has no list commands. */
+  [data-heading-overlay] .oh-listhead-count:only-child {
+    --heading-count-end: calc(var(--h-m) + var(--s1));
+    margin-inline-end: var(--heading-count-end);
+  }
+}
+
+[data-filter-list] > .oh-listhead .oh-listhead-run {
+  --search-heading-run-left: calc(var(--s3) - var(--flush));
+  margin-left: var(--search-heading-run-left);
+}
+
+/* Keep the full tap target around the shorter painted filter. */
+:root[data-touch="1"] [data-filter-list] > .oh-listhead .oh-listhead-run {
+  padding-bottom: var(--s1);
+  --search-heading-run-bottom: calc(-1 * var(--s1));
+  margin-bottom: var(--search-heading-run-bottom);
+}
+
+:root[data-device="phone"] [data-filter-list] > .oh-listhead {
+  padding-bottom: var(--s2);
 }

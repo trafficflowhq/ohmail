@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useSyncExternalStore } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -28,6 +28,12 @@ const press = (name: RegExp): void => void fireEvent.click(screen.getByRole("but
 const heading = (): string => screen.getByRole("heading", { level: 1 }).textContent ?? "";
 const words = (text: string): RegExp => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
 
+function enter(): void {
+  const active = document.activeElement!;
+  const activate = fireEvent.keyDown(active, { key: "Enter" });
+  if (activate && active instanceof HTMLButtonElement) fireEvent.click(active);
+}
+
 const MAILBOX: FirstRunRow = {
   id: id("mbx-1"),
   address: "me@lichtgrat.example",
@@ -55,19 +61,15 @@ const ground = (over: Partial<FirstRunGround> = {}): FirstRunGround => ({
   ...over,
 });
 
-type Verbs = FirstRunWire & { organize: ReturnType<typeof vi.fn>; setAiEnabled: ReturnType<typeof vi.fn> };
-function verbs(over: Partial<FirstRunWire> = {}): Verbs {
+function verbs(over: Partial<FirstRunWire> = {}) {
   return {
     ai: "unset",
-    probe: () => new Promise(() => {}),
-    connect: () => new Promise(() => {}),
-    organize: vi.fn(async () => "stored"),
-    complete: vi.fn(async () => {}),
-    setAiEnabled: vi.fn(async () => {}),
-    probeReason: () => null,
     probeMessage: () => null,
     ...over,
-  } as Verbs;
+    organize: vi.fn<FirstRunWire["organize"]>(over.organize ?? (async () => "stored")),
+    complete: vi.fn<FirstRunWire["complete"]>(over.complete ?? (async () => {})),
+    setAiEnabled: vi.fn<NonNullable<FirstRunWire["setAiEnabled"]>>(over.setAiEnabled ?? (async () => {})),
+  } satisfies FirstRunWire;
 }
 
 function stage(o: {
@@ -117,6 +119,26 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("holds focus on the step while organizer checking blocks Continue, then offers Continue", async () => {
+  const awaiting = { ...MAILBOX, organizerRole: "reader" as const, organizerChecked: false };
+  const v = verbs();
+  const s = stage({ verbs: v, ground: ground({ rows: [awaiting] }), door: "selfhost" });
+  await settle();
+  expect(heading()).toBe(O.resumeCheckingTitle);
+  const waiting = screen.getByRole<HTMLButtonElement>("button", { name: words(O.continue) });
+  expect(waiting.disabled).toBe(true);
+  expect(document.activeElement).toBe(waiting.form);
+  enter();
+  await settle();
+  expect(heading()).toBe(O.resumeCheckingTitle);
+  expect(screen.queryByRole("button", { name: words(O.cancelConfirm) })).toBeNull();
+
+  act(() => s.facts.set(ground({ rows: [{ ...awaiting, organizerChecked: true }] })));
+  await settle();
+  expect(heading()).toBe(O.consentTitle);
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: words(O.continue) }));
+});
+
 describe("the AI question stops the run and asks; nothing is spent before the press", () => {
   const consented = { ...MAILBOX, organizeConsentedAt: "2026-11-01T00:00:00Z" };
 
@@ -130,6 +152,24 @@ describe("the AI question stops the run and asks; nothing is spent before the pr
     press(words(O.continue));
     await settle();
     expect(v.setAiEnabled.mock.calls).toEqual([[true]]);
+  });
+
+  it("a second ↵ while the answer is on its way writes nothing more: the step's form waits for its write", async () => {
+    let answer: () => void = () => {};
+    const setAiEnabled = vi.fn(() => new Promise<void>((resolve) => (answer = resolve)));
+    stage({ verbs: verbs({ setAiEnabled }), ground: ground({ rows: [consented] }) });
+    await settle();
+    expect(heading()).toBe(O.aiTitle);
+    fireEvent.click(screen.getByRole("radio", { name: words(O.aiYesCloud) }));
+    press(words(O.continue));
+    await settle();
+    expect(setAiEnabled).toHaveBeenCalledTimes(1);
+    /* The answer is no press of the gate's one slot: the form's own wait alone holds a second one. */
+    fireEvent.submit(screen.getByRole("heading", { level: 1 }).closest("form")!);
+    await settle();
+    expect(setAiEnabled).toHaveBeenCalledTimes(1);
+    await act(async () => answer());
+    await settle();
   });
 
   it("offers no yes where a self-hosted server has no model: no is the only answer", async () => {
@@ -160,6 +200,23 @@ describe("Agree is one call, carrying the consent, the window and the scope", ()
     press(words(O.agree));
     await settle();
     expect(v.organize.mock.calls).toEqual([[MAILBOX.id, BODY]]);
+  });
+
+  it("opens the window on its chosen radio, moves with Arrow Up, and agrees from the new choice with Enter", async () => {
+    const v = verbs();
+    stage({ verbs: v, ground: ground() });
+    await toWindow();
+    const chosen = screen.getByRole("radio", { name: words(O.win365), checked: true });
+    expect(document.activeElement).toBe(chosen);
+
+    fireEvent.keyDown(chosen, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: words(O.win180), checked: true }));
+    expect(v.organize).not.toHaveBeenCalled();
+    enter();
+    await settle();
+    expect(v.organize.mock.calls).toEqual([
+      [MAILBOX.id, { ...BODY, screening: { ...BODY.screening, dormancyDays: 180 } }],
+    ]);
   });
 
   it("a press that stored nothing says so and stays", async () => {
@@ -230,7 +287,7 @@ describe("Agree is one call, carrying the consent, the window and the scope", ()
     expect(screen.getByText(D.stepUpExpired)).toBeTruthy();
   });
 
-  it("the run moved to another mailbox while Agree is on its way: no factor is asked for the press it was moved under, and nothing ran", async () => {
+  it("the run moved to another mailbox while Agree is on its way: no factor is asked for the press it was moved under, nothing ran, and the other mailbox's run starts new", async () => {
     const windowClosed = {
       status: 403,
       code: "step_up_required",
@@ -260,7 +317,10 @@ describe("Agree is one call, carrying the consent, the window and the scope", ()
       await settle();
     }
     expect({ asked, organizes: organize.mock.calls.length }).toEqual({ asked: false, organizes: 1 });
-    expect(screen.getByText(M.cancelledNothingChanged)).toBeTruthy();
+    /* A run about another mailbox is a new run: it opens on its own statement, and no word of the press it was moved
+       under stands on it. */
+    expect(heading()).toContain(O.consentTitle);
+    expect(screen.queryByText(M.cancelledNothingChanged)).toBeNull();
   });
 });
 
@@ -376,5 +436,225 @@ describe("the route's word is a claim, answered by the account's own rows", () =
     act(() => s.facts.set(ground({ rows: [MAILBOX, { ...MAILBOX, id: id("mbx-2") }] })));
     await settle();
     expect(heading()).toContain(O.consentTitle);
+  });
+});
+
+/**
+ * ↵ belongs to one thing at a time, and the keys stand in it. The two questions (Close setup, Start over) are the
+ * kit's dialog: asked, it takes the keys on its first answer, so ↵ answers the question and never runs the step's verb
+ * behind it; Escape and Back take it back, and the keys are where the person was. Whatever was asked last has them: a
+ * question asked over an open second-factor prompt, and a prompt asked from within a question.
+ */
+describe("the keys stand in what was asked last", () => {
+  const WINDOW_CLOSED = { status: 403, code: "step_up_required", message: "Confirm it is you.", details: {} };
+  const focused = (): Element | null => document.activeElement;
+  const escape = (): void => void fireEvent.keyDown(focused() ?? document.body, { key: "Escape" });
+  const question = (name: string): HTMLElement => screen.getByRole("dialog", { name });
+  const stepForm = (): HTMLFormElement => screen.getByRole("heading", { level: 1 }).closest("form")!;
+
+  it("Escape asks to close with the keys on its first verb, ↵'s own press there closes setup once, and taken back they are where the person was", async () => {
+    const v = verbs();
+    stage({ verbs: v, ground: ground() });
+    await settle();
+    const forward = screen.getByRole("button", { name: words(O.continue) });
+    expect(focused()).toBe(forward);
+    /* The person is on the foot's Cancel setup, not where the step opened. */
+    const footCancel = screen.getByRole("button", { name: words(O.cancel) });
+    footCancel.focus();
+
+    escape();
+    await settle();
+    expect(focused()).toBe(within(question(O.cancel)).getByRole("button", { name: words(O.cancelConfirm) }));
+    expect(stepForm().contains(focused())).toBe(false);
+
+    escape();
+    await settle();
+    expect(screen.queryByRole("dialog", { name: O.cancel })).toBeNull();
+    expect(focused()).toBe(footCancel);
+
+    escape();
+    await settle();
+    fireEvent.click(focused()!);
+    await settle();
+    expect(v.complete).toHaveBeenCalledTimes(1);
+    expect(v.organize).not.toHaveBeenCalled();
+  });
+
+  it("after Start over, Escape takes the question back with the keys where the person was, and two ↵ where the keys stand never organize the mailbox", async () => {
+    const v = verbs();
+    stage({ verbs: v, ground: ground() });
+    await settle();
+    /* Start over, pressed by the keys. */
+    const over = screen.getByRole("button", { name: words(O.restart) });
+    over.focus();
+    fireEvent.click(over);
+    await settle();
+    expect(focused()).toBe(within(question(O.restart)).getByRole("button", { name: words(O.restartKeep) }));
+
+    escape();
+    await settle();
+    const after = {
+      asked: [O.cancel, O.restart].filter((name) => screen.queryByRole("dialog", { name }) !== null).length,
+      keysOnStartOver: focused() === over,
+    };
+    /* Two ↵ where the keys stand. */
+    for (let press = 0; press < 2; press += 1) {
+      fireEvent.click(focused()!);
+      await settle();
+    }
+    expect({
+      ...after,
+      organize: v.organize.mock.calls.length,
+      complete: vi.mocked(v.complete).mock.calls.length,
+    }).toEqual({
+      asked: 0,
+      keysOnStartOver: true,
+      organize: 0,
+      complete: 0,
+    });
+  });
+
+  it("while a question stands the step behind it runs nothing: its form's submit sends nothing, and ↵ on the question's first answer closes setup once", async () => {
+    const v = verbs();
+    stage({ verbs: v, ground: ground() });
+    await settle();
+    press(words(O.continue));
+    await settle();
+    expect(heading()).toBe(O.windowTitle);
+
+    escape();
+    await settle();
+    expect(focused()).toBe(within(question(O.cancel)).getByRole("button", { name: words(O.cancelConfirm) }));
+    /* The step's own ↵, behind the question: Agree's form. */
+    fireEvent.submit(stepForm());
+    await settle();
+    expect(v.organize).not.toHaveBeenCalled();
+    expect(heading()).toBe(O.windowTitle);
+
+    fireEvent.click(focused()!);
+    await settle();
+    expect(v.complete).toHaveBeenCalledTimes(1);
+    expect(v.organize).not.toHaveBeenCalled();
+  });
+
+  it("a question asked while the other stands is asked anew: the foot's Start over, pressed while Close setup's question stands, puts the keys on Keep the mailbox", async () => {
+    stage({ verbs: verbs(), ground: ground() });
+    await settle();
+    escape();
+    await settle();
+    expect(focused()).toBe(within(question(O.cancel)).getByRole("button", { name: words(O.cancelConfirm) }));
+
+    const over = screen.getByRole("button", { name: words(O.restart) });
+    over.focus();
+    fireEvent.click(over);
+    await settle();
+    expect(screen.queryByRole("dialog", { name: O.cancel })).toBeNull();
+    expect(focused()).toBe(within(question(O.restart)).getByRole("button", { name: words(O.restartKeep) }));
+  });
+
+  it("a question asked while a write is on its way: its first verb cannot be pressed yet, so the keys stand on its way out, in the question and never in the step's form, and stay in it once the verb can be pressed", async () => {
+    let answer: (value: string) => void = () => {};
+    const organize = vi.fn(() => new Promise<string>((resolve) => (answer = resolve)));
+    const v = verbs({ organize: organize as never });
+    stage({ verbs: v, ground: ground() });
+    await settle();
+    press(words(O.continue));
+    await settle();
+    press(words(O.agree));
+    await settle();
+    expect(organize).toHaveBeenCalledTimes(1);
+
+    escape();
+    await settle();
+    const asked = question(O.cancel);
+    const close = within(asked).getByRole("button", { name: words(O.cancelConfirm) }) as HTMLButtonElement;
+    const out = within(asked).getByRole("button", { name: words(O.back) });
+    expect(close.disabled).toBe(true);
+    expect(focused()).toBe(out);
+    expect(stepForm().contains(focused())).toBe(false);
+    /* ↵ in the question runs nothing of the step: the press on its way stays the only one. */
+    fireEvent.keyDown(focused()!, { key: "Enter" });
+    await settle();
+    expect(organize).toHaveBeenCalledTimes(1);
+
+    /* The write ends with nothing stored: the step stays, the question stands, and the keys are still in it. */
+    await act(async () => answer("gone"));
+    await settle();
+    expect(close.disabled).toBe(false);
+    expect(asked.contains(focused())).toBe(true);
+    expect(stepForm().contains(focused())).toBe(false);
+  });
+
+  it("a question asked over an open second-factor prompt has the keys: the prompt does not keep them ahead of it", async () => {
+    const organize = vi.fn(async () => {
+      throw WINDOW_CLOSED;
+    });
+    stage({ verbs: verbs({ organize }), ground: ground() });
+    await settle();
+    press(words(O.continue));
+    await settle();
+    press(words(O.agree));
+    await settle();
+    const prompt = screen.getByRole("dialog", { name: "the second factor" });
+    /* The person is in the prompt. */
+    within(prompt).getByRole("button", { name: "verify" }).focus();
+    expect(prompt.contains(focused())).toBe(true);
+
+    escape();
+    await settle();
+    expect(focused()).toBe(within(question(O.cancel)).getByRole("button", { name: words(O.cancelConfirm) }));
+  });
+
+  it("a prompt asked from within a question keeps the keys while it stands; when it leaves, the question has them again, never the step's form", async () => {
+    const forgetMailbox = vi.fn(async () => {
+      throw WINDOW_CLOSED;
+    });
+    stage({ verbs: verbs({ forgetMailbox }), ground: ground() });
+    await settle();
+    press(words(O.restart));
+    await settle();
+    const asked = question(O.restart);
+    expect(focused()).toBe(within(asked).getByRole("button", { name: words(O.restartKeep) }));
+
+    fireEvent.click(within(asked).getByRole("button", { name: words(O.restartForget) }));
+    await settle();
+    expect(forgetMailbox).toHaveBeenCalledTimes(1);
+    const prompt = screen.getByRole("dialog", { name: "the second factor" });
+    const cancel = within(prompt).getByRole("button", { name: "cancel" });
+    cancel.focus();
+    /* The prompt stands, asked last: nothing takes the keys out of it. */
+    await settle();
+    expect(focused()).toBe(cancel);
+
+    fireEvent.click(cancel);
+    await settle();
+    expect(screen.queryByRole("dialog", { name: "the second factor" })).toBeNull();
+    expect(question(O.restart).contains(focused())).toBe(true);
+    expect(stepForm().contains(focused())).toBe(false);
+    expect(forgetMailbox).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("how far the run is: the kit's dots, said as one sentence", () => {
+  /** The catalogue's sentence for a phase, with the step's number and the walk's length read back. */
+  const said = (phase: string): RegExp =>
+    new RegExp(
+      `^${O.railSaid.replace("{n}", "(\\d+)").replace("{total}", "(\\d+)").replace("{phase}", phase)}$`,
+    );
+  const place = (phase: string): { n: number; total: number } => {
+    const [, n, total] = said(phase).exec(
+      screen.getByRole("img", { name: said(phase) }).getAttribute("aria-label")!,
+    )!;
+    return { n: Number(n), total: Number(total) };
+  };
+
+  it("names the step's place in the walk and its phase in one sentence, and moves with the walk", async () => {
+    stage({ verbs: verbs(), ground: ground() });
+    await settle();
+    const organize = place(O.rail_organize);
+    press(words(O.continue));
+    await settle();
+    expect(place(O.rail_history)).toEqual({ n: organize.n + 1, total: organize.total });
+    expect(screen.queryByRole("list", { name: O.rail_mailbox })).toBeNull();
   });
 });

@@ -1,46 +1,81 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { UI_KEYS } from "@ohmail/app-logic/storage/persisted-ui";
+import { NONE } from "@ohmail/app/host";
+import { DESKTOP_DOWNLOAD_URL } from "../app/(product)/mailbox/host";
+import { browserOpenLink } from "../app/shell/browser-mail";
+import { mountShell, stubDom, unmountAll, waitFor } from "./_draft-shell.js";
 
-/**
- * "GET OHMAIL FOR DESKTOP" — SHOWN IN THE SIGNED-IN BROWSER, NEVER IN THE DESKTOP APP ITSELF.
- *
- * The prompt invites a browser reader to install the desktop app, so it must not appear inside
- * that app. The shell's own platform tell is the injected `desktopSection` — the pane only a
- * native process can have — so its presence IS "this build is the desktop app". `showDesktopCta`
- * is that branch, made a pure value a test can drive; the demo is excluded because it is a shop
- * window, not an account.
- *
- * MUTATION WATCH: drop the `!opts.desktop` term and the desktop case goes red; drop `!opts.demo`
- * and the demo case does. Point the link away from the download section, or take the dismiss out,
- * and the component cases go red.
- */
+const hasOffer = () => screen.queryByRole("button", { name: "Get it" }) !== null;
+const desktopOffer = { url: DESKTOP_DOWNLOAD_URL, openLink: browserOpenLink };
 
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+beforeEach(() => {
+  localStorage.clear();
+  stubDom();
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
+});
+afterEach(async () => {
+  await unmountAll();
+  vi.restoreAllMocks();
+});
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-}
+it("offers the desktop app in the signed-in browser", async () => {
+  await mountShell("#/ohbox", [], [], { desktopOffer });
+  await waitFor(hasOffer, "the desktop offer");
+});
 
-beforeEach(() => { try { localStorage.clear(); } catch { /* no store */ } });
-afterEach(async () => { await unmount(); vi.restoreAllMocks(); });
+it("never offers the desktop app on the demo", async () => {
+  await mountShell("#/ohbox", [], [], { desktopOffer, demo: true });
+  expect(hasOffer()).toBe(false);
+});
 
-describe("the platform branch — where the prompt may appear", () => {
-  it("shows only in the signed-in browser (not the desktop app, not the demo)", async () => {
-    const { showDesktopCta } = await import("../app/shell/AppShell.js");
-    expect(showDesktopCta({ demo: false, desktop: false }), "the signed-in browser must offer it").toBe(true);
-    expect(showDesktopCta({ demo: false, desktop: true }), "the desktop app must NOT offer it").toBe(false);
-    expect(showDesktopCta({ demo: true, desktop: false }), "the demo must NOT offer it").toBe(false);
+it.each(["desktop", "pairedPage", "phone"] as const)("never offers the desktop app on %s", async (surface) => {
+  await mountShell("#/ohbox", [], [], { desktopOffer: { ...desktopOffer, surface } });
+  expect(hasOffer()).toBe(false);
+});
+
+it("withholds the download when the host cannot open it", async () => {
+  await mountShell("#/ohbox", [], [], { desktopOffer: { ...desktopOffer, openLink: NONE } });
+  expect(hasOffer()).toBe(false);
+});
+
+it("withholds the download when the host has no address for it", async () => {
+  await mountShell("#/ohbox", [], [], { desktopOffer: { ...desktopOffer, url: null } });
+  expect(hasOffer()).toBe(false);
+});
+
+it("honors dismissal saved before this version was installed", async () => {
+  localStorage.setItem("ohmail.desktopCtaDismissed", "1");
+  await mountShell("#/ohbox", [], [], { desktopOffer });
+  expect(hasOffer()).toBe(false);
+});
+
+describe("today's strips, as notices in the one slot", () => {
+  it("offers the desktop app in a signed-in browser, and a dismissal keeps it away", async () => {
+    stubDom();
+    await mountShell("#/ohbox", [], [], { desktopOffer });
+    await waitFor(() => screen.queryByText(/Get ohmail for/) !== null, "the desktop offer");
+    expect(screen.getByText(/Get ohmail for/)).toBeTruthy();
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    fireEvent.click(screen.getByRole("button", { name: "Get it" }));
+    expect(open).toHaveBeenCalledWith(DESKTOP_DOWNLOAD_URL, "_blank", "noopener,noreferrer");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(localStorage.getItem(UI_KEYS.desktopCtaDismissed)).toBe("1");
+    expect(screen.queryByText(/Get ohmail for/)).toBeNull();
+    await unmountAll();
+    stubDom();
+    await mountShell("#/ohbox", [], [], { desktopOffer });
+    expect(screen.queryByText(/Get ohmail for/)).toBeNull();
+  });
+
+  it("never offers the desktop app inside the desktop app or on the demo", async () => {
+    stubDom();
+    await mountShell("#/ohbox", [], [], { desktopOffer: { ...desktopOffer, surface: "desktop" } });
+    expect(screen.queryByText(/Get ohmail for/)).toBeNull();
+    await unmountAll();
+    stubDom();
+    await mountShell("#/ohbox", [], [], { desktopOffer, demo: true });
+    expect(screen.queryByText(/Get ohmail for/)).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { openDraftDecision } from "../app/shell/AppShell";
+import { openDraftDecision } from "@ohmail/app-logic/writing/shell-compose";
 
 /**
  * A DRAFT IS NEVER OPENED WITH A BODY THIS CLIENT DOES NOT HAVE.

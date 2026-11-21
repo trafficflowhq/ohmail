@@ -5,7 +5,7 @@
  * owner says while the views stand; the folder rail's opened branches and the sent-mail review put off are kept under
  * the scope the shell hands them. Drawn in no shell, a view keeps nothing: no key names nobody for want of a scope.
  */
-import type { EngineMutation, FolderEntity } from "@ohmail/wire";
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -13,8 +13,19 @@ import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore, OhmailEngine, mutationEffects, type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
-import { forgetOpenVerdict, markOpenVerdict } from "@ohmail/app-logic/session/access-window";
 import { namesOwner, resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { fireEvent, getByRole, queryByRole, within } from "@testing-library/react";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
+import { KeymapContext, useKeymapStore } from "@ohmail/app-logic/keys/keymap";
+import { useSearchList } from "@ohmail/app-logic/search";
+import { NONE } from "@ohmail/app/host";
+import { TextProvider } from "@ohmail/app/text";
+import { FrameContext, type FrameInner } from "../../../packages/app/src/frame/commands.js";
+import { SearchSort } from "../../../packages/app/src/search/SearchSort.js";
+import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
+import { WebGeneralPane } from "../app/(product)/mailbox/WebGeneralPane.js";
+import { MAIL_BODY_COPY } from "@ohmail/letter-body";
+import { WEB_PANE_PARTS } from "../app/(product)/mailbox/pane-parts.js";
 import messages from "../messages/en.json";
 import { act, consentTransport, msg, NOW, S, setup, teardown, waitFor } from "./_view-shell.js";
 
@@ -49,14 +60,8 @@ const press = async (el: Element | null | undefined, what: string): Promise<void
   await act(async () => { (el as HTMLElement).click(); });
   await settle(4);
 };
-const buttonSaying = (root: ParentNode, words: string): HTMLButtonElement | undefined =>
-  [...root.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent ?? "").trim() === words);
 async function typeInto(input: HTMLInputElement, value: string): Promise<void> {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await act(() => { fireEvent.change(input, { target: { value } }); });
 }
 
 /** A mirror with one light HTML letter, and an engine whose body door answers it. */
@@ -95,7 +100,7 @@ async function engineWithLetter(): Promise<OhmailEngine> {
  * `reads` what else its host answers.
  */
 async function shellIn(scope?: string, reads: Record<string, unknown> = {}): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = await engineWithLetter();
   S.engine = engine;
@@ -110,9 +115,9 @@ async function shellIn(scope?: string, reads: Record<string, unknown> = {}): Pro
       children: React.createElement(ThemeProvider, {
         defaultPreference: "dark", storageKey: null,
         children: React.createElement(ToastHost, {
-          children: React.createElement(AppShell as never, {
+          children: React.createElement(MailShell, {
             ...(scope === undefined ? {} : { scope }), demo: false, engine, consentTransport,
-            mailboxFacts: async () => [], ...reads,
+            mailboxFacts: async () => [], general: WEB_PANE_PARTS.general, ...reads,
           } as never),
         }),
       }),
@@ -122,25 +127,29 @@ async function shellIn(scope?: string, reads: Record<string, unknown> = {}): Pro
   return container;
 }
 
+async function chooseOldest(el: HTMLElement): Promise<void> {
+  await press(getByRole(el, "button", { name: /^Sorted by/ }), "Sort by");
+  const sort = within(getByRole(el, "menu", { name: messages.search.sortLabel }));
+  await press(sort.getByRole("menuitemradio", { name: messages.search.sort_date_asc }), "Oldest first");
+}
+
+async function chooseGeneralLooks(el: HTMLElement): Promise<void> {
+  await press(getByRole(el, "button", { name: settings.afterVerbChoice.close }), "Close");
+  await press(getByRole(el, "button", { name: settings.imageQualityLevel.low }), "Low");
+}
+
 /** The four looks the views keep, chosen through the shell; answers whose keys hold each choice. */
 async function chooseTheLooks(el: HTMLElement): Promise<Record<string, { a: number; b: number; none: number }>> {
   await go("#/search");
-  await waitFor(() => el.querySelector(".view-search input") != null, "the search field");
-  await typeInto(el.querySelector<HTMLInputElement>(".view-search input")!, "heron");
-  await waitFor(() => el.querySelector("#search-sort") != null, "the order");
-  const order = el.querySelector<HTMLSelectElement>("#search-sort")!;
-  await act(async () => {
-    order.value = "date_asc";
-    order.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  await go("#/settings");
-  await waitFor(() => el.querySelector(".afterverb-seg") != null, "the after-verb row");
-  await press(buttonSaying(el.querySelector(".afterverb-seg")!, settings.afterVerbChoice.close!), "Close");
-  await press(buttonSaying(el.querySelector(".quality-seg")!, settings.imageQualityLevel.low!), "Low");
+  await waitFor(() => queryByRole(el, "textbox", { name: messages.search.aria }) !== null, "the search field");
+  await typeInto(getByRole<HTMLInputElement>(el, "textbox", { name: messages.search.aria }), "heron");
+  await chooseOldest(el);
+  await go("#/settings/general");
+  await waitFor(() => queryByRole(el, "button", { name: settings.afterVerbChoice.close }) !== null, "the after-verb row");
+  await chooseGeneralLooks(el);
   await go("#/ohbox/m/m1");
-  const { COPY } = await import("../app/letter-body/MessageBody.js");
-  await waitFor(() => buttonSaying(el, COPY.darkOriginal) != null, "the original look's control", 5000);
-  await press(buttonSaying(el, COPY.darkOriginal), "Original");
+  await waitFor(() => queryByRole(el, "button", { name: MAIL_BODY_COPY.darkOriginal }) !== null, "the original look's control", 5000);
+  await press(getByRole(el, "button", { name: MAIL_BODY_COPY.darkOriginal }), "Original");
   return {
     order: whose(keysHolding("date_asc", true)),
     afterVerb: whose(keysHolding("close", true)),
@@ -181,106 +190,27 @@ describe("today's views keep their looks under the shell's scope", () => {
   }, 30_000);
 });
 
-describe("the mail state asks the access window for the scope its host handed", () => {
-  const behind = (messages as unknown as { frame: { connection: { behind: { title: string; asOf: string } } } })
-    .frame.connection.behind;
-  /* The catalogue's own words around the time of the dated sentence. */
-  const [before, after] = behind.asOf.split(/\{[^}]*\}/) as [string, string];
-  /* The copy on screen last finished a sync three days ago, as the host's copy-age read says it. */
-  const asOf = new Date(Date.now() - 3 * 86_400_000).toISOString();
-  const staleCopy = { mirrorFreshness: async () => ({ state: "stale" as const, asOf }) };
-  /** What the frame's notices say of a copy that is catching up: with its date, or without. */
-  const catchingUp = (el: HTMLElement): string[] =>
-    [...el.querySelectorAll<HTMLElement>('[role="status"]')].map((n) => (n.textContent ?? "").trim())
-      .filter((said) => said.includes(behind.title) || (said.includes(before) && said.includes(after)));
+// "the mail state asks the access window for the scope its host handed" (two cases over the new shell's door) moved
+// word for word to `views-keep-the-shell-scope-ground.test.tsx`.
 
-  /* The service said open for B over a stored refusal a moment ago, and the storage owner has come to name B. */
-  beforeEach(() => {
-    setStorageOwner(B);
-    markOpenVerdict(B, Date.now() - 20_000, true);
-  });
-  afterEach(() => { forgetOpenVerdict(); });
-
-  it("another account's reopening withholds no date of the copy this shell shows", async () => {
-    const el = await shellIn(A, staleCopy);
-    await waitFor(() => catchingUp(el).length > 0, "the catching-up notice", 5000);
-    expect(catchingUp(el).join(" | "), "B's reopening withheld the date of A's copy").toContain(before);
-  }, 30_000);
-
-  it("CONTROL: the reopening of the account its host named withholds the date from before it", async () => {
-    const el = await shellIn(B, staleCopy);
-    await waitFor(() => catchingUp(el).length > 0, "the catching-up notice", 5000);
-    expect(catchingUp(el).join(" | ")).not.toContain(before);
-    expect(catchingUp(el).join(" | ")).toContain(behind.title);
-  }, 30_000);
-});
-
-describe("the rail and the review keep theirs under the scope the shell hands them", () => {
-  let root: Root | null = null;
-  afterEach(async () => {
-    if (root) await act(async () => { root!.unmount(); });
-    root = null;
-  });
-  const mountIn = async (node: React.ReactElement): Promise<HTMLElement> => {
-    const el = document.createElement("div");
-    document.body.appendChild(el);
-    root = createRoot(el);
-    await act(async () => {
-      root!.render(React.createElement(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW, children: node,
-      } as never));
-    });
-    return el;
-  };
-
-  it("a folder branch opened under A while the storage owner names B is A's", async () => {
-    setStorageOwner(B);
-    const { FoldersRailGroup } = await import("../app/shell/FoldersRailGroup");
-    const folder = (name: string): FolderEntity => ({ id: `f-mb1-${name}`, name, mailboxId: "mb1", mailbox: "a@x.example" });
-    const el = await mountIn(React.createElement(FoldersRailGroup, {
-      scope: A, folders: [folder("Projects"), folder("Projects/Acme")], unread: new Map(), onNavigate: () => {},
-    } as never));
-    await press(el.querySelector("button.ftw"), "the branch's disclosure");
-    expect(whose(keysHolding("mb1|Projects"))).toEqual(UNDER_A);
-  });
-
-  it("the sent-mail review put off under A while the storage owner names B is A's", async () => {
-    setStorageOwner(B);
-    const { useSeedOffer } = await import("../app/shell/seed-offer");
-    let later: (() => void) | null = null;
-    function Probe(): null {
-      const offer = useSeedOffer({
-        scope: A, demo: false, known: true, supported: true, seedConfirmedAt: null, hasMailbox: true,
-      } as never);
-      later = offer.later;
-      return null;
-    }
-    await mountIn(React.createElement(Probe));
-    await act(async () => { later!(); });
-    expect(whose(keysHolding("1", true).filter((k) => k.startsWith("ohmail.ui.seed.notNow.")))).toEqual(UNDER_A);
-  });
-});
+// The Folder scope case now mounts the registered rail. The sent-mail review remains in
+// views-keep-the-shell-scope-ground.test.tsx over the first-run surface.
 
 describe("drawn in no shell, a view keeps nothing", () => {
-  let root: Root | null = null;
-  afterEach(async () => {
-    if (root) await act(async () => { root!.unmount(); });
-    root = null;
-  });
   const bare = async (node: React.ReactElement): Promise<HTMLElement> => {
     const el = document.createElement("div");
     document.body.appendChild(el);
-    root = createRoot(el);
-    const { ThemeProvider } = await import("@ohmail/ui");
-    const { KeymapProvider } = await import("@ohmail/app/keys");
-    await act(async () => {
-      root!.render(React.createElement(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: React.createElement(ThemeProvider, {
-          defaultPreference: "dark", storageKey: null,
-          children: React.createElement(KeymapProvider, null, node),
-        }),
-      } as never));
+    const root: Root = createRoot(el);
+    S.roots.push(root);
+    const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+    await act(() => {
+      root.render(
+        <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC" now={NOW}>
+          <ThemeProvider defaultPreference="dark" storageKey={null}>
+            <TextProvider locale="en" messages={messages} timeZone="UTC"><ToastHost>{node}</ToastHost></TextProvider>
+          </ThemeProvider>
+        </NextIntlClientProvider>,
+      );
     });
     await settle(4);
     return el;
@@ -288,72 +218,50 @@ describe("drawn in no shell, a view keeps nothing", () => {
   const stored = (): string[] => Object.keys(window.localStorage).sort();
 
   it("the search order chosen on a search drawn alone is kept for the view and stored nowhere", async () => {
-    const { SearchView } = await import("../app/views/SearchView");
     const engine = await engineWithLetter();
-    const el = await bare(React.createElement(SearchView, {
-      engine, version: 1, now: NOW, query: "heron", onQuery: () => {}, onOpen: () => {},
-    } as never));
+    function Sort() {
+      const model = useSearchList({
+        engine, scope: false, query: "heron", onQuery: () => {}, onOpen: () => {}, onExit: NONE,
+        boxRef: React.useRef(null), scrollerRef: React.useRef(null), t: (key) => key, searchBy: "words",
+      });
+      return <SearchSort model={model} />;
+    }
+    function StandaloneSearch() {
+      return <KeymapContext.Provider value={useKeymapStore()}><Sort /></KeymapContext.Provider>;
+    }
+    const el = await bare(<StandaloneSearch />);
     const before = stored();
-    const order = el.querySelector<HTMLSelectElement>("#search-sort")!;
-    await act(async () => {
-      order.value = "date_asc";
-      order.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    expect({ shown: order.value, stored: stored() }).toEqual({ shown: "date_asc", stored: before });
+    await chooseOldest(el);
+    expect({
+      shown: queryByRole(el, "button", { name: "Sorted by Oldest first" }) !== null,
+      stored: stored(),
+    }).toEqual({ shown: true, stored: before });
   });
 
-  it("a letter shown in its original look alone keeps the choice for itself and stores nothing", async () => {
-    const { COPY, MessageBody } = await import("../app/letter-body/MessageBody.js");
-    const el = await bare(React.createElement(MessageBody, { text: "Newsletter", html: LIGHT, messageId: "m-1" } as never));
-    const before = stored();
-    await press(buttonSaying(el, COPY.darkOriginal), "Original");
-    expect({ shown: buttonSaying(el, COPY.darkAdapt) != null, stored: stored() }).toEqual({ shown: true, stored: before });
-  });
-
-  it("the attach dial moved alone shows the move and stores nothing", async () => {
-    const { ComposeAttach } = await import("../app/components/ComposeAttach");
-    const zone = { current: document.createElement("div") };
-    const el = await bare(React.createElement(ComposeAttach, { attachments: [], onChange: () => {}, dropZone: zone } as never));
-    const before = stored();
-    const dial = el.querySelector<HTMLSelectElement>(".compose-attach-level select")!;
-    await act(async () => {
-      dial.value = "low";
-      dial.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    expect({ shown: dial.value, stored: stored() }).toEqual({ shown: "low", stored: before });
-  });
+  // "a letter shown in its original look alone…" moved to `views-keep-the-shell-scope-alone.test.tsx`, over the body
+  // the new reader mounts. "the attach dial moved alone…" (today's ComposeAttach) left with that part: Write's quality
+  // is drawn only inside the frame, under its scope; a part drawn under no scope names no key, the frame's rule
+  // (`packages/app/test/frame/scope.test.tsx`, "is none where no scope stands above…").
 
   it("the picture quality and the after-verb rows pressed alone store nothing", async () => {
-    const { ImageQualityRow } = await import("../app/shell/ImageQualityRow");
-    const { AfterVerbRow } = await import("../app/shell/AfterVerbRow");
-    const el = await bare(React.createElement(React.Fragment, null,
-      React.createElement(ImageQualityRow), React.createElement(AfterVerbRow)));
+    const { host } = fakeHost({ engine: NO_ENGINE, scope: null, service: "self" });
+    const frame = { api: { host } } as FrameInner;
+    function StandaloneGeneral() {
+      const consent = useConsentState(false, null, NONE);
+      return (
+        <FrameContext.Provider value={frame}>
+          <ConsentContext.Provider value={consent}><WebGeneralPane /></ConsentContext.Provider>
+        </FrameContext.Provider>
+      );
+    }
+    const el = await bare(<StandaloneGeneral />);
     const before = stored();
-    await press(buttonSaying(el.querySelector(".quality-seg")!, settings.imageQualityLevel.low!), "Low");
-    await press(buttonSaying(el.querySelector(".afterverb-seg")!, settings.afterVerbChoice.close!), "Close");
+    await chooseGeneralLooks(el);
+    expect(getByRole(el, "button", { name: settings.afterVerbChoice.close, pressed: true })).toBeTruthy();
+    expect(getByRole(el, "button", { name: settings.imageQualityLevel.low, pressed: true })).toBeTruthy();
     expect(stored()).toEqual(before);
   });
 });
 
-describe("the shell's mount of its scope is no second way to read it", () => {
-  it("a part that holds the provider reads nothing through it, while the scope's own hook reads the shell's", async () => {
-    const { TodaysScopeProvider, useTodaysScope } = await import("../app/shell/todays-scope");
-    const read: { throughTheProvider: unknown; throughTheHook: unknown } = { throughTheProvider: "not drawn", throughTheHook: "not drawn" };
-    function Outsider(): null {
-      /* Every file may import the provider; were it the context itself, this would be the shell's scope. */
-      read.throughTheProvider = React.useContext(TodaysScopeProvider as unknown as React.Context<string | null>);
-      return null;
-    }
-    function Reader(): null {
-      read.throughTheHook = useTodaysScope();
-      return null;
-    }
-    const root = createRoot(document.createElement("div"));
-    await act(async () => {
-      root.render(React.createElement(TodaysScopeProvider, { value: "acc-A" },
-        React.createElement(Outsider), React.createElement(Reader)));
-    });
-    await act(async () => { root.unmount(); });
-    expect(read).toEqual({ throughTheProvider: undefined, throughTheHook: "acc-A" });
-  });
-});
+// "the shell's mount of its scope is no second way to read it" read today's `todays-scope`, which leaves with today's
+// shell: a part reads the frame's scope through `useScopeHere()` (`packages/app/test/frame/scope.test.tsx`).

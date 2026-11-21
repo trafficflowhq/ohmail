@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
+import { screen, within } from "@testing-library/react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
@@ -23,7 +24,7 @@ import messages from "../messages/en.json";
  *
  * Driven through the real shell rather than by reading the command array, because the array
  * is only half the claim: a `disabled` field nothing rendered would be a field, not a
- * behaviour. The assertions are on the DOM the person sees (`aria-disabled`) and on what
+ * behaviour. The assertions are on the native disabled buttons the person reaches and on what
  * pressing ↵ over the row does.
  */
 
@@ -62,7 +63,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -72,7 +73,7 @@ async function mountShell(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -91,7 +92,8 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
 /** Open ⌘K and hand back the rows it drew. */
 async function openPalette(): Promise<HTMLElement[]> {
   await key("k", { metaKey: true });
-  return [...host!.querySelectorAll<HTMLElement>(".palette [role=option]")];
+  const list = await screen.findByRole("listbox", { name: messages.palette.ariaLabel });
+  return within(list).getAllByRole("option");
 }
 
 const rowNamed = (rows: HTMLElement[], startsWith: string): HTMLElement => {
@@ -105,7 +107,7 @@ const rowNamed = (rows: HTMLElement[], startsWith: string): HTMLElement => {
   return found;
 };
 
-const off = (row: HTMLElement): boolean => row.getAttribute("aria-disabled") === "true";
+const off = (row: HTMLElement): boolean => row instanceof HTMLButtonElement && row.disabled;
 
 beforeEach(() => {
   setViewport(false);
@@ -134,7 +136,7 @@ describe("the ⌘K rows that act on the open message", () => {
 
     /* …and pressing ↵ over one does NOTHING — not even close the sheet, because closing is
        the one outcome that reads as "that worked". */
-    const input = host!.querySelector<HTMLInputElement>(".palette input")!;
+    const input = screen.getByRole("combobox", { name: messages.palette.ariaLabel });
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype, "value",
     )!.set!;
@@ -147,7 +149,7 @@ describe("the ⌘K rows that act on the open message", () => {
         new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
       );
     });
-    expect(host!.querySelector(".palette"), "a refused row must not close the palette").toBeTruthy();
+    expect(screen.getByRole("dialog", { name: messages.palette.ariaLabel }), "a refused row must not close the palette").toBeTruthy();
 
     /* Close it, open a message the way the product now says to — `j` — and re-ask. */
     await key("Escape");

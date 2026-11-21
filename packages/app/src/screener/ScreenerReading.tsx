@@ -18,10 +18,10 @@ export function ScreenerReading({ route }: PaneProps) {
   const t = useText("screener");
   const model = useScreener();
   const view = useListView();
-  const { junk } = useScreenerBeside();
+  const { facts, junk } = useScreenerBeside();
   const above = useScreenerAbove();
   const allDecided = useAllDecided(view);
-  if (junk !== NONE && segmentOf(route.sub) === "spam") {
+  if (junk !== NONE && segmentOf(route.sub) === "spam" && !view?.quarantine) {
     /* The Junk row the list has open; with none (being read, not read, empty) the list says why. */
     const key = above.selected("junk");
     const item = key === null ? undefined : junk.visible.find((i) => junkKey(i) === key);
@@ -38,5 +38,6 @@ export function ScreenerReading({ route }: PaneProps) {
     );
   if (!model.queueSettled) return <BlankColumn>{t("place.loading")}</BlankColumn>;
   const count = model.waitingCount;
+  if (count === 0 && facts.notOrganizingYet !== null) return null;
   return <BlankColumn hot={count > 0}>{t("metaWaiting", { count })}</BlankColumn>;
 }

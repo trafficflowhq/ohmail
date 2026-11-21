@@ -26,7 +26,7 @@ import {
   TAG_HUES,
 } from "@ohmail/ui";
 import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
-import { useSenderCheckWords } from "../shell/sender-check";
+import { useSenderCheckWords } from "../screening/sender-check";
 import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";

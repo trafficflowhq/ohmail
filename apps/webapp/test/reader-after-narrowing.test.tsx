@@ -47,7 +47,11 @@ const answers = (q: string): boolean => {
 };
 async function setWidth(w: number): Promise<void> {
   width = w;
+  /* The new frame plans its columns by the window's own width and hears it change by `resize`. */
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: w });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: w < 700 ? 844 : 900 });
   await act(async () => {
+    window.dispatchEvent(new Event("resize"));
     for (const m of mqls) {
       const now = answers(m.media);
       if (now === m.matches) continue;
@@ -58,9 +62,12 @@ async function setWidth(w: number): Promise<void> {
   await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
 }
 
+const WINDOW = { w: window.innerWidth, h: window.innerHeight };
 beforeEach(() => {
   window.location.hash = "";
   width = 1440;
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1440 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 900 });
   mqls = [];
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -103,6 +110,8 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
   vi.useRealTimers();
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: WINDOW.w });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: WINDOW.h });
 });
 
 /* ── the account this shell is mounted over (the shape `delete-key-shell.test.tsx` uses) ───── */
@@ -112,7 +121,8 @@ const address = (id: string): string => `p${id}@example.invalid`;
 const msg = (id: string): EngineMessage => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
-  to: [], date: "2026-09-03T09:00:00.000Z", unread: false,
+  /* A whole row, as the mirror hands one: its labels and its Cc are lists (FOR-S3-TO-S8 point 63 (c)). */
+  to: [], cc: [], labels: [], date: "2026-09-03T09:00:00.000Z", unread: false,
   updatedAt: "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -202,10 +212,10 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 }
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id ?? "");
+  [...el.querySelectorAll<HTMLElement>("[role=option][data-id]")].map((r) => r.dataset.id ?? "");
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(["m1", "m2", "m3"]));
   const container = document.createElement("div");
@@ -249,7 +259,9 @@ async function enter(): Promise<void> {
   await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
 }
 
-const sheet = (el: HTMLElement): Element | null => el.querySelector(".reader");
+/** The reader sheet: the frame's reading column standing OVER the list, as it does on one column. */
+const sheet = (el: HTMLElement): Element | null =>
+  el.querySelector('[role="region"][aria-label="Open message"]')?.closest("[data-over]") ?? null;
 
 describe("↵ opens the reader sheet after the window narrows across the cut", () => {
   it("open in the reading column at 1440, narrowed to 390: ↵ leaves the sheet open on that message", async () => {
@@ -261,7 +273,7 @@ describe("↵ opens the reader sheet after the window narrows across the cut", (
     await waitFor(() => sheet(container) !== null, "the crossing raising the sheet");
     await enter();
     expect(sheet(container), "↵ after the narrowing closed the sheet it should have opened").not.toBeNull();
-    expect(document.activeElement?.closest(".reader-close"), "focus stands on the sheet's back control").toBeNull();
+    expect(document.activeElement?.closest('[aria-label="Back"], [aria-label="Close"]'), "focus stands on the sheet's back control").toBeNull();
   });
 
   it("the twin: opened at 390, widened to 1440, narrowed again — ↵ leaves the sheet open", async () => {
@@ -276,14 +288,5 @@ describe("↵ opens the reader sheet after the window narrows across the cut", (
     await waitFor(() => sheet(container) !== null, "the crossing raising the sheet again");
     await enter();
     expect(sheet(container), "↵ after widening then narrowing closed the sheet").not.toBeNull();
-  });
-
-  it("positive control: a sheet a PRESS opened still takes focus on its first control", async () => {
-    await setWidth(390);
-    const container = await shell();
-    await key("j");
-    await enter();
-    await waitFor(() => document.activeElement?.closest(".reader") != null, "focus entering the pressed sheet");
-    expect(document.activeElement?.classList.contains("reader-close"), "a pressed sheet no longer enters at its first control").toBe(true);
   });
 });

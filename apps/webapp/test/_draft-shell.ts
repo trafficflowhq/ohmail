@@ -11,6 +11,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { vi } from "vitest";
+import type { TodaysShellProps } from "./_mail-shell.js";
 import {
   CursorExpiredError,
   IndexedDbMirrorStore,
@@ -25,7 +26,7 @@ import {
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ReaderEntry } from "@ohmail/app/host";
+import type { GapLettersWire, OrganizerNoticeWire, ReaderEntry } from "@ohmail/app/host";
 import { announceUpdate, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
@@ -102,6 +103,15 @@ export interface DraftShell {
 let roots: Root[] = [];
 let seq = 0;
 
+/** jsdom does not implement the animation used while the frame's report leaves. */
+export function stubAnimate(): void {
+  if (!window.navigator.userAgent.includes("jsdom")) return;
+  Element.prototype.animate ??= (() => ({
+    cancel() {},
+    finished: Promise.resolve(),
+  })) as unknown as Element["animate"];
+}
+
 export function stubDom(opts: { narrow?: boolean } = {}): void {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -114,6 +124,7 @@ export function stubDom(opts: { narrow?: boolean } = {}): void {
     }),
   });
   (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
+  stubAnimate();
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
@@ -240,6 +251,8 @@ export class DraftServer {
     }
     if (m.kind === "draft_discard") {
       const row = this.rows.get(m.draftId) ?? refuse(404, "not_found");
+      if (m.ifContentRevision !== undefined && m.ifContentRevision !== row.contentRevision) refuse(409, "draft_changed");
+      if (m.ifUpdatedAt !== undefined && m.ifUpdatedAt !== row.updatedAt) refuse(409, "draft_changed");
       const c = this.commit(row, "delete");
       return { changes: [c], seq: c.seq };
     }
@@ -305,7 +318,7 @@ export function engineOver(
   syncHeld: DraftShell["syncHeld"] = { on: false },
   sentCopy: DraftShell["sentCopy"] = {},
 ): OhmailEngine {
-  const delivered = new Set<string>();
+  const delivered = new Map<string, { sentDraftId: string; sentDraftThrough: number }>();
   return new OhmailEngine({
     store: s,
     now: () => NOW,
@@ -365,7 +378,7 @@ export function engineOver(
         sent.push(m);
         const sendKey = m.kind === "mail_send" ? o?.idempotencyKey ?? null : null;
         if (sendKey !== null && delivered.has(sendKey)) {
-          return { changes: [], seq: null, firstSend: { status: "sent", at: NOW.toISOString() } };
+          return { changes: [], seq: null, ...delivered.get(sendKey), firstSend: { status: "sent", at: NOW.toISOString() } };
         }
         const named = m.kind === "draft_save" || m.kind === "mail_send" ? m.draftId ?? null : null;
         if (named !== null && serverGone.has(named)) {
@@ -391,7 +404,8 @@ export function engineOver(
               }) as unknown as SyncChange)
             : [];
           await s.applyChanges([...local, ...served.changes]);
-          if (sendKey !== null) delivered.add(sendKey);
+          const deliveredDraft = served.changes.find((change) => change.type === "draft");
+          if (sendKey !== null && deliveredDraft) delivered.set(sendKey, { sentDraftId: deliveredDraft.id, sentDraftThrough: deliveredDraft.seq });
           return {
             changes: [...local, ...served.changes], seq: served.seq,
             ...(served.entityId ? { entityId: served.entityId } : {}), ...(served.revision ? { revision: served.revision } : {}),
@@ -483,12 +497,14 @@ export function engineOver(
           for (const c of changes) if (c.id === entityId && c.entity) (c.entity as { contentRevision?: string }).contentRevision = revision;
         }
         await s.applyChanges(changes);
-        if (sendKey !== null) delivered.add(sendKey);
+        const deliveredDraft = changes.find((change) => change.type === "draft");
+        if (sendKey !== null && deliveredDraft) delivered.set(sendKey, { sentDraftId: deliveredDraft.id, sentDraftThrough: deliveredDraft.seq });
         if (sendKey !== null && loseSendAnswer.on) {
           throw new MutationRejectedError("network failure: TypeError: Failed to fetch", { code: "network", retryable: true });
         }
         return {
           changes, seq: changes[changes.length - 1]?.seq ?? null, ...(entityId ? { entityId } : {}), ...(revision ? { revision } : {}),
+          ...(m.kind === "mail_send" && !m.sendAt && changes[0]?.type === "draft" ? { sentDraftId: changes[0].id } : {}),
           ...(m.kind === "mail_send" ? sentCopy : {}),
         };
       },
@@ -597,6 +613,8 @@ export async function mountShell(
     sendGate?: DraftShell["sendGate"];
     /** Every message carries three files (`FORWARD_PARTS`), and the server takes a forward's kept list. */
     parts?: boolean;
+    /** Set this fixture's engine readings before the shell observes them. */
+    prepareEngine?: (engine: OhmailEngine) => void;
     /** A mail link the host holds from the first render: the click that started the app. */
     mailto?: ComposePrefill;
     /** What the first `/sync` carries: a launch over an empty mirror (the desktop rebuilds it each start). */
@@ -607,10 +625,18 @@ export async function mountShell(
     locks?: EngineLocks;
     /** The reader the host hands (a case that stands a place with a reading column); absent: none. */
     reader?: ReaderEntry;
+    places?: TodaysShellProps["places"];
+    /** The mailboxes' facts the host reads (absent: `ROSTER`), and the Mailboxes entry's notices over these wires. */
+    roster?: MailboxFacts[];
+    mailboxNotices?: { organizerNotice?: OrganizerNoticeWire; gapLetters?: GapLettersWire };
+    /** The account's strip says its notices as the web's entry does (the session's sweeps among them). */
+    accountNotices?: boolean;
+    demo?: boolean;
+    desktopOffer?: TodaysShellProps["desktopOffer"];
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
-  const { AppShell } = await import("./_todays-shell.js");
+  const AppShell = (await import("./_mail-shell.js")).MailShell;
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const versions = options.versions === true ? new Map<string, string>() : null;
   if (versions !== null) for (const d of drafts) versions.set(d.id, d.contentRevision ?? `rev-${d.id}`);
@@ -641,17 +667,29 @@ export async function mountShell(
   const handOff: DraftShell["handOff"] = { on: options.handOff === true };
   const outboxHeld = engine.outboxHeld.bind(engine);
   engine.outboxHeld = () => !handOff.on || outboxHeld();
+  options.prepareEngine?.(engine);
   const el = document.createElement("div");
   document.body.appendChild(el);
   const root = createRoot(el);
   roots.push(root);
   const shellProps = {
-    demo: false, engine, consentTransport: consentTransportWith(options.signatures),
-    mailboxFacts: async () => (options.noMailbox === true ? [] : options.secondMailbox === true
+    demo: options.demo === true, engine, consentTransport: consentTransportWith(options.signatures),
+    mailboxFacts: async () => (options.noMailbox === true ? [] : options.roster !== undefined ? options.roster
+      : options.secondMailbox === true
       ? [...ROSTER, { ...ROSTER[0]!, id: "mb2", address: "me2@example.invalid", createdAt: "2026-09-02T00:00:00.000Z" }]
       : ROSTER),
     ...(options.draftReplyWire !== undefined ? { draftReplyWire: options.draftReplyWire } : {}),
     ...(options.reader !== undefined ? { reader: options.reader } : {}),
+    ...(options.places !== undefined ? { places: options.places } : {}),
+    ...(options.accountNotices === true ? { accountNotices: true } : {}),
+    ...(options.desktopOffer ? { desktopOffer: options.desktopOffer } : {}),
+    ...(options.mailboxNotices !== undefined
+      ? {
+          mailboxesNotices: true,
+          ...(options.mailboxNotices.organizerNotice ? { organizerNoticeTransport: options.mailboxNotices.organizerNotice } : {}),
+          ...(options.mailboxNotices.gapLetters ? { gapLettersTransport: options.mailboxNotices.gapLetters } : {}),
+        }
+      : {}),
   };
   /* The host's half of the mail-link seam, as the desktop holds it: the link in state, dropped
      once the shell says it took it. */
@@ -703,40 +741,60 @@ export async function press(target: Element | null, what: string): Promise<void>
   await settleEditor();
 }
 
-/** The inline forward's dock (the reply dock in forward mode), on the open message. */
-export const forwardDock = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>(".read-col .reply[data-reply-for]");
+export const openRegion = (root: ParentNode = document): HTMLElement | null =>
+  root.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]');
+export const replyText = (root: ParentNode = document): HTMLElement | null =>
+  openRegion(root)?.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"]') ?? null;
+export const forwardText = (root: ParentNode = document): HTMLElement | null =>
+  openRegion(root)?.querySelector<HTMLElement>('[role="textbox"][aria-label="Forward body"]') ?? null;
+/** The open forward: the region while its text stands in it. */
+export const forwardDock = (root: ParentNode = document): HTMLElement | null => (forwardText(root) ? openRegion(root) : null);
+/** A verb of the open letter's panel (Send while a reply or forward stands; Reply, Forward otherwise), by its name. */
+export const actionIn = (root: ParentNode, name: string): HTMLButtonElement | null =>
+  [...(openRegion(root)?.querySelectorAll<HTMLButtonElement>('[role="toolbar"][aria-label="Actions"] button') ?? [])]
+    .find((b) => b.getAttribute("aria-label") === name) ?? null;
+/** Any button of the open letter by its name. */
+export const letterVerb = (root: ParentNode, name: string): HTMLButtonElement | null =>
+  [...(openRegion(root)?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.getAttribute("aria-label") === name) ?? null;
+export const messageRow = (root: ParentNode, id: string): HTMLElement | null =>
+  root.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id='${id}']`);
 
-/** Open message `id` (unless one is open) and press Forward in its menu. */
+/** Open message `id` (unless one is open) and press its Forward. */
 export async function openForward(s: DraftShell, id = "m1"): Promise<void> {
-  if (s.el.querySelector(".read-col .msg") == null) {
-    await waitFor(() => s.el.querySelector(`:is(.view-ohbox, .view-history) :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
-    await press(s.el.querySelector(`:is(.view-ohbox, .view-history) :is(.row, [role=option])[data-id='${id}']`), "the row");
+  if (openRegion(s.el) == null) {
+    await waitFor(() => messageRow(s.el, id) != null, "the row");
+    await press(messageRow(s.el, id), "the row");
   }
-  const panel = s.el.querySelector<HTMLElement>(".read-col .conv-focus") ?? s.el.querySelector<HTMLElement>(".read-col .msg")!;
-  await act(async () => { panel.querySelector<HTMLElement>(".msg-more")!.click(); });
-  await press([...panel.querySelectorAll<HTMLElement>(".mmenu button")].find((b) => b.textContent?.trim() === "Forward") ?? null, "Forward");
+  await press(letterVerb(s.el, "Forward"), "Forward");
 }
-
-/** Type `value` into the forward dock's To row. */
+/** Type `value` into the forward's To line. */
 export async function typeForwardTo(s: DraftShell, value: string): Promise<void> {
-  const input = forwardDock(s.el)!.querySelector<HTMLInputElement>(".rcp-input")!;
+  const input = openRegion(s.el)!.querySelector<HTMLInputElement>('[role="combobox"][aria-label="To"]')!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
-
-/** Forward on `m1`, `to` in the To row, the third file removed, `note` typed. */
+/** The files the open forward carries, by their part ids (each file's Remove press names it). */
+export const forwardFiles = (root: ParentNode = document): string[] =>
+  [...(forwardDock(root)?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .map((b) => /^Remove (.+)$/.exec(b.getAttribute("aria-label") ?? "")?.[1])
+    .flatMap((name) => FORWARD_PARTS.filter((p) => p.filename === name).map((p) => p.id));
+/** Forward on `m1`, `to` in the To line, the third file removed, `note` typed (the door's `fillForward`, re-pointed). */
 export async function fillForward(s: DraftShell, to: string, note: string): Promise<void> {
   await openForward(s);
   await waitFor(() => forwardDock(s.el) != null, "the forward dock");
   await typeForwardTo(s, `${to}, `);
-  await waitFor(() => forwardDock(s.el)!.querySelectorAll("[data-forward-part]").length === 3, "the three files listed");
-  const remove = forwardDock(s.el)!.querySelectorAll<HTMLButtonElement>("[data-forward-part] .compose-attach-remove");
-  await act(async () => { remove[2]!.click(); });
-  await act(async () => { typeInto(forwardDock(s.el)!.querySelector<HTMLElement>(".rte-surface")!, note); });
+  await waitFor(() => forwardFiles(s.el).length === 3, "the three files listed");
+  const third = FORWARD_PARTS[2]!.filename;
+  await act(async () => {
+    [...forwardDock(s.el)!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.getAttribute("aria-label") === `Remove ${third}`)!.click();
+  });
+  await act(async () => { typeInto(forwardText(s.el)!, note); });
 }
 
-/** The inline reply's editing surface, wherever the message is read. */
+/** The reply or forward editor of the open letter. */
 export const replySurface = (el: HTMLElement): HTMLElement | null =>
-  el.querySelector<HTMLElement>(".read-col .msg .rte-surface, .reader .msg .rte-surface");
+  openRegion(el)?.querySelector<HTMLElement>(
+    '[role="textbox"][aria-label="Reply body"], [role="textbox"][aria-label="Forward body"]',
+  ) ?? null;

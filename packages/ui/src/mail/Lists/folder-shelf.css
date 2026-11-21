@@ -15,6 +15,18 @@
     flex: 0 1 auto;
   }
 
+  .oh-foldershelf-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .oh-foldershelf-row > .oh-railentry {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+  }
+
   /* The fold's own line is quieter than a folder. */
   .oh-foldershelf-all {
     display: flex;

@@ -86,7 +86,7 @@ export function WallRoute({ facts, onLifted }: { facts: AccessRefusedFacts; onLi
   const said = c.signOutSaid === null
     ? null
     : c.signOutSaid.key === "signOutServerRefused"
-      ? ta(c.signOutSaid.key, { reason: c.signOutSaid.reason })
+      ? ta(c.signOutSaid.cleanupIncomplete ? "signOutServerRefusedUnverified" : c.signOutSaid.key, { reason: c.signOutSaid.reason })
       : ta(c.signOutSaid.key);
   const door: WallDoor = {
     state: stateOf(c, facts, said),

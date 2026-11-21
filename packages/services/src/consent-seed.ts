@@ -4,7 +4,7 @@ import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { isSubjectHeading, subjectHeadingOf, type SubjectHeading } from "@trafficflow/core/adapters/organizer-profile";
 import {
   accountSettings, carryBinding, clearRuleRemovals, contacts, mailboxes, mailboxProfileMirror, messageBodies,
-  messages, lockAccountRuleKeys, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, statePreference,
+  messages, lockAccountRuleKeys, readAccountSettings, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, statePreference,
   PROFILE_SIGNATURE_MAX,
   TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type LedgerTx, type OrganizedBy, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
@@ -701,8 +701,7 @@ export async function consentSettings(
    */
   screeningScope: "window" | "all_time";
 }> {
-  const [row] = await ctx.db.select().from(accountSettings)
-    .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
+  const row = await readAccountSettings(asTx(ctx), ctx.accountId);
   // An absent row is every account that has never changed anything. Defaults, not an error.
   return {
     // The row's word only as one of its pair and beside its instant: anything else is nothing stated.

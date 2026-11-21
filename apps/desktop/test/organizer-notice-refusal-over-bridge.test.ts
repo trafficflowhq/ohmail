@@ -16,7 +16,7 @@ vi.mock("../src/bridge-fetch.js", async () => {
 });
 
 const { organizerNoticeOverBridge } = await import("../src/local-organizer-notice.js");
-const { refusalOf } = await import("../../webapp/app/shell/OrganizerNotice");
+const { noticeRefusalOf } = await import("@ohmail/app-logic/mailboxes/pane/notices");
 
 describe("the bridge's Mark read, answered", () => {
   /* 503 `offline_read_only` is the proxy's own answer while the install is offline (`cloud-auth.ts`). */
@@ -32,7 +32,7 @@ describe("the bridge's Mark read, answered", () => {
       code = said;
       const err = await organizerNoticeOverBridge("mb1").then(() => null, (e: unknown) => e);
       expect(err, "a refused stamp resolved as written").not.toBeNull();
-      expect(refusalOf(err)).toBe(key);
+      expect(noticeRefusalOf(err)).toBe(key);
     });
   }
   it("200 resolves", async () => {

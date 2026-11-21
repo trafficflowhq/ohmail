@@ -4,72 +4,47 @@
  *
  * `tracking-notice.test.tsx` moved "A tracking pixel was blocked." out of the bar above a stream
  * card and into the card's head as a glyph with a two-word caption (`BlockNoticeGloss`). This file
- * holds the OTHER three surfaces to the same shape — the reading pane and a conversation panel,
- * which share `MessageHeader`, and the Screener's held card — so one fact is said one way wherever
- * a message is rendered.
+ * holds the reading column to the same shape — the open letter and each letter of its conversation —
+ * so one fact is said one way wherever a message is rendered.
  *
- *  1. THE CENSUS. Every file under `app/` that mounts the viewer (`<MessageBody`) is a known host,
- *     and every mount passes `onNotice`. Red before this slice: three of four did not.
- *  2. THE RENDERS. On each host a message with a beacon refused carries, in its META LINE, a real
- *     button CALLED by the caption and DESCRIBED by the whole sentence — and no `.mb-bar-text`
- *     anywhere. In the message header the glyph leads the right cluster (before the ⋯ menu and the
- *     stamp, whose order `conversation.test.ts` holds); in the Screener card's line it stands right
- *     before the time. The header's "details" block prints the sentence in full.
+ *  1. THE CENSUS. Every file of the app that draws a letter's text through the viewer is a known host,
+ *     and every mount passes `onNotice`, and every host wears the report.
+ *  2. THE RENDERS. A message with a beacon refused carries, in its head, a real button CALLED by the
+ *     caption — and no `.mb-bar-text` anywhere. In the message head the glyph leads the right cluster
+ *     (before the ⋯ menu and the stamp). The sentence is printed in full.
  *  3. THE CONTROLS. A message with nothing refused wears no glyph and prints no sentence; German
- *     reads the German caption and sentence. The bare-mount fallback is `tracking-notice.test.tsx`'s
- *     and is not restated here.
- *  4. THE HELD SENDER. A letter in the Screener, Screened out or Spam loads no picture on open on an
- *     auto account; the held card keeps Show images, and an Ohbox letter's pictures load.
+ *     reads the German caption and sentence.
+ *  4. THE HELD SENDER. A letter Screened out loads no picture on open on an auto account; an Ohbox
+ *     letter's pictures load.
  *
- * Mutation-proven at authoring time (each reddens the case named and no other):
- *   · drop `onNotice={onNotice}` from `MessagePane`'s mount           → census + the pane render
- *   · drop the `<BlockNoticeGloss>` from `MessageHeader`'s cluster     → pane + panel renders
- *   · drop the `.msg-rcpt-notice` row from the details `<dl>`          → the two details cases
- *   · drop `onNotice={setNotice}` from `HeldMail`'s mount              → census + the Screener render
- *   · move the Screener glyph after the time                           → the Screener order case
- *   · move the header glyph after the ⋯ menu                           → the pane order case
+ * RE-POINTED (share reader-1, the switch's older tests): these cases mounted today's `MessagePane` under a
+ * `MessageChromeProvider`; they now mount the reading column the new shell mounts (`_reader-1-letters.tsx`: the
+ * frame, the reader with the letter's real body renderer, a fake engine whose mirror holds each letter's body row),
+ * each claim as it stood. Where the studio's head says it otherwise, the case follows the studio and says so: the
+ * glyph is the kit's chip (`BlockedImages`), and the whole sentence is printed in the chip's card on a press ("the
+ * sentence only when asked"), no longer as a tooltip's description or a line of "details". The census reads the
+ * files that now draw a letter (`packages/app/src/`: the reading column's `Letter.tsx` and the Screener's held letter,
+ * each through the letter part; the part's adapter `reader/body/LetterBody.tsx` is the viewer as the old census's
+ * `MessageBody.tsx` was); its Screener half, and the Screener's held card cases, moved as they stood to
+ * `block-notice-screener.test.tsx` (their place is not mounted yet). Every address is invented.
  */
-import type { EngineMessage, MessageBodyWire } from "@ohmail/wire";
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import type { EngineMessage } from "@ohmail/wire";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import {
-  MemoryMirrorStore,
-  OhmailEngine,
-  type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
-import en from "../messages/en.json";
-import de from "../messages/de.json";
-import { COPY } from "../../../packages/letter-body/src/MessageBody";
-import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";
-import { imageProxyUrl, useRemoteImages, type RemoteImagesChrome } from "../app/shell/remote-images";
-import { settleFirstPaint } from "./_first-paint.js";
-import { withBodyDoor } from "./_body-door.js";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { PictureSeam } from "@ohmail/app-logic/reader";
+import { imageProxyUrl } from "@ohmail/app-logic/reader/remote-images";
+import { letterBody } from "../../../packages/app/src/reader/body/index.js";
+import readerDe from "../../../packages/app/messages/reader.de.json" with { type: "json" };
+import { READER_EN, letter, letterOf, mountLetters } from "./_reader-1-letters.js";
 
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-// See `sync-liveness-shell.test.ts` for why React is published as a global (the Screener mount).
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
+/* The reader stamps in Intl's zone: the case pins it. */
+process.env.TZ = "UTC";
 
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-
-type Catalogue = Record<string, Record<string, string>>;
-const DE = de as unknown as Catalogue;
-const DE_MERGED = fillFrom(en as never, de as never) as never;
+/** The body's sentences, in the reader's own catalogue (the words the letter body is handed). */
+const COPY = READER_EN.mailBody;
+const DE = readerDe.mailBody;
 
 /* ── fixtures: a framed document with a beacon, and one with only words ─────────────────────── */
 
@@ -79,208 +54,90 @@ const canvas = (inner: string) => `<table width="600"><tr><td><p>hello</p>${inne
 const PIXEL_ONLY = canvas(`<img src="${BEACON}" width="1" height="1">`);
 const ONLY_WORDS = canvas("<p>only words</p>");
 
-const NOW = new Date("2026-08-02T12:00:00.000Z");
-
 function msg(id: string, extra: Partial<EngineMessage> = {}): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `Subject ${id}`,
-    from: { name: "Acme Store", address: "orders@acme.example" },
-    // A recipient, so the header renders its recipients block and the "details" press with it.
-    to: [{ name: "Lena Marti", address: "lena@atelier.example" }], cc: [],
-    date: "2026-08-01T09:00:00.000Z", folder: "INBOX", snippet: `snippet ${id}`, unread: false,
-    hasAttachments: false, attachmentCount: 0,
-    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
-    ...extra,
+    ...letter(id, {
+      subject: `Subject ${id}`,
+      from: { name: "Acme Store", address: "orders@acme.example" },
+      // A recipient, so the head renders its recipients line and the "details" press with it.
+      to: [{ name: "Lena Marti", address: "lena@atelier.example" }],
+      date: "2026-08-01T09:00:00.000Z",
+      unread: false,
+      ...extra,
+    }),
+    // The text is the mirror's body row, as the shell hands it.
+    body: undefined,
   } as unknown as EngineMessage;
 }
 
 /* ── mounting ──────────────────────────────────────────────────────────────────────────────── */
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
-async function settle(): Promise<void> {
-  await act(async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); });
-}
-
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-}
-
-afterEach(async () => {
-  await unmount();
-  setActiveCatalog(DEFAULT_LOCALE, null);
+beforeEach(() => {
+  Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
+});
+afterEach(() => {
+  cleanup();
 });
 
 /**
- * The reading pane through its chrome, exactly as `conversation.test.ts` drives it: `bodyOf`
- * answers `full` with the html given, `conversationOf` the thread given, and `openReply`/`forward`
- * are present so the header's ⋯ menu renders and the cluster's order can be read.
+ * The reading column with `open` open over `conversation` (or the letter alone): every letter's body row answers
+ * `ready` with the html given, drawn by the letter's real renderer.
  */
 async function mountPane(
   open: EngineMessage,
-  opts: { conversation?: EngineMessage[]; html?: string; locale?: "en" | "de"; remoteImages?: RemoteImagesChrome } = {},
-): Promise<HTMLDivElement> {
-  await unmount();
-  const { MessagePane } = await import("../app/shell/MessagePane.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  const conversation = opts.conversation ?? [];
+  opts: { conversation?: EngineMessage[]; html?: string; locale?: "en" | "de"; remoteImages?: PictureSeam } = {},
+): Promise<HTMLElement> {
+  cleanup();
+  const letters = opts.conversation ?? [open];
   const html = opts.html ?? PIXEL_ONLY;
-  const locale = opts.locale ?? "en";
-  host = document.createElement("div");
-  host.className = "read-col";
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale, messages: locale === "de" ? DE_MERGED : en, timeZone: "UTC", now: NOW,
-        children: h(MessageChromeProvider as never, {
-          value: {
-            ownAddresses: ["me@x.invalid"],
-            absoluteTime: false,
-            onToggleAbsoluteTime: () => {},
-            replyTo: null,
-            replyBody: { text: "", html: "" },
-            onReplyBody: () => {},
-            closeReply: () => {},
-            sendReply: () => {},
-            replySendState: () => ({ phase: "idle" }),
-            openSenderMenu: () => {},
-            openAttachmentPreview: () => {},
-            conversationOf: () => conversation,
-            bodyOf: (m: EngineMessage) => ({
-              text: m.snippet, state: "full", html, loadedRemoteContent: false,
-              unsubscribe: "no_header", unsubscribeUrl: null,
-            }),
-            hydrateBody: () => {}, hydrateBodies: () => {},
-            hydrateThread: () => {},
-            openReply: () => {},
-            forward: () => {},
-            remoteImages: opts.remoteImages,
-          },
-          children: h(MessagePane as never, {
-            message: open, tags: [], now: NOW, onAction: () => {}, onAddTag: () => {}, onAttachment: () => {},
-          } as never),
-        } as never),
-      }),
-    );
+  mountLetters({
+    letters,
+    open: open.id,
+    lang: opts.locale ?? "en",
+    parts: { body: letterBody, ...(opts.remoteImages ? { pictures: opts.remoteImages } : {}) },
+    bodies: Object.fromEntries(letters.map((m) => [m.id, { state: "ready", text: m.snippet, html }])),
   });
-  await settle();
-  await settleFirstPaint();
-  return host;
+  await new Promise((r) => setTimeout(r, 0));
+  return document.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]') ?? document.body;
 }
 
-/**
- * The Screener through the real engine and the real state hook (`screener-cloud.test.ts`'s
- * recipe): three held messages, every body hydrated from an adapter whose `fetchBody` answers the
- * beacon document, then the view — so a held card's `MessageBody` frames html the way a live
- * account's does.
- */
-async function mountScreener(
-  html: string, remoteImages?: RemoteImagesChrome | (() => RemoteImagesChrome | undefined),
-): Promise<HTMLDivElement> {
-  await unmount();
-  const held = [
-    msg("m1", { from: { name: null, address: "lena@atelier.example" }, folder: "ohmail/Screener" } as Partial<EngineMessage>),
-    msg("m2", { from: { name: null, address: "lena@atelier.example" }, folder: "ohmail/Screener" } as Partial<EngineMessage>),
-    msg("m3", { from: { name: null, address: "win@jackpot.example" }, folder: "ohmail/Screener" } as Partial<EngineMessage>),
-  ];
-  const store = new MemoryMirrorStore();
-  await store.load();
-  let seq = 0;
-  await store.applyChanges(
-    held.map((m): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })),
-  );
-  const engine = new OhmailEngine({
-    store,
-    now: () => NOW,
-    adapter: {
-      sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
-        cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-      }),
-      mutate: async () => ({ changes: [], seq: null }),
-      fetchBody: async (): Promise<MessageBodyWire> => ({
-        text: "FULL BODY", html, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
-      }),
-    } as never,
-  });
-  await engine.start();
-  for (const m of held) await engine.hydrateBody(m.id);
-
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    useKeyBindings([{ chord: "?", group: "app", label: "Keyboard shortcuts", run: () => {} }], "global");
-    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
-    const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
-    // A hook is the shell's own chrome, called here as `AppShell` calls it.
-    const chrome = typeof remoteImages === "function" ? remoteImages() : remoteImages;
-    return h(ScreenerView, {
-      owed: false,
-      state, segment: "waiting", selection: sel as never,
-      onSelect: (seg: string, id: string | null) => setSel((m) => ({ ...m, [seg]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {}, remoteImages: chrome,
-    } as never);
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages: en, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, { storageKey: null, children: withBodyDoor(engine, h(KeymapProvider, { children: h(Probe) })) }),
-      }),
-    );
-  });
-  await settle();
-  await settleFirstPaint();
-  return host;
-}
-
-/** The glyph inside a meta line, with what a reader is told about it. */
-function glyphIn(line: Element | null) {
-  const trigger = line?.querySelector<HTMLButtonElement>(".mb-notice .gloss-t") ?? null;
+/** The glyph in a letter's head, with what a reader is told about it on a press. */
+function glyphIn(head: Element | null, caption: string) {
+  const trigger = head ? within(head as HTMLElement).queryByRole("button", { name: caption }) : null;
   if (!trigger) return null;
-  const describedBy = trigger.getAttribute("aria-describedby");
-  const tooltip = describedBy ? document.querySelector<HTMLElement>(`[id="${describedBy}"]`) : null;
-  return {
-    trigger,
-    name: trigger.querySelector(".gloss-cap")?.textContent ?? "",
-    description: tooltip?.textContent ?? null,
-    tooltipRole: tooltip?.getAttribute("role") ?? null,
-    tooltipHidden: tooltip?.hidden ?? null,
-  };
+  return { trigger, name: trigger.textContent ?? "" };
 }
-
-/** First-class index of a child by its FIRST class name, or -1. */
-const at = (parent: Element, cls: string): number =>
-  [...parent.children].findIndex((el) => el.classList.contains(cls));
+/** The sentence the glyph's card prints in full, with the card open (pressed once). */
+function sentenceOf(glyph: { trigger: HTMLElement }, caption: string): string | null {
+  fireEvent.click(glyph.trigger);
+  const card = screen.queryByRole("dialog", { name: caption });
+  const said = card ? (within(card).queryByRole("note")?.textContent ?? null) : null;
+  fireEvent.keyDown(card ?? document.body, { key: "Escape" });
+  return said;
+}
+/** A letter's head: its sender line, its tools and its recipients. */
+const headOf = (id: string): HTMLElement | null => letterOf(id)?.querySelector<HTMLElement>("header") ?? null;
+/** The head's right cluster, in order: the glyph, the letter's menu, the stamp. */
+const cluster = (head: Element): Element[] => [...(head.querySelector("button[aria-haspopup='menu']")?.parentElement?.children ?? [])];
+/** Where a part stands in the cluster: the glyph's box, the menu ("Message"), the stamp (its time). */
+const at = (head: Element, part: "notice" | "menu" | "stamp"): number =>
+  cluster(head).findIndex((el) =>
+    part === "notice" ? el.querySelector(".oh-blocked") !== null
+      : part === "menu" ? el.getAttribute("aria-label") === "Message"
+        : el.querySelector("time") !== null);
+/** The "details" press under the recipients. */
+const detailsOf = (id: string): HTMLButtonElement | null =>
+  within(headOf(id)!).queryByRole("button", { name: "details" }) as HTMLButtonElement | null;
 
 /* ── 1. the census ────────────────────────────────────────────────────────────────────────── */
 
-const APP = resolve(process.cwd(), "apps/webapp/app");
-const VIEWER = "../../../packages/letter-body/src/MessageBody.tsx";
-/** Every product surface that mounts the viewer — the FOUR hosts. */
+const APP = resolve(process.cwd(), "packages/app/src");
+/** The viewer as the app mounts it: the letter part's renderer (the old census's `MessageBody.tsx`). */
+const VIEWER = "reader/body/LetterBody.tsx";
+/** Every product surface that draws a letter through the viewer (the letter part a shell hands). */
 const HOSTS = [
-  "shell/MessageCard.tsx",
-  "shell/MessagePane.tsx",
-  "shell/StreamCardMemo.tsx",
-  "views/ScreenerView.tsx",
+  "reader/Letter.tsx",
+  "screener/held/HeldLetter.tsx",
 ].sort();
 
 function walk(dir: string): string[] {
@@ -293,13 +150,16 @@ function walk(dir: string): string[] {
   return out;
 }
 
-const MOUNT = /<MessageBody(?:View)?\b[\s\S]*?\/>/g;
+/** A mount of the viewer: `<MessageBody … />`, or the letter part a shell hands, drawn as `<Body … />`. */
+const MOUNT = /<(?:MessageBody(?:View)?|Body)\b[\s\S]*?\/>/g;
+/** A file draws the viewer: it mounts `MessageBody`, or the letter part (`parts.body`, `letters.body`). */
+const DRAWS = /<MessageBody(?:View)?\b|=\s*(?:parts|letters)\.body\b/;
 
 describe("the census: every host that mounts the viewer passes onNotice", () => {
   it("every file under app/ that mounts <MessageBody> is a known host", () => {
     const mounting = walk(APP)
       .filter((p) => relative(APP, p) !== VIEWER)
-      .filter((p) => /<MessageBody(?:View)?\b/.test(readFileSync(p, "utf8")))
+      .filter((p) => DRAWS.test(readFileSync(p, "utf8")))
       .map((p) => relative(APP, p))
       .sort();
     expect(mounting, "a surface mounts the viewer and is not in HOSTS — add it here and hold it below").toEqual(HOSTS);
@@ -309,7 +169,7 @@ describe("the census: every host that mounts the viewer passes onNotice", () => 
     const missing: string[] = [];
     for (const rel of HOSTS) {
       const src = readFileSync(join(APP, rel), "utf8");
-      const mounts = src.match(MOUNT) ?? [];
+      const mounts = (src.match(MOUNT) ?? []).filter((tag) => /^<(?:MessageBody|Body)\b/.test(tag));
       expect(mounts.length, `${rel}: no <MessageBody …/> mount parsed — the census regex lost the host`).toBeGreaterThan(0);
       for (const tag of mounts) if (!/\bonNotice=/.test(tag)) missing.push(rel);
     }
@@ -317,11 +177,11 @@ describe("the census: every host that mounts the viewer passes onNotice", () => 
   });
 
   it("every host wears the report somewhere in its own chrome", () => {
-    for (const rel of HOSTS) {
+    // The Screener's held letter's half stands in `block-notice-screener.test.tsx`, waiting for its mount.
+    for (const rel of HOSTS.filter((h) => h.startsWith("reader/"))) {
       const src = readFileSync(join(APP, rel), "utf8");
-      // The header hosts hand it to `MessageHeader` (`notice={notice}`); the stream card and the
-      // Screener card render the glyph themselves.
-      expect(/BlockNoticeGloss|notice=\{notice\}/.test(src), `${rel} takes the report and renders nothing with it`).toBe(true);
+      // The reading column hands it to its head (`notice={notice}`); the kit draws it (`BlockedImages`).
+      expect(/BlockedImages|notice=\{notice\}/.test(src), `${rel} takes the report and renders nothing with it`).toBe(true);
     }
   });
 });
@@ -331,20 +191,20 @@ describe("the census: every host that mounts the viewer passes onNotice", () => 
 describe("the reading pane", () => {
   it("wears the glyph in its header's right cluster, before the ⋯ menu and the stamp — and no bar", async () => {
     const el = await mountPane(msg("solo"));
-    const t = el.querySelector(".msg-from .t")!;
+    const t = headOf("solo")!;
     expect(t, "the premise: the focused message rendered its header").not.toBeNull();
-    const g = glyphIn(t);
+    const g = glyphIn(t, COPY.pixelCaption);
     expect(g, "the header carries no notice glyph").not.toBeNull();
     expect(g!.name).toBe(COPY.pixelCaption);
-    expect(g!.description, "aria-describedby does not resolve to the sentence").toBe(COPY.pixelOnly);
-    expect(g!.tooltipRole).toBe("tooltip");
-    expect(g!.tooltipHidden, "the sentence is stated while closed").toBe(true);
+    // The studio's chip: the sentence only when asked, in the chip's card (no tooltip describes it while closed).
+    expect(screen.queryByText(COPY.pixelOnly), "the sentence is stated while closed").toBeNull();
+    expect(sentenceOf(g!, COPY.pixelCaption), "the chip's card does not print the sentence").toBe(COPY.pixelOnly);
     // Fact before controls: notice, then the menu, then the stamp (the order conversation.test holds).
-    const notice = at(t, "mb-notice");
-    const menu = at(t, "msg-menu");
-    const stamp = at(t, "stamp-toggle");
+    const notice = at(t, "notice");
+    const menu = at(t, "menu");
+    const stamp = at(t, "stamp");
     expect(notice, "no notice in the cluster").toBeGreaterThanOrEqual(0);
-    expect(menu, "no ⋯ menu in the cluster (the chrome offers openReply)").toBeGreaterThanOrEqual(0);
+    expect(menu, "no ⋯ menu in the cluster").toBeGreaterThanOrEqual(0);
     expect(stamp, "no stamp in the cluster").toBeGreaterThanOrEqual(0);
     expect(notice, "the notice does not lead the cluster").toBeLessThan(menu);
     expect(menu).toBeLessThan(stamp);
@@ -354,33 +214,30 @@ describe("the reading pane", () => {
   });
 
   it("prints the sentence in full under \"details\", beside the exact date", async () => {
-    const el = await mountPane(msg("solo"));
-    expect(el.querySelector(".msg-rcpt-full")).toBeNull();
-    const more = el.querySelector<HTMLButtonElement>(".msg-rcpt-more")!;
+    await mountPane(msg("solo"));
+    const more = detailsOf("solo");
     expect(more, "the premise: a recipient renders the details press").not.toBeNull();
-    await act(async () => { more.click(); });
-    const full = el.querySelector(".msg-rcpt-full")!;
-    expect(full.querySelector(".msg-rcpt-notice")?.textContent, "details does not print the sentence").toBe(COPY.pixelOnly);
-    // The exact date is still there beside it (its wording is `conversation.test.ts`'s claim).
-    expect(full.querySelector("time"), "the date left the details block").not.toBeNull();
+    fireEvent.click(more!);
+    // The exact date is there in details (its wording is `conversation.test.ts`'s claim).
+    expect(within(headOf("solo")!).queryByText("Sat 1 Aug 2026, 09:00", { exact: false }), "the date left the details block").not.toBeNull();
+    // The sentence in full: in the studio's head it is the glyph's card, one press away.
+    expect(sentenceOf(glyphIn(headOf("solo"), COPY.pixelCaption)!, COPY.pixelCaption), "details does not print the sentence").toBe(COPY.pixelOnly);
   });
 
   it("a message with nothing refused wears no glyph and prints no sentence", async () => {
     const el = await mountPane(msg("plain"), { html: ONLY_WORDS });
-    expect(glyphIn(el.querySelector(".msg-from .t"))).toBeNull();
-    await act(async () => { el.querySelector<HTMLButtonElement>(".msg-rcpt-more")!.click(); });
-    expect(el.querySelector(".msg-rcpt-notice"), "a sentence about a block that did not happen").toBeNull();
+    expect(glyphIn(headOf("plain"), COPY.pixelCaption)).toBeNull();
+    expect(headOf("plain")!.querySelector(".oh-blocked"), "a chip of another caption").toBeNull();
+    fireEvent.click(detailsOf("plain")!);
+    expect(screen.queryByText(COPY.pixelOnly), "a sentence about a block that did not happen").toBeNull();
     expect(el.querySelector(".mb-bar")).toBeNull();
   });
 
   it("says it in German when the catalogue is German", async () => {
-    setActiveCatalog("de", DE_MERGED);
-    const el = await mountPane(msg("solo"), { locale: "de" });
-    const g = glyphIn(el.querySelector(".msg-from .t"))!;
-    expect(g.name).toBe(DE.mailBody!.pixelCaption);
-    expect(g.description).toBe(DE.mailBody!.pixelOnly);
-    await act(async () => { el.querySelector<HTMLButtonElement>(".msg-rcpt-more")!.click(); });
-    expect(el.querySelector(".msg-rcpt-notice")?.textContent).toBe(DE.mailBody!.pixelOnly);
+    await mountPane(msg("solo"), { locale: "de" });
+    const g = glyphIn(headOf("solo"), DE.pixelCaption)!;
+    expect(g.name).toBe(DE.pixelCaption);
+    expect(sentenceOf(g, DE.pixelCaption)).toBe(DE.pixelOnly);
   });
 });
 
@@ -391,56 +248,28 @@ describe("a conversation's panels", () => {
 
   it("every panel — the focused one and its siblings — wears the glyph in its header; no panel wears a bar", async () => {
     const el = await mountPane(B, { conversation: [A, B, C] });
-    const panels = [...el.querySelectorAll(".pm")];
+    const panels = [...el.querySelectorAll<HTMLElement>("[data-conv-id]")];
     expect(panels.length, "the premise: three panels").toBe(3);
     for (const panel of panels) {
-      const g = glyphIn(panel.querySelector(".msg-from .t"));
+      const g = glyphIn(panel.querySelector("header"), COPY.pixelCaption);
       expect(g, `panel ${panel.getAttribute("data-conv-id")} carries no notice glyph`).not.toBeNull();
       expect(g!.name).toBe(COPY.pixelCaption);
-      expect(g!.description).toBe(COPY.pixelOnly);
+      expect(sentenceOf(g!, COPY.pixelCaption)).toBe(COPY.pixelOnly);
     }
     expect(el.querySelectorAll(".mb-bar-text").length, "a boxed line survived on a panel").toBe(0);
     expect(el.querySelectorAll(".mb-bar").length).toBe(0);
   });
 
   it("a sibling panel's \"details\" prints the sentence in full", async () => {
-    const el = await mountPane(B, { conversation: [A, B, C] });
-    const sibling = el.querySelector('.pm[data-conv-id="a"]:not(.conv-focus)')!;
-    expect(sibling, "the premise: an older sibling panel").not.toBeNull();
-    await act(async () => { sibling.querySelector<HTMLButtonElement>(".msg-rcpt-more")!.click(); });
-    expect(sibling.querySelector(".msg-rcpt-notice")?.textContent).toBe(COPY.pixelOnly);
+    await mountPane(B, { conversation: [A, B, C] });
+    const sibling = letterOf("a")!;
+    expect(sibling.getAttribute("aria-current"), "the premise: an older sibling panel").toBeNull();
+    fireEvent.click(glyphIn(headOf("a"), COPY.pixelCaption)!.trigger);
+    const card = screen.getByRole("dialog", { name: COPY.pixelCaption });
+    expect(within(card).getByRole("note").textContent).toBe(COPY.pixelOnly);
     // Only the pressed panel opened.
-    expect(el.querySelectorAll(".msg-rcpt-notice").length).toBe(1);
-  });
-});
-
-describe("the Screener's held card", () => {
-  it("wears the glyph in its head line, right before the time — and no bar", async () => {
-    const el = await mountScreener(PIXEL_ONLY);
-    const cards = [...el.querySelectorAll(".view-screener .hmail")];
-    expect(cards.length, "the premise: the selected sender's held mail is on screen").toBeGreaterThan(0);
-    for (const card of cards) {
-      const line = card.querySelector(".hm-line")!;
-      const g = glyphIn(line);
-      expect(g, "the held card's line carries no notice glyph").not.toBeNull();
-      expect(g!.name).toBe(COPY.pixelCaption);
-      expect(g!.description).toBe(COPY.pixelOnly);
-      expect(g!.tooltipRole).toBe("tooltip");
-      // The glyph leads into the time: it is the time's immediate predecessor in the line.
-      expect(at(line, "mb-notice"), "the notice is not right before the time").toBe(at(line, "t") - 1);
-      // Only the dark toggle's slot may follow the time: in a dark theme "Original" stands right of
-      // the date (DESIGN-FOLD-WIDTHS); in this light theme the slot is empty.
-      const afterTime = [...line.children].slice(at(line, "t") + 1);
-      expect(afterTime.every((e) => e.classList.contains("hm-adapt")), "the time lost its corner").toBe(true);
-      expect(card.querySelector(".mb-bar-text"), "the sentence is still said as a bar").toBeNull();
-    }
-  });
-
-  it("a held message with nothing refused wears no glyph", async () => {
-    const el = await mountScreener(ONLY_WORDS);
-    const cards = [...el.querySelectorAll(".view-screener .hmail")];
-    expect(cards.length).toBeGreaterThan(0);
-    for (const card of cards) expect(glyphIn(card.querySelector(".hm-line"))).toBeNull();
+    expect(screen.getAllByRole("dialog", { name: COPY.pixelCaption }).length).toBe(1);
+    expect(within(headOf("a")!).getByRole("button", { name: COPY.pixelCaption }).getAttribute("aria-expanded")).toBe("true");
   });
 });
 
@@ -450,7 +279,7 @@ const PICTURED = canvas(`<img src="https://${SENDER}/hero.png" width="600" heigh
 const NO_PICTURES: ReadonlyMap<string, string> = new Map();
 
 /** An account that loads pictures on open, through the proxy on this origin; each Show images press lands in `pressed`. */
-function autoChrome(pressed: string[] = []): RemoteImagesChrome {
+function autoChrome(pressed: string[] = []): PictureSeam {
   const proxies = new Map<string, (url: string) => string>();
   return {
     auto: true, loadPixels: false,
@@ -474,56 +303,6 @@ function proxiedIn(el: Element): string[] {
 }
 
 describe("a sender not let in", () => {
-  it("the Screener's held cards name no proxied picture and offer Show images, which asks for that letter", async () => {
-    const pressed: string[] = [];
-    const el = await mountScreener(PICTURED, autoChrome(pressed));
-    const card = el.querySelector<HTMLElement>(".view-screener .hmail[data-sid]");
-    expect(card, "the premise: a held letter is on screen").not.toBeNull();
-    expect(proxiedIn(el), "a held sender's picture was asked for on open").toEqual([]);
-    const show = [...card!.querySelectorAll("button")].find((b) => b.textContent === COPY.show);
-    expect(show, "the held card offers no Show images").toBeTruthy();
-    await act(async () => { show!.click(); });
-    expect(pressed).toEqual([card!.dataset.sid]);
-  });
-
-  it("on a door that fetches its own pictures, a held card's Show images loads them into the card", async () => {
-    const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-    const recorded: string[] = [];
-    const fetched: string[] = [];
-    const proxies = new Map<string, (url: string) => string>();
-    const el = await mountScreener(PICTURED, function useDesktopChrome() {
-      const real = useRemoteImages({
-        onFailed: () => {}, mode: "auto", loadPixels: false,
-        wire: {
-          fetch: async (id, url) => { fetched.push(`${id} ${url}`); await new Promise((r) => setTimeout(r, 0)); return PNG; },
-          record: async (id) => { recorded.push(id); },
-        },
-      });
-      // The desktop's `tauri://localhost` window (macOS, Linux): no proxy source a frame could name.
-      const tauri = (id: string) => {
-        if (!proxies.has(id)) proxies.set(id, (url) => imageProxyUrl("", "tauri://localhost", id, url));
-        return proxies.get(id)!;
-      };
-      return React.useMemo(() => real && { ...real, proxyFor: tauri }, [real]);
-    });
-    const sid = el.querySelector<HTMLElement>(".view-screener .hmail[data-sid]")?.dataset.sid;
-    const card = () => el.querySelector<HTMLElement>(`.view-screener .hmail[data-sid="${sid}"]`)!;
-    expect(sid, "the premise: a held letter is on screen").toBeTruthy();
-    const show = [...card().querySelectorAll("button")].find((b) => b.textContent === COPY.show);
-    expect(show, "the held card offers no Show images").toBeTruthy();
-    expect(fetched, "a held sender's picture was fetched on open").toEqual([]);
-    await act(async () => { show!.click(); });
-    for (let i = 0; i < 5; i += 1) {
-      await act(async () => { await new Promise((r) => setTimeout(r, 2)); });
-      await settle();
-    }
-    expect(recorded).toEqual([sid]);
-    expect(fetched).toEqual([`${sid} https://${SENDER}/hero.png`]);
-    const drawn = [...new DOMParser().parseFromString(card().querySelector("iframe")?.getAttribute("srcdoc") ?? "", "text/html")
-      .querySelectorAll("img")].filter((img) => img.getAttribute("src") === PNG);
-    expect(drawn.length, "the fetched picture never reached the card").toBe(1);
-  });
-
   it("the reading pane holds a screened-out letter's pictures; an Ohbox letter's load (control)", async () => {
     const held = await mountPane(msg("p1", { folder: "ohmail/Screened" }), { html: PICTURED, remoteImages: autoChrome() });
     expect(proxiedIn(held), "a screened-out sender's picture was asked for on open").toEqual([]);

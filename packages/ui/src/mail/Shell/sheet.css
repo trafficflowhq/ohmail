@@ -21,6 +21,30 @@
     box-shadow: 0 0 0 var(--ringw) var(--ring);
   }
 
+  .oh-sheet[data-phone-list-padding] {
+    padding-top: var(--s1);
+  }
+
+  .oh-sheet[data-phone-list-padding="dock"] {
+    --oh-sheet-list-dock-room: calc(var(--h-xl) + var(--s6) + var(--oh-sheet-foot-own));
+    padding-bottom: var(--oh-sheet-list-dock-room);
+  }
+
+  .oh-sheet[data-flush-bottom] {
+    flex: 1;
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+  }
+
+  .oh-sheet[data-scroll] {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    padding-block-end: var(--oh-sheet-foot-room);
+  }
+
   .oh-sheet[data-kind="list"],
   .oh-sheet[data-kind="wide"] {
     position: relative;
@@ -30,8 +54,8 @@
     overflow: hidden;
   }
 
-  :root[data-face="ohmarchy"] .oh-sheet[data-kind="list"][data-focused],
-  :root[data-face="ohmarchy"] .oh-sheet[data-kind="wide"][data-focused] {
+  :root[data-face="ohmarchy"]:not([data-zone="rail"]) .oh-sheet[data-kind="list"][data-focused],
+  :root[data-face="ohmarchy"]:not([data-zone="rail"]) .oh-sheet[data-kind="wide"][data-focused] {
     box-shadow: 0 0 0 var(--ringw) var(--focus);
   }
 
@@ -70,6 +94,17 @@
     grid-template-columns: var(--sq-gutter) minmax(0, 1fr);
   }
 
+  .oh-sheet-fixed-head {
+    flex: none;
+    margin-inline: var(--oh-sheet-side);
+    padding-inline: var(--ringw);
+  }
+
+  :root[data-device="phone"] .oh-sheet-fixed-head {
+    --oh-sheet-phone-heading-pad: calc(var(--s2) + var(--ringw));
+    padding-inline: var(--oh-sheet-phone-heading-pad);
+  }
+
   .oh-sheet-gutter {
     align-self: start;
     justify-self: start;
@@ -84,6 +119,20 @@
     scrollbar-width: none;
     padding: var(--oh-sheet-scroll-pad);
     outline: none;
+  }
+
+  :root[data-face="paper"][data-device="desktop"] .oh-sheet[data-extend-top] {
+    --oh-sheet-extension: calc(-1 * var(--edge));
+    margin-block-start: var(--oh-sheet-extension);
+  }
+
+  :root[data-face="paper"][data-device="desktop"] .oh-sheet[data-extend-top] .oh-sheet-scroll {
+    --oh-sheet-extended-scroll-top: calc(var(--ringw) + var(--edge));
+    padding-block-start: var(--oh-sheet-extended-scroll-top);
+  }
+
+  .oh-sheet-scroll[data-manual-anchor] {
+    overflow-anchor: none;
   }
 
   .oh-sheet-run {
@@ -139,7 +188,8 @@
 
     /* A sheet that arrives at the foot is tilted away and a little narrower until it is up. */
     @supports (animation-timeline: view()) {
-      :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > * {
+      :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > :not([role="feed"]),
+      :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > [role="feed"] > [aria-posinset] {
         transform-origin: 50% 0;
         animation: oh-sheet-pull linear both;
         animation-timeline: view(block);
@@ -174,43 +224,54 @@
   /* The way back: the place it returns to, a capsule of the sheet's own tone, first in the bar. It is whole up to
      six tenths of the bar, then its word is cut; a finger reaches it a little outside its edge. */
   :root[data-device="phone"] .oh-sheet-back {
-    --oh-sheet-back-h: 40px;
-    --oh-sheet-back-most: 60%;
-    --oh-sheet-back-icon: 22px;
-    --oh-sheet-back-gap: 2px;
-    --oh-sheet-back-pad: 0 var(--s4) 0 var(--s2);
-    --oh-sheet-back-reach: -8px -4px;
     display: flex;
     flex: none;
     min-width: 0;
-    max-width: var(--oh-sheet-back-most);
+    max-width: var(--sheet-back-max-width);
   }
 
-  :root[data-device="phone"] .oh-sheet-back > .oh-button:not([data-bare]) {
-    --oh-button-pad: var(--oh-sheet-back-pad);
+  :root[data-device="phone"]
+    :is(
+      .oh-sheet-back > .oh-button:not([data-bare]),
+      .oh-sheet-top > .oh-button[data-kind="two"]:first-child
+    ) {
+    --oh-button-pad: 0 var(--s4) 0 var(--s2);
     position: relative;
     flex: 0 1 auto;
-    gap: var(--oh-sheet-back-gap);
+    gap: var(--sheet-back-gap);
     min-width: 0;
-    height: var(--oh-sheet-back-h);
+    height: var(--sheet-back-height);
     background: var(--sheet);
     box-shadow: var(--oh-ring-ctl);
     color: var(--ink);
     font-weight: var(--w-bold);
   }
 
-  :root[data-device="phone"] .oh-sheet-back > .oh-button:not([data-bare])::after {
+  :root[data-device="phone"] .oh-sheet-top > .oh-button[data-kind="two"]:first-child {
+    flex: none;
+    max-width: var(--sheet-back-max-width);
+  }
+
+  :root[data-device="phone"]
+    :is(
+      .oh-sheet-back > .oh-button:not([data-bare]),
+      .oh-sheet-top > .oh-button[data-kind="two"]:first-child
+    )::after {
     content: "";
     position: absolute;
-    inset: var(--oh-sheet-back-reach);
+    inset: calc(-1 * var(--s2)) calc(-1 * var(--s1));
   }
 
-  :root[data-device="phone"] .oh-sheet-back > .oh-button > .oh-icon {
-    width: var(--oh-sheet-back-icon);
-    height: var(--oh-sheet-back-icon);
+  :root[data-device="phone"]
+    :is(.oh-sheet-back > .oh-button, .oh-sheet-top > .oh-button[data-kind="two"]:first-child)
+    > .oh-icon {
+    width: var(--sheet-back-icon);
+    height: var(--sheet-back-icon);
   }
 
-  :root[data-device="phone"] .oh-sheet-back > .oh-button > :not(.oh-icon) {
+  :root[data-device="phone"]
+    :is(.oh-sheet-back > .oh-button, .oh-sheet-top > .oh-button[data-kind="two"]:first-child)
+    > :not(.oh-icon) {
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -232,6 +293,12 @@
     right: var(--s4);
   }
 
+  /* The letter being written has no squares beside it. Its panel starts from the reading column's edge. */
+  :root[data-device="phone"] .oh-sheet:has(.oh-composer[data-fill]) > .oh-sheet-foot,
+  :root[data-face="paper"][data-device="phone"] .oh-sheet[data-flush-foot] > .oh-sheet-foot {
+    inset-inline-start: 0;
+  }
+
   /* The foot keeps its room at the screen's edge; the way back keeps the column's corner. */
   :root[data-device="phone"] .oh-sheet-foot > .oh-button.oh-jumpback {
     right: calc(var(--s3) - var(--s4));
@@ -242,6 +309,11 @@
     --oh-sheet-lead: calc(var(--sq-gutter) + var(--ringw));
 
     margin: var(--oh-sheet-out) var(--oh-sheet-out) 0;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet-run:has(> .oh-composer[data-fill]) {
+    min-height: 100%;
+    margin-top: 0;
   }
 
   :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet > .oh-sheet-foot {
@@ -258,7 +330,8 @@
     right: calc(var(--s3) - var(--ringw));
   }
 
-  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet[data-kind="reading"][data-focused]::after {
+  :root[data-face="ohmarchy"]:not([data-device="phone"], [data-zone="rail"])
+    .oh-sheet[data-kind="reading"][data-focused]::after {
     content: "";
     position: absolute;
     z-index: var(--oh-sheet-layer-ring);
@@ -274,4 +347,16 @@
     .oh-sheet[data-kind="reading"][data-gutter][data-focused]::after {
     left: var(--oh-sheet-lead);
   }
+}
+
+[data-stream-phone-list] .oh-sheet-scroll {
+  padding-block-start: var(--s1);
+}
+
+/* A folded card offscreen reserves its estimated size until layout can measure it. An open overlay
+   needs to paint over the reading column. */
+[data-stream-window-item][data-folded] > [data-stream-item]:not(:has(.oh-over)) {
+  contain-intrinsic-block-size: inherit;
+  content-visibility: auto;
+  overflow-clip-margin: var(--ringw);
 }

@@ -15,7 +15,7 @@
  * held-verb window publishes and this hook subtracts — `hideMessages`' job done by hand, no reader to wrap.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { OhmailEngine, TrashRowWire } from "@ohmail/client-engine";
 
 const NO_IDS: readonly string[] = [];
@@ -54,6 +54,27 @@ export interface TrashPage {
  */
 const SPEAKS_TO_THE_READER: ReadonlySet<string> = new Set(["payment_required"]);
 
+/** Absence is known only after the last successful page. Stop as soon as all candidates are found. */
+async function absentFromTrash(
+  engine: OhmailEngine,
+  candidates: ReadonlySet<string>,
+  current: () => boolean,
+): Promise<ReadonlySet<string> | null> {
+  const missing = new Set(candidates);
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  while (current()) {
+    const page = await engine.listTrash({ limit: TRASH_PAGE_LIMIT, ...(cursor ? { cursor } : {}) });
+    if (!current() || page.state !== "ready") return null;
+    for (const row of page.items) missing.delete(row.id);
+    cursor = page.nextCursor;
+    if (missing.size === 0 || cursor === null) return missing;
+    if (seen.has(cursor)) return null;
+    seen.add(cursor);
+  }
+  return null;
+}
+
 export function useTrashPage(
   engine: OhmailEngine,
   /**
@@ -69,8 +90,11 @@ export function useTrashPage(
   landed = 0,
   /** Restores the server has taken (the restore window's `landedIds`, append-only): each leaves the list. */
   restored: readonly string[] = NO_IDS,
-): TrashPage {
+): TrashPage & { readonly removed: ReadonlySet<string> } {
   const [items, setItems] = useState<TrashRowWire[]>([]);
+  const [removed, setRemoved] = useState<ReadonlySet<string>>(() => new Set());
+  const listed = useRef({ items, hidden });
+  listed.current = { items, hidden };
   /* A LANDED RESTORE LEAVES THE LIST. `hidden` covers a restore only until the server answers; the row itself stayed
      in `items` and was listed again after. Adjusted during render, so no frame shows it back. */
   const [restoredSeen, setRestoredSeen] = useState(restored.length);
@@ -89,6 +113,44 @@ export function useTrashPage(
   const inFlight = useRef(false);
 
   const available = engine.trashAvailable();
+  useLayoutEffect(() => {
+    if (!active || !available) return;
+    let activeVisit = true;
+    const latestConfirmation = new Map<string, symbol>();
+    const stop = engine.onMessagesRemoved((_ids, applied) => {
+      const { items, hidden } = listed.current;
+      const candidates = new Set(items.filter((row) => applied.has(row.id) && !hidden.has(row.id)).map((row) => row.id));
+      if (candidates.size === 0) return;
+      const request = Symbol();
+      for (const id of candidates) latestConfirmation.set(id, request);
+      // This engine's account-bound read decides membership. A filing and a later removal both tombstone the mirror.
+      void absentFromTrash(engine, candidates, () => activeVisit).then((missing) => {
+        if (!activeVisit) return;
+        const current = new Set<string>();
+        for (const id of candidates) {
+          if (latestConfirmation.get(id) !== request) continue;
+          latestConfirmation.delete(id);
+          current.add(id);
+        }
+        if (missing === null || current.size === 0) return;
+        const { items, hidden } = listed.current;
+        const eligible = items.filter((row) => current.has(row.id) && !hidden.has(row.id)).map((row) => row.id);
+        setRemoved((was) => {
+          if (!eligible.some((id) => was.has(id) !== missing.has(id))) return was;
+          const next = new Set(was);
+          for (const id of eligible) {
+            if (missing.has(id)) next.add(id);
+            else next.delete(id);
+          }
+          return next;
+        });
+      });
+    });
+    return () => {
+      activeVisit = false;
+      stop();
+    };
+  }, [active, available, engine]);
 
   const loadMore = useCallback(() => {
     if (!available || inFlight.current || exhausted) return;
@@ -138,6 +200,7 @@ export function useTrashPage(
       cursor.current = null;
       inFlight.current = false;
       setItems([]);
+      setRemoved(new Set());
       setError(null);
       setExhausted(false);
       setLoading(false);
@@ -172,7 +235,9 @@ export function useTrashPage(
 
   return {
     available,
-    items: hidden.size === 0 ? items : items.filter((r) => !hidden.has(r.id)),
+    items: removed.size === 0 && hidden.size === 0
+      ? items : items.filter((row) => !hidden.has(row.id) && !removed.has(row.id)),
+    removed,
     loading,
     error,
     exhausted,

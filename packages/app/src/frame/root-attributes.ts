@@ -3,7 +3,7 @@
  * on the document's element. Pure: the plan, the look the shell stands under, the window. `null` removes an
  * attribute. The face and the old theme stay the old theme provider's (see `FrameRoot`).
  */
-import type { Appearance, LayoutPlan, WindowFacts } from "./contract.js";
+import type { Appearance, LayoutPlan, Product, WindowFacts } from "./contract.js";
 
 export const ROOT_ATTRIBUTES = [
   "data-scheme",
@@ -20,6 +20,7 @@ export function attributesOf(
   plan: LayoutPlan,
   look: Appearance,
   w: WindowFacts,
+  product: Product = "mail",
 ): Record<RootAttribute, string | null> {
   return {
     "data-scheme": look.scheme,
@@ -29,7 +30,7 @@ export function attributesOf(
     "data-pose": plan.pose,
     /* Signs on the places: the sidebar-icons setting's own default. Turning it off is Settings' to ask. */
     "data-icons": "1",
-    "data-product": "mail",
+    "data-product": product,
     "data-rm": w.reducedMotion ? "1" : null,
   };
 }

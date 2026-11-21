@@ -1,24 +1,22 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { OhmailEngine, threadOf, type EngineAdapter } from "@ohmail/client-engine";
-import { desktopFileShell, enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
-import { useMessageAttachments } from "../../webapp/app/shell/attachments.js";
-import { MessageChromeProvider } from "../../webapp/app/shell/message-chrome.js";
-import { MessageFiles } from "../../webapp/app/shell/MessageFiles.js";
-import { AttachmentPreview } from "../../webapp/app/components/AttachmentPreview.js";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { act as rtlAct, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { MemoryMirrorStore, OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
+import { IntlProvider } from "use-intl";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import type { SaveRefusal } from "@ohmail/app-logic/reader/attachments";
+import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
+import { letter } from "../../webapp/test/_reader-1-letters.js";
+import { en as messages } from "../../../test/support/web-catalogues.js";
+import { DesktopFrame } from "../src/DesktopFrame.js";
+import { linkSlot } from "../src/link-in.js";
 
 /**
  * THE DESKTOP OPENS AN ATTACHMENT IN THE PREVIEW THE WEB SHOWS, AND DOWNLOAD SAVES IT.
  *
- * Owner-reported: on the desktop a press on a PDF saved it into Downloads where the web opens its
- * preview. The window armed (`enableDesktopAttachments`), a shell that records every command, the
- * strip as every reading pane renders it (`MessageFiles`) and the overlay as `AppShell` mounts it.
+ * DesktopFrame supplies the real reader and its native file wiring over a fixture mirror and a
+ * shell that records attachment commands.
  * A PDF and a picture open the preview; the strip's corner control and the preview's Download save
  * through the shell; a zip and an SVG still save on the press; Esc closes and lets go of what the
  * shell staged. A save from the preview leaves what it shows alone, as the web's download does: the
@@ -27,27 +25,22 @@ import { KeymapProvider } from "@ohmail/app/keys";
  */
 
 const pdfLoads = vi.fn();
-/** How many pages the stand-in document has; read when a document is loaded. */
 let pdfPages = 1;
-/* The real library is spread under the stand-in (`mock-factory-census.test.ts`), and its module
-   initialisation reads `DOMMatrix`, which jsdom lacks; nothing here draws with it. */
-(globalThis as unknown as { DOMMatrix?: unknown }).DOMMatrix ??= class DOMMatrix {};
-vi.mock("pdfjs-dist", async () => {
-  const real = await vi.importActual<typeof import("pdfjs-dist")>("pdfjs-dist");
-  const page = {
-    getViewport: () => ({ width: 600, height: 800 }),
-    render: () => ({ promise: Promise.resolve(), cancel: () => {} }),
-  };
-  return {
-    ...real,
-    // A seam, as the window's own module is: the overlay hands it the load.
-    seam: true,
-    getDocument: () => {
-      pdfLoads();
-      return { promise: Promise.resolve({ numPages: pdfPages, getPage: async () => page }), destroy: async () => {} };
+/** The only part jsdom stands in for is the sealed renderer on the other end of the transferred port. */
+class PreviewChannel {
+  readonly port1 = {
+    onmessage: null as ((event: { data: unknown }) => void) | null,
+    close: () => { this.port1.onmessage = null; },
+    postMessage: (data: unknown) => {
+      if (typeof data !== "number") pdfLoads(data);
+      this.reply({ page: typeof data === "number" ? data : 1, total: pdfPages });
     },
   };
-});
+  readonly port2 = { start: () => this.reply("ready") };
+  private reply(data: unknown) {
+    queueMicrotask(() => this.port1.onmessage?.({ data }));
+  }
+}
 
 for (const [name, read] of [
   ["text", (fr: FileReader, b: Blob) => fr.readAsText(b)],
@@ -64,11 +57,30 @@ for (const [name, read] of [
     };
   }
 }
-(HTMLCanvasElement.prototype as unknown as { getContext: () => null }).getContext = () => null;
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+const act = rtlAct as unknown as (cb: () => Promise<void> | void) => Promise<void>;
 const h = React.createElement;
+
+type SaveReport = { saved: number } | { refused: [SaveRefusal, number] };
+let saveReports: SaveReport[];
+
+vi.mock("@ohmail/app-logic/reader/attachments", async (load) => {
+  const actual = await load<typeof import("@ohmail/app-logic/reader/attachments")>();
+  const useMessageAttachments: typeof actual.useMessageAttachments = (engine, messageId, opts) =>
+    actual.useMessageAttachments(engine, messageId, {
+      ...opts,
+      onSavedToDownloads: (count) => {
+        saveReports.push({ saved: count });
+        opts.onSavedToDownloads?.(count);
+      },
+      onSaveRefused: (reason, count) => {
+        saveReports.push({ refused: [reason, count] });
+        opts.onSaveRefused?.(reason, count);
+      },
+    });
+  return { ...actual, useMessageAttachments };
+});
 
 const PDF = "0b5e8d3c-1f2a-4c3b-9d8e-7f6a5b4c3d01";
 const PNG = "0b5e8d3c-1f2a-4c3b-9d8e-7f6a5b4c3d02";
@@ -88,17 +100,22 @@ let invoked: Invoked[] = [];
 let fetched: string[] = [];
 /** What the shell answers `save_attachment` with; a case that holds the save replaces it. */
 let saveAnswer: () => Promise<unknown> = () => Promise.resolve(null);
-/** What the press said: the toasts `AppShell` speaks for a save. */
-let said: Array<{ saved?: number; refused?: [string, number] }> = [];
 const shell = globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: (c: string, p?: Record<string, unknown>) => Promise<unknown> } };
 
 beforeAll(() => {
   enableDesktopAttachments();
 });
 
-function engineOverFakeAdapter(): OhmailEngine {
+async function engineOverFakeAdapter(): Promise<OhmailEngine> {
+  const store = new MemoryMirrorStore();
+  await store.load();
+  await store.applyChanges([{
+    type: "message", op: "create", seq: 1, id: "m1",
+    updatedAt: letterWithAttachments.updatedAt, entity: letterWithAttachments,
+  }]);
   const adapter: EngineAdapter = {
-    sync: async () => ({ changes: [], cursor: "1", hasMore: false }) as never,
+    sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] },
+      cursor: "1", hasMore: false, serverTime: letterWithAttachments.updatedAt }),
     mutate: async () => ({ changes: [], seq: null }),
     withdrawSend: async () => ({ outcome: "unsupported" as const }),
     fetchBody: async () => null,
@@ -108,56 +125,24 @@ function engineOverFakeAdapter(): OhmailEngine {
       return new Blob(["%PDF-1.4"], { type: FILES.find((f) => f.id === id)!.contentType });
     },
   };
-  return new OhmailEngine({ adapter });
+  return new OhmailEngine({ adapter, store, storePolicy: { mode: "full" } });
 }
 
-/** The reading pane's strip and `AppShell`'s overlay mount, over one engine. */
-function Desktop({ engine }: { engine: OhmailEngine }) {
-  const attachments = useMessageAttachments(engine, "m1", { shell: desktopFileShell(),
-    conversationOf: (id: string) => threadOf(engine.read(), id),
-    onDownloadAllFailed: () => {},
-    onSavedToDownloads: (count) => said.push({ saved: count }),
-    onSaveRefused: (why, count) => said.push({ refused: [why, count] }),
-  });
-  const [previewFor, setPreviewFor] = useState<{ messageId: string; attachmentId: string } | null>(null);
-  const chrome = {
-    attachments,
-    openAttachmentPreview: (messageId: string, attachmentId: string) => setPreviewFor({ messageId, attachmentId }),
-    conversationOf: () => [],
-  };
-  const overlay = (() => {
-    if (!previewFor || !attachments) return null;
-    const view = attachments.itemsOf(previewFor.messageId, { includeInlineParts: true });
-    const previewItems = view.state === "ready" ? view.items : [];
-    if (previewItems.length === 0) return null;
-    return h(AttachmentPreview, {
-      key: previewFor.messageId,
-      items: previewItems,
-      activeId: previewFor.attachmentId,
-      onActiveIdChange: (id: string) => setPreviewFor({ messageId: previewFor.messageId, attachmentId: id }),
-      ensure: (aid: string, opts?: { retry?: boolean }) => attachments.ensure(previewFor.messageId, aid, opts),
-      blobOf: (aid: string) => attachments.blobOf(previewFor.messageId, aid),
-      onDownload: (aid: string) => attachments.open(previewFor.messageId, aid),
-      onClose: () => setPreviewFor(null),
-      onRelease: () => attachments.releasePreviews(previewFor.messageId),
-    });
-  })();
-  return h(MessageChromeProvider as never, { value: chrome }, h(MessageFiles, { messageId: "m1" }), overlay);
-}
-
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+/** The letter that carries the four files. */
+const letterWithAttachments = letter("m1", { hasAttachments: true, attachmentCount: 4, unread: false });
 
 beforeEach(() => {
+  saveReports = [];
   invoked = [];
   fetched = [];
-  said = [];
   pdfPages = 1;
   saveAnswer = () => Promise.resolve(null);
   pdfLoads.mockClear();
+  vi.stubGlobal("MessageChannel", PreviewChannel);
   shell.__TAURI_INTERNALS__ = {
     invoke: async (command, payload) => {
-      invoked.push({ command, payload });
+      if (["stage_attachment_preview", "release_attachment_preview", "save_attachment"].includes(command))
+        invoked.push({ command, payload });
       if (command === "stage_attachment_preview") return { url: `attachment-preview://localhost/${STAGED}`, token: STAGED, size: 2048 };
       if (command === "save_attachment") return saveAnswer();
       return null;
@@ -168,12 +153,11 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  if (root) await act(async () => root!.unmount());
-  host?.remove();
-  root = null;
-  host = null;
+  cleanup();
+  window.history.replaceState(null, "", "/");
   delete shell.__TAURI_INTERNALS__;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function settle(): Promise<void> {
@@ -191,29 +175,64 @@ async function until(done: () => boolean, ms = 8_000): Promise<void> {
 vi.setConfig({ testTimeout: 15_000 });
 
 async function mount(): Promise<void> {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => root!.render(h(KeymapProvider, null, h(Desktop, { engine: engineOverFakeAdapter() }))));
+  const engine = await engineOverFakeAdapter();
+  window.history.replaceState(null, "", "#/ohbox/m/m1");
+  const idle = () => undefined;
+  render(h(IntlProvider, { locale: "en", messages, timeZone: "UTC",
+    children: h(ThemeProvider, {
+      children: h(ToastHost, { children: h(DesktopFrame, {
+        engine, status: { state: "serving", mode: "local", mailboxId: "mb-1" },
+        session: "live", sessionRefused: false, sealFailed: false, paired: false, hostLabel: null,
+        freshness: null, account: null, storage: null, mayLinkOut: true, manageOffered: false,
+        withdrawManage: idle, rereadAccess: idle, reuseSweeps: [], recheckSweeps: async () => undefined,
+        ai: null, setAi: idle, onStatus: idle, openOverlay: idle, takeOver: idle,
+        firstRunOpen: false, firstRun: undefined, takesMailLinks: true, scope: "mb-1",
+        onUnread: idle, liveBody: async () => ({ kind: "refused", reason: "gone" } as const),
+        links: linkSlot(), connection: { read: () => null, subscribe: () => idle },
+      }) }),
+    }),
+  }));
   await settle();
-  expect(host.querySelectorAll("button.att-tile"), "the strip never drew the four files").toHaveLength(4);
+  for (const f of FILES) expect(tile(f.filename), `the letter never drew ${f.filename}`).not.toBeNull();
 }
 
-const tile = (name: string) => host!.querySelector<HTMLButtonElement>(`button.att-tile[title$="${name}"]`);
-const corner = (name: string) => host!.querySelector<HTMLButtonElement>(`button.att-side[aria-label="Download ${name}"]`);
-const dialog = () => document.querySelector('[role="dialog"]');
-const previewDownload = () =>
-  [...document.querySelectorAll<HTMLButtonElement>(".ap-head button.ap-btn")].find((b) => b.textContent?.includes("Download")) ?? null;
+const tile = (name: string): HTMLButtonElement | null => {
+  const preview = messages.attachments.preview.replace("{name}", name);
+  const download = messages.attachments.download.replace("{name}", name);
+  return screen.queryByRole<HTMLButtonElement>("button", { name: preview }) ??
+    screen.queryAllByRole<HTMLButtonElement>("button", { name: download })
+      .find((control) => within(control).queryByText(name, { exact: true }) !== null) ?? null;
+};
+const corner = (name: string): HTMLButtonElement | null =>
+  screen.queryByRole("button", { name: messages.attachments.download.replace("{name}", name) });
+const dialog = () => screen.queryByRole("dialog");
+const previewDownload = (): HTMLButtonElement | null =>
+  (dialog() === null ? null : within(dialog()!).queryByRole("button", { name: "Download" })) as HTMLButtonElement | null;
 const saves = () => invoked.filter((i) => i.command === "save_attachment");
-const pageLine = () => (document.querySelector(".ap-meta")?.textContent ?? "").match(/\d+ \/ \d+/)?.[0] ?? null;
-const nextPage = () => document.querySelector<HTMLButtonElement>('.ap-pager button[aria-label="Next page"]');
-const previewSays = () => document.querySelector(".ap-content")?.textContent ?? "";
-const canvas = () => document.querySelector("canvas.ap-canvas");
+const pageLine = () => (dialog()?.textContent ?? "").match(/\d+ \/ \d+/)?.[0] ?? null;
+const nextPage = (): HTMLButtonElement | null =>
+  (dialog() === null ? null : within(dialog()!).queryByRole("button", { name: "Next page" })) as HTMLButtonElement | null;
+const previewSays = () => dialog()?.textContent ?? "";
+const pdfFrame = () => dialog()?.querySelector<HTMLIFrameElement>('iframe[sandbox="allow-scripts"]') ?? null;
+const picture = () => dialog()?.querySelector("img") ?? null;
+const report = (name: string) => screen.findByRole("status", { name });
+const saved = () => report("Saved to Downloads");
 
 async function press(el: HTMLElement | null): Promise<void> {
   expect(el, "the control is not on screen").not.toBeNull();
   await act(async () => el!.click());
   await settle();
+  const frame = pdfFrame();
+  if (frame && !frame.hasAttribute("data-test-connected")) {
+    frame.setAttribute("data-test-connected", "");
+    vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation((...args: unknown[]) => {
+      expect(args[0]).toBe("pdf-preview");
+      const [channel] = args[2] as [{ start: () => void }];
+      channel.start();
+    });
+    await act(async () => { fireEvent.load(frame); });
+    await settle();
+  }
 }
 
 /** Hold the next `save_attachment` until the case answers it, as a slow mail server would. */
@@ -242,9 +261,10 @@ describe("on the desktop, a PDF opens in the preview the web shows", () => {
     expect(fetched).toEqual([PDF]);
     expect(saves()).toEqual([]);
     expect(invoked.filter((i) => i.command === "stage_attachment_preview"), "a PDF was staged on disk").toEqual([]);
-    await until(() => document.querySelector("canvas.ap-canvas") !== null);
+    await until(() => pdfFrame() !== null);
     expect(pdfLoads).toHaveBeenCalledTimes(1);
-    expect(document.querySelector("canvas.ap-canvas"), "the PDF never reached the canvas").not.toBeNull();
+    expect(pdfLoads.mock.calls[0]?.[0]?.byteLength).toBe("%PDF-1.4".length);
+    expect(pdfFrame(), "the PDF never reached the sealed renderer").not.toBeNull();
   });
 
   it("the PDF tile's corner Download saves it through the shell, once, by id and name", async () => {
@@ -268,7 +288,7 @@ describe("a save from the preview leaves what it shows alone, as the web's downl
     await pdfOnPageThree();
     await press(previewDownload());
     expect(saves()).toHaveLength(1);
-    expect(canvas(), "the save took the PDF off the screen").not.toBeNull();
+    expect(pdfFrame(), "the save took the PDF off the screen").not.toBeNull();
     expect(previewSays(), "the preview said it was fetching while the shell saved").not.toMatch(/Fetching/);
     expect(previewDownload()!.getAttribute("aria-busy"), "the preview's Download does not say it is saving").toBe("true");
     expect(previewDownload()!.getAttribute("aria-disabled")).toBe("true");
@@ -280,7 +300,8 @@ describe("a save from the preview leaves what it shows alone, as the web's downl
     expect(pageLine(), "the save sent the reader back to page 1").toBe("3 / 3");
     expect(pdfLoads, "the save parsed the PDF again").toHaveBeenCalledTimes(1);
     expect(fetched).toEqual([PDF]);
-    expect(said).toEqual([{ saved: 1 }]);
+    expect(await saved()).toBeTruthy();
+    expect(saveReports).toEqual([{ saved: 1 }]);
     expect(previewDownload()!.getAttribute("aria-busy")).toBeNull();
     expect(tile("Invoice.pdf")!.getAttribute("aria-busy")).toBeNull();
     expect(corner("Invoice.pdf")!.getAttribute("aria-disabled")).toBeNull();
@@ -293,12 +314,13 @@ describe("a save from the preview leaves what it shows alone, as the web's downl
     await press(previewDownload());
     await act(async () => save.reject({ status: 502, code: "upstream_unavailable", message: "The mail server did not answer.", retryable: true }));
     await settle();
-    expect(canvas(), "the refusal replaced the PDF").not.toBeNull();
+    expect(pdfFrame(), "the refusal replaced the PDF").not.toBeNull();
     expect(previewSays()).not.toMatch(/Couldn't fetch/);
     expect(pageLine()).toBe("3 / 3");
     expect(pdfLoads).toHaveBeenCalledTimes(1);
     expect(fetched, "the refusal fetched bytes the window holds again").toEqual([PDF]);
-    expect(said).toEqual([{ refused: ["not-saved", 1] }]);
+    expect(await report("The file could not be saved.")).toBeTruthy();
+    expect(saveReports).toEqual([{ refused: ["not-saved", 1] }]);
   });
 
   it("a save the shell refuses keeps the PDF on screen and says why", async () => {
@@ -308,10 +330,11 @@ describe("a save from the preview leaves what it shows alone, as the web's downl
     await press(previewDownload());
     await act(async () => save.reject("ohmail: this computer named no Downloads folder"));
     await settle();
-    expect(canvas()).not.toBeNull();
+    expect(pdfFrame()).not.toBeNull();
     expect(pageLine()).toBe("3 / 3");
     expect(pdfLoads).toHaveBeenCalledTimes(1);
-    expect(said).toEqual([{ refused: ["no-downloads-folder", 1] }]);
+    expect(await report(messages.ohbox.toastSaveNoDownloads)).toBeTruthy();
+    expect(saveReports).toEqual([{ refused: ["no-downloads-folder", 1] }]);
   });
 
   it("the picture stays on screen through a save and through a refused one", async () => {
@@ -320,16 +343,19 @@ describe("a save from the preview leaves what it shows alone, as the web's downl
     await mount();
     await press(tile("Photo.png"));
     await press(previewDownload());
-    expect(document.querySelector("img.ap-img"), "the save took the picture off the screen").not.toBeNull();
+    expect(picture(), "the save took the picture off the screen").not.toBeNull();
     await act(async () => save.resolve(null));
     await settle();
+    expect(await saved()).toBeTruthy();
+    expect(saveReports).toEqual([{ saved: 1 }]);
     save = holdSave();
     await press(previewDownload());
     await act(async () => save.reject({ status: 404, code: "not_found", message: "gone", retryable: true }));
     await settle();
-    expect(document.querySelector("img.ap-img")?.getAttribute("src")).toBe(`attachment-preview://localhost/${STAGED}`);
+    expect(picture()?.getAttribute("src")).toBe(`attachment-preview://localhost/${STAGED}`);
     expect(invoked.filter((i) => i.command === "stage_attachment_preview"), "the picture was staged again").toHaveLength(1);
-    expect(said).toEqual([{ saved: 1 }, { refused: ["not-saved", 1] }]);
+    expect(await report("The file could not be saved.")).toBeTruthy();
+    expect(saveReports).toEqual([{ saved: 1 }, { refused: ["not-saved", 1] }]);
   });
 
   it("control: a second Download while the shell saves is not a second save", async () => {
@@ -341,7 +367,8 @@ describe("a save from the preview leaves what it shows alone, as the web's downl
     expect(saves()).toHaveLength(1);
     await act(async () => save.resolve(null));
     await settle();
-    expect(said).toEqual([{ saved: 1 }]);
+    expect(await saved()).toBeTruthy();
+    expect(saveReports).toEqual([{ saved: 1 }]);
   });
 });
 
@@ -352,7 +379,7 @@ describe("the rest of the desktop's attachment presses, unchanged", () => {
     expect(dialog()).not.toBeNull();
     expect(invoked).toEqual([{ command: "stage_attachment_preview", payload: { attachmentId: PNG, mimeType: "image/png" } }]);
     expect(fetched, "a picture's bytes were fetched into the window").toEqual([]);
-    expect(document.querySelector("img.ap-img")?.getAttribute("src")).toBe(`attachment-preview://localhost/${STAGED}`);
+    expect(picture()?.getAttribute("src")).toBe(`attachment-preview://localhost/${STAGED}`);
   });
 
   it("the preview's own Download saves the picture on screen through the shell", async () => {
@@ -384,23 +411,36 @@ describe("the rest of the desktop's attachment presses, unchanged", () => {
     expect(invoked.filter((i) => i.command === "release_attachment_preview")).toEqual([
       { command: "release_attachment_preview", payload: { token: STAGED } },
     ]);
-  });
-});
+    const released = () => invoked.filter((i) => i.command === "release_attachment_preview").map((i) => i.payload);
+    const pending: Array<(value: unknown) => void> = [];
+    const dispatch = shell.__TAURI_INTERNALS__!.invoke;
+    shell.__TAURI_INTERNALS__!.invoke = (command, payload) =>
+      command === "stage_attachment_preview"
+        ? new Promise((resolve) => { pending.push(resolve); })
+        : dispatch(command, payload);
+    const dismiss = async () => {
+      await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+      expect(dialog()).toBeNull();
+    };
+    const stage = (token: string) => ({ url: `attachment-preview://localhost/${token}`, token, size: 2048 });
+    await press(tile("Photo.png"));
+    expect(pending).toHaveLength(1);
+    await dismiss();
+    await act(async () => { pending[0]!(stage("late-first")); });
+    expect(released(), "closing before staging settles must release the late file").toContainEqual({ token: "late-first" });
 
-describe("AppShell mounts the overlay this file copies", () => {
-  it("with the seam's ensure, blobOf, open as its Download, and the release", () => {
-    let shellSource: string;
-    try {
-      shellSource = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    } catch {
-      shellSource = readFileSync(resolve(process.cwd(), "../webapp/app/shell/AppShell.tsx"), "utf8");
-    }
-    const from = shellSource.indexOf("<AttachmentPreview");
-    expect(from, "AppShell no longer mounts <AttachmentPreview>").toBeGreaterThan(-1);
-    const mountBlock = shellSource.slice(from, shellSource.indexOf("/>", from));
-    expect(mountBlock).toMatch(/ensure=\{\(aid, opts\) => attachments\.ensure\(previewFor\.messageId, aid, opts\)\}/);
-    expect(mountBlock).toMatch(/blobOf=\{\(aid\) => attachments\.blobOf\(previewFor\.messageId, aid\)\}/);
-    expect(mountBlock).toMatch(/onDownload=\{\(aid\) => attachments\.open\(previewFor\.messageId, aid\)\}/);
-    expect(mountBlock).toMatch(/onRelease=\{\(\) => attachments\.releasePreviews\(previewFor\.messageId\)\}/);
+    await press(tile("Photo.png"));
+    expect(pending).toHaveLength(2);
+    await dismiss();
+    await press(tile("Photo.png"));
+    expect(pending).toHaveLength(3);
+    await act(async () => { pending[1]!(stage("late-second")); });
+    expect(released()).toContainEqual({ token: "late-second" });
+    expect(dialog()).not.toBeNull();
+    expect(picture()).toBeNull();
+    await act(async () => { pending[2]!(stage("shown-third")); });
+    expect(picture()?.getAttribute("src")).toBe("attachment-preview://localhost/shown-third");
+    await dismiss();
+    expect(released()).toContainEqual({ token: "shown-third" });
   });
 });

@@ -15,7 +15,7 @@ const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, im
 
 /** Every file of the two surfaces, and the door each must use. */
 const SURFACES: Array<{ file: string; door: RegExp }> = [
-  { file: "../app/views/HistoryView.tsx", door: /useStoreTimeline\(/ },
+  { file: "../../../packages/app-logic/src/history/live.ts", door: /useStoreTimeline\(/ },
   { file: "../../../packages/app-logic/src/session/store-timeline.ts", door: /StoreTimelineWalker/ },
   { file: "../../../packages/client-engine/src/store-timeline.ts", door: /engine\.pageStore\("all"[\s\S]*engine\.pageSearch\(/ },
   { file: "../../../packages/app-logic/src/search/store-pass.ts", door: /new StoreSearchWalker\(/ },
@@ -38,10 +38,12 @@ describe("History and Search read the store, never the mirror's window", () => {
   }
 
   it("the shell hands History no mirror list and no window flag", () => {
-    const shell = read("../app/shell/AppShell.tsx");
-    const at = shell.indexOf("<HistoryView");
-    const block = shell.slice(at, shell.indexOf("/>", at));
-    expect(block).not.toMatch(/\bmessages=|\bwindowed=/);
+    const seat = read("../../../packages/app/src/history/Seat.tsx");
+    const live = read("../../../packages/app-logic/src/history/live.ts");
+    expect(seat).toContain("useHistoryLive(usePlaceLiveArgs(), usePlaceListOwn())");
+    expect(seat).toMatch(/<HistoryAbove model=\{model\}>/);
+    expect(seat).not.toMatch(/\bmessages=|\bwindowed=/);
+    expect(live).toContain("useStoreTimeline(engine, derived, mirrorRows)");
   });
 
   /**

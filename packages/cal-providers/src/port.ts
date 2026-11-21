@@ -85,8 +85,9 @@ export type ChangeItem =
    * items (`event.rules`, `event.recurrenceId`); where they are one stored object they share `id`,
    * `version` and `text`. `text` is that object whole, as the calendar format writes it, for CalDAV
    * and a subscription; `null` for Google and Microsoft, which store no calendar text.
+   * `audienceIncomplete` marks a reading with omitted or unrepresentable participants.
    */
-  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null }
+  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true }
   /** The stored object of this id is no longer there. */
   | { readonly kind: "gone"; readonly id: string }
   /** One day of a series was cancelled, and the provider says so by a record of its own. */
@@ -222,6 +223,10 @@ export type EventChange = Partial<EventDraft>;
 
 /** The stored object a write is made on, as a reading handed it out. */
 export interface WriteTarget {
+  /** These scopes were chosen for a series with no guests. */
+  readonly personalSeries?: true;
+  /** The confirmed audience of a single-event change or cancellation. */
+  readonly audience?: { readonly organizer: string | null; readonly guests: readonly string[] };
   /** `upsert.id` as a reading handed it. */
   readonly id: string;
   /** `upsert.version` as stored; never empty. A writer that cannot send it as a precondition reads the object first. */

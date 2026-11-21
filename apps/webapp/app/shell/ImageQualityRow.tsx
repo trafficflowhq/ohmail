@@ -27,14 +27,14 @@ import {
   readImageQualityLevel,
   writeImageQualityLevel,
 } from "../components/image-quality";
-import { useTodaysScope } from "./todays-scope";
+import { useScopeHere } from "@ohmail/app/frame";
 
 export function ImageQualityRow() {
   const t = useTranslations("settings");
   const [level, setLevel] = useState<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
   /* The account whose preference this row edits: the scope of the shell it is drawn in. Drawn in none, the row
      shows the default and stores nothing. */
-  const scope = useTodaysScope();
+  const scope = useScopeHere();
 
   // Post-mount, never during render — see the hydration note above.
   useEffect(() => {

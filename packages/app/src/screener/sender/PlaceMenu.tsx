@@ -12,10 +12,12 @@ import {
   suggestionWords,
   type ScreenerView,
 } from "@ohmail/app-logic/screener";
-import { Menu, MenuItem } from "@ohmail/ui/base";
+import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
 import type { Point } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
+import { useNoAdvice, useScreener } from "../contract.js";
 import { whoOf } from "./Sentence.js";
+import { unsubscribeDisclosure } from "./unsubscribe-disclosure.js";
 
 export function PlaceMenu({
   view,
@@ -32,7 +34,13 @@ export function PlaceMenu({
   card: boolean;
 }) {
   const t = useText("screener");
-  const words = suggestionWords(sender);
+  const words = suggestionWords(sender, useNoAdvice());
+  const model = useScreener();
+  const scope = view.scopeOf(sender);
+  const unsubscribe =
+    open && card
+      ? unsubscribeDisclosure(t, sender.from.address, scope, model.unsubClaimOf(sender, scope))
+      : null;
   return (
     <Menu
       open={open}
@@ -40,8 +48,10 @@ export function PlaceMenu({
       anchor={anchor}
       label={t("rowMoreAria")}
       kind={card ? "context" : undefined}
+      fit={card ? "beside" : undefined}
       title={card ? undefined : whoOf(sender)}
     >
+      {unsubscribe ? <MenuNote>{unsubscribe}</MenuNote> : null}
       {DECISION_ORDER.map((dest) => (
         <MenuItem
           key={dest}

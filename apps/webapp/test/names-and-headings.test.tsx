@@ -1,8 +1,10 @@
 /** @vitest-environment jsdom */
+import { computeAccessibleName } from "dom-accessibility-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 
@@ -68,29 +70,30 @@ async function mount(node: React.ReactElement): Promise<HTMLElement> {
 
 async function shell(hash: string): Promise<HTMLElement> {
   window.location.hash = hash;
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  return mount(h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(AppShell, { demo: true }) }) }));
+  return mount(h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(MailShell, { demo: true }) }) }));
 }
 
-function nameOf(el: Element): string {
-  const label = el.getAttribute("aria-label");
-  if (label !== null) return label.trim();
-  const walk = (n: Node): string => {
-    if (n.nodeType === 3) return n.textContent ?? "";
-    if (!(n instanceof Element) || n.getAttribute("aria-hidden") === "true") return "";
-    return [...n.childNodes].map(walk).join("");
-  };
-  return walk(el).replace(/\s+/g, " ").trim();
+const nameOf = (el: Element) => computeAccessibleName(el);
+
+function nameWithoutCap(control: HTMLElement): string {
+  const copy = control.cloneNode(true) as HTMLElement;
+  for (const cap of copy.querySelectorAll("kbd")) cap.remove();
+  copy.removeAttribute("aria-label");
+  copy.removeAttribute("title");
+
+  return nameOf(copy);
 }
 
 /** Every control that draws a keycap, with the name a reader hears and the keys it states. */
-function keyedControls(root: ParentNode): Array<{ name: string; caps: string[]; keys: string | null }> {
+function keyedControls(root: ParentNode): Array<{ name: string; expectedName: string; caps: HTMLElement[]; keys: string | null }> {
   return [...root.querySelectorAll<HTMLElement>("button, a[href]")]
-    .filter((b) => b.querySelector("kbd") !== null)
+    .filter((b) => b.querySelector("kbd") !== null && b.closest('[hidden], [aria-hidden="true"], [inert]') === null)
     .map((b) => ({
       name: nameOf(b),
-      caps: [...b.querySelectorAll("kbd")].map((k) => (k.textContent ?? "").trim()),
+      expectedName: nameWithoutCap(b),
+      caps: [...b.querySelectorAll<HTMLElement>("kbd")],
       keys: b.getAttribute("aria-keyshortcuts"),
     }));
 }
@@ -98,22 +101,24 @@ function keyedControls(root: ParentNode): Array<{ name: string; caps: string[]; 
 describe("a control's name is its words (R21-08)", () => {
   it("an open letter's controls: no keycap in any name, and the key stated beside it", async () => {
     const root = await shell("#/ohbox");
-    const row = root.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")[1]!;
+    const row = root.querySelectorAll<HTMLElement>("[role=option][data-id]")[1]!;
     await act(async () => { row.click(); });
     for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     const controls = keyedControls(root);
     const names = new Set(controls.map((c) => c.name));
     for (const want of ["Reply", "Later", "Park", "Screening"]) expect(names, `no control named "${want}"`).toContain(want);
-    const withCap = controls.filter((c) => c.caps.some((cap) => cap !== "" && c.name.endsWith(cap)));
-    expect(withCap.map((c) => `${c.name} (${c.caps.join(" ")})`), "names that end in their keycap").toEqual([]);
+    for (const { name, expectedName, caps } of controls) {
+      expect(name, `name for ${expectedName}`).toBe(expectedName);
+      for (const cap of caps) expect(cap.getAttribute("aria-hidden"), `${name}: ${cap.textContent}`).toBe("true");
+    }
     const byName = Object.fromEntries(controls.map((c) => [c.name, c.keys]));
     expect(byName.Reply).toBe("r");
     expect(byName.Forward).toBe("Shift+F");
-    /* The rail's Compose and Search print no keycap at rest, and state their keys all the same, as 1.0's did. */
+    /* The rail's Compose (the studio's Write) and Search print no keycap at rest, and state their keys all the same, as 1.0's did. */
     const inRail = (want: string) =>
       [...root.querySelectorAll<HTMLElement>("nav button, nav a")].find((b) => nameOf(b) === want);
-    expect(inRail("Compose"), "the rail has no control named Compose").toBeTruthy();
-    expect(inRail("Compose")!.getAttribute("aria-keyshortcuts")).toBe("c");
+    expect(inRail("Write"), "the rail has no control named Write").toBeTruthy();
+    expect(inRail("Write")!.getAttribute("aria-keyshortcuts")).toBe("c");
     expect(inRail("Search"), "the rail has no control named Search").toBeTruthy();
     expect(inRail("Search")!.getAttribute("aria-keyshortcuts")).toBe("/");
   });
@@ -138,13 +143,16 @@ describe("one heading level per view (R21-09)", () => {
 
   it("an open letter's subject is a level-2 heading under the view's h1", async () => {
     const root = await shell("#/ohbox");
-    const row = root.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")[1]!;
+    const row = root.querySelectorAll<HTMLElement>("[role=option][data-id]")[1]!;
     await act(async () => { row.click(); });
     for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    const subject = root.querySelector(".read-col .msg-subject");
-    expect(subject?.getAttribute("role")).toBe("heading");
-    expect(subject?.getAttribute("aria-level")).toBe("2");
-    const view = root.querySelector(".view")!;
+    /* The open letter's subject: the heading of the frame's reading column; the view: the place's main landmark. */
+    const reading = root.querySelector('[role="region"][aria-label="Open message"]');
+    expect(reading, "premise: the letter opened").not.toBeNull();
+    const subject = reading!.querySelector<HTMLElement>("h1, h2, h3, h4, h5, h6, [role=heading]");
+    expect(subject, "the open letter's subject is no heading").not.toBeNull();
+    expect(Number(subject!.getAttribute("aria-level") ?? subject!.tagName.slice(1))).toBe(2);
+    const view = root.querySelector("main")!;
     const seen = levels(view);
     expect(seen[0]).toBe(1);
     for (let i = 1; i < seen.length; i += 1) expect(seen[i]! - seen[i - 1]!, `a skipped level in ${seen.join(",")}`).toBeLessThanOrEqual(1);
@@ -152,7 +160,16 @@ describe("one heading level per view (R21-09)", () => {
 
   it("the Screener's held mail is level 2 under its h1, not 3", async () => {
     const root = await shell("#/screener/screened");
-    const view = root.querySelector(".view")!;
+    const page = within(root);
+    const row = page.getAllByRole("option")[0]!;
+    const rowName = row.getAttribute("aria-label") ?? "";
+    const separator = rowName.indexOf(": ");
+    expect(separator).toBeGreaterThan(0);
+    const subject = rowName.slice(separator + 2);
+    await act(async () => { row.click(); });
+    const reading = within(page.getByRole("region", { name: "Reading" }));
+    expect(reading.getByRole("heading", { name: subject, level: 2 })).toBeTruthy();
+    const view = page.getByRole("main");
     const seen = levels(view);
     expect(seen[0]).toBe(1);
     expect(seen.slice(1).length, "no held mail heading read").toBeGreaterThan(0);

@@ -325,10 +325,17 @@ export interface HandedReaders {
   readers: Record<string, string>;
   /**
    * Where the namespaces are chosen: every reader bound in that file, or every reader handed at each call of that
-   * hook (of those hooks, for a file whose hooks are each handed a reader of their own).
+   * hook. The mounted suggestion record is resolved through its consumer.
    */
-  glue: { file: string } | { call: string } | { calls: readonly string[] };
+  glue:
+    | { file: string }
+    | { call: string }
+    | { calls: readonly string[] }
+    | { mountedSuggestions: true };
 }
+
+const SCREENER_WORDS = "packages/app/src/screener/words.ts";
+const SCREENER_MOUNT = "packages/app/src/mail/ground/ScreenerMount.tsx";
 
 export const HANDED_READERS: Record<string, HandedReaders> = {
   "packages/app-logic/src/screener/screener-state.ts": {
@@ -341,7 +348,7 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
   },
   "packages/app-logic/src/screener/screener-suggest.ts": {
     readers: { t: "screener", tAi: "aiRefusal" },
-    glue: { file: "apps/webapp/app/shell/suggest-text.ts" },
+    glue: { mountedSuggestions: true },
   },
   /* The send machine's words are made from the composer's own reader (`useSendText`), chosen where the composer is called. */
   "packages/app-logic/src/writing/mail-send.ts": {
@@ -389,13 +396,18 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
 };
 
 /** `useTranslations()` → "", `useTranslations("ns")` → "ns", a variable namespace → null, anything else → undefined. */
-function readerNamespace(e: ts.Expression): string | null | undefined {
-  while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e)) e = e.expression;
-  if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression) || e.expression.text !== "useTranslations") {
+function readerNamespace(e: ts.Expression, hook = "useTranslations"): string | null | undefined {
+  e = unwrapped(e);
+  if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression) || e.expression.text !== hook) {
     return undefined;
   }
   const arg = e.arguments[0];
   return arg === undefined ? "" : ts.isStringLiteral(arg) ? arg.text : null;
+}
+
+function unwrapped(e: ts.Expression): ts.Expression {
+  while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e)) e = e.expression;
+  return e;
 }
 
 function sourceFiles(repo: string, roots: string[]): string[] {
@@ -415,6 +427,101 @@ function sourceFiles(repo: string, roots: string[]): string[] {
 const parse = (file: string): ts.SourceFile =>
   ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
+type SourceScope = ts.SourceFile | ts.FunctionDeclaration;
+
+function findOne<T extends ts.Node>(scope: SourceScope, label: string, matches: (n: ts.Node) => n is T): T {
+  const found: T[] = [];
+  const visit = (n: ts.Node): void => {
+    if (matches(n)) found.push(n);
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  if (found.length !== 1) throw new Error(`${scope.getSourceFile().fileName}: expected one ${label}, found ${found.length}`);
+  return found[0]!;
+}
+
+/** Follow the reader records from the mounted frame to the state and suggestion hooks. */
+export function mountedScreenerReaderBindings(repo: string) {
+  const logic = "packages/app-logic/src/screener";
+  const declared = (file: string, name: string) =>
+    findOne(parse(path.join(repo, file)), name,
+      (n): n is ts.FunctionDeclaration => ts.isFunctionDeclaration(n) && n.name?.text === name);
+  const call = (scope: SourceScope, name: string) =>
+    findOne(scope, name, (n): n is ts.CallExpression =>
+      ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name);
+  const initializer = (scope: SourceScope, name: string): ts.Expression => {
+    const decl = findOne(scope, name, (n): n is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name);
+    if (!decl.initializer) throw new Error(`${name} has no initializer`);
+    return unwrapped(decl.initializer);
+  };
+  const field = (record: ts.Expression | undefined, name: string): ts.Expression => {
+    if (!record || !ts.isObjectLiteralExpression(record) || record.properties.some(ts.isSpreadAssignment)) {
+      throw new Error(`expected an explicit reader record for ${name}`);
+    }
+    const props = record.properties.filter((prop) => prop.name?.getText() === name);
+    const prop = props.length === 1 ? props[0] : undefined;
+    if (prop && ts.isShorthandPropertyAssignment(prop)) return prop.name;
+    if (prop && ts.isPropertyAssignment(prop)) return unwrapped(prop.initializer);
+    throw new Error(`expected one reader field named ${name}`);
+  };
+  const requireSource = (node: ts.Node | undefined, expected: string): void => {
+    if (node?.getText() !== expected) throw new Error(`expected reader ${expected}, found ${node?.getText()}`);
+  };
+  const memoRecord = (expr: ts.Expression): ts.Expression => {
+    const fn = ts.isCallExpression(expr) && expr.expression.getText() === "useMemo" ? expr.arguments[0] : undefined;
+    if (!fn || !ts.isArrowFunction(fn) || ts.isBlock(fn.body)) throw new Error("expected a memoized reader record");
+    return unwrapped(fn.body);
+  };
+  const namespace = (scope: SourceScope, reader: ts.Expression): string | null => {
+    const expr = ts.isIdentifier(reader) ? initializer(scope, reader.text) : reader;
+    return readerNamespace(expr, "useText") ?? null;
+  };
+
+  const mount = declared(SCREENER_MOUNT, "ScreenerMount");
+  const liveInput = call(mount, "useScreenerLive").arguments[0];
+  const words = field(liveInput, "text");
+  requireSource(ts.isIdentifier(words) ? initializer(mount, words.text) : words, "useScreenerWords()");
+  const producer = declared(SCREENER_WORDS, "useScreenerWords");
+  const record = memoRecord(call(producer, "useMemo"));
+
+  const live = declared(`${logic}/live.ts`, "useScreenerLive");
+  const input = live.parameters[0]?.name;
+  for (const name of ["text", "aiRefusal"]) {
+    if (!input || !ts.isObjectBindingPattern(input) ||
+        !input.elements.some((element) => !element.propertyName && element.name.getText() === name)) {
+      throw new Error(`the live hook no longer receives ${name} from its mounted caller`);
+    }
+  }
+  requireSource(field(call(live, "useScreenerModel").arguments[0], "text"), "text");
+  const model = declared(`${logic}/model.ts`, "useScreenerModel");
+  requireSource(call(model, "useScreenerState").arguments[4], "input.text");
+  const stateHook = declared(`${logic}/screener-state.ts`, "useScreenerState");
+  requireSource(stateHook.parameters[4]?.name, "text");
+  const state = Object.fromEntries(Object.entries({
+    t: "screener", ts: "screening", tWhy: "ohbox", tSession: "session",
+  }).map(([reader, fieldName]) => {
+    requireSource(initializer(stateHook, reader), `text.${fieldName}`);
+    return [reader, namespace(producer, field(record, fieldName))];
+  }));
+
+  const suggestionsText = field(call(live, "useScreenerSuggestions").arguments[0], "text");
+  const suggestionsRecord = memoRecord(ts.isIdentifier(suggestionsText)
+    ? initializer(live, suggestionsText.text) : suggestionsText);
+  requireSource(field(suggestionsRecord, "screener"), "text.screener");
+  requireSource(field(suggestionsRecord, "aiRefusal"), "aiRefusal");
+  const suggestHook = declared(`${logic}/screener-suggest.ts`, "useScreenerSuggestions");
+  requireSource(initializer(suggestHook, "t"), "opts.text.screener");
+  requireSource(initializer(suggestHook, "tAi"), "opts.text.aiRefusal");
+  return {
+    state,
+    suggestions: {
+      t: state.t ?? null,
+      tAi: namespace(mount, field(liveInput, "aiRefusal")),
+    },
+  };
+}
+
 /**
  * The namespaces a row's glue chooses: for `{ file }` every reader bound in that file, for
  * `{ call }` (and each of `{ calls }`) every reader handed at a call of that hook, as an argument (`useZoneNav(
@@ -422,6 +529,7 @@ const parse = (file: string): ts.SourceFile =>
  * `t` is resolved to the nearest binding as the scan does). A variable namespace answers null.
  */
 export function handedReaderNamespaces(repo: string, roots: string[], glue: HandedReaders["glue"]): Set<string | null> {
+  if ("mountedSuggestions" in glue) return new Set(Object.values(mountedScreenerReaderBindings(repo).suggestions));
   const out = new Set<string | null>();
   const files = "file" in glue ? [path.join(repo, glue.file)] : sourceFiles(repo, roots);
   for (const file of files) {

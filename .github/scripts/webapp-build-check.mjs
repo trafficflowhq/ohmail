@@ -6,7 +6,8 @@
  *                         `Activity` from Next's vendored React reached a release that way, and News and
  *                         Receipts threw React #130 on the web.
  *   smoke <webapp dir>    next start over that build on a free port, then /demo (the client over its
- *                         fixtures, no account, no network) in Chromium at the Ohbox, News and Receipts.
+ *                         fixtures, no account, no network) in Chromium. Open a message, compose a letter, visit News and Receipts,
+ *                         and verify that an unregistered address returns to the Ohbox.
  *                         Exit 1 on a server 5xx, an uncaught page error, a React error in the console
  *                         or a view's failure card.
  */
@@ -54,11 +55,6 @@ export function smokeFailure(event) {
   }
 }
 
-/** The views the smoke opens, by hash route; each one's root carries `.view-<id>`. */
-const ROUTES = ["ohbox", "reads", "receipts"];
-/** A seated place draws its own list in the frame's list section and no `.view-<id>`: the Ohbox's is `.ob-list`. */
-const SEATED = { ohbox: "section.fr-list .ob-list" };
-
 async function freePort() {
   const s = createServer();
   await new Promise((r) => s.listen(0, "127.0.0.1", r));
@@ -70,7 +66,7 @@ async function freePort() {
 async function smoke(webapp) {
   const req = createRequire(join(resolve(webapp), "package.json"));
   const nextCli = join(dirname(req.resolve("next/package.json")), "dist/bin/next");
-  const { chromium } = await import("playwright");
+  const { chromium } = req("playwright");
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const server = spawn(process.execPath, [nextCli, "start", "-p", String(port), "-H", "127.0.0.1"], {
@@ -93,6 +89,7 @@ async function smoke(webapp) {
     }
     browser = await chromium.launch();
     const page = await browser.newPage();
+    page.setDefaultTimeout(30_000);
     const note = (event) => {
       const f = smokeFailure(event);
       if (f) failures.push(f);
@@ -100,20 +97,30 @@ async function smoke(webapp) {
     page.on("response", (r) => note({ kind: "response", url: r.url(), status: r.status() }));
     page.on("pageerror", (e) => note({ kind: "pageerror", text: e.stack ?? String(e) }));
     page.on("console", (m) => note({ kind: "console", type: m.type(), text: m.text().split("\n", 2).join("\n") }));
-    const doc = await page.goto(`${origin}/demo#/${ROUTES[0]}`, { waitUntil: "load" });
+    const doc = await page.goto(`${origin}/demo#/ohbox`, { waitUntil: "load" });
     if (!doc || doc.status() >= 400) failures.push(`/demo answered ${doc?.status() ?? "nothing"}`);
-    for (const view of ROUTES) {
-      // A hash change, as a press of the rail does: the shell switches views without a reload.
-      await page.evaluate((v) => { window.location.hash = `#/${v}`; }, view);
-      const drawn = await page
-        .waitForSelector([`.view-${view}`, SEATED[view], ".view-fail"].filter(Boolean).join(", "), { state: "visible", timeout: 30_000 })
-        .then(() => true, () => false);
-      await page.waitForTimeout(1_000);
-      const failed = (await page.locator(".view-fail:visible").count()) > 0;
-      if (failed) note({ kind: "failcard", text: view });
-      else if (!drawn) failures.push(`the ${view} view did not draw in 30 s`);
-      console.log(`webapp smoke: ${view} ${failed ? "failed" : drawn ? "drawn" : "not drawn"}`);
+    const inbox = page.locator("section.fr-list .ob-list");
+    const firstLetter = inbox.getByRole("option").first();
+    await firstLetter.waitFor();
+    await firstLetter.click();
+    await page.getByRole("region", { name: "Open message", exact: true }).getByRole("heading").first().waitFor();
+    await page.keyboard.press("c");
+    await page.getByRole("textbox", { name: "Subject", exact: true }).waitFor();
+    if (await page.locator(".view-fail:visible").count()) note({ kind: "failcard", text: "Compose" });
+    for (const [path, title] of [["reads", "News"], ["receipts", "Receipts"]]) {
+      await page.evaluate((id) => { window.location.hash = `#/${id}`; }, path);
+      const list = page.locator("section.fr-list");
+      await list.getByRole("heading", { name: title, exact: true }).waitFor();
+      const first = list.locator('[role="option"][data-id]').first();
+      const letter = await first.getAttribute("data-id");
+      if (!letter) throw new Error(`${title} has no first message`);
+      await first.click();
+      await page.waitForURL((url) => url.hash === `#/${path}/m/${letter}`);
+      if (await page.locator(".view-fail:visible").count()) note({ kind: "failcard", text: title });
     }
+    await page.evaluate(() => { window.location.hash = "#/unknown-place"; });
+    await page.waitForURL((url) => url.hash === "#/ohbox");
+    await firstLetter.waitFor();
   } finally {
     await browser?.close();
     server.kill("SIGTERM");
@@ -132,7 +139,7 @@ if (isMain) {
   } else if (verb === "smoke" && arg) {
     const failures = await smoke(arg).catch((e) => [String(e?.stack ?? e)]);
     for (const f of failures) console.log(`::error::webapp smoke: ${f}`);
-    if (!failures.length) console.log("webapp smoke: the Ohbox, News and Receipts drew with no error.");
+    if (!failures.length) console.log("webapp smoke: Ohbox, Reader, Compose, News, Receipts and the unknown-address fallback passed.");
     process.exit(failures.length ? 1 : 0);
   } else {
     console.error("usage: webapp-build-check.mjs imports <build log> | smoke <webapp dir>");

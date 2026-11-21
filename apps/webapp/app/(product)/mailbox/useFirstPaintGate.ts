@@ -19,11 +19,15 @@ export type FirstPaint = "hydrating" | "asking" | "open";
 
 const useAfterHydration = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
-export function useFirstPaintGate(demo: boolean, onRefused: (facts: AccessRefusedFacts) => void): FirstPaint {
-  // The demo's shell is prerendered and asks nobody, so it never waits.
-  const [phase, setPhase] = useState<FirstPaint>(demo ? "open" : "hydrating");
+export function useFirstPaintGate(
+  serverDemo: boolean,
+  resolvedDemo: boolean,
+  onRefused: (facts: AccessRefusedFacts) => void,
+): FirstPaint {
+  // The first paint matches the prerender. The live verdict uses the browser's resolved mode.
+  const [phase, setPhase] = useState<FirstPaint>(serverDemo ? "open" : "hydrating");
   useAfterHydration(() => {
-    if (demo) {
+    if (resolvedDemo) {
       setPhase("open");
       return;
     }
@@ -54,6 +58,6 @@ export function useFirstPaintGate(demo: boolean, onRefused: (facts: AccessRefuse
       .finally(() => { clearTimeout(bound); open(); });
     return () => { live = false; clearTimeout(bound); release(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `onRefused` is a state setter
-  }, [demo]);
+  }, [resolvedDemo]);
   return phase;
 }

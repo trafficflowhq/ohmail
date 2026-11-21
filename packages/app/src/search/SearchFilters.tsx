@@ -13,7 +13,6 @@ export function SearchFilters({
   model,
   beside,
   more,
-  after,
 }: {
   model: SearchListModel;
   beside: SearchBeside;
@@ -22,11 +21,9 @@ export function SearchFilters({
    * the person's (`SearchPersonRow`), and the answer's sender facet is not offered beside it.
    */
   more: ReactNode;
-  /** What ends the row (the order): it folds with the filters by the row's width. */
-  after: ReactNode;
 }) {
   const t = useText("search");
-  if (model.facets.length === 0 && more === null && after === null) return null;
+  if (model.facets.length === 0 && more === null) return null;
   const nameOf = (it: SearchFacetItem): string =>
     it.pick.group === "folder" ? beside.words.placeOfFolder(it.pick.key) : it.label;
   const group = (g: SearchFacetGroup["group"]) => model.facets.find((x) => x.group === g);
@@ -34,20 +31,24 @@ export function SearchFilters({
   const folder = group("folder");
   const files = group("refine")?.items[0];
   return (
-    <div className="sr-filters" role="group" aria-label={t("facetRefine")}>
+    <div className="sr-filters" data-filter-row="" role="group" aria-label={t("facetRefine")}>
       {from && more === null ? (
         <FacetMenu word={t("facetFrom")} items={from.items} nameOf={nameOf} pick={model.pick} />
       ) : null}
       {folder ? (
-        <FacetMenu word={t("facetFolder")} items={folder.items} nameOf={nameOf} pick={model.pick} />
+        <FacetMenu
+          word={t(model.searchBy === "people" ? "facetPlace" : "facetFolder")}
+          items={folder.items}
+          nameOf={nameOf}
+          pick={model.pick}
+        />
       ) : null}
       {files ? (
         <Button kind="two" size="s" pressed={files.pressed} onPress={() => model.pick(files.pick)}>
-          {files.label}
+          {t("facetAttachment")}
         </Button>
       ) : null}
       {more}
-      {after}
     </div>
   );
 }
@@ -82,6 +83,7 @@ function FacetMenu({
         mark="down"
         opens="menu"
         expanded={open}
+        disabled={items.length === 0}
         onPress={() => setOpen((was) => !was)}
       >
         {word}

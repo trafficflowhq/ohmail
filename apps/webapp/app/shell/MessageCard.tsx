@@ -33,11 +33,11 @@ import {
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useBodyStalled, useMessageChrome, useWithheldSentence } from "./message-chrome";
 import { useDrawnBody } from "./body-slice";
-import { InvitationNote } from "./InvitationNote";
+import { InvitationNote } from "../components/InvitationNote";
 import { MessageEvents } from "./MessageEvents";
 import { MessageRecipients } from "./MessageRecipients";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
-import { useSenderCheckWords } from "./sender-check";
+import { useSenderCheckWords } from "../screening/sender-check";
 import { autoLoadsImages } from "./remote-images";
 
 /** Names per recipients field before the rest folds into "and N others" (`MessageRecipients`). */

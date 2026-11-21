@@ -3,14 +3,12 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { createElement as h } from "react";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
 import { settleEditor } from "./_first-paint.js";
-import { SIG_FOLLOWING, type SignatureState } from "@ohmail/app-logic/writing/signature";
 import { publicPath } from "../../../test/support/public-root.mjs";
 import { readChangelogText } from "../../../scripts/changelog-fold.mjs";
+import { fireEvent, screen } from "@testing-library/react";
+import writeEn from "../../../packages/app/messages/write.en.json";
+import { mountWriting, rounds, unmountWritings } from "./_write-1-writing.js";
 
 /**
  * ═══ A SIGNATURE WITH FORMATTING IN IT — the pane that writes it, the block that shows it ════
@@ -39,51 +37,35 @@ import { readChangelogText } from "../../../scripts/changelog-fold.mjs";
 
 const TEXT = { "mb-one": "Anna\nohmail", "mb-two": "— Team Two" } as const;
 const HTML = { "mb-one": "<p><strong>Anna</strong><br />ohmail</p>" } as const;
+/** A markup map that names another sender only: the letter's own sender stores none. */
+const W_HTML_OTHER = { "mb-other": HTML["mb-one"] } as const;
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
-const mount = async (node: React.ReactNode): Promise<void> => {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", children: node,
-    }));
-  });
-};
-
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-  vi.restoreAllMocks();
-});
+afterEach(() => { vi.restoreAllMocks(); });
 
 /* ══ the block — what it shows for each of the two shapes ══════════════════════════════════ */
 
-async function mountBlock(props: {
-  sig: SignatureState;
-  onSig: (next: SignatureState) => void;
-  signatures: Readonly<Record<string, string>>;
-  signaturesHtml?: Readonly<Record<string, string>>;
-  mailboxId: string | null;
-}): Promise<void> {
-  const { SignatureBlock } = await import("../app/shell/SignatureBlock.js");
-  await mount(h(SignatureBlock, { disabled: false, ...props }));
-  // The block renders its editor behind `RichEditorLazy` — one seam, one helper.
-  await settleEditor();
-}
+
+/*
+ * OVER WRITE (the older tests' sorting): today's `SignatureBlock` leaves with the switch. The block is
+ * Write's (`packages/app/src/write/text/Signature.ts` in the kit's `Composer`), drawn under Write's new letter as the
+ * composition stands it (`_write-1-writing.tsx`), the letter's sender the roster's `mb1`: a stored signature for it
+ * is the case's mailbox, a map without it the case's other sender. Found by role and name: a plain block is the
+ * field named for the signature, a formatted one the group of that name holding the shell's editor, read-only; its
+ * presses are "Edit as text" and Remove by their names. What the block reports is the letter's signature state.
+ */
+const SIG = writeEn.write.signature;
+const W_TEXT = { mb1: TEXT["mb-one"] } as const;
+const W_HTML = { mb1: HTML["mb-one"] } as const;
+const plainField = (): HTMLElement | null => screen.queryByRole("textbox", { name: SIG.label });
+const formattedBlock = (): HTMLElement | null => screen.queryByRole("group", { name: SIG.label });
 
 describe("SignatureBlock — the block shows whichever shape the send will carry", () => {
+  afterEach(unmountWritings);
+
   it("renders the stored MARKUP as formatting, not as tags, while following", async () => {
-    await mountBlock({
-      sig: SIG_FOLLOWING, onSig: () => {},
-      signatures: TEXT, signaturesHtml: HTML, mailboxId: "mb-one",
-    });
-    const block = host!.querySelector<HTMLElement>(".sig-block")!;
+    await mountWriting({ view: true, signatures: W_TEXT, signaturesHtml: W_HTML });
+    await settleEditor();
+    const block = formattedBlock()!;
     expect(block, "no block for a sender with a stored signature").not.toBeNull();
 
     // The formatting is real elements. A `<strong>` in the DOM is the whole point: the tags must
@@ -92,17 +74,14 @@ describe("SignatureBlock — the block shows whichever shape the send will carry
     expect(block.textContent).not.toContain("<strong>");
     // And the plain textarea is NOT the surface for this shape — a signature with formatting is
     // never shown as its own source.
-    expect(block.querySelector(".sig-text")).toBeNull();
+    expect(plainField()).toBeNull();
   });
 
   it("keeps today's textarea, byte for byte, for a signature with NO markup", async () => {
-    await mountBlock({
-      sig: SIG_FOLLOWING, onSig: () => {},
-      signatures: TEXT, signaturesHtml: HTML, mailboxId: "mb-two",
-    });
-    const text = host!.querySelector<HTMLTextAreaElement>(".sig-text")!;
+    await mountWriting({ view: true, signatures: { mb1: TEXT["mb-two"] }, signaturesHtml: W_HTML_OTHER });
+    const text = plainField()!;
     expect(text, "a plain signature lost its textarea").not.toBeNull();
-    expect(text.value).toBe("— Team Two");
+    expect(text.textContent).toBe("— Team Two");
   });
 
   /**
@@ -111,24 +90,21 @@ describe("SignatureBlock — the block shows whichever shape the send will carry
    * markup map; an absent prop therefore means "nothing here can carry formatting", and the
    * answer is today's textarea — the fail-safe direction, because the plain half is always
    * present and always the same words.
+   * (Over Write: the composition hands Write an empty markup map where its host hands none.)
    */
   it("falls back to the textarea when the shell supplies no markup map", async () => {
-    await mountBlock({
-      sig: SIG_FOLLOWING, onSig: () => {}, signatures: TEXT, mailboxId: "mb-one",
-    });
-    const text = host!.querySelector<HTMLTextAreaElement>(".sig-text")!;
+    await mountWriting({ view: true, signatures: W_TEXT, signaturesHtml: {} });
+    const text = plainField()!;
     expect(text, "no markup map should mean the plain block, not an empty one").not.toBeNull();
-    expect(text.value).toBe("Anna\nohmail");
+    expect(text.textContent).toBe("Anna\nohmail");
   });
 
   it("the strike still strikes, on the formatted shape too", async () => {
-    const seen: SignatureState[] = [];
-    await mountBlock({
-      sig: SIG_FOLLOWING, onSig: (n) => seen.push(n),
-      signatures: TEXT, signaturesHtml: HTML, mailboxId: "mb-one",
-    });
-    host!.querySelector<HTMLButtonElement>(".sig-remove")!.click();
-    expect(seen).toEqual([{ kind: "removed" }]);
+    const w = await mountWriting({ view: true, signatures: W_TEXT, signaturesHtml: W_HTML });
+    await settleEditor();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: SIG.remove })); });
+    await rounds(2);
+    expect(w.now().compose.sig).toEqual({ kind: "removed" });
   });
 
   /**
@@ -138,243 +114,36 @@ describe("SignatureBlock — the block shows whichever shape the send will carry
    * words. What is shown is what ships, in both states and across the step between them.
    */
   it("edit-as-text reports the derived words and hands over to the plain textarea", async () => {
-    const seen: SignatureState[] = [];
-    await mountBlock({
-      sig: SIG_FOLLOWING, onSig: (n) => seen.push(n),
-      signatures: TEXT, signaturesHtml: HTML, mailboxId: "mb-one",
-    });
-    const edit = host!.querySelector<HTMLButtonElement>(".sig-edit-text")!;
+    const w = await mountWriting({ view: true, signatures: W_TEXT, signaturesHtml: W_HTML });
+    await settleEditor();
+    const edit = screen.queryByRole("button", { name: SIG.editAsTextHint });
     expect(edit, "a formatted block offers no way to edit it").not.toBeNull();
-    edit.click();
+    await act(async () => { fireEvent.click(edit!); });
+    await rounds(2);
     // The DERIVED text — the same words the message's plain part carries, not the markup.
-    expect(seen).toEqual([{ kind: "edited", text: "Anna\nohmail" }]);
+    expect(w.now().compose.sig).toEqual({ kind: "edited", text: "Anna\nohmail" });
   });
 
   it("renders the plain textarea once the block is edited, whatever the mailbox stores", async () => {
-    await mountBlock({
-      sig: { kind: "edited", text: "my own sign-off" }, onSig: () => {},
-      signatures: TEXT, signaturesHtml: HTML, mailboxId: "mb-one",
-    });
-    const text = host!.querySelector<HTMLTextAreaElement>(".sig-text")!;
-    expect(text.value).toBe("my own sign-off");
-    expect(host!.querySelector("strong"), "an edited block still rendered markup").toBeNull();
-  });
-});
-
-/* ══ the pane — the editor it mounts, and the shape it saves ═══════════════════════════════ */
-
-describe("SignaturesRow — the compose editor, and one of two save shapes", () => {
-  const MAILBOXES = [{ id: "mb-one", address: "one@example.test" }] as const;
-
-  async function mountRow(
-    signatures: Record<string, string>,
-    signaturesHtml: Record<string, string>,
-    save: (id: string, text: string | null, html?: string | null) => Promise<void>,
-  ): Promise<void> {
-    const { SignaturesRow } = await import("../app/shell/SignaturesRow.js");
-    await mount(h(SignaturesRow, {
-      mailboxes: MAILBOXES as unknown as ReadonlyArray<{ id: string; address: string }>,
-      signatures,
-      signaturesHtml,
-      signatureSources: {},
-      setMailboxSignature: (async (id: string, t: string | null, ht?: string | null) => {
-        await save(id, t, ht);
-        return { signatures, signaturesHtml };
-      }) as never,
-    }));
-  }
-
-  it("mounts the compose editor rather than a bare textarea", async () => {
-    await mountRow({}, {}, async () => {});
-    // The compose editor is a ProseMirror surface; a plain `<textarea>` is what this replaces.
-    expect(host!.querySelector(".ProseMirror"), "the pane is still a plain textarea").not.toBeNull();
-  });
-
-  it("shows the stored formatting as formatting, in the editor and in the preview", async () => {
-    await mountRow({ "mb-one": "Anna\nohmail" }, { "mb-one": HTML["mb-one"] }, async () => {});
-    // Both surfaces render real elements. The preview exists to show the block as a message will
-    // carry it, so it must speak the same grammar the editor does — it is the same component.
-    expect(host!.querySelectorAll("strong").length).toBeGreaterThanOrEqual(2);
-    expect(host!.querySelector(".sig-settings-preview")).not.toBeNull();
-    expect(host!.textContent).not.toContain("<strong>");
-  });
-
-  /* ── A MAILBOX THIS INSTALL ONLY READS — the editor is a report ──────────────────────────── */
-
-  async function mountRole(
-    role: string | null | undefined, signatures: Record<string, string>,
-    /* WHOSE signature the row is showing. A case that does not say leaves it ABSENT, which is
-       the wire of a server too old to answer and must read as local. */
-    signatureSources: Record<string, "organizer" | "local"> = {},
-  ): Promise<void> {
-    const { SignaturesRow } = await import("../app/shell/SignaturesRow.js");
-    await mount(h(SignaturesRow, {
-      mailboxes: [{ id: "mb-one", address: "one@example.test", organizerRole: role }] as never,
-      signatures, signaturesHtml: {}, signatureSources,
-      setMailboxSignature: (async () => ({ signatures, signaturesHtml: {} })) as never,
-    }));
-  }
-
-  /**
-   * The signature in force on a mailbox somebody else organizes is THEIRS, and this install's row
-   * is inert. So the pane shows their text and offers no way to change it: a Save here would
-   * write a value no message will ever carry, and an editor that takes words and drops them is
-   * the exact false state the rest of this work exists to remove.
-   */
-  it("a reader mailbox shows the organizer's text and offers no Save", async () => {
-    await mountRole("reader", { "mb-one": "-- \nfrom the organizer" }, { "mb-one": "organizer" });
-    expect(host!.textContent, "the organizer's sign-off is not on screen")
-      .toContain("from the organizer");
-    expect(host!.textContent).toContain(messages.settings.signatures.mailboxRead);
-    expect(host!.querySelector(".sig-settings-actions"), "a reader was offered a Save button")
-      .toBeNull();
-    const editor = host!.querySelector<HTMLElement>(".sig-settings-editor .ProseMirror");
-    expect(editor, "the reader's editor did not mount at all").not.toBeNull();
-    expect(editor!.getAttribute("contenteditable"), "the reader's editor takes typing")
-      .not.toBe("true");
-  });
-
-  /**
-   * THE OTHER READER, and the one this row got wrong: an install that only reads a mailbox whose
-   * organizer has PUBLISHED NOTHING. There is no organizer signature to show, so the value on
-   * screen is this install's own row — the one its sends actually carry — and reporting it as
-   * somebody else's while removing Save leaves a person unable to change the sign-off going out.
-   */
-  it("a reader whose organizer has published nothing keeps its own editor and its Save", async () => {
-    await mountRole("reader", { "mb-one": "-- \nmine" }, { "mb-one": "local" });
-    expect(host!.textContent, "a local signature was reported as the organizer's")
-      .not.toContain(messages.settings.signatures.mailboxRead);
-    expect(host!.textContent).toContain(messages.settings.signatures.mailboxOn);
-    expect(host!.querySelector(".sig-settings-actions"), "the reader lost the Save button")
-      .not.toBeNull();
-    const editor = host!.querySelector<HTMLElement>(".sig-settings-editor .ProseMirror");
-    expect(editor!.getAttribute("contenteditable"), "the reader's own editor refuses typing")
-      .toBe("true");
-  });
-
-  /* AN ABSENT MAP IS NOT A POSITIVE FACT. A server too old to answer `signatureSources` omits it,
-     and the row must then behave as it did before the field existed rather than lock every reader
-     out of a signature nobody else has published. */
-  it("a reader with no sources map at all is not locked out", async () => {
-    await mountRole("reader", { "mb-one": "-- \nmine" });
-    expect(host!.textContent).not.toContain(messages.settings.signatures.mailboxRead);
-    expect(host!.querySelector(".sig-settings-actions")).not.toBeNull();
-  });
-
-  /* THE OTHER HALF, and the one a merge is most likely to lose: an install that OWNS its mailbox
-     must keep every control it had. Absent is tested beside "organizer" on purpose — a roster too
-     old to carry the field must not lock the editors on an account that organizes its own mail. */
-  for (const role of ["organizer", null, undefined] as const) {
-    it(`an organizer mailbox (role ${String(role)}) keeps its editor and its Save`, async () => {
-      await mountRole(role, { "mb-one": "-- \nmine" });
-      expect(host!.textContent).not.toContain(messages.settings.signatures.mailboxRead);
-      expect(host!.querySelector(".sig-settings-actions"), "the account holder lost the Save button")
-        .not.toBeNull();
-      const editor = host!.querySelector<HTMLElement>(".sig-settings-editor .ProseMirror");
-      expect(editor!.getAttribute("contenteditable"), "the account holder's editor became read-only")
-        .toBe("true");
-    });
-  }
-});
-
-/* ══ a removed mailbox, and the reconnected one beside it ═══════════════════════════════════ */
-
-describe("SignaturesRow — a removed mailbox has no editor; the live one owns the signature", () => {
-  type Row = { id: string; address: string; status?: string; legacyStandDown?: boolean;
-    organizerRole?: string; takeoverAuthorizedAt?: string | null };
-  const OLD = "-- \nbefore the removal";
-  let calls: Array<[string, string | null, string | null | undefined]>;
-
-  async function mountRows(
-    rows: Row[], signatures: Record<string, string>,
-    answer: (id: string) => Promise<void> = async () => {},
-  ): Promise<void> {
-    calls = [];
-    const { SignaturesRow } = await import("../app/shell/SignaturesRow.js");
-    await mount(h(SignaturesRow, {
-      mailboxes: rows, signatures, signaturesHtml: {}, signatureSources: {},
-      setMailboxSignature: (async (id: string, t: string | null, ht?: string | null) => {
-        calls.push([id, t, ht]);
-        await answer(id);
-        return {};
-      }) as never,
-    }));
+    await mountWriting({ view: true, signatures: W_TEXT, signaturesHtml: W_HTML });
     await settleEditor();
-  }
-  const blocks = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".sig-settings")];
-  const typeInto = async (block: HTMLElement, words: string): Promise<void> => {
-    const dom = block.querySelector(".sig-settings-editor .ProseMirror") as unknown as {
-      editor?: { commands: { focus: (at: string) => void; insertContent: (s: string) => void } };
-    } | null;
-    if (!dom?.editor) throw new Error("the signature editor did not mount");
-    await act(async () => { dom.editor!.commands.focus("end"); dom.editor!.commands.insertContent(words); });
-  };
-  const pressSave = async (block: HTMLElement): Promise<void> => {
-    const save = [...block.querySelectorAll("button")]
-      .find((b) => b.textContent?.trim() === messages.settings.signatures.save)!;
-    await act(async () => { save.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    for (let i = 0; i < 3; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-  };
-  const SAME = "one@example.test";
-  const refusal = (reason: string) => Object.assign(new Error("refused"), {
-    status: 409, code: "organized_elsewhere", details: { reason, by: null },
-  });
-
-  it("a removed copy with a signature beside the live row: one block, the live one, Save writes it", async () => {
-    await mountRows([
-      { id: "mb-gone", address: SAME, status: "disabled", organizerRole: "organizer" },
-      { id: "mb-live", address: SAME, status: "connected", organizerRole: "organizer" },
-    ], { "mb-gone": OLD });
-    expect(blocks(), "the removed copy still has its own editor").toHaveLength(1);
-    expect(host!.textContent, "the removed copy's sign-off is on screen").not.toContain("before the removal");
-    expect(blocks()[0]!.textContent).toContain(messages.settings.signatures.mailboxOff);
-
-    await typeInto(blocks()[0]!, "-- new");
-    await pressSave(blocks()[0]!);
-    expect(calls.map((c) => c[0]), "the save went to the removed copy").toEqual(["mb-live"]);
-  });
-
-  it("every row removed: no editor at all", async () => {
-    await mountRows([
-      { id: "mb-gone", address: SAME, status: "disabled" },
-      { id: "mb-gone-2", address: SAME, status: "disabled" },
-    ], { "mb-gone": OLD });
-    expect(blocks()).toHaveLength(0);
-  });
-
-  it("a legacy stand-down row is not a removal and keeps its block", async () => {
-    await mountRows([{ id: "mb-one", address: SAME, status: "disabled", legacyStandDown: true }], {});
-    expect(blocks()).toHaveLength(1);
-  });
-
-  it("a refusal because nothing organizes the mailbox says why, not 'try again'", async () => {
-    await mountRows([{ id: "mb-one", address: SAME, organizerRole: "reader" }], {},
-      async () => { throw refusal("no_organizer"); });
-    await typeInto(blocks()[0]!, "-- mine");
-    await pressSave(blocks()[0]!);
-    expect(host!.textContent).toContain(messages.ohbox.whyRefused.nobody);
-    expect(host!.textContent).not.toContain(messages.settings.signatures.failed);
-  });
-
-  it("the same refusal while this install's Organize-here press stands says it is starting", async () => {
-    await mountRows([{
-      id: "mb-one", address: SAME, organizerRole: "reader", takeoverAuthorizedAt: "2026-10-30T10:00:00Z",
-    }], {}, async () => { throw refusal("no_organizer"); });
-    await typeInto(blocks()[0]!, "-- mine");
-    await pressSave(blocks()[0]!);
-    expect(host!.textContent).toContain(messages.ohbox.whyRefused.starting);
-    expect(host!.textContent).not.toContain(messages.settings.signatures.failed);
-  });
-
-  it("any other failure keeps the try-again sentence", async () => {
-    await mountRows([{ id: "mb-one", address: SAME }], {}, async () => { throw new Error("offline"); });
-    await typeInto(blocks()[0]!, "-- mine");
-    await pressSave(blocks()[0]!);
-    expect(host!.textContent).toContain(messages.settings.signatures.failed);
+    // The block edited: through its own press, then written over (Write's letter takes its state from the person).
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: SIG.editAsTextHint })); });
+    await rounds(2);
+    const typed = plainField()!;
+    await act(async () => {
+      typed.focus();
+      typed.textContent = "my own sign-off";
+      fireEvent.input(typed);
+      fireEvent.blur(typed);
+    });
+    await rounds(2);
+    const text = plainField()!;
+    expect(text.textContent).toBe("my own sign-off");
+    expect(formattedBlock(), "an edited block still rendered markup").toBeNull();
+    expect(text.querySelector("strong"), "an edited block still rendered markup").toBeNull();
   });
 });
-
-/* ══ claims — the published sentence, and the copy that describes the pane ═════════════════ */
 
 describe("the copy does not claim a signature is plain text", () => {
   const read = (p: string): string => readFileSync(resolve(process.cwd(), p), "utf8");
@@ -412,7 +181,11 @@ describe("the copy does not claim a signature is plain text", () => {
     const changelog = readChangelogText(dirname(publicPath("CHANGELOG.md")));
     expect(changelog, "the claim this guard exists for is gone — re-read it before deleting me")
       .toContain("What you see is what ships");
-    const block = read("apps/webapp/app/shell/SignatureBlock.tsx");
+    /* OVER WRITE (the older tests' sorting): today's block file leaves with the switch. Write's block
+       (`write/text/Signature.ts`) asks its signature of Write's model (`beside.signature`), and the model answers it
+       with the call below (`writing-of.ts`, `writeBesideOf`'s `signature`): the guard reads both, the call's form kept. */
+    expect(read("packages/app/src/write/text/Signature.ts")).toContain("beside.signature(letter.state ?? FOLLOWING, letter.mailboxId, w.signatures)");
+    const block = read("packages/app-logic/src/writing/writing-of.ts");
     /**
      * THE CALL, not the identifier — found by a mutation of this very guard.
      *
@@ -422,6 +195,6 @@ describe("the copy does not claim a signature is plain text", () => {
      * asks the question. The same trap as reading "no caller" off a `grep "fn("`, from the
      * other side.
      */
-    expect(block).toContain("effectiveSignatureHtml(sig, signaturesHtml ?? {}, mailboxId)");
+    expect(block).toContain("effectiveSignatureHtml(state, stored.html, mailboxId)");
   });
 });

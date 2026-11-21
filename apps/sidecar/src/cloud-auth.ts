@@ -109,12 +109,14 @@ const NEVER_RENEW = [
   "/auth/password",
 ];
 
-/** May a 401 at this path be renewed? Asked of the canonical route, as the relay's allowlist is (the
- * `/api` mount, doubled slashes and escapes are one route); a path that does not canonicalize never is. */
+function canonicalRoute(path: string): string | null {
+  try { return normalizePathname(path.replace(/[?#][\s\S]*$/, "")); } catch { return null; }
+}
+
+/** May a 401 at this path be renewed? The relay and auth both use the canonical route. */
 export function mayRenewFor(path: string): boolean {
-  let route: string;
-  try { route = normalizePathname(path.replace(/[?#][\s\S]*$/, "")); } catch { return false; }
-  return !NEVER_RENEW.some((p) => route.startsWith(p));
+  const route = canonicalRoute(path);
+  return route !== null && !NEVER_RENEW.some((p) => route.startsWith(p));
 }
 
 /** Renew at this share of the access window (jittered ±5 %), so expiry never meets a request. */
@@ -798,6 +800,9 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   };
 
   const authedFetch = async (path: string, init?: RequestInit): Promise<Response> => {
+    const suggestion = init?.method?.toUpperCase() === "POST" && canonicalRoute(path) === "/screener/suggest";
+    // Only the renderer can check this quote or suggestion's live grant after a renewal wait.
+    if (suggestion && (launchRenewal || renewing)) return erased() ? erasedResponse() : offlineResponse();
     if (launchRenewal) await launchRenewal;
     // A deleted account is asked nothing more: every caller hears the same answer at once.
     if (erased()) return erasedResponse();
@@ -820,6 +825,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     const again = async (): Promise<Response> =>
       noticeErased(await send(`${base}${path}`, withBearer(init, tokens.accessToken)));
     if (tokens.accessToken !== sentWith) {
+      if (suggestion) return res;
       discard(res);
       return again();
     }
@@ -834,6 +840,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
       discard(res);
       return erasedResponse();
     }
+    if (suggestion && r.kind === "minted") return res;
     discard(res);
     return r.kind === "minted" ? again() : offlineResponse();
   };

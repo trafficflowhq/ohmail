@@ -1,223 +1,70 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { fireEvent, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import messages from "../messages/en.json";
-import { shellFrameOf } from "./source-anchor.js";
+import { act, message, mountShell, press, stubDom, unmountAll, waitFor } from "./_draft-shell.js";
 
-/**
- * TRI-F2 — A SEARCH HIT OPENS EXACTLY THE CLICKED MESSAGE, AND THE ARRIVAL IS MARKED.
- *
- * The live sweep clicked a hit and landed with the cursor and the reader on a different
- * message — and with no flash on the one that was clicked. Two mechanisms accounted for the
- * silent half and are pinned here:
- *
- *   1. A conversation folds into ONE row carrying its lead's `data-id`, so the locate pass
- *      matched nothing for any other member. Folded rows now declare every member in
- *      `data-ids`, and the shell's selector falls back to `~=` over it.
- *   2. The windowed lists mount only their top, so a hit deep in the pile had no row in the
- *      DOM at all. The views now reveal an externally-set cursor by scrolling the windowed
- *      scroller (`OhboxView`, `ReadsView`, `ReceiptsView`); the locate pass retries until
- *      the row exists.
- *
- * The end-to-end case below runs the real shell on the fixture world: click a hit, arrive in
- * the Ohbox, and the OPEN message — the one the reading column renders and the row the flash
- * lands on — is the clicked one, by id.
- */
-(globalThis as unknown as { React: unknown }).React = React;
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+beforeEach(() => {
+  stubDom();
+  localStorage.clear();
+});
+afterEach(unmountAll);
 
 const read = (rel: string): string =>
   readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
-let roots: Root[] = [];
+async function findResults() {
+  const field = await screen.findByRole("textbox", { name: "Search" });
+  await act(async () => { fireEvent.change(field, { target: { value: "kiln" } }); });
+}
 
-beforeEach(() => {
-  window.location.hash = "";
-  Object.defineProperty(window, "matchMedia", {
-    configurable: true,
-    writable: true,
-    value: (query: string) => ({
-      matches: false,
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      addListener: () => {},
-      removeListener: () => {},
-      onchange: null,
-      dispatchEvent: () => false,
-    }),
-  });
-  // The escape is real — it is what stops an id with a quote breaking out of the selector.
-  (globalThis as Record<string, unknown>).CSS = {
-    escape: (v: string) => v.replace(/["\\\]]/g, (c) => `\\${c}`),
-  };
-  const el = Element.prototype as unknown as Record<string, () => void>;
-  el.scrollIntoView = () => {};
-  el.scrollTo = () => {};
-  (globalThis as Record<string, unknown>).IntersectionObserver = class {
-    observe(): void {}
-    unobserve(): void {}
-    disconnect(): void {}
-    takeRecords(): [] {
-      return [];
+describe("a search hit opens exactly the clicked message", () => {
+  it("opens the clicked message in the Ohbox and marks its row", async () => {
+    const clicked = message("clicked", { subject: "Kiln delivery" });
+    const neighbor = message("neighbor", { subject: "Kiln inspection", date: "2026-09-27T08:30:00Z" });
+    await mountShell("#/search", [clicked, neighbor]);
+    await findResults();
+    await screen.findByRole("button", { name: /Kiln inspection/ });
+    await press(await screen.findByRole("button", { name: /Kiln delivery/ }), "the delivery result");
+
+    await waitFor(() => window.location.hash === "#/ohbox/m/clicked", "the clicked letter's Ohbox address");
+    const list = await screen.findByRole("region", { name: "Messages" });
+    const option = within(list).getByRole("option", { name: /Kiln delivery/ });
+    expect(option.getAttribute("data-id")).toBe(clicked.id);
+    expect(option.hasAttribute("data-open")).toBe(true);
+    await waitFor(() => option.hasAttribute("data-located"), "the arrival mark on the clicked row");
+    expect(within(list).getByRole("option", { name: /Kiln inspection/ }).hasAttribute("data-located")).toBe(false);
+    const reading = await screen.findByRole("region", { name: "Reading" });
+    await within(reading).findByRole("heading", { name: "Kiln delivery" });
+    expect(within(reading).queryByRole("heading", { name: "Kiln inspection" })).toBeNull();
+  }, 20_000);
+});
+
+describe("locating a folded conversation", () => {
+  it("marks the same row for every member of the conversation", async () => {
+    const letters = [
+      message("oldest", { subject: "Kiln estimate", threadId: "shared", date: "2026-09-25T08:00:00Z" }),
+      message("older", { subject: "Kiln delivery", threadId: "shared", date: "2026-09-26T08:00:00Z" }),
+      message("lead", { subject: "Kiln inspection", threadId: "shared", date: "2026-09-27T08:00:00Z" }),
+    ];
+
+    for (const letter of letters) {
+      await mountShell("#/search", letters);
+      await findResults();
+      await press(await screen.findByRole("button", { name: new RegExp(letter.subject) }), "a member's result");
+      await waitFor(() => window.location.hash === `#/ohbox/m/${letter.id}`, "the member's Ohbox address");
+      const list = await screen.findByRole("region", { name: "Messages" });
+      const rows = within(list).getAllByRole("option");
+      expect(rows).toHaveLength(1);
+      const [row] = rows;
+      expect(row!.getAttribute("data-id")).toBe("lead");
+      expect(row!.getAttribute("data-ids")?.split(" ")).toEqual(expect.arrayContaining(letters.map(({ id }) => id)));
+      expect(row!.hasAttribute("data-open")).toBe(true);
+      await waitFor(() => row!.hasAttribute("data-located"), "the arrival mark on the folded row");
+      await unmountAll();
     }
-  };
-  // The locate pass retries on animation frames; vitest's jsdom does not provide them.
-  if (typeof globalThis.requestAnimationFrame !== "function") {
-    (globalThis as Record<string, unknown>).requestAnimationFrame = (cb: (t: number) => void) =>
-      setTimeout(() => cb(performance.now()), 16) as unknown as number;
-    (globalThis as Record<string, unknown>).cancelAnimationFrame = (id: number) =>
-      clearTimeout(id as unknown as ReturnType<typeof setTimeout>);
-  }
-  vi.spyOn(console, "error").mockImplementation(() => {});
-});
-
-afterEach(async () => {
-  for (const root of roots) {
-    await act(() => {
-      root.unmount();
-    });
-  }
-  roots = [];
-  document.body.innerHTML = "";
-  delete (globalThis as Record<string, unknown>).IntersectionObserver;
-  delete (globalThis as Record<string, unknown>).CSS;
-  vi.restoreAllMocks();
-});
-
-async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
-  const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  roots.push(root);
-
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        timeZone: "UTC",
-        now: new Date("2026-08-02T09:00:00.000Z"),
-        children: h(ThemeProvider, {
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
-        }),
-      }),
-    );
-  });
-  return container;
-}
-
-const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
-  await act(async () => {
-    document.dispatchEvent(
-      new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
-    );
-  });
-};
-
-async function waitFor(predicate: () => boolean, what: string, timeout = 3000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 25));
-    });
-  }
-  throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
-}
-
-/** Type into the search box the way React sees it: native setter + input event. */
-async function type(input: HTMLInputElement, value: string): Promise<void> {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
-describe("TRI-F2 — a search hit opens exactly the clicked message", () => {
-  it("click a hit: the Ohbox opens THAT message, and the flash lands on ITS row", async () => {
-    const container = await shell();
-    await key("/");
-    await waitFor(() => container.querySelector(".view-search input") != null, "search input");
-    // "pizza" ⇒ `ben`, an UNPARKED Ohbox row. It used to be "glaze" ⇒ `giulia`, which is the
-    // demo's Answer Later message: a parked mail is in no Ohbox group, so `openTargetFor` now
-    // routes it to the reader rather than to a pile that cannot show it, and this end-to-end
-    // guard is about the OHBOX arm. The parked arm has its own assertion in `search-locate`.
-    await type(container.querySelector<HTMLInputElement>(".view-search input")!, "pizza");
-    await waitFor(() => container.querySelectorAll(".hit-w").length > 0, "search hits");
-
-    const first = container.querySelector<HTMLElement>(".hit-w")!;
-    const clickedId = first.dataset.hit!;
-    await act(async () => {
-      first.querySelector("button")!.click();
-    });
-
-    // Arrival is `#/ohbox/m/<id>` now — the URL names the very message the click opened
-    // (`message-url.test.tsx`), which is a STRONGER arrival claim than the bare view was.
-    await waitFor(
-      () => window.location.hash === `#/ohbox/m/${clickedId}` || window.location.hash === "#/ohbox",
-      "arrival at the Ohbox",
-    );
-    await waitFor(() => container.querySelector(".view-ohbox") != null, "ohbox view");
-
-    // The SELECTED row is the clicked message — not the first row, not a neighbour. The row
-    // may be a folded conversation, in which case membership (data-id or data-ids) is the
-    // contract; here the fixture's hit leads its own row.
-    await waitFor(
-      () => container.querySelector(`.view-ohbox :is(.row.sel, [role=option][data-open])[data-id="${clickedId}"]`) != null,
-      `the cursor stands on ${clickedId}`,
-    );
-
-    // The reading column shows the clicked message: its subject, from the mirror's own row.
-    const subject = first.querySelector(".subj")?.textContent?.replace(/fuzzy.*$/, "") ?? "";
-    const pane = container.querySelector(".view-ohbox .read-col");
-    expect(pane, "no reading column beside the list").not.toBeNull();
-    expect(pane!.textContent).toContain("Kiln");
-
-    // THE ARRIVAL IS MARKED — the locate pass finds the row and flashes it. This is the half
-    // the sweep reported as silent.
-    await waitFor(
-      () => document.querySelector(`:is(.row, [role=option]).is-located[data-id="${clickedId}"]`) != null,
-      "the locate flash on the clicked row",
-      4000,
-    );
-    expect(subject.length).toBeGreaterThan(0);
-  }, 20000);
-});
-
-describe("the locate selector reaches folded conversations (data-ids)", () => {
-  it("a row that stands for several messages is found by ANY member's id", () => {
-    // The DOM contract: folded rows carry `data-ids="a b c"`; `~=` is the attribute selector
-    // defined over exactly that space-separated shape.
-    document.body.innerHTML = `
-      <div class="view">
-        <div class="row" data-id="lead" data-ids="lead older oldest"></div>
-        <div class="row" data-id="single"></div>
-      </div>`;
-    const bySelf = document.querySelector(`.view :is(.row, [role=option])[data-id="older"]`);
-    const byMembership = document.querySelector(`.view :is(.row, [role=option])[data-ids~="older"]`);
-    expect(bySelf).toBeNull(); // the exact-id contract alone cannot see a folded member…
-    expect(byMembership?.getAttribute("data-id")).toBe("lead"); // …membership can.
-  });
-
-  it("the shell's locate pass consults membership after the exact id", () => {
-    /* The locate pass sits with the open it follows, in `shell-open-state.ts` — the frame is
-       resolved from the manifest by the declaration it belongs to. */
-    const src = shellFrameOf("openMessage").source;
-    expect(src).toMatch(/\.view :is\(\.row, \[role=option\]\)\[data-id="\$\{CSS\.escape\(located\)\}"\]/);
-    expect(src).toMatch(/\.view :is\(\.row, \[role=option\]\)\[data-ids~="\$\{CSS\.escape\(located\)\}"\]/);
-  });
+  }, 20_000);
 });
 
 describe("the windowed lists reveal an externally-set cursor", () => {

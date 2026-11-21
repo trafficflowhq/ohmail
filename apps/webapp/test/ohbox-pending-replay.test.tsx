@@ -291,8 +291,10 @@ describe("a warm reopen mid-catch-up never asserts emptiness", () => {
     // header sentence is the ListPane meta's ungated twin, gated through the same reading now.
     const NOTHING_NEW = "Nothing new since you were here";
     await goTo("reads");
+    expect(el.querySelector('[role="region"][aria-label="News"]')).not.toBeNull();
     expect(textOf(el), "Reads asserted 'Nothing new' mid-catch-up").not.toContain(NOTHING_NEW);
     await goTo("receipts");
+    expect(el.querySelector('[role="region"][aria-label="Receipts"]')).not.toBeNull();
     expect(textOf(el), "Receipts asserted 'Nothing new' mid-catch-up").not.toContain(NOTHING_NEW);
   });
 });

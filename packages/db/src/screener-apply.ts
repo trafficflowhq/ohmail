@@ -111,17 +111,47 @@ export interface ValidatedRequestPayload {
    * option keeps today's behaviour; a non-boolean refuses the whole record rather than coercing.
    */
   applyRetro: boolean;
+  confirmedIds?: string[];
+  unsubscribeIds?: string[];
 }
 
 /** A generous ceiling on the address field alone — RFC 5321's own 254-octet mailbox limit, doubled. */
 const REQUEST_ADDRESS_MAX_CHARS = 512;
 
+/** The held-bag restriction shared by the live press, forwarded claims and the request drain. */
+export function confirmedScreenerRows(ids: readonly string[]): SQL {
+  return inArray(messages.id, [...ids]);
+}
+
+export function parseDecisionScope(scope: unknown, ids: unknown, unsubscribe: unknown): {
+  scope: "sender" | "domain"; confirmedIds?: string[]; unsubscribeIds?: string[];
+} | null {
+  const isId = (id: unknown): id is string =>
+    typeof id === "string" && id.length === 36 && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id);
+  if (scope === "sender" || scope === "domain") {
+    if (ids !== undefined) return null;
+    if (unsubscribe === undefined) return { scope };
+    return Array.isArray(unsubscribe) && unsubscribe.every(isId)
+      ? { scope, unsubscribeIds: [...new Set<string>(unsubscribe)] } : null;
+  }
+  if (scope !== "confirmed_sender" && scope !== "confirmed_domain") return null;
+  if (!Array.isArray(ids) || ids.length === 0 || !ids.every(isId)) return null;
+  const confirmed = new Set<string>(ids);
+  const grants = unsubscribe === undefined ? [] : unsubscribe;
+  if (!Array.isArray(grants) || grants.some((id) => !confirmed.has(id))) return null;
+  return {
+    scope: scope === "confirmed_sender" ? "sender" : "domain",
+    confirmedIds: [...confirmed], unsubscribeIds: [...new Set<string>(grants)],
+  };
+}
+
 export function validateRequestPayload(payload: unknown): ValidatedRequestPayload | null {
   if (typeof payload !== "object" || payload === null) return null;
   const p = payload as Record<string, unknown>;
 
-  const scope = p.scope;
-  if (scope !== "sender" && scope !== "domain") return null;
+  const parsed = parseDecisionScope(p.scope, p.confirmedIds, p.unsubscribeIds);
+  if (!parsed) return null;
+  const { scope, confirmedIds } = parsed;
 
   const decision = p.decision;
   if (decision !== "yes" && decision !== "no") return null;
@@ -149,9 +179,9 @@ export function validateRequestPayload(payload: unknown): ValidatedRequestPayloa
   // Absent is the default, a non-boolean is a refusal — `"false"` is truthy, and reading a decline
   // as consent to re-file a backlog is the mistake this whole validator exists to make impossible.
   if (p.applyRetro !== undefined && typeof p.applyRetro !== "boolean") return null;
-  const applyRetro = p.applyRetro === undefined ? true : p.applyRetro;
+  const applyRetro = confirmedIds === undefined && (p.applyRetro ?? true);
 
-  return { scope, address, appliedFolder, decision, applyRetro };
+  return { ...parsed, address, appliedFolder, decision, applyRetro };
 }
 
 /**
@@ -622,11 +652,11 @@ async function listClaimsFiledAlone(
  * held bag account-wide, checked first as a press checks it. Empty at an address no list posts as.
  */
 export async function readListClaimsFiledAlone(
-  tx: Tx, accountId: string, address: string, check: ApplyScreenerDecisionInput["checkUnchecked"],
+  tx: Tx, accountId: string, address: string, check: ApplyScreenerDecisionInput["checkUnchecked"], within?: SQL,
 ): Promise<AppliedScreenerRow[]> {
   if (!(await readListAddresses(tx, accountId, [address.toLowerCase()])).has(address.toLowerCase())) return [];
   return listClaimsFiledAlone(tx, accountId, address,
-    await checkedBag(tx, accountId, () => heldRowsForSender(tx, accountId, address), check));
+    await checkedBag(tx, accountId, () => heldRowsForSender(tx, accountId, address, undefined, { within }), check));
 }
 
 export interface ApplyScreenerDecisionInput {

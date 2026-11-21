@@ -5,6 +5,7 @@
  * last decision, Escape closes what is open. A key that cannot act now stays listed and inert.
  */
 import type { KeyBinding } from "../keys/binding.js";
+import type { ZoneListStep } from "../keys/zone-nav.js";
 import { DECISION_KEY, DECISION_ORDER, DECISION_QUIET, type DecisionDestination } from "./decision.js";
 
 export type KeySegment = "waiting" | "screened" | "spam";
@@ -40,6 +41,22 @@ export interface ScreenerKeysInput {
   readonly undo: () => void;
   /** What Escape closes now (an ask, a menu, the open sender on one column); null when nothing is open. */
   readonly escape: (() => void) | null;
+}
+
+/**
+ * THE LIST'S STEPS FOR THE KEYBOARD'S ZONES: the arrows down and up in the list are the very walk `j` and `k` take,
+ * under the same words, and inert where that walk has no next sender.
+ */
+export function screenerListSteps(
+  words: Pick<ScreenerKeyWords, "next" | "prev">,
+  step: ScreenerKeysInput["step"],
+): { readonly up: ZoneListStep; readonly down: ZoneListStep } {
+  const of = (run: (() => void) | null, label: string): ZoneListStep => ({
+    disabled: run === null,
+    run: () => run?.(),
+    label,
+  });
+  return { up: of(step.up, words.prev), down: of(step.down, words.next) };
 }
 
 export function screenerKeys(input: ScreenerKeysInput): KeyBinding[] {

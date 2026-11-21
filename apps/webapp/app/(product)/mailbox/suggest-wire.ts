@@ -39,6 +39,15 @@ export const CLOUD_WIRE: SuggestWire = {
   },
 };
 
+/** The mounted frame keeps the scope that supplied the queue and the price request. */
+export function suggestWireFor(expectedOwner: string): SuggestWire {
+  return {
+    ...CLOUD_WIRE,
+    list: (opts) => screenerApi.list(opts, expectedOwner),
+    suggest: (senders, opts) => screenerApi.suggest(senders, opts, expectedOwner),
+  };
+}
+
 /**
  * The sentence for a refusal the HOSTED transport produced —
  * {@link CLOUD_WIRE}'s half of {@link SuggestWire.messageFor}, never called

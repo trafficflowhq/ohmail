@@ -1,6 +1,15 @@
-import { useLayoutEffect, useRef, type CSSProperties, type MouseEvent } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { cssRect, type CssRect } from "../../base/ui-zoom.js";
 import { animate } from "../../motion/motion.js";
+import { SquareTip, useSquareTip } from "./square-tip.js";
 import "./read-squares.css";
 
 /** A message's square: seen, not seen yet, your own, or a reply being written. */
@@ -29,13 +38,72 @@ export interface ReadSquaresProps {
   run?: SquaresRun;
   /** A press on a square: the conversation opens on that message. */
   onJump?: (index: number) => void;
+  /**
+   * Each square's name, said to a screen reader ("Anna Roth, Mon 08:00"). With `onJump` the squares are then one
+   * roving set the keyboard walks: one tab stop, on the reader's square; the arrows, Home and End move it; Enter or
+   * Space opens that message. Without names they stay a picture the pointer presses.
+   */
+  names?: readonly string[];
+  ids?: readonly string[];
+  tips?: readonly ReactNode[];
+  /** The keys moved onto a square (a run then pulls a square beyond it over: `squaresWindow`'s `focus`). */
+  onFocusSquare?: (index: number) => void;
+}
+
+/** The roving tab stop of the squares, and their keys: it rests on the reader's square until the keys move it. */
+function useSquareKeys(count: number, here: number | undefined, on: boolean, props: ReadSquaresProps) {
+  const [stop, setStop] = useState<string | number | null>(null);
+  const current = here === undefined ? undefined : (props.ids?.[here] ?? here);
+  const [was, setWas] = useState(current);
+  if (was !== current) {
+    setWas(current);
+    setStop(null);
+  }
+  const index = typeof stop === "string" ? props.ids?.indexOf(stop) : stop;
+  const at = Math.min(index != null && index >= 0 ? index : (here ?? 0), Math.max(count - 1, 0));
+  const keys = (event: KeyboardEvent<HTMLElement>) => {
+    const slot = (event.target as HTMLElement).closest<HTMLElement>("[data-square]");
+    if (!on || !slot || event.altKey || event.ctrlKey || event.metaKey) return;
+    const from = Number(slot.dataset.square);
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      props.onJump?.(from);
+      return;
+    }
+    const back = props.axis === "column" ? "ArrowUp" : "ArrowLeft";
+    const forward = props.axis === "column" ? "ArrowDown" : "ArrowRight";
+    const to =
+      event.key === back
+        ? Math.max(from - 1, 0)
+        : event.key === forward
+          ? Math.min(from + 1, count - 1)
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? count - 1
+              : null;
+    if (to === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (to === from) return;
+    setStop(props.ids?.[to] ?? to);
+    slot.parentElement?.querySelector<HTMLElement>(`[data-square="${to}"]`)?.focus({ preventScroll: true });
+    props.onFocusSquare?.(to);
+  };
+  return { at, keys };
 }
 
 /**
  * How far a conversation is read, and where the reader is in it. Longer than its room, a run of the
  * squares stands and each edge that hides more says how many; nothing is ever cut.
  */
-export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSquaresProps) {
+export function ReadSquares(props: ReadSquaresProps) {
+  const { squares, here, axis, label, run, onJump, names } = props;
+  /* A control the keyboard stops on only where a press goes somewhere and each square can be named. */
+  const walks = Boolean(onJump && names);
+  const { at, keys } = useSquareKeys(squares.length, here, walks, props);
+  const tip = useSquareTip();
   const before = run ? run.from : 0;
   const after = run ? squares.length - run.to : 0;
   const long = before > 0 || after > 0;
@@ -62,7 +130,7 @@ export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSqu
         const slot = (event.target as HTMLElement).closest<HTMLElement>("[data-square]");
         if (!slot) return;
         event.stopPropagation();
-        onJump(Number(slot.dataset.square));
+        if (!tip.suppressClick()) onJump(Number(slot.dataset.square));
       }
     : undefined;
   const room =
@@ -78,6 +146,7 @@ export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSqu
       data-press={onJump ? "" : undefined}
       style={room}
       onClick={jump}
+      onKeyDown={walks ? keys : undefined}
     >
       <i className="oh-readsquares-more" data-on={before ? "" : undefined} aria-hidden="true">
         {before ? `+${before}` : null}
@@ -86,8 +155,20 @@ export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSqu
         const k = run ? (run.scale[index] ?? 0) : 1;
         return (
           <i
-            key={index}
-            className="oh-readsquares-slot"
+            key={props.ids?.[index] ?? index}
+            className={walks ? "oh-control oh-readsquares-slot" : "oh-readsquares-slot"}
+            role={walks ? "button" : undefined}
+            aria-label={walks ? names![index] : undefined}
+            tabIndex={walks ? (index === at ? 0 : -1) : undefined}
+            data-hold-tip={props.tips ? "" : undefined}
+            onContextMenu={props.tips ? (event) => event.preventDefault() : undefined}
+            onPointerEnter={props.tips ? tip.enter : undefined}
+            onPointerLeave={props.tips ? tip.leave : undefined}
+            onPointerDown={props.tips ? tip.down : undefined}
+            onPointerUp={props.tips ? tip.up : undefined}
+            onPointerCancel={props.tips ? tip.cancel : undefined}
+            onFocus={props.tips ? (event) => tip.focus(event.currentTarget) : undefined}
+            onBlur={props.tips ? tip.leave : undefined}
             data-kind={kind}
             data-square={index}
             data-here={index === here ? "" : undefined}
@@ -102,6 +183,9 @@ export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSqu
           </i>
         );
       })}
+      {tip.anchor && props.tips ? (
+        <SquareTip anchor={tip.anchor}>{props.tips[Number(tip.anchor.dataset.square)]}</SquareTip>
+      ) : null}
       <i className="oh-readsquares-more" data-on={after ? "" : undefined} data-end="" aria-hidden="true">
         {after ? `+${after}` : null}
       </i>

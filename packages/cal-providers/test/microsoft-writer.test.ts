@@ -97,6 +97,23 @@ async function held(id: string) {
 }
 
 describe("Microsoft's writer, at the double", () => {
+  it("does not notify different attendees after the pending change is rebased", async () => {
+    const made = await writer.create(signedIn(), studio, { key: { hex: KEY }, event: draft() }, never);
+    const item = made.ok ? made.items[0] : null;
+    if (item?.kind !== "upsert") throw new Error("missing test event");
+    const target = {
+      id: item.id,
+      version: item.version,
+      text: null,
+      occurrence: null,
+      audience: { organizer: "studio@example.invalid", guests: ["clay@example.invalid"] },
+    };
+    expect(word(await writer.change(signedIn(), studio, target, { summary: "Moved firing" }, never))).toBe(
+      "version_stale",
+    );
+    expect(sent.some((r) => r.method === "PATCH")).toBe(false);
+  });
+
   it("makes a new event under a transactionId from the write's key; the same key again hands the first event back: ONE event", async () => {
     const first = await writer.create(signedIn(), studio, { key: { hex: KEY }, event: draft() }, never);
     const again = await writer.create(signedIn(), studio, { key: { hex: KEY }, event: draft() }, never);
@@ -142,6 +159,21 @@ describe("Microsoft's writer, at the double", () => {
       ok: true,
       items: [{ kind: "gone", id: item.id }],
     });
+  });
+
+  it("refuses a cancellation when the live event's audience differs from the confirmation", async () => {
+    const [invited] = await held("evt-catalogue-shoot");
+    if (invited?.kind !== "upsert" || !invited.event.organizer?.email) throw new Error("missing test event");
+    sent.length = 0;
+    const target = {
+      id: invited.id,
+      version: invited.version,
+      text: null,
+      occurrence: null,
+      audience: { organizer: invited.event.organizer.email, guests: [] },
+    };
+    expect(word(await writer.remove(signedIn(), studio, target, never))).toBe("version_stale");
+    expect(sent.map((r) => r.method)).toEqual(["GET"]);
   });
 
   it("takes an answer whose first attempt landed as done when it is sent again, and asks nothing more; another answer on that copy is refused", async () => {

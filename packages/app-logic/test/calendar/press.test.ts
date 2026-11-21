@@ -2,18 +2,27 @@
  * THE ONE PRESS SEAM over the real queue and a scripted door: a sentence only after our server's verdict, the
  * refusal's own word, nothing while the press is still owed, and the verdict of a press the queue tracks by no event.
  */
-import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, MutationRejectedError } from "@ohmail/client-engine";
+import { describe, expect, it, vi } from "vitest";
+import {
+  IndexedDbMirrorStore,
+  MemoryMirrorStore,
+  MutationRejectedError,
+  type MirrorStore,
+} from "@ohmail/client-engine";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import type { CalendarWriteTransport } from "@ohmail/client-engine/calendar-writes";
 import type { CalendarAct, CalendarWriteAnswer } from "@ohmail/wire";
-import { calendarPortOf, pressAndHear } from "../../src/calendar/index.js";
+import { calendarPortOf, calendarRefusalSentence, pressAndHear } from "../../src/calendar/index.js";
 
 const PRESSED_AT = Date.UTC(2026, 10, 16, 9);
 type Answer = { answer: CalendarWriteAnswer; seq: number | null };
 
-function portOver(door: (key: string) => Promise<Answer>) {
+function portOver(
+  door: (key: string) => Promise<Answer>,
+  store: MirrorStore = new MemoryMirrorStore(),
+  now: () => number = () => PRESSED_AT,
+) {
   let n = 0;
-  const store = new MemoryMirrorStore();
   const transport: CalendarWriteTransport = {
     writeCalendar: (_act, key) => door(key),
     retryCalendarWrite: (_id, key) => door(key),
@@ -22,7 +31,7 @@ function portOver(door: (key: string) => Promise<Answer>) {
   return calendarPortOf({
     engine: { store, subscribe: () => () => undefined, read: () => ({ version: () => 0 }) } as never,
     transport,
-    clock: { uuid: () => `key-${++n}`, now: () => PRESSED_AT },
+    clock: { uuid: () => `key-${++n}`, now },
     settings: async () => ({
       enabledAt: null,
       secondZone: null,
@@ -139,4 +148,126 @@ describe("a press and what is said of it", () => {
     });
     expect((await pressAndHear(port, create)).verdict).toMatchObject({ kind: "refused", word: "unknown" });
   });
+});
+
+it("returns a refusal to the pressing tab after another tab sends the queued change", async () => {
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const factory = new IDBFactory();
+  const pressingStore = new IndexedDbMirrorStore({ factory, owner: "acct-calendar" });
+  const sendingStore = new IndexedDbMirrorStore({ factory, owner: "acct-calendar" });
+  await pressingStore.load();
+  await sendingStore.load();
+  const offline = vi.fn(async () => {
+    throw new MutationRejectedError("offline", { code: "network", retryable: true });
+  });
+  const refuse = vi.fn(async () => {
+    throw new MutationRejectedError("read only", {
+      code: "calendar_read_only",
+      retryable: false,
+      details: { remote: "private diagnostic" },
+    });
+  });
+  let now = PRESSED_AT;
+  const pressing = portOver(offline, pressingStore, () => now);
+  const sending = portOver(refuse, sendingStore);
+  const stopPressing = pressing.activate();
+  const reports = vi.fn();
+  const stopReports = pressing.subscribeLateRefusals((word) => reports(calendarRefusalSentence(word)));
+  const peerReports = vi.fn();
+  const stopPeerReports = sending.subscribeLateRefusals(peerReports);
+  try {
+    const act: CalendarAct = {
+      kind: "calendar_event_update",
+      eventId: "ev",
+      base: new Date(PRESSED_AT).toISOString(),
+      scope: { kind: "record" },
+      change: { title: "A new time" },
+    };
+    const heard = await pressAndHear(pressing, act);
+    expect(heard).toMatchObject({ verdict: null, say: null });
+    await sending.flush();
+    expect(refuse.mock.calls).toHaveLength(1);
+    await vi.waitFor(() => expect(pressing.hasOwedWrites()).toBe(false));
+    expect(pressing.verdict(heard.key)).toEqual({
+      kind: "refused",
+      word: "calendar_read_only",
+      details: null,
+    });
+    expect(reports.mock.calls).toEqual([["refusal.readOnly"]]);
+    expect(peerReports).not.toHaveBeenCalled();
+    expect(pressingStore.entries("calendar_settlement")).toEqual([
+      {
+        id: heard.key,
+        seq: 0,
+        entity: {
+          expiresAt: PRESSED_AT + 5 * 60_000,
+          reference: { type: "event", id: act.eventId },
+          result: { kind: "refused", word: "calendar_read_only" },
+        },
+      },
+    ]);
+    pressing.resumeWrites();
+    sending.resumeWrites();
+    await Promise.all([pressing.flush(), sending.flush()]);
+    expect(refuse.mock.calls).toHaveLength(1);
+    expect(offline.mock.calls).toHaveLength(1);
+    expect(reports.mock.calls).toEqual([["refusal.readOnly"]]);
+    now += 5 * 60_000;
+    await pressing.flush();
+    expect(pressing.verdict(heard.key)).toBeNull();
+    expect(pressingStore.entries("calendar_settlement")).toEqual([]);
+  } finally {
+    stopReports();
+    stopPeerReports();
+    stopPressing();
+    sending.suspendWrites();
+    pressingStore.close();
+    sendingStore.close();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("reconciles two peer settlements in the pressing tab once per original key", async () => {
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const factory = new IDBFactory();
+  const store = () => new IndexedDbMirrorStore({ factory, owner: "acct-calendar", notices: () => null });
+  const pressingStore = store();
+  const sendingStore = store();
+  await pressingStore.load();
+  await sendingStore.load();
+  const pressing = portOver(async () => {
+    throw new MutationRejectedError("offline", { code: "network", retryable: true });
+  }, pressingStore);
+  const send = vi.fn(async (key: string) => {
+    const code = key === "key-1" ? "calendar_read_only" : "calendar_writes_full";
+    throw new MutationRejectedError("refused", { code, retryable: false });
+  });
+  const sending = portOver(send, sendingStore);
+  const report = vi.fn();
+  const retire = vi.fn();
+  const stop = pressing.activate();
+  const off = pressing.subscribeLateRefusals(report, retire);
+  try {
+    const first = await pressAndHear(pressing, create);
+    const second = await pressAndHear(pressing, { ...create, eventId: "second-event" });
+    expect([first.say, second.say]).toEqual([null, null]);
+    await sending.flush();
+    expect(send.mock.calls).toEqual([[first.key], [second.key]]);
+    expect(report).not.toHaveBeenCalled();
+
+    pressing.resumeWrites();
+    await pressing.flush();
+    pressing.watchLateRefusal(first.key);
+    pressing.watchLateRefusal(second.key);
+    expect(report.mock.calls).toEqual([["calendar_read_only"], ["calendar_writes_full"]]);
+    pressing.suspendWrites();
+    expect(retire).toHaveBeenCalledOnce();
+  } finally {
+    off();
+    stop();
+    sending.suspendWrites();
+    pressingStore.close();
+    sendingStore.close();
+    vi.unstubAllGlobals();
+  }
 });

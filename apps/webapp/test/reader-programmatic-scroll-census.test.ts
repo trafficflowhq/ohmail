@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
@@ -11,36 +11,51 @@ import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from
  * would mark the panels it passed read. Comments and strings are blanked first (one pass,
  * `source-scan.mjs`); a planted raw write and a planted bare focus are the positive controls.
  */
-/* @reads: apps/webapp/app/shell, apps/webapp/app/components, packages/letter-body/src, packages/ui/src/primitives, packages/app-logic/src/keys, packages/app/src/write/editor */
-const ROOT = join(__dirname, "..", "app");
-/** The reader tree: every file whose code runs inside the reading column or the sheet. */
+/* @reads: packages/app/src/reader, packages/ui/src/mail/Reading, packages/app/src/write, packages/ui/src/mail/Editor, packages/letter-body/src, packages/ui/src/mail/Lists, packages/ui/src/calendar/Shell, packages/ui/src/primitives, packages/app-logic/src/keys, packages/app-logic/src/writing */
+const ROOT = join(__dirname, "..", "..", "..");
+/** Every source file under a folder, by its path from the repository's root. */
+const under = (dir: string): string[] =>
+  readdirSync(join(ROOT, dir)).flatMap((name) => {
+    const rel = `${dir}/${name}`;
+    if (statSync(join(ROOT, rel)).isDirectory()) return under(rel);
+    return /\.tsx?$/.test(name) ? [rel] : [];
+  });
+/**
+ * The reader tree: every file whose code runs inside the reading column or the sheet. Re-pointed by path from today's
+ * reader's ten files (its pane, its reply, its letters, its squares, its menus, its files, its editor and its people
+ * line) to the parts that draw the same column now: the reader and the kit's reading parts whole; the reply Write hands the column (its sheet, editors, people line, marks and
+ * Send later); the body, the squares, the day pickers and the walks, as before.
+ */
 const FILES = [
-  "shell/MessagePane.tsx",
-  "shell/InlineReply.tsx",
-  "../../../packages/app-logic/src/writing/sent-reveal.ts",
-  "../../../packages/letter-body/src/MessageBody.tsx",
-  "shell/MessageCard.tsx",
-  "shell/Conversation.tsx",
-  "shell/ThreadMarks.tsx",
-  "../../../packages/app-logic/src/keys/zone-nav.ts",
-  "../../../packages/app-logic/src/keys/focus-follows.ts",
-  "shell/MoreMenu.tsx",
-  "shell/ForwardAsk.tsx",
-  "shell/MessageFiles.tsx",
-  "shell/RichEditor.tsx",
-  "../../../packages/app/src/write/editor/commands.ts",
-  "shell/RecipientField.tsx",
-  "../../../packages/ui/src/primitives/DatePicker.tsx",
+  ...under("packages/app/src/reader"),
+  ...under("packages/ui/src/mail/Reading"),
+  "packages/app/src/write/Reply.tsx",
+  "packages/app/src/write/editor/RichEditor.tsx",
+  "packages/app/src/write/editor/commands.ts",
+  "packages/app/src/write/plain/PlainEditor.tsx",
+  "packages/app/src/write/head/People.tsx",
+  "packages/app/src/write/text/Marks.tsx",
+  "packages/app/src/write/verbs/Later.tsx",
+  "packages/ui/src/mail/Editor/Recipients.tsx",
+  "packages/ui/src/mail/Editor/recipient-type.tsx",
+  "packages/app-logic/src/writing/sent-reveal.ts",
+  "packages/letter-body/src/MessageBody.tsx",
+  "packages/ui/src/mail/Lists/ReadSquares.tsx",
+  "packages/app-logic/src/keys/zone-nav.ts",
+  "packages/app-logic/src/keys/focus-follows.ts",
+  "packages/ui/src/primitives/DatePicker.tsx",
+  "packages/ui/src/calendar/Shell/MiniMonth.tsx",
 ];
 /**
  * Focus moves admitted without `preventScroll`, each with its reason, counted so a new one is a
  * reviewed diff: the reply editor's toolbar runs TipTap's `chain().focus()` on a press of one of its
- * own buttons — the button's `onMouseDown` calls `preventDefault()`, so the press leaves the focus where it
+ * own buttons (Write's editor: its four marks, `marksOf`'s `run`; the link's and the insert's chains are not a
+ * toolbar's press and are not admitted) — the button's `onMouseDown` calls `preventDefault()`, so the press leaves the focus where it
  * is, and TipTap's `focus()` on an editor that already has it returns without scrolling.
  */
 const ADMITTED: Record<string, { pattern: RegExp; count: number }> = {
-  "shell/RichEditor.tsx": { pattern: /\.chain\(\)\s*\.focus\(\)/g, count: 3 },
-  "../../../packages/app/src/write/editor/commands.ts": { pattern: /\.chain\(\)\s*\.focus\(\)/g, count: 7 },
+  "packages/app/src/write/editor/RichEditor.tsx": { pattern: /editor\.chain\(\)\.focus\(\)\.toggle/g, count: 4 },
+  "packages/app/src/write/editor/commands.ts": { pattern: /\.chain\(\)\s*\.focus\(\)/g, count: 7 },
 };
 const RAW = /\.scrollTop\s*(?:=(?!=)|\+=|-=)|\.scrollTo\s*\(|\.scrollBy\s*\(|\.scrollIntoView\b/g;
 

@@ -13,6 +13,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { menuItem, moreButton, ohboxRows, openLetter } from "./ohbox/_finders.js";
 
 /**
  * ═══ THE FOLDERS FLAG IS NOT A GATE ON THE DELETE CONFIRM ══════════════════════════════════
@@ -64,6 +65,15 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
  * THE CONTROL is untouched by that mutation and is meant to be — it is the positive control for
  * the layer itself: while the strip is drawn, Escape closes the strip and NOT the reader, so the
  * inverted first case cannot be satisfied by an Escape that has stopped reaching the bar at all.
+ *
+ * ── RE-POINTED (share reader-1, the switch's older tests) ───────────────────────────────────
+ *
+ * The shell is the new one (the web's `MailShell`, through `_mail-shell.js`, over the same engine, consent wire and
+ * roster), in a narrow window as before; the letter is opened as before (`j`, then Enter). THE ASK IS MORE: the new
+ * reader draws no confirm strip (DIFFERENCES-FROM-TODAY, the reader: More is the ask, its Delete the deliberate
+ * second press, and the Undo window is the confirm where no strip is drawn, RULING-JOIN J-2). So "the strip" below
+ * is More's menu standing open with Delete in it, found by its role and name; its Cancel is the way a menu is left
+ * (Escape), and "the resting bar" is the panel with its More. Each expectation as it stood.
  */
 (globalThis as unknown as { React: unknown }).React = React;
 
@@ -156,6 +166,8 @@ const msg = (id: string): EngineMessage => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
   to: [], date: "2026-09-03T09:00:00.000Z", unread: false,
+  /* A letter's Cc and tags, as every mirror row carries them: the new reader's head reads both lists. */
+  cc: [], labels: [],
   updatedAt: "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -257,11 +269,10 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
   throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
 }
 
-const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id ?? "");
+const rowIds = (el: HTMLElement): string[] => ohboxRows(el).map((r) => r.dataset.id ?? "");
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const AppShell = (await import("./_mail-shell.js")).MailShell;
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   store = await storeWith(["m1", "m2", "m3"]);
   engine = engineOver(store);
@@ -284,7 +295,7 @@ async function shell(): Promise<HTMLElement> {
       }),
     }));
   });
-  await waitFor(() => rowIds(container).length > 0, "rows in the Ohbox");
+  await waitFor(() => rowIds(container).length > 0, "rows in the Ohbox", 10_000);
   return container;
 }
 
@@ -306,21 +317,25 @@ async function pointer(el: HTMLElement): Promise<void> {
   });
 }
 
-const reader = (el: HTMLElement): Element | null => el.querySelector(".reader");
-const confirm = (el: HTMLElement): Element | null => el.querySelector(".reader .abar-panel.abar-delete");
+const reader = (el: HTMLElement): Element | null => openLetter(el);
+/** The ask: More's menu standing open with Delete in it (the new reader's confirm), else null. */
+const asks = (): HTMLElement[] =>
+  [...document.querySelectorAll<HTMLElement>('[role="menu"][aria-label="More"]')].filter((m) =>
+    [...m.querySelectorAll('[role^="menuitem"]')].some((i) => (i.textContent ?? "").trim().startsWith("Delete")));
+const confirm = (_el: HTMLElement): Element | null => asks()[0] ?? null;
 
 /** Open the reader on the row under the cursor, then open the delete confirm from More. */
 async function readerWithConfirm(): Promise<HTMLElement> {
   const container = await shell();
   await key("j");
   await key("Enter");
-  expect(reader(container), "no reader opened at 390px").not.toBeNull();
-  const more = container.querySelector<HTMLElement>(".reader .abar-more");
+  await waitFor(() => reader(container) !== null, "no reader opened at 390px", 10_000);
+  const more = moreButton(container);
   expect(more, "the reader's bar has no More disclosure").not.toBeNull();
   await pointer(more!);
-  const item = document.querySelector<HTMLElement>('[role="menu"] [data-item="delete"]');
+  const item = menuItem("Delete");
   expect(item, "More offers no Delete with the folders foundation on").not.toBeNull();
-  await pointer(item!);
+  /* The new reader's More IS the ask: Delete stands in it, and only its press dispatches. */
   expect(confirm(container), "the confirm strip did not open").not.toBeNull();
   return container;
 }
@@ -405,22 +420,21 @@ describe("the delete confirm and the folders flag going off under it", () => {
        copy re-opened by the gate reopening. */
     expect(confirm(container), "the confirm is gone after the flag came back").not.toBeNull();
     expect(
-      container.querySelectorAll(".reader .abar-panel.abar-delete"),
+      asks(),
       "the flag coming back re-asked a question that was already on screen",
     ).toHaveLength(1);
     expect(sent.filter((m) => m.kind === "message_delete")).toEqual([]);
 
     /* …and the verb is reachable throughout, so neither assertion is about a verb that has gone
        away: the strip's Cancel puts the resting bar back and its disclosure offers Delete. */
-    const cancel = [...container.querySelectorAll<HTMLButtonElement>(".reader .abar-delete button")]
-      .find((b) => (b.textContent ?? "").trim() === "Cancel");
-    expect(cancel, "the confirm has no Cancel").not.toBeUndefined();
-    await act(async () => { cancel!.click(); });
-    const more = container.querySelector<HTMLElement>(".reader .abar-more");
+    /* The ask's way out is Escape (a menu holds no Cancel). */
+    await key("Escape");
+    expect(confirm(container), "the confirm has no Cancel").toBeNull();
+    const more = moreButton(container);
     expect(more, "the resting bar is gone — something is standing in its place").not.toBeNull();
     await pointer(more!);
     expect(
-      document.querySelector('[role="menu"] [data-item="delete"]'),
+      menuItem("Delete"),
       "Delete is not in More, so nothing above was about the confirmation",
     ).not.toBeNull();
   });

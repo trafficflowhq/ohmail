@@ -9,6 +9,7 @@
  * command's name into the bundle a phone is handed, which `scan:host` refuses.
  */
 
+import { SUGGESTION_GRANT_HEADER } from "@trafficflow/core/suggestion-consent";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { ConsentStateWire } from "../../webapp/app/api-client";
 
@@ -59,6 +60,7 @@ async function jsonOf<T>(res: Response): Promise<T> {
  */
 export function consentVia(
   fetchImpl: (path: string, init?: RequestInit) => Promise<Response>,
+  hosted = false,
 ): Omit<ConsentTransport, "foldersStorable"> {
   /**
    * One `PATCH /consent/settings` naming ONE axis.
@@ -68,18 +70,26 @@ export function consentVia(
    * on these doors it is also what stops the app overwriting a setting changed in a browser tab a
    * moment ago. Every caller below therefore sends exactly the field it owns, never a whole object.
    */
-  const patch = async <T>(body: Record<string, unknown>): Promise<T> =>
-    jsonOf<T>(
+  const answer = async <T extends object>(
+    res: Response, carriesGrant: boolean,
+  ): Promise<T & { relaySuggestionGrant?: string | null }> => {
+    const value = await jsonOf<T>(res);
+    return hosted && carriesGrant ? { ...value, relaySuggestionGrant: res.headers.get(SUGGESTION_GRANT_HEADER) } : value;
+  };
+  const patch = async <T extends object>(body: Record<string, unknown>, carriesGrant = false) =>
+    answer<T>(
       await fetchImpl(CONSENT_SETTINGS_PATH, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
+      carriesGrant,
     );
   return {
-    state: async () => jsonOf<ConsentStateWire>(await fetchImpl(CONSENT_PATH)),
+    retryColdRead: true,
+    state: async () => answer<ConsentStateWire>(await fetchImpl(CONSENT_PATH), true),
     setAutoSuggest: (enabled) =>
-      patch<{ autoSuggestAt: string | null; autoActAt?: string | null }>({ autoSuggest: enabled }),
+      patch<{ autoSuggestAt: string | null; autoActAt?: string | null }>({ autoSuggest: enabled }, true),
     // The act on suggestions: the same route on both doors, one axis per PATCH.
     setAutoAct: (enabled) => patch<{ autoActAt: string | null }>({ autoAct: enabled }),
     /* THE WINDOW AND ITS MODE, one call and one PATCH — the hosted door's shape exactly.

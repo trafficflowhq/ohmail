@@ -19,5 +19,6 @@ export {
   type OpenInvite,
 } from "./model.js";
 export { useInvites } from "./use-invites.js";
+export { invitesPane, type InvitesPaneParts } from "./pane.js";
 export { invitesStates, type InvitesShown } from "./states.js";
 export { INVITES_NAMESPACE } from "./namespace.js";

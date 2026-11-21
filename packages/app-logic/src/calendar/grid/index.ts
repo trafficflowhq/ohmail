@@ -19,7 +19,7 @@ export {
   type TimeGridInput,
   type TimeGridModel,
 } from "./model.js";
-export { clockOf, dayHead, hourLabels, type DayHead } from "./words.js";
+export { clockOf, dayHead, hourLabels, otherHourLabels, type DayHead } from "./words.js";
 export { blockChip, pillChip, type BlockChip, type GridEvent, type PillChip } from "./chips.js";
 export {
   fitHour,

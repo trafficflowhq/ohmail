@@ -31,7 +31,8 @@ const wipe = vi.hoisted(() => ({
   handed: [] as (string | undefined)[],
   held: { cleared: true, remaining: [] as string[], inventoryComplete: true, serverRefused: null as string | null },
 }));
-vi.mock("../../app/sign-out", () => ({
+vi.mock("../../app/sign-out", async (original) => ({
+  ...await original<typeof import("../../app/sign-out")>(),
   signOut: async (owner?: string) => {
     wipe.handed.push(owner);
     try {

@@ -1,6 +1,7 @@
 /** The door of `screener`: what a decision is, a row of the spam shelf, and the Screener's state with its journal. */
 export type { DecisionDestination, DecisionScope } from "./decision.js";
 export { DECISION_KEY, DECISION_ORDER, DECISION_QUIET, PILE_KEY, PILE_VERB_KEY } from "./decision.js";
+export { autoUnsubscribeConfirms, screeningDegrade } from "@ohmail/client-engine";
 export { useScreenerModel, type ScreenerModelInput } from "./model.js";
 export { useScreenerLive, type ScreenerLive, type ScreenerLiveInput } from "./live.js";
 export {
@@ -14,11 +15,19 @@ export {
   type ScreenerFilterId,
 } from "./filter.js";
 export { nextAfterDecision } from "./next-sender.js";
+export { HELD_BODY_STALL_MS, useHeldBodies } from "./view-parts.js";
 export { emptyOf, type ScreenerEmpty, type ScreenerFacts } from "./empty.js";
 export { defaultScopeOf, isSharedDomain } from "./reach.js";
-export { suggestionWords, type SuggestionWords, type WordsLine } from "./words.js";
-export { screenerKeys, type KeySegment, type ScreenerKeysInput, type ScreenerKeyWords } from "./keys.js";
+export { NO_RUN, suggestionWords, type NoAdvice, type SuggestionWords, type WordsLine } from "./words.js";
 export {
+  screenerKeys,
+  screenerListSteps,
+  type KeySegment,
+  type ScreenerKeysInput,
+  type ScreenerKeyWords,
+} from "./keys.js";
+export {
+  screenerSenderKey,
   useScreenerView,
   viewRowId,
   viewSender,
@@ -78,3 +87,11 @@ export {
   useImpersonationFiled,
 } from "./impersonation-filed.js";
 export type { ImpersonationFiledNotice } from "./impersonation-filed.js";
+
+export {
+  claimFact,
+  senderCheckAmong,
+  senderCheckFact,
+  senderCheckSentence,
+  type SenderCheckFact,
+} from "./sender-check.js";

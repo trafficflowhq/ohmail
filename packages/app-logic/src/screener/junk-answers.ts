@@ -54,5 +54,7 @@ export interface JunkSweepWire {
   mailboxes: JunkSweepMailboxWire[];
   movable: number;
   pending: boolean;
+  confirmationRequired?: boolean;
+  confirmation?: string;
   held?: { ids: string[]; truncated: boolean };
 }

@@ -128,7 +128,8 @@ describe("the shell wires it", () => {
   it("open only on the live Ohbox", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    expect(shell).toMatch(/useOhboxVisitMark\(demo \? null : engine, !demo && effectiveView === "ohbox"\)/);
+    // The mail ground records the visit independently of the Ohbox component's lifetime.
+    const shell = readFileSync(resolve(process.cwd(), "packages/app/src/mail/ground/boot-visit.ts"), "utf8");
+    expect(shell).toMatch(/useOhboxVisitMark\(demo \? null : engine, !demo && route\.place === "ohbox"\)/);
   });
 });

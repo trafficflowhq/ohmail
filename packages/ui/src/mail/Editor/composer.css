@@ -101,7 +101,7 @@
     border-radius: var(--r-pill);
   }
 
-  .oh-composer-mark[aria-pressed="true"] {
+  .oh-composer-mark:is([aria-pressed="true"], [aria-expanded="true"]) {
     background: var(--sheet);
     box-shadow: var(--oh-ring-ctl);
     color: var(--ink);
@@ -371,7 +371,7 @@
     font-weight: var(--w-text);
   }
 
-  :root[data-face="ohmarchy"] .oh-composer-mark[aria-pressed="true"] {
+  :root[data-face="ohmarchy"] .oh-composer-mark:is([aria-pressed="true"], [aria-expanded="true"]) {
     box-shadow: none;
   }
 
@@ -398,6 +398,16 @@
   :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] .oh-composer-text {
     flex: 1 0 auto;
     max-width: none;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"])
+    .oh-composer[data-fill]
+    .oh-composer-text:has(.oh-lettertext) {
+    display: grid;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] .oh-lettertext {
+    min-height: 100%;
   }
 
   /* Under a finger the marks are a line that travels sideways, its far end fading where more waits. */

@@ -1,8 +1,8 @@
 /**
  * THE HOST-CLIENT GATE — which of two things this browser is looking at. Either it holds a
  * pairing (a refresh token the BearerManager found), and the answer is the mail client — the
- * SAME `AppShell` the desktop window and app.ohmail.app render, over the shared `HttpAdapter`
- * in bearer mode — or it does not, and the answer is the pairing landing, which is also where
+ * SAME frame over the mail ground the desktop window and app.ohmail.app mount, over the shared
+ * `HttpAdapter` in bearer mode — or it does not, and the answer is the pairing landing, which is also where
  * a session that DIES mid-use lands: rendering mail past a revocation would be a mailbox that
  * silently stopped being live. `baseUrl: ""` (root-relative on the served origin); the
  * `headers` seam injects Authorization; the `fetch` is the manager's, with its single 401
@@ -22,16 +22,20 @@
  * hosted constant, under-selling the door.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { NONE, type FeatureEntry, type HostContract } from "@ohmail/app/host";
+import { BrowserGeneralSettings } from "@ohmail/app/settings/browser";
+import { NONE, type FeatureEntry, type HostContract, type HostLanguage } from "@ohmail/app/host";
+import {
+  browserMailParts,
+  browserOpenLink,
+  MailFrame,
+  useBrowserMail,
+} from "../../webapp/app/shell/browser-mail";
 import { EngineProvider } from "../../webapp/app/shell/engine";
 import { browserNotificationHost } from "../../webapp/app/shell/notification-settings";
 import { ScreeningSection } from "../../webapp/app/shell/ScreeningSection";
-import { TodaysFrame } from "../../webapp/app/shell/TodaysFrame";
-import { NO_TODAYS } from "../../webapp/app/shell/todays-inputs";
-import { useTodaysSupplies } from "../../webapp/app/shell/todays-supplies";
-import { dropLocalStorageKeys, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
+import { dropLocalStorageKeys } from "@ohmail/app-logic/session/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "@ohmail/app-logic/writing/compose";
 import {
   OWNED_REPLY_DRAFT_PREFIX,
@@ -42,14 +46,15 @@ import {
 } from "@ohmail/app-logic/writing/mail-send";
 import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
-import { ROUTING_INTENTS_PREFIX, type OhmailEngine } from "@ohmail/client-engine";
+import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import { scopeMayMount, setStorageOwner } from "@ohmail/app-logic/storage";
 import { BearerManager, type SignOutOutcome } from "./bearer.js";
 import { HostAccountPane } from "./HostAccountPane.js";
-import { createHostClientEngine } from "./host-engine.js";
-import { pairedHost } from "./host.js";
-import { discardHostOutbox, type HostOutboxDiscard } from "./outbox-store.js";
+import { usePairedEngine, useReplacePairedEngine } from "./paired-engine.js";
+import { languageOf, pairedAccountDoor, pairedHost, pairedPaneParts } from "./host.js";
+import { discardHostOutbox } from "./outbox-store.js";
+import { reportDiscard, reportSweep } from "./pairing-cleanup.js";
 import { PairScreen } from "./PairScreen.js";
 import {
   consentOverBearer,
@@ -103,115 +108,44 @@ export const HOST_SCRATCH_PREFIXES: readonly string[] = [
   OWNED_REPLY_META_PREFIX,
 ];
 
-/**
- * WHAT THE SWEEP COULD NOT DO IS A FACT, NOT A SHRUG. `dropLocalStorageKeys` returns a
- * verdict — which matched keys are still present, and whether the jar could be walked —
- * because a browser that refuses proves nothing by naming no survivors. Both departure paths
- * discarded it, so a private window or a refusing storage layer produced a signed-out screen
- * over mail text still on the device. This door has no toast host at the moment either path
- * runs, so the verdict goes to the console — the weakest useful thing: on record, greppable,
- * and not pretending the sweep succeeded. A visible sentence beside this door's own sign-out
- * copy is the named follow-up rather than invented here.
- */
-function reportSweep(sweep: LocalSweep): void {
-  if (sweep.enumerated && sweep.survivors.length === 0) return;
-  console.warn("ohmail host client: the scratch sweep did not complete", {
-    enumerated: sweep.enumerated,
-    survivors: sweep.survivors.length,
-  });
-}
-
-/** The queued changes go with the pairing; a database that refused is on record, not done. */
-function reportDiscard(verdict: HostOutboxDiscard): void {
-  if (verdict === "discarded") return;
-  console.warn("ohmail host client: the queued changes kept in this browser could not be discarded");
-}
-
 /** How the CURRENT unpaired state came about, for the landing: ended at the computer, or signed out here. */
 type Ended = { kind: "revoked" } | { kind: "signed-out"; outcome: SignOutOutcome | null };
 
-export function HostGate({ bearer }: { bearer: BearerManager }) {
-  const [paired, setPaired] = useState(bearer.paired());
-  /** `null` until the session ends in this page; the landing says which way it ended. */
-  const [ended, setEnded] = useState<Ended | null>(null);
-  /** Set across this page's own Sign out, so the death it causes is said as a sign-out. */
-  const signingOut = useRef(false);
-  /** `/pair` opens the landing even while paired — that is what a fresh QR scan is. */
-  const [onPairPath, setOnPairPath] = useState(
-    typeof window !== "undefined" && window.location.pathname === "/pair",
-  );
+/** The pairing's own sign-out, stood around the frame for the Account section's door. */
+const PairingSignOut = createContext<(() => Promise<void>) | null>(null);
 
-  useEffect(
-    () =>
-      bearer.onSessionDead(() => {
-        // WHAT IS LEFT AT REST GOES WITH THE PAIRING. `bearer.die()` has already dropped the
-        // refresh token and the pairing scope, so nothing on this page can read these keys again
-        // — but unreachable is not gone, and three of them are mail text on a device somebody
-        // just signed out of. See HOST_SCRATCH_PREFIXES.
-        reportSweep(dropLocalStorageKeys(HOST_SCRATCH_PREFIXES));
-        // The changes this browser kept for the pairing go with it too, every pairing's.
-        void discardHostOutbox().then(reportDiscard);
-        // Land on /pair with the plain sentence — the ruled shape for a rotation failure. The
-        // path is replaced (not pushed) so Back cannot return to a dead mailbox.
-        window.history.replaceState(null, "", "/pair");
-        setEnded(signingOut.current ? { kind: "signed-out", outcome: null } : { kind: "revoked" });
-        setPaired(false);
-        setOnPairPath(true);
-      }),
-    [bearer],
-  );
+/** The page's door of the Account section, the sign-out alone: one door for the page's life. */
+function usePairedAccountDoor() {
+  const signOut = useContext(PairingSignOut);
+  const door = useMemo(() => (signOut === null ? null : pairedAccountDoor(signOut)), [signOut]);
+  if (door === null) throw new Error("usePairedAccountDoor: no pairing stands above (PairingSignOut)");
+  return door;
+}
 
-  /** This page's own Sign out: the death above sweeps, and the landing says what the computer heard. */
-  const signOut = useCallback(async (): Promise<void> => {
-    signingOut.current = true;
-    try {
-      const outcome = await bearer.signOut();
-      setEnded({ kind: "signed-out", outcome });
-    } finally {
-      signingOut.current = false;
-    }
-  }, [bearer]);
+const pairedTextRoot = () => document.documentElement;
 
-  /**
-   * ONE engine per pairing, built only once this browser holds one. `paired` is the dependency
-   * that matters: a re-pair after a death builds a fresh engine rather than reviving one whose
-   * in-flight drains were refused.
-   */
-  /**
-   * WHICH PAIRING THIS PAGE IS SERVING — read every render, because a re-pair changes it under us.
-   *
-   * `paired` is a boolean and `bearer` is one long-lived object, so neither of them CHANGES when a
-   * `/pair` redeem swaps the credential while the tab is already paired — the explicitly supported
-   * gesture one branch below. The engine memo therefore kept account A's in-memory mirror and
-   * served it under account B's session: two accounts' mail in one mirror, which is the
-   * cross-account lesson this door's own header cites as the reason it has no persistent one.
-   */
-  const scope = bearer.pairScope();
+type PairedLocale = HostLanguage & NonNullable<Parameters<typeof BrowserGeneralSettings>[0]["locale"]>;
+const PairedLocaleContext = createContext<PairedLocale | null>(null);
 
-  /** WHICH PAIRING THIS BROWSER SAID IT CANNOT KEEP CHANGES FOR — said once, dismissible. */
-  const [unkept, setUnkept] = useState<{ scope: string | null; dismissed: boolean } | null>(null);
+function PairedGeneralPane() {
+  return <BrowserGeneralSettings locale={useContext(PairedLocaleContext)} textRoot={pairedTextRoot} />;
+}
 
+export const PAIRED_PANE_PARTS = pairedPaneParts(usePairedAccountDoor, PairedGeneralPane);
+
+/** What only this page hands the mail: a browser host's reader, no part of a stage, and that one door. */
+const PAIRED_MAIL_PARTS = browserMailParts(PAIRED_PANE_PARTS);
+
+/** The paired root supplies the language controls for adoption and the General pane. */
+export function HostGate({ bearer, language }: { bearer: BearerManager; language?: PairedLocale | null }) {
+  const { paired, ended, onPairPath, signOut, onPaired } = usePairedSession(bearer);
+  const { scope, makeEngine, mirrorAccount, unkept, setUnkept } = usePairedEngine(bearer);
+  // Re-pairing changes the scope even when the bearer object stays the same.
   const engine = useMemo(
-    () =>
-      paired
-        ? createHostClientEngine(bearer, {
-            scope,
-            onUnkept: () =>
-              setUnkept((u) => (u !== null && u.scope === scope ? u : { scope, dismissed: false })),
-          })
-        : null,
-    // `scope` is the dependency that matters on a RE-PAIR: a fresh redeem mints a new one, so the
-    // engine (and the mirror inside it) is rebuilt for the account that is now being served.
-    [paired, bearer, scope],
+    () => (paired ? makeEngine(bearer, scope) : null),
+    [paired, bearer, scope, makeEngine],
   );
-  /* AN ENGINE THE PAGE REPLACES LETS GO OF ITS OUTBOX ROWS (`OhmailEngine.dispose`), so the next one
-     adopts them. Disposed when the memo moves on, never in the effect's own cleanup: StrictMode
-     replays that cleanup over the engine still in use. */
-  const previous = useRef<OhmailEngine | null>(null);
-  useEffect(() => {
-    if (previous.current !== null && previous.current !== engine) previous.current.dispose();
-    previous.current = engine;
-  }, [engine]);
+  useReplacePairedEngine(engine);
 
   /* Stable identities: the shared hooks (`useProfileImport`, the mail-state probe) treat their
      transport as a dependency, and a fresh object per render would re-run them per render. */
@@ -271,19 +205,9 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
         ended={ended?.kind ?? null}
         signedOut={ended?.kind === "signed-out" ? ended.outcome : null}
         onPaired={() => {
-          // A FRESH PAIRING IS ALSO A DEPARTURE, and only the death path used to say so.
-          // `/pair` opens this landing while still paired — the case just above — so a person can
-          // move this browser from one computer to another without ever signing out. `adopt`
-          // retires the old scope, which makes the previous pairing's records unreachable; it does
-          // not make them GONE, and three of them are mail text. Swept here for the same reason
-          // and by the same list as the death path.
+          // Re-pairing also departs from the previous account. Sweep before adopting the new frame.
           reportSweep(dropLocalStorageKeys(HOST_SCRATCH_PREFIXES));
-          // Every earlier pairing's queued changes; the new one keeps its own.
-          void discardHostOutbox({ except: bearer.pairScope() }).then(reportDiscard);
-          window.history.replaceState(null, "", "/");
-          setEnded(null);
-          setOnPairPath(false);
-          setPaired(true);
+          onPaired();
         }}
       />
     );
@@ -305,43 +229,64 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
      * never mounts for one commit over scope A's engine.
      */
     <EngineProvider key={scope} demo={false} engine={engine}>
-      <PairedFrame engine={engine} scope={scope} has={has} />
+      <PairingSignOut.Provider value={signOut}>
+        <PairedFrame
+          engine={engine}
+          scope={scope}
+          mirrorAccount={mirrorAccount}
+          has={has}
+          controls={language ?? null}
+        />
+      </PairingSignOut.Provider>
     </EngineProvider>
   );
 }
 
-type PairedHas = Omit<Parameters<typeof pairedHost>[2], "notifications" | "frame">;
+type PairedHas = Omit<Parameters<typeof pairedHost>[2], "notifications" | "frame" | "language" | "openLink">;
 
 /** The frame over this page's host, held to one record while its parts stand. */
 function PairedFrame({
   engine,
   scope,
+  mirrorAccount,
   has,
+  controls,
 }: {
   engine: HostContract["engine"];
   scope: string;
+  mirrorAccount: string | null;
   has: PairedHas;
+  controls: PairedLocale | null;
 }) {
-  /* What every browser shell hands the frame: made where the frame mounts, under the page's theme. */
-  const frame = useTodaysSupplies(NONE);
+  /* What every browser host hands the frame for mail: made where the frame mounts, under the page's theme. */
+  const frame = useBrowserMail(NONE, PAIRED_MAIL_PARTS);
+  const language = useMemo(() => languageOf(controls), [controls]);
   const { signOut, mailboxes, wires, features } = has;
   const host = useMemo(
     () =>
       pairedHost(
         engine,
-        { scope, sendCeiling: HOST_CLIENT_SEND_MAX_TOTAL_BYTES, build: { version: null, commit: null } },
+        {
+          scope,
+          mirrorAccount,
+          sendCeiling: HOST_CLIENT_SEND_MAX_TOTAL_BYTES,
+          build: { version: null, commit: null },
+        },
         {
           signOut,
           mailboxes,
           wires,
           features,
           notifications: browserNotificationHost,
+          language,
+          openLink: browserOpenLink,
           frame,
         },
       ),
     [
       engine,
       scope,
+      mirrorAccount,
       signOut,
       mailboxes,
       wires.gapLetters,
@@ -352,10 +297,15 @@ function PairedFrame({
       wires.trash,
       wires.draftReply,
       features,
+      language,
       frame,
     ],
   );
-  return <TodaysFrame host={host} todays={NO_TODAYS} />;
+  return (
+    <PairedLocaleContext.Provider value={controls}>
+      <MailFrame host={host} />
+    </PairedLocaleContext.Provider>
+  );
 }
 
 /** The page's own sentence for a browser that refused the outbox's database, with its one answer. */
@@ -366,4 +316,57 @@ function useUnkeptNotice(dismiss: () => void) {
     title: t("outboxNotKept"),
     acts: [{ label: t("outboxNotKeptDismiss"), onPress: dismiss }] as const,
   };
+}
+
+function usePairedSession(bearer: BearerManager) {
+  const [paired, setPaired] = useState(bearer.paired());
+  /** `null` until the session ends in this page; the landing says which way it ended. */
+  const [ended, setEnded] = useState<Ended | null>(null);
+  /** Set across this page's own Sign out, so the death it causes is said as a sign-out. */
+  const signingOut = useRef(false);
+  /** `/pair` opens the landing even while paired — that is what a fresh QR scan is. */
+  const [onPairPath, setOnPairPath] = useState(
+    typeof window !== "undefined" && window.location.pathname === "/pair",
+  );
+
+  useEffect(
+    () =>
+      bearer.onSessionDead(() => {
+        // WHAT IS LEFT AT REST GOES WITH THE PAIRING. `bearer.die()` has already dropped the
+        // refresh token and the pairing scope, so nothing on this page can read these keys again
+        // — but unreachable is not gone, and three of them are mail text on a device somebody
+        // just signed out of. See HOST_SCRATCH_PREFIXES.
+        reportSweep(dropLocalStorageKeys(HOST_SCRATCH_PREFIXES));
+        // The changes this browser kept for the pairing go with it too, every pairing's.
+        void discardHostOutbox().then(reportDiscard);
+        // Land on /pair with the plain sentence — the ruled shape for a rotation failure. The
+        // path is replaced (not pushed) so Back cannot return to a dead mailbox.
+        window.history.replaceState(null, "", "/pair");
+        setEnded(signingOut.current ? { kind: "signed-out", outcome: null } : { kind: "revoked" });
+        setPaired(false);
+        setOnPairPath(true);
+      }),
+    [bearer],
+  );
+
+  /** This page's own Sign out: the death above sweeps, and the landing says what the computer heard. */
+  const signOut = useCallback(async (): Promise<void> => {
+    signingOut.current = true;
+    try {
+      const outcome = await bearer.signOut();
+      setEnded({ kind: "signed-out", outcome });
+    } finally {
+      signingOut.current = false;
+    }
+  }, [bearer]);
+
+  const onPaired = () => {
+    // Every earlier pairing's queued changes; the new one keeps its own.
+    void discardHostOutbox({ except: bearer.pairScope() }).then(reportDiscard);
+    window.history.replaceState(null, "", "/");
+    setEnded(null);
+    setOnPairPath(false);
+    setPaired(true);
+  };
+  return { paired, ended, onPairPath, signOut, onPaired };
 }

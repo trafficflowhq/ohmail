@@ -8,3 +8,4 @@ export {
   type HistoryModel,
   type HistoryMonth,
 } from "./model.js";
+export { useHistoryLive, type HistoryLiveOwn } from "./live.js";

@@ -72,7 +72,32 @@ beforeAll(async () => {
   };
   webAdmit = density.admitVerbs;
   webOrder = density.BAR_VERB_ORDER.map((v) => ({ id: NAME[v.verb] ?? v.verb, seg: v.seg }));
+  const fit = pathToFileURL(join(APP, "..", "..", "packages", "ui", "src", "mail", "Reading", "fit-panel.ts")).href;
+  webFit = ((await import(fit)) as { fitPanel: (wrap: unknown) => string[] }).fitPanel;
 });
+
+/* ── the web's floor: the new reader's action panel (`packages/app/src/reader/actions/ActionBar.tsx`)
+      hands the kit each verb's rank, and the kit's fold (`fitPanel`) folds only a rank above 0.
+      Forward's rank is read off the panel's verb list; the kit's own fold is then run over a row
+      with no room, Forward and one foldable verb in it, as fake nodes carrying the data the
+      panel's buttons carry. ───────────────────────────────────────────────────────────────── */
+let webFit: (wrap: unknown) => string[];
+function webForwardFolds(): boolean {
+  const panel = read("../../packages/app/src/reader/actions/ActionBar.tsx");
+  const hit = panel.match(/id: "forward",[^}]*?rank: (\d+),/);
+  expect(hit, "the web panel stands no Forward").not.toBeNull();
+  const node = (id: string, rank: string) => ({ hidden: false, dataset: { id, rank, signed: "" } as Record<string, string> });
+  const verbs = [node("forward", hit![1]!), node("later", "2")];
+  const bar = {
+    querySelectorAll: (sel: string) => (sel === "[data-rank]" ? verbs : []),
+    querySelector: () => null,
+    get scrollWidth() {
+      return verbs.filter((v) => !v.hidden).length * 100;
+    },
+  };
+  const folded = webFit({ firstElementChild: bar, clientWidth: 1 });
+  return folded.includes("forward") || verbs[0]!.hidden;
+}
 
 /* ── the width fixture: en labels × the measured metric + the component's chrome ──────────── */
 const CHAR_DP = 6.95;
@@ -107,11 +132,11 @@ function widthsTable(): Record<string, number> {
 
 /** The verbs with their segments, in the desktop's row order — derived above. Forward is the web
  *  bar's FLOOR (DESIGN-026 §2.1): out of the admission order, standing after Reply all
- *  (`MessagePane.tsx`), so the web ROW is the order with Forward in that seat — the reader-verbs
+ *  (the new reader's panel: rank 0, which the kit's fold never folds), so the web ROW is the order with Forward in that seat — the reader-verbs
  *  census's own derivation. */
 function liteVerbs(): BarVerbLite[] {
   expect(webOrder.map((v) => v.id), "Forward is admissible on the web again — it would fold").not.toContain("forward");
-  expect(read("../webapp/app/shell/MessagePane.tsx"), "the web bar's Forward is no longer a floor group").toContain('className="abar-g abar-fwd"');
+  expect(webForwardFolds(), "the web bar's Forward is no longer a floor group").toBe(false);
   const row = [...webOrder];
   row.splice(row.findIndex((v) => v.id === "replyAll") + 1, 0, { id: "forward", seg: null });
   expect(barIds, "the bar's standing set drifted from the webapp's row").toEqual(row.map((v) => v.id));

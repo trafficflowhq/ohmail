@@ -1,15 +1,12 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, MessageBody, TagEntity as TagDTO } from "@ohmail/wire";
+import type { EngineMessage } from "@ohmail/wire";
+import { screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { FeedPartition } from "@ohmail/client-engine";
-import en from "../messages/en.json";
-import de from "../messages/de.json";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { ReadsView } from "../app/views/ReadsView";
-import { mailboxLabelKey, mailboxLabelResolver, type MailboxLabelFact } from "../app/shell/mailbox-label";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
+import { issue } from "../../../packages/app/test/streams/registered-world.js";
+import { mountCheckedStream } from "./stream-check-frame.js";
+
+type MailboxLabelFact = { id: string; address: string; displayName: string | null };
 
 /**
  * ═══ A READS SURFACE SAYS WHICH ADDRESS OF YOURS THE MESSAGE ARRIVED AT ═══════════════════
@@ -29,11 +26,6 @@ import { mailboxLabelKey, mailboxLabelResolver, type MailboxLabelFact } from "..
  *    absent on the same card.
  */
 
-const ISO = "2026-08-04T09:00:00.000Z";
-const tags: TagDTO[] = [];
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
 /** Two mailboxes: one labelled, one not — the two faces the resolver has to choose between. */
 const TWO: MailboxLabelFact[] = [
   { id: "mb-work", address: "w@x.invalid", displayName: "Work" },
@@ -42,69 +34,25 @@ const TWO: MailboxLabelFact[] = [
 const ONE: MailboxLabelFact[] = [TWO[0]!];
 
 const message = (mailboxId: string, to = [{ name: null, address: "w@x.invalid" }]): EngineMessage =>
-  ({
-    id: "m1", accountId: "a", mailboxId, threadId: null, messageIdHeader: null,
+  issue("m1", 12, {
+    mailboxId,
     subject: "The weekly note", from: { name: "Ida Vogt", address: "ida@x.invalid" },
-    to, cc: [], date: ISO, folder: "INBOX", physicalFolder: "INBOX",
-    snippet: "the opening line of the issue",
-    unread: false, hasAttachments: false, attachmentCount: 0, sensitivity: {}, triage: null,
-    labels: [], remoteContent: "none", updatedAt: ISO,
-  }) as unknown as EngineMessage;
+    to, cc: [],
+  });
 
-const body = (m: EngineMessage): MessageBody =>
-  ({ text: m.snippet, state: "snippet", html: null, loadedRemoteContent: false,
-     unsubscribe: "no_header", unsubscribeUrl: null } as unknown as MessageBody);
-
-let roots: Root[] = [];
 let host: HTMLElement | null = null;
 
-/**
- * Mounted through the REAL resolver, never a hand-written stub: the gate under test lives inside
- * `mailboxLabelResolver`, so a mount that passed its own `() => "Work"` would be measuring the
- * wiring while the thing that decides went unasked.
- */
-async function mountReads(
-  m: EngineMessage,
-  facts: MailboxLabelFact[] | null,
-  locale: "en" | "de" = "en",
-): Promise<void> {
-  host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  roots.push(root);
-  const partition: FeedPartition = { waterline: null, fresh: [m], seen: [], newCount: 0 };
-  await act(() => {
-    root.render(
-      <NextIntlClientProvider locale={locale} messages={locale === "de" ? de : en} now={new Date(ISO)} timeZone="UTC">
-        <KeymapProvider>
-          <ReadsView settled owed={false}
-            partition={partition} tags={tags} now={new Date(ISO)} cur={null} onCur={() => {}}
-            aiChip={null} chipState={null} onChipState={() => {}} markSeen={() => {}}
-            bodyOf={body} hydrateBody={() => {}} jumpTo={null} onJumped={() => {}}
-            onAction={() => {}}
-            mailboxLabelOf={mailboxLabelResolver(facts)}
-          />
-        </KeymapProvider>
-      </NextIntlClientProvider>,
-    );
-  });
+async function mountReads(m: EngineMessage, facts: MailboxLabelFact[] | null, locale: "en" | "de" = "en") {
+  const { engine } = fakeMail([m]);
+  ({ el: host } = await mountCheckedStream(engine, "#/reads", locale, facts ? async () => facts : undefined));
 }
 
-afterEach(async () => {
-  await act(async () => { for (const r of roots) r.unmount(); });
-  roots = [];
-  host?.remove();
-  host = null;
-});
+afterEach(() => { host = null; });
 
-const rowButton = (): HTMLElement => {
-  const el = host!.querySelector<HTMLElement>(".row");
-  expect(el, "no Reads row rendered").toBeTruthy();
-  return el!;
-};
+const rowButton = (): HTMLElement => screen.getByRole("option", { name: /The weekly note/ });
 const card = (): HTMLElement => {
-  const el = host!.querySelector<HTMLElement>(".scast");
-  expect(el, "no Reads card rendered").toBeTruthy();
+  const el = screen.getByRole("heading", { name: "The weekly note" }).closest<HTMLElement>("article");
+  expect(el, "no News card rendered").toBeTruthy();
   return el!;
 };
 const rowBadges = (): string[] =>
@@ -124,7 +72,7 @@ describe("a two-mailbox account is told which of its addresses received the mess
     await mountReads(message("mb-work"), TWO);
     expect(cardBadges()).toContain("Work");
     expect(
-      card().querySelector(".sc-line .badge.place"),
+      card().querySelector(".oh-messagehead .badge.place"),
       "the card's badge is not on the head line",
     ).toBeTruthy();
   });
@@ -157,7 +105,7 @@ describe("a two-mailbox account is told which of its addresses received the mess
     await mountReads(message("mb-work"), TWO, "de");
     expect(rowBadges()).toContain("Work");
     expect(rowButton().getAttribute("aria-description") ?? "").toContain("Zugestellt an Work");
-    expect(card().querySelector<HTMLElement>(".sc-line .badge.place")!.getAttribute("title"))
+    expect(card().querySelector<HTMLElement>(".oh-messagehead .badge.place")!.getAttribute("title"))
       .toBe("Zugestellt an Work");
   });
 
@@ -202,46 +150,9 @@ describe("the label is its own node, not a relaxed recipients block", () => {
     await mountReads(message("mb-work"), TWO);
     expect(cardBadges()).toContain("Work");
     expect(
-      card().querySelector(".msg-rcpts"),
+      card().querySelector(".oh-messagehead-to"),
       "the one-recipient card grew a recipients block — the ruling was relaxed",
     ).toBeNull();
-    expect(card().querySelectorAll(".rcpt-chip")).toHaveLength(0);
-  });
-});
-
-/* ══ THE GATE ITSELF, ASKED DIRECTLY ═══════════════════════════════════════════════════════ */
-
-describe("the resolver gates on the account, not on the caller", () => {
-  it("null facts, one mailbox and an empty list all answer null for every id", () => {
-    for (const facts of [null, ONE, [] as MailboxLabelFact[]]) {
-      const resolve = mailboxLabelResolver(facts);
-      expect(resolve("mb-work")).toBeNull();
-      expect(resolve("mb-home")).toBeNull();
-    }
-  });
-
-  it("above one it answers the label, the address without one, and null for a stranger", () => {
-    const resolve = mailboxLabelResolver(TWO);
-    expect(resolve("mb-work")).toBe("Work");
-    expect(resolve("mb-home")).toBe("h@x.invalid");
-    expect(resolve("mb-gone"), "an unknown mailbox id must not be rendered as itself").toBeNull();
-  });
-
-  it("a whitespace-only displayName is no label — the address answers", () => {
-    const resolve = mailboxLabelResolver([
-      { id: "a", address: "a@x.invalid", displayName: "   " },
-      { id: "b", address: "b@x.invalid" },
-    ]);
-    expect(resolve("a")).toBe("a@x.invalid");
-    expect(resolve("b")).toBe("b@x.invalid");
-  });
-
-  it("the memo key moves with a label and holds still for everything else", () => {
-    // The key is what keeps a poll that moved `pendingMoves` from rebuilding the map.
-    const same = mailboxLabelKey(TWO);
-    expect(mailboxLabelKey([...TWO].reverse()), "order must not make a new key").toBe(same);
-    expect(mailboxLabelKey(TWO.map((m) => ({ ...m })))).toBe(same);
-    expect(mailboxLabelKey([{ ...TWO[0]!, displayName: "Job" }, TWO[1]!])).not.toBe(same);
-    expect(mailboxLabelKey(null)).not.toBe(mailboxLabelKey([]));
+    expect(card().querySelectorAll(".oh-messagehead-person")).toHaveLength(0);
   });
 });

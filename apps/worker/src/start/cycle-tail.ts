@@ -154,7 +154,7 @@ export function cycleTailSection(scope: WorkerScope): void {
                 // No mailbox, deliberately: this pass spends through `spend`, never the circuit's
                 // meter, so it has no open charge to clear or refund (`ClassifierCircuit.port`).
                 classifier: scope.classifierCircuit?.port(),
-                ...(scope.spend ? { credits: scope.spend } : {}),
+                ...(scope.spend ? { credits: scope.spend, access: scope.spend } : {}),
                 ...(scope.obligations ? { obligations: scope.obligations } : {}),
                 ...(scope.usageRelay ? { usageHook: scope.usageRelay.hook } : {}),
                 ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
@@ -243,7 +243,7 @@ export function cycleTailSection(scope: WorkerScope): void {
                 drafter: scope.config.drafter && scope.usageRelay && scope.usageBuffer
                   ? attributedWorkflowDrafter(scope.config.drafter, accountId, scope.usageRelay.hook, scope.usageBuffer)
                   : scope.config.drafter ?? unconfiguredDrafter,
-                accountId, ...(scope.spend ? { credits: scope.spend } : {}),
+                accountId, ...(scope.spend ? { credits: scope.spend, access: scope.spend, consentRefunds: scope.obligations } : {}),
               },
               nowTick,
             );
@@ -691,7 +691,7 @@ export function cycleTailSection(scope: WorkerScope): void {
                 // No mailbox, deliberately: this pass spends through `spend`, never the circuit's
                 // meter, so it has no open charge to clear or refund (`ClassifierCircuit.port`).
                 classifier: scope.classifierCircuit?.port(),
-                ...(scope.spend ? { credits: scope.spend } : {}),
+                ...(scope.spend ? { credits: scope.spend, access: scope.spend } : {}),
                 ...(scope.obligations ? { obligations: scope.obligations } : {}),
                 ...(scope.usageRelay ? { usageHook: scope.usageRelay.hook } : {}),
                 ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),

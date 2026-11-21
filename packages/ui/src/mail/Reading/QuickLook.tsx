@@ -1,4 +1,5 @@
-import type { KeyboardEvent, ReactNode } from "react";
+import type { KeyboardEvent, ReactNode, SyntheticEvent } from "react";
+import { createPortal } from "react-dom";
 import { Button, KeyHint, Overlay } from "../../base/index.js";
 import type { IconName } from "../../icons/Icon.js";
 import "./quick-look.css";
@@ -16,7 +17,8 @@ export interface QuickLookProps {
   /** The file's name, and its facts in one line: kind, size, page, which of how many. */
   name: string;
   facts: string;
-  download: Way;
+  kind?: "image" | "pdf" | "text" | "other";
+  download?: Way & { busy?: boolean };
   /** Every file of the letter at once. */
   all?: Way & { busy?: boolean };
   close: { label: string };
@@ -39,8 +41,7 @@ const round = (side: "prev" | "next", way: Way, icon: IconName) => (
 
 /** Looking at a file, over the whole view. One Quick Look everywhere a file stands. */
 export function QuickLook(props: QuickLookProps) {
-  const { open, onClose, label, name, facts, download, all, close, prev, next, pages, hints, children } =
-    props;
+  const { open, onClose, label, kind, prev, next, pages, hints, children } = props;
   const keys = (event: KeyboardEvent<HTMLDivElement>): boolean => {
     const run =
       event.key === " "
@@ -66,53 +67,21 @@ export function QuickLook(props: QuickLookProps) {
     return true;
   };
   return (
-    <Overlay open={open} onClose={onClose} label={label} className="oh-quicklook" onKey={keys}>
-      <header className="oh-quicklook-head">
-        <div className="oh-quicklook-id">
-          <b className="oh-quicklook-name">{name}</b>
-          <span className="oh-quicklook-facts">{facts}</span>
-        </div>
-        <div className="oh-quicklook-tools">
-          {pages ? (
-            <span className="oh-quicklook-pager">
-              <span data-turned="">
-                <Button
-                  kind="quiet"
-                  size="s"
-                  icon="down"
-                  label={pages.up.label}
-                  disabled={pages.up.end}
-                  onPress={pages.up.onPress}
-                />
-              </span>
-              <Button
-                kind="quiet"
-                size="s"
-                icon="down"
-                label={pages.down.label}
-                disabled={pages.down.end}
-                onPress={pages.down.onPress}
-              />
-            </span>
-          ) : null}
-          {all ? (
-            <span className="oh-quicklook-all" aria-busy={all.busy || undefined}>
-              <Button kind="quiet" size="s" onPress={all.onPress}>
-                {all.label}
-              </Button>
-            </span>
-          ) : null}
-          <span className="oh-quicklook-save">
-            <Button kind="two" size="s" icon="download" onPress={download.onPress}>
-              {download.label}
-            </Button>
-          </span>
-          <Button kind="quiet" size="s" icon="x" label={close.label} onPress={onClose} />
-        </div>
-      </header>
+    <Overlay
+      open={open}
+      onClose={onClose}
+      label={label}
+      className="oh-quicklook"
+      scrimMotion="backdrop"
+      first={(box) => box}
+      onKey={keys}
+    >
+      {quickLookHead(props)}
       <div className="oh-quicklook-stage">
         {prev ? round("prev", prev, "back") : null}
-        <div className="oh-quicklook-look">{children}</div>
+        <div className="oh-quicklook-look" data-kind={kind}>
+          {children}
+        </div>
         {next ? round("next", next, "back") : null}
       </div>
       {hints?.length ? (
@@ -130,5 +99,76 @@ export function QuickLook(props: QuickLookProps) {
         </footer>
       ) : null}
     </Overlay>
+  );
+}
+
+function quickLookHead({ name, facts, pages, all, download, close, onClose }: QuickLookProps) {
+  return (
+    <header className="oh-quicklook-head">
+      <div className="oh-quicklook-id">
+        <b className="oh-quicklook-name">{name}</b>
+        <span className="oh-quicklook-facts">{facts}</span>
+      </div>
+      <div className="oh-quicklook-tools">
+        {pages ? (
+          <span className="oh-quicklook-pager">
+            <span data-turned="">
+              <Button
+                kind="quiet"
+                size="s"
+                icon="down"
+                label={pages.up.label}
+                disabled={pages.up.end}
+                onPress={pages.up.onPress}
+              />
+            </span>
+            <Button
+              kind="quiet"
+              size="s"
+              icon="down"
+              label={pages.down.label}
+              disabled={pages.down.end}
+              onPress={pages.down.onPress}
+            />
+          </span>
+        ) : null}
+        {all ? (
+          <span className="oh-quicklook-all" aria-busy={all.busy || undefined}>
+            <Button kind="quiet" size="s" busy={all.busy} onPress={all.onPress}>
+              {all.label}
+            </Button>
+          </span>
+        ) : null}
+        {download ? (
+          <span className="oh-quicklook-save">
+            <Button
+              kind="two"
+              size="s"
+              icon="download"
+              label={download.label}
+              busy={download.busy}
+              onPress={download.onPress}
+            >
+              {download.label}
+            </Button>
+          </span>
+        ) : null}
+        <Button kind="quiet" size="s" icon="x" label={close.label} onPress={onClose} />
+      </div>
+    </header>
+  );
+}
+
+/** File previews stand over the entire window and take paste and drop away from the composer. */
+export function FileQuickLook(props: QuickLookProps) {
+  const keepHere = (event: SyntheticEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  return createPortal(
+    <div onPaste={keepHere} onDragOver={keepHere} onDrop={keepHere}>
+      <QuickLook {...props} />
+    </div>,
+    document.body,
   );
 }

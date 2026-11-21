@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { Frame } from "../../src/frame/Frame.js";
 import { useFrame } from "../../src/frame/commands.js";
+import { Scoped, useScopeHere } from "../../src/frame/scope.js";
 import type { PaneProps, PlaceEntry, StageEntry } from "../../src/frame/contract.js";
 import { TextProvider } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
@@ -212,5 +213,58 @@ describe("a scope that names nobody mounts nothing", () => {
       });
       expect(under(scope, "#/first-run").stage, scope).toBe(true);
     }
+  });
+});
+
+describe("the scope a part is drawn under", () => {
+  /** A part that keeps a choice per account, and is also drawn where no frame stands: it says whose it reads. */
+  function Says(_: Partial<PaneProps>) {
+    const scope = useScopeHere();
+    return <p>{scope === null ? "under no scope" : `under ${scope}`}</p>;
+  }
+  const says: PlaceEntry = { id: "write", body: "write", rail: null, panes: { kind: "wide", Wide: Says } };
+  const framed = (scope: string) => (
+    <TextProvider locale="en" messages={FRAME_WORDS.en} timeZone="Europe/Zurich">
+      <Frame
+        host={
+          fakeHost({
+            engine: engines.A as unknown as OhmailEngine,
+            service: "self",
+            scope,
+            places: { write: says },
+            window,
+            address,
+          }).host
+        }
+      />
+    </TextProvider>
+  );
+
+  it("is the frame's scope under a frame, and the next account's once the frame stands under it", () => {
+    const view = render(framed("acct-1"));
+    expect(screen.getByText("under acct-1")).toBeTruthy();
+    view.rerender(framed("acct-2"));
+    expect(screen.getByText("under acct-2")).toBeTruthy();
+    expect(screen.queryByText("under acct-1")).toBeNull();
+  });
+
+  it("is none where no scope stands above: such a part names no key, and never a word for nobody", () => {
+    render(<Says />);
+    expect(screen.getByText("under no scope")).toBeTruthy();
+  });
+
+  it("is the scope stood above a part drawn by itself, and nothing is drawn under a scope that names nobody", () => {
+    const view = render(
+      <Scoped scope="acct-7">
+        <Says />
+      </Scoped>,
+    );
+    expect(screen.getByText("under acct-7")).toBeTruthy();
+    view.rerender(
+      <Scoped scope="local">
+        <Says />
+      </Scoped>,
+    );
+    expect(view.container.textContent).toBe("");
   });
 });

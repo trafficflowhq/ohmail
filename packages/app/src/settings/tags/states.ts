@@ -1,4 +1,5 @@
 /** Tags' registered states, as models (`screen=settings&sec=tags`, `&state=rename`, `&state=taken`). */
+import { TAG_COLOURS } from "../../tags/colours.js";
 import type { TagsModel } from "./model.js";
 
 const still = () => undefined;
@@ -10,18 +11,7 @@ export function tagsState(): TagsModel {
       { id: "t2", name: "Paperwork", colour: "ochre", hue: 78, count: 12 },
       { id: "t3", name: "Travel", colour: "denim", hue: 214, count: 3 },
     ],
-    colours: [
-      { id: "rosewood", hue: 25 },
-      { id: "ochre", hue: 78 },
-      { id: "olive", hue: 112 },
-      { id: "moss", hue: 150 },
-      { id: "verdigris", hue: 182 },
-      { id: "denim", hue: 214 },
-      { id: "indigo", hue: 250 },
-      { id: "iris", hue: 288 },
-      { id: "mulberry", hue: 320 },
-      { id: "heather", hue: 352 },
-    ],
+    colours: TAG_COLOURS,
     newHue: 150,
     notOnServer: "",
     verbs: { create: still, rename: still, recolour: still, remove: still },

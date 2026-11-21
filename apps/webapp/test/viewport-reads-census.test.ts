@@ -12,16 +12,17 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * belongs in viewport px. Comments are blanked first (`source-scan.mjs`); a planted raw read is the
  * positive control.
  */
-/* @reads: apps/webapp/app/shell, apps/webapp/app/views, apps/webapp/app/components, packages/letter-body/src, packages/app-logic/src, packages/app/src/keys, packages/ui/src */
+/* @reads: apps/webapp/app/shell, apps/webapp/app/views, apps/webapp/app/components, packages/letter-body/src, packages/app-logic/src, packages/app/src/frame/rail-drag.ts, packages/app/src/keys, packages/ui/src */
 const REPO = join(__dirname, "..", "..", "..");
 const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/components", "packages/letter-body/src", "apps/webapp/app/(product)", "packages/app-logic/src", "packages/app/src/keys", "packages/ui/src"];
+const RAIL_DRAG = "packages/app/src/frame/rail-drag.ts";
 const RAW = /getBoundingClientRect\s*\(|\.clientX\b|\.clientY\b|\binnerWidth\b|\binnerHeight\b/g;
 
 /** Reads that belong in viewport px, each with why. A new one is a reviewed diff. */
 const ADMITTED: Record<string, { count: number; why: string }> = {
   "packages/ui/src/ui-zoom.ts": { count: 5, why: "the helper itself" },
   "packages/app-logic/src/geometry/ui-zoom.ts": { count: 5, why: "the helper's twin, for behaviour that may not import the kit" },
-  "apps/webapp/app/shell/drag-file.ts": {
+  [RAIL_DRAG]: {
     count: 6,
     why: "the drag's slop compares two pointer reads, and the hit test `elementFromPoint` takes viewport px",
   },
@@ -64,6 +65,8 @@ function walkCss(dir: string): string[] {
 
 describe("viewport reads in the shell go through ui-zoom", () => {
   const counts = new Map<string, number>();
+  const dragReads = rawCount(readFileSync(join(REPO, RAIL_DRAG), "utf8"));
+  if (dragReads > 0) counts.set(RAIL_DRAG, dragReads);
   for (const root of ROOTS) {
     for (const file of walk(join(REPO, root))) {
       const n = rawCount(readFileSync(file, "utf8"));

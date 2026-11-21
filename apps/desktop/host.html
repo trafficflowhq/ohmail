@@ -9,7 +9,7 @@
          carries it. NO inline script exists in this document, and none may be added — the /pair
          landing reads a credential out of location.hash, and `script-src 'self'` refusing every
          inline block is the mitigation that guards it. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; worker-src 'none'; manifest-src 'self'; media-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; worker-src 'self'; manifest-src 'self'; media-src 'self'" />
     <!-- Relative, so vite bundles it as a hashed asset; the phone's /favicon.ico probe would
          otherwise 404 into its console. Same file the installers use. -->
     <link rel="icon" type="image/png" href="./src-tauri/icons/32x32.png" />

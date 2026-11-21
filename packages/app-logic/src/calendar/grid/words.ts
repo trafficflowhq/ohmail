@@ -3,7 +3,15 @@
  * as the calendar's design does in both languages). A day is a date, so it is written in UTC: the reader's zone has
  * nothing to move on it.
  */
-import { MS_PER_DAY, dayNumber, type PlainDate } from "@ohmail/cal-core";
+import {
+  MS_PER_DAY,
+  dayNumber,
+  civilFromDays,
+  instantOf,
+  wallIn,
+  type PlainDate,
+  type ZoneSource,
+} from "@ohmail/cal-core";
 
 export interface DayHead {
   /** The weekday in short. */
@@ -51,4 +59,15 @@ export function clockOf(minutes: number): string {
 /** One label for each hour line from `first` to `last`, both drawn. */
 export function hourLabels(first: number, last: number): string[] {
   return Array.from({ length: last - first + 1 }, (_, i) => clockOf((first + i) * 60));
+}
+
+/** What each line on one day's hour scale reads in the second zone. */
+export function otherHourLabels(day: PlainDate, zone: string, other: string, zones: ZoneSource): string[] {
+  return Array.from({ length: 25 }, (_, hour) => {
+    const date = hour === 24 ? civilFromDays(dayNumber(day) + 1) : day;
+    const wall = { ...date, hour: hour % 24, minute: 0, second: 0 };
+    const instant = instantOf({ kind: "zoned", wall, tzid: zone }, zones);
+    const there = instant ? wallIn(instant.epochMs, other, zones) : null;
+    return there ? clockOf(there.hour * 60 + there.minute) : "";
+  });
 }

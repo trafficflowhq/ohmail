@@ -93,6 +93,7 @@ export function Palette(props: PaletteProps) {
       onClose={onClose}
       label={label}
       className="oh-palette"
+      scrimMotion="together"
       place="top"
       first={(box) => box.querySelector<HTMLElement>("input")}
       onKey={keys}

@@ -3,8 +3,10 @@
  * Rename and Delete. With none (the place's own address, `#/tag`), every tag as a group that shuts and opens, by
  * name. A tag is ohmail's own row: Delete takes it off its letters, which stay where they are.
  */
+import { useStableCallback } from "../press/stable-callback.js";
+import { countWhen, listSurface, saysEmpty } from "@ohmail/client-engine";
 import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { newestFirst, usePlaceList, type PlaceList, type PlaceListInput } from "../place-list/place-list.js";
 
 export interface TagsInput extends Omit<PlaceListInput, "rows"> {
@@ -40,7 +42,7 @@ export interface TagsModel {
   /** Every tag, by name, each with its letters; only where no tag is named. */
   readonly groups: readonly TagGroup[];
   readonly toggle: (tagId: string) => void;
-  readonly count: number;
+  readonly count: number | undefined;
   readonly loading: boolean;
   readonly empty: boolean;
   readonly stamp: (iso: string) => string;
@@ -79,41 +81,38 @@ export function useTagsList(input: TagsInput): TagsModel {
     [tag, carrying, groups],
   );
   const list = usePlaceList({ ...input, rows });
-  const toggle = useCallback((id: string) => {
+  const toggle = useStableCallback((id: string) => {
     setShut((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }, []);
+  });
   const tagsById = useMemo(() => new Map(tags.map((x) => [x.id, x])), [tags]);
-  const tagsOf = useCallback(
-    (m: EngineMessage) => m.labels.map((id) => tagsById.get(id)).filter((x): x is TagDTO => x !== undefined),
-    [tagsById],
+  const tagsOf = useStableCallback((m: EngineMessage) =>
+    m.labels.map((id) => tagsById.get(id)).filter((x): x is TagDTO => x !== undefined),
   );
-  const countOf = useCallback((id: string) => carrying.get(id)?.length ?? 0, [carrying]);
-  const judge = useCallback(
-    (id: string, draft: string): RenameAnswer => {
-      const name = draft.trim();
-      const own = tagsById.get(id);
-      if (name.length === 0) return { kind: "empty" };
-      if (own !== undefined && name === own.name) return { kind: "same" };
-      const other = tags.find((x) => x.id !== id && x.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-      return other !== undefined ? { kind: "taken", name: other.name } : { kind: "save", name };
-    },
-    [tags, tagsById],
-  );
-  const none = tagId === null ? tags.length === 0 : rows.length === 0;
+  const countOf = useStableCallback((id: string) => carrying.get(id)?.length ?? 0);
+  const judge = useStableCallback((id: string, draft: string): RenameAnswer => {
+    const name = draft.trim();
+    const own = tagsById.get(id);
+    if (name.length === 0) return { kind: "empty" };
+    if (own !== undefined && name === own.name) return { kind: "same" };
+    const other = tags.find((x) => x.id !== id && x.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    return other !== undefined ? { kind: "taken", name: other.name } : { kind: "save", name };
+  });
+  const facts = { settled, count: tagId === null ? tags.length : rows.length, pending: owed };
+  const surface = listSurface(facts);
   return {
     list,
     tag,
-    gone: tagId !== null && tag === null && settled && !owed,
+    gone: tagId !== null && tag === null && saysEmpty(surface),
     groups,
     toggle,
-    count: tag !== null ? rows.length : tags.length,
-    loading: none && (!settled || owed),
-    empty: none && settled && !owed,
+    count: countWhen(facts, facts.count),
+    loading: surface === "skeleton" || surface === "pending",
+    empty: saysEmpty(surface),
     stamp: input.stamp,
     tagsOf,
     countOf,

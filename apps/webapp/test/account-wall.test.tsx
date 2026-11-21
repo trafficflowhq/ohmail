@@ -555,7 +555,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
       const t = document.body.textContent ?? "";
       if (frames[frames.length - 1] !== t) frames.push(t);
       if (document.querySelector("main.gate[aria-busy=true] .gate-card .mbx-spin")) sawGateCard = true;
-      if (!(document.body.textContent ?? "").includes(wallTitle) && document.querySelector(".today")) sawShellBeforeWall = true;
+      if (!(document.body.textContent ?? "").includes(wallTitle) && document.querySelector(".fr-root")) sawShellBeforeWall = true;
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   });
@@ -564,6 +564,9 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     await shell.teardownConfirmEnv();
   });
 
+  /* RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (1)): the mail stands when the frame's root is drawn
+     (`.fr-root`, `packages/app/src/frame/FrameRoot.tsx`, as sign-out-every-tab finds it), where today's shell drew
+     `.today`. */
   const ohbox = [en.ohbox.emptyPlain, en.ohbox.emptyScreenerTitle, en.ohbox.emptyFiledTitle];
   const wallTitle = "Your trial ended on";
   /** The wall stands: its sentence names the closure. */
@@ -591,7 +594,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     access = () => new Promise<Response>(() => {});
     await shell.mountCloudShell();
     await shell.tick(2_500);
-    expect(document.body.querySelector(".today"), "painted before the bound").toBeNull();
+    expect(document.body.querySelector(".fr-root"), "painted before the bound").toBeNull();
     await shell.tick(1_000);
     // Past the bound the shell mounted, met the roster's 402, and the wall came through the sink.
     await shell.tick(2_000);
@@ -638,7 +641,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.mountCloudShell();
     await shell.tick(500);
-    expect(document.body.querySelector(".today"), "the mailbox never opened").not.toBeNull();
+    expect(document.body.querySelector(".fr-root"), "the mailbox never opened").not.toBeNull();
     expect(sawGateCard, "the ordinary account was shown the verdict's waiting card").toBe(false);
   });
 
@@ -653,7 +656,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(1_000);
     expect(wallStands(), "the wall stood over an open verdict").toBe(false);
-    expect(document.body.querySelector(".today")).not.toBeNull();
+    expect(document.body.querySelector(".fr-root")).not.toBeNull();
     // Said in the frame's one notice slot now, where the account's note said it: in front, or behind
     // its "more" line when a notice of a higher rank stands (here, no mailbox is connected).
     const more = [...document.body.querySelectorAll<HTMLButtonElement>("button[aria-label]")]
@@ -675,7 +678,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.mountCloudShell();
     await shell.tick(1_000);
-    expect(document.body.querySelector(".today")).not.toBeNull();
+    expect(document.body.querySelector(".fr-root")).not.toBeNull();
     expect(liftedAt(OWNER), "the first open answer after the wall was not read as the reopening").not.toBeNull();
   });
 
@@ -689,6 +692,11 @@ describe("the first paint after sign-in waits for the verdict", async () => {
       getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(5).buffer,
       unsubscribe: () => Promise.resolve(true),
     };
+    // A browser that can deliver notices with the page closed also shares the worker's lock.
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request: async (_name: string, work: () => Promise<void>) => work() },
+    });
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: { register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(sub) } }) },
@@ -715,9 +723,10 @@ describe("the first paint after sign-in waits for the verdict", async () => {
       walled = false;
       await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
       await shell.tick(3_000);
-      expect(document.body.querySelector(".today")).not.toBeNull();
+      expect(document.body.querySelector(".fr-root")).not.toBeNull();
       expect(posts, "the lift did not re-announce, or announced twice").toHaveLength(1);
     } finally {
+      Reflect.deleteProperty(navigator, "locks");
       delete (navigator as unknown as Record<string, unknown>).serviceWorker;
       delete (globalThis as Record<string, unknown>).Notification;
     }
@@ -754,7 +763,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.mountCloudShell();
     await shell.tick(1_000);
-    expect(document.body.querySelector(".today")).not.toBeNull();
+    expect(document.body.querySelector(".fr-root")).not.toBeNull();
     expect(wallStands()).toBe(false);
     expect(localStorage.getItem(`ohmail.access.${OWNER}`)).toBeNull();
   });

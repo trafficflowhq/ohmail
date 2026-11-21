@@ -40,10 +40,10 @@ export const dayAndMonth = (id: DayId, locale: string): string =>
   formatter(locale, { day: "numeric", month: "short" }).format(atNoon(id));
 
 /** "November", or "November 2027" where the year is not `thisYear`. */
-export const monthName = (m: MonthId, locale: string, thisYear?: string): string =>
+export const monthName = (m: MonthId, locale: string, thisYear?: string | null): string =>
   formatter(locale, {
     month: "long",
-    ...(thisYear && m.slice(0, 4) !== thisYear ? { year: "numeric" } : {}),
+    ...(thisYear === null || (thisYear && m.slice(0, 4) !== thisYear) ? { year: "numeric" } : {}),
   }).format(atNoon(`${m}-01`));
 
 /** The weekdays in the week's order: "Mon"…, or one letter each ("narrow"). */
@@ -71,3 +71,20 @@ export const dayDate = (id: DayId, locale: string, thisYear?: string): string =>
     month: "long",
     ...(thisYear && id.slice(0, 4) !== thisYear ? { year: "numeric" } : {}),
   }).format(atNoon(id));
+
+/** The dates at each end of a calendar week. */
+export function weekTitle(
+  first: DayId,
+  last: DayId,
+  locale: string,
+  thisYear: string,
+  short = false,
+): string {
+  return formatter(locale, {
+    day: "numeric",
+    month: short || monthOfDay(first) !== monthOfDay(last) ? "short" : "long",
+    ...(yearOf(first) !== thisYear || yearOf(last) !== thisYear ? { year: "numeric" } : {}),
+  })
+    .formatRange(atNoon(first), atNoon(last))
+    .replace(/\s*–\s*/g, " – ");
+}

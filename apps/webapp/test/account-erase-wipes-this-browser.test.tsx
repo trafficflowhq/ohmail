@@ -167,7 +167,7 @@ async function seedThisBrowser(): Promise<{ close: () => void; keys: string[]; p
 async function plantPreferences(owner: string): Promise<string[]> {
   const before = new Set([...Object.keys(localStorage), ...Object.keys(sessionStorage)]);
   const { foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
-  const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
+  const { seedNotNowKey } = await import("@ohmail/app-logic/mailboxes/first-run/seed-offer");
   const { writeAfterVerb } = await import("@ohmail/app-logic/press/after-verb");
   const { imageQualityKeyFor } = await import("../app/components/image-quality.js");
   const { dismissKey } = await import("../app/(product)/mailbox/LifecycleBanner.js");

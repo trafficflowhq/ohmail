@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { queryByRole } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell,
@@ -42,7 +43,7 @@ const json = (v: unknown): Response =>
 
 const folderCreate = (seq: number) => ({
   type: "folder", op: "create", id: FOLDER_ID, seq, updatedAt: ISO,
-  entity: { id: FOLDER_ID, name: "Receipts", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO },
+  entity: { id: FOLDER_ID, name: "Project receipts", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO },
 });
 const folderDelete = (seq: number) => ({
   type: "folder", op: "delete", id: FOLDER_ID, seq, updatedAt: ISO,
@@ -63,9 +64,7 @@ const pageOf = (creates: unknown[], deletes: unknown[], cursor: string): Respons
   });
 
 const foldersToggle = (el: HTMLElement): string | undefined =>
-  [...el.querySelectorAll(".rlabel-toggle")]
-    .map((n) => n.textContent?.trim())
-    .find((t) => t === "Folders");
+  queryByRole(el, "button", { name: "Folders" })?.textContent?.trim();
 
 beforeEach(() => {
   installShellEnv();
@@ -180,7 +179,7 @@ describe("settings changes propagate through the sync channel to an open shell",
     await tick(30_000);
 
     expect(foldersToggle(el), "the group never appeared after a flip made elsewhere").toBe("Folders");
-    expect(el.querySelector(`[data-rail-folder-id="${FOLDER_ID}"]`)).not.toBeNull();
+    expect(queryByRole(el, "button", { name: "Project receipts" })).not.toBeNull();
   });
 
   it("flag on + zero entities: skeleton while the mirror is unsettled, the honest empty line after", async () => {
@@ -203,13 +202,13 @@ describe("settings changes propagate through the sync channel to an open shell",
     // UNSETTLED: the group stands (the flag is on), its content is the skeleton — and the
     // sentence only a settled mirror may say is nowhere.
     expect(foldersToggle(el)).toBe("Folders");
-    expect(el.querySelector('[data-testid="folders-skeleton"]'), "no skeleton over the unsettled mirror").not.toBeNull();
+    expect.soft(queryByRole(el, "status", { name: "Loading folders" }), "no skeleton over the unsettled mirror").not.toBeNull();
     expect(textOf(el)).not.toContain("No folders on your mail server yet.");
 
     // The drain settles with a genuinely empty inventory: the skeleton yields to the honest line.
     release!(pageOf([], [], "c1"));
     await tick(30_000);
-    expect(el.querySelector('[data-testid="folders-skeleton"]')).toBeNull();
+    expect(queryByRole(el, "status", { name: "Loading folders" })).toBeNull();
     expect(textOf(el)).toContain("No folders on your mail server yet.");
   });
 });

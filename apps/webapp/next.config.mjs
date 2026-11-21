@@ -1,7 +1,8 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildPdfFrame, PDF_FRAME_CSP, PDF_FRAME_PATH } from "../../packages/app/pdf-preview/build.mjs";
 import createNextIntlPlugin from "next-intl/plugin";
 import { API_BASE, MARKETING_PATHS, ZONE_PATHS, rewritesFor } from "./routes.mjs";
 import { GA_ID_VAR, assertMeasurementId, withAnalytics } from "./analytics.mjs";
@@ -524,6 +525,15 @@ const PDF_WORKER_RULE = {
   headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
 };
 
+const PDF_FRAME_RULE = {
+  source: PDF_FRAME_PATH,
+  headers: [
+    { key: "Content-Security-Policy", value: PDF_FRAME_CSP },
+    { key: "X-Content-Type-Options", value: "nosniff" },
+    { key: "Referrer-Policy", value: "no-referrer" },
+  ],
+};
+
 /**
  * The header rules, for a build with or without a website measurement id (`analytics.mjs`).
  * Without one they are exactly the two rules every build had. With one, the website's documents
@@ -545,7 +555,7 @@ export function headerRules(gaId, zone = null, staging = null) {
     // FIRST and EXCLUSIVE — see the note above SHARED_CSP. The demo is the real mail
     // client in demo mode (`app/(product)/demo/page.tsx`), framed same-origin by the
     // landing, so it needs the baseline bundle policy with framing relaxed to `'self'`.
-    // The `/((?!demo).*)` rule below excludes it by negative lookahead so it never also
+    // The `/((?!demo)(?!pdf-preview\\.html$).*)` rule below excludes it by negative lookahead so it never also
     // receives the blanket `frame-ancestors 'none'` header — two CSP headers intersect,
     // they do not override, and the intersection would be `'none'` and a blank frame.
     source: "/demo",
@@ -561,7 +571,7 @@ export function headerRules(gaId, zone = null, staging = null) {
       demo,
       {
         // Every path but the demo and the zone's, which the blanket policy would intersect with.
-        source: `/((?!demo)(?!(?:${ZONE_EXACT_SOURCE})$)(?!(?:${ZONE_PREFIX_SOURCE})/).*)`,
+        source: `/((?!demo)(?!pdf-preview\\.html$)(?!(?:${ZONE_EXACT_SOURCE})$)(?!(?:${ZONE_PREFIX_SOURCE})/).*)`,
         headers: [
           { key: "Content-Security-Policy", value: baseline },
           ...STATIC_SECURITY_HEADERS,
@@ -573,6 +583,7 @@ export function headerRules(gaId, zone = null, staging = null) {
         headers: [...STATIC_SECURITY_HEADERS],
       },
       PDF_WORKER_RULE,
+      PDF_FRAME_RULE,
     ];
   }
   if (gaId === null) {
@@ -581,13 +592,14 @@ export function headerRules(gaId, zone = null, staging = null) {
       {
         // Everything else, including `/`. The negative lookahead keeps the blanket policy
         // off `/demo` — the one path in the deployment that may be framed by this origin.
-        source: "/((?!demo).*)",
+        source: "/((?!demo)(?!pdf-preview\\.html$).*)",
         headers: [
           { key: "Content-Security-Policy", value: baseline },
           ...STATIC_SECURITY_HEADERS,
         ],
       },
       PDF_WORKER_RULE,
+      PDF_FRAME_RULE,
     ];
   }
   const site = MARKETING_PATHS.map((p) => p.slice(1)).join("|");
@@ -601,13 +613,14 @@ export function headerRules(gaId, zone = null, staging = null) {
       ],
     })),
     {
-      source: `/((?!demo)(?!(?:${site})$).*)`,
+      source: `/((?!demo)(?!pdf-preview\\.html$)(?!(?:${site})$).*)`,
       headers: [
         { key: "Content-Security-Policy", value: baseline },
         ...STATIC_SECURITY_HEADERS,
       ],
     },
     PDF_WORKER_RULE,
+    PDF_FRAME_RULE,
   ];
 }
 
@@ -801,6 +814,8 @@ export function copyStandardFonts(to = fileURLToPath(new URL("./public/pdfjs/sta
 
 export default async function config() {
   copyStandardFonts();
+  const pdfjsRoot = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
+  writeFileSync(new URL(`./public${PDF_FRAME_PATH}`, import.meta.url), buildPdfFrame(pdfjsRoot));
   const provided = (process.env[GITHUB_STARS_VAR] ?? "").trim();
   const stars = provided !== "" ? provided : String(await githubStars());
   return {

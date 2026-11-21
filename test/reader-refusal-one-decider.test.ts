@@ -117,7 +117,12 @@ type SourceFile = { file: string; raw: string };
 const MAIL_STATE = "packages/app-logic/src/mail-state/mail-state.ts";
 const SCREENER_STATE = "packages/app-logic/src/screener/screener-state.ts";
 const SHELL_DISPATCH = "packages/app-logic/src/press/shell-dispatch.ts";
-const APP_SHELL = "apps/webapp/app/shell/AppShell.tsx";
+const CONTACT_SCREENING = "packages/app/src/reader/contact/Screening.tsx";
+const FIRST_RUN_LIVE = "packages/app-logic/src/mailboxes/first-run/live.ts";
+const FIRST_RUN_AGREE = "packages/app-logic/src/mailboxes/first-run/use-agree.ts";
+const MAILBOX_STEP = "packages/app/src/mailboxes/first-run/MailboxStep.tsx";
+const ELSEWHERE_STEP = "packages/app/src/mailboxes/first-run/Elsewhere.tsx";
+const ORGANIZER_NOTICES = "packages/app-logic/src/mailboxes/pane/notices.ts";
 const PHONE_FORM = "apps/mobile/src/ui/standalone-form.ts";
 const READER_HOLDER = "packages/app-logic/src/reading/reader-holder.ts";
 const PHONE_LIVE = "apps/mobile/src/state/live.ts";
@@ -175,17 +180,29 @@ const SITES: Site[] = [
   { file: "apps/webapp/app/views/ScreenerView.tsx",
     keys: ['"moveBarWhy"', '"moveBarWhyUnknown"', '"moveBarWhyNobody"', '"readerBarWhy"', '"readerBarWhyUnknown"'],
     calls: [{ file: "apps/webapp/app/views/ScreenerView.tsx", call: /reader=\{readerHolder\(state\.role\)\}/ }] },
-  { file: "apps/webapp/app/shell/SenderMenu.tsx", keys: ['"orgPending"', '"orgPendingUnnamed"', '"orgNobody"'],
-    calls: [{ file: APP_SHELL, call: /organizer=\{otherOrganizerOf\(/ }] },
-  { file: "apps/webapp/app/shell/SubjectRuleSheet.tsx", keys: ['"subjectOrgNobody"'],
-    calls: [{ file: APP_SHELL, call: /nobody=\{otherOrganizerOf\(/ }] },
+  { file: "packages/app-logic/src/press/sender-screening.ts", fn: "screeningOrganizerCopy",
+    keys: ['"orgPending"', '"orgPendingUnnamed"', '"orgNobody"'],
+    calls: [
+      { file: CONTACT_SCREENING, call: /const organizer = otherOrganizerOf\(facts, new Set\(sender\.messages\.map\(/ },
+      { file: CONTACT_SCREENING, call: /\bscreeningOrganizerCopy\(organizer\)/ },
+    ] },
+  { file: "packages/app-logic/src/press/subject-rule.ts", keys: ['"subjectOrgNobody"'],
+    calls: [
+      { file: CONTACT_SCREENING, call: /const nobody = otherOrganizerOf\(facts, new Set\(subject\.messages\.map\(/ },
+      { file: CONTACT_SCREENING, call: /nobody=\{nobody\}/ },
+      { file: CONTACT_SCREENING, call: /nobody \? <p>\{t\(subjectOrganizerMissing\)\}/ },
+    ] },
   // The connect notice was exempt as "the connect's outcome at that moment" and outlived a hand-back
   // it is chosen over the live claim the strip reads now.
   { file: PHONE_FORM, fn: "readingAtConnectLine", keys: ["Copy.readingAtConnect", "Copy.readingAtConnectKept", "Copy.readingAtConnectJoinWaits"],
     calls: [{ file: "apps/mobile/app/(tabs)/index.tsx", call: /readingAtConnectNow\([^;]*\bclaim\)/ },
       { file: "apps/mobile/src/ui/OrganizerStrip.tsx", fn: "useStandaloneClaim", call: /\bclaimHere\(/ }] },
-  { file: "apps/webapp/app/shell/FirstRun.tsx", keys: ['"doorReaderWhy"', '"doorReaderWhyLegacy"'],
-    calls: [{ file: APP_SHELL, call: /accountOrganizer=\{accountOrganizer\(/ }] },
+  { file: MAILBOX_STEP, keys: ['"onboarding.doorReaderWhy"', '"onboarding.doorReaderWhyLegacy"'],
+    calls: [
+      { file: FIRST_RUN_LIVE, fn: "useFirstRunLive", call: /const organizer = useMemo\(\(\) => accountOrganizer\(facts\)/ },
+      { file: FIRST_RUN_LIVE, fn: "useFirstRunLive", call: /accountOrganizer: organizer/ },
+      { file: MAILBOX_STEP, call: /const holder = run\.accountOrganizer/ },
+    ] },
   { file: "apps/desktop/src/install-role.ts",
     keys: ["DOOR_COPY.mailboxWhyReadsNamed", "DOOR_COPY.mailboxWhyReads", "DOOR_COPY.mailboxWhyReadsNobody"],
     calls: ["DesktopAbout", "DesktopSettings"].map((pane) => ({
@@ -203,10 +220,18 @@ const SITES: Site[] = [
     calls: [{ file: "apps/mobile/src/state/world-projection.ts", call: /\bphoneOrganizer\(inp\.mailboxes\)/ }] },
   { file: READER_HOLDER, fn: "phoneHolderKey", keys: ['"readerHolderPhone"'],
     calls: [{ file: READER_HOLDER, fn: "phoneHolder", call: /\bholderIsLive\(/ }] },
-  { file: "apps/webapp/app/shell/OrganizerNotice.tsx", keys: ['"noticeElsewhere"'],
-    calls: [{ file: MAIL_STATE, fn: "noticeKind", call: /\borganizerSituation\(/ }] },
-  { file: "apps/webapp/app/shell/FirstRun.tsx", keys: ['"elsewhereChoiceReadWhy"'],
-    calls: [{ file: "apps/webapp/app/shell/FirstRun.tsx", call: /\bholderStopped\(facts\.mailbox\)/ }] },
+  { file: ORGANIZER_NOTICES, fn: "elsewhereNoticeTitle", keys: ['"noticeElsewhere"'],
+    calls: [
+      { file: ORGANIZER_NOTICES, fn: "titleOf", call: /\belsewhereNoticeTitle\(one\)/ },
+      { file: ORGANIZER_NOTICES, fn: "useOrganizerNotices", call: /\borganizerNotices\(input\.facts\)/ },
+      { file: MAIL_STATE, fn: "organizerNotices", call: /\bnoticeKind\(m\)/ },
+      { file: MAIL_STATE, fn: "noticeKind", call: /\borganizerSituation\(/ },
+    ] },
+  { file: ELSEWHERE_STEP, keys: ['"onboarding.elsewhereChoiceReadWhy"'],
+    calls: [
+      { file: FIRST_RUN_AGREE, fn: "useAgree", call: /const stopped = holderStopped\(facts\.mailbox\)/ },
+      { file: ELSEWHERE_STEP, call: /const stopped = run\.agree\.stopped/ },
+    ] },
   { file: PHONE_FORM, fn: "scheduledNotHereSentence", keys: ["Copy.scheduledReaderHere"],
     calls: [{ file: PHONE_FORM, fn: "scheduledNotHereSentence", call: /\bholder\.stopped\b/ },
       { file: "apps/mobile/src/state/world-projection.ts", call: /\bphoneOrganizer\(inp\.mailboxes\)/ }] },

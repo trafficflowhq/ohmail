@@ -12,27 +12,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { TravelledChangeWire } from "@ohmail/app-logic/consent/travelled-change";
-
-export type { TravelledChangeWire };
-
-export type TravelledNote =
-  | { kind: "asked" }
-  | { kind: "applied" }
-  | { kind: "refused"; holder: string | null; refusal: "unreadable" | "other" | null };
+import { TravelledChangeLine } from "@ohmail/app/settings/browser";
+import { noteOf, type TravelledChangeWire, type TravelledNote } from "@ohmail/app-logic/consent/travelled-change";
+export { noteOf, standingNote, type TravelledChangeWire, type TravelledNote } from "@ohmail/app-logic/consent/travelled-change";
 
 /** The organizer's cycle is tens of seconds; a few minutes of asking covers several of them. */
 export const CHANGE_POLL_MS = 20_000;
 export const CHANGE_POLL_MAX = 12;
 
 interface Answer { pending?: true; change?: TravelledChangeWire }
-
-export function noteOf(change: TravelledChangeWire | undefined): TravelledNote | null {
-  if (!change) return null;
-  if (change.state === "asked") return { kind: "asked" };
-  if (change.state === "applied") return { kind: "applied" };
-  return { kind: "refused", holder: change.holder, refusal: change.refusal };
-}
 
 /**
  * `heard` takes every answer the pane gets — its first read (`press: false`) and each save's
@@ -106,23 +94,11 @@ export function useTravelledChange<T extends Answer>(opts: {
  * refusal. The dormancy dial and the signature editors read their own row, which a holder's
  * apply does not write, so "Applied." there would sit over the old value.
  */
-export function standingNote(change: TravelledChangeWire | null | undefined): TravelledNote | null {
-  const note = noteOf(change ?? undefined);
-  return note?.kind === "applied" ? null : note;
-}
-
 /** The sentence for a {@link TravelledNote}. A live region, so a press's answer is heard. */
 export function TravelledChangeNote({ note, className = "scn-sg-note" }: {
   note: TravelledNote | null;
   className?: string;
 }) {
   const t = useTranslations("settings");
-  if (note === null) return null;
-  if (note.kind === "asked") return <span className={className} role="status">{t("screening.asked")}</span>;
-  if (note.kind === "applied") return <span className={className} role="status">{t("screening.applied")}</span>;
-  const unreadable = note.refusal !== "other";
-  const text = note.holder
-    ? t(unreadable ? "screening.refusedUnreadable" : "screening.refusedOther", { name: note.holder })
-    : t(unreadable ? "screening.refusedUnreadableUnknown" : "screening.refusedOtherUnknown");
-  return <span className={className} role="alert">{text}</span>;
+  return <TravelledChangeLine note={note} className={className} t={(key, values) => t(key, values)} />;
 }

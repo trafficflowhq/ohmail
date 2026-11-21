@@ -4,22 +4,28 @@
  * to the Ohbox. Filing it moves mail, so an install that does not organize this mailbox draws no answer: what this
  * computer may not do, or who decides, and the way to Mailboxes.
  */
+import { useState } from "react";
 import type { FailedAtGateDTO } from "@ohmail/wire";
-import type { ScreenerView } from "@ohmail/app-logic/screener";
+import { senderCheckSentence, useHeldBodies, type ScreenerView } from "@ohmail/app-logic/screener";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { Dot, Sentence } from "@ohmail/ui/base";
-import { ActionPanel, Sheet, type PanelNote, type PanelVerb } from "@ohmail/ui/mail";
+import { ActionPanel, ContactCard, Sheet, type PanelNote, type PanelVerb } from "@ohmail/ui/mail";
 import { useFrame } from "../../frame/commands.js";
 import { useText } from "../../text/index.js";
 import { useScreener } from "../contract.js";
 import { HeldLetter } from "../held/HeldLetter.js";
+import { IdentityNotice } from "./IdentityNotice.js";
 import { decidesNote } from "./holder.js";
 
 export function Failed({ view, letter }: { view: ScreenerView; letter: FailedAtGateDTO }) {
+  useHeldBodies([letter.id]);
   const t = useText("screener");
+  const screening = useText("screening");
   const model = useScreener();
   const { commands } = useFrame();
   const address = displayAddress(letter.from.address);
+  const caution = senderCheckSentence(t, { reason: "failed", address: letter.from.address });
+  const [card, setCard] = useState<{ id: string; anchor: HTMLElement } | null>(null);
   const file = (to: "spam" | "ohbox") => {
     model.fileFailed(letter.id, to);
     view.close();
@@ -64,7 +70,7 @@ export function Failed({ view, letter }: { view: ScreenerView; letter: FailedAtG
             <Dot kind="ink" />
           </Sentence>
           <p className="oh-text">{address}</p>
-          <p className="oh-text">{t("senderCheck.failed", { address })}</p>
+          <p className="oh-text">{caution}</p>
         </div>
       }
       foot={<ActionPanel label={t("failedAria")} items={items} />}
@@ -75,8 +81,17 @@ export function Failed({ view, letter }: { view: ScreenerView; letter: FailedAtG
         checked={{ reason: "failed" }}
         segment="waiting"
         invites={false}
-        onPerson={() => undefined}
+        onPerson={(anchor) => setCard({ id: letter.id, anchor })}
         onRetry={view.retryBody}
+      />
+      <ContactCard
+        open={card?.id === letter.id}
+        anchor={card?.anchor}
+        onClose={() => setCard(null)}
+        label={t("place.keyCard")}
+        closeWhenFull={screening("close")}
+        person={{ name: letter.from.name?.trim() || address, address }}
+        notice={<IdentityNotice>{caution}</IdentityNotice>}
       />
     </Sheet>
   );

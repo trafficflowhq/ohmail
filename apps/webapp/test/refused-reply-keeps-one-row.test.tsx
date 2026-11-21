@@ -1,10 +1,12 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import messages from "../messages/en.json";
 import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import {
-  act, message, mountShell, press, replyDraft, replySurface, stubDom, unmountAll, waitFor,
+  act, message, messageRow, mountShell, openRegion, press, replyDraft, replyText, stubDom, unmountAll, waitFor,
   type DraftShell,
 } from "./_draft-shell.js";
 
@@ -26,9 +28,17 @@ const sends = (s: DraftShell): Array<Extract<EngineMutation, { kind: "mail_send"
   s.sent.filter((m): m is Extract<EngineMutation, { kind: "mail_send" }> => m.kind === "mail_send");
 const repliesTo = (s: DraftShell, id: string): EngineDraft[] =>
   s.store.list<EngineDraft>("draft").filter((d) => d.inReplyToMessageId === id);
-const sendButton = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-    .find((b) => (b.textContent ?? "").startsWith("Send"));
+const sendButton = (el: HTMLElement): HTMLButtonElement | null => {
+  const reader = openRegion(el);
+  return reader === null ? null : within(reader).queryByRole("button", { name: "Send" });
+};
+const says = (el: HTMLElement, word: string): boolean => {
+  const reader = openRegion(el);
+  return reader !== null && within(reader).queryAllByRole("status")
+    .some((status) => status.textContent?.includes(word));
+};
+const draftRow = (s: DraftShell, id: string) =>
+  within(s.el).queryAllByRole("option").find((row) => row.dataset.id === id) ?? null;
 
 async function key(k: string): Promise<void> {
   await act(async () => {
@@ -40,12 +50,11 @@ async function key(k: string): Promise<void> {
 /** Press Send and wait for the refusal to be said in the editor. */
 async function sendRefused(s: DraftShell, nth: number): Promise<void> {
   const button = sendButton(s.el);
-  expect(button, "the reply editor offers no Send").toBeDefined();
+  expect(button, "the reply editor offers no Send").not.toBeNull();
   await act(async () => { button!.click(); });
   await waitFor(() => sends(s).length === nth, `send ${nth} on the wire`);
   await waitFor(
-    () => sendButton(s.el)?.getAttribute("data-send") == null
-      && s.el.querySelector(".reply .send-status.error") != null,
+    () => says(s.el, messages.write.status.failed),
     `send ${nth} said as refused`,
   );
 }
@@ -53,11 +62,11 @@ async function sendRefused(s: DraftShell, nth: number): Promise<void> {
 describe("a refused reply keeps one draft", () => {
   it("the second press sends the row the first refusal left, and makes no other", async () => {
     const s = await mountShell("#/history", [message("m1")]);
-    await waitFor(() => s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "the row");
+    await waitFor(() => messageRow(s.el, "m1") != null, "the row");
+    await press(messageRow(s.el, "m1"), "the row");
     await key("r");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor");
-    await act(async () => { typeInto(replySurface(s.el)!, "See you on Thursday"); });
+    await waitFor(() => replyText(s.el) != null, "the reply editor");
+    await act(async () => { typeInto(replyText(s.el)!, "See you on Thursday"); });
 
     s.refuseSend.on = true;
     await sendRefused(s, 1);
@@ -69,14 +78,14 @@ describe("a refused reply keeps one draft", () => {
     expect(sends(s)[1]!.draftId, "the second press made a row of its own").toBe(left[0]!.id);
     expect(repliesTo(s, "m1").map((d) => d.id)).toEqual([left[0]!.id]);
     // The refusal is still said where the press was.
-    expect(s.el.querySelector(".reply .send-status.error")).not.toBeNull();
+    expect(says(s.el, messages.write.status.failed)).toBe(true);
   }, 20_000);
 
   it("a reply opened from a draft is sent as that draft: refused, it stays the one row", async () => {
     const s = await mountShell("#/drafts", [message("m1")], [replyDraft("d1", "m1", "Thursday works")]);
-    await waitFor(() => s.el.querySelector(".draft-row[data-id='d1'] .draft-open") != null, "the draft row");
-    await press(s.el.querySelector(".draft-row[data-id='d1'] .draft-open"), "the draft's open button");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor, seeded");
+    await waitFor(() => draftRow(s, "d1") != null, "the draft row");
+    await press(draftRow(s, "d1"), "the draft's open button");
+    await waitFor(() => replyText(s.el) != null, "the reply editor, seeded");
 
     s.refuseSend.on = true;
     await sendRefused(s, 1);
@@ -90,11 +99,11 @@ describe("a refused reply keeps one draft", () => {
 
   it("a send from that row whose fate is not known is never sent again", async () => {
     const s = await mountShell("#/history", [message("m1")]);
-    await waitFor(() => s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "the row");
+    await waitFor(() => messageRow(s.el, "m1") != null, "the row");
+    await press(messageRow(s.el, "m1"), "the row");
     await key("r");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor");
-    await act(async () => { typeInto(replySurface(s.el)!, "See you on Thursday"); });
+    await waitFor(() => replyText(s.el) != null, "the reply editor");
+    await act(async () => { typeInto(replyText(s.el)!, "See you on Thursday"); });
     s.refuseSend.on = true;
     await sendRefused(s, 1);
     const row = repliesTo(s, "m1")[0]!.id;
@@ -103,7 +112,7 @@ describe("a refused reply keeps one draft", () => {
     await act(async () => { sendButton(s.el)!.click(); });
     await waitFor(() => sends(s).length === 2, "the second send on the wire");
     expect(sends(s)[1]!.draftId).toBe(row);
-    await waitFor(() => sendButton(s.el)?.getAttribute("data-send") == null, "the second send answered");
+    await waitFor(() => says(s.el, messages.write.status.unverified), "the second send answered");
 
     await act(async () => { sendButton(s.el)?.click(); });
     for (let i = 0; i < 8; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
@@ -112,24 +121,24 @@ describe("a refused reply keeps one draft", () => {
 
   it("the row it was sent from is not discarded when that send goes through", async () => {
     const s = await mountShell("#/history", [message("m1")]);
-    await waitFor(() => s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "the row");
+    await waitFor(() => messageRow(s.el, "m1") != null, "the row");
+    await press(messageRow(s.el, "m1"), "the row");
     await key("r");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor");
-    await act(async () => { typeInto(replySurface(s.el)!, "See you on Thursday"); });
+    await waitFor(() => replyText(s.el) != null, "the reply editor");
+    await act(async () => { typeInto(replyText(s.el)!, "See you on Thursday"); });
     s.refuseSend.on = true;
     await sendRefused(s, 1);
     const row = repliesTo(s, "m1")[0]!.id;
 
     // The row is reopened from Drafts, which seeds the editor from it, and sent for real.
     window.location.hash = "#/drafts";
-    await waitFor(() => s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`) != null, "the row in Drafts");
-    await press(s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`), "the row's open button");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor, seeded from the row");
+    await waitFor(() => draftRow(s, row) != null, "the row in Drafts");
+    await press(draftRow(s, row), "the row's open button");
+    await waitFor(() => replyText(s.el) != null, "the reply editor, seeded from the row");
     s.refuseSend.on = false;
     await act(async () => { sendButton(s.el)!.click(); });
     await waitFor(() => sends(s).length === 2, "the second send on the wire");
-    await waitFor(() => replySurface(s.el) == null, "the editor closed on the confirmation");
+    await waitFor(() => replyText(s.el) == null, "the editor closed on the confirmation");
 
     expect(sends(s)[1]!.draftId).toBe(row);
     expect(s.sent.filter((m) => m.kind === "draft_discard").map((m) => m.draftId)).not.toContain(row);

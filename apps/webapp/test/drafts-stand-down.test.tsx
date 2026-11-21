@@ -1,11 +1,8 @@
 /** @vitest-environment jsdom */
 import type { EngineDraft } from "@ohmail/wire";
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { DraftsView } from "../app/views/DraftsView";
+import { screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mountShell, stubDom, unmountAll } from "./_draft-shell.js";
 
 /**
  * ═══ WHAT THE DRAFTS SCREEN SAYS AFTER A HANDOVER ════════════════════════════════════════
@@ -29,15 +26,10 @@ import { DraftsView } from "../app/views/DraftsView";
  *
  * ── HOW TO WATCH IT FAIL ─────────────────────────────────────────────────────────────────
  *
- * Delete the `d.status === "draft" && d.sendError` note from `DraftsView` and the second case
+ * Delete the `d.status === "draft" && d.sendError` note from the mounted Drafts list and the second case
  * goes red with the row carrying no sentence at all — a message the person was promised would
  * send, sitting silently in Drafts. Run.
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 const NOW = new Date("2026-09-01T15:00:00.000Z");
 /**
@@ -70,45 +62,14 @@ const draft = (over: Partial<EngineDraft> = {}): EngineDraft => ({
   ...over,
 });
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
-async function mount(drafts: EngineDraft[], scheduled: EngineDraft[]): Promise<void> {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        timeZone: "UTC",
-        now: NOW,
-        children: h(DraftsView, {
-          settled: true,
-          owed: false,
-          drafts,
-          scheduled,
-          now: NOW,
-          onOpen: () => {},
-          onDiscard: () => {},
-          onResolve: () => {},
-          onCancelSchedule: () => {},
-          onEditScheduled: () => {},
-          onSendAgain: () => {},
-          repliesHere: () => false,
-        }),
-      }),
-    );
-  });
-}
-
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+  stubDom();
+});
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  root = null;
-  host?.remove();
-  host = null;
-  document.body.innerHTML = "";
+  await unmountAll();
+  vi.useRealTimers();
 });
 
 describe("a scheduled send a handover ended", () => {
@@ -116,8 +77,9 @@ describe("a scheduled send a handover ended", () => {
     // The orphan, rendered. This is not a guard on new code — it is the measurement, kept, so
     // that the case below is legible as the change and so that a future edit to `scheduleLabel`
     // cannot quietly make a past appointment read as a future one somewhere else.
-    await mount([], [draft({ status: "scheduled", sendAt: "2026-09-01T14:50:00.000Z" })]);
-    const text = host!.textContent ?? "";
+    await mountShell("#/drafts", [], [draft({ status: "scheduled", sendAt: "2026-09-01T14:50:00.000Z" })]);
+    const scheduled = await screen.findByRole("region", { name: "Scheduled" });
+    const text = scheduled.textContent ?? "";
     expect(text).toContain("Scheduled");
     // The CLOCK, matched as a shape rather than as a literal: `scheduleLabel` renders in the
     // reader's own zone (`activeFormatZone()`, which this provider does not drive), so a literal
@@ -132,15 +94,17 @@ describe("a scheduled send a handover ended", () => {
     // Exactly what `closeStoodDownAppointments` leaves: `status:'draft'`, no `sendAt`, the
     // sentence in `sendError`. The shared `draftsList` selector puts such a row in Drafts and the
     // `scheduled` list is empty, which is what removes the promise from the screen.
-    await mount([draft({ sendError: SENTENCE })], []);
-    const text = host!.textContent ?? "";
+    const shell = await mountShell("#/drafts", [], [draft({ sendError: SENTENCE })]);
+    await screen.findByRole("option", { name: /Invoice for the paper order/ });
+    const text = shell.el.textContent ?? "";
 
     // The promise is GONE — no heading, no "Sends", no time.
     expect(text, "the appointment is still being promised").not.toMatch(/Sends \w/);
-    // And the section itself is gone — `DraftsView` renders the heading only for a non-empty
+    // And the section itself is gone — the mounted Drafts list renders the heading only for a non-empty
     // list, so an empty one takes the promise off the screen rather than leaving an empty shelf.
     expect(text, "the Scheduled section is still on screen with nothing in it")
       .not.toMatch(/Scheduled[A-Z]/);
+    expect(screen.queryByRole("region", { name: "Scheduled" })).toBeNull();
 
     // And the row says what happened, in the frame this surface already had.
     expect(text).toContain(

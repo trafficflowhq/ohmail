@@ -5,7 +5,7 @@
  * anything else; otherwise they hand a draft to the place `write`. Nothing is sent from here.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useMemo } from "react";
+import { useContext, useMemo } from "react";
 import {
   isOwnVerb,
   markSeenOver,
@@ -16,7 +16,7 @@ import {
   runOwnVerb,
   type VerbWords,
 } from "@ohmail/app-logic/reader";
-import type { ListVisit, ThreadReadWiring } from "@ohmail/app-logic/reading";
+import { ListMoveContext, type ListVisit, type ThreadReadWiring } from "@ohmail/app-logic/reading";
 import type { MessageAction, MoveTarget } from "@ohmail/app-logic/press/actions";
 import { useFrame } from "../../frame/commands.js";
 import { useOwnAddresses, usePressWhereOn, useResurfaceTime } from "../../frame/room.js";
@@ -26,6 +26,8 @@ import { useParts } from "../parts.js";
 
 type Answer = (messageId: string, how: "reply" | "reply_all" | "forward", from?: "menu") => void;
 const noAnswer = (): Answer | null => null;
+type Drafter = (messageId: string) => void;
+const noDrafter = (): Drafter | null => null;
 
 /** `write`'s open for an answer, or null where the shell handed none (the same hook on every render of an entry). */
 export function useAnswer(): Answer | null {
@@ -36,6 +38,13 @@ export function useAnswer(): Answer | null {
 
 const prefixed = (prefix: string, subject: string): string =>
   subject.toLowerCase().startsWith(prefix.toLowerCase()) ? subject : `${prefix} ${subject}`;
+
+/** `write`'s Draft reply for a letter, or null where the shell's composition has no drafter (the same hook every render). */
+export function useDrafter(): Drafter | null {
+  const { reply } = useParts();
+  const useDraft: () => Drafter | null = reply === "none" ? noDrafter : (reply.useDraft ?? noDrafter);
+  return useDraft();
+}
 
 /** The draft an answer starts from: the address it goes to and the subject it carries. */
 export function draftFor(action: "reply" | "reply_all" | "forward", m: EngineMessage): LinkedDraft {
@@ -66,13 +75,20 @@ export interface Verbs {
   readonly act: (action: MessageAction) => void;
   /** No list's visit and no press seam here: the reader's own verbs cannot run. */
   readonly idle: boolean;
+  /** The Ohbox visit can release a resurfaced conversation through its existing Done action. */
+  readonly done: boolean;
   /**
    * The read slot's face: what a press does now. Null on a letter that came back, where a list's visit stands: its
-   * read is its release, which the list's row offers as Done, and the plain directions are not offered beside it.
+   * read is its release, with neither plain direction offered beside it.
    */
   readonly readSlot: "markRead" | "markUnread" | null;
+  /**
+   * How many letters the read slot's press marks read: the list's read set of the open conversation (0 where no list's
+   * visit stands, where the press marks the open letter alone). The slot says the count where it is more than one.
+   */
+  readonly readCount: number;
   /** Put a tag on the letter or take it off, through the room's seam; null where no seam stands. */
-  readonly tag: ((tagId: string, on: boolean) => void) | null;
+  readonly tag: ((tagId: string, name: string, on: boolean) => void) | null;
   /** The letter's tags, by id. */
   readonly tagged: readonly string[];
   /**
@@ -82,6 +98,8 @@ export interface Verbs {
   readonly moves: readonly MoveTarget[];
   /** More than one person besides the sender has the letter: Reply all is a verb of its own. */
   readonly replyAll: boolean;
+  /** Draft reply on the letter, behind More; null where no drafter stands. */
+  readonly draft: (() => void) | null;
   /**
    * The pile the letter is filed in, of the three the panel's Later, Park and Resurface put it in and take it out of;
    * null in none (a letter brought back to the top is in none of them).
@@ -92,15 +110,18 @@ export interface Verbs {
 export function useVerbs(
   message: EngineMessage | null,
   visit: ListVisit | null,
-  own: ThreadReadWiring | null,
+  own: Pick<ThreadReadWiring, "onMarkUnread"> | null,
 ): Verbs {
   /* The seam is taken only where an own verb may run: a list's visit runs every verb on the list's path. */
   const press = usePressWhereOn();
-  const { commands } = useFrame();
+  const listMove = useContext(ListMoveContext);
+  const { commands, route } = useFrame();
   const answer = useAnswer();
+  const drafter = useDrafter();
   /* The account's resurface hour, as the shell handed it to the room: what the quick return books at. */
   const hour = useResurfaceTime();
   const t = useText("reader");
+  const tagText = useText("tag");
   const locale = useLocale();
   const words: VerbWords = useMemo(
     () => ({
@@ -123,16 +144,16 @@ export function useVerbs(
     });
     return (iso: string) => f.format(new Date(iso));
   }, [locale]);
-  const readSlot =
-    visit && message !== null && readIsItsRelease(message)
-      ? null
-      : visit
-        ? visit.readSet.length > 0
-          ? "markRead"
-          : "markUnread"
-        : message?.unread
-          ? "markRead"
-          : "markUnread";
+  const releases = visit !== null && message !== null && readIsItsRelease(message);
+  const readSlot = releases
+    ? null
+    : visit
+      ? visit.readSet.length > 0
+        ? "markRead"
+        : "markUnread"
+      : message?.unread
+        ? "markRead"
+        : "markUnread";
   const act = (asked: MessageAction): void => {
     if (message === null) return;
     let action = asked;
@@ -142,6 +163,10 @@ export function useVerbs(
     }
     if (visit !== null) {
       visit.act(action);
+      return;
+    }
+    if (listMove && action.startsWith("move:")) {
+      listMove(message, action.slice("move:".length) as MoveTarget);
       return;
     }
     if (action === "reply" || action === "reply_all" || action === "forward") {
@@ -169,23 +194,26 @@ export function useVerbs(
   const tag =
     press === null || message === null
       ? null
-      : (tagId: string, on: boolean) =>
-          void press.mutateAndReport(
+      : (tagId: string, name: string, on: boolean) =>
+          press.mutateAndReportConfirmed(
             { kind: "tag_assign", messageId: message.id, tagId, assigned: on },
-            null,
+            tagText(on ? "toastTagged" : "toastUntagged", { name }),
           );
-  const moves = visit !== null && message !== null ? moveTargetsOf(message) : [];
+  const moves = (visit !== null || listMove !== null) && message !== null ? moveTargetsOf(message) : [];
   const replyAll = hasReplyAll(message, useOwnAddresses());
   const pile = message?.triage?.state;
   const filed = pile === "reply_later" || pile === "set_aside" || pile === "bubbled_up" ? pile : null;
   return {
     act,
+    done: releases && route.place === "ohbox",
     readSlot,
+    readCount: visit?.readSet.length ?? 0,
     idle: visit === null && press === null,
     tag,
     tagged: message?.labels ?? [],
     moves,
     replyAll,
+    draft: drafter !== null && message !== null ? () => drafter(message.id) : null,
     filed,
   };
 }

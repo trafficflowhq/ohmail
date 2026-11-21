@@ -749,11 +749,11 @@ export const DE: Deck = {
   decideUnsub: (claim: UnsubSaid, target: string, domain: boolean) =>
     domain
       ? claim === "sends"
-        ? `Aussortieren und Spam senden den wartenden Absendern bei ${target} außerdem eine Ein-Klick-Abmeldung und melden dich bei späteren Mails der Domain mit Ein-Klick-Abmeldung erneut ab.`
-        : `Bieten Absender bei ${target} Ein-Klick-Abmeldung an, melden Aussortieren und Spam dich gleich mit ab, jetzt und bei späteren Mails.`
+        ? `Aussortieren und Spam senden den wartenden Absendern bei ${target} eine Ein-Klick-Abmeldung für die wartenden Mails. Gesendete Anfragen lassen sich nicht zurücknehmen.`
+        : `Bieten Absender bei ${target} Ein-Klick-Abmeldung an, schicken Aussortieren und Spam eine Abmeldeanfrage für die wartenden Mails. Gesendete Anfragen lassen sich nicht zurücknehmen.`
       : claim === "sends"
-        ? `Aussortieren und Spam senden ${target} außerdem eine Ein-Klick-Abmeldung und melden dich bei späteren Mails mit Ein-Klick-Abmeldung erneut ab.`
-        : `Bietet ${target} Ein-Klick-Abmeldung an, melden Aussortieren und Spam dich gleich mit ab, jetzt und bei späteren Mails.`,
+        ? `Aussortieren und Spam senden ${target} eine Ein-Klick-Abmeldung für die wartenden Mails. Gesendete Anfragen lassen sich nicht zurücknehmen.`
+        : `Bietet ${target} Ein-Klick-Abmeldung an, schicken Aussortieren und Spam eine Abmeldeanfrage für die wartenden Mails. Gesendete Anfragen lassen sich nicht zurücknehmen.`,
   decideReadToggle: "& gelesen",
   decideReadOn: "Wird als gelesen einsortiert — der Zähler bewegt sich nicht.",
   decideReadOff: "Wird ungelesen einsortiert — sie meldet sich.",
@@ -1233,13 +1233,9 @@ export const DE: Deck = {
   liveDecidedClaims: (dest: string, brand: string) =>
     `${dest} — nur die Nachrichten, die sich als ${brand} ausgeben. Es wurde keine Regel erstellt, die übrigen Mails der Liste bleiben, wo sie sind.`,
   liveAlsoUnsubscribing: (said: string, how: UnsubToast) =>
-    how === "sends"
-      ? `${said} Rückgängig stoppt auch die Ein-Klick-Abmeldung. Sobald Rückgängig weg ist, wird sie gesendet und lässt sich nicht zurücknehmen, und spätere Mails des Absenders mit Ein-Klick-Abmeldung werden ebenfalls abgemeldet.`
-      : how === "may"
-        ? `${said} Bietet der Absender Ein-Klick-Abmeldung an, meldet ohmail dich ab, sobald Rückgängig weg ist, und bei späteren Mails erneut; Rückgängig stoppt das auch.`
-        : how === "sent"
-          ? `${said} ohmail sendet eine Ein-Klick-Abmeldung, die sich nicht zurücknehmen lässt, und meldet dich bei späteren Mails mit Ein-Klick-Abmeldung erneut ab.`
-          : `${said} Bietet der Absender Ein-Klick-Abmeldung an, meldet ohmail dich jetzt und bei späteren Mails ab; eine gesendete Abmeldung lässt sich nicht zurücknehmen.`,
+    how === "sends" || how === "sent"
+      ? `${said} ohmail sendet eine Ein-Klick-Abmeldung für die wartenden Mails. Gesendete Anfragen lassen sich nicht zurücknehmen.`
+      : `${said} Bieten die wartenden Mails Ein-Klick-Abmeldung an, schickt ohmail Abmeldeanfragen. Gesendete Anfragen lassen sich nicht zurücknehmen.`,
   liveDecidedElsewhere: (name: string, target: string) =>
     `Entschieden — ${name} sortiert ${target} beim nächsten Durchlauf ein.`,
   liveDecidedElsewhereUnknown: (target: string) =>

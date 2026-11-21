@@ -31,6 +31,8 @@
     "waitingToSend": "Waiting to send.",
     "discardUnknownJar": "Not discarded — this browser can't read its own send records, so it can't tell whether this message is still going out. Discard it from a browser that can.",
     "discardRefused": "Not discarded: {reason}",
+    "discardChanged": "This draft changed and was kept",
+    "discardUnsupported": "This server cannot safely discard this draft yet",
     "discardRefusedUnnamed": "That didn't go through, and the server didn't say why. The draft is still here.",
     "discardQueued": "Not discarded yet — this browser could not reach your account. We will keep trying.",
     "discardAwaitingOrganizer": "Asked for. The install that organizes this mailbox discards it on its next pass.",

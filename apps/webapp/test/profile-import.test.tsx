@@ -1,11 +1,18 @@
 /** @vitest-environment jsdom */
 import { existsSync, readFileSync } from "node:fs";
-import { beforeEach, afterEach, describe, expect, it } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
+import { getByRole, queryByRole } from "@testing-library/dom";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useFormatter, useLocale, useTranslations } from "next-intl";
 import messages from "../messages/en.json";
+import { ProfileImportCard, useProfileImport, type ProfileImportCardProps, type ProfileImportTransport } from "@ohmail/app/profile-import";
 import { sliceOfDeclaration } from "./source-anchor.js";
+import {
+  ACCOUNT as SHELL_ACCOUNT, installConfirmEnv, ISO as SHELL_TIME, mountCloudShell, refresh204, rememberOwner, scriptRefresh,
+  scriptSession, sessionFull, teardownConfirmEnv, tick,
+} from "./fixtures/cloud-confirm-shell";
+import { installShellEnv, mailbox, mountShell, teardownShellEnv, tick as tickShell } from "./fixtures/live-walk-shell";
 
 /**
  * "WE FOUND YOUR OHMAIL SETTINGS ON THIS MAILBOX" — the restore card, over the real hook.
@@ -97,25 +104,35 @@ function installFetch(): void {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-/** The REAL hook + the REAL card, wired exactly as `AppShell` wires them. */
+function LocalizedOffer(props: Omit<ProfileImportCardProps, "words">) {
+  const profile = useTranslations("profileImport");
+  const mailbox = useTranslations("mailboxes");
+  const locale = useLocale();
+  const format = useFormatter();
+  return h(ProfileImportCard, {
+    ...props, words: { profile, mailbox, locale, longDate: (date) => format.dateTime(date, { dateStyle: "long" }) },
+  });
+}
+
+/** The shared offer and its model over a synthetic profile-import wire. */
 async function mount(opts: {
   active: boolean;
   recheckMs?: number;
   /** A host's own wire, when the test is about one — the desktop's seam. */
-  transport?: import("../app/shell/ProfileImportCard.js").ProfileImportTransport;
+  transport?: ProfileImportTransport;
 }): Promise<void> {
-  const { ProfileImportCard, useProfileImport } = await import("../app/shell/ProfileImportCard.js");
+  const { HOSTED } = await import("../app/profile-import-wire");
 
   function Probe(): React.ReactElement | null {
-    const state = useProfileImport(opts.active, [MB], opts.transport, opts.recheckMs);
+    const state = useProfileImport(opts.active, [MB], opts.active ? opts.transport ?? HOSTED : null, opts.recheckMs);
     if (!state.offer) return h("div", { className: "no-card" });
-    return h(ProfileImportCard as never, {
+    return h(LocalizedOffer, {
       offer: state.offer,
       phase: state.phase,
       onImport: state.importNow,
       onNotNow: state.notNow,
       onAcknowledge: state.acknowledge,
-    } as never);
+    });
   }
 
   const el = h(NextIntlClientProvider, {
@@ -127,7 +144,9 @@ async function mount(opts: {
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
-const card = (): HTMLElement | null => host!.querySelector(".pfi-card");
+const card = () => queryByRole(host!, "region", {
+  name: (name) => [messages.profileImport.title, messages.profileImport.newerTitle, messages.profileImport.doneTitle].includes(name),
+});
 
 const button = (label: string): HTMLButtonElement => {
   const el = Array.from(host!.querySelectorAll("button"))
@@ -380,17 +399,17 @@ describe("the mailbox set is the scope of every offer", () => {
    *  mailbox removal are both exactly this: the set changes under a standing offer. */
   type Box = { id: string; address: string; status?: string; legacyStandDown?: boolean };
   async function mountList(list: Box[]): Promise<(next: Box[]) => Promise<void>> {
-    const { ProfileImportCard, useProfileImport } = await import("../app/shell/ProfileImportCard.js");
+    const { HOSTED } = await import("../app/profile-import-wire");
     function ListProbe({ boxes }: { boxes: Box[] }) {
-      const state = useProfileImport(true, boxes, undefined, 60_000);
+      const state = useProfileImport(true, boxes, HOSTED, 60_000);
       if (!state.offer) return h("div", { className: "no-card" });
-      return h(ProfileImportCard as never, {
+      return h(LocalizedOffer, {
         offer: state.offer,
         phase: state.phase,
         onImport: state.importNow,
         onNotNow: state.notNow,
         onAcknowledge: state.acknowledge,
-      } as never);
+      });
     }
     const render = async (boxes: Box[]): Promise<void> => {
       const el = h(NextIntlClientProvider, {
@@ -460,14 +479,14 @@ describe("a removed mailbox has no settings check", () => {
     calls.filter((c) => c.method === "GET" && c.path === `/mailboxes/${id}/profile-import`).length;
 
   async function mountBoxes(list: Box[], recheckMs: number): Promise<(next: Box[]) => Promise<void>> {
-    const { ProfileImportCard, useProfileImport } = await import("../app/shell/ProfileImportCard.js");
+    const { HOSTED } = await import("../app/profile-import-wire");
     function BoxProbe({ boxes }: { boxes: Box[] }) {
-      const state = useProfileImport(true, boxes, undefined, recheckMs);
+      const state = useProfileImport(true, boxes, HOSTED, recheckMs);
       if (!state.offer) return h("div", { className: "no-card" });
-      return h(ProfileImportCard as never, {
+      return h(LocalizedOffer, {
         offer: state.offer, phase: state.phase,
         onImport: state.importNow, onNotNow: state.notNow, onAcknowledge: state.acknowledge,
-      } as never);
+      });
     }
     const render = async (boxes: Box[]): Promise<void> => {
       const el = h(NextIntlClientProvider, {
@@ -522,10 +541,26 @@ describe("a removed mailbox has no settings check", () => {
 });
 
 describe("a host's own transport — the desktop's seam, driven where it can be driven", () => {
+  beforeEach(installShellEnv);
+  afterEach(teardownShellEnv);
+
+  async function mountHost(wire: import("@ohmail/app/profile-import").ProfileImportTransport) {
+    const inner = globalThis.fetch;
+    const cloudProfile = vi.fn(() => { throw new Error("the injected transport was bypassed"); });
+    globalThis.fetch = (input, init) => String(input).includes("/profile-import")
+      ? cloudProfile()
+      : inner(input, init);
+    const frame = await mountShell([mailbox({
+      ...MB, lastSyncAt: SHELL_TIME, initialImportCompletedAt: SHELL_TIME, organizeConsentedAt: SHELL_TIME,
+    })], { profileImportTransport: wire });
+    await tickShell(3000);
+    return { frame, cloudProfile };
+  }
+
   /** A transport that answers from the test's own state and records every call it carries. */
-  function hostWire(overrides: Partial<import("../app/shell/ProfileImportCard.js").ProfileImportTransport> = {}) {
+  function hostWire(overrides: Partial<ProfileImportTransport> = {}) {
     const carried: Array<{ verb: string; args: unknown[] }> = [];
-    const wire: import("../app/shell/ProfileImportCard.js").ProfileImportTransport = {
+    const wire: ProfileImportTransport = {
       candidate: async (id) => { carried.push({ verb: "candidate", args: [id] }); return candidate as never; },
       apply: async (id, fp) => { carried.push({ verb: "apply", args: [id, fp] }); return applied as never; },
       status: async (id, fp) => { carried.push({ verb: "status", args: [id, fp] }); return { state: "importing", fingerprint: fp }; },
@@ -539,17 +574,16 @@ describe("a host's own transport — the desktop's seam, driven where it can be 
   it("an injected transport carries every call, and nothing reaches the Cloud client", async () => {
     // BOOBY TRAP: with a host wire in hand, a single request through the Cloud client is a
     // desktop window opening a socket — the exact thing its CSP and offline guard forbid.
-    globalThis.fetch = (async () => {
-      throw new Error("the injected transport was bypassed — this must never reach fetch");
-    }) as typeof fetch;
     const { wire, carried } = hostWire();
-    await mount({ active: true, transport: wire });
-    expect(card()).not.toBeNull();
-    await click(button("Import settings"));
+    const { frame, cloudProfile } = await mountHost(wire);
+    const offer = getByRole(frame, "region", { name: messages.profileImport.title });
+    await act(async () => getByRole(offer, "button", { name: "Import settings" }).click());
+    await tickShell(0);
     expect(carried).toEqual([
       { verb: "candidate", args: [MB.id] },
       { verb: "apply", args: [MB.id, FINGERPRINT] },
     ]);
+    expect(cloudProfile).not.toHaveBeenCalled();
   });
 
   it("an injected transport's refusal reaches the card as its own sentence — the engine's words, not the generic line", async () => {
@@ -559,16 +593,19 @@ describe("a host's own transport — the desktop's seam, driven where it can be 
     // one the engine wrote.
     const said = "The saved settings changed since you looked. Review them again before importing.";
     const { wire } = hostWire({ apply: async () => { throw new Error(said); } });
-    await mount({ active: true, transport: wire });
-    await click(button("Import settings"));
-    expect(card()!.textContent).toContain(said);
+    const { frame, cloudProfile } = await mountHost(wire);
+    const offer = getByRole(frame, "region", { name: messages.profileImport.title });
+    await act(async () => getByRole(offer, "button", { name: "Import settings" }).click());
+    await tickShell(0);
+    expect(offer.textContent).toContain(said);
     // The decision survives the refusal: the offer and both buttons are still there.
-    expect(button("Import settings")).toBeDefined();
+    expect(getByRole(offer, "button", { name: "Import settings" })).toBeDefined();
+    expect(cloudProfile).not.toHaveBeenCalled();
   });
 });
 
 describe("Settings → Mailboxes: a declined document, with Import and Replace", () => {
-  async function mountRow(transport?: import("../app/shell/ProfileImportCard.js").ProfileImportTransport): Promise<void> {
+  async function mountRow(transport?: ProfileImportTransport): Promise<void> {
     const { SavedProfileSection } = await import("../app/shell/ProfileImportCard.js");
     const el = h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-17T12:00:00.000Z"),
@@ -665,9 +702,10 @@ describe("Settings → Mailboxes: a declined document, with Import and Replace",
 describe("Settings → Mailboxes: a mailbox that cannot keep its settings copy says so", () => {
   /** The hook and the section, wired as `AppShell` wires them; a new doorbell re-asks. */
   async function mountPane(): Promise<(bell: number) => Promise<void>> {
-    const { SavedProfileSection, useProfileImport } = await import("../app/shell/ProfileImportCard.js");
+    const { SavedProfileSection } = await import("../app/shell/ProfileImportCard.js");
+    const { HOSTED } = await import("../app/profile-import-wire");
     function Pane({ bell }: { bell: number }) {
-      const state = useProfileImport(true, [MB], undefined, 60 * 60 * 1000, bell);
+      const state = useProfileImport(true, [MB], HOSTED, 60 * 60 * 1000, bell);
       return h(SavedProfileSection, { rows: state.declined, unkept: state.unkept });
     }
     const render = async (bell: number): Promise<void> => {
@@ -705,7 +743,7 @@ describe("the doorbell: a find is asked for on the drain that carries it", () =>
     const pending: Array<{ id: string; release: (v: unknown) => void }> = [];
     const asked: string[] = [];
     let declineRelease: (() => void) | null = null;
-    const wire: import("../app/shell/ProfileImportCard.js").ProfileImportTransport = {
+    const wire: ProfileImportTransport = {
       candidate: (id) => { asked.push(id); return new Promise((r) => { pending.push({ id, release: r as (v: unknown) => void }); }) as never; },
       apply: async () => applied as never,
       status: async () => { throw new Error("not asked"); },
@@ -729,17 +767,16 @@ describe("the doorbell: a find is asked for on the drain that carries it", () =>
 
   /** The real hook + card with the doorbell as a prop; the beat is an hour, so only a ring can ask. */
   async function mountBell(
-    wire: import("../app/shell/ProfileImportCard.js").ProfileImportTransport, boxes: ReadonlyArray<{ id: string; address: string }> = [MB],
+    wire: ProfileImportTransport, boxes: ReadonlyArray<{ id: string; address: string }> = [MB],
   ): Promise<(bell: number | null) => Promise<void>> {
-    const { ProfileImportCard, useProfileImport } = await import("../app/shell/ProfileImportCard.js");
     function BellProbe({ bell }: { bell: number | null }) {
       const state = useProfileImport(true, boxes, wire, 60 * 60 * 1000, bell);
       const rows = h("i", { className: "declined-rows" }, state.declined.map((r) => r.address).join(","));
       if (!state.offer) return h("div", { className: "no-card" }, rows);
-      return h("div", null, rows, h(ProfileImportCard as never, {
+      return h("div", null, rows, h(LocalizedOffer, {
         offer: state.offer, phase: state.phase,
         onImport: state.importNow, onNotNow: state.notNow, onAcknowledge: state.acknowledge,
-      } as never));
+      }));
     }
     const render = async (bell: number | null): Promise<void> => {
       const el = h(NextIntlClientProvider, {
@@ -840,30 +877,252 @@ describe("the doorbell: a find is asked for on the drain that carries it", () =>
   });
 });
 
+interface SavedRecoveryWalk {
+  frame: HTMLElement;
+  visit: (route: string) => Promise<void>;
+  requests: Array<{ verb: "import" | "replace"; body: unknown }>;
+  reads: () => number;
+  buttonOnFrame: (label: string) => HTMLButtonElement | undefined;
+  bindApiOwner: (owner: string | null) => void;
+  holdReplace: () => () => void;
+  pendImport: () => void;
+  holdStatus: () => () => void;
+  statusReads: Array<string | null>;
+}
+
+async function withSavedRecovery(walk: (fixture: SavedRecoveryWalk) => Promise<void>) {
+  const { bindApiOwner } = await import("../app/api-client");
+  const { resetStorageOwnerForTest } = await import("@ohmail/app-logic/storage/storage-owner");
+  installConfirmEnv();
+  try {
+    rememberOwner();
+    scriptRefresh(refresh204);
+    scriptSession(sessionFull);
+    window.location.hash = "#/ohbox";
+    const inner = globalThis.fetch;
+    let candidateReads = 0;
+    const requests: SavedRecoveryWalk["requests"] = [];
+    const profile = `/api/mailboxes/${MB.id}/profile-import`;
+    let replaceReply: Promise<Response> | null = null;
+    let importPending = false;
+    let statusReply: Promise<Response> | null = null;
+    const statusReads: SavedRecoveryWalk["statusReads"] = [];
+    const holdStatus = () => {
+      let finish!: (response: Response) => void;
+      statusReply = new Promise((resolve) => { finish = resolve; });
+      return () => {
+        statusReply = null;
+        finish(json({ ...applied, state: "imported" }));
+      };
+    };
+    const holdReplace = () => {
+      let finish!: (response: Response) => void;
+      replaceReply = new Promise((resolve) => { finish = resolve; });
+      return () => {
+        replaceReply = null;
+        finish(json({ replaced: true }));
+      };
+    };
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/mailboxes") {
+        return json({ items: [{ ...MB, status: "connected", organizerRole: "organizer",
+          createdAt: SHELL_TIME, lastSyncAt: SHELL_TIME,
+          initialImportCompletedAt: SHELL_TIME, organizeConsentedAt: SHELL_TIME }] });
+      }
+      if (path === profile + "/replace" && init?.method === "POST") {
+        requests.push({ verb: "replace", body: JSON.parse(String(init.body)) });
+        return replaceReply ?? json({ replaced: true });
+      }
+      if (path === profile + "/status") {
+        statusReads.push(new Headers(init?.headers).get("x-ohmail-profile-fingerprint"));
+        return statusReply ?? json({ state: "importing", fingerprint: FINGERPRINT });
+      }
+      if (path === profile) {
+        if (init?.method === "POST") {
+          requests.push({ verb: "import", body: JSON.parse(String(init.body)) });
+          return importPending ? json({ state: "importing", fingerprint: FINGERPRINT, reason: "slow" }, 202) : json(applied);
+        }
+        candidateReads += 1;
+        // Replace schedules an organizer write. The mailbox can keep returning this copy until it lands.
+        return json({ ...candidate, state: "declined" });
+      }
+      return inner(input, init);
+    };
+    const frame = await mountCloudShell();
+    await tick(3000);
+    const visit = async (route: string) => {
+      await act(async () => {
+        window.location.hash = `#/${route}`;
+        window.dispatchEvent(new Event("hashchange"));
+      });
+      await tick(500);
+    };
+    const buttonOnFrame = (label: string) =>
+      [...frame.querySelectorAll("button")].find((button) => button.textContent?.trim() === label);
+    await walk({
+      frame, visit, requests, reads: () => candidateReads, buttonOnFrame, bindApiOwner, holdReplace,
+      pendImport: () => { importPending = true; }, holdStatus, statusReads,
+    });
+  } finally {
+    await teardownConfirmEnv();
+    bindApiOwner(null);
+    resetStorageOwnerForTest();
+    window.history.replaceState(null, "", "/");
+  }
+}
+
 describe("the shell wiring, pinned by source", () => {
-  const shell = read("shell/AppShell.tsx");
+  const ground = read("../../../packages/app/src/profile-import/ground.tsx");
 
   /* Re-decided (HOST-CLIENT-DECLINED-SETTINGS-HAS-NO-ROW): the SHELL reads the declined rows, so
      the pane exists on a surface with no mailbox node while one stands. */
-  it("the Mailboxes pane carries the declined rows over the same transport, withheld on the demo", () => {
-    expect(shell).toContain("<SavedProfileSection rows={profileImportOffer.declined} unkept={profileImportOffer.unkept} transport={profileImportTransport} />");
-    expect(shell).toContain("savedSettingsSection={demo || profileImportOffer.declined.length + profileImportOffer.unkept.length === 0 ? undefined : (");
+  it("the Mailboxes pane carries the declined rows over the same transport, withheld on the demo", async () => {
     // The rows are the card's own answers, never a second request (`useProfileImport`'s `declined`).
-    const hook = sliceOfDeclaration(read("shell/ProfileImportCard.tsx"), "useProfileImport");
+    const hook = sliceOfDeclaration(read("../../../packages/app/src/profile-import/use-profile-candidates.ts"), "useCandidateChecks");
     expect(hook).toContain("const saved = asDeclined(dto);");
     expect(hook).not.toContain("useSavedProfiles(");
-    const view = read("views/SettingsView.tsx");
-    expect(view).toContain('{shown === "mailboxes" ? savedSettingsSection : null}');
+    expect(ground).toContain('const active = !demo && host.session.state !== "refused" && wire !== NONE;');
+    await withSavedRecovery(async ({ frame, visit, requests, reads, buttonOnFrame, bindApiOwner }) => {
+      expect(reads(), "the shared ground must read the declined document before Settings").toBe(1);
+      expect(frame.textContent).not.toContain("Settings saved on");
+      await visit("settings/mailboxes");
+      expect(frame.textContent).toContain("Settings saved on mila@example.com");
+      expect(reads(), "opening Settings must not ask a second time").toBe(1);
+      expect(requests).toEqual([]);
+      // Keep the old frame in place while the browser changes owners. Its visible button is
+      // still reachable before the session's own refresh can replace the frame.
+      const oldPress = buttonOnFrame("Import settings");
+      expect(oldPress).toBeDefined();
+      rememberOwner("acct_recovery_other");
+      bindApiOwner("acct_recovery_other");
+      await act(async () => { oldPress!.click(); });
+      await tick(0);
+      expect(requests, "the old frame sent its fingerprint under the new account").toEqual([]);
+      rememberOwner(SHELL_ACCOUNT);
+      bindApiOwner(SHELL_ACCOUNT);
+      await act(async () => { buttonOnFrame("Import settings")!.click(); });
+      await tick(0);
+      expect(requests).toEqual([{ verb: "import", body: { fingerprint: FINGERPRINT } }]);
+      expect(frame.textContent).toContain("Your settings are back.");
+    });
+  });
+
+  it("does not offer a replaced settings copy again after returning to Mailboxes", async () => {
+    const { PROFILE_IMPORT_RECHECK_MS } = await import("@ohmail/app/profile-import");
+    await withSavedRecovery(async ({ frame, visit, requests, reads, buttonOnFrame, holdReplace }) => {
+      const replace = "Save this ohmail's settings to the mailbox";
+      await visit("settings/mailboxes");
+      const finishReplace = holdReplace();
+      await act(async () => { buttonOnFrame(replace)!.click(); });
+      await tick(0);
+      expect(requests).toEqual([{ verb: "replace", body: { fingerprint: FINGERPRINT } }]);
+      await visit("ohbox");
+      await visit("settings/mailboxes");
+      expect(buttonOnFrame("Import settings")?.disabled).toBe(true);
+      expect(buttonOnFrame(replace)).toBeUndefined();
+      expect(requests).toHaveLength(1);
+      await act(async () => { finishReplace(); });
+      await tick(0);
+      expect(frame.textContent).toContain("This ohmail's settings go to the mailbox within a few minutes.");
+      await visit("ohbox");
+      await visit("settings/mailboxes");
+      expect(reads()).toBe(1);
+      expect(buttonOnFrame("Import settings")).toBeUndefined();
+      expect(buttonOnFrame(replace)).toBeUndefined();
+      expect(requests).toHaveLength(1);
+
+      const newFingerprint = "d".repeat(64);
+      candidate = { ...candidate, fingerprint: newFingerprint };
+      await act(async () => { await vi.advanceTimersByTimeAsync(PROFILE_IMPORT_RECHECK_MS); });
+      await tick(500);
+      expect(reads()).toBe(2);
+      expect(buttonOnFrame(replace)?.disabled).toBe(false);
+      const importNew = buttonOnFrame("Import settings");
+      expect(importNew?.disabled).toBe(false);
+      await act(async () => { importNew!.click(); });
+      await tick(0);
+      expect(requests).toEqual([
+        { verb: "replace", body: { fingerprint: FINGERPRINT } },
+        { verb: "import", body: { fingerprint: newFingerprint } },
+      ]);
+    });
+  });
+
+  it("pauses a pending saved import away from Mailboxes and resumes it without applying again", async () => {
+    const { PROFILE_IMPORT_STATUS_BEAT_MS: beat } = await import("@ohmail/app/profile-import");
+    await withSavedRecovery(async ({ frame, visit, requests, buttonOnFrame, pendImport, holdStatus, statusReads }) => {
+      pendImport();
+      await visit("settings/mailboxes");
+      await act(async () => { buttonOnFrame(messages.profileImport.import)!.click(); });
+      await tick(0);
+      expect(buttonOnFrame(messages.profileImport.importing)?.disabled).toBe(true);
+
+      await visit("settings/general");
+      expect(buttonOnFrame(messages.profileImport.importing)).toBeUndefined();
+      await tick(beat + 1);
+      expect(statusReads).toEqual([]);
+
+      await visit("settings/mailboxes");
+      expect(buttonOnFrame(messages.profileImport.importing)?.disabled).toBe(true);
+      expect(buttonOnFrame(messages.profileImport.import)).toBeUndefined();
+      const finishStatus = holdStatus();
+      await tick(beat);
+      expect(statusReads).toEqual([FINGERPRINT]);
+      await visit("ohbox");
+      await act(async () => { finishStatus(); });
+      await tick(beat + 1);
+      expect(statusReads).toEqual([FINGERPRINT]);
+
+      await visit("settings/mailboxes");
+      expect(frame.textContent).toContain(messages.profileImport.doneTitle);
+      expect(buttonOnFrame(messages.profileImport.import)).toBeUndefined();
+      expect(requests).toEqual([{ verb: "import", body: { fingerprint: FINGERPRINT } }]);
+    });
+  });
+
+  it("keeps a late saved import status and its timers out of a different account", async () => {
+    const { PROFILE_IMPORT_STATUS_BEAT_MS: beat } = await import("@ohmail/app/profile-import");
+    await withSavedRecovery(async ({ frame, visit, requests, buttonOnFrame, bindApiOwner, pendImport, holdStatus, statusReads }) => {
+      pendImport();
+      await visit("settings/mailboxes");
+      await act(async () => { buttonOnFrame(messages.profileImport.import)!.click(); });
+      await tick(0);
+      expect(buttonOnFrame(messages.profileImport.importing)?.disabled).toBe(true);
+      const finishStatus = holdStatus();
+      await tick(beat);
+      expect(statusReads).toEqual([FINGERPRINT]);
+
+      const other = "acct_recovery_other";
+      rememberOwner(other);
+      bindApiOwner(other);
+      scriptSession(() => sessionFull(other));
+      const current = await mountCloudShell();
+      await tick(3000);
+      const offer = () => [...current.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === messages.profileImport.import);
+      expect(offer()?.disabled).toBe(false);
+
+      await act(async () => { finishStatus(); });
+      await tick(beat + 1);
+      expect(frame.textContent).not.toContain(messages.profileImport.doneTitle);
+      expect(current.textContent).not.toContain(messages.profileImport.doneTitle);
+      expect(offer()?.disabled).toBe(false);
+      expect(statusReads).toEqual([FINGERPRINT]);
+      expect(requests).toEqual([{ verb: "import", body: { fingerprint: FINGERPRINT } }]);
+    });
   });
 
   it("the shell holds ONE import state, gated on the demo alone, on the host's wire when there is one", () => {
-    expect(shell).toMatch(/const profileImportOffer = useProfileImport\(!demo, facts, profileImportTransport, undefined, profileDoorbell\);/);
+    expect(ground.match(/\buseProfileImport\(/g)).toHaveLength(1);
+    expect(ground).toContain("const wire = host.wires.profileImport;");
+    expect(ground).toContain('const active = !demo && host.session.state !== "refused" && wire !== NONE;');
+    expect(sliceOfDeclaration(ground, "state")).toContain("wire === NONE ? null : wire,");
   });
 
   it("the shell hands the hook the mirror's doorbell, re-read with every derived version", () => {
-    const decl = sliceOfDeclaration(shell, "profileDoorbell");
-    expect(decl).toContain("() => settingsDoorbell(engine.read()),");
-    expect(decl).toContain("[engine, derived],");
+    expect(ground).toContain("useDerivedVersion();");
+    expect(sliceOfDeclaration(ground, "state")).toContain("settingsDoorbell(engine.read()),");
   });
 
 });
@@ -873,7 +1132,7 @@ describe("a press the organizer finishes — the card says importing, then the r
   function handoverWire(reason: "slow" | "unreachable" = "slow") {
     const statusAsked: string[] = [];
     let status: Record<string, unknown> = { state: "importing", fingerprint: FINGERPRINT };
-    const wire: import("../app/shell/ProfileImportCard.js").ProfileImportTransport = {
+    const wire: ProfileImportTransport = {
       candidate: async () => candidate as never,
       apply: async (_id, fp) => ({ state: "importing", fingerprint: fp, reason }) as never,
       status: async (_id, fp) => { statusAsked.push(fp); return status as never; },
@@ -883,15 +1142,14 @@ describe("a press the organizer finishes — the card says importing, then the r
     return { wire, statusAsked, settle: (v: Record<string, unknown>) => { status = v; } };
   }
 
-  async function mountRinging(wire: import("../app/shell/ProfileImportCard.js").ProfileImportTransport): Promise<(bell: number) => Promise<void>> {
-    const { ProfileImportCard, useProfileImport } = await import("../app/shell/ProfileImportCard.js");
+  async function mountRinging(wire: ProfileImportTransport): Promise<(bell: number) => Promise<void>> {
     function Probe({ bell }: { bell: number }) {
       const state = useProfileImport(true, [MB], wire, 60 * 60 * 1000, bell);
       if (!state.offer) return h("div", { className: "no-card" });
-      return h(ProfileImportCard as never, {
+      return h(LocalizedOffer, {
         offer: state.offer, phase: state.phase,
         onImport: state.importNow, onNotNow: state.notNow, onAcknowledge: state.acknowledge,
-      } as never);
+      });
     }
     const render = async (bell: number): Promise<void> => {
       const el = h(NextIntlClientProvider, {

@@ -6,11 +6,13 @@
  * the root, because an app's own tests may not import another app.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import en from "../apps/webapp/messages/en.json";
 import { act, message, stubDom } from "../apps/webapp/test/_draft-shell.js";
-import { mountWriting, rounds, unmountWritings } from "../apps/webapp/test/write/writing-world.js";
+/* The composition under Write as the mail ground stands it (`write/writing-world.tsx` is today's words and keys, which leave). */
+import { mountWriting, rounds, unmountWritings } from "../apps/webapp/test/_write-1-writing.js";
+import { typeInto } from "../apps/webapp/test/fixtures/rich-editor-driver.js";
 import { draftReplyVia } from "../apps/desktop/src/draft-reply-wire.js";
 
 const W = en.write;
@@ -37,10 +39,9 @@ describe("draft from your text where the host answers none", () => {
     const w = await mountWriting({ messages: [message("m1")], hash: "#/ohbox", sheet: ["m1"], draftWire: wire });
     await act(async () => w.now().openReply("m1"));
     await rounds(6);
+    /* Write's reply text is its rich editor: the words are typed into it as a person types them. */
     await act(async () => {
-      fireEvent.change(screen.getByRole("textbox", { name: W.reply.text }), {
-        target: { value: "noon ok, bring the glaze" },
-      });
+      typeInto(screen.getByRole("textbox", { name: W.reply.text }), "noon ok, bring the glaze");
     });
     await rounds(2);
     expect(screen.queryByRole("button", { name: W.draft.fromText })).toBeNull();

@@ -2,9 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import en from "../messages/en.json";
-import { MoreMenu, type MoreMenuItem } from "../app/shell/MoreMenu";
+import { Menu, MenuItem } from "@ohmail/ui/base";
 
 /**
  * ═══ WIDENING THE COLUMN TOOK THE KEYBOARD OUT OF THE OPEN MENU ════════════════════════════
@@ -50,6 +48,15 @@ import { MoreMenu, type MoreMenuItem } from "../app/shell/MoreMenu";
  * exactly one case goes red — the letter one, at "a did not claim the event away from the document
  * listener" — while the positive control beside it (Enter, Tab, Space, a modified combo) stays
  * green.
+ *
+ * ── RE-POINTED (share reader-1, the switch's older tests) ───────────────────────────────────
+ *
+ * Today's `MoreMenu` leaves with today's shell: every menu of the new panel, More's among them, is the kit's `Menu`
+ * (`packages/ui/src/base/Overlays/Menu.tsx`), so the harness wires the kit's menu to its trigger exactly as the new
+ * panel does (`packages/app/src/reader/actions/ActionBar.tsx`: the trigger as the anchor, the caller's `onClose`),
+ * and an item is found by its name. The repair cases and the keys a menu must not claim are red by their rows
+ * (`GAP:kit`); the letter case retired with the case that holds it over the new shell
+ * (`reader-panel-focus.test.tsx`, "a letter pressed inside the More menu does not reach the mail underneath").
  */
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -93,20 +100,18 @@ function Harness({ ids }: { ids: string[] }): React.ReactElement {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLButtonElement>(null);
   triggerRef = ref;
-  const items: MoreMenuItem[] = ids.map((id) => ({ id, label: id, run: () => {} }));
   return h("div", null,
     h("button", {
-      ref, type: "button", className: "abar-more", "aria-expanded": open,
+      ref, type: "button", "aria-haspopup": "menu", "aria-expanded": open,
       onClick: () => setOpen((o) => !o),
     }, "More"),
-    open
-      ? h(MoreMenu, {
-        items,
-        ariaLabel: "More",
-        anchor: ref.current,
-        onClose: () => { closes += 1; setOpen(false); ref.current?.focus(); },
-      })
-      : null);
+    h(Menu, {
+      open,
+      label: "More",
+      anchor: ref,
+      onClose: () => { closes += 1; setOpen(false); ref.current?.focus(); },
+      children: ids.map((id) => h(MenuItem, { key: id, onPress: () => {}, children: id })),
+    }));
 }
 
 async function mount(ids: string[]): Promise<void> {
@@ -116,19 +121,18 @@ async function mount(ids: string[]): Promise<void> {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages: en as never,
-      children: h(Harness, { ids }) }));
+    root!.render(h(Harness, { ids }));
   });
 }
 
-const trigger = (): HTMLButtonElement => host!.querySelector<HTMLButtonElement>(".abar-more")!;
+const trigger = (): HTMLButtonElement => host!.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!;
 const menu = (): HTMLElement | null => document.querySelector('[role="menu"]');
 const item = (id: string): HTMLButtonElement =>
-  document.querySelector<HTMLButtonElement>(`[role="menuitem"][data-item="${id}"]`)!;
+  [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((el) => (el.textContent ?? "").trim() === id)!;
 const shown = (): string[] =>
   [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
     .filter((el) => getComputedStyle(el).display !== "none")
-    .map((el) => el.dataset.item ?? "");
+    .map((el) => (el.textContent ?? "").trim());
 
 /** A press, as a pointing device makes one — down, up, then click. */
 async function pointer(el: HTMLElement): Promise<void> {
@@ -152,8 +156,7 @@ async function widen(ids: string[], opts: { blur: boolean }): Promise<void> {
     if (opts.blur) (document.activeElement as HTMLElement | null)?.blur();
     // A widen is a new measurement, and the measurement is state — so the bar re-renders and so
     // does the menu. Re-rendering the same tree is how that arrives here.
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages: en as never,
-      children: h(Harness, { ids: LONG }) }));
+    root!.render(h(Harness, { ids: LONG }));
   });
 }
 
@@ -237,30 +240,6 @@ describe("the admitted set moves under an open menu", () => {
 });
 
 describe("while the menu is open its keys are its own", () => {
-  it("a letter does not reach the document — the shell's mail shortcuts live there", async () => {
-    /* The other half of the report: with focus lost to the document, the next letter typed acted
-       on the mail underneath. With focus repaired the key arrives at the menu, and the menu keeps
-       it — `a` (Answer Later), `e` (Park) and `u` (Mark unread) are all one character.
-
-       Both the outcome and the CALL are asserted. Under a harness React mounts into a `<div>`, so
-       `stopPropagation` alone stops a document listener and the outcome is reachable here; in the
-       product React's root container IS the document and only `stopImmediatePropagation` stops
-       the registry's sibling listener, which no DOM can reproduce. `action-bar.test.ts` watches
-       the same call for the five keys the menu acts on. */
-    await opened();
-    for (const key of ["a", "e", "u", "I"]) {
-      const before = atDocument.length;
-      const e = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, shiftKey: key === "I" });
-      let immediate = 0;
-      e.stopImmediatePropagation = () => { immediate++; };
-      await act(async () => { item("later").dispatchEvent(e); });
-      expect(immediate, `${key} did not claim the event away from the document listener`).toBe(1);
-      expect(atDocument.length, `${key} reached a document listener`).toBe(before);
-      expect(e.defaultPrevented, `${key} was left to the browser as well`).toBe(true);
-    }
-    expect(menu(), "swallowing a letter also closed the menu").not.toBeNull();
-  });
-
   it("…and the keys a menu must NOT claim still pass: Enter, Tab, Space, and a modified combo", async () => {
     /* The positive control. A rule written as "swallow everything" would pass the case above and
        break the menu: Enter and Space are how a keyboard presses an item, Tab is the way out, and

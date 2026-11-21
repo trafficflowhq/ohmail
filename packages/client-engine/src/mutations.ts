@@ -353,8 +353,9 @@ function derivedScreenerEffects(
     scope === "domain" ? domainOfAddress(senderKey(address)) === domainOfAddress(key) : senderKey(address) === key;
   // A removed mailbox's letters stay where they are: the server writes none of them (`heldElsewhere`).
   const gone = new Set(screenerWaitingOf(reader)?.page.gone ?? []);
+  const confirmed = m.confirmedIds === undefined ? null : new Set(m.confirmedIds);
   const gate = reader.list<EngineMessage>("message")
-    .filter((x) => x.folder === FOLDER_OF_VIEW.screener && inScope(x.from.address) && !gone.has(x.mailboxId));
+    .filter((x) => x.folder === FOLDER_OF_VIEW.screener && inScope(x.from.address) && !gone.has(x.mailboxId) && (confirmed === null || confirmed.has(x.id)));
   const moves = (x: EngineMessage): boolean => heldMovesOnPress({
     check: heldCheckOf(x.senderCheck), from: x.from.address, auth: x.authVerdict,
   }, key);
@@ -580,11 +581,13 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       const effects: MutationEffect[] = [];
 
       if (m.decision === "yes") {
+        const heldIds = m.confirmedIds === undefined ? null : new Set(m.confirmedIds);
+        const heldMail = heldIds === null ? sender.held : sender.held.filter((held) => heldIds.has(held.id));
         // Yes → the sender's held mail is filed into the destination; "&read"
         // seen-semantics: the held mail lands already-seen (previously_seen,
         // not new_for_you). The waiting entry disappears; a promoted rule
         // remembers the decision.
-        sender.held.forEach((held, i) => {
+        heldMail.forEach((held, i) => {
           const msg: EngineMessage = {
             id: ctx.uuid(),
             accountId: "demo",

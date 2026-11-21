@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deriveOnboardingStep, importOverOf, type OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
-import { firstRunStep } from "../app/shell/FirstRun";
+import { firstRunStep } from "@ohmail/app-logic/mailboxes/first-run/step";
 import { importOver, seedGrowth, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
@@ -9,6 +9,9 @@ import { importOver, seedGrowth, type MailboxFacts } from "@ohmail/app-logic/mai
  * device holding the account's total or on the 24 h floor bound, and the stage ended on the stamp
  * alone, so the pull screen stayed up with the strip quiet. ONE predicate (`importOver`) now, read
  * by the strip, the stage's derivation, the cursor release and the AI step's `keep`.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the cursor's release is read where the new first run keeps it
+ * (`@ohmail/app-logic/mailboxes/first-run/step`), no longer through today's stage. Every expectation as it stood.
  */
 
 const NOW = Date.parse("2026-09-29T01:00:00.000Z");

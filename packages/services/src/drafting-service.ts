@@ -1,6 +1,6 @@
 import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import {
-  messages, draftAttemptKey, draftFromTextAttemptKey, reverseCharge,
+  messages, draftAttemptKey, draftFromTextAttemptKey, modelConsentGate, ModelConsentWithdrawn, readManagedModelConsent, reverseCharge,
   type IdempotencyKey, type ReverseChargeFact, type ReverseChargeResult,
 } from "@trafficflow/db";
 // TYPE-ONLY, and it has to stay that way: `import type` is erased, so it creates no module edge
@@ -18,7 +18,7 @@ import {
 } from "@trafficflow/core/mail";
 import type { DraftFromTextBody, UntrustedBody } from "@ohmail/wire";
 import { usageLines } from "./ai-usage-lines.js";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { refuseAiSpend } from "./ai-refusal.js";
 import { DraftsService, DRAFT_SUBJECT_MAX_CHARS, type DraftCreateIdempotency } from "./drafts-service.js";
@@ -156,12 +156,8 @@ export interface DraftFromMessageDeps {
    */
   obligations?: RefundObligationPort;
   /**
-   * THE ACCESS HALF, READ ONLY WHEN THE GATE HAS ALREADY REFUSED — never on the way in.
-   *
-   * The Screener's twin dep, for the twin rule: a `state` refusal is cross-checked against a
-   * fresh read of this account's access, and one that says AI is available answers 503 rather
-   * than demanding money. ABSENT is a host that wired no such reader, and then a refusal answers
-   * what it always answered.
+   * The managed account's current AI access, checked again before model dispatch.
+   * A spend refusal also uses it to distinguish a payment demand from a host fault.
    */
   access?: AccessPort;
   /**
@@ -545,13 +541,20 @@ export class DraftingService {
     //    buy nothing at all. The refund CLOSES the attempt, so a same-key retry is charged
     //    afresh rather than served free — which is what stops refund-plus-retry from composing
     //    into unlimited free drafts.
+    const { access } = deps;
+    // The authenticated drafting request carries this press. A managed account also needs current AI access.
+    const consent = modelConsentGate(() => access ? readManagedModelConsent(bridgeTx(ctx.db), ctx.accountId, access) : true);
     let result;
     try {
-      result = await draftWithin(deps.drafter, input, window?.modelDeadline ?? null, usage.call);
+      result = await draftWithin(deps.drafter, input, window?.modelDeadline ?? null,
+        { ...usage.call, beforeDispatch: consent.beforeDispatch });
     } catch (err) {
       // A DECLINE IS SAID AS ONE: a 422 the person can read, never a retryable 503 — pressing again
       // draws the same refusal. The credits take the same two states as any failed draft.
       const declined = err instanceof ModelDeclinedError;
+      const failure = err instanceof ModelConsentWithdrawn
+        ? new ServiceError("ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry")
+        : err;
       // `refund: true` only for an attempt THIS request charged. A `duplicate` names an earlier
       // attempt whose work may have been delivered, and reversing that one because this request
       // failed would hand back a charge for a draft the customer already has.
@@ -562,7 +565,7 @@ export class DraftingService {
           // the retry is free.
           await releaseClaim(false);
           if (declined) throw draftDeclined(null);
-          throw err;
+          throw failure;
         }
         const done = await releaseClaim(true);
         // AND THE PERSON IS TOLD WHICH OF THE TWO HAPPENED: `returned` is money already back,
@@ -572,7 +575,7 @@ export class DraftingService {
         // attempt stays open. A 500 would render as "internal error" and lose the money's state.
         const back = done?.receipt === "settled" ? "returned" : done?.owed ? "owed" : null;
         if (declined) throw draftDeclined(back);
-        if (back === null) throw err;
+        if (back === null) throw failure;
         throw new ServiceError(
           "ai_draft_failed", 503,
           back === "returned"
@@ -583,7 +586,7 @@ export class DraftingService {
         );
       }
       if (declined) throw draftDeclined(null);
-      throw err;
+      throw failure;
     }
 
     // THE USAGE RELEASE, sent after the store below: the lesser fact. A plain release moves no money on this
@@ -704,7 +707,10 @@ async function draftWithin(
   drafter: DraftPort, input: DraftInput, deadline: number | null, call: AiCallOptions | undefined,
 ): Promise<Awaited<ReturnType<DraftPort["draft"]>>> {
   // The usage hook rides BOTH arms: an arm without it is a call nobody attributes.
-  if (deadline === null) return call ? drafter.draft(input, call) : drafter.draft(input);
+  if (deadline === null) {
+    if (call?.beforeDispatch) await call.beforeDispatch();
+    return call ? drafter.draft(input, call) : drafter.draft(input);
+  }
   const cut = (): ServiceError =>
     new ServiceError("ai_unavailable", 503, "the drafting model did not answer in time; please retry");
   const left = deadline - Date.now();
@@ -713,7 +719,11 @@ async function draftWithin(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      drafter.draft(input, { ...call, signal: ac.signal }),
+      (async () => {
+        if (call?.beforeDispatch) await call.beforeDispatch();
+        if (ac.signal.aborted) throw cut();
+        return drafter.draft(input, { ...call, signal: ac.signal });
+      })(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => { ac.abort(); reject(cut()); }, left);
       }),

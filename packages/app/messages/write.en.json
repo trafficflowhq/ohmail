@@ -295,6 +295,7 @@
     "reasonUnknown": "the server refused it.",
     "toastSent": "Reply sent.",
     "toastSentAndDone": "Sent · marked done",
+    "toastSentFilingIncomplete": "Sent · filing incomplete",
     "toastForwarded": "Forwarded.",
     "toastEarlierWent": "This reply had already been sent. Your newer text was not sent as a second copy.",
     "toastForwardEarlierWent": "This forward had already been sent. Your newer text was not sent as a second copy.",
@@ -319,6 +320,7 @@
       "itWasSent": "It was sent — dismiss"
     },
     "letter": "New message",
+    "back": "Ohbox",
     "foot": "Formatting and files",
     "text": "Message",
     "placeholder": "Write your message",
@@ -330,6 +332,8 @@
     "subjectPlaceholder": "Subject",
     "remove": "Remove {name}",
     "refused": "Not an address: {list}",
+    "suggestions": "Address suggestions",
+    "wroteToYou": "wrote to you",
     "verbs": "Send or discard",
     "send": "Send",
     "discard": "Discard",
@@ -395,7 +399,12 @@
     },
     "keys": {
       "send": "Send the message",
-      "leave": "Leave the message"
+      "leave": "Leave the message",
+      "schedule": "Schedule the send",
+      "evening": "Send later: this evening",
+      "tomorrow": "Send later: tomorrow morning",
+      "monday": "Send later: Monday morning",
+      "custom": "Send later: pick a time"
     },
     "files": {
       "attach": "Attach files, at most {size} in all",
@@ -464,11 +473,13 @@
       }
     },
     "draft": {
+      "placeholder": "Write, or a few words to draft from",
       "verb": "Draft reply",
       "again": "Draft again",
       "running": "Drafting…",
       "waiting": "Another reply is being drafted…",
       "fromText": "Draft from your text",
+      "fromTextShort": "Draft from text",
       "fromTextTitle": "Draft from your text, {cost, plural, one {# credit} other {# credits}}",
       "noCredits": "This account has no AI credits left.",
       "cost": "{cost, plural, one {# credit} other {# credits}}",

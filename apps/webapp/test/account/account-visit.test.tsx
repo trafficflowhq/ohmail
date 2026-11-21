@@ -29,7 +29,8 @@ import { usePasswordDoor } from "../../app/(product)/mailbox/password-door";
  * door and records the account it was handed.
  */
 const wipe = vi.hoisted(() => ({ handed: [] as (string | undefined)[] }));
-vi.mock("../../app/sign-out", () => ({
+vi.mock("../../app/sign-out", async (original) => ({
+  ...await original<typeof import("../../app/sign-out")>(),
   signOut: async (owner?: string) => {
     wipe.handed.push(owner);
     await fetch("/auth/refresh/logout", { method: "POST" });

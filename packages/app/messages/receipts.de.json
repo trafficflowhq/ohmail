@@ -20,6 +20,7 @@
       "empty": "Hier ist nichts"
     },
     "item": {
+      "keyboardOpen": "Drücke in der Nachrichtenzeile die Eingabetaste, um die Nachricht zu öffnen",
       "expand": "Aufklappen",
       "collapse": "Zuklappen",
       "full": "Ganz lesen",

@@ -145,7 +145,7 @@ export interface BadgeProps {
 
 /** Small in-row capsule (thread count, held count, protected, AI suggestion). */
 export function Badge({ variant = "default", icon, className, title, children }: BadgeProps) {
-  const cls = ["badge", variant !== "default" ? variant : null, "num", className]
+  const cls = ["badge", "oh-badge", variant !== "default" ? variant : null, "num", className]
     .filter(Boolean)
     .join(" ");
   return (

@@ -38,6 +38,9 @@
     gap: var(--s3);
     min-height: var(--h-s);
   }
+  .oh-keyhelp-row[aria-disabled="true"] {
+    color: var(--ink2);
+  }
   .oh-keyhelp-label {
     flex: none;
     font-weight: var(--w-mid);

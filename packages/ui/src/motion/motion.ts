@@ -15,11 +15,13 @@ import { cssRect, type CssRect } from "../ui-zoom.js";
 export type DurationToken = `--d-${MotionRole}`;
 export type EaseToken = `--${Extract<TokenName, `e-${string}`>}`;
 export type ShapeToken = `--${Extract<TokenName, `x-${string}` | `o-${string}`>}`;
+type ThresholdToken = `--${Extract<TokenName, `${string}-motion-threshold`>}`;
 
 const read = (el: Element, token: string) => getComputedStyle(el).getPropertyValue(token).trim();
 
 const TIME = /^(-?[\d.]+)(ms|s)$/;
 const SCALED = /^calc\(\s*(-?[\d.]+)(ms|s)\s*\*\s*(.+?)\s*\)$/;
+const PIXELS = /^(\d*\.?\d+)px$/;
 const inMs = (n: string, unit: string) => Number(n) * (unit === "s" ? 1000 : 1);
 
 /** A duration token in milliseconds, the time scale applied. A token that is not set is 0: nothing moves. */
@@ -36,6 +38,12 @@ export function motionMs(el: Element, token: DurationToken): number {
 
 /** A curve token as the browser's animations take it. */
 export const motionEase = (el: Element, token: EaseToken): string => read(el, token) || "linear";
+
+/** Minimum travel in CSS pixels. An unset or invalid threshold leaves the element still. */
+export function motionPx(el: Element, token: ThresholdToken): number {
+  const pixels = PIXELS.exec(read(el, token));
+  return pixels ? Number(pixels[1]) : Infinity;
+}
 
 /** A shape token: a transform for `--x-*`, an opacity for `--o-*`. Unset is "does not move" and "all there". */
 export const motionShape = (el: Element, token: ShapeToken): string =>

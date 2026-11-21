@@ -1,14 +1,27 @@
 /**
  * THE SCREENER'S LIST: its head with the three sections, the rows, what an empty section says, and Show more senders.
- * It reads the one model from `ScreenerAbove` and never makes one; its keys stand while it has them. On one column
- * the open sender stands over the list.
+ * It reads the one model from `ScreenerAbove` and never makes one; its keys stand while it has them, and the
+ * keyboard's zones are declared here: the arrows walk the senders as `j` and `k` do, and the list has no reading zone
+ * (a sender is decided, not read). On one column the open sender stands over the list.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { quarantineShelf, shelfRowMatches } from "@ohmail/app-logic/press/quarantine-shelf";
+import { GroupHeading } from "@ohmail/ui/mail";
 import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
-import { useJunkView, useScreenerView, type ScreenerState } from "@ohmail/app-logic/screener";
-import { useFrame, useSelectionBar } from "../frame/commands.js";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
+import {
+  emptyOf,
+  screenerListSteps,
+  useJunkView,
+  useScreenerView,
+  viewSender,
+  type ScreenerState,
+} from "@ohmail/app-logic/screener";
+import { useEntered, useFrame, useSelectionBar } from "../frame/commands.js";
 import type { PaneProps } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
+import { useCursorRowInView } from "../place-list/ListColumn.js";
 import {
   segmentOf,
   useScreener,
@@ -16,11 +29,12 @@ import {
   useScreenerBeside,
   type ScreenerSegment,
 } from "./contract.js";
-import { AllSpam } from "./asks/AllSpam.js";
+import { BulkDecision } from "./asks/BulkDecision.js";
 import { Unsubscribe } from "./asks/Unsubscribe.js";
 import { Empty } from "./list/Empty.js";
 import { Head } from "./list/Head.js";
 import { Junk } from "./list/Junk.js";
+import { QuarantineMove } from "./list/QuarantineMove.js";
 import { Notices } from "./list/Notices.js";
 import { Rows } from "./list/Rows.js";
 import { Tail } from "./list/Tail.js";
@@ -28,7 +42,8 @@ import { Tools } from "./list/Tools.js";
 import { JunkLetter } from "./held/JunkLetter.js";
 import type { ScreenerJunkItem } from "./ports.js";
 import { Failed } from "./sender/Failed.js";
-import { Sender } from "./sender/Sender.js";
+import { Sender, type SenderWindow } from "./sender/Sender.js";
+import { useText } from "../text/index.js";
 import { useKeyWords } from "./words.js";
 import "./screener.css";
 
@@ -46,12 +61,16 @@ export function useStanding(place: string, sub: string | null): void {
   useEffect(() => () => standing(null), [standing]);
 }
 
-export function ScreenerList({ route, plan, keysHere }: PaneProps) {
+function useScreenerList({ route, plan, keysHere }: PaneProps) {
   const model = useScreener();
   const beside = useScreenerBeside();
   const above = useScreenerAbove();
   const { commands } = useFrame();
   const words = useKeyWords();
+  const t = useText("screener");
+  const phoneWindow = useRef<SenderWindow | null>(null);
+  const listScroller = useRef<HTMLDivElement>(null);
+  const [shelfPicked, setShelfPicked] = useState(false);
   const segment = segmentOf(route.sub);
   useStanding(route.place, route.sub);
   const go = useCallback(
@@ -62,9 +81,18 @@ export function ScreenerList({ route, plan, keysHere }: PaneProps) {
   const selectJunk = useCallback((key: string | null) => above.select("junk", key), [above]);
   const oneColumn = plan.columns === 1;
   const { junk } = beside;
-  /* With the mail server's Junk handed, the third section is that folder, and Spam's own senders are not listed. */
   const junkOn = segment === "spam" && junk !== NONE;
-  const state = useMemo(() => (junkOn ? { ...model, spam: NO_SPAM } : model), [model, junkOn]);
+  const spam = useMemo(() => {
+    if (!junkOn || !junk.held) return NO_SPAM;
+    return quarantineShelf(model.spam, junk.held.ids).filter((row) =>
+      shelfRowMatches(row, junk.search.query),
+    );
+  }, [junkOn, junk, model.spam]);
+  const quarantine = junkOn && spam.length > 0 && (shelfPicked || junk.visible.length === 0);
+  const state = useMemo(() => (junkOn ? { ...model, spam } : model), [model, spam, junkOn]);
+  useEffect(() => {
+    if (!junkOn || spam.length === 0) setShelfPicked(false);
+  }, [junkOn, spam.length]);
   const view = useScreenerView({
     state,
     segment,
@@ -75,8 +103,22 @@ export function ScreenerList({ route, plan, keysHere }: PaneProps) {
     words,
     oneColumn,
   });
+  const keptCursor = segment !== "waiting" && (!junkOn || quarantine) && !view.full ? view.openId : null;
+  useCursorRowInView(keptCursor, listScroller);
+  const entered = useEntered();
+  useEffect(() => {
+    const id = entered.letter;
+    if (id === null || junkOn) return;
+    const row = view.rows
+      .map(viewSender)
+      .find((sender) => sender.id === id || sender.held.some((letter) => letter.id === id));
+    if (row) {
+      view.select(row.id, null, id);
+      entered.taken();
+    }
+  }, [entered, view, junkOn]);
   const junkView = useJunkView({
-    active: junkOn,
+    active: junkOn && !quarantine,
     rows: junk === NONE ? NO_JUNK : junk.visible,
     selected: above.selected("junk"),
     select: selectJunk,
@@ -86,7 +128,14 @@ export function ScreenerList({ route, plan, keysHere }: PaneProps) {
     undo: beside.undo,
     oneColumn,
   });
-  useOptionalKeyBindings(keysHere ? (junkOn ? junkView.keys : view.keys) : []);
+  const count = view.rows.length + view.decided.length;
+  const ready = junkOn
+    ? junk.phase !== "loading"
+    : emptyOf(segment, model, beside.facts, count).kind !== "loading";
+  useSwitchEnded(route, ready);
+  const walked = junkOn && !quarantine ? junkView : view;
+  useOptionalKeyBindings(keysHere ? walked.keys : []);
+  useZoneNav(useText("shortcuts"), { list: screenerListSteps(words, walked.step) });
   /* The queue's first page is asked again when the Screener opens, once: the model makes this function anew on
      every draw. */
   const reread = useRef(model.rereadWaiting);
@@ -96,23 +145,45 @@ export function ScreenerList({ route, plan, keysHere }: PaneProps) {
   }, []);
   /* The reading column reads what the list shows; written after each draw, cleared when the list leaves. */
   useLayoutEffect(() => {
-    above.cell.write(view);
+    above.cell.write({ ...view, quarantine });
   });
   useEffect(() => () => above.cell.write(null), [above.cell]);
   /* On one column an open sender stands over the list, and the dock leaves for its panel. */
   useSelectionBar(view.full || junkView.full);
+  return {
+    t,
+    segment,
+    go,
+    phoneWindow,
+    listScroller,
+    setShelfPicked,
+    view,
+    junk: junkOn ? junk : null,
+    junkView,
+    quarantine,
+  };
+}
+
+export function ScreenerList(pane: PaneProps) {
+  const { t, segment, go, phoneWindow, listScroller, setShelfPicked, view, junk, junkView, quarantine } =
+    useScreenerList(pane);
+  const junkOn = junk !== null;
   const asks = (
     <>
-      <AllSpam view={view} />
+      <BulkDecision view={view} />
       <Unsubscribe view={view} />
     </>
   );
   if (junkOn && junkView.full && junkView.open !== null)
     return <JunkLetter junk={junk} item={junkView.open} onBack={junkView.close} />;
-  if (view.full)
+  if (view.full && (!junkOn || quarantine))
     return (
       <>
-        {view.failedOpen !== null ? <Failed view={view} letter={view.failedOpen} /> : <Sender view={view} />}
+        {view.failedOpen !== null ? (
+          <Failed view={view} letter={view.failedOpen} />
+        ) : (
+          <Sender key={`${segment}:${view.openId ?? ""}`} view={view} phoneWindow={phoneWindow} />
+        )}
         {asks}
       </>
     );
@@ -120,13 +191,41 @@ export function ScreenerList({ route, plan, keysHere }: PaneProps) {
     <div className="sc-list">
       <Head view={view} go={go} />
       <Notices view={view} />
-      <div className="sc-scroll">
+      {junkOn && junk.sweep ? <QuarantineMove sweep={junk.sweep} /> : null}
+      <div className="sc-scroll" ref={listScroller}>
         {junkOn ? (
-          <Junk junk={junk} view={junkView} />
+          <>
+            <Junk
+              junk={junk}
+              view={{
+                ...junkView,
+                select: (key) => {
+                  setShelfPicked(false);
+                  junkView.select(key);
+                },
+              }}
+            />
+            {view.rows.length > 0 ? (
+              <>
+                <GroupHeading>{t("quarantineShelf")}</GroupHeading>
+                <Rows
+                  label={t("quarantineShelf")}
+                  view={{
+                    ...view,
+                    openId: quarantine ? view.openId : null,
+                    select: (id) => {
+                      setShelfPicked(true);
+                      view.select(id);
+                    },
+                  }}
+                />
+              </>
+            ) : null}
+          </>
         ) : (
           <>
             <Tools view={view} />
-            <Rows view={view} />
+            <Rows view={view} scroller={listScroller} />
             <Empty view={view} />
             {segment === "waiting" ? <Tail /> : null}
           </>

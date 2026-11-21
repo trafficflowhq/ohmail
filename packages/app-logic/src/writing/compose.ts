@@ -9,7 +9,7 @@
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/wire";
 import type { SignatureState } from "@ohmail/client-engine";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet, localStorageDoor } from "../storage/durable.js";
-import { isDemoOwned } from "../storage/storage-owner.js";
+import { isDemoOwned, retiredSignOutStorageHeld } from "../storage/storage-owner.js";
 import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
@@ -762,7 +762,7 @@ export function clearComposeDraft(owner: StorageScope): void {
   // NEVER FROM THE DEMO. This key carries no owner, so the demo's own partition does not reach
   // it — and the demo clears at every door that replaces the form. A shop window draining the one
   // buffer an upgraded browser still holds is the same lost message by a different route.
-  if (!isDemoOwned(owner)) durableRemove(LEGACY_COMPOSE_DRAFT_KEY, "compose.draft");
+  if (!isDemoOwned(owner) && !retiredSignOutStorageHeld()) durableRemove(LEGACY_COMPOSE_DRAFT_KEY, "compose.draft");
 }
 
 /**

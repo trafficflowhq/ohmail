@@ -869,6 +869,7 @@ export interface ResolvedSession {
   accountId: string;
   userId: string;
   sessionId: string;
+  familyId?: string;
   lastTwofaAt: Date | null;
   scope: SessionScope;
   via: SessionVia;
@@ -990,6 +991,7 @@ export interface ApiDeps {
    * header is then omitted. Never read on any other route.
    */
   credentialAccount?: string | null;
+  credentialFamily?: string;
   /**
    * The ERASED account a declared token belonged to — set by `erasedAccountBearer` when it answers
    * `410 account_erased`, read by `createApp.handle` to name that answer. Absent on every other

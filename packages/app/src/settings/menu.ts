@@ -4,13 +4,14 @@ import {
   PANE_GROUPS,
   PANE_IDS,
   type PaneGroup,
-  type PaneId,
+  type SettingsPaneId,
   type SettingsPane,
   type SettingsPanes,
 } from "./contract.js";
 
 /** The listed sections in the menu's order: registered, and listed by the host's answers. */
-export function menuOf(host: HostContract, panes: SettingsPanes): readonly SettingsPane[] {
+export function menuOf(host: HostContract, panes: SettingsPanes | null): readonly SettingsPane[] {
+  if (panes === null) return [];
   const listed: SettingsPane[] = [];
   for (const id of PANE_IDS) {
     const pane = panes[id];
@@ -22,10 +23,14 @@ export function menuOf(host: HostContract, panes: SettingsPanes): readonly Setti
 /** The menu in its three groups, each in the menu's order; a group with no listed section is left out. */
 export function groupsOf(
   menu: readonly SettingsPane[],
+  calendarFirst = false,
 ): readonly { group: PaneGroup; panes: readonly SettingsPane[] }[] {
-  return PANE_GROUPS.map((group) => ({ group, panes: menu.filter((pane) => pane.group === group) })).filter(
-    (part) => part.panes.length > 0,
-  );
+  const order = calendarFirst
+    ? (["calendar", ...PANE_GROUPS] as const)
+    : (["mail", "calendar", "account", "about"] as const);
+  return order
+    .map((group) => ({ group, panes: menu.filter((pane) => pane.group === group) }))
+    .filter((part) => part.panes.length > 0);
 }
 
 /**
@@ -36,7 +41,7 @@ export function shownOf(
   sub: string | null,
   menu: readonly SettingsPane[],
   columns: 1 | 2,
-  startAt: PaneId | null,
+  startAt: SettingsPaneId | null,
 ): SettingsPane | null {
   const find = (id: string | null) => (id === null ? undefined : menu.find((pane) => pane.id === id));
   const asked = find(sub);

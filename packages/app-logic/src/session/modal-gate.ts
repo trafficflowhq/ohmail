@@ -84,8 +84,11 @@ export function resetModalGateForTests(): void {
 export const MODAL_SELECTOR =
   '[aria-modal="true"], [role="dialog"], [role="alertdialog"], [role="menu"], .cpop, .senderm';
 
-/** The reading sheet itself. See the header for why the exclusion is `matches` and not `closest`. */
-export const READING_SURFACE = ".reader";
+/**
+ * The reading sheet itself: today's (`.reader`), and the new frame's reading column, which stands over the list as a
+ * modal dialog at one column. See the header for why the exclusion is `matches` and not `closest`.
+ */
+export const READING_SURFACE = ".reader, .fr-reading";
 
 /**
  * Visible enough to be a question.

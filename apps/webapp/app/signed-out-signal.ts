@@ -7,6 +7,15 @@
  * A tab never obeys its own post: the tab signing out still has a sentence of its own to say.
  */
 
+import { cookieFromJar } from "@ohmail/app-logic/storage/cookie-jar";
+
+export const EXPECTED_ACCOUNT_HEADER = "X-Ohmail-Expected-Account";
+export const EXPECTED_FAMILY_HEADER = "X-Ohmail-Expected-Family";
+
+export function readSessionFamily(): string | null {
+  return typeof document === "undefined" ? null : cookieFromJar(document.cookie, "tf_family");
+}
+
 type Wire = { t: "signed-out"; from: string };
 
 /** The channel name, and the transient storage key where there is no channel. */
@@ -34,13 +43,42 @@ const isWire = (m: unknown): m is Wire =>
   typeof m === "object" && m !== null && (m as Wire).t === "signed-out"
   && typeof (m as Wire).from === "string";
 
+const SESSION_CHANGE_SIGNAL = "ohmail.session-changed";
+
+export function postSessionChange(): void {
+  post(SESSION_CHANGE_SIGNAL);
+}
+
+const LOCAL_SIGN_OUT = "ohmail.same-tab-sign-out";
+
+export function postLocalSignOut(): void {
+  window.dispatchEvent(new CustomEvent(LOCAL_SIGN_OUT, { detail: thisTab }));
+}
+
+export function listenLocalSignOut(onSignal: () => void): () => void {
+  const self = thisTab;
+  const listener = (event: Event) => {
+    if ((event as CustomEvent<string>).detail === self) onSignal();
+  };
+  window.addEventListener(LOCAL_SIGN_OUT, listener);
+  return () => window.removeEventListener(LOCAL_SIGN_OUT, listener);
+}
+
+export function listenSessionChange(onSignal: () => void): () => void {
+  return listen(SESSION_CHANGE_SIGNAL, onSignal);
+}
+
 /** Tell every other tab of this account that the session here has ended. Never throws. */
 export function postSignedOut(owner: string | null): void {
-  if (owner === null || typeof window === "undefined") return;
+  if (owner !== null) post(signedOutChannel(owner));
+}
+
+function post(key: string): void {
+  if (typeof window === "undefined") return;
   const message: Wire = { t: "signed-out", from: thisTab };
   if (typeof BroadcastChannel !== "undefined") {
     try {
-      const bus = new BroadcastChannel(signedOutChannel(owner));
+      const bus = new BroadcastChannel(key);
       bus.postMessage(message);
       bus.close();
       return;
@@ -49,7 +87,6 @@ export function postSignedOut(owner: string | null): void {
     }
   }
   try {
-    const key = signedOutChannel(owner);
     window.localStorage.setItem(key, JSON.stringify(message));
     window.localStorage.removeItem(key);
   } catch {
@@ -59,6 +96,10 @@ export function postSignedOut(owner: string | null): void {
 
 /** Hear another tab's post for `owner`. Returns the unsubscribe. */
 export function listenSignedOut(owner: string, onSignal: () => void): () => void {
+  return listen(signedOutChannel(owner), onSignal);
+}
+
+function listen(key: string, onSignal: () => void): () => void {
   const self = thisTab;
   const heard = (m: unknown): void => {
     if (isWire(m) && m.from !== self) onSignal();
@@ -66,13 +107,12 @@ export function listenSignedOut(owner: string, onSignal: () => void): () => void
   let bus: BroadcastChannel | null = null;
   if (typeof BroadcastChannel !== "undefined") {
     try {
-      bus = new BroadcastChannel(signedOutChannel(owner));
+      bus = new BroadcastChannel(key);
       bus.onmessage = (e: MessageEvent) => heard(e.data);
     } catch {
       bus = null;
     }
   }
-  const key = signedOutChannel(owner);
   const onStorage = (e: StorageEvent): void => {
     if (e.key !== key || e.newValue === null) return;
     try {

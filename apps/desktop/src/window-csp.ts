@@ -45,7 +45,7 @@ export function cspFor(platform: string | null, where: "header" | "meta" = "head
     `connect-src ${connect}`,
     "media-src 'none'",
     "object-src 'none'",
-    "frame-src 'none'",
+    "frame-src 'self'",
     // pdf.js's worker, a file of the bundle (`window-pdfjs.ts`); the shell gives it its own policy.
     "worker-src 'self'",
     "base-uri 'none'",

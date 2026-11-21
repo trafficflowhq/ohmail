@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { ViewBoundary } from "../app/shell/ViewBoundary";
+import { ViewBoundary } from "../app/components/ViewBoundary";
 
 /**
  * THE PER-VIEW ERROR BOUNDARY IS LOAD-BEARING, NOT DECORATION.

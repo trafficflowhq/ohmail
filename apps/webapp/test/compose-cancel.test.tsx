@@ -80,7 +80,7 @@ async function unmount(): Promise<void> {
 /** The whole client on the fixture world, parked on `#/compose`. */
 async function mountCompose(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -90,7 +90,7 @@ async function mountCompose(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -106,39 +106,38 @@ async function mountCompose(): Promise<void> {
 
 const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
 
-/** The foot's Cancel — matched on its own class, never on a label another button could share. */
-const cancelButton = (): HTMLButtonElement =>
-  q<HTMLButtonElement>(".compose-foot .compose-cancel")!;
+// Find Write's new letter, recipients and actions by their accessible names. Discard removes the letter immediately and offers Undo in the frame's report.
+const letter = (): HTMLElement | null => q<HTMLElement>('[role="region"][aria-label="New message"]');
+const verbs = (): HTMLElement | null =>
+  letter()?.querySelector<HTMLElement>('[role="toolbar"][aria-label="Send or discard"]') ?? null;
+const verb = (name: string): HTMLButtonElement | null =>
+  [...(verbs()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.getAttribute("aria-label") === name) ?? null;
+/** Today's foot Cancel: Write's Discard. */
+const cancelButton = (): HTMLButtonElement => verb("Discard")!;
+/** A question the press might raise (today's alertdialog): any dialog on the page. */
+const question = (): Element | null => document.querySelector('[role="alertdialog"], [role="dialog"]');
+/** The frame's report, and its Undo press. */
+const reportUndo = (): HTMLButtonElement | null =>
+  [...document.querySelectorAll<HTMLButtonElement>(".fr-report button")].find((b) => b.textContent?.trim() === "Undo") ?? null;
 
-/**
- * The To entries as the FORM holds them — settled chips plus the input's raw tail.
- *
- * This used to read `#compose-to`'s `.value` alone, and that read was only ever true by
- * accident: the form opened with nothing focused, so the typed text sat in the input for
- * ever. Compose now focuses To on mount (`ComposeView.initialFocus`), so when the discard
- * question takes focus the field BLURS — and leaving the field commits the typed entry into
- * a chip, by design ("the entry is finished by the leaving", `RecipientField.tsx`). The
- * property guarded by the callers is unchanged — the question must not DESTROY the text —
- * and a settled chip IS the text, kept; this reads it wherever it lives.
- */
+/** The To entries as the letter holds them: its people (each a press "Remove <address>"), then the typed tail. */
 const toEntries = (): string => {
-  const field = q<HTMLInputElement>("#compose-to")!;
-  const chips = [...field.closest(".rcp")!.querySelectorAll(".rcp-chip-addr")]
-    .map((n) => n.textContent ?? "");
-  return [...chips, field.value].filter(Boolean).join(", ");
+  const field = letter()!.querySelector<HTMLInputElement>('[role="combobox"][aria-label="To"]')!;
+  const line = field.closest('[role="group"], li, div')!.parentElement ?? field.parentElement!;
+  const people = [...line.querySelectorAll<HTMLButtonElement>("button")]
+    .map((b) => /^Remove (.+)$/.exec(b.getAttribute("aria-label") ?? "")?.[1] ?? "")
+    .filter(Boolean);
+  return [...people, field.value].filter(Boolean).join(", ");
 };
-
-const btnIn = (sel: string, label: string): HTMLButtonElement =>
-  [...host!.querySelectorAll<HTMLButtonElement>(`${sel} button`)]
-    .find((b) => b.textContent === label)!;
 
 /** Type into the To field the way React sees it — the native setter, then an input event. */
 async function typeTo(value: string): Promise<void> {
-  const input = q<HTMLInputElement>("#compose-to")!;
+  const input = letter()!.querySelector<HTMLInputElement>('[role="combobox"][aria-label="To"]')!;
   const setter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype, "value",
   )!.set!;
   await act(async () => {
+    input.focus();
     setter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
@@ -146,13 +145,24 @@ async function typeTo(value: string): Promise<void> {
 
 const press = async (el: HTMLElement): Promise<void> => { await act(async () => { el.click(); }); };
 
+/** Escape where the keys are: the field that has the focus (the To line while it is typed in). */
 const escape = async (): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document).dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
   });
 };
+
+/** Back to the letter, as a returning navigation. */
+async function reopen(): Promise<void> {
+  await act(async () => {
+    window.location.hash = "#/compose";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
+  await settleFirstPaint();
+  for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+}
 
 beforeEach(() => {
   window.location.hash = "";
@@ -169,6 +179,8 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  // jsdom draws no animation: the frame's report leaves through `animate`.
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {} unobserve(): void {} disconnect(): void {}
     takeRecords(): [] { return []; }
@@ -192,18 +204,18 @@ describe("Compose offers a cancel at all", () => {
    */
   it("renders it in the foot, beside Send", async () => {
     await mountCompose();
-    const foot = q<HTMLElement>(".compose-foot");
+    const foot = verbs();
     expect(foot, "compose rendered no foot").not.toBeNull();
     expect(
-      foot!.querySelector(".compose-cancel"),
+      verb("Discard"),
       "the compose foot has no cancel — abandoning a message still means going to the "
         + "Drafts list",
     ).not.toBeNull();
     // In the SEND ROW: the two ways this message can end, in one place.
     expect(
-      q(".compose-foot .send-row .compose-cancel"),
+      verb("Send") !== null && foot!.contains(verb("Discard")),
       "the cancel is in the foot but not beside Send",
-    ).not.toBeNull();
+    ).toBe(true);
   });
 });
 
@@ -219,12 +231,12 @@ describe("an empty compose is cancelled with one press", () => {
    */
   it("leaves immediately and asks nothing", async () => {
     await mountCompose();
-    expect(q(".view-compose"), "the compose view is not on screen").not.toBeNull();
+    expect(letter(), "the compose view is not on screen").not.toBeNull();
 
     await press(cancelButton());
 
     expect(
-      q(".compose-confirm"),
+      question(),
       "cancelling an untouched compose asked a question about nothing",
     ).toBeNull();
     expect(window.location.hash, "cancelling an empty compose did not leave the view")
@@ -233,67 +245,28 @@ describe("an empty compose is cancelled with one press", () => {
 });
 
 describe("a written compose is cancelled with a confirm", () => {
-  /**
-   * ══ THE CENTRAL GUARD ══════════════════════════════════════════════════════════════════
-   *
-   * ONE PRESS MUST NOT DELETE A MESSAGE. The row is the only copy of something unsent and the
-   * delete is real, so the first press asks and the second acts — the Drafts list's idiom, for
-   * the reason its header gives.
-   *
-   * Mutation: make `cancel` call `onCancel()` unconditionally. Real failure text:
-   *   AssertionError: cancelling a written compose left the view without asking: expected
-   *   '#/ohbox' to be '#/compose'
-   */
+  /** An unsent letter may be the only copy. One Discard removes it, and Undo during the report's lifetime restores its words. */
   it("asks first, and stays on the message while it asks", async () => {
     await mountCompose();
     await typeTo("sam@example.com");
 
     await press(cancelButton());
+    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 
-    const panel = q<HTMLElement>(".compose-confirm");
-    expect(panel, "cancelling a written compose asked nothing").not.toBeNull();
-    expect(window.location.hash, "cancelling a written compose left the view without asking")
-      .toBe("#/compose");
-    expect(toEntries(), "the text was taken away by the question")
+    const undo = reportUndo();
+    expect(undo, "cancelling a written compose took it at one press, and offers nothing back").not.toBeNull();
+    await press(undo!);
+    await settleFirstPaint();
+    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+    expect(window.location.hash, "Undo did not bring the message back").toBe("#/compose");
+    expect(toEntries(), "the text was taken away by the press")
       .toContain("sam@example.com");
-    /* A DIALOG TO THE ACCESSIBILITY TREE, NOT A SILENT GROUP — CMP-F12. `role="group"` appears
-       without an announcement and without a focus move, so a screen-reader user pressed Cancel
-       and heard nothing while a destructive question sat on screen.
-       Mutation: put `role="group"` back and drop the focus effect. Real failure text:
-         AssertionError: the discard question opened without taking focus — it is silent to a
-         screen reader: expected <body></body> to be <div class="compose-confirm"…> */
-    expect(panel!.getAttribute("role")).toBe("alertdialog");
-    expect(panel!.getAttribute("aria-label")).toBe("Discard message");
-    expect(
-      panel!.getAttribute("aria-describedby"),
-      "the dialog does not name its own sentence — the label alone is read",
-    ).toBe("compose-cancel-what");
-    expect(
-      document.activeElement,
-      "the discard question opened without taking focus — it is silent to a screen reader",
-    ).toBe(panel);
-    expect(cancelButton().getAttribute("aria-expanded")).toBe("true");
   });
 
-  /**
-   * ══ CMP-F5 — THE GUARD MUST SEE THE FILES ══════════════════════════════════════════════
-   *
-   * `worthSaving` reads the text fields only, and rightly (attachment bytes are never
-   * autosaved, so they are no reason to write a row). But the cancel question is about what
-   * the user LOSES, and picked files are exactly that: a compose holding only an attachment
-   * used to discard silently.
-   *
-   * The file is a plain text file on purpose — `shrinkImage` passes non-images through
-   * untouched, so no canvas model is needed in jsdom.
-   *
-   * Mutation: drop the `(fields.attachments?.length ?? 0) > 0` term from `cancel`. Real
-   * failure text:
-   *   AssertionError: cancelling a compose that holds only an attachment discarded it silently
-   *   — the files are a loss the question must name: expected '#/ohbox' to be '#/compose'
-   */
+  /** Autosave has no attachment bytes to persist. A file-only letter still has something to lose, and Undo must restore the file. */
   it("asks before discarding a compose that holds ONLY an attachment", async () => {
     await mountCompose();
-    const input = q<HTMLInputElement>('.compose-attach input[type="file"]')!;
+    const input = letter()!.querySelector<HTMLInputElement>('input[type="file"]')!;
     const file = new File([new Uint8Array(2048)], "notes.txt", { type: "text/plain" });
     Object.defineProperty(input, "files", { value: [file], configurable: true });
     await act(async () => {
@@ -303,86 +276,30 @@ describe("a written compose is cancelled with a confirm", () => {
     for (let i = 0; i < 8; i += 1) {
       await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     }
+    const tile = (): HTMLButtonElement | null =>
+      letter()?.querySelector<HTMLButtonElement>('button[aria-label="Remove notes.txt"]') ?? null;
     expect(
-      q(".compose-attach-item"),
+      tile(),
       "the file never attached, so the cancel question proves nothing",
     ).not.toBeNull();
 
     await press(cancelButton());
+    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 
+    const undo = reportUndo();
     expect(
-      window.location.hash,
+      undo,
       "cancelling a compose that holds only an attachment discarded it silently — the files "
         + "are a loss the question must name",
-    ).toBe("#/compose");
-    expect(q(".compose-confirm")).not.toBeNull();
+    ).not.toBeNull();
+    await press(undo!);
+    await settleFirstPaint();
+    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+    expect(window.location.hash).toBe("#/compose");
+    expect(tile(), "Undo brought the letter back without its file").not.toBeNull();
   });
 
-  /**
-   * ══ CMP-F12's SECOND HALF — THE SENTENCE IS EXACTLY AS WIDE AS THE TRUTH ═══════════════
-   *
-   * "here and on your account" is right once autosave has written a row and wrong before it
-   * has: a never-saved message exists in this browser alone, and a warning that exaggerates
-   * teaches people warnings exaggerate. The debounce is two seconds, so pressing Cancel
-   * straight after typing is exactly the never-saved case.
-   *
-   * Mutation: render `t("cancelWhat")` unconditionally. Real failure text:
-   *   AssertionError: the confirm claims the account holds a copy it does not hold: expected
-   *   'This deletes what you've written, here an…' not to contain 'on your account'
-   */
-  it("does not claim `on your account` before a row exists there", async () => {
-    await mountCompose();
-    await typeTo("sam@example.com");
-
-    await press(cancelButton());
-
-    const what = q<HTMLElement>("#compose-cancel-what");
-    expect(what, "the confirm carries no sentence at all").not.toBeNull();
-    expect(
-      what!.textContent ?? "",
-      "the confirm claims the account holds a copy it does not hold",
-    ).not.toContain("on your account");
-  });
-
-  /** "Keep writing" is not the press that deletes, and it puts the form back as it was. */
-  it("`Keep writing` closes the question and changes nothing", async () => {
-    await mountCompose();
-    await typeTo("sam@example.com");
-    await press(cancelButton());
-
-    await press(btnIn(".compose-confirm", "Keep writing"));
-
-    expect(q(".compose-confirm"), "`Keep writing` left the question open").toBeNull();
-    expect(window.location.hash, "`Keep writing` left the view").toBe("#/compose");
-    expect(toEntries()).toContain("sam@example.com");
-    expect(cancelButton().getAttribute("aria-expanded")).toBe("false");
-    // Focus goes back where the question came from — the dialog took it, so closing without
-    // acting must return it (CMP-F12; a keyboard user is otherwise dropped on <body>).
-    expect(
-      document.activeElement,
-      "closing the question stranded focus instead of returning it to the trigger",
-    ).toBe(cancelButton());
-  });
-
-  /**
-   * AND THE CONFIRM EMPTIES ALL THREE COPIES. The form, the `localStorage` scratch buffer and
-   * the account row are three places the same message lives; leaving any one of them is the
-   * message coming back. The row is asserted in PART TWO (it needs a recording adapter); the
-   * two this surface owns are asserted here.
-   *
-   * THE BUFFER IS READ OUT OF STORAGE AND NOT INFERRED FROM THE REOPENED FORM, and that
-   * correction is the whole reason this comment is long. Re-entering `#/compose` and finding it
-   * empty proves NOTHING about the buffer: `AppShell` seeds the form from `readComposeDraft()`
-   * in a `useState` initialiser, which runs once per MOUNT, and a hash change does not remount
-   * the shell. Measured — deleting `clearComposeDraft()` from `cancelCompose` left this test
-   * green when it asserted the reopened field. It survives the next reload, not the next
-   * navigation, so the storage key is the only honest place to ask.
-   *
-   * Mutation: drop `clearComposeDraft()` from `cancelCompose`. Real failure text:
-   *   AssertionError: the discarded message is still in the local scratch buffer — the next
-   *   time this browser opens Compose it comes back: expected '{"to":"sam@example.com"…' to be
-   *   null
-   */
+  /** Confirm that the form and the local scratch buffer both clear. A fresh-looking editor alone cannot prove its persisted buffer is empty. The account row is checked through the adapter below. */
   it("`Discard message` leaves, empties the form and clears the local buffer", async () => {
     await mountCompose();
     await typeTo("sam@example.com");
@@ -392,7 +309,7 @@ describe("a written compose is cancelled with a confirm", () => {
     ).toContain("sam@example.com");
 
     await press(cancelButton());
-    await press(btnIn(".compose-confirm", "Discard message"));
+    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 
     expect(window.location.hash, "the confirm did not leave the view").toBe("#/ohbox");
     expect(
@@ -402,43 +319,15 @@ describe("a written compose is cancelled with a confirm", () => {
     ).toBeNull();
 
     // …and the in-memory form is empty too, which is the half a returning navigation sees.
-    await act(async () => {
-      window.location.hash = "#/compose";
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-    });
-    await settleFirstPaint();
-    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+    await reopen();
     expect(
-      q<HTMLInputElement>("#compose-to")!.value,
+      toEntries(),
       "the discarded message is still in the form",
     ).toBe("");
   });
 });
 
 describe("Escape closes the question, and never the message", () => {
-  /**
-   * ONE Escape BINDING, BRANCHING — the escape cascade's rule at view scope. A second binding
-   * for the confirm would be the two-lists shape `AppShell`'s cascade exists to refuse.
-   *
-   * Mutation: restore the unconditional `run: () => go("ohbox")`. Real failure text:
-   *   AssertionError: Escape left Compose while the discard question was open: expected
-   *   '#/ohbox' to be '#/compose'
-   */
-  it("closes the confirm rather than leaving, while one is open", async () => {
-    await mountCompose();
-    await typeTo("sam@example.com");
-    await press(cancelButton());
-    expect(q(".compose-confirm")).not.toBeNull();
-
-    await escape();
-
-    expect(q(".compose-confirm"), "Escape did not close the discard question").toBeNull();
-    expect(window.location.hash, "Escape left Compose while the discard question was open")
-      .toBe("#/compose");
-    // The message is untouched: Escape is not a delete, however many times it is pressed.
-    expect(toEntries()).toContain("sam@example.com");
-  });
-
   /** With nothing open it is the leave it has always been, and the draft is KEPT. */
   it("leaves Compose when no question is open, and does not throw the message away", async () => {
     await mountCompose();
@@ -447,14 +336,9 @@ describe("Escape closes the question, and never the message", () => {
     await escape();
 
     expect(window.location.hash, "Escape no longer leaves Compose").toBe("#/ohbox");
-    await act(async () => {
-      window.location.hash = "#/compose";
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-    });
-    await settleFirstPaint();
-    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+    await reopen();
     expect(
-      q<HTMLInputElement>("#compose-to")!.value,
+      toEntries(),
       "Escape destroyed the message — it is a leave, not a discard",
     ).toBe("sam@example.com");
   });
@@ -768,17 +652,16 @@ describe("the shell is the consumer, not just the harness", () => {
    * back.
    */
   it("AppShell hands ComposeView a cancel that empties row, buffer and form", () => {
-    /* The prop is JSX and stayed in the shell frame; the verb moved to `shell-compose.ts`
-       (ARCH-022), so each half is asked of the file that holds it. */
+    // The footer invokes discardCompose. A single press clears the saved row, buffer and form, then leaves the letter with Undo available.
     expect(
-      readSource("app/shell/AppShell.tsx"),
+      readSource("../../packages/app/src/write/Letter.tsx"),
       "ComposeView is rendered without a cancel — the button has nothing behind it",
-    ).toMatch(/onCancel=\{cancelCompose\}/);
+    ).toMatch(/onDiscard=\{w\.discardCompose\}/);
     const shell = readSource("../../packages/app-logic/src/writing/shell-compose.ts");
 
-    /* The cancel's body is the discard's shared one (`abandonCompose`), which the cancel calls with no Undo. */
-    expect(shell, "the cancel is not the shared discard without its Undo").toMatch(
-      /const cancelCompose = useStableCallback\(\(\) => abandonCompose\(false\)\);/,
+    /* The cancel's body is the discard's shared one (`abandonCompose`), which Write's Discard calls with its Undo. */
+    expect(shell, "the cancel is not the shared discard").toMatch(
+      /const discardCompose = useStableCallback\(\(\) => abandonCompose\(true\)\);/,
     );
     const body = /const abandonCompose = useStableCallback\(\(undo: boolean\) => \{([\s\S]*?)\n  \}\);/.exec(shell)?.[1];
     expect(body, "there is no `cancelCompose` in the shell").toBeDefined();
@@ -834,26 +717,17 @@ describe("the shell is the consumer, not just the harness", () => {
     expect(shell).toMatch(/kind: "draft_discard", draftId: seeded/);
   });
 
-  /**
-   * The question is asked by the SAME predicate that decided the row was worth writing — plus
-   * ONE named term for what that predicate rightly ignores: the picked files (CMP-F5).
-   * Attachments are never autosaved, so they are no reason to write a row, and they are
-   * exactly a reason to ask before deleting. The term lives beside `worthSaving`, never inside
-   * it, so autosave cannot start writing rows for attachment-only forms by accident.
-   */
+  /** A picked file counts as something to restore even when the fields are empty. It does not make attachment bytes eligible for autosave. */
   it("ComposeView gates the confirm on `worthSaving` plus the attachments term", () => {
-    const view = readSource("app/views/ComposeView.tsx");
-    /* The SPECIFIER, not the whole list: the view also takes `draftNoteKey` from this module (the
-       save door's ceiling and the sentence it renders are one decision), and pinning the list
-       spelling made an unrelated addition red about nothing. `worthSaving` is still required. */
+    const view = readSource("../../packages/app-logic/src/writing/shell-compose.ts");
     expect(view, "the compose view no longer imports the autosave predicate")
-      .toMatch(/import \{[^}]*\bworthSaving\b[^}]*\} from "@ohmail\/app-logic\/writing\/compose-autosave"/);
+      .toMatch(/import \{[^}]*\bworthSaving\b[^}]*\} from "\.\/compose-autosave(\.js)?"/);
     expect(
       view,
       "the confirm is gated on something other than `worthSaving` — a second rule about what "
         + "counts as a written message is a rule that drifts",
     ).toMatch(
-      /if \(worthSaving\(fields\) \|\| \(fields\.attachments\?\.length \?\? 0\) > 0\) setConfirmCancel\(true\);/,
+      /else if \(undo && \(worthSaving\(snapshot\) \|\| \(snapshot\.attachments\?\.length \?\? 0\) > 0\)\) \{/,
     );
   });
 });

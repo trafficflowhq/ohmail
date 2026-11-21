@@ -49,7 +49,7 @@ function alreadyOnOf(
 }
 
 export function foundOf(input: FoundInput): FoundRow[] {
-  const shown = new Set(input.calendars.filter((c) => c.shown).map((c) => c.id));
+  const shown = new Set(input.calendars.filter((c) => c.shown && c.access !== "busy").map((c) => c.id));
   const standing = input.events
     .map((e) => e.record)
     .filter((r) => shown.has(r.calendarId) && !r.heldBack && r.status !== "cancelled");

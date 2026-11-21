@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { screen, within } from "@testing-library/react";
 import {
   ISO, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv,
-  textOf, tick,
+  tick,
 } from "./fixtures/live-walk-shell";
 
 /**
@@ -63,6 +64,7 @@ const world = (): Response =>
           message({ id: "tg-b", from: "friend@example.invalid", labels: ["tg1"] }, 4),
           // An untagged sibling, to prove the list is the tag's and not the whole Ohbox.
           message({ id: "plain", from: "friend@example.invalid" }, 5),
+          tag("tg2", "Travel", 6),
         ],
         updates: [], moves: [], deletes: [],
       },
@@ -71,15 +73,26 @@ const world = (): Response =>
     { status: 200, headers: { "content-type": "application/json" } },
   );
 
-const rowIds = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
+const list = () => screen.getByRole("listbox", { name: "Invoices" });
+const row = (id: string) => within(list()).getByRole("option", { name: `Sender ${id}: subject of ${id}` });
+const column = (name: string) => within(screen.getByRole("region", { name }));
+const messages = () => column("Messages");
 
-const clickText = async (c: HTMLElement, label: string): Promise<void> => {
-  const btn = [...c.querySelectorAll("button")].find((b) => b.textContent?.trim() === label);
-  if (!btn) throw new Error(`no button "${label}" — have: ${[...c.querySelectorAll("button")].map((b) => b.textContent?.trim()).join(" | ")}`);
-  await act(async () => { btn.click(); await Promise.resolve(); });
+const click = async (control: HTMLElement): Promise<void> => {
+  await act(async () => { control.click(); await Promise.resolve(); });
   await tick(0);
 };
+
+async function openTag(id = "tg1") {
+  await mountShell([mailbox({ lastSyncAt: ISO })]);
+  await tick(0);
+  await goTo(`tag/${id}`);
+}
+
+async function listMenu() {
+  await click(messages().getByRole("button", { name: "List" }));
+  return within(screen.getByRole("menu", { name: "List" }));
+}
 
 describe("Tag view", () => {
   beforeEach(() => {
@@ -89,81 +102,65 @@ describe("Tag view", () => {
   afterEach(teardownShellEnv);
 
   it("lists only the tagged mail, under the tag's name", async () => {
-    const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
-    await tick(0);
-    await goTo("tag/tg1");
+    await openTag();
+    expect(messages().getByRole("heading", { name: "Invoices" })).toBeTruthy();
+    expect(row("tg-a")).toBeTruthy();
+    expect(row("tg-b")).toBeTruthy();
+    expect(within(list()).queryByRole("option", { name: /subject of plain/ })).toBeNull();
+  });
 
-    const ids = rowIds(c);
-    expect(ids).toContain("tg-a");
-    expect(ids).toContain("tg-b");
-    expect(ids).not.toContain("plain");
-    expect(textOf(c)).toContain("Invoices");
+  it("states when nothing carries the tag", async () => {
+    await openTag("tg2");
+    expect(messages().getByRole("heading", { name: "Travel" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Messages" }).textContent).toContain("Nothing carries this tag");
+    expect(messages().queryByRole("option")).toBeNull();
   });
 
   it("reads a row IN PLACE — the route stays on the tag, it does not jump to the Ohbox", async () => {
-    const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
-    await tick(0);
-    await goTo("tag/tg1");
-
-    const row = c.querySelector('.row[data-id="tg-a"]') as HTMLElement | null;
-    await act(async () => { row!.click(); await Promise.resolve(); });
-    await tick(0);
+    await openTag();
+    await click(row("tg-a"));
 
     // `openMessage` would have set the hash to `#/ohbox`. The reader-in-place keeps the tag up,
     // and the address names the letter on the tag's route.
     expect(window.location.hash).toBe("#/tag/tg1/m/tg-a");
-    expect(textOf(c)).toContain("subject of tg-a");
+    expect(column("Reading").getByText("subject of tg-a")).toBeTruthy();
   });
 
   it("is the two-pane layout on arrival, with no mode to pick, and a row reads in the column", async () => {
-    const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
-    await tick(0);
-    await goTo("tag/tg1");
+    await openTag();
+    expect(messages().getByRole("listbox", { name: "Invoices" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Reading" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Split" })).toBeNull();
+    expect(screen.getByRole("button", { name: "List" }).getAttribute("aria-haspopup")).toBe("menu");
 
-    const view = c.querySelector(".view-tag")!;
-    // Mutation watched: restore `layout === "split" ? … : "view center"` and this goes red.
-    expect(view.classList.contains("split")).toBe(true);
-    expect(view.classList.contains("center")).toBe(false);
-    // The `List` / `Split` control is gone with the solo mode it selected — and its absence is
-    // what makes that a deletion rather than a new default with the old path still reachable.
-    const modes = [...c.querySelectorAll("button")].map((b) => b.textContent?.trim());
-    expect(modes, "the layout toggle is still on screen").not.toContain("Split");
-    expect(modes, "the layout toggle is still on screen").not.toContain("List");
-
-    const row = c.querySelector('.row[data-id="tg-b"]') as HTMLElement | null;
-    await act(async () => { row!.click(); await Promise.resolve(); });
-    await tick(0);
+    await click(row("tg-b"));
 
     expect(window.location.hash).toBe("#/tag/tg1/m/tg-b");
-    expect(c.querySelector(".view-tag .read-col")!.textContent ?? "").toContain("subject of tg-b");
+    expect(column("Reading").getByText("subject of tg-b")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Reading" })).toBeNull();
   });
 
   it("offers Rename and Delete, and Delete states the count and what survives BEFORE it asks", async () => {
-    const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
-    await tick(0);
-    await goTo("tag/tg1");
-
-    const labels = [...c.querySelectorAll("button")].map((b) => b.textContent?.trim());
-    expect(labels).toContain("Rename");
-    expect(labels).toContain("Delete");
+    await openTag();
+    const address = window.location.hash;
+    expect(address).toMatch(/^#\/tag\/tg1(?:\/m\/[^/]+)?$/);
+    const menu = await listMenu();
+    expect(menu.getByRole("menuitem", { name: "Rename" })).toBeTruthy();
 
     // The first Delete opens the confirm — it must NOT delete on the first press. The count is
     // the number of tagged messages, and the sentence about the mail is on screen before the ask.
-    await clickText(c, "Delete");
-    expect(window.location.hash, "still on the tag — the first press only asks").toBe("#/tag/tg1");
-    expect(textOf(c)).toContain("Delete “Invoices”?");
-    expect(textOf(c)).toContain("It's on 2 of your messages.");
-    expect(textOf(c)).toContain("The messages stay where they are.");
+    await click(menu.getByRole("menuitem", { name: "Delete" }));
+    expect(window.location.hash, "the first press only asks").toBe(address);
+    const ask = within(screen.getByRole("dialog", { name: /Delete Invoices/ }));
+    expect(ask.getByText("2 messages carry it and stay where they are.")).toBeTruthy();
+    expect(ask.getByRole("button", { name: "Delete" })).toBeTruthy();
   });
 
   it("Rename opens a field starting from the current name", async () => {
-    const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
-    await tick(0);
-    await goTo("tag/tg1");
-
-    await clickText(c, "Rename");
-    const input = c.querySelector<HTMLInputElement>(".tag-manage-input");
-    expect(input, "renaming replaces the controls with a field").not.toBeNull();
-    expect(input!.value).toBe("Invoices");
+    await openTag();
+    const menu = await listMenu();
+    await click(menu.getByRole("menuitem", { name: "Rename" }));
+    const form = within(screen.getByRole("dialog", { name: /Rename Invoices/ }));
+    expect(form.getByRole("textbox", { name: "Name" })).toHaveProperty("value", "Invoices");
   });
 });

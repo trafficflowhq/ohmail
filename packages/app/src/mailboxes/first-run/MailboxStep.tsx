@@ -8,12 +8,12 @@
  * in words: the word is a claim, and until a row answers it there is no form and no verb of a mailbox.
  */
 import type { ReactNode } from "react";
-import { Page } from "@ohmail/ui/base";
+import { Page, Sentence } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import { NONE } from "../../host/index.js";
 import { ConnectForm } from "../connect/index.js";
 import type { ConnectResult } from "../connect/contract.js";
-import { Foot, Next, Said, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
+import { Foot, Next, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
 import { PASSWORD_HINT } from "./words.js";
 
 export function MailboxStep(props: StepProps): ReactNode {
@@ -27,7 +27,9 @@ export function MailboxStep(props: StepProps): ReactNode {
           note={say("onboarding.probeOkDetail")}
           acts={<Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} />} />}
         >
-          <Said text={say("onboarding.mailboxTitle")} dot="ink" />
+          <Sentence size="xl" level={1} end="ink">
+            {say("onboarding.mailboxTitle")}
+          </Sentence>
         </Page>
       </StepForm>
     );
@@ -44,7 +46,9 @@ export function MailboxStep(props: StepProps): ReactNode {
             />
           }
         >
-          <Said text={say("onboarding.resumeCheckingTitle")} />
+          <Sentence size="xl" level={1} end="hot">
+            {say("onboarding.resumeCheckingTitle")}
+          </Sentence>
         </Page>
       </StepForm>
     );
@@ -57,7 +61,9 @@ export function MailboxStep(props: StepProps): ReactNode {
             <Foot run={run} say={say} back primary={<Next label={say("onboarding.mailboxHandoffGo")} />} />
           }
         >
-          <Said text={say("onboarding.mailboxTitle")} />
+          <Sentence size="xl" level={1} end="hot">
+            {say("onboarding.mailboxTitle")}
+          </Sentence>
         </Page>
       </StepForm>
     );
@@ -65,7 +71,7 @@ export function MailboxStep(props: StepProps): ReactNode {
 }
 
 /** The form itself. It is its own form, so the step around it is none; its press is the step's forward verb. */
-function Connect({ run, say, service, slots, connect }: StepProps): ReactNode {
+function Connect({ run, say, service, slots, connect, onCodeStarted }: StepProps): ReactNode {
   const holder = run.accountOrganizer;
   const named = holder?.name?.trim() ? holder.name : null;
   const onDone = (result: ConnectResult): void => {
@@ -88,7 +94,11 @@ function Connect({ run, say, service, slots, connect }: StepProps): ReactNode {
           ) : null}
           {connect === NONE ? null : (
             <ConnectForm
-              ask={{ purpose: { kind: run.add ? "add" : "firstRun" }, onDone }}
+              ask={{
+                purpose: { kind: run.add ? "add" : "firstRun" },
+                onDone,
+                ...(onCodeStarted ? { onCodeStarted } : {}),
+              }}
               door={connect}
               factor={slots.factor}
             />
@@ -98,7 +108,9 @@ function Connect({ run, say, service, slots, connect }: StepProps): ReactNode {
       }
       acts={<Foot run={run} say={say} back />}
     >
-      <Said text={say("onboarding.mailboxTitle")} />
+      <Sentence size="xl" level={1} end="hot">
+        {say("onboarding.mailboxTitle")}
+      </Sentence>
     </Page>
   );
 }

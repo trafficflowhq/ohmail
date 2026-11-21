@@ -46,6 +46,19 @@
     display: inline-flex;
   }
 
+  .oh-menu-close {
+    position: sticky;
+    top: 0;
+    z-index: var(--oh-layer-raised);
+    display: flex;
+    justify-content: flex-end;
+    background: var(--sheet);
+  }
+  .oh-menu-close > .oh-button {
+    min-width: var(--h-s);
+    min-height: var(--h-s);
+  }
+
   .oh-menu-title {
     --oh-menu-title-pad: var(--s2) var(--s3) var(--s1);
     padding: var(--oh-menu-title-pad);

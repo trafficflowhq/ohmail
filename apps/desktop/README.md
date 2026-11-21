@@ -122,7 +122,7 @@ find, which is the no-demo rule as bytes rather than as intent.
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
 img-src 'self' data: blob: attachment-preview: http://attachment-preview.localhost;
 font-src 'self'; connect-src ipc:; media-src 'none'; object-src 'none';
-frame-src 'none'; worker-src 'self'; base-uri 'none'; form-action 'none';
+frame-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none';
 frame-ancestors 'none'
 ```
 
@@ -140,13 +140,11 @@ the part into its staging folder and serves it by a random token
 channel, which carries raw bytes as a JSON array. It names no file and serves only
 files the shell staged there, to the main window, as one of four raster types.
 
-`worker-src 'self'` admits one worker, pdf.js's, which draws a PDF in the preview
-from a file of the bundle (`src/window-pdfjs.ts`). The window builds it and hands
-it to pdf.js as a port, so a refused worker fails the PDF instead of parsing it on
-the page's own thread. A worker obeys the policy of its own script, not the page's,
-so the shell answers every file of the app's that is not a page with
-`default-src 'none'` (`src-tauri/src/navigation.rs`): inside the worker there is no
-connection, no import and no eval.
+Quick Look opens `pdf-preview.html` from the bundle in a sandboxed frame with
+an opaque origin. The renderer's response and document policies deny network
+access. The frame receives the PDF bytes and page numbers over a private
+message port. It runs pdf.js and its worker and draws the canvas inside the
+frame. The mail window keeps the download action.
 
 `connect-src` is the load-bearing one. Its one source is Tauri's in-process
 command scheme, which every shell command already rides: a POST this app's own

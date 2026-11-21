@@ -11,8 +11,8 @@ import type {
 
 export type { NoticeKind, NoticePermission, NotificationChannels };
 
-/** The three answers of a reconcile a person can act on; the ordinary ones are no state. */
-export type DeliveryNote = "no_server_key" | "row_remains" | "not_registered";
+/** Results worth showing in the pane. A successful reconcile clears a prior note. */
+export type DeliveryNote = "no_server_key" | "row_remains" | "not_registered" | "unsupported";
 
 export interface NotificationsModel {
   /** This device's stored choices. */
@@ -49,4 +49,5 @@ export const DELIVERY_SENTENCE: Readonly<Record<DeliveryNote, string>> = {
   no_server_key: "notifyNoServerKey",
   row_remains: "notifyRowRemains",
   not_registered: "notifyNotRegistered",
+  unsupported: "notifyWakeUnsupported",
 };

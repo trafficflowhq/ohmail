@@ -27,6 +27,8 @@ import {
 import { displayAddress } from "./idn.js";
 import { activeFormatLocale, activeFormatZone, liveCopy } from "./format-words.js";
 
+export { longDateStamp } from "@ohmail/client-engine";
+
 /** An instant's wall clock where the reader is standing — the one call the stamps below share. */
 function readerFields(d: Date): ReturnType<typeof zonedFields> {
   return zonedFields(d, activeFormatZone());
@@ -138,6 +140,11 @@ export function displayTime(m: Pick<EngineMessage, "time" | "date" | "sortAt">, 
      zone to nothing at all, on purpose: see `messageDisplayTime`. This is the seam that supplies
      both. */
   return messageDisplayTime(m, now, activeFormatZone(), activeFormatLocale());
+}
+
+/** An instant as a list's row prints it, on the reader's calendar: the hour today, the day this week, else the date. */
+export function stampOver(now: Date): (iso: string) => string {
+  return (iso) => displayTime({ date: iso }, now);
 }
 
 /**
@@ -252,8 +259,7 @@ export function nextFridayNine(base: Date): string {
  * A {@link ResurfaceHorizon}, not a bare instant: the caller labels the button from the same
  * value it dispatches. In the small hours it is the coming morning (`morningDayOffset`).
  */
-export function tomorrowAt(base: Date, at: string | null | undefined): ResurfaceHorizon {
-  const zone = activeFormatZone();
+export function tomorrowAt(base: Date, at: string | null | undefined, zone = activeFormatZone()): ResurfaceHorizon {
   const f = zonedFields(base, zone);
   return clockOn(zone, f.year, f.month, f.day + morningDayOffset(base, zone, resurfaceClock(at)), at);
 }
@@ -273,8 +279,8 @@ export function nextWeekAt(base: Date, at: string | null | undefined): Resurface
 }
 
 /** Tomorrow, 09:00 where the reader is — {@link tomorrowAt} at the product's hour. */
-export function tomorrowNine(base: Date): string {
-  return tomorrowAt(base, null).iso;
+export function tomorrowNine(base: Date, zone = activeFormatZone()): string {
+  return tomorrowAt(base, null, zone).iso;
 }
 
 /** The coming Monday, 09:00 — {@link nextWeekAt} at the product's hour. */
@@ -401,8 +407,7 @@ export function dayNine(day: string): string {
  * (`ends_at >= now`), so this is the last instant a reply may go out on the day somebody named.
  * Paired with {@link dayValue}, which reads the same instant back as the same calendar day.
  */
-export function dayEnd(day: string): string {
-  const zone = activeFormatZone();
+export function dayEnd(day: string, zone = activeFormatZone()): string {
   const picked = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
   const f = picked
     ? { year: Number(picked[1]), month: Number(picked[2]), day: Number(picked[3]) }
@@ -419,8 +424,8 @@ export function dayEnd(day: string): string {
  * in Auckland is 21:00 the previous day in UTC, so slicing the ISO string would floor the picker a
  * day early and let a reader there choose a horizon that has already passed.
  */
-export function dayValue(iso: string): string {
-  const f = readerFields(new Date(iso));
+export function dayValue(iso: string, zone = activeFormatZone()): string {
+  const f = zonedFields(new Date(iso), zone);
   return `${String(f.year).padStart(4, "0")}-${pad(f.month)}-${pad(f.day)}`;
 }
 
@@ -770,12 +775,12 @@ export function agoStamp(iso: string, now: number): { rel: string; abs: string }
  * key — two copies would be two dates for one fact. An absent or unparseable instant renders an em
  * dash rather than "Invalid Date": a sentence with a dash is still readable.
  */
-export function dayStamp(iso: string | null | undefined): string {
+export function dayStamp(iso: string | null | undefined, locale = activeFormatLocale(), zone = activeFormatZone()): string {
   if (!iso) return "—";
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "—";
-  return at.toLocaleDateString(activeFormatLocale(), {
+  return at.toLocaleDateString(locale, {
     dateStyle: "medium",
-    timeZone: activeFormatZone(),
+    timeZone: zone,
   });
 }

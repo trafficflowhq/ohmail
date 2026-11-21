@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv,
-  textOf, tick,
+  tick,
 } from "./fixtures/live-walk-shell";
 import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
@@ -131,7 +132,7 @@ const world = (): Response =>
   );
 
 const rowIds = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
+  within(c).queryAllByRole("option").map((row) => row.getAttribute("data-id") ?? "");
 
 describe("the Screener queue is partitioned by consent, not by folder", () => {
   beforeEach(() => {
@@ -201,8 +202,10 @@ describe("the Screener queue is partitioned by consent, not by folder", () => {
     // sit in the Screener FOLDER and eight in the two undecided residences; the number a person is
     // shown must be the one they can act on. dorm@ (History) and friend@ (consented AND retired,
     // at the gate since ARCH-R902) are still excluded.
-    expect(textOf(c)).toContain("5 first-time senders waiting");
-    expect(textOf(c)).not.toContain("6 first-time senders waiting");
+    const sections = within(within(c).getByRole("group", { name: "Screener sections" }));
+    const waiting = sections.getByRole("button", { name: "Waiting 5", pressed: true });
+    expect(waiting.getAttribute("title")).toContain("5 first-time senders waiting");
+    expect(waiting.getAttribute("title")).not.toContain("6 first-time senders waiting");
   });
 
   it("a dormant sender is in History and NOWHERE ELSE — no double presentation", async () => {

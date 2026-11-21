@@ -27,21 +27,19 @@ const read = (p: string): string => readFileSync(fileURLToPath(new URL(p, import
 const code = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 const railNav = code(read("../../../packages/ui/src/composites/RailNav.tsx"));
-const shell = read("../app/shell/AppShell.tsx");
 const persisted = code(read("../../../packages/app-logic/src/storage/persisted-ui.ts"));
 
 describe("the Tags group remembers its collapse state", () => {
 
   it("the shared UI package never touches browser storage", () => {
     // The whole reason the component is controlled-optional. If this ever fails, the desktop
-    // shell has inherited a web-only storage decision it cannot satisfy.
+    // shell has inherited a web-only storage decision it cannot satisfy. The rail every host's
+    // frame draws is the kit's (`@ohmail/ui/mail`: the rail and its entries, the Tags group a
+    // place draws itself among them), read here beside the older `RailNav`.
+    const rails = ["Rail.tsx", "RailEntry.tsx", "RailFoot.tsx"]
+      .map((f) => code(read(`../../../packages/ui/src/mail/Shell/${f}`))).join("\n");
+    expect(rails).not.toMatch(/localStorage|sessionStorage/);
     expect(railNav).not.toMatch(/localStorage|sessionStorage/);
-  });
-
-  it("stays usable uncontrolled — a host that wires nothing still gets a working toggle", () => {
-    // Degrade to today's behaviour (forgets), never to a dead button.
-    expect(railNav).toMatch(/const \[uncontrolled, setUncontrolled\] = useState\(defaultOpen\)/);
-    expect(railNav).toMatch(/const open = openProp \?\? uncontrolled/);
   });
 
   it("reads storage AFTER mount, or the server's value silently wins", () => {
@@ -70,13 +68,15 @@ describe("the Tags group remembers its collapse state", () => {
 });
 
 describe("Tags is a peer in the rail, not a child of Triage", () => {
-  const rail = readFileSync(fileURLToPath(new URL("../../../packages/ui/src/composites/rail.css", import.meta.url)), "utf8");
-
-  it("the subordinate group carries no left indent", () => {
-    // "tags is not indented in the menu (margin left currently within the menu)" — owner.
-    // The 10px indent said Tags belonged to the group above it. It belongs to all of them.
-    const rule = rail.split("\n").find((l) => l.includes(".rgroup.rsub{"));
-    expect(rule, ".rgroup .rgroup.rsub rule not found").toBeTruthy();
-    expect(rule).toBe(".rgroup .rgroup.rsub{margin:3px 0 0}");
+  it("the Tags fold uses the rail's top-level alignment", () => {
+    const place = code(read("../../../packages/app/src/tags/place.ts"));
+    const tags = code(read("../../../packages/app/src/tags/TagsRail.tsx"));
+    const css = code(read("../../../packages/ui/src/mail/Shell/rail-entry.css"));
+    expect(place).toContain('railGroup: { group: "tags", Body: TagsRail }');
+    const fold = tags.match(/<RailEntry\s+kind="fold"[\s\S]*?>/)?.[0];
+    expect(fold).toContain('expanded={open}');
+    expect(fold).not.toMatch(/\bdepth=/);
+    const base = css.match(/\.oh-railentry \{([^}]+)\}/)?.[1];
+    expect(base).toMatch(/--oh-railentry-depth:\s*0;/);
   });
 });

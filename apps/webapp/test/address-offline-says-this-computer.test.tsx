@@ -1,14 +1,20 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { queryAllByRole } from "@testing-library/dom";
+import { Frame } from "@ohmail/app/frame";
+import { MailGround, mailPlaces, mailReader } from "@ohmail/app/mail";
+import { TextProvider } from "@ohmail/app/text";
 import { MutationRejectedError, OhmailEngine, REASK_MAX } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
-import { AddressView } from "../app/views/AddressView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { stubDom, unmountAll } from "./_draft-shell";
+import { letterBody } from "../../../packages/app/src/reader/body/index.js";
+import { LIST_WORDS } from "../../../packages/app/test/places/list-seat.js";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
 
 /**
  * On the paired desktop with the account out
@@ -21,11 +27,13 @@ import { KeymapProvider } from "@ohmail/app/keys";
 const JONAS = "jonas@lichtgrat.example";
 let host: HTMLDivElement | null = null;
 let root: Root | null = null;
+beforeEach(() => stubDom());
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
   root = null;
   host = null;
+  await unmountAll();
 });
 
 function engineFailing(fail: () => unknown) {
@@ -43,19 +51,29 @@ function engineFailing(fail: () => unknown) {
 }
 
 async function mount(engine: OhmailEngine): Promise<HTMLElement> {
+  const { host: appHost } = fakeHost({
+    engine,
+    service: "self",
+    scope: "address-offline-test",
+    places: mailPlaces(),
+    above: MailGround,
+    reader: mailReader({ body: letterBody, look: "none" }),
+    window: fakeWindow("desktop"),
+    address: fakeAddress("#/address/" + encodeURIComponent(JONAS)),
+  });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => root!.render(
-    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC" now={DEMO_NOW}>
-      <KeymapProvider><AddressView engine={engine} version={1} now={DEMO_NOW} address={JONAS} onOpen={() => {}} /></KeymapProvider>
-    </NextIntlClientProvider>,
+    <TextProvider locale="en" messages={LIST_WORDS} timeZone="UTC" now={DEMO_NOW}>
+      <Frame host={appHost} />
+    </TextProvider>,
   ));
   return host;
 }
 const settle = async () => { for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); }); };
 const offline = () => new MutationRejectedError("this install is offline", { status: 503, code: "offline_read_only", retryable: true });
-const tryAgain = (el: HTMLElement) => [...el.querySelectorAll("button")].filter((b) => b.textContent === messages.search.addressRetry);
+const tryAgain = (el: HTMLElement) => queryAllByRole(el, "button", { name: messages.search.addressRetry });
 
 describe("the address view on a paired desktop whose account is out of reach", () => {
   it("says the rows are this computer's mail, with no Try again", async () => {

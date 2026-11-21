@@ -36,9 +36,12 @@ export function calendarReadsOf(source: CalendarReadsSource): CalendarReads {
     changes(previous, nowMs) {
       const ownAddresses = source.ownAddresses();
       if (ownAddresses === null) return null;
+      // A calendar can lose detail access while its old event records are still in the mirror.
+      const calendars = source.calendars().filter((calendar) => calendar.shown && calendar.access !== "busy");
+      const detailed = new Set(calendars.map((calendar) => calendar.id));
       const input = {
-        events: source.events(),
-        calendars: source.calendars(),
+        events: source.events().filter(({ record }) => detailed.has(record.calendarId)),
+        calendars,
         ownAddresses,
         suggestions: source.suggestions().filter(mayOffer),
         zone: source.zone(),

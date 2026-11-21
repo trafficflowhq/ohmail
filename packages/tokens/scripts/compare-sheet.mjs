@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /* Compares what this repository ships with a design sheet, value by value.
 
-     node packages/tokens/scripts/compare-sheet.mjs --sheet <dir> [--product <dir>] [--out <file>]
+     node packages/tokens/scripts/compare-sheet.mjs --sheet <dir> [--product <dir>] [--supplement <css>] [--out <file>]
 
    <dir> of --sheet holds four files of the sheet: its data (tokens.json, icons.json) and the two
    stylesheets it is authored in (tokens.css, motion.css). It has no default: the sheet is not
    part of this repository. --product is a checkout of this repository (default: the one this
    script is in); five files of it are read: packages/tokens/src/design/{tokens.json,tokens.css,
-   motion.css}, packages/tokens/source/declared.tsv and packages/ui/src/icons/icons.json.
+   motion.css}, packages/tokens/source/declared.tsv and packages/ui/src/icons/icons.json. --supplement reads independently
+   recorded component measurements as an additional sheet stylesheet.
 
    Two passes. The data: every value each side resolves for a situation (a face, a scheme, a
    device). The stylesheets: every declaration of the generated rules against the sheet's rule at
@@ -341,8 +342,8 @@ function readInput(path, parse) {
   }
 }
 
-/** Reads the nine files and compares them. Throws InputError on a missing or unreadable one. */
-export function compareDirs({ sheetDir, productDir }) {
+/** Reads the product and sheet inputs. Throws InputError on a missing or unreadable file. */
+export function compareDirs({ sheetDir, productDir, supplement }) {
   if (!sheetDir) throw new InputError("--sheet <dir> is required: the sheet is not part of this repository");
   const design = `${productDir}/packages/tokens/src/design`;
   return compare({
@@ -351,6 +352,7 @@ export function compareDirs({ sheetDir, productDir }) {
     sheetCss: {
       "tokens.css": readInput(`${sheetDir}/tokens.css`, declarations),
       "motion.css": readInput(`${sheetDir}/motion.css`, declarations),
+      ...(supplement === undefined ? {} : { supplement: readInput(supplement, declarations) }),
     },
     product: readInput(`${design}/tokens.json`, JSON.parse),
     productCss: [...readInput(`${design}/tokens.css`, declarations), ...readInput(`${design}/motion.css`, declarations)],
@@ -363,7 +365,7 @@ export function main(argv) {
   const arg = (name) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
   const productDir = arg("--product") ?? fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
   try {
-    const { rows, compared, open } = compareDirs({ sheetDir: arg("--sheet"), productDir });
+    const { rows, compared, open } = compareDirs({ sheetDir: arg("--sheet"), productDir, supplement: arg("--supplement") });
     const out = arg("--out");
     if (out) writeFileSync(out, toTsv(rows));
     else process.stdout.write(toTsv(rows));

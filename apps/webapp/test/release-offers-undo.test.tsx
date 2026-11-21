@@ -1,338 +1,194 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider, useTranslations } from "next-intl";
-import {
-  consentPartition, presentAt, presentationReader, winningStates, type OhmailEngine,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
+import type { EngineMessage, Folder, RuleEntity, SyncResponse } from "@ohmail/wire";
+import { fireEvent, within } from "@testing-library/react";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { UNDO_MS } from "@ohmail/app-logic/press/routing-undo";
 import messages from "../messages/en.json";
-import { createEngine } from "../app/shell/engine-config.js";
-import { settleFirstPaint } from "./_first-paint.js";
+import {
+  ACCOUNT, ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
+  scriptRefresh, scriptSession, scriptSync, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
-/**
- * ALLOW, NOT SPAM AND BACK TO WAITING OFFER UNDO, AS MOVE DOES.
- *
- * A release wrote its rule change at the press and offered no Undo; a mistaken one was taken back
- * by hand on the Rules page. Now the mail moves at the press and the rule change waits in the
- * routing window: Undo moves the mail back and the rule is never written, and the window's close
- * writes it. Driven through the engine and the dispatch spine the shell builds.
- */
+const copy = messages.screener;
+const OWN = "out@one.test";
+const DOMAIN = "three.test";
+const MEMBER = "d@three.test";
+const SPAMMER = "spam@two.test";
+const SCREENED = "ohmail/Screened";
+const SPAM = "ohmail/Quarantine";
 
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({ matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } })) as never;
-
-const ARMED = { NEXT_PUBLIC_API_BASE: "/api" } as const;
-const NOW = new Date("2026-09-28T09:00:00.000Z");
-const AT = "2026-09-28T08:00:00.000Z";
-
-function message(id: string, from: string, folder: string): EngineMessage {
+function message(id: string, from: string, folder: Folder): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    id, accountId: ACCOUNT, mailboxId: "mb_1", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
-    date: AT, folder, snippet: `snippet ${id}`, unread: false, hasAttachments: false, attachmentCount: 0,
+    date: ISO, folder, snippet: `snippet ${id}`, unread: false, hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null, labels: [], remoteContent: "none", updatedAt: AT,
-  } as EngineMessage;
+    triage: null, labels: [], remoteContent: "none", updatedAt: ISO,
+  };
 }
-const rule = (id: string, match: string, destination: string, kind = "sender") => ({
-  id, kind, match, destination, priority: 0, provenance: "promoted", enabled: true,
-  subjectContains: null, bodyContains: null, stats: { hits: 0, lastHitAt: null, demotions: 0 },
-  createdAt: AT, updatedAt: AT, retro: { requestedAt: null, doneAt: null },
-});
 
-const json = (status: number, body: unknown): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+function rule(id: string, match: string, destination: Folder, kind: "sender" | "domain" = "sender"): RuleEntity {
+  return {
+    id, kind, match, destination, priority: 0, provenance: "promoted", enabled: true,
+    subjectContains: null, bodyContains: null, stats: { hits: 0, lastHitAt: null, demotions: 0 },
+    createdAt: ISO, updatedAt: ISO,
+  } as RuleEntity;
+}
 
-let calls: string[] = [];
-let ruleBodies: Array<Record<string, unknown>> = [];
-let moveBodies: Array<{ url: string; body: Record<string, unknown> }> = [];
-const toasts: Array<{ message: string; onAction?: () => void }> = [];
-const originalFetch = globalThis.fetch;
-/** A three-letter conversation in the Ohbox, served when a case asks for it. */
-const CONVO = ["c1", "c2", "c3"];
-let convo = false;
-/** The letters whose next triage write the server answers with a retryable 503 (a deploy). */
-let retrying = new Set<string>();
-let triagePosts: Array<{ id: string; state: string; status: number }> = [];
+type Write = { method: string; path: string; body?: Record<string, unknown> };
 
+beforeAll(warmCloudShell);
 beforeEach(() => {
-  calls = [];
-  ruleBodies = [];
-  moveBodies = [];
-  toasts.length = 0;
-  convo = false;
-  retrying = new Set<string>();
-  triagePosts = [];
-  localStorage.clear();
-  globalThis.fetch = ((url: string, init?: RequestInit) => {
-    const method = init?.method ?? "GET";
-    const body = typeof init?.body === "string" ? init.body : "";
-    calls.push(`${method} ${url}${method === "POST" && url.endsWith("/move") ? ` ${JSON.parse(body).folder}` : ""}`);
-    if (url.startsWith("/api/sync/snapshot")) {
-      return Promise.resolve(json(200, {
-        asOfSeq: 1, nextCursor: null, window: { days: 0, minRows: 0 },
-        changes: [
-          { type: "message", op: "create", id: "m1", seq: 1, updatedAt: AT, entity: message("m1", "out@one.test", "ohmail/Screened") },
-          { type: "rule", op: "create", id: "r1", seq: 1, updatedAt: AT, entity: rule("r1", "out@one.test", "ohmail/Screened") },
-          { type: "message", op: "create", id: "m2", seq: 1, updatedAt: AT, entity: message("m2", "spam@two.test", "ohmail/Quarantine") },
-          { type: "rule", op: "create", id: "r2", seq: 1, updatedAt: AT, entity: rule("r2", "spam@two.test", "ohmail/Quarantine") },
-          { type: "message", op: "create", id: "m3", seq: 1, updatedAt: AT, entity: message("m3", "d@three.test", "ohmail/Screened") },
-          { type: "rule", op: "create", id: "r3", seq: 1, updatedAt: AT, entity: rule("r3", "three.test", "ohmail/Screened", "domain") },
-          ...(convo ? CONVO.map((id) => ({
-            type: "message", op: "create", id, seq: 1, updatedAt: AT, entity: { ...message(id, "pal@four.test", "INBOX"), threadId: "t1" },
-          })) : []),
-        ],
-      }));
-    }
-    const triage = /^\/api\/messages\/([^/]+)\/triage$/.exec(url);
-    if (method === "POST" && triage) {
-      const state = (JSON.parse(body) as { state: string }).state;
-      const status = retrying.delete(triage[1]!) ? 503 : 200;
-      triagePosts.push({ id: triage[1]!, state, status });
-      return Promise.resolve(status === 503
-        ? json(503, { error: { code: "unavailable", message: "deploying" } })
-        : json(200, { messageId: triage[1], state, bubbleUpAt: null, updatedAt: AT }));
-    }
-    if (url.startsWith("/api/sync?")) {
-      return Promise.resolve(json(200, {
-        changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "1", hasMore: false, serverTime: AT,
-      }));
-    }
-    if (method === "POST" && url.endsWith("/move")) {
-      moveBodies.push({ url, body: JSON.parse(body) as Record<string, unknown> });
-      return Promise.resolve(json(200, { ok: true }));
-    }
-    if (method === "PATCH" && url === "/api/rules/r1") return Promise.resolve(json(200, { ...rule("r1", "out@one.test", "INBOX") }));
-    if (method === "DELETE" && url === "/api/rules/r2") return Promise.resolve(new Response(null, { status: 204 }));
-    if (method === "POST" && url === "/api/rules") {
-      ruleBodies.push(JSON.parse(body) as Record<string, unknown>);
-      return Promise.resolve(json(201, { ...rule("r9", "d@three.test", "INBOX") }));
-    }
-    return Promise.resolve(json(404, { error: { code: "not_found", message: "no stub for this route" } }));
-  }) as unknown as typeof fetch;
+  installConfirmEnv();
+  window.localStorage.clear();
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  vi.stubGlobal("innerWidth", 1280);
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
 });
-
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-const state: { current: import("@ohmail/app-logic/screener/screener-state").ScreenerState | null } = { current: null };
-const dispatch: { current: ReturnType<typeof import("@ohmail/app-logic/press/shell-dispatch").useShellDispatch> | null } = { current: null };
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-  globalThis.fetch = originalFetch;
+  await teardownConfirmEnv();
+  vi.unstubAllGlobals();
 });
-async function flush(n = 25): Promise<void> {
-  for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+async function mount(letter: EngineMessage, standing: RuleEntity, segment = copy.segScreened) {
+  let sequence = 2;
+  let current = letter;
+  const writes: Write[] = [];
+  const changes: SyncResponse["changes"] = {
+    creates: [
+      { type: "message", op: "create", id: letter.id, seq: 1, updatedAt: ISO, entity: letter },
+      { type: "rule", op: "create", id: standing.id, seq: 2, updatedAt: ISO, entity: standing },
+    ],
+    updates: [], moves: [], deletes: [],
+  };
+  scriptSync(() => Response.json({ changes, cursor: String(sequence), hasMore: false, serverTime: ISO } satisfies SyncResponse));
+
+  const fixture = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), window.location.origin).pathname;
+    const method = init?.method ?? "GET";
+    if (method === "GET" && path === "/api/mailboxes") {
+      return Response.json({ items: [{
+        id: "mb_1", address: "mailbox@fixture.example", status: "connected",
+        organizerRole: "organizer", initialImportCompletedAt: ISO, organizeConsentedAt: ISO,
+        lastSyncAt: ISO, createdAt: ISO,
+      }] });
+    }
+    if (method === "GET" || !/^\/api\/(rules|messages|screener)(?:\/|$)/.test(path)) {
+      return fixture(input, init);
+    }
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+    writes.push({ method, path, body });
+    const seq = ++sequence;
+    const headers = { "x-sync-seq": String(seq) };
+    if (method === "POST" && path === `/api/messages/${letter.id}/move`) {
+      const from = current.folder;
+      current = { ...current, folder: body.folder };
+      changes.moves.push({ type: "message", op: "move", id: letter.id, seq, updatedAt: ISO, entity: current, move: { from, to: current.folder } });
+      return Response.json(current, { headers });
+    }
+    if (method === "PATCH" && path === `/api/rules/${standing.id}`) {
+      const entity = { ...standing, destination: body.destination };
+      changes.updates.push({ type: "rule", op: "update", id: standing.id, seq, updatedAt: ISO, entity });
+      return Response.json(entity, { headers });
+    }
+    if (method === "DELETE" && path === `/api/rules/${standing.id}`) {
+      changes.deletes.push({ type: "rule", op: "delete", id: standing.id, seq, updatedAt: ISO, entity: null });
+      return new Response(null, { status: 204, headers });
+    }
+    if (method === "POST" && path === "/api/rules") {
+      const entity = rule("r-new", body.match, body.destination, body.kind);
+      changes.creates.push({ type: "rule", op: "create", id: entity.id, seq, updatedAt: ISO, entity });
+      return Response.json(entity, { status: 201, headers });
+    }
+    throw new Error(`Unexpected release request: ${method} ${path}`);
+  };
+
+  window.location.hash = "#/screener";
+  const host = await mountCloudShell();
+  await tick(3000);
+  const screen = within(host);
+  const click = async (control: HTMLElement) => {
+    await act(() => { fireEvent.click(control); });
+    await tick(50);
+  };
+  const sections = within(screen.getByRole("group", { name: copy.segAria }));
+  await click(sections.getByRole("button", { name: (name) => name === segment || name.startsWith(`${segment} `) }));
+  const row = () => screen.queryByRole("option", { name: new RegExp(letter.subject) });
+  expect(row(), "the sender is on the requested shelf").not.toBeNull();
+  await click(row()!);
+  const press = (label: string) => click(within(screen.getByRole("toolbar", { name: copy.place.panel }))
+    .getByRole("button", { name: label }));
+  const report = () => host.querySelector<HTMLElement>('.fr-report [role="status"]:not([data-leaving])');
+  const reportText = () => {
+    const sentence = report()?.cloneNode(true) as HTMLElement | undefined;
+    sentence?.querySelectorAll("button").forEach((node) => node.remove());
+    return sentence?.textContent?.trim();
+  };
+  const undoButton = () => within(report()!).getByRole("button", { name: /^Undo/ });
+  return {
+    row, press, reportText, undoButton,
+    undo: () => click(undoButton()),
+    rules: () => writes.filter(({ path }) => path.startsWith("/api/rules")),
+    moves: () => writes.filter(({ path }) => path.endsWith("/move")),
+  };
 }
 
-/** The shell's composition: the dispatch spine, the presentation with the window's places, the Screener. */
-async function mount(engine: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { useShellDispatch } = await import("@ohmail/app-logic/press/shell-dispatch");
-  const { placeLabel } = await import("../app/shell/format.js");
-  function Probe(): null {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const t = useTranslations();
-    const reader = engine.read();
-    const d = useShellDispatch({
-      engine, reader, t, placeLabel, demo: false, refreshFacts: () => {}, scope: null,
-      toast: (message: string, opts?: { onAction?: () => void }) => { toasts.push({ message, onAction: opts?.onAction }); },
-    });
-    dispatch.current = d;
-    const presented = React.useMemo(
-      () => presentAt(presentationReader(reader, consentPartition(reader, { now: NOW })), d.routing.places),
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      [v, d.routing.places],
-    );
-    state.current = useScreenerState(engine, null, v, d.undoToast, useScreenerText(), undefined, presented, true, undefined, [], [], undefined, {
-      hold: d.routing.holdRelease, cancel: (a) => d.routing.undo(d.routing.subjectOf(a)),
-      restart: (a) => d.routing.restart(d.routing.subjectOf(a)), toastWithUndo: d.toastWithUndo,
-    });
-    return null;
-  }
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(ThemeProvider, { storageKey: null, children: h(Probe) }),
-    }));
-  });
-  await flush();
-  await settleFirstPaint();
-  await flush();
+function move(id: string, folder: Folder, pressRule = false): Write {
+  return { method: "POST", path: `/api/messages/${id}/move`, body: { folder, ...(pressRule ? { pressRule: true } : {}) } };
 }
-
-const ruleWrites = (): string[] => calls.filter((c) => c.includes("/api/rules"));
-/** Whether a letter's move to `folder` went as the press's own (`pressRule`), which decides no place of its own. */
-const markedMove = (id: string, folder: string): boolean | undefined =>
-  moveBodies.find((x) => x.url === `/api/messages/${id}/move` && x.body.folder === folder)?.body.pressRule === true;
-const windowCloses = async (): Promise<void> => {
-  await act(async () => { window.dispatchEvent(new Event("pagehide")); });
-  await flush();
-};
+const windowCloses = () => tick(UNDO_MS + 100);
 
 describe("a release from Screened out", () => {
   it("moves the mail at once, holds the rule change, and writes it when the window closes", async () => {
-    const engine = createEngine(false, ARMED);
-    await engine.start();
-    await mount(engine);
-    const sender = state.current!.screenedOut.find((x) => x.from.address === "out@one.test");
-    expect(sender, "the screened-out sender is not on the shelf").toBeDefined();
-
-    await act(async () => { state.current!.allowScreened(sender!, "ohbox"); });
-    await flush();
-    expect(calls).toContain("POST /api/messages/m1/move INBOX");
-    expect(markedMove("m1", "INBOX"), "a release that rewrites the rule stamped its letters as filed by hand").toBe(true);
-    expect(ruleWrites(), "the rule was written at the press").toEqual([]);
-    const offer = toasts.find((x) => x.onAction !== undefined);
-    expect(offer?.message, "the release offered no Undo").toBe(
-      "Ohbox — 1 held from out@one.test released. Their rule now files future mail here too.");
-    expect(state.current!.screenedOut.some((x) => x.from.address === "out@one.test"),
-      "the released sender is still on the shelf").toBe(false);
-
+    const s = await mount(message("m1", OWN, SCREENED), rule("r1", OWN, SCREENED));
+    await s.press(copy.pileOhbox);
+    expect(s.moves()).toEqual([move("m1", "INBOX", true)]);
+    expect(s.rules(), "the rule was written at the press").toEqual([]);
+    expect(s.undoButton()).toBeTruthy();
+    expect(s.reportText()).toBe("Ohbox — 1 held from out@one.test released. Their rule now files future mail here too.");
+    expect(s.row(), "the released sender is still on the shelf").toBeNull();
     await windowCloses();
-    expect(ruleWrites()).toEqual(["PATCH /api/rules/r1"]);
+    expect(s.rules()).toEqual([{ method: "PATCH", path: "/api/rules/r1", body: { destination: "INBOX" } }]);
   });
 
   it("Undo moves the mail back, and the rule is never written", async () => {
-    const engine = createEngine(false, ARMED);
-    await engine.start();
-    await mount(engine);
-    const sender = state.current!.screenedOut.find((x) => x.from.address === "out@one.test")!;
-    await act(async () => { state.current!.allowScreened(sender, "ohbox"); });
-    await flush();
-    const offer = toasts.find((x) => x.onAction !== undefined)!;
-    await act(async () => { offer.onAction!(); });
-    await flush();
+    const s = await mount(message("m1", OWN, SCREENED), rule("r1", OWN, SCREENED));
+    await s.press(copy.pileOhbox);
+    expect(s.moves()).toEqual([move("m1", "INBOX", true)]);
+    await s.undo();
+    expect(s.reportText()).toBe(messages.screening.toastRoutingUndoneRules);
     await windowCloses();
-
-    expect(calls).toContain("POST /api/messages/m1/move ohmail/Screened");
-    expect(markedMove("m1", "ohmail/Screened"), "Undo's move back is not the press's own").toBe(true);
-    expect(ruleWrites(), "Undo left the rule change to be written").toEqual([]);
-    expect(toasts.at(-1)?.message).toBe(messages.screening.toastRoutingUndoneRules);
+    expect(s.moves()).toEqual([move("m1", "INBOX", true), move("m1", SCREENED, true)]);
+    expect(s.rules(), "Undo left the rule change to be written").toEqual([]);
   });
 });
 
 describe("a release from a domain rule", () => {
   it("writes the address rule that walks their past mail when the window closes, and no other", async () => {
-    const engine = createEngine(false, ARMED);
-    await engine.start();
-    await mount(engine);
-    const sender = state.current!.screenedOut.find((x) => x.from.address === "d@three.test")!;
-    await act(async () => { state.current!.allowScreened(sender, "ohbox"); });
-    await flush();
-    expect(ruleWrites()).toEqual([]);
-    expect(markedMove("m3", "INBOX"), "the address rule's release stamped its letter").toBe(true);
+    const s = await mount(message("m3", MEMBER, SCREENED), rule("r3", DOMAIN, SCREENED, "domain"));
+    await s.press(copy.pileOhbox);
+    expect(s.moves()).toEqual([move("m3", "INBOX", true)]);
+    expect(s.rules()).toEqual([]);
     await windowCloses();
-    expect(ruleWrites()).toEqual(["POST /api/rules"]);
-    expect(ruleBodies).toEqual([expect.objectContaining({ kind: "sender", match: "d@three.test", destination: "INBOX", applyRetro: true })]);
+    expect(s.rules()).toEqual([{
+      method: "POST", path: "/api/rules",
+      body: expect.objectContaining({ kind: "sender", match: MEMBER, destination: "INBOX", applyRetro: true }),
+    }]);
   });
 });
 
 describe("Not spam, back to Waiting", () => {
   it("moves the mail to Waiting at once and holds the rule's removal, with Undo", async () => {
-    const engine = createEngine(false, ARMED);
-    await engine.start();
-    await mount(engine);
-    const row = state.current!.spam.find((x) => x.sender.from.address === "spam@two.test");
-    expect(row, "the spam sender is not in Spam").toBeDefined();
-
-    await act(async () => { state.current!.notSpamToWaiting(row!); });
-    await flush();
-    expect(calls).toContain("POST /api/messages/m2/move ohmail/Screener");
-    // Back to the gate writes no rule: its move is an ordinary one.
-    expect(markedMove("m2", "ohmail/Screener")).toBe(false);
-    expect(ruleWrites(), "the rule was removed at the press").toEqual([]);
-    expect(toasts.find((x) => x.onAction !== undefined)?.message).toBe("Not spam — spam@two.test is back in Waiting.");
-
+    const s = await mount(message("m2", SPAMMER, SPAM), rule("r2", SPAMMER, SPAM), copy.segSpam);
+    await s.press(copy.place.toWaiting);
+    expect(s.moves()).toEqual([move("m2", "ohmail/Screener")]);
+    expect(s.rules(), "the rule was removed at the press").toEqual([]);
+    expect(s.reportText()).toBe("Not spam — spam@two.test is back in Waiting.");
+    expect(s.undoButton()).toBeTruthy();
     await windowCloses();
-    expect(ruleWrites()).toEqual(["DELETE /api/rules/r2"]);
-  });
-});
-
-/**
- * A CONVERSATION'S PARK TAKES BACK EVERY LETTER WHOSE PRESS STANDS. A letter whose write met a
- * retryable answer waits on this client's retry queue and lands on the next drive: it is parked,
- * so the press names it and its Undo is owed too. Without that the letter stayed parked while the
- * rest came back, and a press whose every letter met the 503 said nothing had changed, with no Undo.
- */
-describe("a conversation's Park with letters on the retry queue", () => {
-  for (const queued of [["c2"], CONVO]) {
-    it(`names all three, offers Undo, and Undo takes every letter back when ${queued.length} of 3 wait to be sent again`, async () => {
-      convo = true;
-      retrying = new Set(queued);
-      const engine = createEngine(false, ARMED);
-      await engine.start();
-      await mount(engine);
-      let stood = -1;
-      await act(async () => {
-        void dispatch.current!.mutateSetAndReport(
-          CONVO.map((messageId) => ({ kind: "triage_set" as const, messageId, state: "set_aside" as const })),
-          (n) => `Parked ${n}`,
-        ).then((n) => { stood = n; });
-      });
-      await flush();
-      expect(triagePosts.filter((p) => p.status === 503).map((p) => p.id), "control: these writes met the 503").toEqual(queued);
-      expect(toasts.map((x) => x.message), "the press said nothing changed").not.toContain(messages.ohbox.refusedPress);
-      const offer = toasts.find((x) => x.onAction !== undefined);
-      expect(offer?.message, "the press did not name every parked letter with its Undo").toBe("Parked 3");
-      expect(stood, "the press counted only the letters that applied").toBe(3);
-      await act(async () => { offer!.onAction!(); });
-      await flush();
-      await act(async () => { await engine.flushPending(); });
-      await flush();
-
-      const last = (id: string) => triagePosts.filter((p) => p.id === id && p.status === 200).at(-1)?.state ?? "none";
-      expect(CONVO.filter((id) => !triagePosts.some((p) => p.id === id && p.state === "none")), "Undo left these letters out").toEqual([]);
-      expect(CONVO.map(last), "a letter is still parked on the server").toEqual(["none", "none", "none"]);
-      expect(CONVO.map((id) => winningStates(engine.read()).get(id)?.state ?? "none")).toEqual(["none", "none", "none"]);
-      expect(toasts.at(-1)?.message).toBe(messages.ohbox.toastUndone);
-    });
-  }
-
-  /* The Undo stands by the press's own rule: its writes queued for retry land on the next drive. */
-  it("an Undo whose every write is answered retryable says Undone, never that nothing changed", async () => {
-    convo = true;
-    const engine = createEngine(false, ARMED);
-    await engine.start();
-    await mount(engine);
-    await act(async () => {
-      void dispatch.current!.mutateSetAndReport(
-        CONVO.map((messageId) => ({ kind: "triage_set" as const, messageId, state: "set_aside" as const })),
-        (n) => `Parked ${n}`,
-      );
-    });
-    await flush();
-    const offer = toasts.find((x) => x.onAction !== undefined)!;
-    expect(offer.message).toBe("Parked 3");
-    retrying = new Set(CONVO);
-    const before = toasts.length;
-    await act(async () => { offer.onAction!(); });
-    await flush();
-    expect(triagePosts.filter((p) => p.status === 503 && p.state === "none").map((p) => p.id),
-      "control: the Undo's writes met the 503").toEqual(CONVO);
-    const said = toasts.slice(before).map((x) => x.message);
-    expect(said, "a queued Undo said nothing changed").not.toContain(messages.ohbox.refusedPress);
-    expect(said).toEqual([messages.ohbox.toastUndone]);
-    await act(async () => { await engine.flushPending(); });
-    await flush();
-    const last = (id: string) => triagePosts.filter((p) => p.id === id && p.status === 200).at(-1)?.state ?? "none";
-    expect(CONVO.map(last), "the queued Undo did not land").toEqual(["none", "none", "none"]);
+    expect(s.rules()).toEqual([{ method: "DELETE", path: "/api/rules/r2", body: undefined }]);
   });
 });

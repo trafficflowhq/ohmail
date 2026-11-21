@@ -5,7 +5,7 @@ import { accounts, mailboxFolders, mailboxes, messageBodies, messageInstances, m
 import type { ClassifierPort, ClassifierInput, ClassifierResult } from "@trafficflow/core";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import { ScreenerService } from "../src/index.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
 
 /**
@@ -23,7 +23,7 @@ class SpyClassifier implements ClassifierPort {
 }
 
 async function wired() {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "screener-corr" });
   await w.db.update(mailboxes).set({ createdAt: new Date("2026-07-01T00:00:00Z") }).where(eq(mailboxes.id, w.mailboxId));
   await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), folder: "Sent", uidvalidity: 7n, uidnext: 9n });

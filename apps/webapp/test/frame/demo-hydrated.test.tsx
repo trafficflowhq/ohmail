@@ -7,12 +7,16 @@
  */
 import { createElement as h } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
 import messages from "../../messages/en.json";
-import { act, click, engineOver, NOW, setup, shell, storeWith, teardown, waitFor } from "../_view-shell";
+import { act, click, NOW, setup, teardown, waitFor } from "../_view-shell";
+import {
+  installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  sessionFull, teardownConfirmEnv, tick,
+} from "../fixtures/cloud-confirm-shell";
 
 /** The ribbon's own sentence, as the catalogue says it (its `<b>` drawn as a node, so read without it). */
 const SAYS_DEMO = "Invented mail. Nothing leaves this tab.";
@@ -57,7 +61,10 @@ describe("the demo's ribbon, after hydration", () => {
   it("is drawn over the demo, and Dismiss takes it away for the tab", async () => {
     await demo();
     await waitFor(says, "the demo's ribbon");
-    await click(within(ribbon()!).getByRole("button", { name: "Dismiss" }), "the ribbon's Dismiss");
+    const notice = ribbon()!;
+    expect(notice.closest(".oh-noticeslot")).toBeTruthy();
+    expect(notice.getAttribute("role")).toBe("status");
+    await click(within(notice).getByRole("button", { name: "Dismiss" }), "the ribbon's Dismiss");
     await waitFor(() => !says(), "the ribbon gone after Dismiss");
 
     // Dismissed for the tab: the demo mounted again in it draws the frame without the ribbon.
@@ -70,9 +77,21 @@ describe("the demo's ribbon, after hydration", () => {
   });
 
   it("is not drawn over a live host", async () => {
-    const store = await storeWith([]);
-    const el = await shell(store, engineOver(store));
-    await waitFor(() => (el.textContent ?? "").includes("Ohbox"), "the live frame");
-    expect(says(), "a live host drew the demo's ribbon").toBe(false);
+    installConfirmEnv();
+    try {
+      rememberOwner();
+      scriptRefresh(refresh204);
+      scriptSession(sessionFull);
+      window.location.hash = "#/ohbox";
+      const frame = await mountCloudShell();
+      await tick(3000);
+      expect(within(frame).getByRole("heading", { name: "Ohbox" })).toBeTruthy();
+      expect(says(), "a live host drew the demo's ribbon").toBe(false);
+      const more = within(frame).queryByRole("button", { name: /more notices?/ });
+      if (more) await act(async () => { more.click(); });
+      expect(screen.queryByRole("menuitem", { name: "Demo." })).toBeNull();
+    } finally {
+      await teardownConfirmEnv();
+    }
   });
 });

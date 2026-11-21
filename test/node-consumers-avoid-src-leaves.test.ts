@@ -130,7 +130,7 @@ describe("no workspace leaf resolves, under Node, to a source file Node cannot f
      *
      * `types` ahead of `node` is a ruling rather than a mechanism: the type layer reads SOURCE, so a
      * `dist/` nobody rebuilt can never be believed by a typecheck. Measured both ways — with `types`
-     * on dist a mutated `dist/types.d.ts` reddens `apps/webapp/app/shell/FoldersRailGroup.tsx`; with
+     * on dist a mutated `dist/types.d.ts` causes a web type error; with
      * it on src the same mutation is invisible.
      *
      * `ohmail-source` ahead of `node` is what keeps a node-platform bundle (the two host images, the

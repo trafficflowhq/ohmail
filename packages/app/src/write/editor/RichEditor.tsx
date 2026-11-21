@@ -7,12 +7,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { TextSelection } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 import { escapeAsParagraphs, richToHtml, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import type { EditorHandle, EditorMarks, EditorProps, MarkId } from "../ports.js";
 import { applyCode, applyList, applyQuote } from "./commands.js";
 import { linkAtCaret, nextMarks, normalizeHref } from "./marks.js";
 import { EXTENSIONS, escapeUnlessTaken, linksIn } from "./schema.js";
 import { LETTER_TEXT, LetterNames } from "./letter-names.js";
+import { PasteAsLines, readParagraphsAsLines } from "./paste.js";
 
 /** The links a body reads, handed by the shell that mounts the body (the folder imports nothing of it). */
 export interface EditorLinks {
@@ -36,8 +39,11 @@ export const RICH_MARKS: readonly MarkId[] = [
 ];
 
 const NO_LINKS: readonly string[] = [];
-/** The schema, and the names the kit's sheet reads stamped on the view alone. */
-const DRAWN = [...EXTENSIONS, LetterNames];
+/**
+ * The schema, the names the kit's sheet reads stamped on the view alone, and the paste rule (`paste.ts`): pasted
+ * text keeps its lines, and a draft's paragraphs are read as lines when it is put back.
+ */
+const DRAWN = [...EXTENSIONS, LetterNames, PasteAsLines];
 
 /** The marks that hold where the caret is: the next letter's marks with nothing selected, the selection's otherwise. */
 function activeIn(editor: Editor): ReadonlySet<MarkId> {
@@ -79,16 +85,36 @@ function marksOf(editor: Editor, asks: Set<() => void>): EditorMarks {
       else if (id === "quote") applyQuote(editor);
     },
     link: {
-      read: () => (linkAtCaret(editor.state)?.attrs.href as string | undefined) ?? null,
-      set(raw) {
-        const href = raw === null ? "" : normalizeHref(raw);
-        if (href === null) return "refused";
-        const chain = editor.chain().focus().extendMarkRange("link");
-        if (href === "") {
-          chain.unsetLink().run();
-          return "ok";
-        }
-        return chain.setLink({ href }).run() ? "ok" : "refused";
+      open() {
+        const { view } = editor;
+        keepNativeSelection(view);
+        const { doc, selection, storedMarks } = editor.state;
+        let editedDoc = doc;
+        return {
+          href: (linkAtCaret(editor.state)?.attrs.href as string | undefined) ?? null,
+          set(raw) {
+            const href = raw === null ? "" : normalizeHref(raw);
+            if (href === null || editor.isDestroyed || editor.state.doc !== doc) return "refused";
+            const chain = editor
+              .chain()
+              .command(({ tr }) => {
+                tr.setSelection(selection).setStoredMarks(storedMarks);
+                return true;
+              })
+              .extendMarkRange("link");
+            const changed = href === "" ? chain.unsetLink().run() : chain.setLink({ href }).run();
+            editedDoc = editor.state.doc;
+            return changed ? "ok" : "refused";
+          },
+          restore() {
+            if (editor.isDestroyed) return;
+            if (editor.state.doc === editedDoc && !selection.eq(editor.state.selection)) {
+              const tr = editor.state.tr;
+              view.dispatch(tr.setSelection(selection.getBookmark().resolve(tr.doc)));
+            }
+            editor.commands.focus(null, { scrollIntoView: false });
+          },
+        };
       },
       onKey(ask) {
         asks.add(ask);
@@ -109,6 +135,30 @@ function askedLink(editable: boolean, e: KeyboardEvent, asks: ReadonlySet<() => 
   return true;
 }
 
+/** Keep the native range before a pending editor update restores the previous selection. */
+function syncArrowSelection(view: EditorView, event: KeyboardEvent): boolean {
+  if (!event.shiftKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return false;
+  keepNativeSelection(view);
+  return false;
+}
+
+function keepNativeSelection(view: EditorView): void {
+  if (!view.hasFocus()) return;
+  const selection = view.dom.ownerDocument.getSelection();
+  if (
+    !selection?.anchorNode ||
+    !selection.focusNode ||
+    !view.dom.contains(selection.anchorNode) ||
+    !view.dom.contains(selection.focusNode)
+  )
+    return;
+  const { state } = view;
+  const anchor = view.posAtDOM(selection.anchorNode, selection.anchorOffset);
+  const head = view.posAtDOM(selection.focusNode, selection.focusOffset);
+  const next = TextSelection.between(state.doc.resolve(anchor), state.doc.resolve(head));
+  if (!next.eq(state.selection)) view.dispatch(state.tr.setSelection(next));
+}
+
 /** Plain words at the caret: one run per line with a break between, so a one-line insert takes the caret's marks. */
 function inlineOf(text: string): { type: string; text?: string }[] {
   return text
@@ -119,9 +169,28 @@ function inlineOf(text: string): { type: string; text?: string }[] {
     ]);
 }
 
-/** A drop of files is never text: the composer around the editor takes the files. */
-const carriesFiles = (dt: DataTransfer | null): boolean =>
-  (dt?.files?.length ?? 0) > 0 || [...(dt?.types ?? [])].includes("Files");
+/**
+ * A drop of files is never text: the composer around the editor takes the files. Three shapes: File objects, the
+ * `Files` type, and a drop whose files are withheld (a Linux file manager's: no File, `text/uri-list` listed, its
+ * data unreadable or every entry `file:`), whose URL the editor would otherwise insert.
+ */
+function carriesFiles(dt: DataTransfer | null): boolean {
+  if (!dt) return false;
+  const types = [...(dt.types ?? [])];
+  if ((dt.files?.length ?? 0) > 0 || types.includes("Files")) return true;
+  if (!types.includes("text/uri-list")) return false;
+  let data = "";
+  try {
+    data = dt.getData("text/uri-list");
+  } catch {
+    data = "";
+  }
+  const entries = data
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"));
+  return entries.every((entry) => /^file:/i.test(entry));
+}
 
 export function RichEditor({
   links,
@@ -149,24 +218,12 @@ export function RichEditor({
     {
       extensions: DRAWN,
       content: richToHtml(value),
+      editable,
       immediatelyRender: false,
       editorProps: {
         handleDOMEvents: {
-          keydown: (view, e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              keys.current.onSendKey();
-              return true;
-            }
-            if (askedLink(view.editable, e, asks)) return true;
-            if (!escapeUnlessTaken(view, e)) return false;
-            /* An Escape none of the editor's own bindings took is the screen's, and claimed for it. */
-            if (!e.defaultPrevented) {
-              e.preventDefault();
-              keys.current.onLeaveKey();
-            }
-            return true;
-          },
+          keyup: syncArrowSelection,
+          keydown: (view, event) => editorKeyDown(view, event, keys.current, asks),
         },
         handleDrop: (_view, event, _slice, moved) => !moved && carriesFiles(event.dataTransfer),
         attributes: {
@@ -198,7 +255,7 @@ export function RichEditor({
     if (incoming === emitted.current) return;
     if (incoming === (editor.isEmpty ? "" : editor.getHTML())) return;
     emitted.current = incoming;
-    editor.commands.setContent(incoming, { emitUpdate: false });
+    editor.chain().setContent(incoming, { emitUpdate: false }).command(readParagraphsAsLines).run();
   }, [editor, html, text]);
 
   /* Locked while a send is in flight: the document, the caret and the history stay; no update is emitted. */
@@ -221,7 +278,7 @@ export function RichEditor({
               else
                 editor
                   .chain()
-                  .focus()
+                  .focus(null, { scrollIntoView: false })
                   .insertContent(text.html !== "" ? text.html : inlineOf(text.text))
                   .run();
             },
@@ -258,4 +315,31 @@ function useDrawnLinks(editor: Editor | null, links: EditorLinks): readonly stri
     };
   }, [editor, links]);
   return hrefs;
+}
+
+function editorKeyDown(
+  view: EditorView,
+  e: KeyboardEvent,
+  keys: Pick<EditorProps, "onSendKey" | "onLeaveKey">,
+  asks: ReadonlySet<() => void>,
+): boolean {
+  /* Mod+Shift+Enter is Send + Done, the app's key (bound where the reply's composer is): answered here only
+     so that the editor's own Mod-Enter (a line break) does not take it, and left to reach the binding. */
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    const send = keys.onSendKey;
+    if (!e.shiftKey && send) {
+      e.preventDefault();
+      send();
+    }
+    return true;
+  }
+  if (askedLink(view.editable, e, asks)) return true;
+  if (!escapeUnlessTaken(view, e)) return false;
+  /* An Escape none of the editor's own bindings took is the screen's, and claimed for it. */
+  const leave = keys.onLeaveKey;
+  if (!e.defaultPrevented && leave) {
+    e.preventDefault();
+    leave();
+  }
+  return true;
 }

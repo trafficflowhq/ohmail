@@ -19,8 +19,7 @@ import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsRow, Switch } from "@ohmail/ui";
 
 import {
-  readAutoSuggest,
-  saveAutoSuggest,
+  ownModelAutoSuggest,
   type AutoSuggestState,
 } from "./local-auto-suggest.js";
 import { AutoActRow } from "../../webapp/app/shell/AutoActRow";
@@ -54,21 +53,8 @@ export function DesktopAutoSuggest({
 }: { reader?: boolean } = {}) {
   /* See `DesktopScreeningWords` for why the namespace has to be on `vite.config.ts`'s list. */
   const t = useTranslations("desktopScreener");
-  /**
-   * NULL UNTIL THE ENGINE HAS ANSWERED WITH A VALUE, and null for ever on a door that has
-   * none. ONE state for three situations, deliberately, where the neighbouring panes keep
-   * two: not asked yet, no such route on this door, and a refused read. They differ in cause,
-   * not in what may be drawn — there is no stored value in any of them, and the only thing
-   * this row can render without one is a switch showing a position nobody chose.
-   * `local-screening.ts` needs the distinction because one of ITS absences (a hosted account
-   * out of reach) has a sentence worth printing; this route is answered out of a database
-   * file in this process, so that case does not exist here. The load-bearing half is in the
-   */
-
-  /*
-   * TRANSPORT: it must never invent a value for a door that has none — see `readAutoSuggest`.
-   */
-  const [value, setValue] = useState<AutoSuggestState | null>(null);
+  // An absent route belongs to another door. A pending or refused read shows a held Off switch.
+  const [value, setValue] = useState<AutoSuggestState | null | undefined>(null);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   /* THE ACT ON SUGGESTIONS, over this door's own consent route. `null` until the read
@@ -86,25 +72,20 @@ export function DesktopAutoSuggest({
 
   useEffect(() => {
     let cancelled = false;
-    void readAutoSuggest().then(
-      (read) => { if (!cancelled && read.state === "ready") setValue(read.value); },
-      () => {
-        /* A refusal the engine composed, for a reason it has already logged. Left undrawn rather
-           than shown broken: there is no value here to edit, and a switch in the OFF position over
-           an install that has this ON would be somebody believing they had chosen the state they
-           were merely shown. */
-      },
+    void ownModelAutoSuggest.read().then(
+      (read) => { if (!cancelled) setValue(read.state === "ready" ? read.value : undefined); },
+      () => { if (!cancelled) setValue(null); },
     );
     return () => { cancelled = true; };
   }, []);
 
-  if (value === null) return null;
+  if (value === undefined) return null;
 
   const write = (next: boolean): void => {
-    if (pending) return;
+    if (value === null || pending) return;
     setPending(true);
     setFailed(false);
-    void saveAutoSuggest(next).then(
+    void ownModelAutoSuggest.save(next).then(
       (landed) => {
         setValue(landed);
         // Suggestions off withdraws the act in the same write (`setAutoSuggest`).
@@ -119,29 +100,29 @@ export function DesktopAutoSuggest({
     <>
       <SettingsRow
         label={t("autoSuggestLabel")}
-        description={t(autoSuggestCopyKey(value))}
+        description={t(value === null ? "autoSuggestOff" : autoSuggestCopyKey(value))}
         control={
           <Switch
             /* The STORED value, never the hoped-for one. This is the only record the person has of
                whether their own model is being asked unprompted. */
-            checked={value.on}
+            checked={value?.on ?? false}
             ariaLabel={t("autoSuggestLabel")}
-            disabled={pending}
+            disabled={value === null || pending}
             onChange={write}
           />
         }
       />
-      {value.provider === "opencode-go" ? (
+      {value?.provider === "opencode-go" ? (
         <SettingsNote>{t("autoSuggestGoAllowance")}</SettingsNote>
       ) : null}
       {/* WHERE THE MAIL GOES, said once and only when it is actually going somewhere. The engine
           knows which provider is configured; what this row is responsible for is not letting an
           automatic path be armed without the sentence being on screen at the same moment. */}
-      {value.on && value.modelReady ? (
+      {value?.on && value.modelReady ? (
         <SettingsNote>{t("autoSuggestPrivacy")}</SettingsNote>
       ) : null}
       {failed ? <p className="join-error">{t("saveFailed")}</p> : null}
-      {act !== null ? (
+      {value !== null && act !== null ? (
         <AutoActRow
           on={act}
           suggestOn={value.on}

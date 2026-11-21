@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, within } from "@testing-library/react";
 import {
   ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
@@ -72,11 +73,11 @@ afterEach(async () => { await teardownShellEnv(); });
 
 /** What the card draws of the letter: the frameless view inline, or the frame's document. */
 const drawnOf = (scope: Element): string =>
-  (scope.querySelector(".sc-viewer")?.innerHTML ?? "") + (scope.querySelector("iframe")?.getAttribute("srcdoc") ?? "");
+  (scope.querySelector(".mb")?.innerHTML ?? "") + (scope.querySelector("iframe")?.getAttribute("srcdoc") ?? "");
 /** The pictures the card draws, by their src. */
 /** The letter's own pictures in the card (`.msg-img`): the strip's thumbnail shares the part's URL. */
 const picturesOf = (scope: Element): string[] =>
-  [...scope.querySelectorAll(".sc-viewer img.msg-img")].map((i) => i.getAttribute("src") ?? "");
+  [...scope.querySelectorAll(".mb img.msg-img")].map((i) => i.getAttribute("src") ?? "");
 
 async function mountWithTheLetter(): Promise<void> {
     answerSyncWith(() => new Response(JSON.stringify({
@@ -100,8 +101,12 @@ const goHash = async (hash: string): Promise<void> => {
   });
   await tick(1_000);
 };
+const mountedCard = (id: string): HTMLElement | null =>
+  document.querySelector<HTMLElement>(`[data-stream-item="${id}"]`);
+const expansionOf = (card: HTMLElement | null) =>
+  card === null ? null : within(card).queryByRole("button", { name: /^(?:Expand|Collapse)$/ });
 const theCard = (): HTMLElement => {
-  const card = document.querySelector<HTMLElement>(`.view-reads .scast[data-sid="${LETTER}"]`);
+  const card = mountedCard(LETTER);
   expect(card, "News does not show the letter").not.toBeNull();
   return card!;
 };
@@ -117,7 +122,7 @@ describe("a letter filed in News draws its own picture", () => {
     await goHash("#/reads");
     const card = theCard();
     expect(fetched, "a collapsed card fetched a picture nobody opened").toEqual([]);
-    await act(async () => { card.querySelector<HTMLButtonElement>(".sc-x")!.click(); });
+    await act(async () => { within(card).getByRole("button", { name: "Expand" }).click(); });
     await tick(3_000);
     expectThePicture(card);
   }, 60_000);
@@ -125,21 +130,17 @@ describe("a letter filed in News draws its own picture", () => {
   it("a Search hit opened into News draws it", async () => {
     await mountWithTheLetter();
     await goHash("#/search");
-    const box = document.querySelector<HTMLInputElement>(".view-search .search-box input");
+    const box = within(document.body).queryByRole("textbox", { name: "Search" });
     expect(box, "no search box").not.toBeNull();
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => {
-      set.call(box, "quillfen");
-      box!.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await act(async () => { fireEvent.change(box!, { target: { value: "quillfen" } }); });
     await tick(1_000);
-    const hit = document.querySelector<HTMLButtonElement>(`.view-search .hit-w[data-hit="${LETTER}"] button.hit-open`);
+    const hit = document.querySelector<HTMLElement>(`[data-hit="${LETTER}"] .oh-row-subject`);
     expect(hit, "Search does not list the letter").not.toBeNull();
     await act(async () => { hit!.click(); });
     // The landing opens the card once the stream has scrolled to it (its anchoring budget).
-    for (let i = 0; i < 40 && theCard().querySelector(".sc-x")?.getAttribute("aria-expanded") !== "true"; i += 1) await tick(250);
+    for (let i = 0; i < 40 && expansionOf(mountedCard(LETTER))?.getAttribute("aria-expanded") !== "true"; i += 1) await tick(250);
     expect(window.location.hash, "the hit did not open News").toContain("#/reads");
-    expect(theCard().querySelector(".sc-files"), "the landed card is not open").not.toBeNull();
+    expect(theCard().querySelector(".oh-files"), "the landed card is not open").not.toBeNull();
     await tick(3_000);
     expectThePicture(theCard());
   }, 60_000);
@@ -168,8 +169,8 @@ describe("a stream letter opened from Search turns read", () => {
   let savedRect: typeof Element.prototype.getBoundingClientRect;
   const zero = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) };
   const rect = (top: number, bottom: number): DOMRect => ({ ...zero, top, bottom, height: bottom - top, width: 600, right: 600 }) as DOMRect;
-  const isStream = (el: Element): boolean => (el as HTMLElement).classList?.contains("stream") ?? false;
-  const cardsOf = (s: Element): HTMLElement[] => [...s.querySelectorAll<HTMLElement>(".scast[data-sid]")];
+  const isStream = (el: Element): boolean => el.hasAttribute("data-reading-scroll");
+  const cardsOf = (s: Element): HTMLElement[] => [...s.querySelectorAll<HTMLElement>("[data-stream-item]")];
 
   beforeEach(() => {
     reads = [];
@@ -190,6 +191,15 @@ describe("a stream letter opened from Search turns read", () => {
         if (held) await held;
         return json({ text: "Ok, see you at four.", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null });
       }
+      if (/\/messages\/bodies\?/.test(url)) {
+        const ids = (new URL(url, "https://harness.invalid").searchParams.get("ids") ?? "").split(",");
+        const items = pile.filter((p) => ids.includes(p.id)).map((p) => ({
+          messageId: p.id, text: "Ok, see you at four.", html: null, loadedRemoteContent: false,
+          unsubscribe: "no_header", unsubscribeUrl: null,
+        }));
+        if (held && items.length > 0) await held;
+        return json({ items });
+      }
       if (/\/search\?/.test(url)) {
         const q = (new URL(url, "https://harness.invalid").searchParams.get("q") ?? "").toLowerCase();
         const items = pile.filter((p) => q.includes(p.view)).map(entity);
@@ -208,13 +218,13 @@ describe("a stream letter opened from Search turns read", () => {
     });
     Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
       if (isStream(this)) return rect(0, 600);
-      const card = this.closest<HTMLElement>(".scast[data-sid]");
-      const s = card?.closest(".stream");
+      const card = this.closest<HTMLElement>("[data-stream-item]");
+      const s = card?.closest("[data-reading-scroll]");
       if (!card || !s) return zero as DOMRect;
       const top = 100 + cardsOf(s).indexOf(card) * 200 - (tops.get(s) ?? 0);
       if (this === card) return rect(top, top + 200);
-      if (this.classList.contains("sc-line")) return rect(top + 16, top + 36);
-      if (this.classList.contains("sc-clip") || this.classList.contains("sc-body")) return rect(top + 70, top + 180);
+      if (this.classList.contains("oh-message-head")) return rect(top + 16, top + 36);
+      if (this.classList.contains("oh-message-body") || this.classList.contains("mb")) return rect(top + 70, top + 180);
       return zero as DOMRect;
     };
     Object.defineProperty(document, "hasFocus", { configurable: true, value: () => true });
@@ -230,7 +240,7 @@ describe("a stream letter opened from Search turns read", () => {
     delete (document as unknown as Record<string, unknown>).hasFocus;
   });
 
-  async function mountThePile(): Promise<void> {
+  async function mountThePile(settleFor = 30_000): Promise<void> {
     const creates = pile.flatMap((p, i) => [
       { type: "rule", op: "create", id: `rule_${p.id}`, seq: 2 * i + 1, updatedAt: ISO, entity: { ...newsRule, id: `rule_${p.id}`, match: p.from, destination: p.folder } },
       { type: "message", op: "create", id: p.id, seq: 2 * i + 2, updatedAt: ISO, entity: entity(p) },
@@ -239,25 +249,21 @@ describe("a stream letter opened from Search turns read", () => {
       changes: { creates, updates: [], moves: [], deletes: [] }, cursor: "c4", hasMore: false, serverTime: ISO,
     }), { status: 200, headers: { "content-type": "application/json" } }));
     await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })]);
-    await tick(30_000);
+    await tick(settleFor);
   }
   const cardOf = (p: (typeof pile)[number]): HTMLElement | null =>
-    document.querySelector<HTMLElement>(`.view-${p.view} .scast[data-sid="${p.id}"]`);
+    mountedCard(p.id);
   async function landed(p: (typeof pile)[number]): Promise<void> {
-    for (let i = 0; i < 40 && cardOf(p)?.querySelector(".sc-x")?.getAttribute("aria-expanded") !== "true"; i += 1) await tick(250);
-    expect(cardOf(p)?.querySelector(".sc-x")?.getAttribute("aria-expanded"), "the landed card is open").toBe("true");
+    for (let i = 0; i < 40 && expansionOf(cardOf(p))?.getAttribute("aria-expanded") !== "true"; i += 1) await tick(250);
+    expect(expansionOf(cardOf(p))?.getAttribute("aria-expanded"), "the landed card is open").toBe("true");
   }
 
   async function openFromSearch(p: (typeof pile)[number]): Promise<void> {
     await goHash("#/search");
-    const box = document.querySelector<HTMLInputElement>(".view-search .search-box input")!;
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => {
-      set.call(box, `SR2 ${p.view}`);
-      box.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    const box = within(document.body).getByRole("textbox", { name: "Search" });
+    await act(async () => { fireEvent.change(box, { target: { value: `SR2 ${p.view}` } }); });
     await tick(1_000);
-    const hit = document.querySelector<HTMLButtonElement>(`.view-search .hit-w[data-hit="${p.id}"] button.hit-open`);
+    const hit = document.querySelector<HTMLElement>(`[data-hit="${p.id}"] .oh-row-subject`);
     expect(hit, "Search lists the letter").not.toBeNull();
     await act(async () => { hit!.click(); });
     await landed(p);
@@ -275,14 +281,16 @@ describe("a stream letter opened from Search turns read", () => {
 
     it(`${p.view}: a hit whose body comes after the landing is read once it is in and the dwell has passed`, async () => {
       held = new Promise((r) => { release = r; });
-      await mountThePile();
+      // The signed-in shell also preloads bodies. Keep its held request within the body
+      // deadline so this case measures arrival after landing instead of a failed fetch.
+      await mountThePile(1_000);
       await openFromSearch(p);
-      expect(cardOf(p)!.classList.contains("pend"), "the landed card is still on its way").toBe(true);
+      expect(cardOf(p)!.classList.contains("st-pend"), "the landed card is still on its way").toBe(true);
       await tick(3_000);
       expect(reads).toEqual([]);
       release();
       await tick(3_000);
-      expect(cardOf(p)!.classList.contains("pend")).toBe(false);
+      expect(cardOf(p)!.classList.contains("st-pend")).toBe(false);
       expect(reads).toEqual([p.id]);
     }, 60_000);
 

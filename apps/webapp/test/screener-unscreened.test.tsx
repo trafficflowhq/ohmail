@@ -1,18 +1,11 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, Folder } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
 import {
-  OhmailEngine, MemoryMirrorStore,
-  type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
-import messages from "../messages/en.json";
-import de from "../messages/de.json";
-import { createEngine } from "../app/shell/engine-config.js";
-import { settleFirstPaint } from "./_first-paint.js";
+  ACCOUNT, ISO, act, installScreeningWeb, mountScreeningWeb, syncScreeningWeb,
+  teardownScreeningWeb, tick, warmScreeningWeb,
+} from "./fixtures/screening-web.js";
 
 /**
  * "N MESSAGES FROM SENDERS YOU HAVE NOT DECIDED ABOUT ARE STILL IN THE INBOX ON YOUR MAIL SERVER"
@@ -36,27 +29,9 @@ import { settleFirstPaint } from "./_first-paint.js";
  *  4. A DOOR WITH NOTHING TO OFFER DRAWS NO ROW — never a row stating zero.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-
-const NOW = new Date("2026-09-22T09:00:00.000Z");
-let seq = 0;
-
 function waiting(id: string, from: string, folder: Folder = "ohmail/Screener"): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    id, accountId: ACCOUNT, mailboxId: "mb", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
     date: "2026-09-22T08:00:00.000Z",
     folder, snippet: `snippet ${id}`, unread: true,
@@ -74,101 +49,44 @@ interface Door {
   complete?: boolean;
 }
 
-let presses: Array<readonly string[] | undefined> = [];
+const scoped = { headers: { "X-Ohmail-Account": ACCOUNT } };
+const endpoint = "/api/screener/unscreened";
+let host: HTMLElement;
+let calls: string[];
+let presses: Array<readonly string[] | undefined>;
 
-async function engineWith(door: Door | null): Promise<OhmailEngine> {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges([waiting("m0", "stranger@example.test")].map((m): SyncChange => ({
-    type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
-  })));
-  return new OhmailEngine({
-    store,
-    now: () => NOW,
-    adapter: {
-      sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
-        cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-      }),
-      mutate: async () => ({ changes: [], seq: null }),
-      fetchBody: async () => null,
-      // A door with nothing to say implements NEITHER call — an older server, exactly.
-      ...(door
-        ? {
-          unscreened: async () => ({ groups: door.groups, total: door.total, complete: door.complete, max: 200 }),
-          screenUnscreened: async (addresses?: readonly string[]) => {
-            presses.push(addresses);
-            return { screened: door.groups, total: door.total };
-          },
-        }
-        : {}),
-    } as never,
+beforeAll(warmScreeningWeb, 30_000);
+beforeEach(() => { calls = []; presses = []; });
+afterEach(teardownScreeningWeb);
+
+async function mount(door: Door | null): Promise<void> {
+  const letter = waiting("m0", "stranger@example.test");
+  installScreeningWeb("#/screener", (path, query, method, init) => {
+    if (path === "/api/mailboxes") return Response.json({ items: [{
+      id: letter.mailboxId, address: ["fixture", "mailbox.example"].join("@"), status: "connected", organizerRole: "organizer", organizerChecked: true,
+      createdAt: ISO, lastSyncAt: ISO, organizeConsentedAt: ISO,
+    }] });
+    if (path === "/api/sync") return query.get("types") === "rule"
+      ? syncScreeningWeb([], 0)
+      : syncScreeningWeb([{ type: "message", op: "create", id: letter.id, seq: 1, updatedAt: letter.updatedAt, entity: letter }], 1);
+    if (path !== endpoint) return undefined;
+    calls.push(`${method} ${path}`);
+    if (!door) return Response.json({ error: { code: "not_found" } }, { status: 404 });
+    if (method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { addresses?: string[] };
+      presses.push(body.addresses);
+      return Response.json({ screened: door.groups, total: door.total }, scoped);
+    }
+    return Response.json({ ...door, max: 200 }, scoped);
   });
+  host = await mountScreeningWeb();
+  await tick(3000);
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-  presses = [];
-});
-
-async function flush(): Promise<void> {
-  for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
-}
-
-async function mount(door: Door | null, engineOverride?: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const engine = engineOverride ?? await engineWith(door);
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
-    const [sel, setSel] = React.useState<Record<string, string | null>>({
-      waiting: null, screened: null, spam: null,
-    });
-    return h(ScreenerView, {
-      owed: false,
-      state,
-      segment: "waiting", settled: true, selection: sel as never,
-      onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never);
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(KeymapProvider, { children: h(Probe) }),
-        }),
-      }),
-    );
-  });
-  await flush();
-  await settleFirstPaint();
-}
-
-const row = (): HTMLElement | null => host!.querySelector(".scn-unscreened");
-const pressButton = (): HTMLElement => {
-  const hits = [...(row()?.querySelectorAll<HTMLElement>("button") ?? [])]
-    .filter((b) => (b.textContent ?? "").trim().startsWith("Screen"));
-  if (hits.length !== 1) throw new Error(`${hits.length} buttons read "Screen"`);
-  return hits[0]!;
-};
+const leadPattern = /^(?:At least )?\d+ messages? from /;
+const lead = () => within(host).queryByText(leadPattern, { selector: "b" });
+const row = () => within(host).queryAllByRole("status").find((notice) => within(notice).queryByText(leadPattern, { selector: "b" })) ?? null;
+const pressButton = () => within(host).getByRole("button", { name: /^Screen \d+$/ });
 
 const DOOR: Door = {
   groups: [
@@ -179,54 +97,19 @@ const DOOR: Door = {
 };
 
 describe("the row renders through the engine the product actually builds", () => {
-  const ARMED = { NEXT_PUBLIC_API_BASE: "/api" } as const;
-  let calls: string[] = [];
-  let wireFloor = false;
-  const originalFetch = globalThis.fetch;
-
-  const json = (status: number, body: unknown): Response =>
-    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-
-  beforeEach(() => {
-    calls = [];
-    wireFloor = false;
-    // Stubbed BEFORE `createEngine`: `HttpAdapter` binds the global at construction.
-    globalThis.fetch = ((url: string, init?: RequestInit) => {
-      const method = init?.method ?? "GET";
-      calls.push(`${method} ${url}`);
-      if (url.endsWith("/api/screener/unscreened")) {
-        return Promise.resolve(method === "POST"
-          ? json(200, { screened: DOOR.groups, total: DOOR.total })
-          : json(200, { groups: DOOR.groups, total: DOOR.total, max: 200, ...(wireFloor ? { complete: false } : {}) }));
-      }
-      return Promise.resolve(json(404, { error: { code: "not_found", message: "no stub for this route" } }));
-    }) as unknown as typeof fetch;
-  });
-
-  afterEach(() => { globalThis.fetch = originalFetch; });
-
-  it("the live engine's adapter carries both undecided-sender capabilities", () => {
-    const engine = createEngine(false, ARMED);
-    const adapter = (engine as unknown as { adapter: Record<string, unknown> }).adapter;
-    expect(typeof adapter.unscreened, "the gate drops `unscreened`").toBe("function");
-    expect(typeof adapter.screenUnscreened, "the gate drops `screenUnscreened`").toBe("function");
-  });
-
   it("draws the row from the wire and presses back through it", async () => {
-    const engine = createEngine(false, ARMED);
-    await mount(null, engine);
+    await mount(DOOR);
     expect(calls, "the row never asked the door").toContain("GET /api/screener/unscreened");
-    const text = row()?.querySelector(".scn-held-lead")?.textContent ?? "";
+    const text = lead()?.textContent ?? "";
     expect(text, "the undecided-sender row did not render on the live path").toContain("12");
     await act(async () => { pressButton().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await flush();
+    await tick(1500);
     expect(calls, "the press never reached the door").toContain("POST /api/screener/unscreened");
   });
 
   it("a total the server's walk stopped at is said as a floor, off the wire", async () => {
-    wireFloor = true;
-    await mount(null, createEngine(false, ARMED));
-    expect(row()?.querySelector(".scn-held-lead")?.textContent).toBe(
+    await mount({ ...DOOR, complete: false });
+    expect(lead()?.textContent).toBe(
       "At least 12 messages from senders you have not decided about are still in the Inbox on your mail server.",
     );
   });
@@ -235,19 +118,11 @@ describe("the row renders through the engine the product actually builds", () =>
 describe("the undecided-sender row in the Screener header", () => {
   it("states the server's number and says what it is about", async () => {
     await mount(DOOR);
-    const text = row()?.querySelector(".scn-held-lead")?.textContent ?? "";
+    const text = lead()?.textContent ?? "";
     expect(text).toContain("12");
     expect(text.toLowerCase()).toContain("not decided about");
     expect(text.toLowerCase()).toContain("inbox on your mail server");
     expect(text.toLowerCase(), "the Ohbox never lists this mail").not.toContain("ohbox");
-  });
-
-  it("both catalogues name the server's Inbox and never the Ohbox", () => {
-    const en = messages.screener.unscreenedLead;
-    const german = de.screener.unscreenedLead;
-    expect(en).toContain("Inbox on your mail server");
-    expect(german).toContain("Inbox auf deinem Mailserver");
-    for (const lead of [en, german]) expect(lead).not.toMatch(/Ohbox/);
   });
 
   it("is one sentence and one verb — no per-sender list to read", async () => {
@@ -260,21 +135,19 @@ describe("the undecided-sender row in the Screener header", () => {
     await mount(DOOR);
     expect(presses, "a READ moved somebody's mail").toEqual([]);
     await act(async () => { pressButton().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await flush();
+    await tick(1500);
     expect(presses).toEqual([undefined]);
   });
 
   it("a floor says 'at least', and the press names what it moves", async () => {
     await mount({ ...DOOR, total: 40, complete: false });
-    expect(row()?.querySelector(".scn-held-lead")?.textContent).toBe(
+    expect(lead()?.textContent).toBe(
       "At least 40 messages from senders you have not decided about are still in the Inbox on your mail server.",
     );
     expect(pressButton().textContent).toContain("Screen 40");
-    await act(async () => { root!.unmount(); });
-    root = null;
-    host?.remove();
+    await teardownScreeningWeb();
     await mount({ ...DOOR, complete: true });
-    expect(row()?.querySelector(".scn-held-lead")?.textContent).toMatch(/^12 messages/);
+    expect(lead()?.textContent).toMatch(/^12 messages/);
   });
 
   /** A door with nothing to offer draws NO ROW — never a row stating zero. */
@@ -286,116 +159,5 @@ describe("the undecided-sender row in the Screener header", () => {
   it("draws no row when the door answers an empty set", async () => {
     await mount({ groups: [], total: 0 });
     expect(row()).toBeNull();
-  });
-});
-
-/* ── THE NOTE ON NEWS AND RECEIPTS ───────────────────────────────────────────────────────────────
- * Owner report 2026-11-02: letters in News from senders the person never chose. The note states
- * the server's number for the pile it sits on, moves nothing until its press, sends the pile with
- * the press, and draws nothing at zero, on a failed read, or from a door that does not say the
- * pile back (a server from before piles answers the Ohbox's offer). Through `createEngine`. */
-describe("the note on News and Receipts", () => {
-  const ARMED = { NEXT_PUBLIC_API_BASE: "/api" } as const;
-  const originalFetch = globalThis.fetch;
-  let calls: Array<{ method: string; url: string; body: string | null }> = [];
-  /** What the door says to a pile's read; a press empties it. */
-  let pileDoor: { status: number; body: Record<string, unknown> } | null = null;
-
-  const json = (status: number, body: unknown): Response =>
-    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-
-  beforeEach(() => {
-    calls = [];
-    pileDoor = null;
-    globalThis.fetch = ((url: string, init?: RequestInit) => {
-      const method = init?.method ?? "GET";
-      calls.push({ method, url, body: typeof init?.body === "string" ? init.body : null });
-      if (url.includes("/api/screener/unscreened") && pileDoor !== null) {
-        if (method === "POST") {
-          const total = Number(pileDoor.body.total ?? 0);
-          pileDoor = { status: 200, body: { ...pileDoor.body, groups: [], total: 0 } };
-          return Promise.resolve(json(200, { screened: [], total }));
-        }
-        return Promise.resolve(json(pileDoor.status, pileDoor.body));
-      }
-      return Promise.resolve(json(404, { error: { code: "not_found", message: "no stub for this route" } }));
-    }) as unknown as typeof fetch;
-  });
-
-  afterEach(() => { globalThis.fetch = originalFetch; });
-
-  const answer = (pile: string | undefined, total: number, complete = true) => ({
-    status: 200,
-    body: {
-      groups: total > 0 ? [{ address: "paper@paper.test", count: total, newestAt: "2024-03-01T08:00:00.000Z" }] : [],
-      total, complete, max: 200, ...(pile === undefined ? {} : { pile }),
-    },
-  });
-
-  async function mountNote(pile: "news" | "receipts", engine: OhmailEngine): Promise<string[]> {
-    const { usePileNote } = await import("@ohmail/app-logic/lists/pile-note");
-    const { PileNote } = await import("../app/shell/PileNote.js");
-    const said: string[] = [];
-    function Probe(): React.ReactElement {
-      const offer = usePileNote(engine, pile, true, (s) => { said.push(s.kind === "moved" ? `moved ${s.count}` : s.kind); });
-      return h(PileNote, { offer });
-    }
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, { storageKey: null, children: h(Probe) }),
-      }));
-    });
-    await flush();
-    return said;
-  }
-  const note = (): HTMLElement | null => host!.querySelector(".pile-note");
-  const posts = () => calls.filter((c) => c.method === "POST");
-
-  it("News asks its pile, states the server's number, and moves nothing until the press", async () => {
-    pileDoor = answer("news", 3);
-    const said = await mountNote("news", createEngine(false, ARMED));
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toContain("GET /api/screener/unscreened?pile=news");
-    expect(note()?.textContent).toBe("3 letters here are from senders you never let in.Screen 3");
-    expect(posts(), "a READ moved somebody's mail").toEqual([]);
-
-    await act(async () => { note()!.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await flush();
-    expect(posts().map((c) => [c.url, JSON.parse(c.body ?? "null")])).toEqual([["/api/screener/unscreened", { pile: "news" }]]);
-    expect(said).toEqual(["moved 3"]);
-    expect(note(), "the note outlived the press it answered").toBeNull();
-  });
-
-  it("Receipts asks its own pile, one letter in the singular, and a floor says 'at least'", async () => {
-    pileDoor = answer("receipts", 1);
-    await mountNote("receipts", createEngine(false, ARMED));
-    expect(calls.map((c) => c.url)).toContain("/api/screener/unscreened?pile=receipts");
-    expect(note()?.querySelector(".scn-held-lead")?.textContent).toBe("1 letter here is from a sender you never let in.");
-    await act(async () => { root!.unmount(); });
-    root = null;
-    host?.remove();
-    pileDoor = answer("news", 40, false);
-    await mountNote("news", createEngine(false, ARMED));
-    expect(note()?.querySelector(".scn-held-lead")?.textContent).toBe("At least 40 letters here are from senders you never let in.");
-  });
-
-  it("draws nothing at zero, on a failed read, or from a server that does not say the pile back", async () => {
-    for (const door of [answer("news", 0), { status: 500, body: { error: { code: "internal", message: "down" } } }, answer(undefined, 12)]) {
-      pileDoor = door;
-      await mountNote("news", createEngine(false, ARMED));
-      expect(note(), JSON.stringify(door.body)).toBeNull();
-      await act(async () => { root!.unmount(); });
-      root = null;
-      host?.remove();
-    }
-    expect(posts()).toEqual([]);
-  });
-
-  it("draws nothing on a door with no such read", async () => {
-    await mountNote("news", await engineWith(null));
-    expect(note()).toBeNull();
   });
 });

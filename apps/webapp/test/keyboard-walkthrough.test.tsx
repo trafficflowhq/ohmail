@@ -2,50 +2,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { within } from "@testing-library/react";
+import { modGlyph } from "@ohmail/app-logic/keys/mod-glyph";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 
 /**
- * THE KEYBOARD-ONLY WALKTHROUGH (OHMARCHY-PLAN §4 — the hard acceptance criterion).
- *
- * The full-day shape the prototype's script established, ported against the REAL shell on
- * the fixture world: triage 5 · screen 2 · reply 1 with schedule · file 2 · junk-rescue 1 ·
- * settings toggle 1 — fifteen named steps, every one driven by the keyboard through the
- * registry's own document listener, at BOTH widths (desktop split and the 390px phone
- * layout, which flips every `max-width: 699.98px` decision in the views).
- *
- * ── WHAT "KEYBOARD-ONLY" MEANS IN JSDOM, STATED HONESTLY ───────────────────────────────
- *
- * Every app-level chord is a real `keydown` on the document — the same event a person
- * produces and the same listener that serves them. TWO gestures cannot be synthesized:
- *
- *  · ↵ activating a FOCUSED BUTTON is the browser's own default action, which jsdom does
- *    not implement — `activate()` below stands in for it (focus, then click), and is used
- *    ONLY where a real keyboard user would Tab/↵ (the junk-rescue buttons, the send-later
- *    toggle, the settings switch). The registry deliberately leaves ↵-on-button to the
- *    browser (`when: e.target !== BUTTON` in the views), so this is the honest emulation
- *    of the path that exists, not a bypass of one that doesn't.
- *  · Tab traversal (jsdom has no sequential focus navigation) — `activate()` performs the
- *    landing the Tab would have made.
- *
- * ── THE MUTATION CONTRACT ──────────────────────────────────────────────────────────────
- *
- * Every step drives a REGISTERED binding (or the browser-native activation above), so
- * deleting a binding from the shell reddens the step that needed it by name — the other
- * half of the census test's promise (`keymap-census.test.tsx`).
- *
- * ── RECONCILIATIONS AGAINST THE PROTOTYPE (per §0, the app wins) ───────────────────────
- *
- *  · "file 2 to folders" — ohmail's filing model is the Move strip over the five places
- *    (`m`, focus on the first destination, ↵); IMAP folders ride the rail's Folders group,
- *    a different feature. The walkthrough files with the app's own verb.
- *  · "reply with schedule" — the shipping app schedules in COMPOSE (send-later presets),
- *    not in the inline reply; the walkthrough replies inline (r · type · ⌘↵) and schedules
- *    a composed message (c · type · Send later · `2`), which is the app's real shape.
- *  · junk-rescue — the Screener's rescue is the preview's two-step ceremony (Not spam… →
- *    destination), reached by keyboard via the section walk (`]`) + Tab/↵; the prototype's
- *    single-key rescue does not exist in the app and is not invented here.
+ * The keyboard-only walkthrough through the browser demo: five triage acts, two Screener
+ * decisions, one Spam rescue, a reply, two moves, and a theme change. At each width, the
+ * registered bindings take real key events. Where jsdom cannot supply a native Tab landing
+ * or Enter on a focused button, activate() supplies the focus and activation.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -83,6 +50,8 @@ function setup(px: number): void {
     writable: true,
     value: mkMatchMedia(px),
   });
+  /* The frame lays itself out from the window's own width (its layout plan), not from a media query. */
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: px });
   (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
@@ -108,10 +77,6 @@ afterEach(async () => {
   }
   roots = [];
   document.body.innerHTML = "";
-  // The Zero runs stamp the layout axis (see `zeroSetup`); a stale stamp or a stored
-  // `ohmail.layout` must not leak into the classic runs' narrow question (shell/narrow.ts
-  // reads the attribute).
-  delete document.documentElement.dataset.layout;
   try {
     window.localStorage.clear();
   } catch {
@@ -122,22 +87,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-/**
- * THE ZERO LAYOUT'S MOUNT (OHMARCHY-PLAN §3b/§4 — the walkthrough must hold in BOTH
- * layouts). The stamp is written the way production writes it: `ohmail.layout` in storage
- * (what the boot script reads) plus the pre-paint attribute (what shell/narrow.ts asks),
- * and the provider is mounted with the face axis ACTIVE exactly as the product door mounts
- * it — with `faces: false`, or with no storage door, the provider would never adopt the
- * stored layout at all.
- */
-function zeroSetup(px: number): void {
-  setup(px);
-  window.localStorage.setItem("ohmail.layout", "zero");
-  document.documentElement.dataset.layout = "zero";
-}
-
 async function shell(opts: { faces?: boolean } = {}): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { default: DemoPage } = await import("../app/(product)/demo/page.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { localStorageDoor } = await import("@ohmail/app-logic/storage/durable");
 
@@ -155,10 +106,9 @@ async function shell(opts: { faces?: boolean } = {}): Promise<HTMLElement> {
         now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           faces: opts.faces === true,
-          // The product door's door: without one the provider is `unpersisted` and never reads
-          // the `ohmail.layout` the Zero runs seed, so the Zero ladder would measure classic.
+          // The product door's door: without one the provider is `unpersisted` and reads no stored face.
           storage: localStorageDoor("theme"),
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(DemoPage) }),
         }),
       }),
     );
@@ -168,7 +118,7 @@ async function shell(opts: { faces?: boolean } = {}): Promise<HTMLElement> {
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document.body).dispatchEvent(
       new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
     );
   });
@@ -194,10 +144,23 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 4000): 
   throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
 }
 
-const listRows = (c: HTMLElement): HTMLElement[] => [...c.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")];
-const selRow = (c: HTMLElement): HTMLElement | null => c.querySelector<HTMLElement>(".view :is(.row.sel, [role=option][data-open])[data-id]");
-const byText = (c: HTMLElement, sel: string, text: string): HTMLElement | null =>
-  [...c.querySelectorAll<HTMLElement>(sel)].find((el) => (el.textContent ?? "").includes(text)) ?? null;
+/* A place's rows are its list's options, each carrying its letter's id; the cursor row is the one the list marks (or,
+   where it marks none, the open one), as `ohbox/_finders.ts` finds them. */
+const listRows = (c: HTMLElement): HTMLElement[] => [...c.querySelectorAll<HTMLElement>('[role="option"][data-id]')];
+const selRow = (c: HTMLElement): HTMLElement | null =>
+  c.querySelector<HTMLElement>('[role="option"][data-cursor][data-id]') ?? c.querySelector<HTMLElement>('[role="option"][data-open][data-id]');
+/** The place the frame shows, by its rail entry's (or dock's) current mark and name. */
+const placeShown = (name: string): boolean =>
+  [...document.querySelectorAll<HTMLElement>('[aria-current="page"]')]
+    .some((el) => (el.getAttribute("aria-label") ?? el.textContent ?? "").trim().startsWith(name));
+const parts = (container: HTMLElement) => within(container);
+const segOn = (container: HTMLElement, label: string): boolean => {
+  const sections = parts(container).queryByRole("group", { name: "Screener sections" });
+  return sections !== null &&
+    within(sections).queryByRole("button", { name: new RegExp(`^${label}(?: \\d+)?$`), pressed: true }) !== null;
+};
+const openMessage = (container: HTMLElement) => parts(container).queryByRole("region", { name: "Open message" });
+const replyEditor = (container: HTMLElement) => parts(container).queryByRole("textbox", { name: "Reply body" });
 
 /** The fifteen steps, driven at either width. */
 async function walkthrough(container: HTMLElement, narrow: boolean): Promise<void> {
@@ -239,7 +202,7 @@ async function walkthrough(container: HTMLElement, narrow: boolean): Promise<voi
   await key("g");
   await key("s");
   await waitFor(
-    () => container.querySelector(".view-screener") != null,
+    () => segOn(container, "Waiting"),
     "step 7: `g s` did not open the Screener",
   );
   await waitFor(() => listRows(container).length > 0, "step 7: the Screener shows no waiting senders");
@@ -262,25 +225,32 @@ async function walkthrough(container: HTMLElement, narrow: boolean): Promise<voi
   // the first one's section to be ON SCREEN (the segmented control's own selected state),
   // exactly as a person's does — a hash that has changed under a screen that has not is
   // not a section anyone can act in.
-  const segOn = (label: string): boolean =>
-    [...container.querySelectorAll<HTMLElement>(".view-screener button")].some(
-      (b) =>
-        (b.textContent ?? "").includes(label)
-        && (b.getAttribute("aria-selected") === "true" || b.getAttribute("aria-pressed") === "true"),
-    );
   await key("]");
-  await waitFor(() => segOn("Screened out"), "step 9: `]` did not reach the screened-out section");
+  await waitFor(() => segOn(container, "Screened out"), "step 9: `]` did not reach the screened-out section");
   await key("]");
-  await waitFor(() => segOn("Spam"), "step 9: `]` `]` did not reach the spam section");
+  await waitFor(() => segOn(container, "Spam"), "step 9: `]` `]` did not reach the spam section");
   await waitFor(() => listRows(container).length > 0, "step 9: the demo spam section is empty");
   const spamBefore = listRows(container).length;
   await key("j");
+  const spamId = selRow(container)?.dataset.id;
+  expect(spamId, "step 9: j did not select a spam sender").toBeTruthy();
 
-  // 10 · Not spam… → Ohbox (Tab/↵ in a real browser; see the header)
-  await activate(byText(container, ".d-btns button", "Not spam"), "step 10: the Not-spam ceremony");
-  await activate(byText(container, ".d-btns button", "Ohbox"), "step 10: the → Ohbox rescue");
+  // 10 · The Spam panel's Ohbox answer (Tab/Enter lands on the named control).
+  const spamPanel = () => parts(container).queryByRole("toolbar", { name: "Actions" });
+  if (narrow) {
+    const selected = selRow(container);
+    expect(selected?.tabIndex, "step 10: the selected spam row must be a tab stop").toBe(0);
+    // Supply Tab's landing. The focused row handles the real Enter event.
+    await act(async () => selected!.focus());
+    await key("Enter");
+  }
+  await waitFor(() => spamPanel() !== null, "step 10: the Spam action panel did not open");
+  expect(spamPanel()!.textContent).toContain("Not spam");
+  await activate(within(spamPanel()!).queryByRole("button", { name: "Ohbox" }), "step 10: the Ohbox rescue");
+  if (narrow && spamPanel() !== null) await key("Escape");
   await waitFor(
-    () => listRows(container).length < spamBefore,
+    () => segOn(container, "Spam") && listRows(container).length < spamBefore &&
+      !listRows(container).some((row) => row.dataset.id === spamId),
     "step 10: the rescue did not move the sender out of spam",
   );
 
@@ -289,34 +259,36 @@ async function walkthrough(container: HTMLElement, narrow: boolean): Promise<voi
   await key("g");
   await key("o");
   await waitFor(
-    () => container.querySelector(".view-ohbox") != null,
+    () => placeShown("Ohbox"),
     "step 11: `g o` did not return to the Ohbox",
   );
   await waitFor(() => listRows(container).length > 0, "step 11: the Ohbox shows no rows");
   await key("j");
   if (narrow) {
     await key("Enter");
-    await waitFor(() => document.querySelector(".reader") != null, "step 11: ↵ did not raise the reader sheet at 390px");
+    await waitFor(() => openMessage(container) !== null, "step 11: ↵ did not raise the reader sheet at 390px");
   }
   await key("r");
   await waitFor(
-    () => document.querySelector(".reply-editor .rte-surface") != null,
+    () => replyEditor(container) !== null,
     "step 11: `r` did not open the inline reply editor",
   );
 
   // 12 · type · ⌘↵ — the reply goes out through the one send machine
-  const surface = document.querySelector<HTMLElement>(".reply-editor .rte-surface")!;
+  const surface = replyEditor(container)!;
   await act(async () => {
+    surface.focus();
     typeInto(surface, "Answered from the keyboard walkthrough.");
   });
-  await key("Enter", { metaKey: true });
+  const metaKey = modGlyph() === "⌘";
+  await key("Enter", { metaKey, ctrlKey: !metaKey });
   await waitFor(
-    () => document.querySelector(".reply-editor .rte-surface") == null,
-    "step 12: ⌘↵ did not send the reply (the editor is still open)",
+    () => replyEditor(container) === null,
+    "step 12: Mod+Enter did not send the reply (the editor is still open)",
   );
   if (narrow) {
     await key("Escape"); // close the reader sheet the reply rode on
-    await waitFor(() => document.querySelector(".reader") == null, "step 12: Escape did not close the sheet");
+    await waitFor(() => openMessage(container) === null, "step 12: Escape did not close the sheet");
   }
 
   /* ── FILE 2 — the Move strip: m, focus on the first destination, ↵ ────────────────── */
@@ -325,17 +297,11 @@ async function walkthrough(container: HTMLElement, narrow: boolean): Promise<voi
     const id = selRow(container)?.dataset.id;
     expect(id, `step ${step}: no cursor to file`).toBeTruthy();
     await key("m");
-    await waitFor(
-      () => document.querySelector(".abar-panel") != null,
-      `step ${step}: \`m\` did not open the Move strip`,
-    );
-    // `m` lands focus on the first destination; ↵ there is the browser's activation.
-    const first = document.activeElement as HTMLElement | null;
-    expect(
-      first?.classList.contains("abar-solo"),
-      `step ${step}: \`m\` did not land focus on the first destination`,
-    ).toBe(true);
-    await activate(first, `step ${step}: the Move strip's first destination`);
+    const picker = () => within(document.body).queryByRole(narrow ? "dialog" : "menu", { name: /^move(?: to)?$/i });
+    await waitFor(() => picker() !== null, `step ${step}: m did not open the Move picker`);
+    const news = within(picker()!).getByRole("menuitem", { name: messages.place.reads });
+    expect(document.activeElement, `step ${step}: m did not focus News`).toBe(news);
+    await activate(news, `step ${step}: file to News`);
     await waitFor(
       () => !listRows(container).some((r) => r.dataset.id === id),
       `step ${step}: the move did not take the message out of the list`,
@@ -350,26 +316,18 @@ async function walkthrough(container: HTMLElement, narrow: boolean): Promise<voi
   // the one toggle every surface offers, demo included; Tab/↵'s landing in a real browser).
   await key("g");
   await key(",");
-  /* On a phone (below 700, the width ladder's one-column band) the bare Settings route is the
-     SECTION LIST (DESIGN-FOLD-WIDTHS §5) — General is one row of it, a real button, so
-     the keyboard dives in by activating that row; at width the General pane stands directly. */
-  await waitFor(
-    () => container.querySelector(".theme-seg button") != null
-      || container.querySelector('.set-list button[data-pane="general"]') != null,
-    "step 15: `g ,` opened neither Settings' General pane nor the phone's section list",
-  );
-  const generalRow = container.querySelector<HTMLElement>('.set-list button[data-pane="general"]');
-  if (generalRow) await activate(generalRow, "step 15: the General row of the phone's section list");
-  await waitFor(
-    () => container.querySelector(".theme-seg button") != null,
-    "step 15: `g ,` did not open Settings with the scheme control on it",
-  );
-  const segButtons = () => [...container.querySelectorAll<HTMLElement>(".theme-seg button")];
-  const activeSeg = () =>
-    segButtons().find(
-      (b) =>
-        b.getAttribute("aria-pressed") === "true" || b.getAttribute("aria-selected") === "true",
-    ) ?? null;
+  // The setting line and the choice track both say Theme. Auto belongs to the track.
+  const theme = () => parts(container).queryAllByRole("group", { name: "Theme" })
+    .find((group) => within(group).queryByRole("button", { name: "Auto" })?.parentElement === group) ?? null;
+  const general = () => {
+    const nav = parts(container).queryByRole("navigation", { name: "Settings sections" });
+    return nav ? within(nav).queryByRole("button", { name: "General" }) : null;
+  };
+  await waitFor(() => theme() !== null || general() !== null, "step 15: Settings did not open");
+  if (theme() === null) await activate(general(), "step 15: open General from the section list");
+  await waitFor(() => theme() !== null, "step 15: General did not open with the Theme control");
+  const segButtons = () => within(theme()!).getAllByRole("button");
+  const activeSeg = () => within(theme()!).getByRole("button", { pressed: true });
   const wasActive = activeSeg()?.textContent ?? "";
   const other = segButtons().find((b) => (b.textContent ?? "") !== wasActive);
   await activate(other ?? null, "step 15: a scheme other than the current one");
@@ -394,31 +352,37 @@ describe("the §4 keyboard-only walkthrough, against the real shell", () => {
 
 /**
  * THE SAME FIFTEEN STEPS UNDER THE ZERO LAYOUT (3b), at a representative width of every
- * rung of the §12 ladder. The `narrow` flag is the JS half of the ladder itself: under
- * zero the split SURVIVES at 800px (classic's sheet width — the run that proves the
- * ribbon tier's split is real), and the sheet takes over only under 722.
+ * rung of the §12 ladder. The `narrow` flag is the JS half of the ladder itself: the split
+ * SURVIVES at 800px (classic's sheet width — the run that proves the ribbon tier's split is
+ * real), and one column takes over only under 700.
+ *
+ * The frame has one layout, the Zero's successor: the layout axis (`ohmail.layout`,
+ * `data-layout="zero"`) was today's shell's and nothing of the frame reads it. The rungs are
+ * the frame's own layout plan (`packages/app/src/frame/layout-plan.ts`): 1280 the desktop, 800
+ * two columns beside the rail of icons, 600 and 390 one column. The provider is mounted with
+ * the face axis active, as the product door mounts it.
  */
 describe("the §4 walkthrough under the Zero layout, per §12 ladder rung", () => {
   it("passes at the full-rail tier (1280px, split)", { timeout: 120_000 }, async () => {
-    zeroSetup(1280);
+    setup(1280);
     const container = await shell({ faces: true });
     await walkthrough(container, false);
   });
 
   it("passes at the ribbon tier (800px — the split classic never had here)", { timeout: 120_000 }, async () => {
-    zeroSetup(800);
+    setup(800);
     const container = await shell({ faces: true });
     await walkthrough(container, false);
   });
 
   it("passes at the push-nav tier (600px, one tile)", { timeout: 120_000 }, async () => {
-    zeroSetup(600);
+    setup(600);
     const container = await shell({ faces: true });
     await walkthrough(container, true);
   });
 
   it("passes at the floating tier (390px)", { timeout: 120_000 }, async () => {
-    zeroSetup(390);
+    setup(390);
     const container = await shell({ faces: true });
     await walkthrough(container, true);
   });
@@ -469,7 +433,7 @@ describe("the separators are part of the keyboard walk", () => {
     await key("g");
     await key("o");
     await waitFor(
-      () => container.querySelector(".view-ohbox") != null,
+      () => placeShown("Ohbox"),
       "step 16: `g o` stopped working after the separator held focus",
     );
   };
@@ -480,7 +444,7 @@ describe("the separators are part of the keyboard walk", () => {
   });
 
   it("under the Zero layout, at the full-rail tier (1280px)", { timeout: 120_000 }, async () => {
-    zeroSetup(1280);
+    setup(1280);
     const container = await shell({ faces: true });
     await drive(container);
   });

@@ -7,7 +7,11 @@ import type { AccountLifecycle } from "../../app/api-client";
 import { NONE } from "@ohmail/app/host";
 import type { SubscriptionModel } from "@ohmail/app/account";
 import { fillOver, TextProvider, type Messages } from "@ohmail/app/text";
-import { SubscriptionPane, useSubscription } from "../../../../packages/app/src/account/subscription/index.js";
+import { useSubscription } from "../../../../packages/app/src/account/subscription/index.js";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { fakeHost, NO_ENGINE } from "../../../../packages/app/test/support/fake-host.js";
+import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
 import ownDe from "../../../../packages/app/messages/account-subscription.de.json";
 import ownEn from "../../../../packages/app/messages/account-subscription.en.json";
 import { de, en, json, OFFLINE, published, refusal, serve, settle, type Server } from "./storage-harness";
@@ -54,19 +58,38 @@ async function filled(withdraw: () => void = () => {}, scope: string | null = nu
   const { useSubscriptionDoor } = await import("../../app/(product)/mailbox/subscription-door");
   return renderHook(() => useSubscriptionDoor(scope, withdraw), { wrapper: Words });
 }
-/** Settings › Subscription as the web will mount it: the real filling, the hook, the pane. */
+/** The mounted Settings place and the web section the host offers with its access answer. */
 async function mounted(withdraw: () => void = () => {}) {
-  const { useSubscriptionDoor } = await import("../../app/(product)/mailbox/subscription-door");
-  function Body() {
-    const model = useSubscription(useSubscriptionDoor(null, withdraw));
-    drawnModel = model;
-    return <SubscriptionPane model={model} toStorage={null} />;
+  const [{ useSubscriptionDoor }, { MailFrame }, { WEB_PANE_PARTS }, { SubscriptionSection }] = await Promise.all([
+    import("../../app/(product)/mailbox/subscription-door"),
+    import("../../app/shell/browser-mail"),
+    import("../../app/(product)/mailbox/pane-parts"),
+    import("../../app/(product)/mailbox/SubscriptionSection"),
+  ]);
+  function ModelProbe() {
+    drawnModel = useSubscription(useSubscriptionDoor(null, withdraw));
+    return null;
   }
   await published();
   server.forget();
+  const { host } = fakeHost({
+    scope: "subscription-test",
+    engine: NO_ENGINE,
+    service: "managed",
+    address: fakeAddress("#/settings/billing"),
+    places: { settings: mailSettings({ ...NO_PANE_PARTS, billing: WEB_PANE_PARTS.billing }) },
+    features: {
+      subscription: { name: "subscription", render: () => <SubscriptionSection onNowhere={withdraw} /> },
+    },
+  });
   return render(
     <Words>
-      <Body />
+      <ThemeProvider>
+        <ToastHost>
+          <ModelProbe />
+          <MailFrame host={host} />
+        </ToastHost>
+      </ThemeProvider>
     </Words>,
   );
 }

@@ -143,7 +143,7 @@ interface CalendarMenuProps {
   readonly calendar: CalendarRecord;
   readonly anchor: RefObject<HTMLButtonElement | null>;
   readonly renaming: boolean;
-  readonly rename: () => void;
+  readonly rename?: () => void;
   readonly close: () => void;
   readonly setName: (name: string) => void;
   /** Where new events go; null where it cannot be set here. */
@@ -151,7 +151,7 @@ interface CalendarMenuProps {
 }
 
 /** A calendar's menu: its name here, where new events go; and its rename as a card in the same place. */
-function CalendarMenu({
+export function CalendarMenu({
   calendar,
   anchor,
   renaming,
@@ -188,7 +188,7 @@ function CalendarMenu({
         </>
       ) : (
         <>
-          <MenuItem onPress={rename}>{t("accounts.rename")}</MenuItem>
+          {rename ? <MenuItem onPress={rename}>{t("accounts.rename")}</MenuItem> : null}
           {newEventsHere === null ? null : (
             <MenuItem
               checked={newEventsHere.on}

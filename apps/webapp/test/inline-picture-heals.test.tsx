@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
 import {
   ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
@@ -105,9 +106,8 @@ async function openTheLetter(by: "row" | "url" | "news" = "row"): Promise<void> 
   await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })]);
   await tick(30_000);
   if (by === "row") {
-    const row = document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${LETTER}"]`);
-    expect(row, "History does not list the letter").not.toBeNull();
-    await act(async () => { row!.click(); });
+    const row = screen.getByRole("option", { name: /A picture/ });
+    await act(async () => { row.click(); });
   } else if (by === "news") {
     await act(async () => {
       window.location.hash = "#/reads";
@@ -115,12 +115,11 @@ async function openTheLetter(by: "row" | "url" | "news" = "row"): Promise<void> 
       await Promise.resolve();
     });
     await tick(1_000);
-    const card = document.querySelector<HTMLElement>(`.view-reads .scast[data-sid="${LETTER}"]`);
-    expect(card, "News does not show the letter").not.toBeNull();
-    await act(async () => { card!.querySelector<HTMLButtonElement>(".sc-x")!.click(); });
+    const news = screen.getByRole("region", { name: "News stream" });
+    await act(async () => { within(news).getByRole("button", { name: /^Expand/ }).click(); });
   } else {
     await act(async () => {
-      window.location.hash = `#/history/m/${LETTER}`;
+      window.location.hash = `#/ohbox/m/${LETTER}`;
       window.dispatchEvent(new Event("hashchange"));
       await Promise.resolve();
     });
@@ -173,8 +172,10 @@ describe("an embedded picture heals after a short drop, with the letter open", (
     expect(drop.list, "the drop never happened").toBe(0);
     const cards = document.querySelectorAll(".ics-card");
     expect(cards, "the invitation drew no card, or two").toHaveLength(1);
-    const body = document.querySelector(".msg-body");
-    expect(body?.contains(cards[0]!), "the card is inside the mail").toBe(false);
+    const body = screen.getByRole("region", { name: "Open message" }).querySelector("[data-read-body]");
+    expect(body, "the reader shows no body").not.toBeNull();
+    expect(body!.contains(cards[0]!), "the card is inside the mail").toBe(false);
+    expect(cards[0]!.compareDocumentPosition(body!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   }, 60_000);
 
   it("control: the picture with no drop is drawn on open, with one byte fetch", async () => {

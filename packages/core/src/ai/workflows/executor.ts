@@ -9,8 +9,8 @@ import {
   workflows as workflowsTbl,
   workflowRuns,
   fenceErased,
-  fencedAccountWrite,
-  type Tx,
+  fencedAccountWrite, modelConsentGate, ModelConsentWithdrawn, readManagedModelConsent, reverseCharge,
+  type AccessPort, type RefundObligationPort, type Tx,
 } from "@trafficflow/db";
 /**
  * The LEAF, not `/cloud` — and the split is load-bearing. This module is compiled into the
@@ -90,11 +90,14 @@ export interface ToolApplyContext {
 export interface ToolPrepareContext {
   db: Tx;              // TOP-LEVEL handle — never a transaction. See `runOne`.
   accountId: string;
+  workflowId: string;
   runId: string;
   stepIndex: number;
   drafter: DraftPort;  // INJECTED (mocked in tests) — no live model client in core
   /** The AI spend gate. Absent ⇒ unmetered. Charged and released HERE, never in `apply`. */
   credits?: SpendPort;
+  access?: AccessPort;
+  consentRefunds?: RefundObligationPort;
 }
 
 /**
@@ -280,6 +283,14 @@ const draftReplyTool: Tool = {
     // ledger source is composed by whoever answers, through the one composer.
     const attemptKey = workflowAttemptKey(ctx.runId, ctx.stepIndex);
     const meta = { runId: ctx.runId, stepIndex: ctx.stepIndex, messageId };
+    const consent = modelConsentGate(async () => {
+      if (ctx.access && !(await readManagedModelConsent(ctx.db, ctx.accountId, ctx.access))) return false;
+      const [row] = await ctx.db.select({ enabled: workflowsTbl.enabled }).from(workflowsTbl).where(and(
+        eq(workflowsTbl.id, ctx.workflowId), eq(workflowsTbl.accountId, ctx.accountId), isNull(workflowsTbl.deletedAt),
+      )).limit(1);
+      return row?.enabled === true;
+    });
+    if (!(await consent.allowed())) throw new WorkflowStepError("ai_unavailable");
     let chargedAttempt: string | null = null;
     if (ctx.credits) {
       const outcome = await ctx.credits.spend(ctx.accountId, "workflow", attemptKey, meta);
@@ -318,16 +329,22 @@ const draftReplyTool: Tool = {
     // composing into an unlimited free draft.
     let result: DraftResult;
     try {
-      result = await ctx.drafter.draft(input);
+      await consent.beforeDispatch();
+      result = await ctx.drafter.draft(input, { beforeDispatch: consent.beforeDispatch });
     } catch (err) {
       // `refund: true` only for an attempt THIS call charged; otherwise the claim goes back and
       // the charge stands, which is what keeps a free retry free.
-      if (ctx.credits) {
+      if (ctx.credits && chargedAttempt !== null && err instanceof ModelConsentWithdrawn) {
+        await reverseCharge(ctx.credits, ctx.consentRefunds, {
+          accountId: ctx.accountId, action: "workflow", attemptKey, attempt: chargedAttempt, reason: "drafter_failed", meta,
+        }, () => undefined);
+      } else if (ctx.credits) {
         await ctx.credits.release(ctx.accountId, chargedAttempt === null
           ? { action: "workflow", attemptKey, refund: false, meta }
           : { action: "workflow", attemptKey, refund: true, attempt: chargedAttempt, meta });
       }
       // A decline is the run's own reason, said by name rather than as an unexplained `error`.
+      if (err instanceof ModelConsentWithdrawn) throw new WorkflowStepError("ai_unavailable");
       if (err instanceof ModelDeclinedError) throw new WorkflowStepError("model_declined");
       throw err;
     }
@@ -519,6 +536,8 @@ export interface WorkflowExecutorDeps {
   drafter: DraftPort;  // INJECTED (mocked in tests)
   /** The AI spend gate, consulted by `draft_reply` only. Absent ⇒ unmetered. */
   credits?: SpendPort;
+  access?: AccessPort;
+  consentRefunds?: RefundObligationPort;
   now?: () => Date;
 }
 
@@ -538,15 +557,16 @@ export class WorkflowExecutor {
     const now = deps.now?.() ?? new Date();
 
     // Load the (live, non-soft-deleted) workflow's steps. A gone/deleted workflow → fail.
-    const wf = run.workflowId
+    const workflowId = run.workflowId;
+    const wf = workflowId
       ? (await deps.db.select({ steps: workflowsTbl.steps }).from(workflowsTbl)
           .where(and(
-            eq(workflowsTbl.id, run.workflowId),
+            eq(workflowsTbl.id, workflowId),
             eq(workflowsTbl.accountId, run.accountId),
             isNull(workflowsTbl.deletedAt),
           )).limit(1))[0]
       : undefined;
-    if (!wf) return this.fail(deps.db, run, now, "workflow_gone", -1);
+    if (!wf || !workflowId) return this.fail(deps.db, run, now, "workflow_gone", -1);
     const steps = (wf.steps as WorkflowStep[]) ?? [];
 
     // WHOLE-RUN SENSITIVITY PRE-FLIGHT. Resolve EVERY step's targets and refuse the
@@ -612,8 +632,8 @@ export class WorkflowExecutor {
         //       gate's own transaction safe on PGlite's single connection.
         prepared = (await tool.prepare?.(
           {
-            db: deps.db, accountId: run.accountId, runId: run.id, stepIndex: i,
-            drafter: deps.drafter, credits: deps.credits,
+            db: deps.db, accountId: run.accountId, workflowId, runId: run.id, stepIndex: i,
+            drafter: deps.drafter, credits: deps.credits, access: deps.access, consentRefunds: deps.consentRefunds,
           },
           step.args ?? {},
         )) ?? null;

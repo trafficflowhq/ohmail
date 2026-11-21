@@ -65,6 +65,14 @@
       ]
     },
     {
+      "id": "web-device-owners",
+      "reason": "The web host's Outlook device ceremony binds stored and in-flight device sign-in to the API session. The browser wake coordinator binds each subscription to its account and rechecks the live marker before and after publishing worker state.",
+      "files": [
+        "apps/webapp/app/(product)/mailbox/device-sign-in.ts",
+        "apps/webapp/app/shell/notification-settings.ts"
+      ]
+    },
+    {
       "id": "web-edge",
       "reason": "The web's edge file reads the marker's cookie only to answer one question, whether a sign-out is pending, and reads no account's key: it imports the marker's cookie name (OWNER_COOKIE), the marker's word for a sign-out the server never confirmed (OWNER_SIGNED_OUT) and the server cookie that holds that word on the answers that finish a sign-out (pendingSignOutCookie).",
       "files": ["apps/webapp/middleware.ts"]
@@ -88,17 +96,5 @@
   "markerNameSpellers": {
     "reason": "Where the session marker's cookie name is spelled as its source and as its record, and nothing more: the server's cookie module writes and clears the marker, and the registry of stored keys names every key a device holds. Neither reads whose storage a browser keeps, and neither may import a lookup.",
     "files": ["packages/api/src/cookies.ts", "packages/client-engine/src/stored-keys.ts"]
-  },
-  "todaysScopeReaders": {
-    "reason": "The parts drawn deep inside today's views that keep a look per account read the scope of the shell they are drawn in; they leave with today's views. A place in packages/app reads useFrame().host.session.scope instead.",
-    "files": [
-      "apps/webapp/app/components/ComposeAttach.tsx",
-      "apps/webapp/app/letter-body/MessageBody.tsx",
-      "apps/webapp/app/shell/AfterVerbRow.tsx",
-      "apps/webapp/app/shell/ImageQualityRow.tsx",
-      "apps/webapp/app/shell/TodaysOhboxAbove.tsx",
-      "apps/webapp/app/views/SearchView.tsx",
-      "apps/webapp/app/views/SettingsView.tsx"
-    ]
   }
 }

@@ -59,14 +59,26 @@ export function journeysOf(place: PlaceId, body: () => void): void {
  * need this bench does not have, and is expected to fail while its row is open.
  */
 export function journey(guard: Guard, walk: (b: Bench) => Promise<void>): void {
+  const test = prepareJourney(guard, walk);
+  (test.skip ? it.skip : guard.open ? it.fails : it)(test.title, test.options, test.run);
+}
+
+/** An active guard a test file can register directly under its own named Vitest case. */
+export function namedJourney(guard: Guard, walk: (b: Bench) => Promise<void>) {
+  if (guard.open) throw new Error("An open journey must be registered as an expected failure");
+  return prepareJourney(guard, walk);
+}
+
+function prepareJourney(guard: Guard, walk: (b: Bench) => Promise<void>) {
   const named = benchOf();
   const size = sizeOf();
+  const options = { timeout: 180_000, retry: 0 };
   if (named !== null && !runsOn(guard, { id: named.id, setting: named.setting, size })) {
-    it.skip(`${guard.title} (not in ${named.setting}${size === "expanded" ? "" : ` at ${size}`})`, () => {});
-    return;
+    const title = `${guard.title} (not in ${named.setting}${size === "expanded" ? "" : ` at ${size}`})`;
+    return { skip: true, title, options, run: async () => {} };
   }
   runnable += 1;
-  (guard.open ? it.fails : it)(guard.title, { timeout: 180_000, retry: 0 }, async () => {
+  const run = async () => {
     const b = bench;
     if (!b) throw new Error("the bench did not start");
     try {
@@ -81,7 +93,8 @@ export function journey(guard: Guard, walk: (b: Bench) => Promise<void>): void {
     } finally {
       await b.closePeople();
     }
-  });
+  };
+  return { skip: false, title: guard.title, options, run };
 }
 
 const NEEDS = { pg: "a real Postgres", mail: "a mail server", stack: "the self-hosted stack's containers", native: "native doors" } as const;

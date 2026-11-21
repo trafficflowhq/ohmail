@@ -30,6 +30,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "DELETE /calendar/writes/:id": direct,
   "DELETE /devices/:id": none,
   "DELETE /drafts/:id": verbs("draft_discard"),
+  "DELETE /drafts/:id/conditional": verbs("draft_discard"),
   "DELETE /drafts/:id/schedule": verbs("draft_schedule_cancel"),
   "DELETE /folders/:id": verbs("folder_delete"),
   "DELETE /folders/:id/op": verbs("folder_op_dismiss"),

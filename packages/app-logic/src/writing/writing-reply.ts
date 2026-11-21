@@ -6,7 +6,7 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { forwardSubject, replySubject, type FromOption, type OhmailEngine } from "@ohmail/client-engine";
 import type { MailSend } from "./compose.js";
-import { inlineForwardKey, sendRefusal } from "./mail-send.js";
+import { inlineForwardKey, sendRefusal, sendStateFor } from "./mail-send.js";
 import {
   formatRecipientChips,
   replyAllRecipients,
@@ -39,7 +39,9 @@ export function replyOf(compose: ShellCompose, ctx: ReplyContext) {
   const withFiles = files.length > 0 ? { attachments: [...files] } : {};
   const body = compose.replyBody.text;
   const send = compose.replySendState(mode === "forward" ? inlineForwardKey(message.id) : message.id);
-  const base = { messageId: message.id, from: { ...from, domainMatched: false }, send };
+  /* What the reply draws is the lane's state as it applies to THIS reply (`sendStateFor`): a send nobody could confirm
+     warns over the reply it belongs to alone. Its refusal reads the lane's state as it stands, the send's own rule. */
+  const base = { messageId: message.id, from: { ...from, domainMatched: false } };
   if (mode === "forward") {
     const plan = forwardEnvelopePlan(compose.replyEnvelope, own);
     const wire = compose.replyForwardFiles?.plan.wire;
@@ -57,6 +59,7 @@ export function replyOf(compose: ShellCompose, ctx: ReplyContext) {
       seed: { to: "", cc: "", bcc: "" },
       invalid: plan.invalid,
       subject: { value: forwardSubject(message.subject), editable: false },
+      send: sendStateFor(send, would),
       refusal: sendRefusal(send, would),
       held: null,
     };
@@ -79,6 +82,7 @@ export function replyOf(compose: ShellCompose, ctx: ReplyContext) {
     seed: { to: formatRecipientChips(to), cc: formatRecipientChips(cc), bcc: "" },
     invalid: plan.invalid,
     subject: { value: compose.replySubjectEdit ?? replySubject(message.subject), editable: true },
+    send: sendStateFor(send, would),
     refusal: sendRefusal(send, would),
     held: compose.heldReplyRow(message.id),
   };

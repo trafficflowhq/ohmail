@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * "ONE COULD EVEN DIVE INTO THE SETTINGS LIKE THIS" — the zone model inside Settings.

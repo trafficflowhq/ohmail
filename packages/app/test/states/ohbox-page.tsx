@@ -381,7 +381,9 @@ function List(props: PaneProps) {
   useRailModel(RAIL);
   return <OhboxList {...props} />;
 }
-const ohbox: PlaceEntry = { ...ohboxPlace, panes: { ...ohboxPlace.panes, List } as PlaceEntry["panes"] };
+/* The Ohbox's registration without its seat and its rail count, which read the mail ground: this page stands the
+   list's model above the frame itself and feeds the rail it draws. */
+const ohbox: PlaceEntry = { ...ohboxPlace, rail: null, panes: { kind: "columns", List, Reading: "reader" } };
 
 const beside: OhboxBeside = {
   words: {

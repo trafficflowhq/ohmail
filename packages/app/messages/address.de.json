@@ -29,6 +29,33 @@
       "up": "Neuer",
       "down": "Älter"
     },
+    "archive": {
+      "indexing": "Deine neueren Mails werden noch gelesen. Es kommen noch Treffer dazu.",
+      "device": "{count, plural, one {1 neuere} other {# neuere}}",
+      "retry": "Erneut versuchen",
+      "offline": "ohmail Cloud ist nicht erreichbar. Angezeigt werden die Mails auf diesem Computer.",
+      "unanswered": "Dein Server hat nicht geantwortet. Angezeigt werden die neueren Mails, die dieses Gerät hat.",
+      "searching": "Dein ganzes Postfach wird durchsucht …",
+      "unavailable": "Die Suche umfasst das Beispielpostfach.",
+      "noRecipients": "dein ganzes Postfach lässt sich noch nicht nach Empfänger durchsuchen",
+      "noRecipientsWhy": "Diese Liste zeigt die neueren Mails an diese Adresse. Ältere Mails an sie lassen sich noch nicht auflisten.",
+      "bySenderWhy": "Dein ganzes Postfach wird nur nach Absender durchsucht, diese Zahl zählt also die Mails, die diese Adresse geschickt hat. Ältere Mails an diese Adresse sind noch nicht mitgezählt.",
+      "shown": "die ersten {shown} werden gezeigt",
+      "importing": "Der Rest deiner Mails ist noch nicht synchronisiert.",
+      "whole": "{count, plural, one {1 in deinem ganzen Postfach} other {# in deinem ganzen Postfach}}",
+      "wholeAtLeast": "{count, plural, other {mindestens # in deinem ganzen Postfach}}",
+      "wholeBySender": "{count, plural, one {1 in deinem ganzen Postfach (nach Absender)} other {# in deinem ganzen Postfach (nach Absender)}}",
+      "wholeBySenderAtLeast": "{count, plural, other {mindestens # in deinem ganzen Postfach (nach Absender)}}",
+      "synced": "{count, plural, one {1 in den bisher synchronisierten Mails} other {# in den bisher synchronisierten Mails}}",
+      "syncedAtLeast": "{count, plural, other {mindestens # in den bisher synchronisierten Mails}}",
+      "syncedBySender": "{count, plural, one {1 in den bisher synchronisierten Mails (nach Absender)} other {# in den bisher synchronisierten Mails (nach Absender)}}",
+      "syncedBySenderAtLeast": "{count, plural, other {mindestens # in den bisher synchronisierten Mails (nach Absender)}}",
+      "empty": {
+        "all": "Nichts von oder an {address}.",
+        "from": "Nichts von {address}.",
+        "to": "Nichts an {address} geschickt."
+      }
+    },
     "close": "Schliessen"
   }
 }

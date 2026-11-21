@@ -367,6 +367,32 @@ describe("the bridge", () => {
     expect(String(request.payload!.url).startsWith("/")).toBe(true);
   });
 
+  it("keeps newer draft text when a self-hosted server has only the original Discard route", async () => {
+    let body: string | null = "Newer words";
+    const asked = shellAnswering(({ payload }) => {
+      const path = String(payload?.url).split("?")[0];
+      if (payload?.method === "DELETE" && path === "/drafts/letter") {
+        body = null;
+        return encode(204);
+      }
+      return encode(404, JSON.stringify({ error: { code: "not_found", message: "not found" } }));
+    });
+    const adapter = createEngineAdapter();
+    const revision = "a".repeat(64);
+    const result = await adapter.mutate(
+      { kind: "draft_discard", draftId: "letter", ifContentRevision: revision },
+      { idempotencyKey: "discard" },
+    ).catch((error: unknown) => error);
+
+    expect(body).toBe("Newer words");
+    expect(result).toMatchObject({ code: "discard_unsupported", retryable: false });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.payload).toMatchObject({
+      method: "DELETE",
+      url: `/drafts/letter/conditional?ifContentRevision=${revision}`,
+    });
+  });
+
   it("marks a send's own writes, and only those, for an answer before the copy's echo", async () => {
     const draft = JSON.stringify({ id: "d-1", mailboxId: "mbx-1", bcc: [], contentRevision: "r1", updatedAt: new Date().toISOString() });
     const asked = shellAnswering(({ payload }) => {

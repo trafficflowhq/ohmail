@@ -3,15 +3,8 @@
  * into; and Add itself, one press each, said once our server has answered. Nothing is kept: an event added shows as
  * on the calendar as soon as the mirror holds it.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  hueOf,
-  isoOfDay,
-  nowIn,
-  readerZones,
-  type CalendarPort,
-  type CalendarSettingsWire,
-} from "@ohmail/app-logic/calendar";
+import { useMemo, useRef, useState } from "react";
+import { hueOf, isoOfDay, nowIn, readerZones, type CalendarPort } from "@ohmail/app-logic/calendar";
 import {
   addFound,
   foundOf,
@@ -20,35 +13,22 @@ import {
   type FoundRow,
 } from "@ohmail/app-logic/calendar/found";
 import { useFrame, useReport } from "../frame/commands.js";
+import { NONE } from "../host/index.js";
 import { useText, useTimeZone } from "../text/index.js";
+import { useCalendarSettings } from "../calsettings/settings-read.js";
 import { useSources } from "../calendar/where.js";
 
-/** The settings' calendar for new events, asked once per port; null until it answers. */
-function useNewEventsCalendar(port: CalendarPort): string | null {
-  const [said, setSaid] = useState<CalendarSettingsWire | null>(null);
-  useEffect(() => {
-    let live = true;
-    port.settings().then(
-      (s) => live && setSaid(s),
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, [port]);
-  return said?.newEventsCalendarId ?? null;
-}
-
-export function useFound(port: CalendarPort) {
+export function useFound(port: CalendarPort | typeof NONE) {
   const { host } = useFrame();
   const sources = useSources(port);
-  const preferred = useNewEventsCalendar(port);
+  const { said } = useCalendarSettings(port === NONE ? null : port, "none");
+  const preferred = said?.newEventsCalendarId ?? null;
   const zone = useTimeZone();
   const zones = readerZones();
   const now = nowIn(Date.now(), zone, zones);
   const today = now === null ? null : isoOfDay(now.day);
   return useMemo(() => {
-    if (today === null) return null;
+    if (port === NONE || today === null) return null;
     const suggestions = host.engine.store
       .entries<CalendarSuggestionRecord | null>("calendar_suggestion")
       .map((e) => e.entity)
@@ -70,8 +50,15 @@ export function useFound(port: CalendarPort) {
       row.alreadyOn === null
         ? null
         : (sources.events.find((e) => e.record.id === row.alreadyOn?.event)?.record.calendarId ?? null);
-    return { rows, today, target, toneOf, onCalendar };
-  }, [host.engine, sources, preferred, today, zone, zones]);
+    return {
+      rows,
+      pending: rows.filter((row) => row.alreadyOn === null).length,
+      today,
+      target,
+      toneOf,
+      onCalendar,
+    };
+  }, [host.engine, port, sources, preferred, today, zone, zones]);
 }
 
 /** The found events whose Add is out, one set a port, shared by the list and the open card. */

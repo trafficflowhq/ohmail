@@ -753,7 +753,7 @@ export interface ExternalOverrideOutcome {
  * over for nothing. `SpendPort` and not a boolean: six verdicts, read once and exhaustively in
  * {@link aiSpendPermitted}, so a new verdict is a compile error rather than a silent `false`.
  */
-export type CreditGate = Pick<SpendPort, "spend">;
+export type CreditGate = Pick<SpendPort, "spend"> & Partial<Pick<SpendPort, "release">>;
 
 /**
  * May the AI branch run — the INGEST path's reading of a spend verdict, and only its. The other

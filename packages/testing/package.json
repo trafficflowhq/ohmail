@@ -26,5 +26,8 @@
   "dependencies": {
     "@ohmail/client-engine": "*",
     "@ohmail/wire": "*"
+  },
+  "devDependencies": {
+    "@ohmail/app-logic": "*"
   }
 }

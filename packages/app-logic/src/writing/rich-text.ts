@@ -11,6 +11,8 @@
  * legacy read, so it would be a second thing to keep true in exchange for nothing.
  */
 
+import { withSupportBlock, withoutSupportBlock } from "@trafficflow/core/diagnostics";
+
 /** What the editor holds: the markup, and the plain text it renders as. */
 export interface RichValue {
   /** The plain-text rendering, kept for the send path's local checks and the optimistic row. */
@@ -125,4 +127,22 @@ export function appendRich(a: RichValue, b: RichValue): RichValue {
     text: `${a.text}\n\n${b.text}`,
     html: a.html || b.html ? richToHtml(a) + richToHtml(b) : "",
   };
+}
+
+/** The body without the block, or `null` when either half no longer holds it whole. */
+export function richWithoutBlock(value: RichValue, block: string): RichValue | null {
+  const text = withoutSupportBlock(value.text, block);
+  if (text === null) return null;
+  if (value.html === "") return { text, html: "" };
+  const blockHtml = escapeAsParagraphs(block);
+  if (!value.html.includes(blockHtml)) return null;
+  const html = value.html.replace(blockHtml, "").replace(/(?:<p>(?:<br>)?<\/p>)+$/, "");
+  return { text, html: text === "" ? "" : html };
+}
+
+/** The body with the block put back at its end. */
+export function richWithBlock(value: RichValue, block: string): RichValue {
+  return value.html === ""
+    ? { text: withSupportBlock(value.text, block), html: "" }
+    : appendRich(value, { text: block, html: "" });
 }

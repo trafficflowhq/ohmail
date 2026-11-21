@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ImapAdapter, type FolderPage, type FolderSearchPage } from "@trafficflow/core/adapters/imap";
 import {
   accountSettings, changeLog, contacts, folderState, junkRescues, mailboxes,
-  mailboxCredentials, messageBodies, messages, rules as rulesTbl,
+  mailboxCredentials, messageBodies, messages, readJunkSweepCommand, retireLegacyJunkSweep, rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
 import { acquireImapSlot, releaseImapSlot } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -743,9 +743,9 @@ describe("the second verb — Not junk, always allow", () => {
 describe("the one-time sweep offer", () => {
   async function quarantined(
     db: Seeded["db"], accountId: string, mailboxId: string, n: number,
-    folder = "ohmail/Quarantine", desired = "ohmail/Quarantine",
+    folder = "ohmail/Quarantine", desired = "ohmail/Quarantine", offset = 0,
   ) {
-    for (let i = 0; i < n; i++) {
+    for (let i = offset; i < offset + n; i++) {
       const key = `${mailboxId}-${folder}-${desired}-${i}`;
       const [m] = await db.insert(messages).values({
         accountId, mailboxId, messageIdHeader: `<q-${key}@x>`, bodyHash: `q${i}`, dedupKey: `q-${key}`,
@@ -786,25 +786,85 @@ describe("the one-time sweep offer", () => {
     const b = await seed({ db: a.db, accountId: a.accountId, junkFolder: null });
     await quarantined(a.db, a.accountId, a.mailboxId, 2);
     await quarantined(a.db, a.accountId, b.mailboxId, 2);
-    const after = await requestJunkSweep(a.deps, ctxOf(a.deps, a.accountId));
+    const before = await junkSweepPreview(a.deps, a.accountId);
+    const after = await requestJunkSweep(a.deps, ctxOf(a.deps, a.accountId), before.confirmation);
     expect(after.pending).toBe(true);
     expect(after.mailboxes.find((m) => m.id === a.mailboxId)!.pending).toBe(true);
     expect(after.mailboxes.find((m) => m.id === b.mailboxId)!.pending).toBe(false);
-    const [row] = await a.db.select({ at: mailboxes.junkSweepRequestedAt, kick: mailboxes.syncRequestedAt })
+    const db = a.db as unknown as Tx;
+    expect((await readJunkSweepCommand(db, a.accountId, a.mailboxId))?.ids).toHaveLength(2);
+    expect(await readJunkSweepCommand(db, a.accountId, b.mailboxId)).toBeNull();
+    const [row] = await a.db.select({ kick: mailboxes.syncRequestedAt })
       .from(mailboxes).where(eq(mailboxes.id, a.mailboxId));
-    expect(row!.at?.toISOString()).toBe(NOW.toISOString());
     expect(row!.kick?.toISOString()).toBe(NOW.toISOString());
 
     // A swept pile has no candidates — the offer is gone and a press is refused, not repeated.
     const empty = await seed();
-    await expect(requestJunkSweep(empty.deps, ctxOf(empty.deps, empty.accountId))).rejects.toMatchObject({ code: "nothing_to_sweep", httpStatus: 409 });
+    const emptyPreview = await junkSweepPreview(empty.deps, empty.accountId);
+    await expect(requestJunkSweep(empty.deps, ctxOf(empty.deps, empty.accountId), emptyPreview.confirmation)).rejects.toMatchObject({ code: "nothing_to_sweep", httpStatus: 409 });
+  });
+
+  it("asks again for an older queued sweep when the Quarantine pile has changed", async () => {
+    const a = await seed();
+    const db = a.db as unknown as Tx;
+    const ctx = ctxOf(a.deps, a.accountId);
+    await quarantined(a.db, a.accountId, a.mailboxId, 1);
+    const before = await junkSweepPreview(a.deps, a.accountId);
+    // The older release queued a timestamp with no message IDs.
+    await a.db.update(mailboxes).set({ junkSweepRequestedAt: NOW, syncRequestedAt: NOW })
+      .where(eq(mailboxes.id, a.mailboxId));
+    const original = before.held.ids[0]!;
+    await a.db.update(folderState).set({ desiredFolder: "INBOX" }).where(eq(folderState.messageId, original));
+    await quarantined(a.db, a.accountId, a.mailboxId, 1, "ohmail/Quarantine", "ohmail/Quarantine", 1);
+    const preview = await junkSweepPreview(a.deps, a.accountId);
+    expect(preview).toMatchObject({ confirmationRequired: true, pending: false, movable: 1 });
+    expect(preview.held.ids).not.toContain(original);
+    expect(await db.transaction((tx) => retireLegacyJunkSweep(tx, a.accountId, a.mailboxId, new Date(NOW.getTime() - 1)))).toBe(false);
+    expect(await db.transaction((tx) => retireLegacyJunkSweep(tx, a.accountId, a.mailboxId, NOW))).toBe(true);
+    const [retired] = await a.db.select({ legacy: mailboxes.junkSweepRequestedAt })
+      .from(mailboxes).where(eq(mailboxes.id, a.mailboxId));
+    expect(retired?.legacy).toBeNull();
+    expect(await junkSweepPreview(a.deps, a.accountId)).toMatchObject({
+      confirmationRequired: true, pending: false, confirmation: preview.confirmation,
+    });
+    expect(await readJunkSweepCommand(db, a.accountId, a.mailboxId)).toBeNull();
+    await expect(requestJunkSweep(a.deps, ctx, before.confirmation)).rejects.toMatchObject({ code: "stale_junk_sweep" });
+    expect(await readJunkSweepCommand(db, a.accountId, a.mailboxId)).toBeNull();
+    const after = await requestJunkSweep(a.deps, ctx, preview.confirmation);
+    expect(after.pending).toBe(true);
+    expect(after.confirmationRequired).toBe(false);
+    expect((await readJunkSweepCommand(db, a.accountId, a.mailboxId))?.ids).toEqual(preview.held.ids);
+  });
+
+  it("requires a fresh confirmation of the unchanged Quarantine pile after a legacy request", async () => {
+    const a = await seed();
+    const db = a.db as unknown as Tx;
+    const ctx = ctxOf(a.deps, a.accountId);
+    await quarantined(a.db, a.accountId, a.mailboxId, 2);
+    const before = await junkSweepPreview(a.deps, a.accountId);
+    await a.db.update(mailboxes).set({ junkSweepRequestedAt: NOW }).where(eq(mailboxes.id, a.mailboxId));
+    const during = await junkSweepPreview(a.deps, a.accountId);
+    expect(during.held.ids).toEqual(before.held.ids);
+    expect(during.confirmationRequired).toBe(true);
+    await expect(requestJunkSweep(a.deps, ctx, before.confirmation)).rejects.toMatchObject({ code: "stale_junk_sweep" });
+    expect(await readJunkSweepCommand(db, a.accountId, a.mailboxId)).toBeNull();
+
+    expect(await db.transaction((tx) => retireLegacyJunkSweep(tx, a.accountId, a.mailboxId, NOW))).toBe(true);
+    const after = await junkSweepPreview(a.deps, a.accountId);
+    expect(after.confirmation).toBe(during.confirmation);
+    await expect(requestJunkSweep(a.deps, ctx, before.confirmation)).rejects.toMatchObject({ code: "stale_junk_sweep" });
+    expect(await readJunkSweepCommand(db, a.accountId, a.mailboxId)).toBeNull();
+    expect(await requestJunkSweep(a.deps, ctx, after.confirmation)).toMatchObject({
+      pending: true, confirmationRequired: false,
+    });
+    expect((await readJunkSweepCommand(db, a.accountId, a.mailboxId))?.ids.toSorted()).toEqual(after.held.ids.toSorted());
   });
 
   it("both answer 409 folders_disabled with the flag off, and never dial", async () => {
     const off = await seed({ foldersOn: false });
     const connect = vi.spyOn(ImapAdapter.prototype, "connect");
     await expect(junkSweepPreview(off.deps, off.accountId)).rejects.toMatchObject({ code: "folders_disabled" });
-    await expect(requestJunkSweep(off.deps, ctxOf(off.deps, off.accountId))).rejects.toMatchObject({ code: "folders_disabled" });
+    await expect(requestJunkSweep(off.deps, ctxOf(off.deps, off.accountId), "A".repeat(43))).rejects.toMatchObject({ code: "folders_disabled" });
     expect(connect).not.toHaveBeenCalled();
   });
 });
@@ -919,7 +979,8 @@ describe("the held list", () => {
   it("the press answers the held list too; folders off is still 409 and never dials", async () => {
     const a = await seed();
     const held = await letter(a.db, a.accountId, a.mailboxId, "pressed", { loc: Q, desired: Q });
-    const after = await requestJunkSweep(a.deps, ctxOf(a.deps, a.accountId));
+    const before = await junkSweepPreview(a.deps, a.accountId);
+    const after = await requestJunkSweep(a.deps, ctxOf(a.deps, a.accountId), before.confirmation);
     expect(after.held).toEqual({ ids: [held], truncated: false });
     // No participating mailbox still carries the list (a mailbox opted out keeps its letters held).
     const off = await seed({ foldersDisabled: true });

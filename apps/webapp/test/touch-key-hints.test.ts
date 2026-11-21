@@ -1,19 +1,12 @@
-/** @vitest-environment jsdom */
 import { existsSync, readFileSync } from "node:fs";
-import { modGlyph } from "@ohmail/app-logic/keys/keymap";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import {
-  ISO,
-  act,
-  installShellEnv,
-  mailbox,
-  mountShell,
-  teardownShellEnv,
-} from "./fixtures/live-walk-shell";
-
+import { describe, expect, it } from "vitest";
+import { createElement as h } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ActionPanel } from "@ohmail/ui/mail";
+import { entryCss } from "../../../packages/ui/test/compare/harness.js";
+import { launch } from "../../../test/compare/render.mjs";
 /**
  * KEYBOARD CHROME ON A DEVICE WITH NO KEYBOARD.
  *
@@ -51,7 +44,6 @@ import {
  * somebody's phone.
  */
 
-const h = React.createElement;
 
 /** Read from the repo root — vitest's `root`, and the one path shape that survives jsdom. */
 const read = (p: string): string => readFileSync(resolve(process.cwd(), p), "utf8");
@@ -134,127 +126,38 @@ describe("the rules exist, and they are the ones the audit asked for", () => {
   it("the stylesheet is in the bundle — a rule nobody imports is a rule nobody has", () => {
     // `touch-keys.css` has no component of its own, so the only thing that puts it in the route
     // bundle is this import. Deleting it leaves every assertion in this file green and the
-    // product unfixed, which is exactly the failure mode worth one line of grep.
-    const keymap = read("packages/app/src/keys/KeymapProvider.tsx");
-    expect(keymap).toContain('import "./touch-keys.css"');
+    // product unfixed, which is exactly the failure mode worth one line of grep. The registry
+    // is the frame's own now (`OwnKeys` of `Frame.tsx`, mounted by every host's frame): the
+    // stylesheet rides with it there, as it rode with today's `KeymapProvider`.
+    const keymap = read("packages/app/src/frame/Frame.tsx");
+    expect(keymap).toContain('import "../keys/touch-keys.css"');
   });
 });
 
-describe("and each selector still matches the thing it was written for", () => {
-  beforeEach(installShellEnv);
-  afterEach(teardownShellEnv);
-
-  it("`.reader-hint:has(kbd)` is the 'esc to return' hint, and only the keycap form of it", async () => {
-    const { Reader } = await import("@ohmail/ui");
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const root: Root = createRoot(host);
-
-    await act(async () => {
-      root.render(
-        h(Reader, {
-          open: true,
-          onClose: () => {},
-          ariaLabel: "Reading",
-          closeLabel: "Back",
-          returnHint: "to return",
-          children: h("div", null, "body"),
-        }),
-      );
-    });
-    const hint = host.querySelector(".reader-hint:has(kbd)");
-    expect(hint, "the selector no longer matches the reader's default hint").not.toBeNull();
-    expect(hint!.textContent).toBe("esc to return");
-
-    // `:has(kbd)` and not `.reader-hint`: `Reader` accepts a custom `hint`, and prose passed
-    // there is not key chrome and must not be deleted on half the devices in the world.
-    await act(async () => {
-      root.render(
-        h(Reader, {
-          open: true,
-          onClose: () => {},
-          ariaLabel: "Reading",
-          closeLabel: "Back",
-          returnHint: "to return",
-          hint: "Sent from a shared mailbox",
-          children: h("div", null, "body"),
-        }),
-      );
-    });
-    expect(host.querySelector(".reader-hint")).not.toBeNull();
-    expect(host.querySelector(".reader-hint:has(kbd)")).toBeNull();
-
-    await act(async () => root.unmount());
-    host.remove();
-    document.body.classList.remove("reading");
-  });
-
-  it("`.decide .dbtn button kbd` is the decision capsules' caps, and the verbs survive without them", async () => {
-    const { DecisionBar, DECISION_KEY, DECISION_QUIET } = await import("@ohmail/ui");
-    type Dest = "ohbox" | "reads" | "receipts" | "screened" | "spam";
-    /* The words, as the catalogue serves them. `DecisionBar` has none of its own — the host
-       brings them (`app/shell/decision-copy.ts`), and a test is a host like any other. */
-    const enBarCopy = (target: string) => {
-      const place: Record<Dest, string> = {
-        ohbox: "Ohbox", reads: "Reads", receipts: "Receipts", screened: "Screened out", spam: "Spam",
-      };
-      const verb: Record<Dest, string> = { ...place, screened: "Screen out" };
-      const dest = {} as Record<Dest, { label: string; title: string; check?: { label: string; title: string } }>;
-      for (const d of Object.keys(place) as Dest[]) {
-        const k = DECISION_KEY[d];
-        dest[d] = {
-          label: verb[d],
-          title: `${place[d]} (${k})`,
-          ...(DECISION_QUIET.has(d)
-            ? {}
-            : { check: { label: `${place[d]}, mark read`, title: `${place[d]}, mark read (${k.toUpperCase()})` } }),
-        };
-      }
-      return {
-        dest,
-        scopeAria: "Decision scope",
-        scopeSender: "this sender",
-        scopeDomain: "whole domain",
-        rule: `Becomes a rule — future mail from ${target} files automatically.`,
-        halvesLabel: "What each half of the button does",
-        halves: "The name files the mail waiting here; the ✓ files it and marks it read.",
-        back: "Screener",
-      };
-    };
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const root: Root = createRoot(host);
-    await act(async () => {
-      root.render(
-        h(DecisionBar, {
-          aiDest: "ohbox",
-          scope: "sender",
-          onScopeChange: () => {},
-          copy: enBarCopy("anna@example.test"),
-          onDecide: () => {},
-        }),
-      );
-    });
-
-    // Eight caps: a letter on each of the five capsules, and a shifted twin on the ✓ of the
-    // three mail piles only. The demoting destinations (Screen out, Spam) carry no ✓ — you
-    // don't read what you triage out — so no ⇧N / ⇧X.
-    const caps = [...host.querySelectorAll<HTMLElement>(".decide .dbtn button kbd")];
-    expect(caps.every((k) => k.matches("button kbd")), "the touch rule no longer reaches a capsule's cap").toBe(true);
-    expect(caps.map((k) => k.textContent)).toEqual([
-      "o", "⇧O", "r", "⇧R", "c", "⇧C", "n", "x",
-    ]);
-
-    // The acceptance: with every cap gone the bar is still five named destinations and eight
-    // buttons (three capsules with a ✓, two without). Nothing here is only reachable by a key.
-    for (const k of caps) k.remove();
-    expect([...host.querySelectorAll(".dbtn .d-main")].map((b) => b.textContent)).toEqual([
-      "Ohbox", "Reads", "Receipts", "Screen out", "Spam",
-    ]);
-    expect(host.querySelectorAll(".dbtn button")).toHaveLength(8);
-
-    await act(async () => root.unmount());
-    host.remove();
+describe("the current decision panel on touch", () => {
+  it("hides keyboard hints and keeps all five filing controls", async () => {
+    const { chromium } = createRequire(resolve(process.cwd(), "package.json"))("@playwright/test") as
+      typeof import("@playwright/test");
+    const browser = await launch(chromium);
+    try {
+      const page = await browser.newPage({ viewport: { width: 390, height: 740 }, hasTouch: true });
+      const verbs = ["Ohbox", "News", "Receipts", "Screen out", "Spam"];
+      const keys = ["o", "r", "c", "n", "x"];
+      const body = renderToStaticMarkup(h(ActionPanel, {
+        label: "Actions", keysShown: true,
+        items: verbs.map((label, i) => ({ id: label, label, keyHint: keys[i], onPress: () => {} })),
+      }));
+      await page.setContent(`<!doctype html><html data-face="paper" data-scheme="light" data-touch="0">
+        <head><style>${await entryCss("mail")}</style></head><body><div class="oh-root">${body}</div></body></html>`);
+      expect(await page.locator("kbd:visible").allTextContents()).toEqual(keys);
+      await page.evaluate(() => { document.documentElement.dataset.touch = "1"; });
+      expect(await page.locator("kbd:visible").count()).toBe(0);
+      const panel = page.getByRole("toolbar", { name: "Actions" });
+      expect(await panel.getByRole("button").count()).toBe(5);
+      for (const name of verbs) expect(await panel.getByRole("button", { name }).isVisible()).toBe(true);
+    } finally {
+      await browser.close();
+    }
   });
 });
 

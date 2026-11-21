@@ -13,7 +13,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { seedNotNowKey, useSeedOffer, type SeedOffer } from "../app/shell/seed-offer";
+import { seedNotNowKey, useSeedOffer, type SeedOffer } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

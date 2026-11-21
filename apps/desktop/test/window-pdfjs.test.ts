@@ -248,7 +248,7 @@ describe("what the shared overlay asks of pdf.js, and the one version both apps 
     expect(code).not.toMatch(/AnnotationLayer|TextLayer|XfaLayer|pdf_viewer|sandbox|pdfjs-dist\//);
     expect(code.match(/await import\(\s*"pdfjs-dist"\s*\)/g) ?? [], "pdf.js is loaded in a second place").toHaveLength(1);
     // Both builds' modules answer both reads.
-    for (const alias of [await load(), await import("../src/no-pdfjs.js")]) {
+    for (const alias of [await load(), await import("../src/paired-pdfjs.js")]) {
       expect(alias.seam).toBe(true);
       expect(alias.getDocument).toBeTypeOf("function");
     }

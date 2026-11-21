@@ -1,10 +1,12 @@
 /** @vitest-environment jsdom */
-import { pickedCount } from "./_today.js";
+import type { EngineMessage } from "@ohmail/wire";
+import { pickedCount } from "./_finders.js";
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../../messages/en.json";
+import { act, cleanup } from "@testing-library/react";
+import type { OhboxListInput } from "@ohmail/app-logic/ohbox";
+import { fakeMail } from "../../../../packages/app/test/reader/support/fake-mail.js";
+import { ohboxListRedrawable } from "../_ohbox-2-list.js";
+import { admitting, mountSeat, unmountSeat } from "../_ohbox-1-seat.js";
 
 /**
  * CONVERSATION GROUPING IN THE OHBOX LIST.
@@ -23,30 +25,17 @@ import messages from "../../messages/en.json";
  *   · j/k traverse ROWS (conversations), never a folded member;
  *   · a conversation is ONE row ACROSS sections (owner 2026-09-28) — a thread with unread mail
  *     stands in New with its read history on the same row.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's Ohbox view (`./_today.js`, which leaves with
+ * today's shell) to the Ohbox's own parts. A case that hands the list its groups and presses no key is drawn by the
+ * Ohbox's own list from its model (`../_ohbox-2-list.tsx`, redrawn on the same tree with each publish's groups, as the
+ * shell re-rendered today's view; the select and open it reports are the model's own `onSelect` and `onEnterReader`).
+ * A case that presses keys stands on the Ohbox's seat (`../_ohbox-1-seat.tsx`: the place over an engine of these
+ * letters, each sender admitted); the row a key selects is the letter the address names. Expectations untouched.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-/** `mobile: true` makes every width query match, so a tap IS the open (the view's own rule). */
-function setViewport(mobile = false): void {
-  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
-    ({
-      matches: mobile, media: query, onchange: null,
-      addListener() {}, removeListener() {},
-      addEventListener() {}, removeEventListener() {},
-      dispatchEvent() { return false; },
-    }) as unknown as MediaQueryList;
-}
-
 interface Row { id: string; unread: boolean; threadId?: string | null; date?: string; folder?: string }
-function msg(m: Row): Record<string, unknown> {
+function msg(m: Row): EngineMessage {
   return {
     id: m.id, accountId: "a", mailboxId: "mb", threadId: m.threadId ?? null, messageIdHeader: null,
     subject: `subj-${m.id}`, from: { name: `sender-${m.id}`, address: `${m.id}@ex.example` }, to: [], cc: [],
@@ -54,21 +43,21 @@ function msg(m: Row): Record<string, unknown> {
     unread: m.unread, hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
-  };
+  } as unknown as EngineMessage;
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
 const marked: Array<{ ids: string[]; unread: boolean }> = [];
 const selected: string[] = [];
 const opened: string[] = [];
+/** Is one column standing (a phone: a tap IS the open, the model's own rule)? */
+let narrow = false;
 
 interface Props { newForYou: Row[]; previouslySeen?: Row[] }
 
-function baseProps(props: Props): Record<string, unknown> {
+/** The list's input: these groups, the conversation's stored name as the shell binds it, every report logged. */
+function inputOf(props: Props): Partial<OhboxListInput> {
   return {
-    demo: false, settled: true,
-    older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
     resurfacedRows: [],
     newForYou: props.newForYou.map(msg),
     previouslySeen: (props.previouslySeen ?? []).map(msg),
@@ -76,48 +65,43 @@ function baseProps(props: Props): Record<string, unknown> {
     // The conversation's stored (server-cleaned) name, as the shell binds it from the mirror.
     threadSubject: (threadId: string) => (threadId === "T" ? "Webshop" : null),
     tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
-    onEnterReader: (id: string) => { opened.push(id); }, readerId: null, readSetFor: (id: string) => [id],
+    onSelect: (id: string | null) => { if (id !== null) selected.push(id); },
+    onEnterReader: (id: string) => { opened.push(id); },
+    readSetFor: (id: string) => [id],
     onMarkSeen: (ids: string[], unread: boolean) => { marked.push({ ids, unread }); },
-    bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-    doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
+    columnHidden: () => narrow,
   };
 }
 
+let redraw: ((input: Partial<OhboxListInput>) => Promise<void>) | null = null;
+
 /**
- * Mounts the view with a LIVE selection: `onSelect` re-renders with the new `selectedId`, the
- * way the shell does — which is what lets a click's select-then-open pair and a j/k walk be
- * exercised at all. Every `onSelect` is also logged.
- *
- * THE WRAPPER IS MODULE-LEVEL, AND THAT IS LOAD-BEARING. It used to be declared inside
- * `render()`, which gave it a fresh function identity per call — a different component TYPE to
- * React — so a second `render()` in one test silently UNMOUNTED and remounted the view, resetting
- * its session order. Every "prop change" was a fresh mount, and a test that believed it was
- * driving the view through a sync delta was actually asserting over the selector's raw order.
- * The props travel through a module variable so the component identity never changes.
+ * Draws the Ohbox's own list over these groups; a second call in one case hands the STANDING list its new groups
+ * (the same tree, its session order kept), as a sync delta reaches it.
  */
-let viewProps: Record<string, unknown> = {};
-let OhboxViewC: React.ComponentType<never> | null = null;
-function Wrapper(): React.ReactElement {
-  const [sel, setSel] = React.useState<string | null>(null);
-  return h(OhboxViewC as never, {
-    ...viewProps,
-    selectedId: sel,
-    onSelect: (id: string) => { selected.push(id); setSel(id); },
-  } as never);
+async function render(props: Props): Promise<void> {
+  if (redraw === null) {
+    const drawn = ohboxListRedrawable(inputOf(props));
+    host = drawn.view.container;
+    redraw = drawn.redraw;
+    await act(async () => { await Promise.resolve(); });
+  } else await redraw(inputOf(props));
 }
 
-async function render(props: Props): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareToday();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  OhboxViewC = OhboxView as never;
-  viewProps = baseProps(props);
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-    children: h(KeymapProvider as never, { children: h(Wrapper) } as never),
-  });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
+/** The Ohbox's seat over these letters, for a case that presses keys. */
+async function seat(props: Props): Promise<void> {
+  const letters = [...props.newForYou.map(msg), ...(props.previouslySeen ?? []).map(msg)];
+  const mail = fakeMail(letters, [], {}, admitting(letters.map((m) => m.from.address)));
+  const seated = mountSeat(mail.engine);
+  host = seated.container;
+  address = () => seated.address.read();
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
+
+/** The seat's address (the host's own, not the window's). */
+let address: () => string = () => "";
+/** The letter the address names: the row a key selected at the seat. */
+const inAddress = (): string | null => /^#\/ohbox\/m\/([^/?]+)/.exec(address())?.[1] ?? null;
 
 /** The data-ids of the rows in the group with this aria-label ("New", "Earlier"). */
 function idsInGroup(label: string): string[] {
@@ -135,15 +119,26 @@ const click = async (id: string): Promise<void> => {
   });
 };
 
+/** A key at the seat; the row it selected is read off the address. */
 const key = async (k: string): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
   });
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const id = inAddress();
+  if (id !== null && selected.at(-1) !== id) selected.push(id);
 };
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove(); root = null; host = null;
+/** `mobile: true`: one column stands, so a tap IS the open (the model's own rule). */
+function setViewport(mobile = false): void {
+  narrow = mobile;
+}
+
+afterEach(() => {
+  cleanup();
+  unmountSeat();
+  address = () => "";
+  host = null; redraw = null; narrow = false;
   marked.length = 0; selected.length = 0; opened.length = 0;
 });
 
@@ -262,7 +257,7 @@ describe("Ohbox conversation grouping", () => {
 
   it("j/k traverse conversations — a folded member is never a keyboard stop", async () => {
     setViewport();
-    await render({
+    await seat({
       newForYou: [
         { id: "a", unread: true, threadId: null, date: at(12) },
         { id: "t2", unread: true, threadId: "T", date: at(11) },
@@ -329,7 +324,7 @@ describe("Ohbox conversation grouping", () => {
    */
   it("the selection counts ROWS: x on a two-message conversation says 1 selected, a second row 2", async () => {
     setViewport();
-    await render({
+    await seat({
       newForYou: [
         { id: "t2", unread: true, threadId: "T", date: at(12) },
         { id: "t1", unread: true, threadId: "T", date: at(11) },

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Field, FieldStack } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { Consents } from "./Consents.js";
 import type { Drawn } from "./drawn.js";
 import { PasswordField } from "./PasswordField.js";
@@ -20,7 +21,7 @@ export function Head({ d }: { d: Drawn }): ReactNode {
   if (subject !== null)
     return (
       <>
-        <SettingNote>{say(words.address, { address: subject.address })}</SettingNote>
+        <SettingNote>{say(words.address, { address: displayAddress(subject.address) })}</SettingNote>
         {form.way === null && words.lead ? (
           <SettingNote>{say(form.appPasswordSubject ? EDIT_WORDS.leadAppPassword : words.lead)}</SettingNote>
         ) : null}

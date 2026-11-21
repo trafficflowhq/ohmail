@@ -108,7 +108,8 @@ describe("without an id, every route keeps today's policy (the old no-third-part
   it("the rules that carry a policy are the two every build had: /demo and the blanket baseline", async () => {
     const rules = await rulesFor(undefined);
     const carriesPolicy = (r: Rule) => r.headers.some((h) => h.key === "Content-Security-Policy");
-    expect(rules.filter(carriesPolicy).map((r) => r.source)).toEqual(["/demo", "/((?!demo).*)"]);
+    expect(rules.filter(carriesPolicy).map((r) => r.source)).toEqual(["/demo", "/((?!demo)(?!pdf-preview\\.html$).*)", "/pdf-preview.html"]);
+    expect(cspsFor(rules, "/pdf-preview.html")).toEqual([expect.stringContaining("connect-src 'none'")]);
     for (const p of [...MARKETING_PATHS, ...PRODUCT_PATHS, ...UNKNOWN_PATHS, await workerPath()]) {
       expect(cspsFor(rules, p), p).toEqual([BASELINE_CSP]);
     }

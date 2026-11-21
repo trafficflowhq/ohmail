@@ -1,13 +1,21 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ISO, act, answerConsentWith, answerStoreWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  ISO, act, answerConsentWith, answerStoreWith, answerSyncWith, installShellEnv, mailbox,
+  mountShell as mountWithBrowserProviders, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
+import { getByRole, queryAllByRole, within } from "@testing-library/react";
+import { NONE, type HostContract } from "@ohmail/app/host";
+import { screeningSettings } from "../app/api-client";
+import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
+import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
+import { EngineProvider, useEngine } from "../app/shell/engine";
+import { hostFromTodaysInputs } from "./_mail-shell";
 import messages from "../messages/en.json";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 
 /**
- * WHAT A HOST DID NOT OFFER IS NOT TAKEN FROM THE PAGE. Today's views mounted by a host that says `none` for its
+ * WHAT A HOST DID NOT OFFER IS NOT TAKEN FROM THE PAGE. The frame mounted by a host that says `none` for its
  * consent wire, on a page whose own client is configured and whose server holds an account row that lets pictures
  * load: no consent request leaves, Settings draws none of the row's controls, and a letter's pictures wait for its
  * press. And the review of who you write to stands where the host's own wire for it stands, and nowhere else.
@@ -69,7 +77,7 @@ beforeEach(() => {
     }
     /* The Screener pane's own read, which is no part of the consent row: answered so the pane draws. */
     if (String(input).includes("/account/screening")) {
-      return new Response(JSON.stringify({ ohboxPolicy: null, ohboxBar: null, defaultBar: "Mail from people." }),
+      return new Response(JSON.stringify({ ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Mail from people." }),
         { status: 200, headers: { "content-type": "application/json" } });
     }
     return inner(input as RequestInfo, init);
@@ -87,18 +95,45 @@ const goHash = async (hash: string): Promise<void> => {
   });
   await tick(1_000);
 };
-const named = (role: string, name: string): HTMLElement[] =>
-  [...document.querySelectorAll<HTMLElement>(role === "button" ? "button" : `[role="${role}"]`)]
-    .filter((el) => (el.getAttribute("aria-label") ?? el.textContent ?? "").trim() === name);
-const settingsNav = (): string[] =>
-  [...document.querySelectorAll(".set-nav button")].map((button) => button.textContent?.trim() ?? "");
+const named = (role: string, name: string): HTMLElement[] => queryAllByRole(document.body, role, { name });
+const settingsNav = () => within(getByRole(document.body, "navigation", { name: messages.settings.navAria }));
+
+const ACCOUNT = letter.accountId;
+const facts = [mailbox({ lastSyncAt: ISO, id: "mb_1" })];
+const screening: HostContract["wires"]["screening"] = {
+  read: () => screeningSettings.get(),
+  change: (change) => screeningSettings.set(change),
+};
+
+function ConsentFrame({ transport }: { transport: ConsentTransport | typeof NONE | undefined }) {
+  const engine = useEngine();
+  const frame = useBrowserMail(NONE, WEB_MAIL_PARTS);
+  const host = hostFromTodaysInputs({
+    ...(transport === undefined ? {} : { consentTransport: transport }),
+    mailboxFacts: async () => facts,
+    scope: ACCOUNT,
+    screeningSection: null,
+  }, engine, frame, NONE);
+  return <MailFrame host={{
+    ...host,
+    session: { ...host.session, account: ACCOUNT },
+    wires: { ...host.wires, screening },
+  }} />;
+}
+
+async function mountShell(transport?: ConsentTransport | typeof NONE) {
+  await mountWithBrowserProviders(facts, {
+    wrap: () => <EngineProvider demo={false} resolveOwner={async () => ({ kind: "owner", accountId: ACCOUNT })}>
+      <ConsentFrame transport={transport} />
+    </EngineProvider>,
+  });
+}
 
 /** Open the letter as a person does and hand back what its frame names. */
 async function openTheLetter(): Promise<string> {
   await goHash("#/ohbox");
-  const row = document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${LETTER}"]`);
-  expect(row, "the Ohbox does not list the letter, so the walk shows nothing").not.toBeNull();
-  await act(async () => { row!.click(); });
+  const row = getByRole(document.body, "option", { name: /A picture/ });
+  await act(async () => { row.click(); });
   await tick(3_000);
   const frames = [...document.querySelectorAll("iframe")].map((frame) => frame.getAttribute("srcdoc") ?? "");
   expect(frames.join(""), "the letter's body never drew").toContain("hello");
@@ -111,7 +146,7 @@ const storedRow = { blockRemoteImagesAt: null, loadTrackingPixelsAt: null, folde
 describe("a host that says none for its consent wire, on a page whose own client is configured", () => {
   it("CONTROL: with the web's own wire the row is read, its controls are drawn and pictures load by themselves", async () => {
     answerConsentWith(storedRow);
-    await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })]);
+    await mountShell();
     await tick(5_000);
     expect(askedFor("/consent").length, "the walk cannot show a refusal: the row was never read").toBeGreaterThan(0);
 
@@ -122,12 +157,14 @@ describe("a host that says none for its consent wire, on a page whose own client
     expect(named("switch", messages.settings.images.title)).toHaveLength(1);
     await goHash("#/settings/screener");
     expect(named("group", messages.settings.dormancy.ariaLabel)).toHaveLength(1);
-    expect(settingsNav()).toEqual(expect.arrayContaining([messages.settings.folders.nav, messages.settings.signatures.nav]));
+    for (const name of [messages.settings.folders.nav, messages.settings.signatures.nav]) {
+      expect(settingsNav().getByRole("button", { name })).toBeTruthy();
+    }
   }, 60_000);
 
   it("no consent request leaves, Settings draws none of the row's controls, and a letter's pictures wait for its press", async () => {
     answerConsentWith(storedRow);
-    await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })], { consentTransport: "none" });
+    await mountShell(NONE);
     await tick(5_000);
     expect(askedFor("/consent"), "the row was read from the page's own session").toEqual([]);
 
@@ -142,9 +179,9 @@ describe("a host that says none for its consent wire, on a page whose own client
     await goHash("#/settings/screener");
     expect(named("group", messages.settings.dormancy.ariaLabel), "a window dial over no row").toEqual([]);
     const nav = settingsNav();
-    expect(nav.length, "Settings never drew").toBeGreaterThan(0);
-    expect(nav).not.toContain(messages.settings.folders.nav);
-    expect(nav).not.toContain(messages.settings.signatures.nav);
+    expect(nav.getByRole("button", { name: messages.settings.screener })).toBeTruthy();
+    expect(nav.queryByRole("button", { name: messages.settings.folders.nav })).toBeNull();
+    expect(nav.queryByRole("button", { name: messages.settings.signatures.nav })).toBeNull();
     expect(askedFor("/consent")).toEqual([]);
   }, 60_000);
 });
@@ -155,7 +192,7 @@ describe("the review of who you write to is offered by the host's word", () => {
 
   it("on a page with its own client it takes the stage when it is owed, and Settings has its door", async () => {
     answerConsentWith({ seedConfirmedAt: null });
-    await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })]);
+    await mountShell();
     await tick(5_000);
     expect(reviewOnStage(), "the review is owed and was not offered").toBe(true);
 
@@ -172,13 +209,13 @@ describe("the review of who you write to is offered by the host's word", () => {
       foldersStorable: false,
       state: async () => ({ seedConfirmedAt: null, dormancyDays: 60 }),
     } as unknown as ConsentTransport;
-    await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })], { consentTransport: owed });
+    await mountShell(owed);
     await tick(5_000);
     expect(askedFor("/consent/seed")).toEqual([]);
     expect(reviewOnStage(), "the review took the stage where no host offered it").toBe(false);
 
     await goHash("#/settings/screener");
-    expect(settingsNav().length, "Settings never drew").toBeGreaterThan(0);
+    expect(settingsNav().getByRole("button", { name: messages.settings.screener })).toBeTruthy();
     expect(doorInSettings(), "Settings offers a review no host can run").toBe(false);
   }, 60_000);
 });

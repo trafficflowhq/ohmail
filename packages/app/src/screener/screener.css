@@ -22,6 +22,19 @@
   align-items: center;
   gap: var(--s1);
 }
+.sc-held-letters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.sc-primer {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  contain: strict;
+}
 /* The place's notices stand in the list's own inset, as its rows do. */
 .sc-notices {
   padding-inline: var(--s2);

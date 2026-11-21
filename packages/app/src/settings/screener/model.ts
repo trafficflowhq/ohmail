@@ -5,7 +5,7 @@ import { NONE, type HostContract } from "../../host/index.js";
  * posture, impersonations, the words), how far back the Screener asks, the suggestions and what may act on them,
  * unsubscribing on a screen-out, what was filed automatically with Put back, and the door back to the review of who
  * you write to. Each part is `null` where this host withholds it or has not answered yet: a control is never drawn
- * before its stored value is known (a switch drawn early shows a position the account may not hold).
+ * before its stored value is known, except the disabled automatic suggestion switch, which shows the default.
  *
  * The writes are the shell's, handed in as verbs that answer when the server did and throw when it refused; the pane
  * holds what each press is doing (pending, failed), as the shipped rows do.
@@ -23,6 +23,8 @@ export type TravelledNote =
 
 /** What reaches the Ohbox: one account setting, two switches and the words. */
 export interface ScreenerOhbox {
+  /** A host with navigation can ask about unsaved words before leaving. */
+  readonly holdLeave?: (ask: (leave: () => void) => void) => () => void;
   /** "Keep my Ohbox for what's relevant". */
   readonly relevant: boolean;
   /** Filing impersonations to Spam; `null` from an older server, which files none. */
@@ -55,7 +57,7 @@ export interface ScreenerWindow {
  * writes at once. Its sentences are the Screener's (`screener.suggest.*`), handed in as said.
  */
 export interface ScreenerSuggest {
-  readonly on: boolean;
+  readonly on: boolean | null;
   /** The confirm: closed, pricing the batch, or priced and asking. */
   readonly phase: "closed" | "pricing" | "ready";
   /** The server's price for the next batch; no price, no consent. */

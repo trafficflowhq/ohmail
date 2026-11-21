@@ -937,13 +937,12 @@ check("no console errors", consoleErrors.length === 0, consoleErrors.slice(0, 3)
 /* ── 2 · it drew ───────────────────────────────────────────────────────── */
 check("#root exists", root != null);
 check("#root is not empty", (root?.children.length ?? 0) > 0);
-/* THE FRAME'S RAIL. Today's views feed the frame's rail and it stands in a box carrying their key mark (`.rail`),
-   drawn with the kit: its landmark, its Write at the head and its foot (the notice, Pull new mail, the account).
-   The old rail's wordmark and its foot's command and theme controls are not drawn by the frame: the palette is
-   opened by its keys and the scheme is chosen in Settings, so those three reads left with them. */
-check("the rail rendered", doc.querySelector(".rail nav.oh-rail") != null);
-check("the rail's foot rendered", doc.querySelector(".rail .oh-railfoot, .rail .fr-railfoot") != null);
-check("the rail's Write rendered", doc.querySelector(".rail .oh-rail-write button") != null);
+/* The Places landmark identifies the rail in the installed frame. Its foot offers Pull new mail
+   for the connected mailbox, and its head offers Write. */
+const rail = doc.querySelector('nav[aria-label="Places"]');
+check("the rail rendered", rail != null);
+check("the rail's foot rendered", rail?.querySelector(':is(.oh-railfoot, .fr-railfoot) button[title="Pull new mail"]') != null);
+check("the rail's Write rendered", rail?.querySelector(".oh-rail-write button") != null);
 check("a list pane rendered", lists.length > 0, `${lists.length} named lists`);
 /* The floor follows the dataset — whatever the stub served — and is still far
    above "an empty shell rendered its chrome". */

@@ -8,7 +8,10 @@
 import { useEffect, type ReactNode } from "react";
 import { providerById } from "@ohmail/app-logic/mailboxes/connect/providers";
 import { NO_DETAILS } from "@ohmail/app-logic/mailboxes/connect/refusal";
-import { CONNECT_STATES, type ConnectStateRow } from "@ohmail/app-logic/mailboxes/connect/states";
+import {
+  CONNECT_STATES,
+  type ConnectStateRow,
+} from "../../../app-logic/test/mailboxes/connect/refusal-states.js";
 import { mailboxIdOfAnswer } from "@ohmail/app-logic/mailboxes/connect/subject";
 import type { Answered, ConnectPurposeKind, Refusal } from "@ohmail/app-logic/mailboxes/connect/types";
 import { createFeed, NONE, type ConnectWire } from "../../src/host/index.js";

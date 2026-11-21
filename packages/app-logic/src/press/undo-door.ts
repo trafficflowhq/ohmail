@@ -37,6 +37,9 @@ const TOAST_DEFAULT_MS = 2600;
 /** How long an unanswered press keeps `z` for itself. */
 const PENDING_MS = 8000;
 
+/** Undo was pressed, so an answer can still follow in this call. */
+export const UNDO_PRESSED = Symbol("Undo pressed");
+
 export function createUndoDoor(show: ToastFn, now: () => number = () => Date.now()): UndoDoor {
   let live: { take: () => boolean; until: number } | null = null;
   let owed: { claim: UndoClaim; since: number } | null = null;
@@ -64,7 +67,7 @@ export function createUndoDoor(show: ToastFn, now: () => number = () => Date.now
       taken = true;
       close();
       // The capsule leaves with the offer, whichever of the two took it.
-      ends.abort();
+      ends.abort(UNDO_PRESSED);
       onAction();
       return true;
     };

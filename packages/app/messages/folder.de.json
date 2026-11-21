@@ -39,6 +39,7 @@
       "menu": "Liste"
     },
     "move": {
+      "title": "In einen Ordner verschieben",
       "moved": "Verschoben: {name}.",
       "outdated": "{by} organisiert dieses Postfach mit einer älteren ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
       "outdatedUnknown": "Die Installation, die dieses Postfach organisiert, hat eine ältere ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",

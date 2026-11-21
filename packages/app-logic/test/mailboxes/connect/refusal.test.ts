@@ -15,7 +15,7 @@ import {
   type SaidContext,
 } from "../../../src/mailboxes/connect/refusal.js";
 import { echoes, secretOf } from "../../../src/mailboxes/connect/secret.js";
-import { CONNECT_STATES, saidOfState } from "../../../src/mailboxes/connect/states.js";
+import { CONNECT_STATES, saidOfState } from "./refusal-states.js";
 import type { Refusal, RefusalDetails } from "../../../src/mailboxes/connect/types.js";
 
 const keyOf = (said: Said | null): string | null =>

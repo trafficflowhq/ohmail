@@ -43,7 +43,8 @@ import type { ComposeFields, ComposePlan } from "@ohmail/app-logic/writing/compo
 import { draftNoteKey, worthSaving, type ComposeElsewhere } from "@ohmail/app-logic/writing/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "@ohmail/app-logic/writing/compose-from";
 import { SignatureBlock } from "../shell/SignatureBlock";
-import { SupportDiagnostics } from "../shell/SupportDiagnostics";
+import { SupportDiagnostics } from "@ohmail/app/write";
+import { TextFromIntl } from "../shell/LocaleContext";
 import { SIG_FOLLOWING } from "@ohmail/app-logic/writing/signature";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { ForwardFiles } from "../shell/ForwardFiles";
@@ -988,12 +989,14 @@ export function ComposeView({
           />
 
           {fields.diag ? (
-            <SupportDiagnostics
-              block={fields.diag}
-              value={{ text: fields.body, html: fields.html }}
-              disabled={inFlight}
-              onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
-            />
+            <TextFromIntl>
+              <SupportDiagnostics
+                block={fields.diag}
+                value={{ text: fields.body, html: fields.html }}
+                disabled={inFlight}
+                onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
+              />
+            </TextFromIntl>
           ) : null}
 
           {/* THE SIGNATURE — a distinct, removable block BELOW the writing area, never pasted

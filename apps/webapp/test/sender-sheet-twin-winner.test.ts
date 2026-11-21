@@ -1,17 +1,28 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO, SyncResponse } from "@ohmail/wire";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { act } from "react";
+import { within } from "@testing-library/react";
 import {
   MemoryMirrorStore,
   rulesList,
   type SyncChange,
 } from "@ohmail/client-engine";
 import baseMessages from "../messages/en.json";
-import { SettingsView } from "../app/views/SettingsView";
+import {
+  installConfirmEnv,
+  ISO,
+  mountCloudShell,
+  refresh204,
+  rememberOwner,
+  scriptRefresh,
+  scriptSession,
+  scriptSync,
+  sessionFull,
+  teardownConfirmEnv,
+  tick,
+  warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 import { routedRule } from "@ohmail/app-logic/press/sender-audit";
 import {
   planScreeningChange,
@@ -30,11 +41,6 @@ import {
  * message, and the Rules page what it shows. A press is ONE write: a second would name a row the
  * first one's convergence already deleted.
  */
-(globalThis as unknown as { React: unknown }).React = React;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
 const LENA = "lena@atelier.example";
 let seq = 0;
 
@@ -176,37 +182,63 @@ describe("'already' is said only when the winning twin already files there", () 
 });
 
 describe("the Rules page shows what the person pressed", () => {
-  let host: HTMLDivElement;
-  let root: Root | null = null;
+  beforeAll(warmCloudShell);
   beforeEach(() => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
+    installConfirmEnv();
+    rememberOwner();
+    scriptRefresh(refresh204);
+    scriptSession(sessionFull);
   });
-  afterEach(async () => {
-    await act(async () => { root?.unmount(); });
-    root = null;
-    host.remove();
-  });
+  afterEach(teardownConfirmEnv);
 
   it("after pressing Ohbox every rule for the sender reads 'Files into Ohbox'", async () => {
     const { after } = await press([ALLOW(), DENY()], "ohbox");
-    const rules = { items: after, onRevoke: async () => ({ status: "confirmed" as const }), onRetarget: async () => ({ status: "confirmed" as const }), pastMail: () => null };
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages: baseMessages, timeZone: "UTC", now: new Date("2026-08-04T12:00:00.000Z"),
-        children: h(ThemeProvider, { children: h(ToastHost, { children: h(SettingsView, { notifications: null, tags: [], tagCounts: {}, rules }) }) }),
-      }));
-    });
-    await act(async () => {
-      [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Rules")!
-        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    const rows = [...host.querySelectorAll<HTMLElement>("[data-rule-id]")].map((r) => r.textContent ?? "");
+    const json = (body: unknown): Response =>
+      new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+    scriptSync(() => json({
+      changes: {
+        creates: after.map((entity, index) => ({
+          type: "rule", op: "create", id: entity.id, seq: index + 1, updatedAt: entity.updatedAt, entity,
+        })),
+        updates: [], moves: [], deletes: [],
+      },
+      cursor: `c${after.length}`,
+      hasMore: false,
+      serverTime: ISO,
+    } satisfies SyncResponse));
+    const wire = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      if (new URL(String(input), window.location.origin).pathname === "/api/mailboxes") {
+        return json({
+          items: [{
+            id: "mb",
+            address: ["mailbox", "example.invalid"].join("@"),
+            status: "connected",
+            organizerRole: "organizer",
+            initialImportCompletedAt: ISO,
+            organizeConsentedAt: ISO,
+            lastSyncAt: ISO,
+            createdAt: ISO,
+          }],
+        });
+      }
+      return wire(input, init);
+    };
+
+    window.location.hash = "#/settings";
+    const frame = await mountCloudShell();
+    await tick(3000);
+    const nav = within(frame).getByRole("navigation", { name: baseMessages.settings.navAria });
+    await act(async () => { within(nav).getByRole("button", { name: baseMessages.settings.rules }).click(); });
+    await tick(250);
+    const pane = within(within(frame).getByRole("region", { name: baseMessages.settings.rules }));
+    const rows = pane.queryAllByRole("listitem");
     // The press converged the sender's key onto the row it named: ONE rule, and no copy behind it.
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toContain(`Mail from ${LENA}`);
-    expect(rows[0]).toContain("Files into Ohbox");
-    expect(rows[0]).not.toContain("more cop");
+    expect(rows[0]!.getAttribute("aria-setsize")).toBe("1");
+    const row = within(rows[0]!);
+    expect(row.getByRole("group").getAttribute("aria-label")).toContain(`Mail from ${LENA}`);
+    expect(row.getByRole("button", { name: "Files into Ohbox" })).toBeTruthy();
+    expect(rows[0]!.textContent).not.toContain("more cop");
   });
 });

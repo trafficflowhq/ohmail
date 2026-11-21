@@ -3,14 +3,19 @@
  * dock, the report), the whole rail as a sheet, and the stage. The frame's body (`Frame.tsx`) decides what is on
  * screen and hands it down; what a shell stands above every pane wraps all of this.
  */
-import { useCallback, useEffect, type ComponentProps } from "react";
+import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
+import { useCallback, useContext, useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { Overlay } from "@ohmail/ui/base";
 import { NONE, type None } from "../host/index.js";
+import { ProductKeys, ProductSwitch } from "./ProductSwitch.js";
+import { PlaceChords } from "./chords.js";
 import { Columns } from "./Columns.js";
 import type { ConnectionFeed, FrameInner } from "./commands.js";
 import { useConnectionNotice } from "./connection.js";
 import {
   OVER_IDS,
+  type CalendarEntry,
+  type CalendarRailProps,
   type ColumnsProps,
   type FrameCommands,
   type FrameHost,
@@ -22,12 +27,22 @@ import {
   type StageEntry,
 } from "./contract.js";
 import { useSignal, type Feed } from "./feeds.js";
-import { FeatureNotices } from "./FeatureNotices.js";
+import {
+  FeatureNotices,
+  StageNoticeInReview,
+  StageNoticeOffer,
+  STAGE_NOTICE_FEED,
+} from "./FeatureNotices.js";
+import { LetterBesideClose, LetterOverKeys } from "./letter-over.js";
+import { isCalendarPlace } from "./product.js";
+import { RAIL_SHEET, RailKeys } from "./rail-keys.js";
 import type { NoticeStore } from "./notice-store.js";
 import { NoticeHost } from "./NoticeHost.js";
-import { DockRail, SideRail } from "./RailHost.js";
+import { NoticeMore } from "./NoticeMore.js";
+import { DockRail, SideRail, type RailHostProps } from "./RailHost.js";
 import { ReportHost } from "./ReportHost.js";
 import type { useReportSlot } from "./report-slot.js";
+import { useProductArrival } from "./product-arrival.js";
 import { Stage } from "./Stage.js";
 import { useText } from "../text/index.js";
 
@@ -85,6 +100,45 @@ function FootDock({
   ) : null;
 }
 
+/** The active product supplies its navigation in the form chosen by the frame. */
+function Navigation({
+  form,
+  calendar,
+  bars,
+  phoneMore,
+  ...rail
+}: RailHostProps & {
+  readonly form: CalendarRailProps["form"];
+  readonly calendar: CalendarEntry | null;
+  readonly bars: Feed<readonly string[]>;
+  readonly phoneMore?: boolean;
+}) {
+  const apart = useSignal(rail.foot);
+  const fed = useSignal(rail.feed);
+  const standing = useSignal(bars);
+  const switcher =
+    calendar === null || form === "dock" ? undefined : (
+      <ProductSwitch kind={form === "words" ? "pair" : "round"} onRail={form === "icons"} />
+    );
+  if (calendar && isCalendarPlace(rail.route.place)) {
+    const body = (
+      <calendar.Rail
+        form={form}
+        route={rail.route}
+        commands={rail.commands}
+        plan={rail.plan}
+        notice={rail.notice}
+        accountFoot={fed?.account ? fed : apart}
+        switcher={switcher}
+      />
+    );
+    return form === "dock" ? standing.length ? null : <div className="fr-dockbox">{body}</div> : body;
+  }
+  if (form === "words") return <SideRail {...rail} switcher={switcher} phoneMore={phoneMore} />;
+  if (form === "icons") return <DockRail {...rail} switcher={switcher} upright />;
+  return <FootDock {...rail} bars={bars} />;
+}
+
 /** Every over handed stands mounted, open while the frame names it: one at a time, and going closes it. */
 function Overs({
   overs,
@@ -109,6 +163,11 @@ function Overs({
 }
 
 /** What the frame's root holds, as the frame's body hands it down. */
+function SwitchAtCommit({ route }: { route: Route }) {
+  useSwitchEnded(route, true);
+  return null;
+}
+
 interface FramePartsProps {
   readonly host: FrameHost;
   readonly inner: Omit<FrameInner, "api" | "railOpen">;
@@ -116,7 +175,7 @@ interface FramePartsProps {
   readonly route: Route;
   readonly commands: FrameCommands;
   readonly slot: ReturnType<typeof useReportSlot>;
-  readonly panes: Pick<ColumnsProps, "list" | "reading" | "wide" | "kept" | "above">;
+  readonly panes: Pick<ColumnsProps, "list" | "reading" | "wide" | "above">;
   /** What a stage's body is drawn with, and the stage the address names, or `none`. */
   readonly pane: PaneProps;
   readonly stage: StageEntry | None;
@@ -151,21 +210,42 @@ export function FrameParts({
   over,
 }: FramePartsProps) {
   const t = useText("frame");
-  const { list, reading, wide, kept, above } = panes;
+  const { list, reading, wide, above } = panes;
   const staged = stage !== NONE;
   /* The rail reads its feed itself: a new feed (a fold opened in it) draws the rail again, never the panes. */
-  const rails = { feed: inner.rail, places: host.features.places, route, commands };
+  const docks = { feed: inner.rail, places: host.features.places, route, commands };
+  const rails = { ...docks, foot: inner.foot };
   /* On a phone's width a letter stands open over the list or the wide pane: no dock stands at the foot then. */
   const letterUp = plan.rail === "dock" && (route.open !== null || holds);
-  /* Where no rail stands at the side, More opens the whole rail over the app: a modal sheet. */
   const sheet = railOpen && plan.rail !== "words";
-  const slotNotice = <NoticeHost store={inner.notices} place={plan.rail === "words" ? "rail" : "bar"} />;
+  const active = !staged && !held && over === null;
+  /* A letter stands over its list: one column, a reading column drawn, a letter named. Its Escape is the frame's. */
+  const letterOpen = route.open !== null && reading !== null && !staged && !held && !sheet;
+  const letterOver = plan.columns === 1 && letterOpen;
+  /* Beside the list (two columns, a mail place's letter) Escape from the list closes it, in place: Back then leaves. */
+  const letterBeside = plan.columns === 2 && letterOpen && !isCalendarPlace(route.place);
+  const seedReview = stage !== NONE && stage.id === "firstRun" && route.stage === null;
+  const slotNotice = staged ? null : (
+    <NoticeHost store={inner.notices} place={plan.rail === "words" ? "rail" : "bar"} />
+  );
+  const calendar =
+    host.capabilities.products === "both" && host.features.calendar !== NONE ? host.features.calendar : null;
+  const inCalendar = isCalendarPlace(route.place) && calendar !== null;
+  const frame = useRef<HTMLDivElement>(null);
+  useProductArrival(frame, plan.device, inCalendar ? "cal" : "mail");
+  const navigation = (form: CalendarRailProps["form"], notice: ReactNode, phoneMore = false) => (
+    <Navigation
+      {...rails}
+      plan={plan}
+      form={form}
+      notice={notice}
+      calendar={calendar}
+      bars={inner.bars}
+      phoneMore={phoneMore}
+    />
+  );
   const sideRail =
-    plan.rail === "words" ? (
-      <SideRail {...rails} notice={<div className="fr-railnotice">{slotNotice}</div>} />
-    ) : plan.rail === "icons" ? (
-      <DockRail {...rails} upright />
-    ) : null;
+    plan.rail === "dock" ? null : navigation(plan.rail, <div className="fr-railnotice">{slotNotice}</div>);
   /* Where no rail's foot stands, the one notice stands over the list: inside its column beside an upright dock, over
      the whole window on a phone's width. */
   const inColumn = (onSheet: boolean) =>
@@ -177,9 +257,17 @@ export function FrameParts({
 
   return (
     <>
+      {!staged && (inCalendar || route.place === "settings") ? <SwitchAtCommit route={route} /> : null}
       <ConnectionHost host={host} feed={inner.connection} notices={inner.notices} commands={commands} />
       <FeatureNotices features={host.features} notices={inner.notices} />
+      <NoticeMore store={inner.notices} />
+      {calendar && active ? <ProductKeys /> : null}
+      {!inCalendar ? <PlaceChords places={host.features.places} go={commands.go} /> : null}
+      {letterOver ? <LetterOverKeys close={() => commands.open(null)} /> : null}
+      {letterBeside ? <LetterBesideClose close={() => commands.open(null, "replace")} /> : null}
+      <RailKeys side={plan.rail === "words"} up={railOpen} put={commands.rail} />
       <div
+        ref={frame}
         className="fr-frame"
         data-rail={plan.rail}
         data-size={plan.size}
@@ -190,16 +278,15 @@ export function FrameParts({
         <Columns
           plan={plan}
           rail={sideRail}
-          list={[inColumn(plan.device !== "phone"), list]}
+          list={[
+            inColumn(plan.device !== "phone"),
+            <StageNoticeInReview.Provider key="list" value={seedReview}>
+              {list}
+            </StageNoticeInReview.Provider>,
+          ]}
           listKeys={!staged && route.open === null && !holds}
           reading={reading}
           wide={wide !== null ? [inColumn(false), wide] : null}
-          /* The frame's notice bar inside a wide pane stands only in the pane on screen. */
-          kept={
-            kept !== null
-              ? { pane: [kept.shown ? inColumn(false) : null, kept.pane], shown: kept.shown }
-              : null
-          }
           above={above}
           labels={{
             list: t("landmark.list"),
@@ -208,7 +295,7 @@ export function FrameParts({
             listWidth: t("columns.listWidth"),
           }}
         />
-        {plan.rail === "dock" && !letterUp ? <FootDock bars={inner.bars} {...rails} /> : null}
+        {plan.rail === "dock" && !letterUp ? navigation("dock", null) : null}
         <div className="fr-report">
           <ReportHost slot={slot} />
         </div>
@@ -218,14 +305,36 @@ export function FrameParts({
         open={sheet}
         onClose={() => commands.rail(false)}
         label={t("dock.more")}
-        className="fr-railsheet"
+        className={RAIL_SHEET}
       >
-        <SideRail {...rails} notice={null} />
+        {navigation("words", null, plan.rail === "dock")}
       </Overlay>
-      <Stage open={staged} label={t("landmark.stage")}>
-        {stage !== NONE ? <stage.Body {...pane} keysHere /> : null}
-      </Stage>
+      {renderStage(stage, pane, seedReview, inner.notices, t("landmark.stage"))}
       <Overs overs={host.features.overs} over={over} close={commands.over} />
     </>
+  );
+}
+
+function SeedReviewNotice({ store }: { store: NoticeStore }) {
+  const offer = useContext(StageNoticeOffer);
+  return (
+    <div className="fr-noticebar">
+      {offer ?? <NoticeHost store={store} place="bar" feed={STAGE_NOTICE_FEED} />}
+    </div>
+  );
+}
+
+function renderStage(
+  stage: FramePartsProps["stage"],
+  pane: FramePartsProps["pane"],
+  seedReview: boolean,
+  notices: NoticeStore,
+  label: string,
+) {
+  return (
+    <Stage open={stage !== NONE} label={label}>
+      {seedReview ? <SeedReviewNotice store={notices} /> : null}
+      {stage !== NONE ? <stage.Body {...pane} keysHere /> : null}
+    </Stage>
   );
 }

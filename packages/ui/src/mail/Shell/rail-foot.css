@@ -27,7 +27,7 @@
   }
 
   .oh-railfoot-account {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     display: flex;
     align-items: center;
     gap: var(--oh-railfoot-gap);
@@ -50,7 +50,7 @@
   }
 
   .oh-railfoot-who {
-    flex: 1;
+    flex: 1 1 0;
     display: flex;
     flex-direction: column;
     min-width: 0;

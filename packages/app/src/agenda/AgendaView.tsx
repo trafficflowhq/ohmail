@@ -5,10 +5,11 @@
  * of, and asks for more at its foot as it is scrolled: the body works out the occurrences of exactly those days.
  * Where the list reaches past what this device holds, it says so.
  */
-import { useMemo, type UIEvent } from "react";
-import { RefusalLine } from "@ohmail/ui/base";
-import { GroupHeading } from "@ohmail/ui/mail";
-import { AgendaRow, MiniMonth } from "@ohmail/ui/calendar";
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject, type UIEvent } from "react";
+import { useKeyBindings } from "@ohmail/app-logic/keys";
+import { Button, RefusalLine } from "@ohmail/ui/base";
+import { GroupHeading, ListHead } from "@ohmail/ui/mail";
+import { AgendaRow, MiniMonth, SidePanel } from "@ohmail/ui/calendar";
 import {
   addDays,
   agendaDays,
@@ -16,6 +17,9 @@ import {
   dayLong,
   dayShort,
   monthOfDay,
+  firstOfMonth,
+  shiftMonth,
+  weekStartOf,
   monthWeeks,
   rowTime,
   weekdayNames,
@@ -26,6 +30,7 @@ import {
   type RangeInput,
   type ViewEvent,
 } from "@ohmail/app-logic/calendar";
+import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
 import { HeldNotice } from "../calendar/HeldNotice.js";
 import { useLocale, useText } from "../text/index.js";
 import "./agenda.css";
@@ -40,6 +45,9 @@ export interface AgendaViewProps {
   readonly days: number;
   /** Asks for more days at the list's foot. */
   readonly onMore: () => void;
+  readonly onClose?: () => void;
+  readonly onRow?: (id: string, day: string) => void;
+  readonly keysHere?: boolean;
 }
 
 /** Days the list holds at first, and how many more join at its foot. */
@@ -47,10 +55,37 @@ export const AGENDA_DAYS = 60;
 export const AGENDA_MORE = 56;
 const keyOf = (e: ViewEvent): string => e.id;
 
-export function AgendaView({ input, acts, edge, from, days, onMore }: AgendaViewProps) {
+export function AgendaView({
+  input,
+  acts,
+  edge,
+  from,
+  days,
+  onMore,
+  onClose,
+  onRow,
+  keysHere,
+}: AgendaViewProps) {
   const t = useText("agenda");
   const locale = useLocale();
   const first = from ?? input.anchor;
+  const scroller = useRef<HTMLDivElement>(null);
+  const openRow = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (input.open !== null) openRow.current?.scrollIntoView?.({ block: "nearest" });
+  }, [first, input.open]);
+  const [folded, setFolded] = useState(false);
+  const swipe = useCalendarSwipe(
+    (n) =>
+      acts.pick(
+        folded ? addDays(input.anchor, n * 7) : firstOfMonth(shiftMonth(monthOfDay(input.anchor), n)),
+      ),
+    setFolded,
+  );
+  const swipeList = useCalendarSwipe(
+    input.device === "phone" ? (n) => acts.pick(addDays(input.anchor, n)) : undefined,
+  );
+
   const { days: groups, unplaced } = useMemo(
     () =>
       agendaDays({
@@ -65,19 +100,13 @@ export function AgendaView({ input, acts, edge, from, days, onMore }: AgendaView
       }),
     [first, days, input.today, input.zone, input.zones, input.events, from],
   );
-  const thisYear = yearOf(input.today);
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     if (el.scrollTop + el.clientHeight > el.scrollHeight - 240) onMore();
   };
-  const nameOf = (day: string) =>
-    day === input.today
-      ? t("today")
-      : day === addDays(input.today, 1)
-        ? t("tomorrow")
-        : dayShort(day, locale, thisYear);
-  const list = (
-    <div className="cal-ag-list" onScroll={onScroll} data-scroll="calagenda">
+  const content = (
+    <>
+      {keysHere ? <AgendaTop scroller={scroller} /> : null}
       <HeldNotice
         edge={edge}
         first={first}
@@ -86,46 +115,136 @@ export function AgendaView({ input, acts, edge, from, days, onMore }: AgendaView
         className="cal-ag-note"
       />
       {unplaced > 0 ? <RefusalLine>{t("unplaced", { count: unplaced })}</RefusalLine> : null}
-      {groups.map((g) => {
-        const count = g.rows.length;
-        return (
-          <section key={g.day} className="cal-ag-day" aria-label={dayLong(g.day, locale, thisYear)}>
-            <GroupHeading count={count ? t("count", { count }) : undefined} hot={g.today}>
-              {nameOf(g.day)}
-            </GroupHeading>
-            {count ? (
-              <div role="list" className="cal-ag-rows">
-                {g.rows.map((r) => (
-                  <Row key={`${g.day}|${r.key}`} row={r} day={g.day} input={input} acts={acts} />
-                ))}
-              </div>
-            ) : (
-              <p className="cal-ag-none">{g.today ? t("nothingToday") : t("nothing")}</p>
-            )}
-          </section>
-        );
-      })}
+      {agendaGroups({ groups, input, acts, onRow, openRow, t, locale })}
+    </>
+  );
+  if (onClose)
+    return (
+      <SidePanel
+        label={t("landmark")}
+        head={
+          <ListHead
+            title={t("landmark")}
+            hot={first === input.today}
+            aside={<Button kind="quiet" size="s" icon="x" label={t("close")} onPress={onClose} />}
+          />
+        }
+        arrives="slide"
+        scrollRef={scroller}
+        onScroll={onScroll}
+      >
+        {content}
+      </SidePanel>
+    );
+  const list = (
+    <div className="cal-ag-list" ref={scroller} onScroll={onScroll} data-scroll="calagenda" {...swipeList}>
+      {content}
     </div>
   );
   if (input.device !== "phone") return <div className="cal-ag">{list}</div>;
   return (
     <div className="cal-ag" data-device="phone">
-      <PhoneMonth input={input} acts={acts} />
-      <div className="cal-ag-sheet">{list}</div>
+      <div className="cal-ag-pick" {...swipe}>
+        <PhoneMonth input={input} acts={acts} folded={folded} />
+      </div>
+      <div className="cal-ag-sheet">
+        <button
+          type="button"
+          className="oh-control cal-ag-grab"
+          aria-expanded={!folded}
+          aria-label={t("month")}
+          onClick={() => setFolded(!folded)}
+        >
+          <span className="cal-ag-grab-line" />
+        </button>
+        {list}
+      </div>
     </div>
   );
+}
+
+function agendaGroups({
+  groups,
+  input,
+  acts,
+  onRow,
+  openRow,
+  t,
+  locale,
+}: Pick<AgendaViewProps, "input" | "acts" | "onRow"> & {
+  groups: ReturnType<typeof agendaDays<ViewEvent>>["days"];
+  openRow: RefObject<HTMLDivElement | null>;
+  t: ReturnType<typeof useText>;
+  locale: ReturnType<typeof useLocale>;
+}) {
+  const thisYear = yearOf(input.today);
+  const nameOf = (day: string) =>
+    day === input.today
+      ? t("today")
+      : day === addDays(input.today, 1)
+        ? t("tomorrow")
+        : dayShort(day, locale, thisYear);
+  return groups.map((g) => {
+    const count = g.rows.length;
+    return (
+      <section key={g.day} className="cal-ag-day" aria-label={dayLong(g.day, locale, thisYear)}>
+        <GroupHeading count={count ? t("count", { count }) : undefined} hot={g.today}>
+          {nameOf(g.day)}
+        </GroupHeading>
+        {count ? (
+          <div role="list" className="cal-ag-rows">
+            {g.rows.map((r) => (
+              <Row
+                key={`${g.day}|${r.key}`}
+                row={r}
+                day={g.day}
+                input={input}
+                openRow={openRow}
+                onOpen={() => {
+                  if (onRow) onRow(r.item.id, g.day);
+                  else acts.event(r.item.id === input.open ? null : r.item);
+                }}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="cal-ag-none">{g.today ? t("nothingToday") : t("nothing")}</p>
+        )}
+      </section>
+    );
+  });
+}
+
+function AgendaTop({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
+  const t = useText("agenda");
+  useKeyBindings(
+    [
+      {
+        chord: "g g",
+        label: t("top"),
+        group: "navigate",
+        run: () => {
+          if (scroller.current) scroller.current.scrollTop = 0;
+        },
+      },
+    ],
+    "view",
+  );
+  return null;
 }
 
 function Row({
   row,
   day,
   input,
-  acts,
+  openRow,
+  onOpen,
 }: {
   row: AgendaRowData<ViewEvent>;
   day: string;
   input: RangeInput;
-  acts: RangeActs;
+  openRow: RefObject<HTMLDivElement | null>;
+  onOpen: () => void;
 }) {
   const t = useText("agenda");
   const locale = useLocale();
@@ -141,8 +260,10 @@ function Row({
             ? clockTime(time.from, locale)
             : t("span", { from: clockTime(time.from, locale), to: clockTime(time.to, locale) });
   const e = row.item;
+  const open = row.first && e.id === input.open;
   return (
     <AgendaRow
+      ref={open ? openRow : undefined}
       mark={{ kind: "calendar", tone: e.tone }}
       title={e.title}
       time={words}
@@ -151,14 +272,14 @@ function Row({
       off={e.state === "off"}
       quiet={e.state === "maybe"}
       waits={e.waits}
-      open={row.first && e.id === input.open}
-      onOpen={() => acts.event(e.id === input.open ? null : e)}
+      open={open}
+      onOpen={onOpen}
     />
   );
 }
 
 /** The phone's month over the list: a press picks the day the list starts from. */
-function PhoneMonth({ input, acts }: { input: RangeInput; acts: RangeActs }) {
+function PhoneMonth({ input, acts, folded }: { input: RangeInput; acts: RangeActs; folded: boolean }) {
   const locale = useLocale();
   const grid = useMemo(
     () =>
@@ -176,6 +297,8 @@ function PhoneMonth({ input, acts }: { input: RangeInput; acts: RangeActs }) {
       }),
     [input.anchor, input.weekStart, input.today, input.zone, input.zones, input.events],
   );
+  const weekOfAnchor = weekStartOf(input.anchor, input.weekStart);
+  const weeks = folded ? grid.weeks.filter((week) => week.id === weekOfAnchor) : grid.weeks;
   const busy = new Set(
     grid.weeks.flatMap((w) =>
       w.pieces.flatMap((p) => Array.from({ length: p.to - p.from + 1 }, (_, k) => addDays(w.id, p.from + k))),
@@ -186,7 +309,7 @@ function PhoneMonth({ input, acts }: { input: RangeInput; acts: RangeActs }) {
       <MiniMonth
         size="phone"
         weekdays={weekdayNames(locale, input.weekStart, "narrow")}
-        days={grid.weeks.flatMap((w) =>
+        days={weeks.flatMap((w) =>
           w.days.map((d) => ({
             id: d.id,
             number: String(d.day),

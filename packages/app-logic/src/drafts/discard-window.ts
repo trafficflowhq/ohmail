@@ -4,16 +4,19 @@
  * the draft. A send waiting on the row is taken back at the press, before the window opens: a letter never goes out
  * after Discard. A refusal hides nothing and is said in the row.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { PressVerdict } from "@ohmail/client-engine";
 import { UNDO_MS } from "../press/undo-window.js";
 import type { UndoToastFn } from "../press/undo-door.js";
-import type { DiscardRefusal, DraftsDoor } from "./door.js";
+import type { EngineDraft } from "@ohmail/wire";
+import { draftChanged, type DiscardRefusal, type DraftsDoor } from "./door.js";
 
 /** The sentences the window raises, in the place's words. */
 export interface DiscardWords {
   readonly discarded: string;
   readonly undo: string;
+  readonly changed: string;
+  readonly unsupported: string;
   /** The waiting send was taken back and the row is gone. */
   readonly notSent: string;
   /** The server said no: its sentence, or none. */
@@ -30,6 +33,8 @@ export interface DiscardWindow {
 }
 
 interface Open {
+  readonly shown: EngineDraft | undefined;
+  readonly remove: () => ReturnType<DraftsDoor["discard"]>;
   readonly timer: ReturnType<typeof setTimeout>;
   readonly ends: AbortController;
   readonly withdrew: boolean;
@@ -46,7 +51,11 @@ function sayVerdict(
   switch (verdict.kind) {
     case "refused":
       show(false);
-      say(w.refused(verdict.refusal?.message?.trim() || null));
+      say(
+        verdict.refusal?.code === "discard_unsupported"
+          ? w.unsupported
+          : w.refused(verdict.refusal?.message?.trim() || null),
+      );
       return;
     case "queued":
       // The organizer's wait painted the row back; this client's own retry keeps it gone.
@@ -67,59 +76,41 @@ function sayVerdict(
   }
 }
 
-export function useDiscardWindow(door: DraftsDoor, report: UndoToastFn, words: DiscardWords): DiscardWindow {
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
-  const [refusal, setRefusal] = useState<DiscardRefusal | null>(null);
-  const open = useRef(new Map<string, Open>());
-  const asking = useRef(new Set<string>());
-  const mounted = useRef(true);
-  const latest = useRef({ door, report, words });
-  latest.current = { door, report, words };
+interface DiscardRequest {
+  open: RefObject<Map<string, Open>>;
+  asking: RefObject<Set<string>>;
+  mounted: RefObject<boolean>;
+  latest: RefObject<{
+    door: DraftsDoor;
+    report: UndoToastFn;
+    words: DiscardWords;
+    drafts: readonly EngineDraft[];
+  }>;
+  setRefusal: (refusal: DiscardRefusal) => void;
+  changedSincePress: (shown: EngineDraft | undefined) => boolean;
+  commit: (id: string) => void;
+  keepChanged: (id: string) => void;
+  show: (id: string, on: boolean) => void;
+  undo: (id: string) => void;
+}
 
-  const show = useCallback((id: string, on: boolean) => {
-    if (!mounted.current) return;
-    setHidden((prev) => {
-      if (prev.has(id) === on) return prev;
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }, []);
-
-  const commit = useCallback(
-    (id: string) => {
-      const held = open.current.get(id);
-      if (!held) return;
-      open.current.delete(id);
-      clearTimeout(held.timer);
-      held.ends.abort();
-      void latest.current.door
-        .discard(id)
-        .catch((): PressVerdict => ({ kind: "refused", refusal: undefined }))
-        .then((verdict) => {
-          const { report: say, words: w } = latest.current;
-          sayVerdict(verdict, held.withdrew, w, say, (on) => show(id, on));
-        });
-    },
-    [show],
-  );
-
-  const undo = useCallback(
-    (id: string) => {
-      const held = open.current.get(id);
-      if (!held) return;
-      open.current.delete(id);
-      clearTimeout(held.timer);
-      show(id, false);
-    },
-    [show],
-  );
-
-  const discard = useCallback(
+function useAskDiscard({
+  open,
+  asking,
+  mounted,
+  latest,
+  setRefusal,
+  changedSincePress,
+  commit,
+  keepChanged,
+  show,
+  undo,
+}: DiscardRequest) {
+  return useCallback(
     (id: string) => {
       if (open.current.has(id) || asking.current.has(id)) return;
-      const { door: d } = latest.current;
+      const { door: d, drafts: shownDrafts } = latest.current;
+      const shown = shownDrafts.find((row) => row.id === id);
       const decision = d.decide(id);
       if (decision.kind === "refuse") {
         setRefusal({ draftId: id, why: decision.why, at: Date.now() });
@@ -142,9 +133,23 @@ export function useDiscardWindow(door: DraftsDoor, report: UndoToastFn, words: D
             return;
           }
           if (!mounted.current) return;
+          if (answer === "placeholder-withdrawn") {
+            latest.current.report(latest.current.words.notSent);
+            return;
+          }
+          if (changedSincePress(shown)) {
+            keepChanged(id);
+            return;
+          }
           const ends = new AbortController();
           const timer = setTimeout(() => commit(id), UNDO_MS);
-          open.current.set(id, { timer, ends, withdrew: answer === "withdrawn" });
+          open.current.set(id, {
+            shown,
+            timer,
+            ends,
+            remove: () => d.discard(id, shown),
+            withdrew: answer === "withdrawn",
+          });
           show(id, true);
           const { report: say, words: w } = latest.current;
           say(w.discarded, {
@@ -156,8 +161,115 @@ export function useDiscardWindow(door: DraftsDoor, report: UndoToastFn, words: D
           });
         });
     },
-    [commit, show, undo],
+    [asking, changedSincePress, commit, keepChanged, latest, mounted, open, setRefusal, show, undo],
   );
+}
+
+export function useDiscardWindow(
+  door: DraftsDoor,
+  report: UndoToastFn,
+  words: DiscardWords,
+  drafts: readonly EngineDraft[],
+): DiscardWindow {
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
+  const [refusal, setRefusal] = useState<DiscardRefusal | null>(null);
+  const open = useRef(new Map<string, Open>());
+  const asking = useRef(new Set<string>());
+  const mounted = useRef(true);
+  const latest = useRef({ door, report, words, drafts });
+  latest.current = { door, report, words, drafts };
+
+  const show = useCallback((id: string, on: boolean) => {
+    if (!mounted.current) return;
+    setHidden((prev) => {
+      if (prev.has(id) === on) return prev;
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const close = useCallback((id: string) => {
+    const held = open.current.get(id);
+    if (!held) return;
+    open.current.delete(id);
+    clearTimeout(held.timer);
+    held.ends.abort();
+    return held;
+  }, []);
+
+  const keepChanged = useCallback(
+    (id: string) => {
+      show(id, false);
+      latest.current.report(latest.current.words.changed);
+    },
+    [show],
+  );
+
+  const changedSincePress = useCallback((shown: EngineDraft | undefined) => {
+    const current = shown && latest.current.drafts.find((d) => d.id === shown.id);
+    return shown !== undefined && current !== undefined && draftChanged(shown, current);
+  }, []);
+
+  const commit = useCallback(
+    (id: string) => {
+      const held = close(id);
+      if (!held) return;
+      if (changedSincePress(held.shown)) {
+        keepChanged(id);
+        return;
+      }
+      void held
+        .remove()
+        .catch((): PressVerdict => ({ kind: "refused", refusal: undefined }))
+        .then((verdict) => {
+          const { report: say, words: w } = latest.current;
+          if (verdict.kind === "blocked") {
+            show(id, false);
+            if (mounted.current) setRefusal({ draftId: id, why: verdict.why, at: Date.now() });
+            return;
+          }
+          if (verdict.kind === "changed") {
+            keepChanged(id);
+            return;
+          }
+          // Once queued, the engine's own tombstone hides the row until the delete settles.
+          if (verdict.kind === "queued" && held.shown !== undefined) show(id, false);
+          sayVerdict(verdict, held.withdrew, w, say, (on) => show(id, on));
+        });
+    },
+    [changedSincePress, close, keepChanged, show],
+  );
+
+  const undo = useCallback(
+    (id: string) => {
+      if (close(id)) show(id, false);
+    },
+    [close, show],
+  );
+
+  const discard = useAskDiscard({
+    open,
+    asking,
+    mounted,
+    latest,
+    setRefusal,
+    changedSincePress,
+    commit,
+    keepChanged,
+    show,
+    undo,
+  });
+
+  useEffect(() => {
+    if (open.current.size === 0) return;
+    for (const [id, held] of open.current) {
+      if (!changedSincePress(held.shown)) continue;
+      close(id);
+      keepChanged(id);
+    }
+  }, [changedSincePress, close, drafts, keepChanged]);
 
   /* Leaving the place closes every open window: the deletes go now, as they would have. */
   useEffect(() => {

@@ -812,6 +812,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
     bounds: [DRAFT_MAX_RECIPIENTS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
       DRAFT_SUBJECT_MAX_CHARS, DRAFT_HTML_CAP_BYTES, DRAFT_BODY_MAX_BYTES, FORWARD_MAX_PARTS],
   },
+  // A fixed-length content revision or a bounded date for the one draft on the path.
+  "DELETE /drafts/:id/conditional": { scalarsOnly: true },
   "POST /drafts/:id/schedule": { bounds: [SCHEDULE_MAX_AHEAD_MS] },
   // A draft from the person's own words: the words, and their own subject; the two ids are equalities.
   "POST /drafts/from-text": { bounds: [DRAFT_OWN_TEXT_MAX_CHARS, DRAFT_SUBJECT_MAX_CHARS] },
@@ -1245,6 +1247,8 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/calendar-notices.ts#validationToken": "length-capped",
   "routes/consent.ts#counts": "closed-set",
   "routes/events.ts#stream": "identifier",
+  "routes/drafts.ts#ifContentRevision": "length-capped",
+  "routes/drafts.ts#ifUpdatedAt": "length-capped",
   // The lifecycle sweep's keyset position and the erase door's account: canonical uuids or a 400.
   "routes/internal.ts#after": "identifier",
   // A drill's ack token (cloud 0051): 43 base64url characters or the fixed 404, read by the page

@@ -3,10 +3,14 @@
  * the call `AttachmentPreview` makes, one page drawn to a canvas, its centre pixel read back.
  * `open` brings a PDF through the desktop's real path first: the bridge adapter, a real engine and
  * the overlay's `ensurePreview`, under the guard as Windows ships it. */
+import { createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { TextProvider } from "@ohmail/app/text";
+import { usePdfLook } from "@ohmail/app/host/browser";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { createEngineAdapter } from "../../src/bridge-fetch.js";
 import { installOfflineGuard } from "../../src/offline-guard.js";
-import { getDocument } from "../../src/window-pdfjs.js";
+import { getDocument } from "pdfjs-dist";
 import { desktopFileShell, enableDesktopAttachments } from "../../../webapp/app/shell/open-attachment.js";
 import { ensurePreview } from "../../../webapp/app/shell/attachments.js";
 
@@ -49,8 +53,27 @@ async function open(id: string): Promise<Record<string, unknown>> {
   return { size: blob.size, type: blob.type, ...(await draw(new Uint8Array(await blob.arrayBuffer()))) };
 }
 
+function Look({ blob }: { blob: Blob }) {
+  const view = usePdfLook(blob);
+  return createElement("div", { "data-pages": view.total, "data-page": view.page }, view.content,
+    createElement("button", { onClick: () => view.step(1) }, "Next PDF page"),
+  );
+}
+
+function show(b64: string) {
+  const blob = new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type: "application/pdf" });
+  const mount = document.createElement("div");
+  document.body.appendChild(mount);
+  createRoot(mount).render(createElement(TextProvider, {
+    locale: "en", timeZone: "UTC",
+    messages: { attachmentPreview: { rendering: "Preparing preview", pdfErrorTitle: "PDF failed", ariaLabel: "Attachment preview", page: "{page} / {total}" } },
+    children: createElement(Look, { blob }),
+  }));
+}
+
 (window as unknown as { rig: unknown }).rig = {
   render,
+  show,
   open,
   worker: () => typeof (globalThis as { pdfjsWorker?: unknown }).pdfjsWorker,
 };

@@ -103,6 +103,25 @@ export interface Person {
   speak(lang: Language): Promise<void>;
   /** Every address this window asked for, the refused ones included. */
   requests(): string[];
+  /**
+   * WHAT THIS BROWSER KEEPS: each entry its stored keys hold, by key, with the marker words of the walk (`marks`'s
+   * matches) its value holds; a value itself is never handed out. The far end of "nothing of A's is kept under B".
+   */
+  kept(marks: RegExp): Promise<Record<string, string[]>>;
+  /**
+   * An entry another tab of this browser left, as it left it (a closed tab's letter, under its own account's key):
+   * written from a tab of this browser that is opened on the install's name for it and closed again, so it stands
+   * before this window's first page as well as under a page on screen.
+   */
+  keep(key: string, value: string): Promise<void>;
+  /** Does anything this window draws show these words (a letter's words that must not reach another account)? */
+  shows(words: string): Promise<boolean>;
+  /**
+   * TIME PASSES FOR THIS WINDOW: its clock moves `ms` forward at once and every timer due in that span runs (an
+   * autosave's delay, a window that closes). Never a wait. Refused where the window's clock is not driven
+   * (`person({ clock: "driven" })`).
+   */
+  later(ms: number): Promise<void>;
   /** What breaks the bench's promises: page errors, console errors, requests that tried to leave. */
   problems(tolerated?: RegExp[]): string[];
 }
@@ -153,15 +172,25 @@ export interface Bench {
   /** The demo's read-only world; null where the world is planted per account. */
   fixtures: ReturnType<typeof fixturesPlanter> | null;
   has(need: Need): boolean;
-  /** One request to the API as the account's own browser would make it; the far end of a journey. */
-  ask(a: Account, method: string, path: string): Promise<{ status: number; body: unknown }>;
+  /**
+   * One request to the API as the account's own browser would make it; the far end of a journey. `fresh`: from a
+   * session of the account's own made for this one request, for the far end after the account signed out of the
+   * browser (its server still keeps its letters); refused on a bench that cannot make one.
+   */
+  ask(a: Account, method: string, path: string, o?: { session?: "fresh" }): Promise<{ status: number; body: unknown }>;
   /** A new account with a live session. Not on the demo. */
   account(): Promise<Account>;
   /**
    * A new window for a person; signed in when an account is given. `door` is the demo's second way in; `host` the
    * name the account's cookies are put under (the stack's foreign name), the install's own when not given.
    */
-  person(o?: { account?: Account; door?: "/demo" | "/?demo=1"; lang?: Language; host?: string }): Promise<Person>;
+  person(o?: { account?: Account; door?: "/demo" | "/?demo=1"; lang?: Language; host?: string; clock?: "driven" }): Promise<Person>;
+  /**
+   * ANOTHER TAB OF THIS BROWSER SIGNED IN AS `account`: the jar this window shares now names that account, as a
+   * completed sign-in leaves it, and the page on screen is left as it stands (nothing is loaded again). Refused on
+   * a bench that cannot hand a jar another account's session.
+   */
+  signedInElsewhere(person: Person, account: Account): Promise<void>;
   /** Is the account's session still able to renew? (the far end of a sign-out) */
   sessionLive(a: Account): Promise<boolean>;
   stack: Stack | null;

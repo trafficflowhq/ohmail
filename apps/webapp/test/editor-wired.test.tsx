@@ -1,7 +1,6 @@
 /** @vitest-environment jsdom */
 import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DRAFT_REPLY_COST_CREDITS } from "@ohmail/app-logic/writing/draft-reply";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -17,34 +16,16 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
 import { withNodeBlobs } from "./fixtures/node-blobs";
-import { settleFirstPaint } from "./_first-paint.js";
+import { settleEditor, settleFirstPaint } from "./_first-paint.js";
+import { CLOUD_WIRE } from "../app/(product)/mailbox/draft-reply-wire";
+import en from "../messages/en.json";
 import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
 import { DEMO_STORAGE_OWNER, resetStorageOwnerForTest, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /** Where the demo world keeps the reply buffer for `id`: the demo's own partition. */
 const bufferKey = (id: string): string => replyDraftKey(id, DEMO_STORAGE_OWNER);
 
-/**
- * THE EDITOR, WIRED — what reaches the wire, and what a bought draft is allowed to touch.
- *
- * The rich editor, the two scratch-buffer halves, the server sanitizer and the drafting route
- * all shipped separately and NONE of them was connected to a surface. So every assertion here
- * is about a seam that has never carried traffic, and the two that matter most are about
- * things NOT happening:
- *
- *  · a message nobody formatted must go out exactly as it did before this editor existed —
- *    `body`, no `html`, no `multipart/alternative`. Otherwise "we added formatting" quietly
- *    means "we changed how all of your mail is encoded";
- *  · a DRAFTED reply is not a sent reply. It dispatches no mutation at all, so it cannot
- *    discharge a Reply Run's debt — that discharge is `settle`'s, keyed on a send settling.
- *    Asserted by counting mutations rather than by reading the code, because the code that
- *    would break it is code somebody adds later.
- *
- * Driven through the whole shell on the demo world, because every one of these lives in the
- * WIRING and not in a component: what the editor emits, what the form does with it, what the
- * plan puts on the mutation, and who is allowed to write `triage_set`. The byte-shape guard alone
- * runs over the real API, because what it protects is the request.
- */
+/** Exercise the editor through the mounted Write view and the web drafter. Plain text must reach the wire without an HTML alternative; formatting must survive in the rich body. A one-press draft preserves the person's own reply in its tab. */
 (globalThis as unknown as { React: unknown }).React = React;
 
 const h = React.createElement;
@@ -117,9 +98,17 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+/** The window's width, as the new frame's plan reads it (made whole by the older tests' sorting, share write-1). */
+function wide(): void {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
+}
+
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+  wide();
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -129,12 +118,13 @@ async function shell(): Promise<HTMLElement> {
       h(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(AppShell, { demo: true, draftReplyWire: CLOUD_WIRE }) }),
         }),
       }),
     );
   });
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  await waitFor(() => container.querySelector(`section[aria-label="Messages"] [role=option][data-id]`) !== null, "the Ohbox's rows");
   /**
    * …AND THEN OPEN A MESSAGE.
    *
@@ -144,18 +134,20 @@ async function shell(): Promise<HTMLElement> {
    * unread message with nobody having asked. That is gone; the Ohbox rests until a row is
    * picked, so this presses the key that picks one.
    */
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
-  });
+  await key("j");
+  await waitFor(() => container.querySelector(`${OPEN} h2`) !== null, "the letter j opens");
   return container;
 }
 
+/** A key, pressed where the keys are (share write-1: before, always on `document`). */
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document).dispatchEvent(
       new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
     );
   });
+  // A key can open an editor, and the editor is behind a lazy seam.
+  await settleEditor();
 };
 
 const clickText = async (el: HTMLElement, label: string): Promise<void> => {
@@ -164,8 +156,9 @@ const clickText = async (el: HTMLElement, label: string): Promise<void> => {
     const kbd = x.querySelector("kbd")?.textContent ?? "";
     return (x.textContent ?? "").replace(kbd, "").trim();
   };
+  // Or the button's name, where the kit names a verb and draws its cap beside it (share write-1).
   const b = [...el.querySelectorAll<HTMLButtonElement>("button")]
-    .find((x) => bare(x) === label);
+    .find((x) => bare(x) === label || x.getAttribute("aria-label") === label);
   if (!b) throw new Error(`no button reading ${JSON.stringify(label)} on screen`);
   await act(async () => { b.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 };
@@ -174,12 +167,21 @@ const drain = async (): Promise<void> => {
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
 };
 
+/* The new shell's parts by role and name (share write-1; before, today's `.read-col .reply-editor .rte-surface`,
+   `.compose-editor .rte-surface` and the reply's `data-reply-for`). */
+const OPEN = '[role="region"][aria-label="Open message"]';
+const LETTER = '[role="region"][aria-label="New message"]';
 const replySurface = (el: HTMLElement): HTMLElement | null =>
-  el.querySelector<HTMLElement>(".read-col .reply-editor .rte-surface");
+  el.querySelector<HTMLElement>(`${OPEN} [role="textbox"][aria-label="Reply body"]`);
 const composeSurface = (el: HTMLElement): HTMLElement =>
-  el.querySelector<HTMLElement>(".compose-editor .rte-surface")!;
+  el.querySelector<HTMLElement>(`${LETTER} [role="textbox"][aria-label="Message"]`)!;
+/** The id of the letter the reply is open on (the scratch buffer's key): the letter the address reads. */
 const openReplyId = (el: HTMLElement): string =>
-  el.querySelector<HTMLElement>(".read-col .reply[data-reply-for]")?.dataset.replyFor ?? "";
+  replySurface(el) === null ? "" : /^#\/ohbox\/m\/([^/?]+)/.exec(window.location.hash)?.[1] ?? "";
+/** Write's words for the drafter (`write.draft.*`). */
+const D = en.write.draft;
+/** The drafter's sentence at the reply's foot: a status the kit draws beside the control. */
+const replyText = (el: HTMLElement): string => el.querySelector(OPEN)?.textContent ?? "";
 
 const sends = (): Array<Record<string, unknown>> =>
   dispatched.filter((m) => m.kind === "mail_send") as never;
@@ -260,8 +262,9 @@ async function wireShell(): Promise<{ el: HTMLElement; wire: WireRequest[]; deli
     createdAt: "2026-09-01T00:00:00.000Z", organizerRole: "organizer" as const, organizedBy: null,
     organizeConsentedAt: "2026-09-01T00:00:00.000Z",
   } as MailboxFacts];
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+  wide();
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -306,13 +309,16 @@ describe("a message with no formatting in it leaves exactly as it always did", (
       document.body.innerHTML = "";
       const w = await wireShell();
       await goCompose();
-      await waitFor(() => w.el.querySelector(".compose-editor .rte-surface") !== null, "the compose editor");
-      const to = w.el.querySelector<HTMLInputElement>("#compose-to")!;
+      await waitFor(() => w.el.querySelector(`${LETTER} [role="textbox"][aria-label="Message"]`) !== null, "the compose editor");
+      // Write's To is a line of people (share write-1: before, today's `#compose-to` text field): the address typed,
+      // then taken onto the line, as a person writes it.
+      const to = w.el.querySelector<HTMLInputElement>(`${LETTER} [role="combobox"][aria-label="To"]`)!;
       await act(async () => {
         Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!
           .set!.call(to, "someone@example.test");
         to.dispatchEvent(new Event("input", { bubbles: true }));
       });
+      await act(async () => { to.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
       await act(async () => { typeInto(composeSurface(w.el), text); });
       if (afterThePause) {
         await waitFor(() => w.wire.some((r) => r.method === "POST" && r.path === "/drafts"), "the autosave", AUTOSAVE_DELAY_MS + 6000);
@@ -474,36 +480,23 @@ describe("a reply begun before this editor existed is not reinterpreted", () => 
 
 /* ══ 3. THE DRAFTER — THE COST, AND THE DEBT IT MUST NOT SETTLE ═════════════════════════ */
 
-/** Press "Draft reply", which lives in the action bar's More disclosure. */
-async function openDrafter(el: HTMLElement): Promise<void> {
-  const more = el.querySelector<HTMLButtonElement>(".read-col .abar-more")!;
-  await act(async () => { more.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await clickText(el, "Draft reply");
+/** Open the reply, then request a draft through the reply footer. */
+async function openReply(el: HTMLElement): Promise<void> {
+  await key("r");
+  await waitFor(() => replySurface(el) !== null, "the reply editor");
+}
+/** The drafter's one control: the button the reply's foot draws, by the word it says now. */
+const draftControl = (el: HTMLElement): HTMLButtonElement | null =>
+  [...el.querySelectorAll<HTMLButtonElement>(`${OPEN} button`)]
+    .find((b) => [D.verb, D.fromText, D.again, D.running].some((w) => (b.textContent ?? "").includes(w) || b.getAttribute("aria-label") === w)) ?? null;
+async function pressDraft(el: HTMLElement): Promise<void> {
+  const b = draftControl(el);
+  if (!b) throw new Error("no draft control at the reply's foot");
+  await act(async () => { b.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await drain();
 }
 
 describe("buying a drafted reply", () => {
-  it("states the cost and spends NOTHING until it is confirmed", async () => {
-    const el = await shell();
-    await openDrafter(el);
-
-    const card = el.querySelector<HTMLElement>(".read-col .dr-card")!;
-    expect(card, "the offer did not render where the draft will land").toBeTruthy();
-    // The COST IS NAMED, and it is the REAL price. This asserted "one unit of your AI budget"
-    // while a draft cost one flat credit; the 2026-08-21 weighted schedule prices a draft at
-    // DRAFT_REPLY_COST_CREDITS, and the offer copy moved with it — so the pin derives the figure
-    // from the same constant the root anti-drift test compares against the gate's weight,
-    // rather than freezing a number the ledger has stopped charging. The property is unchanged:
-    // the price, on screen, before anything is bought.
-    expect(card.textContent).toContain(`${DRAFT_REPLY_COST_CREDITS} credits of your AI budget`);
-    // No API cost without revenue behind it: the figure is on screen BEFORE anything is
-    // requested. Not one call yet.
-    expect(apiCalls, "opening the offer already spent an AI action").toHaveLength(0);
-    // And the editor is open underneath it, which is the whole reason the card is here rather
-    // than in a dialog: what is being bought is text for that box.
-    expect(replySurface(el), "the reply editor did not open with the offer").toBeTruthy();
-  });
-
   it("puts the draft in the editor and dispatches NO mutation — a draft is not a reply", async () => {
     /**
      * The "No silent AI actions" invariant, structurally. A generated draft must not discharge a Reply Run's debt, and the
@@ -517,12 +510,13 @@ describe("buying a drafted reply", () => {
         ? { draftId: "d1" }
         : { body: "Thursday works for me.", html: null };
 
-    await openDrafter(el);
+    await openReply(el);
     // The demo's letter has a reply draft on the account, which Reply opens: emptied here.
     await act(async () => { typeInto(replySurface(el)!, ""); });
     const before = dispatched.length;
-    await clickText(el, "Draft it");
-    await drain();
+    // The one press requests the draft.
+    await pressDraft(el);
+    await waitFor(() => (replySurface(el)?.textContent ?? "").includes("Thursday works for me."), "the draft in the editor");
 
     expect(apiCalls.map((c) => c.path)).toEqual([
       expect.stringContaining("/draft"),
@@ -536,44 +530,46 @@ describe("buying a drafted reply", () => {
       dispatched.slice(before).map((m) => m.kind),
       "a bought draft dispatched a mutation, so it can discharge a debt it did not pay",
     ).toEqual([]);
-    // The offer is gone — the purchase is over and nothing is left to press.
-    expect(el.querySelector(".read-col .dr-card")).toBeNull();
+    // Drafting has settled. Pressing the control again would request another draft.
+    expect(draftControl(el)?.textContent ?? "").not.toContain(D.running);
   });
 
   it("asks before it overwrites something already written, and adding below escapes it", async () => {
+    /** A completed draft takes the visible tab. The person's original words remain in Your text, and the drafted text keeps its disclosure. */
     const el = await shell();
     // A draft that is PLAIN TEXT and contains a tag. Both halves matter: the drafting route
-    // returns text, and the editor below already holds markup — so the append has to join a
-    // markup half to a plain one, which is the only case where the escaping is load-bearing.
+    // returns text, and the editor below already holds markup. Over typed words the web's wire drafts from them
+    // through the from-text route, whose response includes the draft identity.
     apiImpl = async (path) =>
-      path.endsWith("/draft") ? { draftId: "d1" } : { body: "and <b>this</b> too", html: null };
+      path.endsWith("/draft") || path.endsWith("/drafts/from-text")
+        ? { draftId: "d1" }
+        : { body: "and <b>this</b> too", html: null };
 
-    await key("r");
+    await openReply(el);
     const surface0 = replySurface(el)!;
     await act(async () => { typeInto(surface0, "Already typed."); });
-    // FORMATTED, deliberately. With both halves plain, `appendRich` never enters its html
-    // branch and an assertion about escaping would be vacuous — which is exactly what the
-    // first version of this test was, and a mutation to raw concatenation passed it.
+    // FORMATTED, deliberately: the person's markup must come back as it was, and the draft's tag must not join it.
     await act(async () => { editorOf(surface0).commands.selectAll(); });
     await act(async () => { editorOf(surface0).commands.toggleBold(); });
-    await openDrafter(el);
-    await clickText(el, "Draft it");
     await drain();
+    await pressDraft(el);
+    await waitFor(() => (replySurface(el)?.textContent ?? "").includes("and <b>this</b> too"), "the draft in the editor");
 
-    // NOT clobbered. The text is still there and the question is on screen.
-    expect(replySurface(el)!.textContent).toContain("Already typed.");
-    const card = el.querySelector<HTMLElement>(".read-col .dr-card")!;
-    expect(card.textContent).toContain("You have already written something");
+    // NOT clobbered: the person's own text is one tab away, on screen as a choice.
+    const yours = [...el.querySelectorAll<HTMLElement>(`${OPEN} [role="tab"], ${OPEN} button`)]
+      .find((b) => (b.textContent ?? "").trim() === D.yours);
+    expect(yours, "the person's own text is not kept beside the draft").toBeTruthy();
+    // The draft's tag stayed a TAG THE READER CAN SEE rather than becoming formatting.
+    const drafted = replySurface(el)!;
+    expect(drafted.textContent).toContain("and <b>this</b> too");
+    expect(drafted.querySelectorAll("b, strong"), "the draft's plain text was parsed as markup").toHaveLength(0);
 
-    await clickText(el, "Add below");
+    await act(async () => { yours!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await drain();
 
     const surface = replySurface(el)!;
     expect(surface.textContent).toContain("Already typed.");
-    // The draft's tag stayed a TAG THE READER CAN SEE rather than becoming formatting. Join
-    // the two strings raw and `<b>this</b>` is parsed as markup on the way in — text the
-    // person never wrote, in a message they are about to send.
-    expect(surface.textContent).toContain("and <b>this</b> too");
+    expect(surface.textContent).not.toContain("and <b>this</b> too");
     expect(surface.querySelectorAll("strong")).toHaveLength(1);
   });
 
@@ -584,19 +580,19 @@ describe("buying a drafted reply", () => {
       throw new ApiError(402, "no_credits", "no AI credits remain on this account");
     };
 
-    await openDrafter(el);
-    await clickText(el, "Draft it");
-    await drain();
+    await openReply(el);
+    await act(async () => { typeInto(replySurface(el)!, ""); });
+    await pressDraft(el);
+    await waitFor(() => replyText(el).includes("no AI credits remain on this account"), "the refusal at the reply's foot");
 
-    const card = el.querySelector<HTMLElement>(".read-col .dr-card")!;
     // Verbatim. A local taxonomy here is how somebody with an empty balance is told the model
     // is down — the two are different, actionable facts and neither is inferable from a code.
-    expect(card.textContent).toContain("no AI credits remain on this account");
+    expect(replyText(el)).toContain("no AI credits remain on this account");
     // ONE request. A 402 retried in a loop is a person being asked again to buy what they
     // have just been told they cannot afford.
     expect(apiCalls).toHaveLength(1);
-    // And the offer is still standing, so a second press is a deliberate act.
-    expect([...card.querySelectorAll("button")].map((b) => b.textContent)).toContain("Draft it");
+    // A further request requires another deliberate press.
+    expect(draftControl(el)?.textContent ?? "").toContain(D.verb);
   });
 });
 
@@ -613,8 +609,9 @@ describe("a live shell turned into the demo in place keeps the demo's words in t
     const account = "acc-A1234";
     document.cookie = `tf_owner=${account}; Path=/`;
     try {
-      const { AppShell } = await import("./_todays-shell.js");
+      const { MailShell: AppShell } = await import("./_mail-shell.js");
       const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+      wide();
       const live = new OhmailEngine({ adapter: new FixturesAdapter(), storePolicy: { mode: "full" } });
       const container = document.createElement("div");
       document.body.appendChild(container);

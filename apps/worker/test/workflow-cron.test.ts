@@ -112,3 +112,19 @@ describe("workflowDrainPass", () => {
     expect(run!.status).toBe("failed");   // no live drafter wired
   });
 });
+
+it("drops the model step of a workflow disabled after enqueue", async () => {
+  const db = await makeTestDb();
+  const { accountId, messageId } = await seed(db);
+  const runId = await enqueuePending(db, accountId, [{ tool: "draft_reply", args: { messageId } }]);
+  await db.update(workflows).set({ enabled: false }).where(eq(workflows.accountId, accountId));
+  let calls = 0;
+  await workflowDrainPass(db as unknown as Tx, { drafter: {
+    async draft(input) { calls++; return MOCK.draft(input); },
+  } }, NOW);
+  expect(calls).toBe(0);
+  const [run] = await db.select().from(workflowRuns).where(eq(workflowRuns.id, runId));
+  expect(run?.status).toBe("failed");
+  expect(run?.reason).toBe("ai_unavailable");
+  expect(run?.log).toEqual([expect.objectContaining({ reason: "ai_unavailable" })]);
+});

@@ -11,7 +11,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "@playwright/test";
 import { carets, findProbe, grabFrame } from "./frame";
-import { openHarness, read, setDoc, caretAt, posOf } from "./rig";
+import { openHarness, read, setDoc, caretAt, posOf } from "./writing-rig";
 
 const OUT = resolve(__dirname, "../../../../build/editor-feel");
 const display = process.env.DISPLAY ?? "";
@@ -20,10 +20,13 @@ test.skip(({ browserName }) => browserName !== "webkit" || !display || process.e
   "the caret probe reads an X framebuffer under headed webkit only");
 
 async function sample(page: import("@playwright/test").Page, label: string) {
-  const rect = await page.evaluate(() => {
-    const r = document.querySelector(".rte-surface")!.getBoundingClientRect();
+  const rect = await page.getByRole("textbox", { name: "Reply", exact: true }).evaluate((box) => {
+    const r = box.getBoundingClientRect();
+    const frame = box.closest("[data-reading-scroll]")!.getBoundingClientRect();
     const p = document.getElementById("probe")!.getBoundingClientRect();
-    return { x: r.left - p.left, y: r.top - p.top, w: r.width, h: r.height };
+    const left = Math.max(r.left, frame.left, 0), top = Math.max(r.top, frame.top, 0);
+    const right = Math.min(r.right, frame.right, innerWidth), bottom = Math.min(r.bottom, frame.bottom, innerHeight);
+    return { x: left - p.left, y: top - p.top, w: Math.max(0, right - left), h: Math.max(0, bottom - top) };
   });
   let max = 0, seen: string[] = [], probeMiss = 0;
   for (let i = 0; i < 8; i++) {
@@ -82,7 +85,7 @@ test("ArrowDown walks: hard-break lines, paragraphs, after a link, after a list 
   await sample(page, "list-down-out-of-list");
 
   // A surface that SCROLLS: the reply frame at 120px with twelve hard-break lines.
-  await openHarness(page, { frame: "reply-editor", height: 120 });
+  await openHarness(page, { height: 120 });
   for (let i = 1; i <= 12; i++) { await page.keyboard.type(`row ${i}`); if (i < 12) await page.keyboard.press("Enter"); }
   await page.keyboard.press("Control+Home");
   await sample(page, "scroll-top");

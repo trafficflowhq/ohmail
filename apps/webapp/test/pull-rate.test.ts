@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   RATE_MIN_SPAN_MS, RATE_WINDOW_MS,
   pullEtaMs, pullRate, pullRemaining, pullSampleStep,
-} from "../app/shell/pull-rate";
+} from "@ohmail/app-logic/mailboxes/first-run/pull-rate";
 
 const t0 = 1_760_000_000_000;
 /** Fold a list of `[msFromT0, count]` observations, oldest first. */

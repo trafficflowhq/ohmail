@@ -218,6 +218,35 @@ export const draftsRoutes: Route[] = [
     },
   },
   {
+    method: "DELETE",
+    pattern: "/drafts/:id/conditional",
+    wire: true,
+    relay: true,
+    cost: "work",
+    replay: "state",
+    handler: async (req, deps, params) => {
+      const url = new URL(req.url);
+      const ifContentRevision = readContentRevision(url.searchParams.get("ifContentRevision"));
+      const stamp = url.searchParams.get("ifUpdatedAt");
+      const ifUpdatedAt = stamp === null ? undefined : Date.parse(stamp);
+      if (stamp !== null && (stamp.length > 40 || !Number.isFinite(ifUpdatedAt))) {
+        throw new ServiceError("validation_failed", 400, "ifUpdatedAt must be a draft timestamp");
+      }
+      if (ifContentRevision === undefined && ifUpdatedAt === undefined) {
+        throw new ServiceError("validation_failed", 400, "conditional discard requires a draft revision or timestamp");
+      }
+      const headers = new Headers();
+      try {
+        const { seq } = await drafts(deps).remove(serviceContext(deps, req), params.id!, { ifContentRevision, ifUpdatedAt });
+        headers.set("X-Sync-Seq", String(seq));
+      } catch (err) {
+        // Already gone is a successful retry. A 404 on this path means the route is unsupported.
+        if (!(err instanceof ServiceError) || err.code !== "not_found") throw err;
+      }
+      return answerBuilt<"DELETE /drafts/:id/conditional">(new Response(null, { status: 204, headers }));
+    },
+  },
+  {
     /**
      * A person answers for a send we could not confirm — `{ outcome: 'arrived' | 'not_arrived'
      * }`. The one exit from the held state: `unverified` means this server genuinely does not
@@ -236,8 +265,12 @@ export const draftsRoutes: Route[] = [
     replay: "guarded",
     handler: async (req, deps, params) => {
       const body = await readBody<UntrustedBody<RequestOf<"POST /drafts/:id/resolve">>>(req);
+      const { ifUpdatedAt } = body;
+      if (ifUpdatedAt !== undefined && (typeof ifUpdatedAt !== "string" || !Number.isFinite(Date.parse(ifUpdatedAt)))) {
+        throw new ServiceError("validation_failed", 400, "ifUpdatedAt must be a draft timestamp");
+      }
       const { draft, seq } = await drafts(deps).resolve(
-        serviceContext(deps, req), params.id!, body.outcome as SendResolution,
+        serviceContext(deps, req), params.id!, body.outcome as SendResolution, ifUpdatedAt,
       );
       return answer<"POST /drafts/:id/resolve">()(draft, { status: 200, seq });
     },
@@ -377,11 +410,12 @@ export const draftsRoutes: Route[] = [
       switch (result.status) {
         case "sent":
           // `firstSend` RIDES WHEN THE SERVICE STATES IT, and only then: it means this key was
-          // already settled and this request delivered nothing. Absent on an ordinary send, so
-          // the shape every installed client parses today is byte-identical to what it was.
+          // already settled and this request delivered nothing. The reservation names the draft
+          // that went, even when the request named a different one.
           return answer<"POST /drafts/:id/send">()(
             {
-              status: "sent", providerMessageId: result.providerMessageId,
+              status: "sent", providerMessageId: result.providerMessageId, sentDraftId: result.draftId,
+              ...(result.sentDraftThrough === undefined ? {} : { sentDraftThrough: result.sentDraftThrough }),
               ...(result.firstSend ? { firstSend: result.firstSend } : {}),
               ...(result.sentCopy ? { sentCopy: result.sentCopy } : {}),
               ...(result.sentCopyReason ? { sentCopyReason: result.sentCopyReason } : {}),

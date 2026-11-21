@@ -1,12 +1,12 @@
 /**
  * THE RULE TABLE UNDER A REAL KEYBOARD, on chromium and webkit. Every `EDITOR_RULES` id (see
- * `app/shell/rich-editor-marks.ts`) is in a test name here; the jsdom suite pins the same rows at
+ * `packages/app/src/write/editor/marks.ts`) is in a test name here; the jsdom suite pins the same rows at
  * the mechanism and its census refuses a row missing from either file. Keys are Playwright's
  * `page.keyboard` — the browser's own editing host inserts the character and ProseMirror reads
  * the DOM change, which is the path a person's keystroke takes and jsdom cannot.
  */
 import { expect, test, type Page } from "@playwright/test";
-import { MOD, caretAt, marksAt, openHarness, posOf, read, setDoc, settled as caughtUp } from "./rig";
+import { MOD, caretAt, marksAt, openHarness, posOf, read, setDoc, settled as caughtUp } from "./writing-rig";
 
 const A = '<a target="_blank" rel="noopener noreferrer nofollow" href="https://x.example/p">';
 const MARKS: Record<string, [string, string, string]> = {
@@ -49,7 +49,7 @@ test.describe("links end where you stop typing them", () => {
     for (let i = 0; i < 4; i++) await page.keyboard.press("Shift+ArrowLeft");
     await caughtUp(page);
     await page.keyboard.press(`${MOD}+k`);
-    const field = page.getByRole("dialog", { name: "Link" }).getByRole("textbox", { name: "Link address" });
+    const field = page.getByRole("dialog", { name: "Link" }).getByRole("textbox", { name: "Address" });
     await expect(field).toBeFocused();
     await field.fill("https://x.example/p");
     await page.keyboard.press("Enter");
@@ -94,10 +94,10 @@ test.describe("links end where you stop typing them", () => {
   test("[link-self-href] a pasted address, once linked, keeps its address equal to its text as it is typed onto", async ({ page }) => {
     await openHarness(page);
     await page.keyboard.type("see ");
-    await page.evaluate(() => {
+    await page.getByRole("textbox", { name: "Reply", exact: true }).evaluate((box) => {
       const dt = new DataTransfer();
       dt.setData("text/plain", "https://x.example/p");
-      document.querySelector(".rte-surface")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      box.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     });
     await page.keyboard.type(" ");
     expect(await html(page)).toBe('<p>see <a target="_blank" rel="noopener noreferrer nofollow" href="https://x.example/p">https://x.example/p</a> </p>');
@@ -215,7 +215,7 @@ test.describe("the toolbar says what the next letter carries", () => {
     await expect(link).toHaveAttribute("aria-expanded", "false");
     await page.keyboard.press(`${MOD}+k`);
     await expect(link).toHaveAttribute("aria-expanded", "true");
-    await expect(page.getByRole("dialog", { name: "Link" }).getByRole("textbox", { name: "Link address" })).toHaveValue("https://x.example/p");
+    await expect(page.getByRole("dialog", { name: "Link" }).getByRole("textbox", { name: "Address" })).toHaveValue("https://x.example/p");
     await page.keyboard.press("Escape");
     await expect(link).toHaveAttribute("aria-expanded", "false");
   });

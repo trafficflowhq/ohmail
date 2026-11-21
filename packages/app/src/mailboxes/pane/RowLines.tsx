@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Button } from "@ohmail/ui/base";
-import { SettingNote } from "@ohmail/ui/mail";
+import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { filerKey } from "@ohmail/app-logic/mail-state/mail-state";
 import { notCheckedOf, quietSaid, type RowState, type Standing } from "@ohmail/app-logic/mailboxes/pane/said";
 import { NONE } from "../../host/index.js";
@@ -8,20 +8,20 @@ import { ConnectForm } from "../connect/index.js";
 import type { ConnectResult, ConnectSubject } from "../connect/contract.js";
 import { Checks } from "./Checks.js";
 import { Organizing, StandDown } from "./Organizer.js";
-import { Removal } from "./Removal.js";
 import { formOf, type RowProps } from "./Row.js";
 import { useSay, useStamps } from "./say.js";
 
 /**
- * AN OPENED ROW'S LINES, in the shipped pane's order: an earlier entry it stands in front of; who holds it and the
- * one remedy there is; who files it here and the way to stop that; the quiet facts; then its verbs, the connect form
- * for an edit or a reconnect, the removal's confirmation, the check against its server, its filings that wait, and
- * the calendar's half where a shell has one.
+ * AN OPENED ROW'S LINES: first its state with the exact time (the shipped row's pointer hint), then in the shipped
+ * pane's order: an earlier entry it stands in front of; who holds it and the one remedy there is; who files it here
+ * and the way to stop that; the quiet facts; then its verbs, the connect form for an edit or a reconnect, the check
+ * against its server, its filings that wait, and the calendar's half where a shell has one. The removal's
+ * confirmation is the pane's dialog over the window.
  */
 export function RowLines(
   props: RowProps & { readonly standing: Standing; readonly state: RowState },
 ): ReactNode {
-  const { m, model, verbs, standing, filer } = props;
+  const { m, model, verbs, standing, state, filer } = props;
   const say = useSay();
   const stamps = useStamps();
   const now = model.list.now;
@@ -33,6 +33,8 @@ export function RowLines(
   const erasing = Boolean(m.erasure);
   return (
     <div className="mbx-row-lines">
+      {/* Its state with the exact time: when it last synced, or since when and how often it fails. */}
+      {"title" in state && state.title ? <SettingLine label={state.text} value={state.title} /> : null}
       {props.superseded > 0 ? <SettingNote>{say({ key: "superseded" })}</SettingNote> : null}
       <StandDown {...props} />
       {standing.organizerBlock ? <Organizing {...props} /> : null}
@@ -104,7 +106,6 @@ export function RowLines(
           factor={props.factor}
         />
       ) : null}
-      {removing ? <Removal {...props} /> : null}
       {verbs.check && !erasing && m.status !== "disabled" ? <Checks {...props} /> : null}
       {props.calendar !== NONE ? props.calendar({ mailboxId: m.id, provider: m.provider }) : null}
     </div>

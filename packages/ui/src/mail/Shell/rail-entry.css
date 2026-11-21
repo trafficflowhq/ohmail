@@ -137,6 +137,20 @@
     display: inline-flex;
   }
 
+  /* Its digit stands in the key's place while the keys are within the rail, and only then. */
+  .oh-railentry-digit {
+    display: none;
+  }
+
+  .oh-rail:focus-within .oh-railentry-digit {
+    display: inline-flex;
+    flex: none;
+  }
+
+  :root .oh-rail:focus-within .oh-railentry[data-digit] > .oh-railentry-key {
+    display: none;
+  }
+
   .oh-railentry[aria-current="page"] .oh-key {
     --oh-railentry-on-ink: color-mix(in srgb, var(--on-solid) 22%, transparent);
 

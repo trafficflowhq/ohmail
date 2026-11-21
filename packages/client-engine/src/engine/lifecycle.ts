@@ -24,7 +24,7 @@ import {
   SNAPSHOT_REFUSAL_HOLD_CAP_MS, STORE_POLICY_GENERATION, STORE_POLICY_GENERATION_META,
 } from "./options.js";
 import {
-  andDoneOf, byAtN, isCreatedRow, isPersistedOutboxEntry, pastCreateDedupe, type PersistedOutboxEntry,
+  andDoneOf, byAtN, filingMutation, isCreatedRow, isPersistedOutboxEntry, pastCreateDedupe, type PersistedOutboxEntry,
   persistedWired,
 } from "./outbox-record.js";
 import { EngineTrash } from "./trash.js";
@@ -465,7 +465,7 @@ export abstract class EngineLifecycle extends EngineTrash {
       if (e.withdrawOwed === true && e.mutation.kind === "mail_send") {
         this.withdrawnKeys.add(e.key);
         this.owedWithdraws.set(e.id, {
-          id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n, restored: true, withdrawOwed: true,
+          id: e.id, key: e.key, mutation: filingMutation(e.mutation), at: e.at, n: e.n, restored: true, withdrawOwed: true,
           attempts: e.attempts ?? 0, ...(e.nextAt !== undefined ? { nextAt: e.nextAt } : {}),
           ...(persistedWired(e) ? { wired: true as const } : {}),
           ...(isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
@@ -511,7 +511,7 @@ export abstract class EngineLifecycle extends EngineTrash {
       else this.unpaintedRestored.add(e.id);
     } catch { /* a malformed or out-of-vocabulary mutation paints nothing; the wire decides */ }
     this.queue.push({
-      id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n, restored: true,
+      id: e.id, key: e.key, mutation: filingMutation(e.mutation), at: e.at, n: e.n, restored: true,
       // A `v: 1` record carries none of these; `?? 0` is what makes it a valid `v: 2` in memory
       // and gives it the full ceiling rather than retiring it on arrival.
       attempts: e.attempts ?? 0,
@@ -597,6 +597,7 @@ export abstract class EngineLifecycle extends EngineTrash {
 
   protected async heard(n: OutboxNotice): Promise<void> {
     if (n.t === "changed") return this.followDisk();
+    if (n.t === "calendar-changed") return;
     if (n.t === "ended") {
       this.foreignEndings.delete(n.key);
       this.foreignEndings.set(n.key, n.how);

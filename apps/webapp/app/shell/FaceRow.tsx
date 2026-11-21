@@ -16,13 +16,12 @@
  * (ohmarchy on Linux), and the scope line says so.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import type { ApplyFaceAllDevices } from "@ohmail/app/mail";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow, useTheme, useToast, type FaceName } from "@ohmail/ui";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
-
-/** The account write — `useConsentState().setThemeFace`, or null where no wire can store one. */
-export type ApplyFaceAllDevices = (face: FaceName) => Promise<FaceName | null>;
+import { useFaceSettings, type FaceSettingsProps } from "../(product)/mailbox/general-preferences";
 
 /** What the shell's consent read says about the look. */
 type ConsentFace = { themeFace: FaceName | null; themeFaceKnown: boolean; standalone: boolean };
@@ -89,47 +88,20 @@ export function useFaceFollowsAccount(
   return hold;
 }
 
-export function FaceRow({ applyAllDevices, holdForAccount }: {
+export function FaceRow({ applyAllDevices, ...local }: Omit<FaceSettingsProps, "accountWrite"> & {
   applyAllDevices: ApplyFaceAllDevices | null;
-  /** From {@link useFaceFollowsAccount}: a device press it writes to the account once it can. */
-  holdForAccount?: (face: FaceName) => void;
 }) {
   const t = useTranslations("settings");
-  const toast = useToast();
-  const { face, facePreference, accountFace, setFace, adoptAccountFace } = useTheme();
-  /** Local, so a rejection can be reported without any shared flag owning the message. */
-  const [saving, setSaving] = useState(false);
-  /** The newest press; an older write's completion applies nothing. */
-  const press = useRef(0);
-
-  /* "Applies on all your devices" may only be claimed when the account really governs this
-     device: the stored account face matches AND no device pin outranks it. */
-  const accountGoverns = accountFace === face && facePreference === null;
-
-  const writeAccount = (apply: ApplyFaceAllDevices, submitted: FaceName): void => {
-    const mine = ++press.current;
-    const owner = readOwner();
-    const before = { account: accountFace, pin: facePreference };
-    adoptAccountFace(submitted);
-    setFace(null);
-    setSaving(true);
-    /* A sign-out (the sweep cleared the mirror) or a newer press makes this completion stale. */
-    const current = (): boolean => press.current === mine && readOwner() === owner;
-    apply(submitted)
-      .then((stored) => {
-        if (current()) adoptAccountFace(stored); // the echo, not the argument
-      })
-      .catch(() => {
-        if (!current()) return;
-        adoptAccountFace(before.account);
-        setFace(before.pin);
-        toast(t("faceFailed"));
-      })
-      .finally(() => {
-        if (press.current === mine) setSaving(false);
-      });
-  };
-
+  const look = useFaceSettings({
+    ...local,
+    accountWrite: applyAllDevices === null ? null : {
+      apply: applyAllDevices,
+      captureOwner: () => {
+        const owner = readOwner();
+        return () => readOwner() === owner;
+      },
+    },
+  });
   return (
     <>
       <SettingsRow
@@ -138,14 +110,8 @@ export function FaceRow({ applyAllDevices, holdForAccount }: {
         control={
           <SegmentedControl<FaceName>
             ariaLabel={t("faceAria")}
-            value={face}
-            onChange={(next) => {
-              if (next === face) return;
-              if (applyAllDevices === null) {
-                setFace(next);
-                holdForAccount?.(next);
-              } else writeAccount(applyAllDevices, next);
-            }}
+            value={look.face}
+            onChange={look.set}
             className="face-seg"
             options={[
               { id: "paper", label: t("facePaper") },
@@ -154,19 +120,17 @@ export function FaceRow({ applyAllDevices, holdForAccount }: {
           />
         }
       />
-      {applyAllDevices === null ? null : accountGoverns ? (
+      {look.scope === null ? null : look.scope.governs === "all" ? (
         <div className="face-scope">
           <span>{t("faceScopeAll")}</span>
         </div>
       ) : (
         <div className="face-scope">
-          <span>{t(accountFace === null && facePreference === null ? "faceScopeDefault" : "faceScopeDevice")}</span>
+          <span>{t(look.scope.governs === "default" ? "faceScopeDefault" : "faceScopeDevice")}</span>
           <button
             type="button"
-            disabled={saving}
-            onClick={() => {
-              if (!saving) writeAccount(applyAllDevices, face);
-            }}
+            disabled={look.scope.busy}
+            onClick={look.scope.applyAll}
           >
             {t("faceApplyAll")}
           </button>

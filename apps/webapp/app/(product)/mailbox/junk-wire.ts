@@ -14,7 +14,7 @@ export const cloudWire: JunkWire = {
   dismissRescue: (id) => screenerApi.junkRescueDismiss(id),
   search: (q) => screenerApi.junkSearch(q),
   sweepPreview: () => screenerApi.junkSweepPreview(),
-  sweepRequest: () => screenerApi.junkSweepRequest(),
+  sweepRequest: (confirmation) => screenerApi.junkSweepRequest(confirmation),
   isGone: (err) => err instanceof ApiError && err.status === 410,
   codeOf: (err) => (err instanceof ApiError ? err.code : null),
 };

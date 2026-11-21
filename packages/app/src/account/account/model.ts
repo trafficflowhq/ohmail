@@ -10,9 +10,14 @@
 import type { AccountWord, Answer, SignOutOutcome } from "../contract.js";
 
 /** How a host reaches the session this pane is about. */
+interface AccountIdentity {
+  readonly address: string;
+  readonly displayName?: string;
+}
+
 export interface AccountDoor {
   /** Which address is signed in on this browser. */
-  who(): Promise<Answer<{ readonly address: string }, AccountWord>>;
+  who(): Promise<Answer<AccountIdentity, AccountWord>>;
   /**
    * Signs this browser out: the session is ended at the server and this browser's copy of the mail is wiped. `left`:
    * the door has left by a full load. `blocked`: the copy is still here, so it stays. `unverified`: this browser
@@ -39,7 +44,7 @@ export interface AccountModel {
     | { readonly at: "loading" }
     | { readonly at: "failed"; readonly said: string }
     | { readonly at: "signedOut" }
-    | { readonly at: "signedIn"; readonly address: string };
+    | ({ readonly at: "signedIn" } & AccountIdentity);
   /** The sign-out alone is asked for before it runs: the question stands. The whole pane never asks. */
   readonly asked: boolean;
   /** The sign-out is on its way. */
@@ -60,7 +65,7 @@ export type AccountPaneState = Pick<AccountModel, "who" | "asked" | "signingOut"
 
 export type AccountEvent =
   /** The door answered who is signed in. */
-  | { readonly kind: "who"; readonly answer: Answer<{ readonly address: string }, AccountWord> }
+  | { readonly kind: "who"; readonly answer: Answer<AccountIdentity, AccountWord> }
   /** The press on Sign out. */
   | { readonly kind: "signOut" }
   | { readonly kind: "confirmSignOut" }
@@ -89,8 +94,11 @@ const leaves = (state: AccountPaneState): AccountStepped => ({
 });
 
 /** A read's answer as what the pane draws. Any refusal that names signing in as the remedy is nobody signed in. */
-function whoOf(answer: Answer<{ readonly address: string }, AccountWord>): AccountPaneState["who"] {
-  if (answer.ok) return { at: "signedIn", address: answer.value.address };
+function whoOf(answer: Answer<AccountIdentity, AccountWord>): AccountPaneState["who"] {
+  if (answer.ok) {
+    const { address, displayName } = answer.value;
+    return { at: "signedIn", address, ...(displayName === undefined ? {} : { displayName }) };
+  }
   if ("said" in answer) return { at: "failed", said: answer.said };
   return { at: "signedOut" };
 }

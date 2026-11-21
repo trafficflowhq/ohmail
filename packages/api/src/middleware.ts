@@ -24,6 +24,9 @@ export type Middleware = (next: Handler, route: Route) => Handler;
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+export const EXPECTED_ACCOUNT_HEADER = "X-Ohmail-Expected-Account";
+export const EXPECTED_FAMILY_HEADER = "X-Ohmail-Expected-Family";
+
 /**
  * Read the session token from a Bearer header (native) or the `tf_session` cookie (web). The
  * explicit credential wins: a cookie is sent whether or not anyone meant to send it, a header is
@@ -498,6 +501,14 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
     if (token && await erasedAccountBearer(req, deps, token.value)) return accountErasedResponse();
     return errorResponse("unauthorized", 401, "authentication required");
   }
+  const expectedAccount = req.headers.get(EXPECTED_ACCOUNT_HEADER);
+  const expectedFamily = req.headers.get(EXPECTED_FAMILY_HEADER);
+  if (deps.session && (
+    (expectedAccount !== null && expectedAccount !== deps.session.accountId)
+    || (expectedFamily !== null && expectedFamily !== deps.session.familyId)
+  )) {
+    return errorResponse("session_mismatch", 409, "the browser session changed");
+  }
   // Last, and here alone: the session is settled (resolved, or dropped above), and the request's
   // handle comes to name its account before any later step or the handler reads through it.
   bindRequest(deps);
@@ -709,9 +720,19 @@ export const withIdempotency: Middleware = (next, route) => async (req, deps, pa
   if (!accountId) return next(req, deps, params); // protected routes are already 401'd by withSession
 
   const url = new URL(req.url);
-  const rawBody = await req.clone().text();
+  let body = await req.clone().text();
+  if (route.method === "POST" && route.pattern === "/screener/:id") {
+    // Retrying a filing uses the same key after dropping the live unsubscribe grant.
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && Object.hasOwn(parsed, "unsubscribeIds")) {
+        delete parsed.unsubscribeIds;
+        body = JSON.stringify(parsed);
+      }
+    } catch { /* The handler validates the body. */ }
+  }
   const requestHash = sha256(
-    `${req.method}\n${url.pathname}\n${canonicalQuery(url)}\n${rawBody}`,
+    `${req.method}\n${url.pathname}\n${canonicalQuery(url)}\n${body}`,
   ).toString("hex");
 
   /* THE FENCE, BEFORE A STORED RESPONSE IS SERVED. The stored response is a verbatim copy of what

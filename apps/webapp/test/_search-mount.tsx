@@ -6,11 +6,18 @@
 import * as React from "react";
 import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { OhmailEngine } from "@ohmail/client-engine";
+import { useSearchList } from "@ohmail/app-logic/search";
+import { SearchAbove } from "../../../packages/app/src/search/SearchAbove";
+import { SearchList } from "../../../packages/app/src/search/SearchList";
+import { blankOf as searchBlankOf } from "../../../packages/app/src/search/blank";
+import { TextProvider } from "@ohmail/app/text";
+import { NONE } from "@ohmail/app/host";
+import { layoutPlan } from "../../../packages/app/src/frame/layout-plan";
+import { fakeWindow } from "../../../packages/app/test/support/fake-window";
+import type { SearchBeside } from "../../../packages/app/src/search/beside";
+import type { OhmailEngine, SearchHit } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
@@ -57,25 +64,76 @@ export interface MountedSearch {
   unmount: () => void;
 }
 
+const desktopPlan = layoutPlan(fakeWindow("desktop").read());
+const searchBeside: SearchBeside = {
+  words: {
+    name: (mail) => mail.from.name,
+    address: (mail) => mail.from.address,
+    stamp: () => "10 Nov",
+    place: (mail) => mail.folder === "INBOX" ? "Ohbox" : mail.folder,
+    placeOfFolder: (folder) => folder,
+  },
+  junk: NONE,
+  junkReadable: false,
+  keysShown: true,
+  people: NONE,
+  events: NONE,
+  go: { address: () => {} },
+};
+
+export function prepareSearchWindow(): void {
+  window.matchMedia ??= (query) => ({
+    matches: false, media: query, onchange: null,
+    addListener() {}, removeListener() {},
+    addEventListener() {}, removeEventListener() {},
+    dispatchEvent: () => false,
+  });
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
+}
+
+export function SearchSeat({ engine, initialQuery, onOpen = () => {} }: {
+  engine: OhmailEngine;
+  initialQuery: string;
+  onOpen?: (hit: SearchHit) => void;
+}) {
+  const [query, setQuery] = React.useState(initialQuery);
+  const boxRef = React.useRef<HTMLInputElement>(null);
+  const scrollerRef = React.useRef<HTMLElement>(null);
+  const model = useSearchList({
+    engine, scope: "acct", query, onQuery: setQuery, onOpen, onExit: "none",
+    boxRef, scrollerRef, t: (key) => key, searchBy: "words",
+  });
+  return (
+    <SearchAbove model={model} beside={searchBeside} blank={searchBlankOf(model, (key) => key)}>
+      <SearchList
+        route={{ place: "search", sub: null, open: null, stage: null, words: {} }}
+        plan={desktopPlan}
+        keysHere
+      />
+    </SearchAbove>
+  );
+}
+
 export function mountSearch(engine: OhmailEngine, query: string, now = new Date()): MountedSearch {
+  prepareSearchWindow();
   const host = document.createElement("div");
   document.body.appendChild(host);
   let commits = 0;
   const root: Root = createRoot(host);
   root.render(
-    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC" now={now}>
+    <TextProvider locale="en" messages={messages} timeZone="UTC" now={now}>
       <KeymapProvider>
         <React.Profiler id="search" onRender={(_id, phase) => { if (phase !== "nested-update") commits += 1; }}>
-          <SearchView engine={engine} version={1} now={now} query={query} onQuery={() => {}} onOpen={() => {}} />
+          <SearchSeat engine={engine} initialQuery={query} />
         </React.Profiler>
       </KeymapProvider>
-    </NextIntlClientProvider>,
+    </TextProvider>,
   );
   const paint = (): Paint => ({ ...threadClock(), commits });
   return {
     host,
     rendered: (n) => new Promise<Paint>((resolve) => {
-      const count = () => host.querySelectorAll(".hit").length;
+      const count = () => host.querySelectorAll('[role="listitem"]').length;
       if (count() >= n) {
         resolve(paint());
         return;
@@ -89,60 +147,6 @@ export function mountSearch(engine: OhmailEngine, query: string, now = new Date(
       obs.observe(host, { childList: true, subtree: true });
     }),
     commits: () => commits,
-    unmount: () => {
-      root.unmount();
-      host.remove();
-    },
-  };
-}
-
-/**
- * A PERSON'S VISIT TO SEARCH, by what they can do: type a question, press Enter, press a facet by its name, choose an
- * order by its name, scroll to the list's end. The search screen's calls-per-setting test drives it; when the screen
- * is swapped, this mount is re-pointed and the test is not edited.
- */
-export interface SearchVisit {
-  type: (q: string) => void;
-  enter: () => void;
-  facet: (name: string) => boolean;
-  sort: (order: "relevance" | "date_desc" | "date_asc" | "mailbox" | "sender") => void;
-  scrollEnd: () => void;
-  unmount: () => void;
-}
-
-export function mountSearchVisit(engine: OhmailEngine, now: Date): SearchVisit {
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const root: Root = createRoot(host);
-  const door: { type?: (q: string) => void } = {};
-  function Live() {
-    const [query, setQuery] = React.useState("");
-    door.type = setQuery;
-    return <SearchView engine={engine} version={1} indexRev={0} now={now} query={query} onQuery={setQuery} onOpen={() => {}} />;
-  }
-  root.render(
-    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC" now={now}>
-      <KeymapProvider>
-        <Live />
-      </KeymapProvider>
-    </NextIntlClientProvider>,
-  );
-  const box = () => host.querySelector<HTMLInputElement>(`input[aria-label="${messages.search.aria}"]`);
-  return {
-    type: (q) => door.type!(q),
-    enter: () => box()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
-    facet: (name) => {
-      const b = [...host.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find((x) => (x.textContent ?? "").includes(name));
-      b?.click();
-      return b !== undefined;
-    },
-    sort: (order) => {
-      const select = host.querySelector<HTMLSelectElement>("select")!;
-      const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
-      set.call(select, order);
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    scrollEnd: () => host.querySelector('[role="list"]')?.closest(".scroller")?.dispatchEvent(new Event("scroll")),
     unmount: () => {
       root.unmount();
       host.remove();

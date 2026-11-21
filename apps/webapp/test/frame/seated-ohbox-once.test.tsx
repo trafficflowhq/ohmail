@@ -2,11 +2,13 @@
 /**
  * AT THE SEATED OHBOX THE OHBOX'S MODEL HAS ONE MOUNT, AND NOTHING OF TODAY'S OHBOX VIEW IS IN THE DOCUMENT. The real
  * shell as a host mounts it: the hosts' own places hand the Ohbox's entry, and the composition above the panes feeds
- * it. Leaving for News and coming back mounts the model once again, and News's list is the one it was (the kept
- * pile, not built again). And the rail's number at the seated Ohbox is the old shell's fed one: the count today's
- * rail said.
+ * it. Leaving for News and coming back mounts the model once again, and News keeps its reading position. And the rail's number at the seated Ohbox is the old shell's fed one: the count today's
+ * rail said. (What every web host was handed through today's adapter left with it: the mail's own supplies say what a
+ * browser host hands, in `packages/app/test/mail/supplies.test.tsx`.)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/dom";
+import type { EngineMessage } from "@ohmail/wire";
 import messages from "../../messages/en.json";
 import { act, message, mountShell, stubDom, unmountAll, waitFor } from "../_draft-shell.js";
 
@@ -17,8 +19,8 @@ vi.mock("@ohmail/app-logic/ohbox", async (load) => {
   const { useEffect } = await import("react");
   return {
     ...real,
-    useOhboxList: (...args: Parameters<typeof real.useOhboxList>) => {
-      const model = real.useOhboxList(...args);
+    useOhboxLive: (...args: Parameters<typeof real.useOhboxLive>) => {
+      const model = real.useOhboxLive(...args);
       useEffect(() => {
         seen.mounts += 1;
         seen.live += 1;
@@ -43,7 +45,9 @@ async function rounds(n: number): Promise<void> {
 /** Today's Ohbox view, by the one name its section had; the seated place draws none. */
 const todaysOhbox = (): Element | null => document.querySelector(".view-ohbox");
 const rows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')];
-const newsFeed = (): Element | null => document.querySelector(`[aria-label="${messages.reads.streamAria}"]`);
+const newsFeed = (): HTMLElement | null =>
+  within(document.body).queryByRole("region", { name: messages.reads.streamAria })
+    ?.querySelector<HTMLElement>(".oh-sheet-scroll") ?? null;
 /** The rail's entry for the Ohbox, as the frame draws the fed model. */
 const railOhbox = (): HTMLElement | null => document.querySelector<HTMLElement>('nav [data-rail-id="ohbox"] button');
 
@@ -57,42 +61,18 @@ afterEach(async () => {
   await unmountAll();
 });
 
-describe("what every web host is handed", () => {
-  it("the Ohbox is its own entry, fed from above its two columns; every other place is one of today's; the reader is the shell's", async () => {
-    const { todaysPlaces, isTodays } = await import("../../app/shell/todays-places");
-    const { todaysReader } = await import("../../app/shell/reader-parts");
-    const { useTodaysSupplies } = await import("../../app/shell/todays-supplies");
-    const { renderHook } = await import("@testing-library/react");
-    const { NONE } = await import("@ohmail/app/host");
-    const places = todaysPlaces();
-    const { ohbox, ...others } = places;
-    expect(ohbox, "the Ohbox's own entry").toMatchObject({
-      id: "ohbox", body: "ohbox", panes: { kind: "columns", Reading: "reader" },
-    });
-    expect(ohbox !== NONE && ohbox.panes.kind === "columns" && typeof ohbox.panes.Above, "what the composition feeds it stands above its columns").toBe("function");
-    expect(isTodays(ohbox), "a seated place is none of today's").toBe(false);
-    expect(Object.values(others).map((place) => (place === NONE ? "none" : place.body)), "every other place is today's body").toEqual(
-      Object.values(others).map(() => "today"),
-    );
-    expect(Object.values(others).every((place) => isTodays(place)), "and reads as one of today's").toBe(true);
-    expect(isTodays(NONE), "a place a host hands none of is none of today's").toBe(false);
-    const { result, unmount } = renderHook(() => useTodaysSupplies(NONE));
-    expect(result.current.reader, "the supplies hand the shell's reader").toBe(todaysReader);
-    expect(result.current.reader, "and it is not none").not.toBe(NONE);
-    unmount();
-  });
-});
-
 describe("the seated Ohbox stands once", () => {
-  it("one mount of the model at the Ohbox, none of today's view; News and back: one mount again, News kept", async () => {
-    await mountShell("#/ohbox", [message("m1"), message("m2")]);
+  it("one Ohbox model per visit and a preserved News reading position", async () => {
+    await mountShell("#/ohbox", [
+      message("m1"), message("m2"), message("news", { folder: "ohmail/Reads" as EngineMessage["folder"], unread: true }),
+    ]);
     await waitFor(() => rows().length === 2, "the seated list's two rows");
     expect({ live: seen.live, view: todaysOhbox() !== null }, "at the seated Ohbox").toEqual({ live: 1, view: false });
 
     await visit("#/reads");
-    await waitFor(() => newsFeed() !== null, "News's feed");
-    const news = newsFeed();
-    expect({ live: seen.live, view: todaysOhbox() !== null, rows: rows().length }, "at News").toEqual({ live: 0, view: false, rows: 0 });
+    await waitFor(() => newsFeed()?.querySelector("article") != null, "News's first letter");
+    newsFeed()!.scrollTop = 64;
+    expect({ live: seen.live, view: todaysOhbox() !== null, rows: rows().filter((row) => ["m1", "m2"].includes(row.dataset.id ?? "")).length }, "at News").toEqual({ live: 0, view: false, rows: 0 });
 
     await visit("#/ohbox");
     await waitFor(() => rows().length === 2, "the seated list again");
@@ -101,7 +81,7 @@ describe("the seated Ohbox stands once", () => {
     });
     await visit("#/reads");
     await rounds(4);
-    expect(newsFeed(), "News's list was built again").toBe(news);
+    expect(newsFeed()?.scrollTop, "News lost its scroll position").toBe(64);
   }, 60_000);
 
   it("the rail's number at the seated Ohbox is the fed rail's: the same the old shell says at a view of today's", async () => {

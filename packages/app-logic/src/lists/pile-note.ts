@@ -9,7 +9,7 @@
  */
 
 import type { UnscreenedPileWire } from "@ohmail/wire";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useEffect, useRef, useState } from "react";
 
 /** What News or Receipts draws: the count, whether it is a floor, and the press. */
 export interface PileNoteOffer {
@@ -18,6 +18,9 @@ export interface PileNoteOffer {
   screening: boolean;
   screen: () => void;
 }
+
+/** The currently shown pile's offer, supplied by the account-scoped mail ground. */
+export const PileNoteContext = createContext<PileNoteOffer | null>(null);
 
 /** The engine's two pile calls. */
 export interface PileNoteDoor {
@@ -34,34 +37,49 @@ export function usePileNote(
   const [answer, setAnswer] = useState<{ total: number; atLeast: boolean } | null>(null);
   const [screening, setScreening] = useState(false);
   const alive = useRef(true);
+  const reading = useRef(0);
+  const pressing = useRef(false);
+  const visible = useRef(shown);
+  visible.current = shown;
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
 
   const ask = useCallback(async () => {
+    const request = ++reading.current;
     try {
       const next = await door.pileUnscreened(pile);
-      if (alive.current) setAnswer(next);
+      if (alive.current && reading.current === request) setAnswer(next);
     } catch {
       // A note, not a surface: a door that will not answer has none to make.
-      if (alive.current) setAnswer(null);
+      if (alive.current && reading.current === request) setAnswer(null);
     }
   }, [door, pile]);
   useEffect(() => {
     if (shown) void ask();
+    else if (!pressing.current) setAnswer(null);
+    return () => { reading.current += 1; };
   }, [shown, ask]);
 
   const screen = (): void => {
-    if (screening) return;
+    if (!alive.current || !visible.current || pressing.current) return;
+    pressing.current = true;
     setScreening(true);
     void door.screenPileUnscreened(pile)
-      .then((count) => { say(count > 0 ? { kind: "moved", count } : { kind: "none" }); })
-      .catch(() => { say({ kind: "failed" }); })
+      .then((count) => {
+        if (!alive.current) return;
+        reading.current += 1;
+        setAnswer(null);
+        say(count > 0 ? { kind: "moved", count } : { kind: "none" });
+      })
+      .catch(() => { if (alive.current) say({ kind: "failed" }); })
       .finally(() => {
         if (!alive.current) return;
+        pressing.current = false;
+        if (!visible.current) setAnswer(null);
         setScreening(false);
-        void ask();
+        if (visible.current) void ask();
       });
   };
 

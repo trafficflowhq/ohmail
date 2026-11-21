@@ -22,6 +22,7 @@ import { givenUpRowIds } from "@ohmail/app-logic/screener/screener-given-up";
 import {
   ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick, act,
 } from "./fixtures/live-walk-shell";
+import { decideScreenerRow, screenerRow } from "./fixtures/live-screener";
 import messages from "../messages/en.json";
 
 const NOW = "2026-10-23T09:00:00.000Z";
@@ -204,15 +205,11 @@ function installWorld(): void {
 }
 
 const rowText = (c: HTMLElement, id: string): string | null =>
-  c.querySelector(`.row[data-id="${id}"]`)?.textContent ?? null;
+  screenerRow(c, id)?.textContent ?? null;
 
 /** File a row to the Ohbox through its own quick-adjust menu, then leave so the commit fires. */
 async function decideToOhbox(c: HTMLElement, id: string): Promise<void> {
-  const slot = c.querySelector(`.row[data-id="${id}"]`)?.closest(".row-slot");
-  if (!slot) throw new Error(`no row ${id}`);
-  slot.querySelector<HTMLButtonElement>(".scn-act-more")!.click();
-  await tick(0);
-  slot.querySelectorAll<HTMLButtonElement>(".scn-act-dest")[0]!.click();
+  await decideScreenerRow(c, id, "ohbox");
   await tick(400);
   await goTo("ohbox");
   await tick(200);
@@ -220,8 +217,10 @@ async function decideToOhbox(c: HTMLElement, id: string): Promise<void> {
 
 /** The shell's Unsaved changes strip, opened: in the frame, the notice's Show opens today's list in a dialog. */
 async function stripRows(c: HTMLElement): Promise<HTMLElement[]> {
-  const rowsNow = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>("[role='dialog'] .unsaved-row")];
-  if (document.querySelector("[role='dialog'] .unsaved") === null) {
+  const rowsNow = (): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>("[role='dialog'] [role='listitem']"),
+  ];
+  if (rowsNow().length === 0) {
     const show = [...c.querySelectorAll<HTMLButtonElement>("button")]
       .find((b) => b.closest("[role='dialog']") === null && (b.textContent ?? "").trim() === messages.sync.unsavedShow);
     if (!show) return [];
@@ -270,10 +269,7 @@ describe("in the shipped shell", () => {
 
     // A new decision about the sender clears the mark in the same frame.
     w.refuse = false;
-    const slot = c.querySelector(`.row[data-id="${ALPHA}"]`)!.closest(".row-slot")!;
-    slot.querySelector<HTMLButtonElement>(".scn-act-more")!.click();
-    await tick(0);
-    slot.querySelectorAll<HTMLButtonElement>(".scn-act-dest")[0]!.click();
+    await decideScreenerRow(c, ALPHA, "ohbox");
     await tick(0);
     expect(rowText(c, ALPHA) ?? "", "the mark outlived the new decision").not.toContain(messages.screener.rowNotSaved);
     // …and once it lands the given-up record is superseded: the sender is decided, nothing marked.

@@ -11,9 +11,12 @@ const rows = () => [msg({ id: "a" })];
 
 describe("the doorbell in the head", () => {
   it("says how many wait and leads to the Screener", () => {
-    const world = ohbox({ newForYou: rows() }, { side: { doorbell: { count: 6, settled: true } } });
+    const world = ohbox(
+      { newForYou: rows() },
+      { side: { doorbell: { count: 6, settled: true }, keysShown: true } },
+    );
     const bell = screen.getByRole("button", { name: "6 first-time senders waiting — open the Screener" });
-    expect(bell.textContent).toContain("6");
+    expect(bell.textContent).toBe("6");
     fireEvent.click(bell);
     expect(world.said.went).toEqual(["screener"]);
   });

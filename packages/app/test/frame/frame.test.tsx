@@ -140,6 +140,32 @@ describe("the frame", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
   });
 
+  it("keeps the Away notice in one rail or bar slot outside the message list", () => {
+    const title = "Away responder is on";
+    const settings = vi.fn();
+    function AwayList() {
+      useNotice({ kind: "away", title, acts: [{ label: "Away settings", onPress: settings }] });
+      return <p>the list of ohbox</p>;
+    }
+    const window = fakeWindow("desktop");
+    mount({ window }, { ohbox: { ...ohbox, panes: { kind: "columns", List: AwayList, Reading } } });
+    const check = (place: "rail" | "bar") => {
+      const status = screen.getByRole("status");
+      expect(status.textContent).toContain(title);
+      expect(status.getAttribute("data-place")).toBe(place);
+      const slot = status.closest(place === "rail" ? ".fr-railnotice" : ".fr-noticebar");
+      expect(slot).not.toBeNull();
+      expect(status.parentElement?.firstElementChild).toBe(status);
+      expect(within(screen.getByRole("region", { name: "Messages" })).queryByText(title)).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+      return within(status).getByRole("button", { name: "Away settings" });
+    };
+    check("rail");
+    act(() => window.resize(390, 844));
+    fireEvent.click(check("bar"));
+    expect(settings).toHaveBeenCalledOnce();
+  });
+
   it("lays out again from the window with no reload: the body stays mounted and the root says the new device", () => {
     const window = fakeWindow("desktop");
     mount({ window, address: fakeAddress("#/reads") });
@@ -156,8 +182,10 @@ describe("the frame", () => {
   it("on a phone's width shows the list alone, and the open letter over it", () => {
     const { address } = mount({ window: fakeWindow("phone") });
     expect(screen.queryByRole("region", { name: "Reading" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Reading" })).toBeNull();
     act(() => address.visit("#/ohbox/m/a1"));
-    expect(screen.getByRole("region", { name: "Reading" }).textContent).toBe("reading a1");
+    /* Over the list it covers, the letter is a modal dialog (point 67). */
+    expect(screen.getByRole("dialog", { name: "Reading" }).textContent).toBe("reading a1");
     expect(screen.getByText("the list of ohbox")).toBeTruthy();
   });
 
@@ -165,7 +193,7 @@ describe("the frame", () => {
     const { address } = mount({ window: fakeWindow("phone") });
     expect(screen.getByRole("navigation", { name: "Places" })).toBeTruthy();
     act(() => address.visit("#/ohbox/m/a1"));
-    expect(screen.getByRole("region", { name: "Reading" }).textContent).toBe("reading a1");
+    expect(screen.getByRole("dialog", { name: "Reading" }).textContent).toBe("reading a1");
     expect(
       screen.queryByRole("navigation", { name: "Places" }),
       "the dock stands over the letter",
@@ -196,9 +224,11 @@ describe("the frame", () => {
       seen.list.length = 0;
       seen.reading.length = 0;
       mount({ window: fakeWindow(room), address: fakeAddress("#/compose") }, { ohbox, write });
-      expect(screen.getByRole("region", { name: "Reading" }).textContent, room).toBe(
-        "a letter being written",
-      );
+      /* On a phone the column stands over the list: a modal dialog (point 67); beside it, a region. */
+      expect(
+        screen.getByRole(room === "phone" ? "dialog" : "region", { name: "Reading" }).textContent,
+        room,
+      ).toBe("a letter being written");
       expect(seen.reading.at(-1), room).toBe(true);
       expect(seen.list.at(-1) ?? false, room).toBe(false);
       if (room === "phone")

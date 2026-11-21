@@ -16,6 +16,8 @@
  */
 
 import { useMemo } from "react";
+import { folderCommands } from "@ohmail/app-logic/folder";
+import type { FolderAct } from "@ohmail/wire";
 import { useTranslations } from "next-intl";
 import type { ToastFn } from "@ohmail/ui";
 import type { MutationStatus } from "@ohmail/client-engine";
@@ -23,24 +25,12 @@ import { api, apiConfigured } from "../api-client";
 import type { FolderVerbs } from "./FoldersRailGroup";
 
 /**
- * Exactly the four members this module dispatches, spelled as the engine's own discriminated
- * shapes — a SUBSET of `EngineMutation`, which is what makes the engine's
- * `(m: EngineMutation) => …` assignable here under contravariance without this module naming
- * the whole union.
- */
-type FolderMutation =
-  | { kind: "folder_create"; folderId: string; mailboxId: string; name: string }
-  | { kind: "folder_rename"; folderId: string; name: string }
-  | { kind: "folder_delete"; folderId: string }
-  | { kind: "folder_op_dismiss"; folderId: string };
-
-/**
  * The engine surface this module needs — `AppShell`'s own engine object satisfies it. The status
  * is the engine's OWN union rather than a copy of three of its members: a narrower spelling here
  * refuses the real engine the day a fourth arrives, which is how this type earned its import.
  */
 interface MutatingEngine {
-  mutate: (m: FolderMutation) => Promise<{ status: MutationStatus }>;
+  mutate: (m: FolderAct) => Promise<{ status: MutationStatus }>;
 }
 
 export function useFolderVerbs(engine: MutatingEngine, toast: ToastFn): FolderVerbs {
@@ -52,15 +42,13 @@ export function useFolderVerbs(engine: MutatingEngine, toast: ToastFn): FolderVe
     };
     return {
       create: (mailboxId, name) =>
-        speakIfRolledBack(engine.mutate({
-          kind: "folder_create", folderId: crypto.randomUUID(), mailboxId, name,
-        })),
+        speakIfRolledBack(engine.mutate(folderCommands.create(mailboxId, name))),
       rename: (folderId, name) =>
-        speakIfRolledBack(engine.mutate({ kind: "folder_rename", folderId, name })),
+        speakIfRolledBack(engine.mutate(folderCommands.rename(folderId, name))),
       remove: (folderId) =>
-        speakIfRolledBack(engine.mutate({ kind: "folder_delete", folderId })),
+        speakIfRolledBack(engine.mutate(folderCommands.remove(folderId))),
       dismiss: (folderId) => {
-        void engine.mutate({ kind: "folder_op_dismiss", folderId });
+        void engine.mutate(folderCommands.dismiss(folderId));
       },
       summary: async (folderId) => {
         if (!apiConfigured()) return null;

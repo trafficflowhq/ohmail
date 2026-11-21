@@ -30,7 +30,7 @@ export function PaletteRow({ id, command, marked, onRun }: PaletteRowProps) {
       {command.keys?.length ? (
         <span className="oh-palette-keys">
           {command.keys.map((k) => (
-            <KeyHint key={k} shown>
+            <KeyHint key={k} shown unsaid>
               {k}
             </KeyHint>
           ))}

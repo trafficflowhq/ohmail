@@ -9,7 +9,14 @@ import {
   type ServerSearchOpts,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { mountSearchVisit, type SearchVisit } from "./_search-mount";
+import { createRoot, type Root } from "react-dom/client";
+import { flushSync } from "react-dom";
+import { fireEvent, within } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
+import { NONE } from "@ohmail/app/host";
+import { ThemeProvider } from "@ohmail/ui";
+import messages from "../messages/en.json";
+import { MailShell } from "./_mail-shell.js";
 
 /**
  * THE CALLS SEARCH MAKES, PER SETTING. One person's visit (typing a word key by key, a pause, Enter, a facet, an
@@ -92,6 +99,61 @@ async function engineFor(setting: Setting): Promise<OhmailEngine> {
     ...(setting === "none" ? {} : { searchServer }),
   } as unknown as EngineAdapter;
   return new OhmailEngine({ adapter, store, now: () => NOW, ...(setting === "lane" ? { searchSupersede: true } : {}) });
+}
+
+/**
+ * A PERSON'S VISIT TO SEARCH, by what they can do: type a question, press Enter, press a facet by its name, choose an
+ * order by its name, and scroll to the list's end. Drive the registered Search screen through the mail frame.
+ */
+interface SearchVisit {
+  type: (q: string) => void;
+  enter: () => void;
+  facet: (name: string) => boolean;
+  sort: (order: "relevance" | "date_desc" | "date_asc" | "mailbox" | "sender") => void;
+  scrollEnd: () => void;
+  unmount: () => void;
+}
+
+function mountSearchVisit(engine: OhmailEngine, now: Date): SearchVisit {
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as typeof Element.prototype.animate;
+  Element.prototype.scrollIntoView ??= () => undefined;
+  const previous = window.location.href;
+  window.history.replaceState(null, "", "#/search");
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root: Root = createRoot(host);
+  root.render(
+    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC" now={now}>
+      <ThemeProvider storageKey={null}>
+        <MailShell engine={engine} consentTransport={NONE} />
+      </ThemeProvider>
+    </NextIntlClientProvider>,
+  );
+  const search = within(host);
+  const box = () => search.getByRole("textbox", { name: messages.search.aria });
+  return {
+    type: (q) => fireEvent.change(box(), { target: { value: q } }),
+    enter: () => fireEvent.keyDown(box(), { key: "Enter" }),
+    facet: (name) => {
+      const button = search.queryByRole("button", { name: messages.search.facetFrom });
+      if (!button) return false;
+      flushSync(() => fireEvent.click(button));
+      const option = within(document.body).getByRole("menuitem", { name: (label) => label.startsWith(name) });
+      return fireEvent.click(option);
+    },
+    sort: (order) => {
+      const label = messages.search.sortedBy.split("{order}")[0]!;
+      const button = search.getByRole("button", { name: (name) => name.startsWith(label) });
+      flushSync(() => fireEvent.click(button));
+      fireEvent.click(within(document.body).getByRole("menuitemradio", { name: messages.search[`sort_${order}`] }));
+    },
+    scrollEnd: () => fireEvent.scroll(host.querySelector(".sr-scroll")!),
+    unmount: () => {
+      root.unmount();
+      host.remove();
+      window.history.replaceState(null, "", previous);
+    },
+  };
 }
 
 /** The visit, the same on every setting. */

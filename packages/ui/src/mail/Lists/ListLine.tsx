@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { Button } from "../../base/index.js";
 import { useMeasuredMark } from "../../base/measured-mark.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
@@ -6,7 +6,7 @@ import "./list-line.css";
 
 export interface ListLineProps {
   /** What the list says of itself: "Loading more senders…", "That is everything on your mail server." */
-  children?: string;
+  children?: ReactNode;
   /** A refusal: in the ink, bold, with the warning sign. */
   warn?: boolean;
   /** Something is being read: said when it appears. */

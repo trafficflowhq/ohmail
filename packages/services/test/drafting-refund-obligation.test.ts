@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { mailboxes, messages, clientIdempotencyKey } from "@trafficflow/db";
+import { accounts, mailboxes, messages, clientIdempotencyKey, UNMETERED_ACCESS } from "@trafficflow/db";
 import type { RefundObligation, RefundObligationPort } from "@trafficflow/db";
 import { DraftingService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
@@ -349,4 +349,26 @@ describe("DraftingService — the refund survives a failed debt write", () => {
     expect(named).toHaveLength(1);
     expect(named[0]).toMatchObject({ accountId, attempt: charged(credits) });
   });
+});
+
+it("withholds a paid press when the account turns AI off before the model dispatch", async () => {
+  const { db, ctx, accountId, messageId } = await setup();
+  await db.insert(accounts).values({ id: accountId, name: "draft account", aiEnabled: true });
+  const credits = fakeSpendPort();
+  const spend = credits.spend.bind(credits);
+  credits.spend = async (...args) => {
+    const outcome = await spend(...args);
+    await db.update(accounts).set({ aiEnabled: false }).where(eq(accounts.id, accountId));
+    return outcome;
+  };
+  const draft = vi.fn(async () => ({ subject: "Reply", body: "A draft", rationale: "" }));
+  await svc.draftFromMessage(ctx, messageId, {
+    drafter: { draft }, credits, obligations: fakeObligations(), attemptKey,
+    access: {
+      access: async () => ({ ...UNMETERED_ACCESS }),
+      accessOrFault: async () => ({ ...UNMETERED_ACCESS }),
+    },
+  }).catch(() => undefined);
+  expect(draft).toHaveBeenCalledTimes(0);
+  expect(credits.releases).toEqual([expect.objectContaining({ refund: true })]);
 });

@@ -146,7 +146,7 @@ describe("RailEntry", () => {
     expect(screen.getByRole("button", { name: "Pull new mail" }).getAttribute("aria-busy")).toBe("true");
   });
 
-  it("shows a place's digit in place of its key while the keys are in the rail", () => {
+  it("draws a place's digit beside its key: the rail's sheet shows it in the key's place while the keys are within the rail", () => {
     const { rerender } = render(
       <RailEntry kind="place" icon="ohbox" keyHint="g o" keyShown>
         Ohbox
@@ -158,7 +158,9 @@ describe("RailEntry", () => {
         Ohbox
       </RailEntry>,
     );
-    expect(screen.queryByText("g o")).toBeNull();
+    /* Both are drawn; which stands is the sheet's (`:focus-within`), laid out in Chromium by the frame's
+       rail-digits-in-a-browser case (the switch's point 65). */
+    expect(screen.getByText("g o")).toBeTruthy();
     expect(screen.getByText("1")).toBeTruthy();
   });
 

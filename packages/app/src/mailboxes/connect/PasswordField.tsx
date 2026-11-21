@@ -26,6 +26,7 @@ export function PasswordField({
   onChange(filled: boolean): void;
 }): ReactNode {
   const box = useRef<HTMLInputElement | null>(null);
+  const filled = useRef(false);
   const told = useRef(onChange);
   told.current = onChange;
   useImperativeHandle(
@@ -34,12 +35,18 @@ export function PasswordField({
       take: () => secretOf(box.current?.value ?? ""),
       clear: () => {
         if (box.current) box.current.value = "";
+        filled.current = false;
       },
     }),
     [],
   );
-  /* No longer drawn: nothing is held, and the form is told so. */
-  useEffect(() => () => told.current(false), []);
+  /* Removing an empty field changes no password. */
+  useEffect(
+    () => () => {
+      if (filled.current) told.current(false);
+    },
+    [],
+  );
   return (
     <Field
       ref={box}
@@ -47,7 +54,10 @@ export function PasswordField({
       type="password"
       autoComplete="off"
       hint={hint}
-      onChange={(next) => onChange(next !== "")}
+      onChange={(next) => {
+        filled.current = next !== "";
+        onChange(filled.current);
+      }}
     />
   );
 }

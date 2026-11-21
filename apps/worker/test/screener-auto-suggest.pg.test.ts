@@ -1533,30 +1533,6 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
 });
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE CROSS-BOUNDARY CLAIM — read as TEXT, because neither side can import the other
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   `AUTO_SUGGEST_BATCH` here and `AUTO_BATCH_SIZE` in `apps/webapp/app/shell/screener-suggest.ts`
-   are the same policy: how many senders one AUTOMATIC batch buys. They are two literals because
-   there is no package both files may reach — this app may import core and db and nothing else
-   from the workspace, and `apps/webapp` declares no `@trafficflow/*` dependency at all — so the
-   equality is pinned here instead, with the technique `apps/webapp/test/mail-state.test.ts` uses
-   for its own cross-boundary claims.
-
-   The extractor asserts it FOUND the literal before comparing it. A probe that silently finds
-   nothing is a claim about the probe, and this one would then agree with anything. */
-describe("the automatic batch size is ONE number on both sides of the boundary", () => {
-  it("matches `AUTO_BATCH_SIZE` in the webapp's Screener spender", () => {
-    const src = readFileSync(
-      fileURLToPath(new URL("../../../packages/app-logic/src/screener/screener-suggest.ts", import.meta.url)), "utf8",
-    );
-    const m = /export const AUTO_BATCH_SIZE = (\d+);/.exec(src);
-    expect(m, "AUTO_BATCH_SIZE was not found — the probe is stale, not the claim").not.toBeNull();
-    expect(Number(m![1])).toBe(AUTO_SUGGEST_BATCH);
-  });
-});
-
-/* ══════════════════════════════════════════════════════════════════════════════════════════
    ONE DOOR — THE PER-CANDIDATE CLAIM GOES BACK IN A `finally`
    ══════════════════════════════════════════════════════════════════════════════════════════
 

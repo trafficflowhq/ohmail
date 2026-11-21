@@ -71,7 +71,8 @@
     color: var(--ink2);
     font-size: var(--t-meta);
     font-weight: var(--w-text);
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   /* On a sheet of settings an answer is one of the sheet's lines: its mark, its name and tag, what it is about
      beside them in the second ink, its figure at the line's end. It reaches a step past the sheet's text at both

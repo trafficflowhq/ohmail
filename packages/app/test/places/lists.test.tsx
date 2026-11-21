@@ -17,7 +17,7 @@ import { FrameContext, type FrameInner } from "../../src/frame/commands.js";
 import type { LayoutPlan, RailModel } from "../../src/frame/contract.js";
 import { createFeed } from "../../src/frame/feeds.js";
 import { ListMenu } from "../../src/place-list/index.js";
-import { at, draw, inWords, msg, pane, PHONE, stamp } from "./lists-world.js";
+import { at, draw, inWords, msg, NO_HIT, pane, PHONE, stamp, walkAt } from "./lists-world.js";
 import { wideWindow } from "../ohbox/setup.js";
 
 interface Seen {
@@ -57,6 +57,8 @@ function useSeat(seen: Seen, first: string | null = null) {
       return true;
     },
     act: (action: MessageAction, m: EngineMessage) => seen.acted.push([action, m.id]),
+    entered: NO_HIT,
+    ...walkAt(),
     stamp,
   };
 }
@@ -313,6 +315,18 @@ describe("Tags", () => {
     fireEvent.click(within(groups[1]!).getByRole("button", { name: /Pottery/ }));
     expect(within(screen.getAllByRole("region")[1]!).queryAllByRole("option")).toEqual([]);
     expect(screen.getByTestId("column").textContent).toBe("2 tags");
+  });
+
+  it("with no tag named, a letter that carries two tags is one stop of the walk: the steps go on past it to the end", () => {
+    draw(<Tags tagId={null} seen={fresh()} />);
+    fireEvent.click(screen.getAllByRole("option", { name: /Kiln/ })[0]!);
+    expect(screen.getByTestId("column").textContent).toContain("open c");
+    const older = () => within(screen.getByTestId("column")).getByRole("button", { name: "Older" });
+    fireEvent.click(older());
+    expect(screen.getByTestId("column").textContent).toContain("open b");
+    fireEvent.click(older());
+    expect(screen.getByTestId("column").textContent).toContain("open a");
+    expect(older()).toHaveProperty("disabled", true);
   });
 
   it("one tag: the letters carrying it across every place, newest first", () => {

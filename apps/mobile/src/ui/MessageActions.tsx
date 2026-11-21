@@ -889,7 +889,13 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
   /* Nothing organizes any mailbox: the note says so rather than what a rule would file. */
   const nobody = w.mailboxes.known && noneOrganizedWhy(w.mailboxes.rows) !== null;
   const inPlay = w.actions.screeningRules(m.id, scope);
-  const unsubClaim = w.actions.screeningUnsubClaim(m.id, scope);
+  const unsubscribeFor = (choice: Scope) => ({
+    claim: w.actions.screeningUnsubClaim(m.id, choice),
+    ids: w.actions.screeningUnsubscribeIds(m.id, choice),
+  });
+  const unsub = unsubscribeFor(scope);
+  const chosenScope = step ? phoneTiles(step.cls, step.forecast)[step.choice]!.scope ?? scope : scope;
+  const chosenUnsub = step?.unsubscribe[chosenScope];
   /* WHY SOME OF THEIR MAIL STAYED once the rule's past-mail pass finished — asked of the server
      once per row set, one line per place and reason, as the web sheet asks it. */
   const ask = w.actions.screeningStayed(m.id, scope);
@@ -905,6 +911,8 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
   const labelOf = (id: string) => w.mailboxes.all.find((r) => r.id === id)?.displayName?.trim() || null;
   const stayed = stayedRows(ask, why && why.key === askKey ? why.map : null, labelOf);
   const press = (dest: Destination) => {
+    const demoting = dest === "screened" || dest === "spam";
+    const ids = demoting && unsub.claim !== "none" ? unsub.ids : undefined;
     const f = w.actions.screeningForecast(m.id, dest, scope, applyRetro);
     const cls = f ? phoneStepClass(f, scope) : null;
     // On a shared provider the domain above the address is answered by the address: no "everyone" tile.
@@ -912,12 +920,18 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
       onClose();
       w.actions.screenSender(m.id, dest, scope, applyRetro, {
         resolution: "keep", shown: f.groups.map((g) => g.rule), forecast: f,
+      }, ids);
+      return;
+    }
+    if (f && cls) {
+      setStep({
+        dest, forecast: f, cls, choice: cls === "domain" && !f.exception ? 1 : 0,
+        unsubscribe: demoting ? { [scope]: unsub, ...(cls === "domain" ? { domain: unsubscribeFor("domain") } : {}) } : {},
       });
       return;
     }
-    if (f && cls) { setStep({ dest, forecast: f, cls, choice: cls === "domain" && !f.exception ? 1 : 0 }); return; }
     onClose();
-    w.actions.screenSender(m.id, dest, scope, applyRetro);
+    w.actions.screenSender(m.id, dest, scope, applyRetro, undefined, ids);
   };
   return (
     /* The system back gesture in the step goes back to the list; on the list it closes the sheet. */
@@ -926,13 +940,16 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
         <PhoneResolveStep
           step={step}
           domain={domain}
+          warning={chosenUnsub && chosenUnsub.claim !== "none" && chosenUnsub.ids.length > 0
+            ? Copy.decideUnsub(chosenUnsub.claim, chosenScope === "domain" ? `@${domain}` : m.from.address, chosenScope === "domain")
+            : undefined}
           onChoice={(choice) => setStep({ ...step, choice })}
           onCommit={() => {
             const tile = phoneTiles(step.cls, step.forecast)[step.choice]!;
             onClose();
             w.actions.screenSender(m.id, step.dest, tile.scope ?? scope, applyRetro, {
               resolution: tile.resolution, shown: step.forecast.groups.map((g) => g.rule), forecast: step.forecast,
-            });
+            }, chosenUnsub?.claim === "none" ? undefined : chosenUnsub?.ids);
           }}
           onCancel={() => setStep(null)}
         />
@@ -1017,9 +1034,9 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
         {nobody ? Copy.screeningNoteNobody : applyRetro ? Copy.screeningNoteRetro(target) : Copy.screeningNote(target)}
       </Txt>
       {/* What Screen out and Spam send for a sender still waiting, before either is pressed. */}
-      {unsubClaim !== "none" ? (
+      {unsub.claim !== "none" && unsub.ids.length ? (
         <Txt variant="caption" tone="ink2" style={{ paddingHorizontal: 14, paddingTop: 6 }} testID="screening-unsub">
-          {Copy.decideUnsub(unsubClaim, target, scope === "domain")}
+          {Copy.decideUnsub(unsub.claim, target, scope === "domain")}
         </Txt>
       ) : null}
         </>
@@ -1034,6 +1051,7 @@ interface PhoneStep {
   forecast: PressForecast;
   cls: "term" | "domain" | "inside";
   choice: 0 | 1;
+  unsubscribe: Partial<Record<Scope, { claim: ReturnType<ReturnType<typeof useWorld>["actions"]["screeningUnsubClaim"]>; ids: readonly string[] }>>;
 }
 
 const isTermGroup = (g: ConflictGroup) => g.cause === "term-subject" || g.cause === "term-body";
@@ -1106,8 +1124,8 @@ function PhoneRuleLine({ rule, count, domain, inside = false }: {
 }
 
 /** THE STEP, in the same sheet: the rules that disagree, two radio rows, the press and Cancel. */
-function PhoneResolveStep({ step, domain, onChoice, onCommit, onCancel }: {
-  step: PhoneStep; domain: string; onChoice: (c: 0 | 1) => void; onCommit: () => void; onCancel: () => void;
+function PhoneResolveStep({ step, domain, warning, onChoice, onCommit, onCancel }: {
+  step: PhoneStep; domain: string; warning?: string; onChoice: (c: 0 | 1) => void; onCommit: () => void; onCancel: () => void;
 }) {
   const t = useTheme();
   const f = step.forecast;
@@ -1149,6 +1167,7 @@ function PhoneResolveStep({ step, domain, onChoice, onCommit, onCancel }: {
           </Tap>
         ))}
       </View>
+      {warning ? <Txt variant="caption" tone="ink2">{warning}</Txt> : null}
       <Button label={Copy.screeningResolveGo(place)} variant="solid" onPress={onCommit} />
       <Button label={Copy.screeningResolveCancel} variant="quiet" onPress={onCancel} />
     </View>

@@ -6,27 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FactorSlot } from "@ohmail/app/account";
 import { en, json, refusal, serve, settle, type Server } from "./account-harness";
 import { qr, watchClipboard, Words } from "./devices-support";
-import { InvitesPane, useInvites } from "../../../../packages/app/src/account/invites/index.js";
 import { useInvitesDoor } from "../../app/(product)/mailbox/invites-door";
-import { InvitesSection } from "../../app/(product)/mailbox/InvitesSection";
+import { Frame } from "@ohmail/app/frame";
+import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { fakeHost, NO_ENGINE } from "../../../../packages/app/test/support/fake-host.js";
+import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
 
 /**
- * THE CALLS OF ONE VISIT, BEFORE AND AFTER. The shipped section and the new pane over the web's filling are each
- * walked through the same visit over the same scripted server: open; an invite made for a name, refused for the
- * factor, the factor verified, the link made; Copy; Done; a second invite the server refuses outright; the open
- * invite revoked, already gone at the server; leave. The two ordered lists of method, path and body keys are equal.
- * The factor's own ceremony is the doors' dialog's (both stand in for it here, so neither list carries it); what
- * is compared is what the pane asks.
+ * The exact requests of an Invites visit through Settings. A named invite asks for the factor,
+ * the retry mints the link, and the next invite is refused. Then revoke takes away the listed code.
  */
-
-/** The shipped section's factor prompt, stood in for: the case answers it as the dialog would. */
-const prompt = vi.hoisted(() => ({ verified: null as null | (() => void) }));
-vi.mock("../../app/(product)/mailbox/StepUpPrompt", () => ({
-  StepUpPrompt: (props: { onVerified: () => void }) => {
-    prompt.verified = props.onVerified;
-    return null;
-  },
-}));
 
 const LIST = "GET /api/pair";
 const MINT = "POST /api/pair";
@@ -81,7 +70,6 @@ function scripted(): Server {
 
 beforeEach(() => {
   verify = null;
-  prompt.verified = null;
   clipboard = watchClipboard();
   server = scripted();
 });
@@ -120,20 +108,18 @@ async function walk(pane: ReactNode, factorVerified: () => void): Promise<string
 
 describe("one visit to Settings › Invites asks the server the same things, in the same order", () => {
   it("the shipped section and the new pane", async () => {
-    const before = await walk(<InvitesSection />, () => prompt.verified!());
-    const copiedBefore = [...clipboard.written];
-    cleanup();
-    server.restore();
-    clipboard.restore();
-    clipboard = watchClipboard();
-    server = scripted();
+    const settings = mailSettings({
+      ...NO_PANE_PARTS,
+      invites: { useDoor: useInvitesDoor, factor, qr },
+    });
+    const { host } = fakeHost({
+      engine: NO_ENGINE, service: "self", scope: "invites-visit",
+      address: fakeAddress("#/settings/invites"), places: { settings },
+      features: { invites: { name: "invites", render: () => null } },
+    });
+    const asked = await walk(<Frame host={host} />, () => verify!());
 
-    function Anew() {
-      return <InvitesPane model={useInvites(useInvitesDoor())} factor={factor} qr={qr} />;
-    }
-    const after = await walk(<Anew />, () => verify!());
-
-    expect(before).toEqual([
+    expect(asked).toEqual([
       `${LIST} {}`,
       `${MINT} {grant,label}`,
       `${MINT} {grant,label}`,
@@ -142,9 +128,7 @@ describe("one visit to Settings › Invites asks the server the same things, in 
       `${REVOKE} {}`,
       `${LIST} {}`,
     ]);
-    expect(after).toEqual(before);
-    // Both hand the clipboard one link, the same one.
-    expect(copiedBefore).toHaveLength(1);
-    expect(clipboard.written).toEqual(copiedBefore);
+    expect(clipboard.written).toHaveLength(1);
+    expect(clipboard.written).toEqual([`${window.location.origin}/join/invite#${MADE}`]);
   });
 });

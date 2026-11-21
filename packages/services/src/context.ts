@@ -128,7 +128,7 @@ export interface ServiceContext {
    * ambient session (`ACCOUNT_HEADER`, `packages/api/src/app.ts`). Optional and ignored by every
    * other caller.
    */
-  noteCredentialAccount?: (accountId: string) => void;
+  noteCredentialAccount?: (accountId: string, familyId?: string) => void;
   /** Client network metadata, threaded for auth audit and lockout. */
   ip?: string;
   userAgent?: string;
@@ -276,6 +276,7 @@ export async function runInTransaction<T>(
     throw new Error("a transaction fenced for one account cannot open one fenced for another");
   }
   let pending: string | null = null;
+  let pendingFamily: string | undefined;
   const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
   const result = await tx.transaction(async (handle) => {
     const db = carryBinding(ctx.db, carryDialect(ctx.db, handle as object));
@@ -289,9 +290,15 @@ export async function runInTransaction<T>(
       }
       markFenced(db, fence.accountId);
     }
-    return fn({ ...ctx, db, noteCredentialAccount: (accountId: string) => { pending = accountId; } });
+    return fn({
+      ...ctx, db,
+      noteCredentialAccount: (accountId, familyId) => {
+        pending = accountId;
+        pendingFamily = familyId;
+      },
+    });
   });
-  if (pending !== null) ctx.noteCredentialAccount?.(pending);
+  if (pending !== null) ctx.noteCredentialAccount?.(pending, pendingFamily);
   return result;
 }
 

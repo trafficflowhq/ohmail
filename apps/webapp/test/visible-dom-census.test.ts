@@ -38,7 +38,9 @@ function sources(dir: string): string[] {
 describe("the shell's document queries skip hidden piles", () => {
   it("no raw document query names a row, a card, a split or a strip", () => {
     const raw: string[] = [];
-    for (const file of [...sources(APP), ...sources(join(APP, "..", "..", "..", "packages", "app-logic", "src")), ...sources(join(APP, "..", "..", "..", "packages", "letter-body", "src"))]) {
+    /* `packages/app/src` is the new shell's own tree (its frame, its ground, its places), which every host mounts
+       since the switch: re-pointed by path, the trees today's shell was read in kept beside it. */
+    for (const file of [...sources(APP), ...sources(join(APP, "..", "..", "..", "packages", "app", "src")), ...sources(join(APP, "..", "..", "..", "packages", "app-logic", "src")), ...sources(join(APP, "..", "..", "..", "packages", "letter-body", "src"))]) {
       const src = readFileSync(file, "utf8");
       for (const m of src.matchAll(RAW_QUERY)) {
         const why = refusal(src, m[1]!);
@@ -62,11 +64,8 @@ describe("the shell's document queries skip hidden piles", () => {
     expect(refusal(src, "r.selector);")).toBe("selector is not a literal");
     expect(refusal(src, "ROW);")).toBe("names a pile");
     expect(refusal(src, "RAIL);")).toBeNull();
+    // The matching checks for the legacy shell live beside the active frame's census.
     for (const [file, needle] of [
-      ["shell/shell-keys.tsx", 'queryVisible<HTMLButtonElement>(".abar-delete .abar-danger")'],
-      ["shell/message-verbs.ts", 'queryVisible<HTMLButtonElement>(".abar-delete .abar-danger")'],
-      ["shell/cursor-placer.ts", "queryVisible<HTMLElement>(`${host.scope} :is(.row, .oh-row)"],
-      ["shell/message-verbs.ts", "return queryVisible<HTMLElement>(`${scope} :is(.row, [role=option])"],
       ["../../../packages/app-logic/src/keys/zone-nav.ts", "const sel = queryVisible<HTMLElement>(selector);"],
       ["../../../packages/app-logic/src/keys/zone-nav.ts", "if (tryFocus(queryVisible<HTMLElement>(sel))) return;"],
     ] as const) {

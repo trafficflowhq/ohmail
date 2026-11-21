@@ -116,11 +116,13 @@ describe("today beside the Ohbox", () => {
   });
 
   it("says a calendar shared as busy times by no title", () => {
-    const busy = shown([event("ev-b", "Private thing", "20261116T150000", "20261116T160000")]).map((o) => ({
+    const busy = shown([
+      event("ev-b", "Private thing", "20261116T150000", "20261116T160000", { myAnswer: "none" }),
+    ]).map((o) => ({
       ...o,
       calendar: { ...o.calendar, access: "busy" as const },
     }));
-    expect(todayRowsOf(busy, now(9 * 60))[0]!.title).toBeNull();
+    expect(todayRowsOf(busy, now(9 * 60))[0]).toMatchObject({ title: null, toAnswer: false });
   });
 });
 
@@ -154,6 +156,11 @@ describe("coming up with one person", () => {
     expect(rows.map((r) => r.title)).toEqual(["Studio visit", "Review", "Invited"]);
     expect(rows.map((r) => r.toAnswer)).toEqual([false, false, true]);
     expect(rows.map((r) => r.day)).toEqual(["2026-11-16", "2026-11-18", "2026-11-19"]);
+  });
+
+  it("keeps the people on a calendar shared as busy times off their contact cards", () => {
+    const busy = shown(events).map((o) => ({ ...o, calendar: { ...o.calendar, access: "busy" as const } }));
+    expect(comingUpOf(busy, "petra@studio.test", 3, now(10 * 60))).toEqual([]);
   });
 
   it("lists nothing for an address no event names", () => {

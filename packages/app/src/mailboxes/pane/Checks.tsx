@@ -1,10 +1,13 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
+import { placeOfFolder } from "@ohmail/app-logic/reader";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { FILING_REFUSAL_REASONS } from "@ohmail/app-logic/mail-state/mail-state";
 import { filingWaits } from "@ohmail/app-logic/mailboxes/pane/filings";
 import { selfCheckPressSentence, selfCheckWaiting } from "@ohmail/app-logic/mailboxes/pane/self-check";
 import { useFilings, useSelfChecks } from "@ohmail/app-logic/mailboxes/pane/use-checks";
+import { useFrame } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
 import { useText } from "../../text/index.js";
 import type { RowProps } from "./Row.js";
@@ -45,9 +48,23 @@ function Filings(props: RowProps): ReactNode {
   const { m, model } = props;
   const t = useText("mailboxFilings");
   const sync = useText("sync");
+  const place = useText("place");
   const stamps = useStamps();
   const filings = useFilings(model.wire.filings, m, model.refreshMailState);
   const f = m.filing;
+  const { route } = useFrame();
+  const followed = route.place === "settings" && route.sub === "mailboxes" && route.words.mailbox === m.id;
+  const heading = useRef<HTMLHeadingElement>(null);
+  useLayoutEffect(() => {
+    const target = heading.current;
+    if (!followed || target === null || target.ownerDocument.activeElement === target) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView?.({ block: "start" });
+  }, [followed]);
+  const folderName = (folder: string): string => {
+    const view = placeOfFolder(folder);
+    return view !== null && place.has(view) ? place(view) : folder;
+  };
   const reasonWords = (r: string | null): string => {
     const known =
       r !== null && (FILING_REFUSAL_REASONS as readonly string[]).includes(r)
@@ -59,6 +76,9 @@ function Filings(props: RowProps): ReactNode {
   };
   return (
     <>
+      <h3 className="oh-text" ref={heading} tabIndex={-1}>
+        {t("title", { mailbox: m.displayName?.trim() || displayAddress(m.address) })}
+      </h3>
       {filings.read.k === "unread" && f ? (
         <SettingNote>{t("unread", { count: f.due + f.deferred })}</SettingNote>
       ) : null}
@@ -73,7 +93,7 @@ function Filings(props: RowProps): ReactNode {
             const lines = [
               t("why", { reasons }),
               g.nextAttemptAt ? t("next", { at: stamps.when(g.nextAttemptAt, model.list.now) }) : null,
-              g.at ? t("at", { count: g.count, at: g.at }) : null,
+              g.at ? t("at", { count: g.count, at: folderName(g.at) }) : null,
               g.deletes > 0
                 ? t(g.deletes >= g.count ? "deletesAll" : "deletesSome", { count: g.deletes })
                 : null,
@@ -83,7 +103,7 @@ function Filings(props: RowProps): ReactNode {
                 <SettingLine
                   label={t("group", {
                     count: g.count,
-                    folder: g.folder,
+                    folder: folderName(g.folder),
                     since: g.since ? stamps.when(g.since, model.list.now) : "—",
                   })}
                 >

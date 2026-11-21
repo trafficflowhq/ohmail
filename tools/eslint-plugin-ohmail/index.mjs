@@ -135,8 +135,7 @@ const platformName = {
  * stands in this table itself. Helpers are not followed: an unexported function that calls a lookup for an export is
  * intent, which a review reads. The marker's cookie name itself is a lookup too: a string, a template or a regular
  * expression that spells it stands only in a listed file, or in a file listed to spell it and nothing more, so the
- * marker cannot be read by hand out of the jar. The same data closes the list of parts that read the shell's scope
- * (`useTodaysScope`).
+ * marker cannot be read by hand out of the jar.
  */
 export const OWNER_LOOKUPS = {
   "storage-owner": [
@@ -156,7 +155,6 @@ const OWNER_PACKAGE = "@ohmail/app-logic/storage";
 /** The web session client, by its path and by the web app's own alias (`@/`). */
 const SESSION_CLIENT = "apps/webapp/app/api-client";
 const SESSION_CLIENT_ALIAS = "@/app/api-client";
-const TODAYS_SCOPE = "apps/webapp/app/shell/todays-scope";
 /** A specifier as it is compared: a folder written with a slash at its end reaches its index, and no extension. */
 const withoutExtension = (spec) => spec.replace(/\/+$/, "").replace(/\.(js|ts|tsx|mjs|mts)$/, "");
 /** The path a relative specifier reaches from a file, from the root, with no slash at its end. */
@@ -180,14 +178,6 @@ export function ownerModuleOf(source, fromRel) {
   if (target === `${OWNER_DOOR}/owner-cookie`) return "owner-cookie";
   if (target === SESSION_CLIENT) return "session-client";
   return null;
-}
-
-/** Whether a specifier reaches the shell's scope (`todays-scope`), by path or by the web app's own alias. */
-export function reachesTodaysScope(source, fromRel) {
-  const bare = withoutExtension(source);
-  if (bare === "@/app/shell/todays-scope") return true;
-  if (!source.startsWith(".")) return false;
-  return reached(fromRel, bare) === TODAYS_SCOPE;
 }
 
 const namesOf = (module) =>
@@ -228,7 +218,6 @@ const ownerLookup = {
         properties: {
           root: { type: "string" },
           readers: { type: "array", items: { type: "string" } },
-          todaysScopeReaders: { type: "array", items: { type: "string" } },
           markerNameSpellers: { type: "array", items: { type: "string" } },
         },
         additionalProperties: false,
@@ -246,27 +235,23 @@ const ownerLookup = {
       stale: "{{file}} is listed in tools/owner-readers.json and imports none of them; it leaves the list",
       staleSpeller:
         "{{file}} is listed in tools/owner-readers.json to spell the marker's cookie name and spells it nowhere; it leaves the list",
-      todaysScope:
-        "useTodaysScope is read by the closed list in tools/owner-readers.json; a place reads useFrame().host.session.scope",
       noList:
         "ohmail/owner-lookup has no list of readers (tools/owner-readers.json), so every file is refused",
     },
   },
   create(context) {
-    const { readers, todaysScopeReaders, markerNameSpellers = [] } = context.options[0] ?? {};
-    if (!Array.isArray(readers) || readers.length === 0 || !Array.isArray(todaysScopeReaders)) {
+    const { readers, markerNameSpellers = [] } = context.options[0] ?? {};
+    if (!Array.isArray(readers) || readers.length === 0) {
       return { Program: (node) => context.report({ node, messageId: "noList" }) };
     }
     const root = context.options[0]?.root ?? context.cwd;
     const rel = path.relative(root, context.filename).split(path.sep).join("/");
     const mayLookUp = readers.includes(rel);
-    const mayReadScope = todaysScopeReaders.includes(rel);
     const maySpell = markerNameSpellers.includes(rel);
     /* Where this file is one of the lookups' own modules, the names it stands for in the table are its to export. */
     const ownModule = ownerModuleOf(`./${path.posix.basename(rel)}`, rel);
     const own = new Set(ownModule === null ? [] : namesOf(ownModule));
     let looked = 0;
-    let readScope = 0;
     let spelledHere = 0;
     /*
      * What this file calls the lookups it imported (a namespace of their module, with the module), and what it
@@ -303,10 +288,6 @@ const ownerLookup = {
       looked += 1;
       if (!mayLookUp) context.report({ node, messageId: "whole", data: { what, source } });
     };
-    const scopeRead = (node) => {
-      readScope += 1;
-      if (!mayReadScope) context.report({ node, messageId: "todaysScope" });
-    };
     const spelled = (node, text) => {
       if (typeof text !== "string" || !text.includes(OWNER_MARKER_NAME)) return;
       looked += 1;
@@ -316,13 +297,12 @@ const ownerLookup = {
     };
     const named = (node, source, specifiers, kindOf) => {
       const module = ownerModuleOf(source, rel);
-      if (module === null && !reachesTodaysScope(source, rel)) return;
+      if (module === null) return;
       for (const specifier of specifiers) {
         if (kindOf(specifier) === "type") continue;
         if (specifier.type === "ImportNamespaceSpecifier" || specifier.type === "ExportNamespaceSpecifier") {
-          if (module !== null) whole(specifier, "a namespace", source);
-          else scopeRead(specifier);
-          if (module !== null && specifier.type === "ImportNamespaceSpecifier") {
+          whole(specifier, "a namespace", source);
+          if (specifier.type === "ImportNamespaceSpecifier") {
             lookupLocals.add(specifier.local.name);
             namespaces.set(specifier.local.name, module);
           }
@@ -330,18 +310,17 @@ const ownerLookup = {
         }
         const from = specifier.type === "ExportSpecifier" ? specifier.local : specifier.imported;
         const name = from?.type === "Identifier" ? from.name : from?.value;
-        if (module !== null && namesOf(module).includes(name)) {
+        if (namesOf(module).includes(name)) {
           lookup(specifier, name);
           if (specifier.type === "ExportSpecifier") handedOn(specifier, name);
           else lookupLocals.add(specifier.local.name);
-        } else if (module === null && name === "useTodaysScope") scopeRead(specifier);
+        }
       }
     };
     const wholeModule = (node, what) => {
       const source = literalSource(node);
       if (source === null) return;
       if (ownerModuleOf(source, rel) !== null) whole(node, what, source);
-      else if (reachesTodaysScope(source, rel)) scopeRead(node);
     };
     return {
       ImportDeclaration: (node) =>
@@ -399,8 +378,7 @@ const ownerLookup = {
           else if (values.has(name)) handOn(specifier, nameOf(specifier.exported), values.get(name));
         }
         for (const { at, exported, value } of exportedValues) handOn(at, exported, value);
-        if ((mayLookUp && looked === 0) || (mayReadScope && readScope === 0))
-          context.report({ node, messageId: "stale", data: { file: rel } });
+        if (mayLookUp && looked === 0) context.report({ node, messageId: "stale", data: { file: rel } });
         if (maySpell && spelledHere === 0)
           context.report({ node, messageId: "staleSpeller", data: { file: rel } });
       },
@@ -530,110 +508,20 @@ const noConfigComment = {
   },
 };
 
-/** A file of the old shell's side of the frame, by its name: `Todays<Name>` or `todays-<name>`. */
-const isOldShellFrameName = (base) => /^(Todays[A-Z]|todays-)/.test(base);
-/** A context the old shell feeds a place through, by its name: `Todays<Name>`, or `<Name>Fed`. */
-const isOldShellFeedName = (name) => /^Todays[A-Z]/.test(name) || /[a-z0-9]Fed$/.test(name);
-const callsCreateContext = (call) =>
-  call?.type === "CallExpression" &&
-  ((call.callee.type === "Identifier" && call.callee.name === "createContext") ||
-    (call.callee.type === "MemberExpression" &&
-      !call.callee.computed &&
-      call.callee.property.name === "createContext"));
-
 /**
- * THE OLD SHELL'S SIDE OF THE FRAME IS CLOSED. A place seated after the first one reads the mail ground and is named
- * once in the mail entry's list: no file of the web shell is written for it, and no context is fed to it from the old
- * shell's composition. So in the old shell's folder itself (tools/shell-adapters.json names it) a file whose name
- * says that side (`Todays<Name>`, `todays-<name>`) stands only if the list names it, and a context whose name says a
- * feed (`Todays<Name>`, `<Name>Fed`) is declared only where the list names it for that file. The list only shrinks:
- * the check refuses a name added against the base. The rule reads names: a feed under another name is intent, which
- * a review reads. Without its list, every file of the folder is refused, never none.
- */
-const oldShellAdapters = {
-  meta: {
-    type: "problem",
-    schema: [
-      {
-        type: "object",
-        properties: {
-          root: { type: "string" },
-          folder: { type: "string" },
-          files: { type: "array", items: { type: "object" } },
-        },
-        additionalProperties: false,
-      },
-    ],
-    messages: {
-      file: "{{file}} is a new file of the old shell's side of the frame, and none is written any more: a place reads the mail ground and is named in the mail entry's list (tools/shell-adapters.json only shrinks)",
-      fed: "{{name}} is a context the old shell would feed a place through, and none is written any more: a place reads the mail ground (tools/shell-adapters.json only shrinks)",
-      noList:
-        "ohmail/old-shell-adapters has no list (tools/shell-adapters.json), so every file of the old shell is refused",
-    },
-  },
-  create(context) {
-    const { folder, files } = context.options[0] ?? {};
-    if (typeof folder !== "string" || !Array.isArray(files) || files.length === 0) {
-      return { Program: (node) => context.report({ node, messageId: "noList" }) };
-    }
-    const root = context.options[0]?.root ?? context.cwd;
-    const rel = path.relative(root, context.filename).split(path.sep).join("/");
-    if (path.posix.dirname(rel) !== folder) return {};
-    const base = path.posix.basename(rel);
-    const listed = files.find((entry) => entry.file === base);
-    const contexts = listed?.contexts ?? [];
-    return {
-      Program(node) {
-        if (isOldShellFrameName(base) && !listed)
-          context.report({ node, messageId: "file", data: { file: base } });
-      },
-      VariableDeclarator(node) {
-        if (node.id.type !== "Identifier" || !callsCreateContext(asRun(node.init))) return;
-        const name = node.id.name;
-        if (isOldShellFeedName(name) && !contexts.includes(name))
-          context.report({ node: node.id, messageId: "fed", data: { name } });
-      },
-    };
-  },
-};
-
-/** What a list of the old shell's files names that another did not: a file, or a context of a file it had. */
-export function shellAdaptersAdded(now, before) {
-  const names = (files) =>
-    files.flatMap((entry) => [
-      entry.file,
-      ...(entry.contexts ?? []).map((name) => `${entry.file}: the context ${name}`),
-    ]);
-  const held = new Set(names(before));
-  return names(now).filter((name) => !held.has(name));
-}
-
-/** tools/shell-adapters.json as the options of `ohmail/old-shell-adapters`: the folder, and the files it names. */
-export function readShellAdapters(root) {
-  try {
-    const { folder, files } = JSON.parse(readFileSync(path.join(root, "tools/shell-adapters.json"), "utf8"));
-    return { folder, files: files.map(({ file, contexts }) => ({ file, contexts: contexts ?? [] })) };
-  } catch {
-    return { folder: "", files: [] }; // the rule then refuses every file it binds
-  }
-}
-
-/**
- * tools/owner-readers.json as the options of `ohmail/owner-lookup`: every host's file, the parts that read the shell's
- * scope, and the files that spell the marker's cookie name and nothing more.
+ * tools/owner-readers.json as the options of `ohmail/owner-lookup`: every host's file and the files that spell the marker's cookie name and nothing more.
  */
 export function readOwnerReaders(root) {
   try {
-    const { readers, todaysScopeReaders, markerNameSpellers } = JSON.parse(
+    const { readers, markerNameSpellers } = JSON.parse(
       readFileSync(path.join(root, "tools/owner-readers.json"), "utf8"),
     );
     return {
       readers: readers.flatMap((entry) => entry.files),
-      todaysScopeReaders: todaysScopeReaders.files,
       markerNameSpellers: markerNameSpellers?.files ?? [],
     };
   } catch {
-    return { readers: [], todaysScopeReaders: [], markerNameSpellers: [] }; // the rule then refuses every file
+    return { readers: [], markerNameSpellers: [] }; // the rule then refuses every file
   }
 }
 
@@ -668,6 +556,5 @@ export default {
     "wire-exports-no-value": wireExportsNoValue,
     "no-inline-config": noInlineConfig,
     "no-config-comment": noConfigComment,
-    "old-shell-adapters": oldShellAdapters,
   },
 };

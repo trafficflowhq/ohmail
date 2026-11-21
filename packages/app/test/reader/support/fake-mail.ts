@@ -47,17 +47,22 @@ export function letter(id: string, over: Partial<EngineMessage> = {}): EngineMes
 const COPY_AGE_UNKNOWN = { state: "unknown", asOf: null } as const;
 /** One list for every read: the model keeps what it was last answered by identity. */
 const NOTHING_ABANDONED: readonly never[] = [];
+const NO_QUEUED: readonly never[] = [];
 
 export interface FakeMail {
   readonly engine: OhmailEngine;
   readonly mutations: EngineMutation[];
   readonly bodyAsks: string[];
+  /** Every hand on the row held in New, in order: "hold a", "release a", "restore a". */
+  readonly held: string[];
   /** What a part above the panes told the engine: each cutline and each list of Sent folders, as handed. */
   readonly told: { readonly cutlines: unknown[]; readonly sentFolders: unknown[] };
   /** Change a letter, as a drain would. */
   readonly patch: (id: string, over: Partial<EngineMessage>) => void;
   /** A letter arrives, as a page of the mirror would bring it. */
   readonly add: (m: EngineMessage) => void;
+  /** How often the Ohbox's visit mark was moved (`markOhboxVisit`). */
+  readonly visitMarks: { count: number };
 }
 
 export function fakeMail(
@@ -93,9 +98,14 @@ export function fakeMail(
   const mutations: EngineMutation[] = [];
   const bodyAsks: string[] = [];
   const told = { cutlines: [] as unknown[], sentFolders: [] as unknown[] };
+  const visitMarks = { count: 0 };
+  const held = { id: null as string | null, said: [] as string[] };
   const engine = {
     read: () => reader,
+    storePageRowById: () => undefined,
     verbRead: () => reader,
+    /* Nothing of this world waits on the outbox. */
+    queuedChanges: () => NO_QUEUED,
     subscribe: (l: () => void) => {
       listeners.add(l);
       return () => {
@@ -114,6 +124,25 @@ export function fakeMail(
       bodyAsks.push(`thread ${ids.join(",")}`);
     },
     messageIsGone: (id: string) => gone.includes(id),
+    markOhboxVisit: async () => {
+      visitMarks.count += 1;
+      return true;
+    },
+    /* The row being read, held in New: one id, as the engine keeps it, and every hand on it in order. */
+    openRowHeld: () => held.id,
+    holdOpenRow: (id: string) => {
+      held.id = id;
+      held.said.push(`hold ${id}`);
+    },
+    releaseOpenRow: () => {
+      if (held.id !== null) held.said.push(`release ${held.id}`);
+      held.id = null;
+    },
+    restoreOpenRow: (id: string) => {
+      held.id = id;
+      held.said.push(`restore ${id}`);
+      return true;
+    },
     trashAvailable: () => true,
     replayDelete: async () => ({ status: "confirmed" }),
     restoreFromTrash: async () => ({ status: "confirmed" }),
@@ -123,8 +152,6 @@ export function fakeMail(
     receivedMessages: () => 0,
     freshness: () => COPY_AGE_UNKNOWN,
     sentFolderAsks: () => 0,
-    /* It opens no file: the ground's file door stands over it as no door. */
-    attachmentsAvailable: () => false,
     /* And what the Screener's model, which the ground stands, reads at rest: no change the server refused, a queue
        this device cannot page, and its asks at the mount, answered with nothing. */
     abandoned: () => NOTHING_ABANDONED,
@@ -133,6 +160,10 @@ export function fakeMail(
     refreshHeldReleases: async () => undefined,
     refreshUnscreened: async () => undefined,
     autoFiled: async () => null,
+    /* It opens no file: the ground's file door stands over it as no door. */
+    attachmentsAvailable: () => false,
+    /* And no ring to the worker: the rail's foot, which the ground feeds, offers no Pull new mail over it. */
+    pullAvailable: () => false,
     setCutline: (cutline: unknown) => {
       told.cutlines.push(cutline);
     },
@@ -148,6 +179,7 @@ export function fakeMail(
     mutations,
     bodyAsks,
     told,
+    held: held.said,
     patch: (id, over) => {
       const m = rows.get(`message:${id}`) as EngineMessage;
       rows.set(`message:${id}`, { ...m, ...over });
@@ -157,5 +189,6 @@ export function fakeMail(
       rows.set(`message:${m.id}`, m);
       tell();
     },
+    visitMarks,
   };
 }

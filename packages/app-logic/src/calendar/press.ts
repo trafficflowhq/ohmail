@@ -6,7 +6,11 @@
  */
 import type { CalendarAct } from "@ohmail/wire";
 import type { CalendarPort, CalendarVerdict } from "./port.js";
-import { REFUSAL_KEYS, TAKEN_KEYS, type CalendarSentenceKey } from "./sentences.js";
+import { FAULT_KEYS, REFUSAL_KEYS, TAKEN_KEYS, type CalendarSentenceKey } from "./sentences.js";
+
+const REFUSED = { ...FAULT_KEYS, ...REFUSAL_KEYS };
+
+export const calendarRefusalSentence = (word: keyof typeof REFUSED): CalendarSentenceKey => REFUSED[word];
 
 export interface Heard {
   readonly key: string;
@@ -17,15 +21,16 @@ export interface Heard {
 
 export function sentenceOf(act: CalendarAct, verdict: CalendarVerdict | null): CalendarSentenceKey | null {
   if (verdict === null) return null;
-  return verdict.kind === "taken" ? TAKEN_KEYS[act.kind] : REFUSAL_KEYS[verdict.word];
+  return verdict.kind === "taken" ? TAKEN_KEYS[act.kind] : calendarRefusalSentence(verdict.word);
 }
 
 export async function pressAndHear(
-  port: Pick<CalendarPort, "press" | "flush" | "verdict">,
+  port: Pick<CalendarPort, "press" | "flush" | "verdict" | "watchLateRefusal">,
   act: CalendarAct,
 ): Promise<Heard> {
   const { key } = await port.press(act);
   await port.flush();
   const verdict = port.verdict(key);
+  if (verdict === null) port.watchLateRefusal?.(key);
   return { key, verdict, say: sentenceOf(act, verdict) };
 }

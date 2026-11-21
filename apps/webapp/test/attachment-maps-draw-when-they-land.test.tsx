@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
 import {
   ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
@@ -37,7 +38,7 @@ const PICTURE_ITEM = { id: PICTURE, filename: "logo.png", contentType: "image/pn
 const INVITE_ITEM = { id: INVITE, filename: "invite.ics", contentType: "text/calendar", sizeBytes: ICS.length,
   inline: false, contentId: null, messageId: LETTER };
 
-/* The picture is read in today's reader (opened from History), the invitation on a News card: each surface that draws
+/* The picture is read in the Ohbox reader, the invitation on a News card: each surface that draws
    one of the maps today, so each case measures the subscription and not a surface's wiring. */
 let inReader = false;
 const folderOf = (): string => (parts === "picture" || inReader ? "INBOX" : "ohmail/News");
@@ -115,10 +116,9 @@ async function openTheCard(): Promise<HTMLElement> {
   await mountWithTheLetter();
   await goHash("#/reads");
   await tick(1_000);
-  const card = document.querySelector<HTMLElement>(`.view-reads .scast[data-sid="${LETTER}"]`);
-  expect(card, "News does not show the letter").not.toBeNull();
-  await act(async () => { card!.querySelector<HTMLButtonElement>(".sc-x")!.click(); });
-  return card!;
+  const news = screen.getByRole("region", { name: "News stream" });
+  await act(async () => { within(news).getByRole("button", { name: /^Expand/ }).click(); });
+  return within(news).getByRole("article");
 }
 
 /** Virtual milliseconds from the part's bytes to the first frame that shows `drawn`, stepping 10 ms. */
@@ -134,7 +134,7 @@ describe("a letter's picture and invitation are drawn the moment their bytes lan
   it("the embedded picture, in the reader", async () => {
     parts = "picture";
     await mountWithTheLetter();
-    await goHash(`#/history/m/${LETTER}`);
+    await goHash(`#/ohbox/m/${LETTER}`);
     // The letter's own picture, in the frame or the prose: the strip's thumbnail shares its URL.
     const drawn = (): boolean =>
       [...document.querySelectorAll("iframe")].some((f) => (f.getAttribute("srcdoc") ?? "").includes(DRAWN))
@@ -147,7 +147,7 @@ describe("a letter's picture and invitation are drawn the moment their bytes lan
     parts = "invite";
     inReader = true;
     await mountWithTheLetter();
-    await goHash(`#/history/m/${LETTER}`);
+    await goHash(`#/ohbox/m/${LETTER}`);
     const summary = (): string => document.querySelector(".msg-events .ics-card .ics-summary")?.textContent ?? "";
     expect(await msToDraw(INVITE, () => summary() === "Kiln check with Bea"), "the invitation waited for another render")
       .toBeLessThanOrEqual(100);

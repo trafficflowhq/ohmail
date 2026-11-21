@@ -1,5 +1,4 @@
-import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
-import { animate } from "../../motion/motion.js";
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import { closeTopmost, useOverlayEscape } from "./overlay-escape.js";
 import { cycleTab, useOverlayFocus } from "./overlay-focus.js";
 import "./overlay.css";
@@ -10,8 +9,13 @@ export interface OverlayProps {
   /** Its name, said to a screen reader: the words, or the id of the node that holds them. */
   label?: string;
   labelledBy?: string;
+  /** The id of the part that explains the decision. */
+  describedBy?: string;
+  role?: "dialog" | "alertdialog";
   /** The part that stands on the scrim: its own class draws it. */
   className: string;
+  /** Fade the scrim with the panel, or just its backdrop. Omitted: the backdrop is steady. */
+  scrimMotion?: "together" | "backdrop";
   /** Where it stands: in the middle, or under the window's top. */
   place?: "top";
   /** What takes the keys as it opens. Left out: its first button. */
@@ -34,7 +38,10 @@ export function Overlay({
   onClose,
   label,
   labelledBy,
+  describedBy,
+  role = "dialog",
   className,
+  scrimMotion,
   place,
   first,
   onKey,
@@ -43,9 +50,6 @@ export function Overlay({
   const box = useRef<HTMLDivElement | null>(null);
   useOverlayFocus(open, box, first ?? firstButton);
   useOverlayEscape(open, box, onClose);
-  useLayoutEffect(() => {
-    if (open && box.current) animate(box.current, "pop", { ease: "--e-pop" });
-  }, [open]);
   if (!open) return null;
 
   const keys = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -62,16 +66,18 @@ export function Overlay({
       <div
         className="oh-scrim"
         data-scrim=""
+        data-scrim-motion={scrimMotion}
         data-place={place}
         onPointerDown={(e) => (e.target === e.currentTarget ? onClose() : undefined)}
       >
         <div
           ref={box}
           className={`oh-overlay ${className}`}
-          role="dialog"
+          role={role}
           aria-modal="true"
           aria-label={label}
           aria-labelledby={labelledBy}
+          aria-describedby={describedBy}
           tabIndex={-1}
           onKeyDown={keys}
         >

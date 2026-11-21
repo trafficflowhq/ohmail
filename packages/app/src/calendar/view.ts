@@ -3,7 +3,7 @@
  * open event; a view draws its span of days from what it is handed and keeps no list of its own. It asks the
  * body for the span it shows, so the body expands the repeats over that span and no other.
  */
-import type { ComponentType } from "react";
+import type { ComponentType, PointerEvent, ReactNode } from "react";
 import type { GridEvent, HeldEdge, PlainDate, ZoneSource } from "@ohmail/app-logic/calendar";
 import type { EventRef, LayoutPlan } from "../frame/contract.js";
 
@@ -16,6 +16,7 @@ export interface CalendarEventView extends GridEvent {
 
 /** The settings a view draws by; until the account's settings answer: no week numbers, no second zone, the whole day. */
 export interface CalendarViewSettings {
+  readonly newEventsCalendarId?: string | null;
   /** The week's first day, Monday 0 to Sunday 6. */
   readonly weekStart: number;
   readonly weekNumbers: boolean;
@@ -23,6 +24,8 @@ export interface CalendarViewSettings {
   /** The hours in view when the calendar opens, in minutes of the day. */
   readonly hours: { readonly from: number; readonly to: number };
 }
+
+export type CalendarEventDrag = (id: string, event: PointerEvent<HTMLButtonElement>) => void;
 
 export interface CalendarViewProps {
   /** The day the view stands on: the address's anchor, or today. */
@@ -41,7 +44,12 @@ export interface CalendarViewProps {
   readonly plan: LayoutPlan;
   /** A panel (the Agenda, the Invitations) stands beside the view. */
   readonly panel: boolean;
+  readonly cursor?: number | null;
+  /** The phone's time scroller picks the adjacent civil day. */
+  readonly stepDay?: (direction: -1 | 1) => void;
   /** Opens an event: the frame's named command. */
+  readonly onDrag?: CalendarEventDrag;
+  readonly dragPreview?: { day: string; chip: ReactNode };
   readonly onOpen: (ref: EventRef) => void;
   /** Goes to a day, in the Day view. */
   readonly onDay: (day: PlainDate) => void;

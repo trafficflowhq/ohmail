@@ -1,5 +1,9 @@
 {
   "accountOwn": {
+    "signedInLabel": "Angemeldet als",
+    "managed": "ohmail Cloud",
+    "self": "Dein eigener Server",
+    "ownComputer": "Dieser Computer",
     "signedIn": "Angemeldet",
     "thisBrowser": "Dieser Browser",
     "changeLabel": "Passwort",

@@ -42,7 +42,7 @@ export interface StreamScrollOptions {
   readonly contentKey: unknown;
   /** The view's cursor: one this stream did not announce itself was put there by the person, and is held. */
   readonly cursor?: string | null;
-  readonly onCurrentChange: (id: string) => void;
+  readonly onCurrentChange: (id: string, byHand?: boolean) => void;
   /** The view's order over the whole pile (`-1` for an id it does not hold). */
   readonly pileIndexOf?: (id: string) => number;
   readonly seam?: StreamScrollSeam;
@@ -53,18 +53,28 @@ export interface StreamScroll {
   scrollTo(id: string, onLanded?: () => void): void;
   /** Is this card in the port right now? */
   onScreen(id: string): boolean;
+  settledInReadView(id: string): boolean;
+  settledCursorInReadView(id: string): boolean;
   /** Call `cb` once, on the first scroll frame this card is out of the port or unmounted. */
   whenOffScreen(id: string, cb: () => void): void;
   /** An answered card is about to shrink: hold its own top; `land`, and bring its head to the line if it is above. */
   hold(id: string, land?: boolean): void;
+  /** Reveal the end of the open editor's card and follow growth while it stays at the foot. */
+  revealEnd(id: string, card: HTMLElement): () => void;
   /** A card is about to open or close (its own press, before the commit). */
   toggled(sid: string, open: boolean): void;
   /** The leave's range, read off the state alone. */
   range(): StreamRange;
+  /** The previous address's range stops following the cursor. */
+  resetRange(): void;
   /** The seam's jump to an end has rested. */
   endLanded(): void;
   /** The seam's judged scroll has ended. */
   judged(): void;
+  /** A window committed a fresh set of cards at the current scroll position. */
+  windowChanged(): void;
+  /** A far landing or displaced anchor has no stable viewport to read. */
+  readingBlocked(): boolean;
 }
 
 /** The handle over one core: stable for the core's life. */
@@ -73,6 +83,8 @@ function handleOf(core: StreamScrollCore): StreamScroll {
   return {
     scrollTo,
     onScreen: (id) => core.inPort(id),
+    settledInReadView: (id) => core.settledInReadView(id),
+    settledCursorInReadView: (id) => core.cur === id && core.settledInReadView(id),
     whenOffScreen: (id, cb) => {
       core.offScreen.set(id, cb);
     },
@@ -83,6 +95,38 @@ function handleOf(core: StreamScrollCore): StreamScroll {
       core.toggledFn(id, true);
       if (land && cssRect(item).top < cssRect(el).top - 0.5) core.own(() => scrollTo(id));
     },
+    revealEnd: (id, card) => {
+      const el = core.el;
+      if (!el || !el.contains(card)) return () => {};
+      const below = () => cssRect(card).bottom - cssRect(el).bottom;
+      const toEnd = (distance: number) => {
+        if (distance <= 0.5) return;
+        core.toggledFn(id, true);
+        core.moved();
+        core.own(() => el.scrollTo({ top: el.scrollTop + distance, behavior: "instant" }));
+      };
+      toEnd(below());
+      const Observer = el.ownerDocument.defaultView?.ResizeObserver;
+      if (!Observer) return () => {};
+      let height = cssRect(card).height;
+      const observer = new Observer(() => {
+        const next = cssRect(card).height;
+        const grew = next - height;
+        const distance = below();
+        height = next;
+        if (distance > 0.5 && distance <= grew + 2) toEnd(distance);
+      });
+      const away = () => {
+        if (Math.abs(below()) > 2) release();
+      };
+      const release = () => {
+        observer.disconnect();
+        el.removeEventListener("scroll", away);
+      };
+      observer.observe(card);
+      el.addEventListener("scroll", away, { passive: true });
+      return release;
+    },
     toggled: (sid, open) => {
       // The card the person opened is the reading, and the cursor.
       if (open) {
@@ -92,8 +136,11 @@ function handleOf(core: StreamScrollCore): StreamScroll {
       core.toggledFn(sid, open);
     },
     range: () => ({ ...core.range }),
+    resetRange: () => core.resetRange(),
     endLanded: () => core.endLanded(),
     judged: () => core.judged(),
+    windowChanged: () => core.respy(),
+    readingBlocked: () => core.landing || core.pendingShift() !== 0,
   };
 }
 /** The view's cursor as last rendered, per core (`cur` can differ: a quiet reading, a cursor cleared by Back). */

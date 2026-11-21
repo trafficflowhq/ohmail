@@ -13,7 +13,7 @@ import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import en from "../../messages/en.json";
 import { act, message, replyDraft, stubDom } from "../_draft-shell.js";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
-import { mountWriting, rounds, unmountWritings, type WritingWorld } from "./writing-world.js";
+import { mountWriting, rounds, unmountWritings, type WritingWorld } from "../_write-1-writing.js"; // Write over parts that stay (share write-1): today's words and keys leave
 
 const W = en.write;
 
@@ -55,15 +55,25 @@ async function open(
   return w;
 }
 
+/** The Tiptap editor behind Write's rich text box (ProseMirror's view stamps it on its own element). */
+type RichBox = { editor?: { chain(): { selectAll(): { insertContent(w: string): { run(): boolean } } }; getText(): string } };
+
+/**
+ * A person writes `words` in place of what the box held. Write's text is the ground's rich editor (a
+ * contenteditable, as every host mounts it): the words go in where the person's typing puts them, over a whole
+ * selection; a line of the head (a plain field) takes them as before.
+ */
 async function write(name: string, words: string): Promise<void> {
+  const box = screen.getByRole("textbox", { name }) as HTMLElement & RichBox;
   await act(async () => {
-    fireEvent.change(screen.getByRole("textbox", { name }), { target: { value: words } });
+    if (box.editor) box.editor.chain().selectAll().insertContent(words).run();
+    else fireEvent.change(box, { target: { value: words } });
   });
   await rounds(2);
 }
 
 async function person(line: string, address: string): Promise<void> {
-  const typed = screen.getByRole("textbox", { name: line });
+  const typed = screen.getByRole("combobox", { name: line }) // a line that offers people is a combobox;
   await act(async () => {
     fireEvent.change(typed, { target: { value: address } });
   });
@@ -84,7 +94,7 @@ describe("the reply's sheet", () => {
     const w = await open("reply");
     expect(screen.getByRole("region", { name: W.reply.label.replace("{name}", "The colleague") })).toBeTruthy();
     expect(screen.getByText("The colleague")).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: W.to })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: W.to })).toBeNull();
     expect(sendButton().disabled).toBe(true);
     await write(W.reply.text, "Noon works for me.");
     w.sendGate.wait = new Promise(() => undefined);
@@ -182,7 +192,7 @@ describe("the reply's sheet", () => {
     });
     await rounds(20);
     expect(screen.getByRole("status").textContent).toContain(W.status.offline);
-    expect((screen.getByRole("textbox", { name: W.reply.text }) as HTMLTextAreaElement).value).toBe(
+    expect(replyText()).toBe(
       "Written on the train.",
     );
   });
@@ -200,7 +210,7 @@ describe("the reply's sheet", () => {
     const said = w.reports.find((r) => r.message === en.compose.toastDiscard);
     await act(async () => said!.options!.onAction!());
     await rounds(6);
-    expect((screen.getByRole("textbox", { name: W.reply.text }) as HTMLTextAreaElement).value).toBe("Not yet.");
+    expect(replyText()).toBe("Not yet.");
     expect(sends(w)).toHaveLength(0);
   });
 });
@@ -233,7 +243,12 @@ function drafter(fromText: "door" | "none" = "door") {
   return { wire, bought, fromWords, state };
 }
 const draftButton = (label: string): HTMLButtonElement => screen.getByRole("button", { name: label }) as HTMLButtonElement;
-const replyText = (): string => (screen.getByRole("textbox", { name: W.reply.text }) as HTMLTextAreaElement).value;
+/** The words the reply's text box shows (Write's rich editor: its text). */
+const replyText = (): string => {
+  const box = screen.getByRole("textbox", { name: W.reply.text }) as HTMLElement & RichBox;
+  if (!box.editor) throw new Error("the reply's text box is no rich editor");
+  return box.editor.getText();
+};
 
 describe("draft reply in one press", () => {
   it("says its price before the press, buys once however often pressed while it runs, and lands in the reply", async () => {

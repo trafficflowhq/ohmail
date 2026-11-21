@@ -1,32 +1,14 @@
+/** @vitest-environment jsdom */
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-/* The flag and its flip live in `shell-open-state.ts` since ARCH-022; the frame is resolved
-   from the manifest by the declaration, never by a path. */
-import { shellFrameOf } from "./source-anchor.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, within } from "@testing-library/react";
+import { headStamp, readerZone } from "@ohmail/app-logic/reader";
+import { displayTime, fullDateTime } from "@ohmail/app-logic/text/format";
+import { act, message, mountShell, NOW, storeWith, stubDom, unmountAll, waitFor } from "./_draft-shell.js";
+/* These reads still cover the retained list fixtures' row stamps. Mounted places exercise their
+   own stamp behavior in the list and reading-column tests. */
 
-/**
- * THE DATE FLIP IS AN APP-WIDE ROW LANGUAGE, NOT AN OHBOX FEATURE.
- *
- * `MessageRow` renders whichever form of the stamp it is handed and reports a press on it — so the
- * question this file answers is not "does the row work" (`packages/ui` owns that) and not "does
- * the press flip the list" (`list-stamp.test.tsx` owns that, against a real view). It is: does
- * EVERY mail list hand the row the two forms and the flip.
- *
- * That is a wiring fact spread over seven files with a silent failure mode. A list that forgets
- * the props looks completely normal — relative dates, exactly as before — it simply has one pile
- * whose dates cannot be read exactly while every other pile's can, and no render test that nobody
- * wrote will say so. This is the same census `row-participants-wiring.test.ts` keeps for the
- * thread circles, over the same six lists and for the same reason: adding a new mail list means
- * adding it here, which is the point.
- *
- * ScreenerView is deliberately absent, and it is the same exception it is there. Its rows are a
- * decision about a SENDER, not a message: the stamp on one is the newest held message's, a
- * detail of the queue rather than a date anybody is comparing.
- */
-
-const at = (p: string) => fileURLToPath(new URL(`../app/${p}`, import.meta.url));
-const read = (p: string) => readFileSync(at(p), "utf8");
+const read = (p: string) => readFileSync("apps/webapp/app/" + p, "utf8");
 
 /** Every list surface that renders a mail row, and therefore stamps a flippable date. */
 const MAIL_LISTS = [
@@ -62,51 +44,165 @@ describe("the row stamp is wired into every mail list", () => {
     expect(read(`views/${view}.tsx`)).not.toMatch(/time=\{displayTime\(/);
   });
 
-  it("the shell hands its own flag and toggle to every one of them", () => {
-    const shell = read("shell/AppShell.tsx");
-    for (const view of MAIL_LISTS) {
-      const open = shell.indexOf(`<${view}`);
-      expect(open, `${view} is not rendered by the shell`).toBeGreaterThan(-1);
-      /* The props have to be inside THIS element, not merely somewhere in a file thousands of lines long — the
-         lesson `row-participants-wiring.test.ts` records, where a hard-coded indentation ran the
-         slice on into the NEXT view's props and found the string there. The opening tag ends at
-         the first `/>` sitting at the element's own indentation, so the bound comes from the tag. */
-      const indent = " ".repeat(open - shell.lastIndexOf("\n", open) - 1);
-      const close = shell.indexOf(`\n${indent}/>`, open);
-      expect(close, `${view}'s opening tag does not terminate at its own indentation`).toBeGreaterThan(open);
-      const tag = shell.slice(open, close);
-      expect(tag, `${view} is mounted without the absolute-time flag`).toContain(
-        "absoluteTime={absoluteTime}",
-      );
-      expect(tag, `${view} is mounted without the flip`).toContain(
-        "onToggleTime={toggleAbsoluteTime}",
-      );
+  beforeEach(() => {
+    localStorage.clear();
+    stubDom();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(async () => {
+    await unmountAll();
+    vi.useRealTimers();
+  });
+
+  const subject = "A dated letter";
+  const letter = message("stamp", { subject, labels: ["work"] });
+  const second = message("second-date", { subject: "A second dated letter", date: "2026-09-26T07:10:00.000Z" });
+  const places = [
+    { route: "ohbox", folder: "INBOX", name: "Ohbox", reading: "Open message" },
+    { route: "reads", folder: "ohmail/News", name: "News", reading: "News stream" },
+    { route: "receipts", folder: "ohmail/Receipts", name: "Receipts", reading: "Receipts stream" },
+    { route: "history", folder: "INBOX", name: "History", reading: "Open message" },
+    { route: "tag/work", folder: "INBOX", name: "Tags", reading: "Open message" },
+    { route: "triage", folder: "INBOX", name: "Answer Later", reading: "Open message" },
+  ] as const;
+
+  async function mount(place: typeof places[number]) {
+    const row = { ...letter, folder: place.folder,
+      ...(place.route === "triage" ? { triage: { messageId: letter.id, state: "reply_later" as const, bubbleUpAt: null,
+        setAt: NOW.toISOString(), updatedAt: NOW.toISOString() } } : {}),
+    };
+    const rows = place.route === "ohbox" ? [row, second] : [row];
+    const store = await storeWith(rows, []);
+    await store.applyChanges([{ type: "tag", op: "create", id: "work", seq: 100, updatedAt: NOW.toISOString(),
+      entity: { id: "work", name: "Work", hue: "blue", createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() } }]);
+    return within((await mountShell("#/" + place.route, rows, [], { store })).el);
+  }
+
+  async function stamp(page: ReturnType<typeof within>, word: string, name = /A dated letter$/) {
+    const option = () => page.queryByRole("option", { name });
+    await waitFor(() => option() !== null, "the dated letter in " + window.location.hash);
+    return within(option()!).getByText(word, { selector: "time", exact: true });
+  }
+
+  async function openReader(page: ReturnType<typeof within>, name = "Open message") {
+    await press(page.getByRole("option", { name: /A dated letter$/ }));
+    if (name !== "Open message") {
+      const region = () => page.queryByRole("region", { name });
+      await waitFor(() => region() !== null, name);
+      await press(within(region()!).getByRole("button", { name: "Expand" }));
     }
-  });
+    const date = await readerStamp(page, undefined, name);
+    expect(date.getAttribute("aria-pressed"), window.location.hash + " opens with the default date").toBe("false");
+    return date;
+  }
 
-  /**
-   * ONE STATE FOR THE LISTS AND THE OPEN MESSAGE. The reader's stamp (`MessageChrome`) and every
-   * row's now flip together because they read the same boolean and call the same callback. Two
-   * booleans would let a list and the message open beside it show one date two ways — and that is
-   * also the keyboard route to the flip, since the reader's stamp is a real `<button>` and a list
-   * row's cannot be one (see `MessageRow.onToggleTime`).
-   */
-  it("the flip the rows are given IS the one the open message is given", () => {
-    /* Two frames, one flip: the state and its callback are the open state's, and the chrome memo
-       that hands it to the reader is still `AppShell.tsx`'s — which is the join this pins. */
-    expect(shellFrameOf("toggleAbsoluteTime").source)
-      .toMatch(/const toggleAbsoluteTime = useStableCallback\(\(\) => setAbsoluteTime\(\(v\) => !v\)\)/);
-    expect(read("shell/AppShell.tsx")).toContain("onToggleAbsoluteTime: toggleAbsoluteTime");
-  });
+  async function readerStamp(page: ReturnType<typeof within>, pressed: boolean | undefined, name = "Open message") {
+    const button = () => {
+      const region = page.queryByRole("region", { name });
+      return region && within(region).queryByRole("button", { name: /\d\d:\d\d/, pressed });
+    };
+    await waitFor(() => button() !== null, "the reader's date button");
+    return button()!;
+  }
 
-  /**
-   * AND IT IS STILL MOMENTARY. The flip resets when the reader moves to another pile — it answers
-   * "let me read the exact dates on THIS". `viewer-tags-and-stamp.test.ts` pins the same effect
-   * for the open message; it is one flag, so this is the same guard seen from the list side, and
-   * the reason it is repeated is that the rows are now the loudest thing it governs.
-   */
-  it("the flip is reset on a view switch, for the rows as much as for the reader", () => {
-    expect(shellFrameOf("toggleAbsoluteTime").source, "the absolute-time flag survives a view switch")
-      .toMatch(/setAbsoluteTime\(false\);\s*\}\s*,\s*\[route\.view\]\)/);
-  });
+  async function press(element: HTMLElement) {
+    await act(async () => { fireEvent.click(element); });
+  }
+
+  async function visit(route: string) {
+    await act(async () => {
+      window.location.hash = "#/" + route;
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+  }
+
+  function listTitle(place: typeof places[number]): string {
+    if (place.route === "ohbox") return fullDateTime(letter);
+    if (place.reading !== "Open message") return headStamp(letter.date, NOW, readerZone(), "en", { yesterday: (time) => "Yesterday " + time }).full;
+    return "";
+  }
+
+  async function defaultListStamp(page: ReturnType<typeof within>, place: typeof places[number]) {
+    const date = await stamp(page, displayTime(letter, NOW));
+    expect(date.title, place.name + " date title").toBe(listTitle(place));
+    return date;
+  }
+
+  // Keep the checklist's historical case identities. The studio scopes the reader date switch
+  // to the reading column, so the cases exercise each mounted list's own stamp behavior.
+  it("the shell hands its own flag and toggle to every one of them", async () => {
+    for (const place of places) {
+      const page = await mount(place);
+      const short = displayTime(letter, NOW);
+      const compact = await defaultListStamp(page, place);
+      if (place.route === "ohbox") {
+        const full = fullDateTime(letter);
+        const secondShort = displayTime(second, NOW);
+        const secondFull = fullDateTime(second);
+        const secondName = /A second dated letter$/;
+        expect((await stamp(page, secondShort, secondName)).title).toBe(secondFull);
+        await press(compact);
+        expect((await stamp(page, full)).title).toBe(short);
+        expect((await stamp(page, secondFull, secondName)).title).toBe(secondShort);
+      }
+      await unmountAll();
+      stubDom();
+    }
+  }, 30_000);
+
+  it("the flip the rows are given IS the one the open message is given", async () => {
+    const page = await mount(places[0]);
+    const short = displayTime(letter, NOW);
+    const full = fullDateTime(letter);
+    const reader = await openReader(page);
+    await press(reader);
+    expect(await readerStamp(page, true)).toBeTruthy();
+    expect((await stamp(page, short)).title).toBe(full);
+    await press(await stamp(page, short));
+    expect((await stamp(page, full)).title).toBe(short);
+    expect(await readerStamp(page, true)).toBeTruthy();
+    await press(await readerStamp(page, true));
+    expect(await readerStamp(page, false)).toBeTruthy();
+    expect((await stamp(page, full)).title).toBe(short);
+    await unmountAll();
+
+    for (const place of places.slice(1)) {
+      stubDom();
+      const list = await mount(place);
+      await defaultListStamp(list, place);
+      await press(await openReader(list, place.reading));
+      expect(await readerStamp(list, true, place.reading)).toBeTruthy();
+      await defaultListStamp(list, place);
+      await unmountAll();
+    }
+  }, 30_000);
+
+  it("the flip is reset on a view switch, for the rows as much as for the reader", async () => {
+    for (const place of places) {
+      const page = await mount(place);
+      const compact = await defaultListStamp(page, place);
+      const reader = await openReader(page, place.reading);
+      const readerDefault = reader.textContent;
+      const readerFull = reader.title;
+      await press(reader);
+      expect((await readerStamp(page, true, place.reading)).textContent, place.name).toBe(readerFull);
+      if (place.route === "ohbox") {
+        await press(compact);
+        expect((await stamp(page, fullDateTime(letter))).title).toBe(displayTime(letter, NOW));
+      } else {
+        await defaultListStamp(page, place);
+      }
+
+      const away = place.route === "ohbox" ? "History" : "Ohbox";
+      await visit(away.toLowerCase());
+      const rail = within(page.getByRole("navigation", { name: "Places" }));
+      await waitFor(() => rail.queryByRole("button", { name: away, current: "page" }) !== null, "arrive at " + away);
+      await visit(place.route);
+      await defaultListStamp(page, place);
+      expect((await openReader(page, place.reading)).textContent, place.name + " reader after returning").toBe(readerDefault);
+      await defaultListStamp(page, place);
+      await unmountAll();
+      stubDom();
+    }
+  }, 40_000);
 });

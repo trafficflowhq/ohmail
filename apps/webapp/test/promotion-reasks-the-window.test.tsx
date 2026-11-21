@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import {
@@ -39,7 +40,7 @@ const world = (): Response => json({
   cursor: "c1", hasMore: false, serverTime: ISO,
 });
 
-const rowIds = (c: HTMLElement): string[] => [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
+const rowIds = (c: HTMLElement): string[] => within(c).queryAllByRole("option").map((row) => row.dataset.id ?? "");
 
 let consentAsks = 0;
 let facts: MailboxFacts[] = [];

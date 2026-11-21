@@ -1,21 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { Spinner } from "@ohmail/ui";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "@ohmail/app-logic/doors/app-update";
 import { startBuildWatch } from "@ohmail/app-logic/doors/build-watch";
-import { reviveStandingDown } from "@ohmail/app-logic/session/sync-scheduler";
+import { mirrorOwnerOf, reviveStandingDown } from "@ohmail/app-logic/session/sync-scheduler";
+import { isCalendarFragment } from "@ohmail/app/frame";
+import { MailFrame, useBrowserMail } from "../../shell/browser-mail";
 import { EngineProvider, useEngine, useResolvedDemoMode, useResolvedDemoModeFrom } from "../../shell/engine";
-import { TodaysFrame } from "../../shell/TodaysFrame";
-import { NO_TODAYS } from "../../shell/todays-inputs";
-import { useTodaysSupplies } from "../../shell/todays-supplies";
 import { DemoFrame, DemoShell } from "../demo/DemoShell";
+import { WEB_MAIL_PARTS } from "./mail-parts";
 import { SEND_SURFACE, useWebHost, webRecover, type WebWords } from "./web-supplies";
+import { discardLegacyDeviceSignIn } from "./device-sign-in";
 import {
-  apiOwnerBinding, bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
+  apiConfigured, apiOwnerBinding, apiOwnerHolds, bindApiOwner, boundApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
   type AccessRefusedFacts,
 } from "../../api-client";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
@@ -64,10 +65,18 @@ const DEMO_SAYS = {
   sendCeiling: SEND_SURFACE === undefined ? "strict" : SEND_SURFACE === null ? "mailbox" : SEND_SURFACE,
 } as const;
 
+/** Only the mail frame uses the address returned alongside its normal session check. */
+const resolveMailOwner = () => resolveOwnerOutcome({ includeAddress: true });
+
 /** The account this tab is for, confirmed or pending: the doors' when the jar names nobody. */
 function tabAccount(): string | null {
   const b = apiOwnerBinding();
   return b.kind === "bound" || b.kind === "pending" ? b.owner : null;
+}
+
+/** Check the confirmed account and current session even after the new catalogue has loaded. */
+function localeOwnerHolds(owner: string): boolean {
+  return boundApiOwner() === owner && apiOwnerHolds("/consent/settings");
 }
 
 /**
@@ -98,6 +107,9 @@ export function CloudShell({ demo, drawMail }: {
    * is what stops the hydration mismatch `useDemoMode` exists to prevent.
    */
   const resolvedDemo = useResolvedDemoModeFrom(demo);
+  useEffect(() => {
+    if (!resolvedDemo) discardLegacyDeviceSignIn();
+  }, [resolvedDemo]);
   /** A Microsoft sign-in started in `/join` finishes here behind the gate, then goes back there. */
   const joinWait = useSyncExternalStore(subscribeOAuthOutcome, oauthLandsInJoin, noJoinLanding);
   /** Another tab of this browser signed out: the shell goes in the same task and the tab leaves. */
@@ -105,12 +117,12 @@ export function CloudShell({ demo, drawMail }: {
   /** This tab's session was revoked from another device: the mail goes, no scrim, and the copy with it. */
   const revokedHere = useRevokedHere(resolvedDemo, tabAccount);
   /** The server-confirmed account, for the Help & contact pane's diagnostics block. */
-  const [accountId, setAccountId] = useState<string | null>(null);
-  const onConfirmed = useCallback((accountId: string) => {
+  const [account, setAccount] = useState<{ id: string; address: string | null } | null>(null);
+  const onConfirmed = useCallback((accountId: string, address?: string, familyId?: string) => {
     // A sign-out pending on this jar: the tab is leaving, and nothing is bound for this answer.
-    if (!listenFor(accountId)) return;
-    bindApiOwner(accountId);
-    setAccountId(accountId);
+    if (!listenFor(accountId, familyId)) return;
+    bindApiOwner(accountId, familyId);
+    setAccount({ id: accountId, address: address ?? null });
   }, [listenFor]);
   /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left
@@ -149,7 +161,7 @@ export function CloudShell({ demo, drawMail }: {
     if (resolvedDemo) return;
     return onAccessRefused((facts) => setRefused((held) => held ?? facts));
   }, [resolvedDemo]);
-  const firstPaint = useFirstPaintGate(resolvedDemo, (facts) => setRefused((held) => held ?? facts));
+  const firstPaint = useFirstPaintGate(demo, resolvedDemo, (facts) => setRefused((held) => held ?? facts));
   /**
    * The lift: the shell mounts again and the drain loop picks up from its stored cursors. The
    * remount's boot reconcile re-announces the push registration, once; a call here would be a second.
@@ -218,7 +230,7 @@ export function CloudShell({ demo, drawMail }: {
    * `useCallback`: an imported function already has a stable identity, which is all
    * `EngineProvider`'s effect needs.
    */
-  const resolveOwner = resolveOwnerOutcome;
+  const resolveOwner = resolveMailOwner;
 
   /**
    * A named shell is never a public surface. The account boundary's one nullable state meant both "no
@@ -253,26 +265,18 @@ export function CloudShell({ demo, drawMail }: {
   if (signedOutHere || revokedHere) return <div className="gate" aria-busy="true" />;
   if (joinWait) return <WaitGate />;
 
-  // Three injected panes, for the reason `resolveOwner` is a prop: the
-  // shell is shared with the standalone desktop, which builds without
-  // `app/api-client`; `AppShell` withholds all three in demo mode.
-  // accountSection is the "Leave anytime" control; mailboxSection connects
-  // a mailbox and shows the REAL list (the shared pane renders fixture-only
-  // entities, so it was empty for live accounts); aboutSection is the (i)
-  // body. `AccountLocale` is the same seam as a CONTEXT: the language row
-  // is the one Settings control a standalone install also has, so the row
-  // is shared and only the account write is injected. The lock replaces the
-  // shell entirely — after the hooks, inside `AccountLocale`.
+  // The payment and erasure answers replace the mail frame entirely. The locale decorator has the same
+  // account stamp as the frame, so a pending language choice cannot outlive that account's session.
   if (erased) {
     return (
-      <AccountLocale>
+      <AccountLocale owner={account?.id ?? null} ownerHolds={localeOwnerHolds}>
         <ErasedRoute blocked={(erased.remaining ?? []).some((n) => n.startsWith("ohmail-mirror"))} />
       </AccountLocale>
     );
   }
   if (refused) {
     return (
-      <AccountLocale>
+      <AccountLocale owner={account?.id ?? null} ownerHolds={localeOwnerHolds}>
         <WallRoute facts={refused} onLifted={lift} />
       </AccountLocale>
     );
@@ -284,50 +288,53 @@ export function CloudShell({ demo, drawMail }: {
   if (firstPaint === "asking") return <WaitGate />;
 
   /* THE DEMO, booted by `?demo=1`: the invented world's host, never the hosted wires (`demo/host.ts`). */
-  if (resolvedDemo) {
-    return (
-      <AccountLocale>
-        <DemoShell serverDemo={demo} says={DEMO_SAYS} />
-      </AccountLocale>
-    );
-  }
+  if (resolvedDemo) return <DemoShell serverDemo={demo} says={DEMO_SAYS} />;
 
   const words: WebWords = {
     server, invites: userInvites, subscriptionPage: manageOffered, withdrawManage, storageBlock: storageOffered,
-    account: accountId, firstRun, mailboxFacts, resolve: resolveOwner, confirmed: onConfirmed,
+    account: account?.id ?? null, accountAddress: account?.address ?? null, firstRun, mailboxFacts, resolve: resolveOwner, confirmed: onConfirmed,
   };
   return (
-    <AccountLocale>
-      {/* The classifier answers; `onConfirmed` commits (see `EngineProvider.onConfirmed`). The page's word for the
-          first frame goes to the provider alone: under `wait` nothing of the frame mounts before the check. */}
-      <EngineProvider demo={demo} resolveOwner={resolveOwner} onConfirmed={onConfirmed} drawMail={drawMail}>
-        <WebFrame words={words} />
-      </EngineProvider>
-    </AccountLocale>
+    <EngineProvider demo={demo} resolveOwner={resolveOwner} onConfirmed={onConfirmed} drawMail={drawMail}>
+      <WebFrame words={words} />
+    </EngineProvider>
   );
 }
 
 /**
- * THE WEB'S FRAME, inside its engine: the host built from what the page learned, and today's views in it. Where the
- * engine it stands on is the demo's (the mode changed after mount), the demo's host, so no hosted wire ever reaches
- * the invented world.
+ * THE WEB'S FRAME, inside its engine: the host built from what the page learned, and the mail's places in it over
+ * the mail ground. Where the engine it stands on is the demo's (the mode changed after mount), the demo's host, so
+ * no hosted wire ever reaches the invented world.
  */
 function WebFrame({ words }: { words: WebWords }) {
   const demoNow = useResolvedDemoMode();
+  const scope = mirrorOwnerOf(useEngine());
   if (demoNow) return <DemoFrame says={DEMO_SAYS} />;
-  return <SignedInFrame words={words} />;
+  return (
+    <AccountLocale owner={scope === words.account ? scope : null} ownerHolds={localeOwnerHolds}>
+      <SignedInFrame words={words} />
+    </AccountLocale>
+  );
 }
 
-function SignedInFrame({ words: given }: { words: WebWords }) {
+function SignedInFrame({ words }: { words: WebWords }) {
   const engine = useEngine();
-  const frame = useTodaysSupplies(webRecover);
-  /* The words are memoized on their parts: an entry render with nothing changed hands the frame the same host. */
-  const words = useMemo(() => given, [
-    given.server, given.invites, given.subscriptionPage, given.withdrawManage, given.storageBlock, given.account,
-    given.firstRun, given.mailboxFacts, given.resolve, given.confirmed,
-  ]);
+  /* What every browser host hands the frame for mail: the places, the stages and the ground, over this page's own
+     parts, the look of the theme it stands under and its two ways back. */
+  const frame = useBrowserMail(webRecover, WEB_MAIL_PARTS);
   const host = useWebHost(engine, words, frame);
-  return <TodaysFrame host={host} todays={NO_TODAYS} />;
+  const { account } = host.session;
+  const scope = mirrorOwnerOf(engine);
+  useEffect(() => {
+    if (scope === null || scope !== account || !apiConfigured()) return;
+    // The adapter and API client put these background reads through the same startup lane.
+    void engine.readStoreCoverage();
+    engine.waitingOnOrganizer();
+  }, [engine, account, scope]);
+  // Keep an incoming Calendar link while the handshake and this mirror's sign-in are being confirmed.
+  if (isCalendarFragment(frame.address.read()) &&
+      (words.server.calendar === null || (words.server.calendar === true && words.account === null))) return <WaitGate />;
+  return <MailFrame host={host} />;
 }
 
 const noSubscription = () => () => {};

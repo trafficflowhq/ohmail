@@ -2,7 +2,6 @@
 .cal-body {
   display: flex;
   flex-direction: column;
-  gap: var(--s2);
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -15,6 +14,7 @@
   min-width: 0;
 }
 .cal-body-view {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 2;
@@ -22,9 +22,36 @@
   min-width: 0;
 }
 .cal-body-panel {
+  --oh-calside-flex: 1;
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   min-width: 0;
+}
+
+.cal-body [data-drag="lifted"] {
+  cursor: grabbing;
+}
+.cal-body [data-cal-drop-active] {
+  outline: var(--slot-line) solid var(--ink2);
+  outline-offset: calc(var(--slot-line) * -1);
+}
+
+.cal-event-panel {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+}
+
+.cal-body-strip,
+.cal-mo-pick {
+  touch-action: pan-y;
+}
+
+.cal-date-jump {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding-block-end: var(--s2);
 }

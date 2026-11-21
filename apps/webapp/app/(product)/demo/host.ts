@@ -1,13 +1,18 @@
 /**
- * THE DEMO'S ANSWER TO THE HOST CONTRACT: invented mail, and nothing behind it. Every wire, read, feature and signal
+ * THE DEMO'S ANSWER TO THE HOST CONTRACT: invented mail, and nothing behind it. Every wire, read and signal
  * is `none`, so no hosted call can be made from the invented world; every capability is written out, none spread.
  * It lives in the web shell, not in a test package, while the web app ships the demo; it leaves with the demo. Its
  * scope is the demo's own partition, never none: a page that embeds the demo on the same origin must not find the
  * demo's words in the keys every mount without an owner shares.
  */
-import { CANNOT, FEATURE_NAMES, NONE, type FrameSupplies, type HostCapabilities, type HostContract } from "@ohmail/app/host";
+import {
+  CANNOT, FEATURE_NAMES, NONE, type FrameSupplies, type HostCapabilities, type HostContract, type HostDevice,
+} from "@ohmail/app/host";
 import { DEMO_STORAGE_OWNER } from "@ohmail/app-logic/storage/storage-owner";
+import { DEMO_DAY } from "../../shell/engine-config";
 import { browserNotificationHost } from "../../shell/notification-settings";
+import { DEMO_ABOUT } from "./DemoSettings";
+import { DEMO_NOTICE } from "./notice";
 
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk",
@@ -21,10 +26,21 @@ export interface DemoSays {
   readonly sendCeiling: HostCapabilities["sendCeiling"];
 }
 
-export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, says: DemoSays): HostContract {
+/**
+ * `language`: the language's controls the page wraps around the demo (the account's locale context): what is drawn,
+ * and the adoption, which writes nothing. The invented world's consent row names no language, so nothing is adopted.
+ */
+export function demoHost(
+  engine: HostContract["engine"], frame: FrameSupplies, says: DemoSays, language: HostDevice["language"],
+): HostContract {
   return {
     engine,
-    session: { resolve: NONE, confirmed: NONE, state: NONE, scope: DEMO_STORAGE_OWNER, account: null, recover: NONE, signOut: NONE },
+    /* The demo keeps its frozen day, as today's did: its invented letters are dated around it. */
+    session: {
+      resolve: NONE, confirmed: NONE, state: NONE, scope: DEMO_STORAGE_OWNER, account: null, accountAddress: null, recover: NONE, signOut: NONE,
+      mirrorAccount: null,
+      today: DEMO_DAY,
+    },
     reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
     wires: Object.fromEntries(WIRES.map((wire) => [wire, NONE])) as unknown as HostContract["wires"],
     capabilities: {
@@ -48,6 +64,8 @@ export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, s
     },
     features: {
       ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Record<(typeof FEATURE_NAMES)[number], typeof NONE>),
+      about: DEMO_ABOUT,
+      stageCard: DEMO_NOTICE,
       places: frame.places,
       stages: frame.stages,
       overs: frame.overs,
@@ -56,9 +74,9 @@ export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, s
       calendar: frame.calendar,
     },
     device: {
-      build: { surface: "web", version: null, commit: null, mailtoLeaves: true },
+      build: { surface: "web", version: null, commit: null, mailtoLeaves: true, desktopDownload: null },
       notifications: browserNotificationHost,
-      badge: NONE, language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE,
+      badge: NONE, language, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE,
       textSize: NONE, fold: NONE, liveTheme: NONE,
       address: frame.address, window: frame.window, appearance: frame.appearance,
     },

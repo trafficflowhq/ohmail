@@ -1,5 +1,5 @@
 /**
- * THE LIST'S MENU over Waiting. Its one item, Mark all spam, asks first (`asks/AllSpam.tsx`).
+ * THE LIST'S MENU over Waiting. Its one item, Mark all spam, asks first (`asks/BulkDecision.tsx`).
  */
 import { refused, type ScreenerView } from "@ohmail/app-logic/screener";
 import { useRef, useState } from "react";

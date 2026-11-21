@@ -1,6 +1,14 @@
 import { useState } from "react";
-import { Button, Dialog } from "@ohmail/ui/base";
-import { SettingLine, SettingNote, SettingsSheet, type SettingsSheetProps } from "@ohmail/ui/mail";
+import { Button, Dialog, Tag } from "@ohmail/ui/base";
+import {
+  ActionPanel,
+  SettingLine,
+  SettingNote,
+  SettingsSheet,
+  type SettingsSheetProps,
+} from "@ohmail/ui/mail";
+import type { HostCapabilities } from "../../host/index.js";
+import type { PaneSheet } from "../../settings/contract.js";
 import { useText } from "../../text/index.js";
 import { ACCOUNT_REFUSALS, type FactorSlot } from "../contract.js";
 import type { AccountModel } from "./model.js";
@@ -17,6 +25,8 @@ export type AccountPaneProps =
       readonly factor: FactorSlot;
       /** The page of states only, never handed by a shell: the password form stands open as the pane is drawn. */
       readonly formOpen?: boolean;
+      readonly service?: HostCapabilities["service"];
+      readonly sheet?: PaneSheet;
     }
   | {
       /** The sign-out alone, where a host has nothing else of the account to show. */
@@ -46,7 +56,14 @@ export function AccountPane(props: AccountPaneProps) {
   return props.body === "pane" ? <Whole {...props} /> : <SignOutAlone model={props.model} />;
 }
 
-function Whole({ model, password, factor, formOpen }: Extract<AccountPaneProps, { body: "pane" }>) {
+function Whole({
+  model,
+  password,
+  factor,
+  formOpen,
+  service,
+  sheet,
+}: Extract<AccountPaneProps, { body: "pane" }>) {
   const t = useText("account");
   const own = useText("accountOwn");
   const { who } = model;
@@ -57,13 +74,16 @@ function Whole({ model, password, factor, formOpen }: Extract<AccountPaneProps, 
       : who.said === ""
         ? { word: own("notRead") }
         : { word: own("notRead"), line: who.said };
-  const person = who.at === "signedIn" ? { name: who.address, address: who.address } : undefined;
-  return (
+  const person =
+    who.at === "signedIn"
+      ? { name: who.displayName?.trim() || who.address, address: who.address }
+      : undefined;
+  const content = (
     <>
       <SettingsSheet
-        title={who.at === "signedIn" ? who.address : undefined}
+        title={person?.name}
         person={person}
-        aside={who.at === "signedIn" ? own("signedIn") : undefined}
+        aside={who.at === "signedIn" && service ? <Tag>{own(service)}</Tag> : undefined}
         wants={stayed ?? unread}
       >
         {who.at === "loading" ? <SettingNote>{t("loading")}</SettingNote> : null}
@@ -75,24 +95,49 @@ function Whole({ model, password, factor, formOpen }: Extract<AccountPaneProps, 
             </Button>
           </>
         ) : null}
+        {who.at === "signedIn" ? <SettingLine label={own("signedInLabel")} value={who.address} /> : null}
         <Password model={password} factor={factor} formOpen={formOpen === true} />
-        {who.at === "signedIn" ? (
-          <SignOutLine
-            verb={model.signingOut ? t("signOutBusy") : t("signOut")}
-            off={model.signingOut}
-            press={model.signOut}
-            said={t("signOutBody")}
-          />
-        ) : null}
       </SettingsSheet>
       {who.at === "signedIn" ? (
-        <SettingsSheet title={t("title")}>
-          <SettingNote>{t("lead")}</SettingNote>
-          <Button kind="two" size="s" onPress={model.toErase}>
-            {t("begin")}
-          </Button>
-        </SettingsSheet>
+        <SettingsSheet
+          title={t("title")}
+          note={{
+            line: t("lead"),
+            acts: (
+              <Button kind="quiet" size="s" onPress={model.toErase}>
+                {t("begin")}
+              </Button>
+            ),
+          }}
+        />
       ) : null}
+      {who.at === "signedIn" ? <p className="oh-vh">{t("signOutBody")}</p> : null}
+    </>
+  );
+  const foot =
+    who.at === "signedIn" ? (
+      <ActionPanel
+        label={own("thisBrowser")}
+        items={[
+          {
+            id: "sign-out",
+            label: model.signingOut ? t("signOutBusy") : t("signOut"),
+            icon: "go",
+            kind: "ink",
+            rank: 0,
+            disabled: model.signingOut,
+            busy: model.signingOut,
+            onPress: model.signOut,
+          },
+        ]}
+      />
+    ) : undefined;
+  return sheet ? (
+    sheet(content, foot)
+  ) : (
+    <>
+      {content}
+      {foot}
     </>
   );
 }
@@ -139,8 +184,8 @@ function Password(p: {
   if (open) return <PasswordForm model={p.model} factor={p.factor} onCancel={() => setOpen(false)} />;
   return (
     <>
-      <SettingLine label={own("changeLabel")} narrow="detail">
-        <Button kind="two" size="s" onPress={() => setOpen(true)}>
+      <SettingLine label={own("changeLabel")}>
+        <Button kind="quiet" size="s" onPress={() => setOpen(true)}>
           {t("submit")}
         </Button>
       </SettingLine>

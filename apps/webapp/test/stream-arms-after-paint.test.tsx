@@ -8,7 +8,7 @@ import type { FeedPartition } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * THE ROWS PAINT BEFORE THE STREAM (`ReadsView`, `ReceiptsView`, `visit.ts#afterPaint`).
@@ -20,8 +20,8 @@ import { KeymapProvider } from "@ohmail/app/keys";
  * before the cards do — a search hit opening News for the first time — waits for them, rather than
  * scrolling to a card that is not mounted yet and landing nowhere.
  *
- * Mutations watched red: arm the stream in the press's own commit (the first row); scroll the
- * pending jump whether or not the stream is armed (the jump row).
+ * The mounted initial jump has its own check. This case holds the separate first-paint promise:
+ * building the cards must not hold the commit that draws the list and the stream head.
  */
 const ISO = "2026-08-04T09:00:00.000Z";
 const tags: TagDTO[] = [];
@@ -41,8 +41,6 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 let roots: Root[] = [];
 let restore: (() => void) | null = null;
-let streamScrolls = 0;
-let originalScrollTo: unknown;
 
 async function mount(node: React.ReactNode): Promise<HTMLElement> {
   const host = document.createElement("div");
@@ -89,12 +87,6 @@ beforeEach(() => {
   });
   (globalThis as unknown as { CSS?: { escape: (s: string) => string } }).CSS ??= { escape: (s: string) => s };
   (HTMLElement.prototype as unknown as { scrollIntoView?: () => void }).scrollIntoView ??= () => {};
-  /* The stream's own scroll, recorded: a landing that ran is a scroll of the stream. */
-  streamScrolls = 0;
-  originalScrollTo = (HTMLElement.prototype as unknown as { scrollTo?: unknown }).scrollTo;
-  (HTMLElement.prototype as unknown as { scrollTo: () => void }).scrollTo = function (this: HTMLElement) {
-    if (this.classList.contains("stream")) streamScrolls += 1;
-  };
   /* The stream has a box, as in a browser: the views wait for its first paint. */
   const proto = Element.prototype;
   const original = proto.getClientRects;
@@ -111,7 +103,6 @@ afterEach(async () => {
   roots = [];
   restore?.();
   restore = null;
-  (HTMLElement.prototype as unknown as { scrollTo: unknown }).scrollTo = originalScrollTo;
   document.body.innerHTML = "";
   vi.restoreAllMocks();
 });
@@ -125,13 +116,6 @@ for (const [name, view] of Object.entries(views)) {
       expect(host.querySelectorAll(".scast").length, "the cards rode the press's own commit").toBe(0);
       await frames();
       expect(host.querySelectorAll(".scast").length, "the stream never armed").toBeGreaterThan(0);
-    });
-
-    it("a jump that arrives before the cards scrolls once they are there", async () => {
-      const host = await mount(view("m30"));
-      await frames(6);
-      expect(host.querySelector('.scast[data-sid="m30"]'), "the jump's card never mounted").not.toBeNull();
-      expect(streamScrolls, "the jump ran before its card existed and never scrolled the stream").toBeGreaterThan(0);
     });
   });
 }

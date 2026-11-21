@@ -1,39 +1,14 @@
 /** @vitest-environment jsdom */
 /**
- * A PILE KEPT MOUNTED IS VISITED AGAIN, NOT CONTINUED (`visit.ts`, `kept-piles.tsx`).
- *
- * News and Receipts stay mounted under `<Activity>` while the reader is on another pile, so their
- * state survives a hide and a show — and so does everything a visit owned unless the visit
- * contract lets it go. The hazard is `\Seen`: the leave-commit writes to the person's own IMAP,
- * and a revisit that inherited the last visit's range or scroll could flip a message this visit
- * never put on screen. Every case here drives the REAL views under `<Activity>` with the
- * waterline-leave geometry (200px cards, a 600px port) and states the invariant directly: what a
- * visit commits was on screen during THAT visit, and a visit nobody drove commits nothing.
- *
- * Mutations watched red: drop the range reset at a visit's start (the arrival row, the subset
- * assertion); drop the scroll reset (the lands-at-the-top row, the subset assertion); drop
- * `bar.endVisit` (the lingering row); leave the stream's `pagehide` listener armed while hidden
- * (the pagehide row); never take the arming back on a visit that committed no card (the rapid row);
- * drop the list's scroll reset (the list rows).
+ * Each visit to News or Receipts owns its scroll and read evidence. Drive the registered frame
+ * with browser events and inspect the engine writes. Each card is 200px in a 600px reading port.
  */
-import { Activity } from "react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS = {
-  escape: (s: string) => s.replace(/["\\]/g, (c) => `\\${c}`),
-};
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-/* ── the geometry (waterline-leave's) ──────────────────────────────────────────────────── */
+import type { EngineMessage } from "@ohmail/wire";
+import { hitAt, issue, mountStreamFrame, receipt } from "../../../packages/app/test/streams/registered-world.js";
+import { searchPlace } from "../../../packages/app/src/search/place.js";
+import { feedPartition } from "../../../test/support/engine-fixtures.js";
 
 const CARD_H = 200;
 const VIEW_H = 600;
@@ -48,7 +23,7 @@ class MockIO {
 const ROW_H = 80;
 const LIST_H = 400;
 let listGeometry = false;
-const isList = (el: Element): boolean => listGeometry && (el as HTMLElement).classList?.contains("scroller");
+const isList = (el: Element): boolean => listGeometry && (el as HTMLElement).classList?.contains("pl-scroll");
 const zero = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) };
 
 /** An observer that reports every target on (re)observe, as Chromium and WebKit do. */
@@ -77,28 +52,34 @@ class DeliveringIO {
 }
 
 const scrollTops = new WeakMap<Element, number>();
-const cardsOf = (stream: Element): HTMLElement[] => [...stream.querySelectorAll<HTMLElement>(".scast[data-sid]")];
+const cardsOf = (stream: Element): HTMLElement[] => [...stream.querySelectorAll<HTMLElement>("[data-stream-item]")];
 
 function rectFor(el: Element): DOMRect {
-  const c = (el as HTMLElement).classList;
-  if (isList(el)) return { ...zero, top: 0, bottom: LIST_H, height: LIST_H } as DOMRect;
-  const list = listGeometry ? (el as HTMLElement).closest?.(".scroller") : null;
-  if (list && (el as HTMLElement).hasAttribute("data-window-top")) {
+  const node = el as HTMLElement;
+  if (isList(node)) return { ...zero, top: 0, bottom: LIST_H, height: LIST_H } as DOMRect;
+  const list = listGeometry ? node.closest(".pl-scroll") : null;
+  if (list && node.hasAttribute("data-window-top")) {
     const top = -(scrollTops.get(list) ?? 0);
     return { ...zero, top, bottom: top } as DOMRect;
   }
-  if (list && (el as HTMLElement).dataset.index !== undefined && (el as HTMLElement).dataset.id) {
-    const top = Number((el as HTMLElement).dataset.index) * ROW_H - (scrollTops.get(list) ?? 0);
+  if (list && node.dataset.index !== undefined && node.dataset.id) {
+    const top = Number(node.dataset.index) * ROW_H - (scrollTops.get(list) ?? 0);
     return { ...zero, top, bottom: top + ROW_H, height: ROW_H } as DOMRect;
   }
-  if (c?.contains("stream")) return { ...zero, top: 0, bottom: VIEW_H, height: VIEW_H } as DOMRect;
-  if (c?.contains("scast")) {
-    const stream = el.closest(".stream");
-    if (!stream) return zero as DOMRect;
-    const i = cardsOf(stream).indexOf(el as HTMLElement);
-    if (i < 0) return zero as DOMRect;
-    const top = i * CARD_H - (scrollTops.get(stream) ?? 0);
-    return { ...zero, top, bottom: top + CARD_H, height: CARD_H } as DOMRect;
+  if (pileOf(el)) return new DOMRect(0, 0, 600, VIEW_H);
+  const stream = node.closest<HTMLElement>("[data-reading-scroll]");
+  const card = node.closest<HTMLElement>("[data-stream-item]");
+  const id = node.dataset.streamWindowItem ?? card?.dataset.streamItem;
+  const pile = stream && pileOf(stream);
+  if (pile && id) {
+    const index = orderOf(pile).indexOf(id);
+    if (index < 0) return zero as DOMRect;
+    const top = index * CARD_H - (scrollTops.get(stream) ?? 0);
+    if (node === card || node.dataset.streamWindowItem) return new DOMRect(0, top, 600, CARD_H);
+    if (node.matches("[data-sender-line]")) return new DOMRect(0, top + 16, 600, 20);
+    if (node.matches(".oh-message-clip, .oh-message-body, [data-read-body]")) {
+      return new DOMRect(0, top + 70, 600, CARD_H - 100);
+    }
   }
   return zero as DOMRect;
 }
@@ -114,15 +95,15 @@ function onScreen(stream: Element): string[] {
   return cardsOf(stream).filter((c) => {
     const r = rectFor(c);
     return r.bottom > 0 && r.top < VIEW_H;
-  }).map((c) => c.dataset.sid!);
+  }).map((c) => c.dataset.streamItem!);
 }
 
 /** Every id that was on screen in the visit being recorded. */
 let displayed = new Set<string>();
 const note = (stream: Element): void => { for (const id of onScreen(stream)) displayed.add(id); };
 
-function setScroll(stream: Element, next: number): void {
-  const max = isList(stream) ? 100_000 : Math.max(0, cardsOf(stream).length * CARD_H - VIEW_H);
+function setScroll(stream: HTMLElement, next: number): void {
+  const max = isList(stream) ? 100_000 : Math.max(0, stream.scrollHeight - VIEW_H);
   const clamped = Math.min(Math.max(0, next), max);
   if (clamped === (scrollTops.get(stream) ?? 0)) return;
   scrollTops.set(stream, clamped);
@@ -130,160 +111,177 @@ function setScroll(stream: Element, next: number): void {
   stream.dispatchEvent(new Event("scroll"));
 }
 
-/* ── the harness ───────────────────────────────────────────────────────────────────────── */
-
 interface Row { id: string; unread: boolean; subject?: string }
-
-function msg(r: Row, folder: string): Record<string, unknown> {
-  return {
-    id: r.id, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: r.subject ?? `S-${r.id}`, from: { name: r.id, address: `${r.id}@example.com` },
-    to: [], cc: [], date: "2026-08-02T09:00:00.000Z", folder, snippet: "preview", unread: r.unread,
-    hasAttachments: false, attachmentCount: 0,
-    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
-  };
-}
-
 type Pile = "reads" | "receipts";
-const NOW = new Date("2026-08-02T09:00:00.000Z");
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-let commits: Record<Pile, Array<{ upToId: string; messageIds: string[] }>> = { reads: [], receipts: [] };
-/** What the list sweep (and a card's own dwell) marked, per pile. */
-let marked: Record<Pile, string[]> = { reads: [], receipts: [] };
-let render: (active: Pile | null, rows: Row[], jump?: { pile: Pile; id: string } | null) => Promise<void> = async () => {};
-/** Each pile's cursor, held as the shell holds it, for the cases that set `holdCur`; null and inert otherwise. */
-let curs: Record<Pile, string | null> = { reads: null, receipts: null };
-let holdCur = false;
-/** Every cursor move in order, for the same cases. */
-let curMoves: string[] = [];
 
-async function mountPiles(rows: Row[]): Promise<void> {
-  const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  const bodyOf = (m: { snippet: string }) => ({ text: m.snippet, state: "snippet" });
-  let paint = (): void => {};
-  const onCurOf = (p: Pile) => (id: string) => { if (holdCur) { curs[p] = id; curMoves.push(id); paint(); } };
-  render = async (active, list, jump = null) => {
-    const tree = () => {
-      const reads = h(ReadsView as never, {
-        settled: true, owed: false,
-        partition: { waterline: null, fresh: list.map((r) => msg(r, "ohmail/News")), seen: [], newCount: 0 },
-        tags: [], now: NOW, cur: curs.reads, onCur: onCurOf("reads"),
-        aiChip: null, chipState: null, onChipState: () => {}, markSeen: (id: string) => { marked.reads.push(id); },
-        onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.reads.push(c); },
-        bodyOf, hydrateBody: () => {}, onAction: () => {},
-        jumpTo: jump?.pile === "reads" ? jump.id : null, onJumped: () => {},
-      } as never);
-      const receipts = h(ReceiptsView as never, {
-        settled: true, owed: false, messages: list.map((r) => msg(r, "ohmail/Receipts")),
-        tags: [], now: NOW, cur: curs.receipts, onCur: onCurOf("receipts"),
-        unreadCount: list.filter((r) => r.unread).length, isUnread: (m: { unread: boolean }) => m.unread,
-        markSeen: (id: string) => { marked.receipts.push(id); },
-        onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.receipts.push(c); },
-        bodyOf, hydrateBody: () => {}, onAction: () => {},
-        jumpTo: jump?.pile === "receipts" ? jump.id : null, onJumped: () => {},
-      } as never);
-      return h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(KeymapProvider as never, {
-          children: h(React.Fragment, null,
-            h(Activity, { mode: active === "reads" ? "visible" : "hidden", children: reads }),
-            h(Activity, { mode: active === "receipts" ? "visible" : "hidden", children: receipts })),
-        } as never),
-      });
-    };
-    paint = () => root!.render(tree());
-    await act(async () => { paint(); });
-    await act(async () => { vi.advanceTimersByTime(40); });
-    const shown = active ? stream(active) : null;
-    if (shown) note(shown);
-    if (active && listGeometry) note(listOf(active));
-  };
+const NOW = new Date("2026-08-02T09:00:00.000Z");
+const nameOf = (pile: Pile) => pile === "reads" ? "News" : "Receipts";
+const pileOf = (port: Element): Pile | null => {
+  if (!port.hasAttribute("data-reading-scroll")) return null;
+  const label = port.closest('[role="region"]')?.getAttribute("aria-label");
+  if (label === "News stream") return "reads";
+  if (label === "Receipts stream") return "receipts";
+  return null;
+};
+const stream = (pile: Pile) =>
+  screen.getByRole("region", { name: `${nameOf(pile)} stream` }).querySelector<HTMLElement>("[data-reading-scroll]")!;
+const listOf = (pile: Pile) =>
+  screen.getByRole("region", { name: nameOf(pile) }).querySelector<HTMLElement>(".pl-scroll")!;
+const cursor = (pile: Pile) =>
+  screen.queryByRole("region", { name: nameOf(pile) })
+    ?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')?.dataset.id;
+
+let frame: ReturnType<typeof mountStreamFrame>;
+let previous: Row[];
+let primary: Pile;
+const orderOf = (pile: Pile): string[] => {
+  const { fresh, seen } = feedPartition(frame.mail.engine.read(), pile);
+  return [...fresh, ...seen].map(({ id }) => id);
+};
+
+function letterOf(pile: Pile, row: Row, index: number): EngineMessage {
+  // The mirror keys messages globally, so the other pile needs a distinct copy of the same rows.
+  const id = pile === primary ? row.id : `other-${row.id}`;
+  const seed = pile === "reads" ? issue : receipt;
+  return seed(id, 2, {
+    date: NOW.toISOString(),
+    updatedAt: NOW.toISOString(),
+    // The old fixture supplied an ordered array. Preserve that order through the mirror's sort key.
+    sortAt: new Date(NOW.getTime() - index * 1000).toISOString(),
+    unread: row.unread,
+    subject: row.subject ?? `S-${row.id}`,
+    snippet: "preview",
+  });
 }
 
-const stream = (pile: Pile): Element => host!.querySelector(`.view-${pile} .stream`)!;
-const listOf = (pile: Pile): Element => host!.querySelector(`.view-${pile} .scroller`)!;
+async function mountPiles(rows: Row[], pile: Pile = "reads", jump?: string): Promise<void> {
+  primary = pile;
+  previous = rows;
+  await act(async () => {
+    frame = mountStreamFrame({
+      at: "#/ohbox",
+      letters: (["reads", "receipts"] as const).flatMap((place) => rows.map((row, i) => letterOf(place, row, i))),
+      ...(jump && { hit: { ...hitAt(pile === "reads" ? "news" : "receipts", jump), rail: searchPlace.rail } }),
+    });
+  });
+}
 
-/** A human wheel on a pile's list, then the frames its window and its observer run in. */
+/** Apply the next copy while the old place is still on screen, then use the frame's own navigation. */
+async function visit(active: Pile | null, rows: Row[], fromSearch = false): Promise<void> {
+  await act(async () => {
+    if (previous !== rows) {
+      for (const pile of ["reads", "receipts"] as const) {
+        const next = rows.map((row, index) => letterOf(pile, row, index));
+        const oldIds = previous.map((row, index) => letterOf(pile, row, index).id);
+        for (const id of oldIds) {
+          if (!next.some((row) => row.id === id)) frame.mail.patch(id, { folder: "INBOX" });
+        }
+        for (const letter of next) {
+          if (oldIds.includes(letter.id)) frame.mail.patch(letter.id, letter);
+          else frame.mail.add(letter);
+        }
+      }
+      previous = rows;
+    }
+  });
+  if (!active) return;
+  const rail = within(screen.getByRole("navigation", { name: "Places" }));
+  if (fromSearch) {
+    await act(async () => { fireEvent.click(rail.getByRole("button", { name: /^Search\b/ })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open the hit" })); });
+  } else if (!screen.queryByRole("region", { name: `${nameOf(active)} stream` })) {
+    await act(async () => { fireEvent.click(rail.getByRole("button", { name: new RegExp(`^${nameOf(active)}\\b`) })); });
+  }
+  const port = stream(active);
+  await act(async () => {
+    fireEvent.scroll(port);
+    vi.advanceTimersByTime(40);
+  });
+  note(port);
+  if (listGeometry) note(listOf(active));
+}
+
+function leaves(pile: Pile): Array<{ upToId: string; messageIds: string[] }> {
+  return frame.mail.mutations.flatMap((mutation) =>
+    mutation.kind === "feed_mark_seen" && (mutation.view ?? "reads") === pile && mutation.upToId
+      ? [{ upToId: mutation.upToId, messageIds: mutation.messageIds ?? [] }]
+      : []);
+}
+
+function marked(pile: Pile): string[] {
+  return frame.mail.mutations.flatMap((mutation) => {
+    if (mutation.kind === "feed_mark_seen" && (mutation.view ?? "reads") === pile && !mutation.upToId) {
+      return mutation.messageIds ?? [];
+    }
+    if (mutation.kind === "mark_seen" && !mutation.unread) {
+      return mutation.messageIds.filter((id) => orderOf(pile).includes(id));
+    }
+    return [];
+  });
+}
+
 async function wheelList(pile: Pile, to: number): Promise<void> {
   const el = listOf(pile);
   await act(async () => {
-    el.dispatchEvent(new Event("wheel", { bubbles: true }));
+    fireEvent.wheel(el, { deltaY: to - (scrollTops.get(el) ?? 0) });
     setScroll(el, to);
   });
   for (let i = 0; i < 4; i += 1) await act(async () => { vi.advanceTimersByTime(40); });
   note(el);
 }
 
-/** A human scroll of a stream: the input, then the movement a frame per half card, each with the rAF the measure runs in. */
 async function wheel(pile: Pile, to: number): Promise<void> {
   const el = stream(pile);
-  await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
-  const max = Math.max(0, cardsOf(el).length * CARD_H - VIEW_H);
+  const max = Math.max(0, orderOf(pile).length * CARD_H - VIEW_H);
   const end = Math.min(Math.max(0, to), max);
   let at = scrollTops.get(el) ?? 0;
+  await act(async () => { fireEvent.wheel(el, { deltaY: end - at }); });
   while (at !== end) {
-    at = end > at ? Math.min(end, at + CARD_H / 2) : Math.max(end, at - CARD_H / 2);
-    await act(async () => { setScroll(el, at); });
+    const next = end > at ? Math.min(end, at + CARD_H / 2) : Math.max(end, at - CARD_H / 2);
+    await act(async () => { setScroll(el, next); });
+    at = next;
     await act(async () => { vi.advanceTimersByTime(20); });
   }
   await act(async () => { vi.advanceTimersByTime(40); });
 }
 
-let originalGetRect: unknown;
-let originalScrollTo: unknown;
-let originalScrollIntoView: unknown;
-let innerHeight: PropertyDescriptor | undefined;
-let scrollTopDesc: PropertyDescriptor | undefined;
-
 beforeEach(() => {
-  /* The opening slice is one screen of cards; a tall window opens with the whole pile, as the
-     browser's lookahead would mount it. */
-  innerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
-  Object.defineProperty(window, "innerHeight", { configurable: true, value: 20 * 220 });
+  localStorage.clear();
   vi.useFakeTimers();
+  vi.setSystemTime(NOW);
   vi.stubGlobal("IntersectionObserver", MockIO);
-  commits = { reads: [], receipts: [] };
-  marked = { reads: [], receipts: [] };
-  curs = { reads: null, receipts: null };
-  holdCur = false;
-  curMoves = [];
+  vi.spyOn(window, "innerHeight", "get").mockReturnValue(20 * 220);
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  const { getBoundingClientRect } = HTMLElement.prototype;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return isList(this) || this.closest(".pl-scroll, [data-reading-scroll]") ? rectFor(this) : getBoundingClientRect.call(this);
+  });
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return pileOf(this) ? VIEW_H : isList(this) ? LIST_H : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+    const pile = pileOf(this);
+    return pile ? orderOf(pile).length * CARD_H : 0;
+  });
+  vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: HTMLElement) {
+    return scrollTops.get(this) ?? 0;
+  });
+  vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (this: HTMLElement, value) {
+    if (pileOf(this) || isList(this)) setScroll(this, value);
+  });
+  Element.prototype.scrollIntoView ??= () => {};
+  HTMLElement.prototype.scrollTo ??= () => {};
+  vi.spyOn(HTMLElement.prototype, "scrollTo").mockImplementation(function (this: HTMLElement, options, y?: number) {
+    this.scrollTop = (typeof options === "number" ? y : (options as ScrollToOptions)?.top) ?? 0;
+  });
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   listGeometry = false;
   displayed = new Set();
-  originalGetRect = Element.prototype.getBoundingClientRect;
-  originalScrollTo = (Element.prototype as unknown as { scrollTo?: unknown }).scrollTo;
-  originalScrollIntoView = (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
-  Element.prototype.getBoundingClientRect = function getBoundingClientRect(this: Element) { return rectFor(this); };
-  (Element.prototype as unknown as { scrollTo: (o: { top?: number }) => void }).scrollTo =
-    function scrollTo(this: Element, o: { top?: number }) {
-      if ((this as HTMLElement).classList?.contains("stream")) setScroll(this, o?.top ?? 0);
-    };
-  (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = function scrollIntoView() {};
-  /* The stream's own offset, as the views and the visit read it. */
-  scrollTopDesc = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
-  Object.defineProperty(Element.prototype, "scrollTop", {
-    configurable: true,
-    get(this: Element) { return (this as HTMLElement).classList?.contains("stream") || isList(this) ? scrollTops.get(this) ?? 0 : 0; },
-    set(this: Element, v: number) { if ((this as HTMLElement).classList?.contains("stream") || isList(this)) setScroll(this, v); },
-  });
 });
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null; host = null;
-  if (innerHeight) Object.defineProperty(window, "innerHeight", innerHeight);
-  else delete (window as unknown as { innerHeight?: number }).innerHeight;
-  if (scrollTopDesc) Object.defineProperty(Element.prototype, "scrollTop", scrollTopDesc);
-  Element.prototype.getBoundingClientRect = originalGetRect as typeof Element.prototype.getBoundingClientRect;
-  (Element.prototype as unknown as { scrollTo: unknown }).scrollTo = originalScrollTo;
-  (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = originalScrollIntoView;
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -294,22 +292,22 @@ for (const pile of ["reads", "receipts"] as const) {
   const other: Pile = pile === "reads" ? "receipts" : "reads";
   describe(`${pile}: a revisit is its own visit`, () => {
     it("a revisit commits only what that visit put on screen, anchored inside it", async () => {
-      await mountPiles(TEN);
-      await render(pile, TEN);
+      await mountPiles(TEN, pile);
+      await visit(pile, TEN);
       await wheel(pile, 1400); // the whole pile, then away
-      await render(other, TEN);
-      expect(commits[pile], "control: the first visit commits").toHaveLength(1);
-      expect(commits[pile][0]!.upToId, "control: anchored at the top").toBe("r0");
-      for (const id of commits[pile][0]!.messageIds) expect(displayed.has(id), `control: ${id} was on screen`).toBe(true);
+      await visit(other, TEN);
+      expect(leaves(pile), "control: the first visit commits").toHaveLength(1);
+      expect(leaves(pile)[0]!.upToId, "control: anchored at the top").toBe("r0");
+      for (const id of leaves(pile)[0]!.messageIds) expect(displayed.has(id), `control: ${id} was on screen`).toBe(true);
       // Meanwhile: the first visit's mail is read, a new letter arrives on top, r1 is marked
       // unread on another device.
       const later: Row[] = [{ id: "n0", unread: true }, ...TEN.map((r) => ({ ...r, unread: r.id === "r1" }))];
-      await render(other, later);
+      await visit(other, later);
       displayed = new Set();
-      await render(pile, later);
+      await visit(pile, later);
       await wheel(pile, 1600);
-      await render(other, later);
-      const second = commits[pile][1]!;
+      await visit(other, later);
+      const second = leaves(pile)[1]!;
       expect(second, "the revisit committed nothing").toBeDefined();
       expect(displayed.has(second.upToId), `the line was anchored on ${second.upToId}, which this visit never showed`).toBe(true);
       for (const id of second.messageIds) {
@@ -319,70 +317,83 @@ for (const pile of ["reads", "receipts"] as const) {
     });
 
     it("a revisit nobody scrolled commits nothing", async () => {
-      await mountPiles(TEN);
-      await render(pile, TEN);
+      await mountPiles(TEN, pile);
+      await visit(pile, TEN);
       await wheel(pile, 800);
-      await render(other, TEN);
-      expect(commits[pile]).toHaveLength(1);
-      await render(pile, TEN);
+      await visit(other, TEN);
+      expect(leaves(pile)).toHaveLength(1);
+      await visit(pile, TEN);
       await act(async () => { vi.advanceTimersByTime(2500); });
-      await render(other, TEN);
-      expect(commits[pile], "a visit with no hand on the scroller wrote the waterline").toHaveLength(1);
+      await visit(other, TEN);
+      expect(leaves(pile), "a visit with no hand on the scroller wrote the waterline").toHaveLength(1);
     });
 
     it("a revisit lands at the top, where a fresh mount lands", async () => {
-      await mountPiles(TEN);
-      await render(pile, TEN);
+      await mountPiles(TEN, pile);
+      await visit(pile, TEN);
       await wheel(pile, 800);
       expect(scrollTops.get(stream(pile))).toBe(800);
-      await render(other, TEN);
-      await render(pile, TEN);
+      await visit(other, TEN);
+      await visit(pile, TEN);
       expect(scrollTops.get(stream(pile)) ?? 0, "the revisit opened where the last visit left off").toBe(0);
     });
 
     it("the first j of a revisit steps from the letter the stream opens on, not the last visit's", async () => {
-      holdCur = true;
       const press = async () => {
         await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true })); });
         await act(async () => { vi.advanceTimersByTime(100); });
       };
-      await mountPiles(TEN);
-      await render(pile, TEN);
+      await mountPiles(TEN, pile, "r6");
+      await visit(pile, TEN);
       for (let i = 0; i < 3; i += 1) await press();
-      expect(curs[pile], "control: j steps the cursor").toBe("r3");
-      await render(other, TEN);
+      expect(cursor(pile), "control: j steps the cursor").toBe("r3");
+      await visit(other, TEN);
       const later: Row[] = [...Array.from({ length: 5 }, (_, i) => ({ id: `n${i}`, unread: true })), ...TEN];
-      await render(other, later);
-      await render(pile, later);
+      await visit(other, later);
+      await visit(pile, later);
       expect(onScreen(stream(pile))[0], "control: the revisit opens on the newest letter").toBe("n0");
       await press();
-      expect(curs[pile], "j continued from the last visit's cursor, past the new letters").toBe("n1");
-      await render(other, later);
-      curMoves = [];
-      await render(pile, later, { pile, id: "r6" });
+      expect(cursor(pile), "j continued from the last visit's cursor, past the new letters").toBe("n1");
+      await visit(other, later);
+      const curMoves: string[] = [];
+      const watch = new MutationObserver((records) => {
+        for (const record of records) {
+          if (record.oldValue !== "true" || !(record.target instanceof HTMLElement)) continue;
+          const id = record.target.dataset.id;
+          if (id && id !== curMoves.at(-1)) curMoves.push(id);
+        }
+        const id = cursor(pile);
+        if (id && id !== curMoves.at(-1)) curMoves.push(id);
+      });
+      watch.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-selected"], attributeOldValue: true });
+      try {
+        await visit(pile, later, true);
+      } finally {
+        watch.disconnect();
+      }
       expect(curMoves, "a revisit that arrives on a jump moved the cursor elsewhere first").toEqual(["r6"]);
     });
 
     it("pagehide commits the pile on screen once, and nothing for a hidden one", async () => {
-      await mountPiles(TEN);
-      await render(other, TEN);
+      await mountPiles(TEN, pile);
+      await visit(other, TEN);
       await wheel(other, 400);
-      await render(pile, TEN); // `other` is hidden now, with a visit behind it
-      const before = commits[other].length;
+      await visit(pile, TEN); // `other` is hidden now, with a visit behind it
+      const before = leaves(other).length;
       await wheel(pile, 400);
       await act(async () => { window.dispatchEvent(new Event("pagehide")); });
-      expect(commits[pile], "the pile on screen did not commit on pagehide").toHaveLength(1);
-      expect(commits[other], "a hidden pile committed on pagehide").toHaveLength(before);
+      expect(leaves(pile), "the pile on screen did not commit on pagehide").toHaveLength(1);
+      expect(leaves(other), "a hidden pile committed on pagehide").toHaveLength(before);
     });
 
     it("a mirror change while hidden is on screen at the reveal, the old row gone", async () => {
-      await mountPiles(TEN);
-      await render(pile, TEN);
-      await render(other, TEN);
+      await mountPiles(TEN, pile);
+      await visit(pile, TEN);
+      await visit(other, TEN);
       const changed = TEN.map((r) => (r.id === "r2" ? { ...r, subject: "A new subject" } : r)).filter((r) => r.id !== "r4");
-      await render(other, changed);
-      await render(pile, changed);
-      const view = host!.querySelector(`.view-${pile}`)!;
+      await visit(other, changed);
+      await visit(pile, changed);
+      const view = screen.getByRole("region", { name: `${nameOf(pile)} stream` });
       expect(view.textContent).toContain("A new subject");
       expect(view.textContent, "the reveal drew a row the mirror no longer holds").not.toContain("S-r4");
       expect(view.textContent).not.toContain("S-r2");
@@ -393,28 +404,58 @@ for (const pile of ["reads", "receipts"] as const) {
 describe("what a visit leaves behind", () => {
   it("an earlier card's lingering bar does not outlive the visit", async () => {
     await mountPiles(TEN);
-    await render("reads", TEN);
-    const card = (id: string) => host!.querySelector<HTMLElement>(`.view-reads .scast[data-sid="${id}"]`)!;
-    const bars = () => [...host!.querySelectorAll<HTMLElement>(".view-reads .scast .sc-actions")]
-      .map((b) => b.closest<HTMLElement>(".scast")!.dataset.sid);
-    await act(async () => { card("r0").click(); });
-    await act(async () => { card("r1").click(); });
-    expect(bars(), "control: the earlier card on screen keeps its bar while the next opens").toEqual(["r0", "r1"]);
-    await render("receipts", TEN);
-    await render("reads", TEN);
-    expect(bars(), "the earlier card's bar lingered into the next visit").toEqual(["r1"]);
+    await visit("reads", TEN);
+    const open = async (id: string) => {
+      const card = cardsOf(stream("reads")).find((element) => element.dataset.streamItem === id)!;
+      await act(async () => { fireEvent.click(within(card).getByRole("button", { name: "Expand" })); });
+    };
+    const expectBarOn = (id: string) => {
+      const region = within(screen.getByRole("region", { name: "News stream" }));
+      const toolbar = region.getByRole("toolbar", { name: "Actions" });
+      const cards = cardsOf(stream("reads"));
+      expect(cards.filter((card) => card.hasAttribute("data-held"))
+        .map((card) => card.dataset.streamItem)).toEqual([id]);
+      for (const card of cards.filter((card) => card.dataset.streamItem !== id)) {
+        expect(card.contains(toolbar)).toBe(false);
+      }
+      return within(toolbar);
+    };
+
+    await open("r0");
+    const first = expectBarOn("r0");
+    await act(async () => { fireEvent.click(first.getByRole("button", { name: "Later" })); });
+
+    await open("r1");
+    expectBarOn("r1");
+
+    await visit("receipts", TEN);
+    await visit("reads", TEN);
+    const earlier = cardsOf(stream("reads")).find((card) => card.dataset.streamItem === "r0")!;
+    expect(within(earlier).queryByRole("toolbar", { name: "Actions" })).toBeNull();
+    await open("r1");
+    const latest = expectBarOn("r1");
+    await act(async () => { fireEvent.click(latest.getByRole("button", { name: "More" })); });
+    const more = within(screen.getByRole("menu", { name: "More" }));
+    await act(async () => { fireEvent.click(more.getByRole("menuitem", { name: "Move" })); });
+    const move = within(screen.getByRole("menu", { name: "Move" }));
+    await act(async () => { fireEvent.click(move.getByRole("menuitem", { name: "Ohbox" })); });
+    expect(frame.mail.mutations.filter((mutation) => mutation.kind === "triage_set" || mutation.kind === "move"))
+      .toEqual([
+        { kind: "triage_set", messageId: "r0", state: "reply_later" },
+        expect.objectContaining({ kind: "move", messageId: "r1", folder: "INBOX" }),
+      ]);
   });
 
   it("2, 3, 2, 3, 2 ends on News, armed, with nothing committed", async () => {
     await mountPiles(TEN);
-    await render(null, TEN);
-    for (const p of ["reads", "receipts", "reads", "receipts", "reads"] as const) await render(p, TEN);
-    const reads = host!.querySelector<HTMLElement>(".view-reads")!;
-    const receipts = host!.querySelector<HTMLElement>(".view-receipts")!;
-    expect(reads.style.display, "News is not the pile on screen").not.toBe("none");
-    expect(receipts.style.display).toBe("none");
-    expect(reads.querySelectorAll(".scast").length, "News never armed its stream").toBeGreaterThan(0);
-    expect(commits, "a pile passed through committed something").toEqual({ reads: [], receipts: [] });
+    await visit(null, TEN);
+    for (const p of ["reads", "receipts", "reads", "receipts", "reads"] as const) await visit(p, TEN);
+    const reads = screen.queryByRole("region", { name: "News stream" });
+    const receipts = screen.queryByRole("region", { name: "Receipts stream" });
+    expect(reads, "News is not the pile on screen").not.toBeNull();
+    expect(receipts).toBeNull();
+    expect(cardsOf(reads!).length, "News never armed its stream").toBeGreaterThan(0);
+    expect({ reads: leaves("reads"), receipts: leaves("receipts") }, "a pile passed through committed something").toEqual({ reads: [], receipts: [] });
   });
 });
 
@@ -438,18 +479,18 @@ for (const pile of ["reads", "receipts"] as const) {
       it(`the list marks nothing, and a revisit's list opens at the top: ${name}`, async () => {
         listGeometry = true;
         vi.stubGlobal("IntersectionObserver", DeliveringIO);
-        await mountPiles(TWENTY);
-        await render(pile, TWENTY);
+        await mountPiles(TWENTY, pile);
+        await visit(pile, TWENTY);
         await wheelList(pile, 800);
         expect(scrollTops.get(listOf(pile)), "control: the wheel moved the list").toBe(800);
-        expect(marked[pile], "the first visit's list wheel marked rows").toEqual([]);
-        await render(other, TWENTY);
+        expect(marked(pile), "the first visit's list wheel marked rows").toEqual([]);
+        await visit(other, TWENTY);
         const later = meanwhile(TWENTY);
-        await render(other, later);
-        await render(pile, later);
+        await visit(other, later);
+        await visit(pile, later);
         const atReveal = scrollTops.get(listOf(pile)) ?? 0;
         await wheelList(pile, atReveal + 40);
-        expect(marked[pile], "the revisit's list wheel marked rows").toEqual([]);
+        expect(marked(pile), "the revisit's list wheel marked rows").toEqual([]);
         expect(atReveal, "the revisit's list opened where the last visit left it").toBe(0);
       });
     }

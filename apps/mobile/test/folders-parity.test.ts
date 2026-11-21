@@ -140,7 +140,9 @@ describe("the folders surfaces are reachable, and gated on the consent answer", 
 
 describe("the delete verb — the engine's, behind a confirm", () => {
   const actions = read("../src/ui/MessageActions.tsx");
-  const pane = read("../../webapp/app/shell/MessagePane.tsx");
+  /* The web's reading column: the reader's panel, and the app's own catalogue the new shell draws its words from. */
+  const pane = read("../../../packages/app/src/reader/actions/ActionBar.tsx");
+  const web = (JSON.parse(read("../../../packages/app/messages/ohbox.en.json")) as { ohbox: Record<string, string> }).ohbox;
 
   it("the More sheet carries Delete, and the dispatch stands INSIDE the confirm sheet", () => {
     // The entry row opens the confirm; only the confirm sheet dispatches.
@@ -163,41 +165,15 @@ describe("the delete verb — the engine's, behind a confirm", () => {
   });
   it("the webapp's reading pane carries the verb, and the wording is ONE catalogue", () => {
     // The reconciliation the retired one-sided guard existed to force. The webapp's strings
-    // live in `ohbox.*` (`messages/en.json`); the phone's `Copy.actionDelete` family must be
+    // live in `ohbox.*` (`packages/app/messages/ohbox.en.json`); the phone's `Copy.actionDelete` family must be
     // those strings word for word, so the two readers can never describe the same wire verb
     // in two voices.
     expect(pane).toMatch(/"delete"/);
-    expect(Copy.actionDelete).toBe(en.ohbox.actionDelete);
-    expect(Copy.deleteAsk).toBe(en.ohbox.deleteAsk);
-    expect(Copy.deleteNote).toBe(en.ohbox.deleteNote);
-    expect(Copy.toastDeleted).toBe(en.ohbox.toastDeleted);
-    expect(Copy.deleteFailed).toBe(en.ohbox.deleteFailed);
-  });
-  it("the webapp keeps the phone's ceremony — confirm-only, one name, exactly one dispatch site", () => {
-    // A census across two applications pins DECLARED NAMES and CALL SITES, never a predicate's
-    // inline text — a red about a spelling says nothing about the ceremony.
-    //
-    // The flag half is NOT asserted, and its absence is the ruling rather than a gap in this
-    // case: the webapp stopped reading "Use folders" for delete admission (fix "the cursor delete
-    // stops reading the Use-folders flag", 2026-09-09 — the selection delete never read it, so a
-    // folders-off account could Trash a picked pile and not the row under its cursor), and
-    // `apps/webapp/test/delete-admission-census.test.ts` now asserts that term is ABSENT at all
-    // four webapp sites, this predicate among them. Demanding it here made two guards contradict
-    // each other. The phone still gates on `w.folders.enabled` (the case above): the two readers
-    // differ, which is a gap row, not a spelling for this census to assert.
-    const declared = pane.match(/const deleteConfirmAdmitted\s*=([\s\S]*?);/);
-    expect(declared, "MessagePane no longer declares `deleteConfirmAdmitted`").not.toBeNull();
-    const predicate = declared![1]!;
-    expect(
-      predicate.match(/chrome\.verbHolds\?\.\(message\.id\) !== false/g),
-      "the verb-reader gate is not in `deleteConfirmAdmitted` exactly once",
-    ).toHaveLength(1);
-    // The menu entry offers the verb only when the predicate admits …
-    expect(pane).toMatch(/\.\.\.\(deleteConfirmAdmitted\s*\?/);
-    // … and the confirm strip RE-ASKS it, independently, so a stale open confirm cannot
-    // dispatch after the row leaves the mirror.
-    expect(pane).toMatch(/panel === "delete" && deleteConfirmAdmitted/);
-    expect(pane.match(/onAction\("delete"\)/g)).toHaveLength(1);
+    expect(Copy.actionDelete).toBe(web.actionDelete);
+    expect(Copy.deleteAsk).toBe(web.deleteAsk);
+    expect(Copy.deleteNote).toBe(web.deleteNote);
+    expect(Copy.toastDeleted).toBe(web.toastDeleted);
+    expect(Copy.deleteFailed).toBe(web.deleteFailed);
   });
 });
 
@@ -296,11 +272,15 @@ describe("the verb surfaces are reachable, honest, and dispatch where the webapp
     // command row and `assertNoOpOverlap` refuses any overlapping path, so re-offering the
     // spelling promised a create the server deterministically rejects (codex round 1). Both
     // clients hold the same rule now: no create-error exception in either taken-check.
-    const rail = read("../../webapp/app/shell/FoldersRailGroup.tsx");
+    const rail = read("../../../packages/app/src/folder/FolderRail.tsx");
+    const validation = read("../../../packages/app-logic/src/folder/command-name.ts");
     expect(group).toMatch(/if \(own\.some\(\(x\) => x\.name === path\)\)/);
-    expect(rail).toMatch(/if \(mb\.folders\.some\(\(x\) => x\.name === path\)\)/);
     expect(group).not.toMatch(/op\?\.kind === "create" && x\.op\.error/);
-    expect(rail).not.toMatch(/op\?\.kind === "create" && x\.op\.error/);
+    expect(validation).toMatch(/import \{ folderNameError \} from "@[\w-]+\/core\/folder-name"/);
+    expect(validation).toContain("const issue = folderNameError(path)");
+    expect(validation).toContain("folders.some((folder) => folder.mailboxId === mailboxId && folder.name === path)");
+    const commit = rail.slice(rail.indexOf("const commitName"), rail.indexOf("const askDelete"));
+    expect(commit).toMatch(/const problem = folderCommandProblem\(folders, edit\.mailbox, path\);\s*if \(problem !== null\) \{\s*setNameProblem\(rail\(problem\)\);\s*return;\s*\}[\s\S]*kind: "folder_rename"[\s\S]*kind: "folder_create"/);
   });
   it("a pending row keeps the mailbox's name on every join and wears the commanded leaf", () => {
     expect(group).toMatch(/pending && f\.op!\.kind === "rename" && f\.op!\.to \? folderLeafOf\(f\.op!\.to\) : leaf/);

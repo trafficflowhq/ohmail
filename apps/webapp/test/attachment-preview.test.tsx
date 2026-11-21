@@ -11,7 +11,7 @@ import { useMessageAttachments } from "../app/shell/attachments.js";
 import { AttachmentPreview, isPreviewable, previewKind } from "../app/components/AttachmentPreview.js";
 import { AttachThumb } from "../app/components/compose-attach-look.js";
 import type { AttachmentItem } from "../app/components/AttachmentStrip.js";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapContext, useKeymapStore } from "@ohmail/app-logic/keys";
 
 /**
  * ═══ pdf.js STANDS IN, AND THE STAND-IN IS HELD TO THE REAL LIBRARY'S SHAPE ═══════════════
@@ -149,6 +149,14 @@ if (typeof (Blob.prototype as { arrayBuffer?: unknown }).arrayBuffer !== "functi
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
+/**
+ * THE KEY REGISTRY AS THE NEW FRAME MOUNTS IT (`packages/app/src/frame/Frame.tsx`: `KeymapContext.Provider` over
+ * `useKeymapStore()`), where today's `KeymapProvider` stood (share reader-1: it leaves with today's keys; the store
+ * and its overlay scope are the same).
+ */
+function FrameKeys({ children }: { children?: React.ReactNode }): React.ReactElement {
+  return h(KeymapContext.Provider, { value: useKeymapStore() }, children);
+}
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -210,7 +218,7 @@ function Harness({ engine, initialId }: { engine: OhmailEngine; initialId: strin
 }
 
 const App = (props: { engine: OhmailEngine; initialId: string }) =>
-  h(KeymapProvider, null, h(Harness, props));
+  h(FrameKeys, null, h(Harness, props));
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -406,7 +414,7 @@ async function mountClosing(engine: OhmailEngine): Promise<void> {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () =>
-    root!.render(h(KeymapProvider, null, h(Boundary, null, h(ClosingHarness, { engine, initialId: "p1" })))),
+    root!.render(h(FrameKeys, null, h(Boundary, null, h(ClosingHarness, { engine, initialId: "p1" })))),
   );
   await act(async () => {}); // the fetch the overlay starts
   await act(async () => {}); // `getDocument().promise`, which is what makes a document to tear down
@@ -568,7 +576,7 @@ describe("the desktop's staged preview, from the overlay's side", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => root!.render(h(KeymapProvider, null, h(AttachmentPreview, {
+    await act(async () => root!.render(h(FrameKeys, null, h(AttachmentPreview, {
       items, activeId: items[0]!.id, onActiveIdChange: () => {}, ensure: () => {}, blobOf: () => undefined,
       onDownload: (id: string) => downloads.push(id), onClose: () => {}, onRelease,
     }))));
@@ -600,7 +608,7 @@ describe("the overlay without a Download — the compose preview's own bytes", (
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => root!.render(h(KeymapProvider, null, h(AttachmentPreview, {
+    await act(async () => root!.render(h(FrameKeys, null, h(AttachmentPreview, {
       items, activeId: items[0]!.id, onActiveIdChange: () => {}, ensure: () => {}, blobOf, onClose: () => {},
     }))));
   }
@@ -660,7 +668,7 @@ describe("the overlay without a Download — the compose preview's own bytes", (
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => root!.render(h(KeymapProvider, null, h(Open))));
+    await act(async () => root!.render(h(FrameKeys, null, h(Open))));
     await act(async () => key("ArrowRight"));
     await act(async () => key("Escape"));
     expect(host!.querySelector(".ap-panel")).toBeNull();

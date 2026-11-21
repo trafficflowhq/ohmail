@@ -1,10 +1,12 @@
 /**
- * THE ONE WAY A TEST CROSSES THE FIRST-PAINT SEAM. Three deferrals live behind it: the Screener
- * queue's first derivation (`shell/first-paint.ts` — a macrotask under jsdom, which serves no
- * `requestIdleCallback`), the lazy Settings/Compose chunks, and the editor's own (`React.lazy`,
- * module promises). One timer tick settles the first; the lazy boundaries are waited out by what
- * they show, never by a count of rounds, and fake-timer suites run the due timers rather than
- * waiting for a real tick.
+ * THE ONE WAY A TEST CROSSES THE FIRST-PAINT SEAM. What the new shell (the frame over the mail
+ * ground) defers at its first paint is the Screener queue's first derivation
+ * (`@ohmail/app-logic/session/first-paint.ts` — a macrotask under jsdom, which serves no
+ * `requestIdleCallback`); it draws no lazy boundary of its own (Write's editor is a static import of
+ * `@ohmail/app/write`). One timer tick settles the derivation; any lazy boundary still on screen is
+ * waited out by what it shows, never by a count of rounds, and fake-timer suites run the due timers
+ * rather than waiting for a real tick. NOTHING OF TODAY'S SHELL IS WARMED HERE: the door imports no
+ * view and no part that leaves with the switch, so a test through it runs only what stays.
  */
 import * as React from "react";
 import { vi } from "vitest";
@@ -64,8 +66,8 @@ function boundariesOnFallback(): number {
 
 /**
  * EVERY LAZY BOUNDARY ON SCREEN HAS ITS VIEW. A module that is already evaluated does not make
- * `React.lazy`'s factory a microtask: the factory's own `import("../views/ComposeView")` names a
- * specifier relative to the shell, and vitest's runner resolves every such specifier by a round
+ * `React.lazy`'s factory a microtask: the factory still imports the mounted view, and Vitest's runner
+ * resolves the specifier by a round
  * trip to its main process — a real message, landing after some number of macrotasks that depends
  * on how busy that process is. One timer tick won that race on a warm run and lost it on a cold
  * one (a file alone, or first in its shard), and the view's first query found an empty stage.
@@ -82,24 +84,16 @@ async function untilNoFallback(): Promise<void> {
 }
 
 /**
- * THE EDITOR'S OWN SEAM, for a test that opens one. `RichEditorLazy` defers `RichEditor.tsx`, so
- * the surface renders its frame until that module is evaluated and its boundary has swapped.
+ * THE EDITOR'S OWN SEAM, for a test that opens one: the press's re-render, then any boundary still
+ * on its fallback waited out by what it shows (Write's editor is not deferred; a lazy editor still
+ * drawn by a part that has not left yet swaps when its module lands).
  */
 export async function settleEditor(): Promise<void> {
-  await import("../app/shell/RichEditor.js");
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
   await untilNoFallback();
 }
 
 export async function settleFirstPaint(): Promise<void> {
-  // The lazy panes' modules, evaluated here so the boundaries' own imports find them loaded.
-  await Promise.all([
-    import("../app/views/SettingsView.js"),
-    import("../app/views/ComposeView.js"),
-    // The editor is the third: `RichEditorLazy` defers it behind its own boundary, so a reply,
-    // a signature row and the Reply Run all render their frame until this module is evaluated.
-    import("../app/shell/RichEditor.js"),
-  ]);
   await act(async () => {
     if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
     else await new Promise<void>((resolve) => setTimeout(resolve, 0));

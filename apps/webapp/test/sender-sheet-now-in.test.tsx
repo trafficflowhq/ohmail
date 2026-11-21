@@ -11,9 +11,11 @@ import {
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
+import { SenderMenu } from "../app/components/sender-menu/SenderMenu";
 import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
-import { shellSliceOf } from "./source-anchor";
+import { within } from "@testing-library/react";
+import { act as webAct, tick } from "./fixtures/screening-web.js";
+import { withMountedSender } from "./fixtures/mounted-sender-sheet.js";
 
 /**
  * THE SHEET SAYS WHERE THE LIST SHOWS THE MAIL (SENDER-SHEET-NOW-IN-READS-THE-FILED-FOLDER). The
@@ -78,11 +80,13 @@ async function sheet(list: EngineMessage[], rules: RuleDTO[], opts: { placed?: b
       }),
     }));
   });
-  const el = host;
+  const dialog = within(host).getByRole("dialog", {
+    name: messages.screening.aria.replace("{sender}", ADDR),
+  });
   return {
     placeOf,
-    now: el.querySelector(".sm-now")?.textContent ?? "",
-    checked: [...el.querySelectorAll("li[role=option]")]
+    now: dialog.querySelector(".sm-now")?.textContent ?? "",
+    checked: within(dialog).getAllByRole("option")
       .filter((li) => li.getAttribute("aria-selected") === "true" || li.querySelector(".ck"))
       .map((li) => (li.firstChild?.textContent ?? "").trim()),
   };
@@ -152,7 +156,22 @@ describe("the sheet reads the list's placement", () => {
 });
 
 describe("the shell hands the sheet the list's placement", () => {
-  it("the sender sheet is resolved with the partition the lists render from", () => {
-    expect(shellSliceOf("senderMenuFor")).toMatch(/senderScreening\([^;]*consentView\?\.placeOf\)/);
+  it("the sender sheet is resolved with the partition the lists render from", async () => {
+    await withMountedSender(async ({ shell, sheet }) => {
+      const history = within(shell).getByRole("listbox", { name: "History" });
+      const row = within(history).getByRole("option", { name: /Ada: A note from Ada/ });
+      expect(within(row).getByText("Ohbox")).toBeTruthy();
+      expect(sheet.getByText(/now in Screened out/)).toBeTruthy();
+      expect(sheet.getByRole("option", { name: /^Screened out/, selected: true })).toBeTruthy();
+
+      await webAct(async () => {
+        window.location.hash = "#/screener/screened";
+        window.dispatchEvent(new Event("hashchange"));
+      });
+      await tick(300);
+      const sections = within(shell).getByRole("group", { name: "Screener sections" });
+      expect(within(sections).getByRole("button", { name: /^Screened out/, pressed: true })).toBeTruthy();
+      expect(within(shell).getByRole("option", { name: /Ada: A note from Ada/ })).toBeTruthy();
+    }, { place: "history", placeDecided: false, rules: ["INBOX", "ohmail/Screened"] });
   });
 });

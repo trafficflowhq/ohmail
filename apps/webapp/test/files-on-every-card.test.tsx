@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
+import { screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell,
@@ -25,7 +27,7 @@ const FILES: Record<string, Wire[]> = {
   r2: [file("r2", "a-r2", "receipt.txt", "text/plain", 300)],
 };
 const HTML: Record<string, string> = {
-  s2: "<html><body><p>Our brochure is attached.</p></body></html>",
+  s2: '<table width="600" style="width:600px"><tr><td>Hydrated brochure preview</td><td>Product details</td></tr></table>',
   n2: "<html><body><p>This week's poster.</p></body></html>",
   r1: "<html><body><table><tr><td>Total CHF 42.00</td></tr></table></body></html>",
 };
@@ -58,7 +60,7 @@ const world = (): Response => new Response(JSON.stringify({
     creates: [
       // Held at the gate: one sender, a plain-text and an html message, each with a file.
       message("s1", 1, { folder: "ohmail/Screener", from: STRANGER, date: "2026-08-04T07:00:00.000Z" }),
-      message("s2", 2, { folder: "ohmail/Screener", from: STRANGER }),
+      message("s2", 2, { folder: "ohmail/Screener", from: STRANGER, body: "Inline mirror brochure text" }),
       message("n1", 3, { folder: "ohmail/News" }), rule("n1@example.invalid", "ohmail/News", 4),
       message("n2", 5, { folder: "ohmail/News", date: "2026-08-04T08:00:00.000Z" }), rule("n2@example.invalid", "ohmail/News", 6),
       message("n3", 7, { folder: "ohmail/News", date: "2026-08-04T06:00:00.000Z" }), rule("n3@example.invalid", "ohmail/News", 8),
@@ -117,69 +119,73 @@ const goHash = async (hash: string): Promise<void> => {
   await tick(0);
   await tick(500);
 };
-const key = async (k: string): Promise<void> => {
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
-  });
-  await tick(500);
-};
-const scopeOf = (sel: string): Element => {
-  const el = document.querySelector(sel);
-  expect(el, `${sel} is not on screen`).not.toBeNull();
-  return el!;
-};
-const tilesIn = (scope: Element): string[] =>
-  [...scope.querySelectorAll(".att-strip .att-name")].map((n) =>
-    `${n.querySelector(".att-stem")?.textContent ?? ""}${n.querySelector(".att-ext")?.textContent ?? ""}`);
-
-async function open(): Promise<void> {
-  await mountShell([mailbox()]);
+async function open(engine?: OhmailEngine): Promise<void> {
+  await mountShell([mailbox()], engine ? { engine } : {});
   await tick(30_000);
 }
 
-/** A tile a person can use: its name, its size, a look where the type draws, a save that fetches. */
-async function expectUsableTile(scope: Element, filename: string, attachmentId: string): Promise<void> {
-  const tile = [...scope.querySelectorAll<HTMLElement>(".att-item")]
-    .find((t) => (t.textContent ?? "").includes(filename.replace(/\.[^.]+$/, "")));
-  expect(tile, `no tile for ${filename}`).toBeTruthy();
-  expect(tile!.querySelector(".att-state")?.textContent ?? "", `${filename} states no size`).toMatch(/\d/);
-  expect(tile!.querySelector("button.att-tile"), `${filename} offers no open`).toBeTruthy();
-  const save = tile!.querySelector<HTMLButtonElement>("button.att-side") ?? tile!.querySelector<HTMLButtonElement>("button.att-tile");
-  await act(async () => { save!.click(); });
-  await tick(500);
-  expect(fetched, `pressing ${filename}'s save fetched nothing`).toContain(attachmentId);
+const streamNames = { reads: "News stream", receipts: "Receipts stream" } as const;
+type Stream = keyof typeof streamNames;
+const reading = (view: Stream) => screen.getByRole("region", { name: streamNames[view] });
+
+function cardOf(view: Stream, id: string): HTMLElement {
+  const heading = within(reading(view)).getByRole("heading", { name: "subject of " + id });
+  const card = heading.closest("article");
+  expect(card, "no card for " + id).not.toBeNull();
+  return card!;
 }
 
-/** The stream card for one message. */
-const cardOf = (id: string): HTMLElement => {
-  const el = document.querySelector<HTMLElement>(`.scast[data-sid="${id}"]`);
-  expect(el, `no card for ${id}`).not.toBeNull();
-  return el!;
-};
-async function expand(id: string): Promise<HTMLElement> {
-  const pill = cardOf(id).querySelector<HTMLButtonElement>("button.sc-x");
-  expect(pill, `${id} has no expand pill`).toBeTruthy();
-  await act(async () => { pill!.click(); });
+async function expand(view: Stream, id: string): Promise<HTMLElement> {
+  const pill = within(cardOf(view, id)).getByRole("button", { name: /^(Expand|Collapse)$/ });
+  await act(async () => { pill.click(); });
   await tick(500);
-  return cardOf(id);
+  return cardOf(view, id);
 }
 
 describe("the Screener's preview of held mail lists each message's files", () => {
   it("a plain-text and an html held message each show their file, with a size, an open and a save", async () => {
-    await open();
+    const store = new MemoryMirrorStore();
+    await store.load();
+    await store.applyResponse(await world().json());
+    // An inline body stops the engine from fetching it again. Seed the body already hydrated on this mirror.
+    await store.putLocal("message_body", "s2", { messageId: "s2", state: "ready", text: "Here is the file.", html: HTML.s2 });
+    await open(new OhmailEngine({ store, adapter: new HttpAdapter({ baseUrl: "/api", fetch: globalThis.fetch }) }));
     await goHash("#/screener");
-    await key("j");
-    const held = [...document.querySelectorAll(".hmail")];
+    const sender = screen.getByRole("option", { name: /A Stranger/ });
+    await act(async () => { sender.click(); });
+    await tick(500);
+    const held = screen.getAllByRole("article").filter((letter) =>
+      within(letter).queryByRole("heading", { name: /^subject of s[12]$/ }) !== null,
+    );
     expect(held.length, "the premise: the stranger's two held messages are previewed").toBe(2);
-    expect(held.map(tilesIn), "a held message shows no file").toEqual([["notes.txt"], ["brochure.pdf"]]);
+    expect(held.map(fileTiles), "a held message shows no file").toEqual([["notes.txt"], ["brochure.pdf"]]);
     expect([...listed].sort(), "each held message's list is asked once").toEqual(["s1", "s2"]);
-    await expectUsableTile(held[0]!, "notes.txt", "a-s1");
-    await expectUsableTile(held[1]!, "brochure.pdf", "a-s2");
+    await expectFileTile(held[0]!, "notes.txt", "a-s1");
+    await expectFileTile(held[1]!, "brochure.pdf", "a-s2");
+    const htmlLetter = held.find((letter) => within(letter).queryByRole("heading", { name: "subject of s2" }))!;
+    expect(htmlLetter.querySelector("iframe")?.getAttribute("srcdoc") ?? "", "the held preview renders the hydrated HTML")
+      .toContain("<td>Hydrated brochure preview</td>");
+    expect(htmlLetter.textContent).not.toContain("Inline mirror brochure text");
   }, 30_000);
 });
 
+const fileTiles = (scope: Element): string[] =>
+  [...scope.querySelectorAll(".oh-files .oh-file-title")].map((title) => title.textContent ?? "");
+
+async function expectFileTile(scope: HTMLElement, filename: string, attachmentId: string) {
+  const tile = within(scope).getByText(filename, { selector: ".oh-file-title" }).closest<HTMLElement>(".oh-file");
+  expect(tile, `no tile for ${filename}`).toBeTruthy();
+  expect(tile!.querySelector(".oh-file-size")?.textContent ?? "", `${filename} states no size`).toMatch(/\d/);
+  const controls = within(tile!);
+  const main = controls.getByRole("button", { name: `Preview ${filename}` });
+  expect(main, `${filename} offers no open`).toBeTruthy();
+  await act(async () => { controls.getByRole("button", { name: /^Download/ }).click(); });
+  await tick(500);
+  expect(fetched, `pressing ${filename}'s save fetched nothing`).toContain(attachmentId);
+}
+
 describe("an expanded News or Receipts card lists its message's files", () => {
-  const CASES: Array<{ view: string; id: string; name: string; att: string; shape: string }> = [
+  const CASES: Array<{ view: Stream; id: string; name: string; att: string; shape: string }> = [
     { view: "reads", id: "n1", name: "agenda.txt", att: "a-n1", shape: "plain text" },
     { view: "reads", id: "n2", name: "poster.png", att: "a-n2", shape: "html" },
     { view: "receipts", id: "r1", name: "invoice.pdf", att: "a-r1", shape: "html receipt" },
@@ -189,32 +195,32 @@ describe("an expanded News or Receipts card lists its message's files", () => {
     it(`${c.view}: ${c.id} (${c.shape}) shows ${c.name} once expanded`, async () => {
       await open();
       await goHash(`#/${c.view}`);
-      expect(tilesIn(cardOf(c.id)), "a collapsed card drew a strip").toEqual([]);
-      const card = await expand(c.id);
-      expect(tilesIn(card), `the expanded ${c.id} card shows no file`).toEqual([c.name]);
+      expect(fileTiles(cardOf(c.view, c.id)), "a collapsed card drew a strip").toEqual([]);
+      const card = await expand(c.view, c.id);
+      expect(fileTiles(card), `the expanded ${c.id} card shows no file`).toEqual([c.name]);
       expect(listed.filter((id) => id === c.id), "the list was asked more or less than once").toHaveLength(1);
-      await expectUsableTile(card, c.name, c.att);
+      await expectFileTile(card, c.name, c.att);
     }, 30_000);
   }
 
   it("a collapsed card asks for nothing, on mount or on scroll; collapsing lets the list go", async () => {
     await open();
     await goHash("#/reads");
-    expect(document.querySelectorAll(".scast").length, "the premise: the News cards are mounted").toBeGreaterThanOrEqual(3);
-    const stream = document.querySelector(".view-reads") ?? document.body;
+    expect(within(reading("reads")).getAllByRole("article").length, "the premise: the News cards are mounted").toBeGreaterThanOrEqual(3);
+    const stream = cardOf("reads", "n1").closest("[data-reading-scroll]")!;
     for (let i = 0; i < 5; i += 1) {
       await act(async () => { stream.dispatchEvent(new Event("scroll", { bubbles: true })); window.dispatchEvent(new Event("scroll")); });
       await tick(200);
     }
     expect(listed, "a card nobody expanded asked for its list").toEqual([]);
-    await expand("n1");
+    await expand("reads", "n1");
     expect(listed, "expanding one card asked for another's list").toEqual(["n1"]);
-    expect(tilesIn(cardOf("n3")), "a collapsed card drew a strip").toEqual([]);
-    await expand("n1");
-    expect(tilesIn(cardOf("n1")), "a collapsed card kept its strip").toEqual([]);
+    expect(fileTiles(cardOf("reads", "n3")), "a collapsed card drew a strip").toEqual([]);
+    await expand("reads", "n1");
+    expect(fileTiles(cardOf("reads", "n1")), "a collapsed card kept its strip").toEqual([]);
     // Let go, not merely undrawn: opening it again asks again.
-    await expand("n1");
-    expect(tilesIn(cardOf("n1"))).toEqual(["agenda.txt"]);
+    await expand("reads", "n1");
+    expect(fileTiles(cardOf("reads", "n1"))).toEqual(["agenda.txt"]);
     expect(listed, "the collapse did not let the list go").toEqual(["n1", "n1"]);
   }, 30_000);
 });

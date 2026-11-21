@@ -5,6 +5,7 @@ import { build as viteBuild, defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { UPDATER_HTML, UPDATER_JS } from "./src/updater-window";
 import { withWindowCsp } from "./src/window-csp";
+import { buildPdfFrame, PDF_FRAME_PATH } from "../../packages/app/pdf-preview/build.mjs";
 import { PDFJS_FILES } from "./src/window-pdfjs";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -103,7 +104,7 @@ const BASE_MESSAGE_NAMESPACES = [
   "invitations", "frommail", "calsetup", "calsettings", "calmail",
   // The new places' own words (`@ohmail/app/news`, `piles`, `tags`, `address`), read through `@ohmail/app/text`.
   "news", "later", "parked", "resurface", "tags", "address",
-  // `ohmarchy` is the Option B offer's line (shell/OhmarchyOffer.tsx) — shared-shell code the
+  // `ohmarchy` is the Web appearance offer's line — shared-shell code the
   // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
   // it renders, and the census lists what the sources READ, not what they display.
   "ohmarchy",
@@ -211,7 +212,7 @@ const BASE_MESSAGE_NAMESPACES = [
   // this namespace is for, so a build without it puts `aiRefusal.insufficientCredits` where
   // that sentence belongs.
   "aiRefusal",
-  "reply", "ribbon", "screener", "screening", "search", "session", "settings",
+  "reply", "ribbon", "screener", "screening", "search", "session", "settings", "settingsMenu",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
   // this list against what the sources READ, not against what they display.
@@ -594,7 +595,7 @@ function updaterProgressPage(): Plugin {
 }
 
 /**
- * pdf.js's library and worker at the root of the WINDOW dist, byte for byte from this package's
+ * pdf.js's library and worker at each desktop artifact's root, byte for byte from this package's
  * own `pdfjs-dist` build. `src/window-pdfjs.ts` imports the library from there on the first PDF
  * and starts the worker from there, so neither is in the boot chunk. Emitted from the install for
  * the updater page's reason: no `public/` folder reaches the publish payload.
@@ -606,6 +607,11 @@ function windowPdfjs(): Plugin {
       for (const file of PDFJS_FILES) {
         this.emitFile({ type: "asset", fileName: file, source: fs.readFileSync(r(`./node_modules/pdfjs-dist/build/${file}`)) });
       }
+      this.emitFile({
+        type: "asset",
+        fileName: PDF_FRAME_PATH.slice(1),
+        source: buildPdfFrame(r("./node_modules/pdfjs-dist")),
+      });
     },
   };
 }
@@ -704,13 +710,14 @@ export default defineConfig({
   base: HOST_CLIENT ? "/" : "./",
   plugins: [
     shellMessagesOnly(),
-    ...(HOST_CLIENT ? [hostIndexName()] : [updaterProgressPage(), windowPdfjs(), bootStamp()]),
+    windowPdfjs(),
+    ...(HOST_CLIENT ? [hostIndexName()] : [updaterProgressPage(), bootStamp()]),
     react(),
     {
       /* The webview loads the bundle as an ES module, where `import.meta` is valid; the smoke test
          loads it as a CLASSIC script in jsdom (which cannot run module scripts), where `import.meta`
          is a syntax error that aborts boot and renders nothing. With AttachmentPreview's
-         `import("pdfjs-dist")` inlined (the window's `window-pdfjs.ts`, the host client's stub), the
+         `import("pdfjs-dist")` inlined (the window's `window-pdfjs.ts`, the served page's module), the
          only `import.meta.url` left is vite's dynamic-import preload-helper argument — and with no
          dependencies to resolve it is never read, in either load context. Neutralise it to an empty
          string so the classic-script load parses. */
@@ -809,11 +816,9 @@ export default defineConfig({
       { find: "@tiptap/pm/view", replacement: r("./node_modules/@tiptap/pm/view") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
       { find: "parse5", replacement: r("./node_modules/parse5") },
-      /* pdf.js stays OUT of the boot chunk. The window gets `src/window-pdfjs.ts`, which loads the
-         library and its worker from the two files `windowPdfjs()` emits, on the first PDF; the host
-         client keeps the refusing stub (its policy says `worker-src 'none'`). tsconfig.json still
-         points the TYPE at the real package, so AttachmentPreview.tsx typechecks against pdf.js. */
-      { find: "pdfjs-dist", replacement: HOST_CLIENT ? r("./src/no-pdfjs.ts") : r("./src/window-pdfjs.ts") },
+      /* Each host loads the emitted pdf.js library and worker on the first PDF. tsconfig still
+         resolves the real library's types. */
+      { find: "pdfjs-dist", replacement: HOST_CLIENT ? r("./src/paired-pdfjs.ts") : r("./src/window-pdfjs.ts") },
 
       /* Anchored at both ends: a RegExp `find` replaces only the matched span,
          so a pattern that leaves the leading "./" behind yields a broken path.
@@ -887,13 +892,18 @@ export default defineConfig({
       { find: "@ohmail/ui/squares-window", replacement: r("../../packages/ui/src/squares-window.ts") },
       // The kit's calendar parts: the reader's return menu picks its day with them.
       { find: "@ohmail/ui/calendar", replacement: r("../../packages/ui/src/calendar/index.ts") },
+      { find: "@ohmail/ui/theme", replacement: r("../../packages/ui/src/theme/ThemeProvider.tsx") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
       /* Behaviour without a screen: a folder's door, then a file by its own name. `tsconfig.json`'s
          `paths` carries the same pair, and the host contract's line under it. */
-      // The calendar's alerts: a folder's door two deep, above the rule that would read it as a file.
+      // Calendar directories two levels down need explicit entries before the file pattern.
       { find: "@ohmail/app-logic/calendar/alerts", replacement: r("../../packages/app-logic/src/calendar/alerts/index.ts") },
+      { find: "@ohmail/app-logic/calendar/beside", replacement: r("../../packages/app-logic/src/calendar/beside/index.ts") },
+      { find: "@ohmail/app-logic/calendar/setup", replacement: r("../../packages/app-logic/src/calendar/setup/index.ts") },
+      { find: "@ohmail/app-logic/calendar/found", replacement: r("../../packages/app-logic/src/calendar/found/index.ts") },
+      { find: "@ohmail/app-logic/calendar/invitations", replacement: r("../../packages/app-logic/src/calendar/invitations/index.ts") },
       { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1/index.ts` },
-      { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
+      { find: /^@ohmail\/app-logic\/([a-z-]+(?:\/[a-z-]+)*\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
       // The letter's body: its three leaves ABOVE its door, each by its own file. `tsconfig.json`'s `paths` carries the same four.
       { find: "@ohmail/letter-body/links", replacement: r("../../packages/letter-body/src/rendered-links.ts") },
       { find: "@ohmail/letter-body/cache", replacement: r("../../packages/letter-body/src/mail-doc-cache.ts") },
@@ -902,11 +912,12 @@ export default defineConfig({
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
       { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },
-      { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
-      { find: "@ohmail/app/mail/ground", replacement: r("../../packages/app/src/mail/ground/index.ts") },
+      { find: "@ohmail/app/settings/browser", replacement: r("../../packages/app/src/settings/browser/index.ts") },
       { find: "@ohmail/app/mail", replacement: r("../../packages/app/src/mail/index.ts") },
+      { find: /^@ohmail\/app\/mailboxes$/, replacement: r("../../packages/app/src/mailboxes/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
+      { find: "@ohmail/app/profile-import", replacement: r("../../packages/app/src/profile-import/index.ts") },
       // The reader the seated Ohbox mounts, its letter's body above its door: the web shell's reader parts read both.
       { find: "@ohmail/app/reader/body", replacement: r("../../packages/app/src/reader/body/index.ts") },
       { find: "@ohmail/app/reader", replacement: r("../../packages/app/src/reader/index.ts") },
@@ -914,6 +925,20 @@ export default defineConfig({
       { find: "@ohmail/app/write/editor/schema", replacement: r("../../packages/app/src/write/editor/schema.ts") },
       { find: "@ohmail/app/write/editor/commands", replacement: r("../../packages/app/src/write/editor/commands.ts") },
       { find: "@ohmail/app/write/editor/marks", replacement: r("../../packages/app/src/write/editor/marks.ts") },
+      { find: "@ohmail/app/write", replacement: r("../../packages/app/src/write/index.ts") },
+      { find: "@ohmail/app/settings/ai", replacement: r("../../packages/app/src/settings/ai/index.ts") },
+      { find: "@ohmail/app/settings/browser", replacement: r("../../packages/app/src/settings/browser/index.ts") },
+      { find: "@ohmail/app/settings/away", replacement: r("../../packages/app/src/settings/away/index.ts") },
+      { find: "@ohmail/app/settings/folders", replacement: r("../../packages/app/src/settings/folders/index.ts") },
+      { find: "@ohmail/app/settings/general", replacement: r("../../packages/app/src/settings/general/index.ts") },
+      { find: "@ohmail/app/settings/help", replacement: r("../../packages/app/src/settings/help/index.ts") },
+      { find: "@ohmail/app/settings/notifications", replacement: r("../../packages/app/src/settings/notifications/index.ts") },
+      { find: "@ohmail/app/settings/rules", replacement: r("../../packages/app/src/settings/rules/index.ts") },
+      { find: "@ohmail/app/settings/screener", replacement: r("../../packages/app/src/settings/screener/index.ts") },
+      { find: "@ohmail/app/settings/signatures", replacement: r("../../packages/app/src/settings/signatures/index.ts") },
+      { find: "@ohmail/app/settings/tags", replacement: r("../../packages/app/src/settings/tags/index.ts") },
+      { find: "@ohmail/app/screener", replacement: r("../../packages/app/src/screener/index.ts") },
+      { find: "@ohmail/app/settings", replacement: r("../../packages/app/src/settings/index.ts") },
       { find: "@ohmail/app/search", replacement: r("../../packages/app/src/search/index.ts") },
       { find: "@ohmail/app/palette", replacement: r("../../packages/app/src/palette/index.ts") },
       /* The text reader, and the translator it builds on, from this install: no root install stands beside the package
@@ -1001,6 +1026,7 @@ export default defineConfig({
       { find: "@trafficflow/core/reader-refusal", replacement: r("../../packages/core/src/reader-refusal.ts") },
       { find: "@trafficflow/core/outbound-text", replacement: r("../../packages/core/src/outbound-text.ts") },
       { find: "@trafficflow/core/model-name", replacement: r("../../packages/core/src/model-name.ts") },
+      { find: "@trafficflow/core/suggestion-consent", replacement: r("../../packages/core/src/suggestion-consent.ts") },
       /* The diagnostic file's one builder (Settings → About), shared with the phone. Its files
          import each other and core's logger allowlist, and nothing outside core. */
       { find: "@trafficflow/core/diagnostics", replacement: r("../../packages/core/src/diagnostics/index.ts") },
@@ -1039,7 +1065,7 @@ export default defineConfig({
     ...(HOST_CLIENT ? {} : { cssCodeSplit: false }),
     /* Emit ONE chunk, no dynamic-import split. The shared shell's only dynamic import is
        AttachmentPreview.tsx's `import("pdfjs-dist")`, which resolves to a small module here
-       (`window-pdfjs.ts`, or the host client's stub). Vite otherwise code-splits it and wraps the call in a preload helper
+       (`window-pdfjs.ts`, or the served page's module). Vite otherwise code-splits it and wraps the call in a preload helper
        that references `import.meta.url`; the smoke loads the bundle as a CLASSIC script (jsdom cannot
        run module scripts), where `import.meta` is a syntax error that aborts the whole boot and
        renders nothing. Inlining removes the split and the `import.meta`, so the bundle boots as one

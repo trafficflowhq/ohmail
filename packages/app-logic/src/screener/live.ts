@@ -16,13 +16,13 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { useMemo } from "react";
-import { autoUnsubscribeConfirms, mirrorSuggestionIdOf } from "@ohmail/client-engine";
+import { autoUnsubscribeConfirms, mirrorSuggestionIdOf, screeningDegrade } from "@ohmail/client-engine";
 import { useConsent } from "../consent/consent-row.js";
 import { usePartition } from "../consent/partition.js";
 import { useDemoMode, useDerivedVersion, useEngine, useResolvedDemoMode } from "../engine/index.js";
 import { useMailState } from "../mail-state/mail-state-binding.js";
 import { screenerMode } from "../mail-state/mail-state.js";
-import { screeningShown } from "../press/press-verdict.js";
+import { screeningShown, screeningVerdict } from "../press/press-verdict.js";
 import { postureRefusal, rulesPostureOf } from "../press/rules-posture.js";
 import { autoUnsubscribeDoor } from "../press/sender-screening.js";
 import type { ShellDispatch } from "../press/shell-dispatch.js";
@@ -32,12 +32,14 @@ import type { Translator } from "../text/translator.js";
 import type { DecisionDestination } from "./decision.js";
 import { useJunkPileKey, useJunkWindow, type JunkWindowControl, type JunkWire } from "./junk-window.js";
 import { useScreenerModel } from "./model.js";
-import type { ScreenerState, ScreenerText } from "./screener-state.js";
+import type { SuggestStanding } from "./no-suggestion.js";
+import type { DecisionVerdict, ScreenerState, ScreenerText } from "./screener-state.js";
 import {
   useScreenerSuggestions,
   type AutoOptInControl,
   type SuggestBatchControl,
   type SuggestWire,
+  type ScreenerSuggestions,
 } from "./screener-suggest.js";
 
 export interface ScreenerLiveInput {
@@ -45,6 +47,7 @@ export interface ScreenerLiveInput {
   readonly press: ShellDispatch;
   /** The host's scope, as the frame pinned it: whose journal and undo channel these are. */
   readonly scope: string;
+  readonly mirrorAccount?: string;
   readonly text: ScreenerText;
   /** The catalogue's reader of the refusals every surface shares: the run says a refused purchase through it. */
   readonly aiRefusal: Translator;
@@ -56,11 +59,18 @@ export interface ScreenerLiveInput {
   readonly suggestWire: SuggestWire | "none";
   /** Whether this host draws the shared suggestion control. Where it does not, nothing is priced or bought. */
   readonly suggestControl: boolean;
+  readonly ownSuggest?: boolean;
+  /**
+   * Whether this host buys the batch nobody pressed for, where the account's own row says so. Where it does not,
+   * the row is not read for it: a suggestion is bought on a press of the control and never otherwise.
+   */
+  readonly unpressed: boolean;
 }
 
 /** What a mounted frame holds of the Screener: its one model, and what runs beside it. */
 export interface ScreenerLive {
   readonly model: ScreenerState;
+  readonly windowDegrade: ReturnType<typeof screeningDegrade>;
   /**
    * The mail server's own Junk, read live; null where no window stands: the host named no wire, the account files
    * into no folders, or the invented mailbox is on screen.
@@ -70,17 +80,25 @@ export interface ScreenerLive {
   readonly suggest: SuggestBatchControl | null;
   /** The opt-in's quote, bound to this render's unsuggested senders; null over none or on the invented mailbox. */
   readonly autoOptIn: AutoOptInControl | null;
+  readonly absorb: ScreenerSuggestions["absorb"];
+  /** The refusal the run last met, standing until a later run contradicts it; null: none. */
+  readonly standing: SuggestStanding | null;
+  /** The senders the run is buying now, by sender key. */
+  readonly inFlight: ReadonlySet<string>;
 }
 
 export function useScreenerLive({
   press,
   scope,
+  mirrorAccount,
   text,
   aiRefusal,
   at,
   junkWire,
   suggestWire,
   suggestControl,
+  ownSuggest = false,
+  unpressed,
 }: ScreenerLiveInput): ScreenerLive {
   const engine = useEngine();
   const version = useDerivedVersion();
@@ -109,25 +127,31 @@ export function useScreenerLive({
     () => ({ ...screenerMode(facts), pressRefusal: postureRefusal(rulesPostureOf(facts)) }),
     [facts],
   );
-  /* The pressed rows the lists show at a place, read at the call over the lists' own partition. */
-  const shownAt = useStableCallback((subject: readonly EngineMessage[], dest: DecisionDestination) =>
-    screeningShown(engine.read(), subject, dest, {
-      consent: demo ? null : consent,
-      now: new Date(),
-      ownAddresses,
-      firstImportDoneAt,
-    }),
+  const { shownAt, decisionVerdict } = useScreeningVerdict(
+    engine,
+    demo,
+    invented,
+    consent,
+    role.mode,
+    ownAddresses,
+    firstImportDoneAt,
   );
   /* THE SUGGESTION RUN, once: what was bought is read when the Screener comes on screen, and a batch is bought
-     without a press only for an account whose own row says so. Over none it asks nothing. */
+     without a press only for an account whose own row says so, on a host that buys such a batch. Over none it asks
+     nothing. */
   const suggestText = useMemo(() => ({ screener: text.screener, aiRefusal }), [text.screener, aiRefusal]);
-  const mirrorSuggestionOf = useMemo(
-    () => (address: string) => mirrorSuggestionIdOf(engine.read(), address),
-    [engine],
+  const mirrorSuggestionOf = useStableCallback((address: string) =>
+    mirrorSuggestionIdOf(engine.read(), address),
   );
   const run = useScreenerSuggestions({
     active: !invented && at.screener,
-    autoSuggest: consent.autoSuggest,
+    autoSuggest: unpressed && consent.autoSuggest,
+    permission: {
+      known: consent.suggestionConsentKnown,
+      version: consent.suggestionGrant,
+      grant: consent.readSuggestionGrant,
+      relayGrant: consent.relaySuggestionGrant,
+    },
     toast: press.undoToast,
     text: suggestText,
     wire: suggestWire,
@@ -136,17 +160,19 @@ export function useScreenerLive({
   const model = useScreenerModel({
     engine,
     scope,
+    mirrorAccount,
     version,
     toast: press.undoToast,
     text,
     /* Over no wire this host buys none and lists no decision another session left. */
-    suggestions: suggestWire === "none" ? null : run.suggestions,
+    suggestions: suggestWire === "none" && !ownSuggest ? null : run.suggestions,
     presented,
     autoUnsubscribe: discloses,
     role,
     outstanding: run.outstandingDecisions,
     ownAddresses,
     shownAt,
+    decisionVerdict,
     releaseWindow: press.screenerRelease ?? null,
   });
   const junk = useJunkHere(
@@ -161,18 +187,19 @@ export function useScreenerLive({
      the set that is bought are one list. Bound only where the host draws it: the batch nobody presses for reads the
      list this binding leaves, so without a control it has nothing to buy. */
   const offered = !demo && suggestControl && suggestWire !== "none" && suggestWire.configured();
-  const suggest = offered
-    ? run.forSenders(
-        model.unsuggestedSenders,
-        model.suggestedSenders,
-        model.waitingCount - model.suggestedCount,
-        model.queueSettled,
-      )
-    : null;
+  const suggest = offered ? suggestForSenders(run, model) : null;
+  const windowDegrade = useMemo(
+    () => (demo ? null : screeningDegrade(consent.screeningByMailbox)),
+    [demo, consent.screeningByMailbox],
+  );
   return {
+    windowDegrade,
+    standing: run.standing,
+    inFlight: run.inFlight,
     model,
     junk,
     suggest,
+    absorb: run.absorb,
     autoOptIn: demo || suggestWire === "none" ? null : run.autoOptIn(model.unsuggestedSenders),
   };
 }
@@ -195,4 +222,55 @@ function useJunkHere(
   const keep = useMemo(() => ({ on, moved }), [on, moved]);
   const junk = useJunkWindow(on && at.third, press.undoToast, wire, t, on && at.screener, keep);
   return drawn && junk.supported ? junk : null;
+}
+
+function useScreeningVerdict(
+  engine: ReturnType<typeof useEngine>,
+  demo: boolean,
+  invented: boolean,
+  consent: ReturnType<typeof useConsent>,
+  mode: ReturnType<typeof screenerMode>["mode"],
+  ownAddresses: ReturnType<typeof usePartition>["ownAddresses"],
+  firstImportDoneAt: ReturnType<typeof usePartition>["firstImportDoneAt"],
+) {
+  /* The pressed rows the lists show at a place, read at the call over the lists' own partition. */
+  const shownAt = useStableCallback((subject: readonly EngineMessage[], dest: DecisionDestination) =>
+    screeningShown(engine.read(), subject, dest, {
+      consent: demo ? null : consent,
+      now: new Date(),
+      ownAddresses,
+      firstImportDoneAt,
+    }),
+  );
+  const decisionVerdict: DecisionVerdict = useStableCallback((origin, decision, retro) => {
+    if (engine !== origin) return null;
+    if (invented || !consent.known || mode !== "organizer") return { key: "none" };
+    return screeningVerdict(
+      engine.verbRead(),
+      decision.id,
+      decision.from.address,
+      decision.dest,
+      decision.scope,
+      {
+        consent,
+        now: new Date(),
+        ownAddresses,
+        firstImportDoneAt,
+        retro,
+      },
+    );
+  });
+  return { shownAt, decisionVerdict };
+}
+
+function suggestForSenders(
+  run: ReturnType<typeof useScreenerSuggestions>,
+  model: ReturnType<typeof useScreenerModel>,
+) {
+  return run.forSenders(
+    model.unsuggestedSenders,
+    model.suggestedSenders,
+    model.waitingCount - model.suggestedCount,
+    model.queueSettled,
+  );
 }

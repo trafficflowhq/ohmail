@@ -45,9 +45,9 @@ export interface Gated {
   readonly ask: GatedAsk | null;
   /**
    * Whatever changes what the parked press would send: the slot empties and the dialog closes. A press still on its
-   * way is remembered as moved under: no factor is asked for it.
+   * way is remembered as moved under: no factor is asked for it. A dialog may restrict the withdrawal to its own verb.
    */
-  withdraw(): void;
+  withdraw(verb?: GatedAct["verb"]): void;
 }
 
 export function useGated(send: (run: GatedRun<GatedAct>) => Promise<GatedOutcome>): Gated {
@@ -82,10 +82,16 @@ export function useGated(send: (run: GatedRun<GatedAct>) => Promise<GatedOutcome
     };
     void sender.current(next.run).then(answered, () => answered({ ok: false, word: "refused" }));
   }, []);
-  const withdraw = useCallback(() => {
-    if (state.current.at === "asking") step({ kind: "cancelled" });
-    else if (state.current.at === "trying") moved.current = true;
-  }, [step]);
+  const withdraw = useCallback(
+    (verb?: GatedAct["verb"]) => {
+      const pending = state.current;
+      if (pending.at !== "asking" && pending.at !== "trying") return;
+      if (verb !== undefined && pending.act.verb !== verb) return;
+      if (pending.at === "asking") step({ kind: "cancelled" });
+      else moved.current = true;
+    },
+    [step],
+  );
   return {
     state: state.current,
     press: (act) => step({ kind: "try", act }),

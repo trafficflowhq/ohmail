@@ -3,13 +3,13 @@
  * rule's facts; the text stands in its own block; the body's own controls stand in the head and above the text.
  */
 import type { EngineMessage, MessageBody } from "@ohmail/wire";
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import {
-  BlockedImages,
   LetterHistory,
   LetterViews,
   Message,
   MessageHead,
+  type MessageClip,
   TextNotKept,
 } from "@ohmail/ui/mail";
 import {
@@ -17,22 +17,23 @@ import {
   isProtected,
   letterPictures,
   letterReady,
+  letterStampInstant,
+  readIsItsRelease,
+  useJunkRefill,
   useLetterBody,
   withheldKeyOf,
 } from "@ohmail/app-logic/reader";
-import { headStamp, placeOfFolder, readerZone } from "@ohmail/app-logic/reader";
 import { useLiveBody } from "@ohmail/app-logic/reading";
-import { useSessionDead } from "@ohmail/app-logic/session/session-truth";
 import { endOpen } from "@ohmail/app-logic/session/ui-vitals";
-import { useEngineOrNull } from "@ohmail/app-logic/engine";
 import { useFrame } from "../frame/commands.js";
 import { useSignal } from "../frame/feeds.js";
-import { useMailboxStatus, useMailboxWord, useOwnAddresses } from "../frame/room.js";
+import { useMailboxStatus } from "../frame/room.js";
 import { NONE } from "../host/index.js";
-import { useLocale, useText } from "../text/index.js";
+import { useText } from "../text/index.js";
+import { BodyLoadStatus } from "./BodyLoadStatus.js";
 import type { ContactOf } from "./contact/Contact.js";
 import { LetterFiles } from "./files/Files.js";
-import { LetterMenu } from "./actions/LetterMenu.js";
+import { useLetterHeadPresentation, type LetterHeadProps } from "./LetterHead.js";
 import { useParts } from "./parts.js";
 import type { LetterControl, LetterNotice } from "./ports.js";
 
@@ -53,17 +54,18 @@ const KEPT = {
   withheldTooLarge: "tooLarge",
 } as const;
 
-const nameOf = (p: { name: string | null; address: string }): string => p.name?.trim() || p.address;
-
-const stampOf = (m: EngineMessage): string | null => m.date || m.arrivedAt || null;
-/** A person as the details print them: the name and the whole address, or the address alone. */
-const whole = (p: { name: string | null; address: string }): string =>
-  p.name?.trim() ? `${p.name.trim()} ${p.address}` : p.address;
-
 export interface LetterViewProps {
   readonly message: EngineMessage;
+  readonly offMirrorBody?: MessageBody;
+  readonly retryBody?: () => void;
+  readonly clip?: MessageClip;
+  readonly streamCard?: "open";
+  readonly showSubject?: boolean;
+  /** A heading inside the latest sheet when the conversation heading can scroll out of view. */
+  readonly subject?: string;
   /** The letter the column opened at: its text on screen ends the open's measure. */
   readonly opened: boolean;
+  readonly previewSelection?: string;
   /** Unread as the column presents it. */
   readonly unread: boolean;
   /** `tint`: the sheet is washed and a hidden word says unread; `dot`: the head's dot. */
@@ -75,70 +77,83 @@ export interface LetterViewProps {
   /** The head is narrow: its stamp prints the day and the month, the full form on a press. */
   readonly narrow?: boolean;
   readonly onPerson: (person: ContactOf) => void;
+  /** The name whose card stands open (its `slot`), or null. */
+  readonly card?: string | null;
 }
 
 export function Letter({
   message,
+  offMirrorBody,
+  retryBody,
+  showSubject,
+  clip,
+  streamCard,
+  subject,
   opened,
+  previewSelection,
   unread,
   look,
   reading,
   presented,
   narrow,
   onPerson,
+  card,
 }: LetterViewProps) {
   const t = useText("reader");
   const tm = useText("message");
-  const parts = useParts();
-  const { host } = useFrame();
-  const scheme = useSignal(host.device.appearance).scheme;
-  const body = useLetterBody(message);
-  /* THE OPEN'S MEASURE ENDS HERE, in the commit that put the opened letter's text in the document: never on a text
-     still owed (its snippet, its loading), which would report the wait as over. Held as on screen until it leaves. */
-  useLayoutEffect(() => {
-    if (!opened || body.state === "snippet" || body.state === "loading") return undefined;
-    return endOpen(message.id);
-  }, [opened, message.id, body.state]);
-  const [notice, setNotice] = useState<LetterNotice | null>(null);
-  const [controls, setControls] = useState<readonly LetterControl[]>([]);
-  const liveWire = host.wires.liveBody;
-  const live = useLiveBody(message.id, emptiedForSpace(body) && liveWire !== NONE ? liveWire : undefined);
-  const loaded = "kind" in live.live && live.live.kind === "loaded" ? live.live : null;
-
-  const kept = body.state === "withheld" && loaded === null;
-  const copy = parts.sentCopy === NONE ? null : parts.sentCopy(message.id);
-  const views = controls.filter((c) => c.id !== "history");
-  const history = controls.find((c) => c.id === "history");
-  const Body = parts.body;
-  const Invitation = parts.invitation;
-  /* What the shell says of the letter's invitation stands over its text and outside it, after the text's views. */
-  const invitation =
-    Invitation === NONE || isProtected(message) ? null : <Invitation messageId={message.id} />;
-  const text = isProtected(message) ? (
+  const {
+    parts,
+    body,
+    refillExpired,
+    live,
+    notice,
+    tinted,
+    kept,
+    copy,
+    views,
+    history,
+    protectedLetter,
+    invitation,
+    Body,
+    renderedText,
+    loaded,
+    scheme,
+    owner,
+    setNotice,
+    setControls,
+  } = useLetterContent({ message, offMirrorBody, opened, look, unread, reading, presented }, t);
+  const text = protectedLetter ? (
     <p>{t("protected")}</p>
   ) : (
     <Body
       {...letterPictures(message, body.loadedRemoteContent, parts.pictures, parts.files, reading, presented)}
       messageId={message.id}
-      text={loaded ? loaded.text : body.text}
+      text={renderedText}
       html={loaded ? loaded.html : body.html}
       subject={message.subject}
       scheme={scheme}
-      owner={host.session.scope}
+      owner={owner}
       onNotice={setNotice}
       onControls={setControls}
     />
   );
 
+  const textState = (
+    <TextState message={message} body={body} live={live} retry={retryBody} refillExpired={refillExpired} />
+  );
   return (
     <div
       className="rd-letter"
       data-conv-id={message.id}
+      aria-current={opened ? "true" : undefined}
       data-unseen={message.unread ? "" : undefined}
       data-body-ready={letterReady(message, body) ? "" : undefined}
     >
       {look === "tint" && unread ? <span className="oh-vh">{tm("rowUnread")}</span> : null}
       <Message
+        clip={clip}
+        subject={clip || showSubject ? message.subject || undefined : subject}
+        amount={clip || streamCard ? message.amount : undefined}
         head={
           <LetterHead
             message={message}
@@ -146,10 +161,12 @@ export function Letter({
             notice={notice}
             copy={copy}
             narrow={narrow ?? false}
+            streamCard={streamCard ?? (clip ? "open" : undefined)}
             onPerson={onPerson}
+            card={card ?? null}
           />
         }
-        unread={look === "tint" && unread}
+        unread={tinted}
         lead={
           views.length > 0 || invitation !== null ? (
             <>
@@ -168,120 +185,115 @@ export function Letter({
             <LetterHistory label={history.label} open={history.expanded} onPress={history.onPress} />
           ) : undefined
         }
-        files={isProtected(message) ? undefined : <LetterFiles messageId={message.id} />}
+        files={
+          protectedLetter ? undefined : (
+            <LetterFiles messageId={message.id} selection={previewSelection} parts={parts} />
+          )
+        }
       >
         <div data-read-body="">
           {/* What is kept elsewhere is said under the preview; a load on its way, over it. */}
-          {kept ? null : <TextState message={message} body={body} live={live} />}
+          {kept ? null : textState}
           {text}
-          {kept ? <TextState message={message} body={body} live={live} /> : null}
+          {kept ? textState : null}
         </div>
       </Message>
     </div>
   );
 }
 
-/**
- * Who wrote it, to whom and when; every name opens the contact card; what the body kept out, as its chip; what the
- * shell says of its copy in Sent, as a note under the recipients.
- */
-function LetterHead({
-  message,
-  unread,
-  notice,
-  copy,
-  narrow,
-  onPerson,
-}: {
-  message: EngineMessage;
-  unread: boolean;
-  notice: LetterNotice | null;
-  copy: string | null;
-  narrow: boolean;
-  onPerson: (person: ContactOf) => void;
-}) {
-  const t = useText("reader");
-  const tm = useText("message");
-  const tp = useText("place");
-  const locale = useLocale();
-  const own = useOwnAddresses();
-  const mailboxWord = useMailboxWord();
-  const [noticeOpen, setNoticeOpen] = useState(false);
-  const [full, setFull] = useState(false);
-  const [details, setDetails] = useState(false);
-  const [menu, setMenu] = useState<HTMLElement | null>(null);
-  const person = useCallback(
-    (p: { name: string | null; address: string }) => (anchor: HTMLElement) =>
-      onPerson({ name: nameOf(p), address: p.address, anchor }),
-    [onPerson],
-  );
-  const mine = (address: string): boolean => own.some((a) => a.toLowerCase() === address.toLowerCase());
-  const groups = [
-    { word: t("head.to"), people: message.to },
-    { word: t("head.cc"), people: message.cc },
-  ]
-    .filter((g) => g.people.length > 0)
-    .map((g) => ({
-      word: g.word,
-      people: g.people.map((p) => ({
-        name: mine(p.address) ? t("head.you") : nameOf(p),
-        onPress: person(p),
-      })),
-    }));
-  const stamp = headStamp(stampOf(message), new Date(), readerZone(), locale, {
-    yesterday: (time) => t("head.yesterday", { time }),
-  });
-  /* When, who, to whom with every address whole, and where it is: its place, and its mailbox where there are several. */
-  function detailLines() {
-    const view = placeOfFolder(message.folder);
-    const place = view !== null && tp.has(view) ? tp(view) : message.folder;
-    const mailbox = mailboxWord(message.mailboxId);
-    return [
-      { term: t("sent"), value: stamp.full },
-      { term: t("from"), value: nameOf(message.from), note: message.from.address },
-      ...(message.to.length > 0 ? [{ term: t("detail.to"), value: message.to.map(whole).join(", ") }] : []),
-      ...(message.cc.length > 0 ? [{ term: t("detail.cc"), value: message.cc.map(whole).join(", ") }] : []),
-      { term: t("detail.in"), value: mailbox ? t("detail.where", { place, mailbox }) : place },
-    ];
-  }
+function useLetterContent(
+  {
+    message,
+    offMirrorBody,
+    opened,
+    look,
+    unread,
+    reading,
+    presented,
+  }: Pick<
+    LetterViewProps,
+    "message" | "offMirrorBody" | "opened" | "look" | "unread" | "reading" | "presented"
+  >,
+  t: ReturnType<typeof useText>,
+) {
+  const parts = useParts();
+  const { host } = useFrame();
+  const scheme = useSignal(host.device.appearance).scheme;
+  const mirrorBody = useLetterBody(message);
+  const body = offMirrorBody ?? mirrorBody;
+  const refillExpired = useJunkRefill(message, body);
+  /* THE OPEN'S MEASURE ENDS HERE, in the commit that put the opened letter's text in the document: never on a text
+     still owed (its snippet, its loading), which would report the wait as over. Held as on screen until it leaves. */
+  useLayoutEffect(() => {
+    if (!opened || body.state === "snippet" || body.state === "loading") return undefined;
+    return endOpen(message.id);
+  }, [opened, message.id, body.state]);
+  const [notice, setNotice] = useState<LetterNotice | null>(null);
+  const [controls, setControls] = useState<readonly LetterControl[]>([]);
+  const liveWire = host.wires.liveBody;
+  const live = useLiveBody(message.id, emptiedForSpace(body) && liveWire !== NONE ? liveWire : undefined);
+  const loaded = "kind" in live.live && live.live.kind === "loaded" ? live.live : null;
+
+  // The list treats a pin as unread until Done. The sheet follows the message’s actual read flag.
+  const tinted = look === "tint" && (readIsItsRelease(message) ? message.unread : unread);
+  const kept = body.state === "withheld" && loaded === null;
+  const copy = parts.sentCopy === NONE ? null : parts.sentCopy(message.id);
+  const views = controls.filter((c) => c.id !== "history");
+  const history = controls.find((c) => c.id === "history");
+  const Body = parts.body;
+  const Invitation = parts.invitation;
+  const renderedText = loaded ? loaded.text : body.text;
+  const protectedLetter = isProtected(message);
+  /* What the shell says of the letter's invitation stands over its text and outside it, after the text's views. */
+  const invitation =
+    Invitation === NONE || protectedLetter ? null : (
+      <Invitation
+        messageId={message.id}
+        invitationWithoutEvent={message.invitationWithoutEvent === true}
+        text={renderedText}
+        full={loaded !== null || body.state === "full"}
+      />
+    );
+  return {
+    parts,
+    body,
+    refillExpired,
+    live,
+    notice,
+    tinted,
+    kept,
+    copy,
+    views,
+    history,
+    protectedLetter,
+    invitation,
+    Body,
+    renderedText,
+    loaded,
+    scheme,
+    owner: host.session.scope,
+    setNotice,
+    setControls,
+  };
+}
+
+/** The message head and its contextual menu share the letter's presentation state. */
+export function LetterHead(props: LetterHeadProps) {
+  const { head, stamp, full, setFull, menu } = useLetterHeadPresentation(props);
   return (
     <>
       <MessageHead
-        sender={{
-          name: nameOf(message.from),
-          address: message.from.address,
-          printed: mine(message.from.address) ? t("head.youSender") : undefined,
-          onPress: person(message.from),
-        }}
-        unread={unread}
-        note={
-          notice ? (
-            <BlockedImages
-              caption={notice.caption}
-              sentence={notice.text}
-              open={noticeOpen}
-              onOpen={() => setNoticeOpen(true)}
-              onClose={() => setNoticeOpen(false)}
-            />
-          ) : undefined
-        }
-        menu={{ label: t("head.menu"), expanded: menu !== null || undefined, onPress: (at) => setMenu(at) }}
+        {...head}
         stamp={{
-          when: full ? stamp.full : narrow ? stamp.short : stamp.when,
+          when: full ? stamp.full : props.narrow ? stamp.short : stamp.when,
           full,
           title: full ? stamp.when : stamp.full,
+          at: letterStampInstant(props.message) ?? undefined,
           onPress: () => setFull((f) => !f),
         }}
-        to={groups}
-        details={{
-          label: tm("details"),
-          open: details,
-          onToggle: () => setDetails((d) => !d),
-          lines: details ? detailLines() : [],
-        }}
-        marks={copy === null ? undefined : [{ text: copy }]}
       />
-      <LetterMenu message={message} anchor={menu} onClose={() => setMenu(null)} />
+      {menu}
     </>
   );
 }
@@ -291,43 +303,32 @@ function TextState({
   message,
   body,
   live,
+  retry,
+  refillExpired,
 }: {
   message: EngineMessage;
   body: MessageBody;
+  refillExpired: boolean;
   live: ReturnType<typeof useLiveBody>;
+  retry?: () => void;
 }) {
   const tb = useText("body");
-  const engine = useEngineOrNull();
   const { commands, host } = useFrame();
   const settings = host.features.places.settings;
-  const dead = useSessionDead();
   const status = useMailboxStatus()(message.mailboxId);
   const { load } = live;
   const now = live.live;
   const loaded = "kind" in now && now.kind === "loaded";
   const busy = "state" in now && now.state === "loading";
   const refused = "kind" in now && now.kind === "refused" ? now.reason : null;
-  if (body.state === "loading") return <TextNotKept kind="fine" line={tb("loading")} live />;
-  if (body.state === "failed") {
-    /* With the session ended, the way on is to sign in again; otherwise the person may ask again. */
-    const recover = host.session.recover;
-    return dead ? (
-      <TextNotKept
-        kind="refused"
-        warn={tb("sessionEnded")}
-        way={recover !== NONE ? { label: tb("signIn"), onPress: () => recover("signIn") } : undefined}
-      />
-    ) : (
-      <TextNotKept
-        kind="refused"
-        warn={tb("kept.failed")}
-        way={{
-          label: tb("kept.tryAgain"),
-          onPress: () => void engine?.hydrateBody(message.id, { retry: true }),
-        }}
+  if (body.state === "snippet" || body.state === "loading" || body.state === "failed")
+    return (
+      <BodyLoadStatus
+        state={body.state === "failed" ? "failed" : "loading"}
+        messageId={message.id}
+        retry={retry}
       />
     );
-  }
   const storage =
     settings !== NONE && settings !== undefined
       ? { label: tb("kept.storage"), onPress: () => commands.go({ place: "settings", sub: "storage" }) }
@@ -336,11 +337,17 @@ function TextState({
   if (body.state !== "withheld") return null;
   const key = withheldKeyOf(body, message.folder);
   /* A Junk letter on its way back from the Junk folder is text on its way: one fine line. */
-  if (key === "withheldJunkLoading") return <TextNotKept kind="fine" line={tb(key)} live />;
+  if (key === "withheldJunkLoading")
+    return refillExpired ? (
+      <TextNotKept kind="refused" warn={tb("kept.failed")} />
+    ) : (
+      <TextNotKept kind="fine" line={tb(key)} live />
+    );
   const words = KEPT[key];
   const emptied = key === "withheld";
-  /* Emptied in a mailbox ohmail no longer reads: its text does not come back, and nothing loads it. */
-  const removed = emptied && status === "removed";
+  /* Emptied in a mailbox ohmail no longer reads (the mailbox facts say `disabled`): its text does not come back, and
+     nothing loads it. */
+  const removed = emptied && status === "disabled";
   return (
     <TextNotKept
       kind="kept"

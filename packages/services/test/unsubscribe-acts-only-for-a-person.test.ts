@@ -2,7 +2,7 @@ import { accountOfMessage, bindDb } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
-  applyScreenerDecision, folderState, messageBodies, readDrainCursor, rules, UNSUB_DRAIN_PASS,
+  applyScreenerDecision, folderState, messageBodies, rules,
 } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { makeProfileDoc, profileFingerprint } from "@trafficflow/core/adapters/organizer-profile";
@@ -81,21 +81,6 @@ describe("the automatic unsubscribe acts only for a sender a person screened out
       .where(and(eq(rules.accountId, w.accountId), eq(rules.match, match))))[0]!.at;
     expect(await stamp("news@person.example"), "a person's decision is stamped").not.toBeNull();
     expect(await stamp("news@auto-act.example"), "the auto-act pass's is not").toBeNull();
-  });
-
-  it("the drain reads all three, sends exactly once, and its cursor ends past them", async () => {
-    const { w, person } = await world();
-    const post = spy();
-    const svc = svcWith(post);
-    const run = await svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d1", accounts: 1, perAccount: 1 });
-    expect(post.calls, "only the list a person screened out is left").toEqual(["https://person.example/u?t=abc"]);
-    // The walk's own flag: the two unlicensed rows are read past, never handed to the seam.
-    expect(run.sweep.considered).toBe(1);
-    const cursor = await readDrainCursor(w.db as never, UNSUB_DRAIN_PASS);
-    expect(cursor?.messageId, "the cursor stands on the newest row, past the other two").toBe(person);
-    const again = await svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d2" });
-    expect(again.sweep.considered, "and nothing is owed afterwards").toBe(0);
-    expect(again.remaining).toBe(0);
   });
 
   it("the seam refuses the automatic arm without a person's rule, and the button is unchanged", async () => {

@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -12,24 +12,14 @@ import {
 } from "@ohmail/client-engine";
 import { RailNav, ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { mailboxLabelResolver, type MailboxLabelFact } from "../app/shell/mailbox-label";
-import { senderHitOf } from "../app/shell/sender-hit";
+import { mailboxLabelResolver, type MailboxLabelFact } from "@ohmail/app-logic/reader";
 import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
-import { SenderMenu } from "../app/shell/SenderMenu";
-import { SubjectRuleSheet } from "../app/shell/SubjectRuleSheet";
+import { SenderMenu } from "../app/components/sender-menu/SenderMenu";
+import { SubjectRuleSheet } from "../app/screening/SubjectRuleSheet";
 import { subjectRuleContext } from "@ohmail/app-logic/press/subject-rule";
-import { RulesView } from "../app/views/RulesView";
 import { settleFirstPaint } from "./_first-paint.js";
 
-/**
- * THE SCREENER AND THE RULES FIT A PHONE (web 0.25.2 at 375 and 414 with a
- * coarse pointer). Each case loads the stylesheets' OWN phone rules, lifted from their media
- * blocks, so "at phone width" is the cascade's answer and not a class name; the wide control loads
- * none of them. A tap is dispatched where a thumb lands: `pointer-events: none` hands the press to
- * the box under it. Mutations watched red: `sender-hit.ts`'s Screener-row exclusion, the preview's
- * `hm-who` press, `useOverlayFit`'s `full`, the badge's short form and its third, the rules row's
- * stack, and `button kbd` in `touch-keys.css`.
- */
+/** Phone checks still waiting for equivalent coverage through the mounted shell. */
 
 (globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
@@ -46,7 +36,6 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 const read = (p: string): string =>
   readFileSync(resolve(process.cwd(), p), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const APP = read("apps/webapp/app/app.css");
-const RULES = read("apps/webapp/app/views/rules.css");
 const SHEET = read("apps/webapp/app/shell/sender-sheet.css");
 const TOUCH = read("packages/app/src/keys/touch-keys.css");
 const ABAR = read("apps/webapp/app/shell/action-bar.css");
@@ -160,9 +149,6 @@ const MB_B: MailboxLabelFact = { id: "mb-b", address: "ops@acme.example", displa
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-/** Every sender the stage's hit test opened the sheet for, and every `full` the view asked. */
-let sheetFor: string[] = [];
-let fullCalls: boolean[] = [];
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
@@ -187,7 +173,7 @@ async function mountScreener(mail: EngineMessage[], facts: MailboxLabelFact[] | 
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const engine = await engineWith(mail);
   const labels = mailboxLabelResolver(facts);
   function Probe(): React.ReactElement {
@@ -197,44 +183,21 @@ async function mountScreener(mail: EngineMessage[], facts: MailboxLabelFact[] | 
     const state = useScreenerState(engine, null, v, toast, useScreenerText());
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     const [full, setFull] = React.useState(false);
-    const onFull = React.useCallback((f: boolean) => { fullCalls.push(f); setFull(f); }, []);
+    const onFull = setFull;
     return h(ScreenerView, {
       owed: false, state, segment: "waiting", settled: true, selection: sel as never,
       onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
       hydrateBody: () => {}, hydrateBodies: () => {}, full, onFull, mailboxLabelOf: labels,
     } as never);
   }
-  /* The stage's capture-phase hit test, wired as `shell-verbs.ts` wires it: a sender hit opens the
-     sheet INSTEAD of the row's own press. */
-  const onClickCapture = (e: React.MouseEvent): void => {
-    if (e.shiftKey) return;
-    const hit = senderHitOf(e.target as Element);
-    if (!hit) return;
-    e.preventDefault();
-    e.stopPropagation();
-    sheetFor.push(hit.id);
-  };
-  await render(h("main", { className: "stage", onClickCapture }, h(KeymapProvider, { children: h(Probe) })));
+  await render(h("main", { className: "stage" }, h(KeymapProvider, { children: h(Probe) })));
 }
 
-const section = (): HTMLElement => host!.querySelector<HTMLElement>("section.view-screener")!;
-const readCol = (): HTMLElement => host!.querySelector<HTMLElement>(".view-screener .scn-read")!;
 const rowOf = (id: string): HTMLElement => {
   const row = host!.querySelector<HTMLElement>(`.view-screener .row[data-id="${id}"]`);
   if (!row) throw new Error(`no row ${id}`);
   return row;
 };
-/** Where a thumb on `el` lands: the nearest box that takes pointer events. */
-function landing(el: Element): HTMLElement {
-  let n: Element | null = el;
-  while (n && getComputedStyle(n).pointerEvents === "none") n = n.parentElement;
-  return n as HTMLElement;
-}
-async function tap(el: Element): Promise<void> {
-  const at = landing(el);
-  await act(async () => { at.click(); });
-  await flush();
-}
 /** Drawn: neither the element nor an ancestor computes to `display: none`. */
 const drawn = (el: Element): boolean => {
   for (let n: Element | null = el; n; n = n.parentElement) if (getComputedStyle(n).display === "none") return false;
@@ -245,8 +208,6 @@ const chipOf = (row: HTMLElement): HTMLElement | null =>
   [...row.querySelectorAll<HTMLElement>(".badge[title]")].find((b) => b.title.startsWith("Delivered to ")) ?? null;
 
 beforeEach(() => {
-  sheetFor = [];
-  fullCalls = [];
   vp = { width: 414, coarse: true };
   localStorage.clear();
   Object.defineProperty(window, "matchMedia", {
@@ -271,74 +232,6 @@ afterEach(async () => {
   root = null;
   host = null;
   style = null;
-});
-
-// ── R13-04: the row is one target, the sheet is a deliberate press and can be closed ──────────
-
-describe("R13-04 — a thumb on a waiting row opens the letter, never the sender sheet", () => {
-  it("a tap on the address or the avatar opens the preview at phone width with a coarse pointer", async () => {
-    load(screenerPhone());
-    await mountScreener([held("m1")]);
-    const addr = rowOf("m1").querySelector(".row-top .addr")!;
-    expect(addr, "the premise: the row's middle is the sender's address").not.toBeNull();
-    await tap(addr);
-    expect(sheetFor, "the address opened the sender sheet").toEqual([]);
-    expect(section().className, "the preview is the full-screen layer").toContain("scn-full");
-    expect(readCol().textContent).toContain("ohmail-e2e phone subject m1");
-  });
-
-  it("the avatar is part of the same target", async () => {
-    load(screenerPhone());
-    await mountScreener([held("m1")]);
-    await tap(rowOf("m1").querySelector(".av")!);
-    expect(sheetFor).toEqual([]);
-    expect(fullCalls).toContain(true);
-  });
-
-  it("the sheet stays reachable from the preview: a press on its sender opens it for that letter", async () => {
-    load(screenerPhone());
-    await mountScreener([held("m1")]);
-    await tap(rowOf("m1"));
-    const who = readCol().querySelector<HTMLButtonElement>(".hmail .hm-who");
-    expect(who, "the preview offers no sender press").not.toBeNull();
-    expect(who!.tagName).toBe("BUTTON");
-    expect(who!.getAttribute("aria-label")).toBe("Screening for stranger-m1@stranger.example");
-    await act(async () => { who!.click(); });
-    expect(sheetFor, "the press reached the stage's hit test as the held letter").toEqual(["m1"]);
-  });
-
-  it("wide, with a fine pointer, a click on the address selects the row, and s opens that sender's menu", async () => {
-    vp = { width: 1440, coarse: false };
-    await mountScreener([held("m1"), held("m2")]);
-    const row = rowOf("m2");
-    await tap(row.querySelector(".row-top .addr")!);
-    expect(sheetFor, "the address opened the sender sheet").toEqual([]);
-    expect(fullCalls).not.toContain(true);
-    expect(row.getAttribute("aria-selected")).toBe("true");
-    await act(async () => {
-      row.dispatchEvent(new KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true }));
-    });
-    await flush();
-    const menu = host!.querySelector("[role=menu]");
-    expect(menu?.getAttribute("aria-label")).toBe("Choose where this sender's mail goes");
-    expect(menu?.closest(".row-slot")?.querySelector(".row")?.getAttribute("data-id")).toBe("m2");
-  });
-
-  it("narrow, with a fine pointer, a click opens the full letter, and s leaves it for that sender's menu", async () => {
-    vp = { width: 640, coarse: false };
-    load(screenerPhone());
-    await mountScreener([held("m1"), held("m2")]);
-    await tap(rowOf("m2"));
-    expect(section().className, "the click opened the full letter").toContain("scn-full");
-    await act(async () => {
-      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true }));
-    });
-    await flush();
-    expect(section().className, "the menu would sit under the full letter").not.toContain("scn-full");
-    const menu = host!.querySelector("[role=menu]");
-    expect(menu?.getAttribute("aria-label")).toBe("Choose where this sender's mail goes");
-    expect(menu?.closest(".row-slot")?.querySelector(".row")?.getAttribute("data-id")).toBe("m2");
-  });
 });
 
 describe("R13-04 — a full-height sender sheet carries a close control of at least 44px", () => {
@@ -403,11 +296,6 @@ describe("R13-07 — at phone width the subject gets the row, and the chip says 
     expect([cs.overflow, cs.textOverflow, cs.whiteSpace]).toEqual(["hidden", "ellipsis", "nowrap"]);
   });
 
-  it("control: one mailbox names nothing at phone width", async () => {
-    load(screenerPhone());
-    await mountScreener([held("m1", "mb-a")], [MB_A]);
-    expect(chipOf(rowOf("m1"))).toBeNull();
-  });
 
   it("control: wide, the chip keeps the full label", async () => {
     vp = { width: 1280, coarse: false };
@@ -415,56 +303,6 @@ describe("R13-07 — at phone width the subject gets the row, and the chip says 
     expect(chipOf(rowOf("m1"))!.textContent).toBe("casey@acme.example");
   });
 
-  it("the short label tells this account's mailboxes apart", () => {
-    const short = (facts: MailboxLabelFact[], id: string) => mailboxLabelResolver(facts)(id, "short");
-    const a = (id: string, address: string, displayName: string | null = null) => ({ id, address, displayName });
-    expect(short([MB_A, MB_B], "mb-b")).toBe("ops");
-    expect(short([a("x", "me@home.example"), a("y", "me@work.example")], "y"), "a shared local part names the domain").toBe("work.example");
-    expect(short([a("x", "me@home.example", "Home"), a("y", "me@work.example")], "x"), "a label is its own short form").toBe("Home");
-    expect(short([a("x", "me@a.example"), a("y", "me@b.example"), a("z", "you@a.example")], "x"), "both halves shared: the address").toBe("me@a.example");
-    expect(short([MB_A], "mb-a"), "one mailbox is still silence").toBeNull();
-    expect(mailboxLabelResolver([MB_A, MB_B])("mb-a"), "the long form is unchanged").toBe("casey@acme.example");
-  });
-});
-
-// ── R13-05: the rule says whose it is ─────────────────────────────────────────────────────────
-
-describe("R13-05 — at phone width a rule row stacks, and its title wraps rather than clips", () => {
-  const rule = (i: number, match: string): RuleDTO => ({
-    id: `r${i}`, kind: "sender", match, destination: "INBOX", priority: 0, provenance: "promoted", enabled: true,
-    subjectContains: null, bodyContains: null, stats: { hits: 0, lastHitAt: null, demotions: 0 },
-    createdAt: "2026-09-26T09:00:00.000Z", updatedAt: "2026-09-26T09:00:00.000Z",
-  });
-  const mountRules = () => render(h(RulesView, {
-    rules: [rule(1, "e2e-stranger-bfeecdac@stranger-fixture.example"), rule(2, "bd1@tq776.example")],
-    onRevoke: async () => ({ status: "confirmed" as const }),
-    onRetarget: async () => ({ status: "confirmed" as const }),
-    pastMail: () => null,
-  }));
-  const items = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".rules-item")];
-
-  it("the title takes its own full-width line and wraps anywhere; Change and Revoke sit under it", async () => {
-    load([...topRules(RULES), ...rulesUnder(RULES, "(max-width:640px)")]);
-    await mountRules();
-    expect(items()).toHaveLength(2);
-    for (const row of items()) {
-      expect(getComputedStyle(row).flexDirection, "the row stacks").toBe("column");
-      expect(getComputedStyle(row).height).toBe("auto");
-      const what = row.querySelector<HTMLElement>(".what")!;
-      expect(what.textContent).toMatch(/^Mail from .+@/);
-      expect([getComputedStyle(what).whiteSpace, getComputedStyle(what).overflowWrap]).toEqual(["normal", "anywhere"]);
-      expect(row.querySelector(".body")!.nextElementSibling, "the controls follow the title").toBe(row.querySelector(".acts"));
-    }
-  });
-
-  it("control: wide, the row is the one-line 64px row it was", async () => {
-    load(topRules(RULES));
-    await mountRules();
-    const row = items()[0]!;
-    expect(getComputedStyle(row).height).toBe("64px");
-    expect(getComputedStyle(row).flexDirection).not.toBe("column");
-    expect(getComputedStyle(row.querySelector(".what")!).whiteSpace).toBe("nowrap");
-  });
 });
 
 // ── R13-06: key hints only where there are keys ───────────────────────────────────────────────

@@ -14,6 +14,8 @@ export interface SettingLineProps {
   tag?: string;
   /** The (i) after a word that needs saying once. */
   info?: ReactNode;
+  /** The id of a note that describes this setting. */
+  describedBy?: string;
   /** The setting's value as text, at the right. */
   value?: string;
   /** A figure that ends the line, after its value: a plan's price. */
@@ -51,6 +53,7 @@ export function SettingLine(props: SettingLineProps) {
     lead,
     tag,
     info,
+    describedBy,
     value,
     figure,
     toggle,
@@ -78,6 +81,7 @@ export function SettingLine(props: SettingLineProps) {
       className="oh-settingline"
       role="group"
       aria-labelledby={labelId}
+      aria-describedby={describedBy}
       data-press={pressable ? "" : undefined}
       data-switch={toggle ? "" : undefined}
       data-off={off ? "" : undefined}

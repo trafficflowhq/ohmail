@@ -191,9 +191,7 @@ function signInOf(o: WebConnectWire): ProviderSignInWire {
         return "leaving" as const;
       }),
     returned: returnedOf(o.returned),
-    /* The sign-in by a code is still the Mailboxes pane's own ceremony, with its own record in the tab: it comes to
-       this wire in the change that replaces that pane, so that one ceremony never has two holders. */
-    code: NONE,
+    code: o.device ?? NONE,
   };
 }
 
@@ -202,6 +200,7 @@ export interface WebConnectWire {
   readonly owner: () => string | null;
   /** Where this wire's form stands: on the join, whose return was handed back to it, or on the app's page. */
   readonly returned: "join" | "page";
+  readonly device?: ProviderSignInWire["code"];
   /** How the browser leaves for the provider; the window's own navigation unless said. */
   readonly leave?: (url: string) => void;
   /**

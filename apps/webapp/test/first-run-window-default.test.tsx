@@ -1,13 +1,11 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingDoor, OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
+import { act, cleanup } from "@testing-library/react";
+import type { OnboardingDoor } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { RUNGS } from "../../../packages/app/src/mailboxes/first-run/words.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * "HOW FAR BACK" PRE-SELECTS THE ROW THAT CALLS ITSELF THE USUAL ONE.
@@ -40,13 +38,14 @@ import type { OnboardingDoor, OnboardingFacts } from "@ohmail/app-logic/doors/on
  * account (`"selfhost"`). The first draft of this file invented a door called `"standalone"` from
  * the row's own wording; `OnboardingDoor` is `"local" | "cloud" | "selfhost"` and the webapp
  * typechecks its tests, so it said so.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the re-run is the new frame's first-run stage at
+ * `#/first-run/again` (`_first-run-stage.tsx`), the window the account stored is the ground's
+ * `screening` (absent where nothing was stored), its words the stage's catalogue; a rung is the window's radio by
+ * its name (`words.ts` RUNGS); a re-render is the ground read again. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-const t = messages.onboarding;
+const t = O;
 
 const CONNECTED = {
   organizerRole: "organizer" as const,
@@ -57,21 +56,17 @@ const CONNECTED = {
 };
 
 /** An account that has been through setup — the state a re-run is about. */
-const finished = (door: OnboardingDoor): OnboardingFacts => ({
-  door,
+const finished = () => ({
   mailbox: {
     ...CONNECTED,
-    organizeConsentedAt: "2026-03-01T10:00:00.000Z",
-    initialImportCompletedAt: "2026-03-01T11:00:00.000Z",
+    organizeConsentedAt: "2026-03-01T10:00:00.000Z" as string | null,
+    initialImportCompletedAt: "2026-03-01T11:00:00.000Z" as string | null,
   },
   account: { onboardingCompletedAt: "2026-03-01T11:30:00.000Z" },
-  ai: "off",
-  queuedSenders: 0,
 });
 
-const roots: Root[] = [];
 afterEach(() => {
-  for (const r of roots.splice(0)) r.unmount();
+  cleanup();
   document.body.innerHTML = "";
 });
 
@@ -86,6 +81,8 @@ interface Stage {
   /** The visible label of the checked rung ("One year · usual"). */
   checkedLabel: () => string;
   stored: Array<{ dormancyDays?: number; scope?: "window" | "all_time" }>;
+  /** Choose a rung, as a click on its radio. */
+  pick: (value: string) => Promise<void>;
 }
 
 /**
@@ -99,52 +96,28 @@ async function mount(o: {
 }): Promise<Stage> {
   const stored: Stage["stored"] = [];
   const door = o.door ?? "cloud";
-  let facts = finished(door);
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-
-  const host: FirstRunHost = {
+  let facts = finished();
+  const rowOf = (): FirstRunRow => ({ id: id("mb-1"), address: "me@example.invalid", ...facts.mailbox }) as FirstRunRow;
+  const st = await mountStage({
+    rows: [rowOf()],
+    at: "#/first-run/again?mailbox=mb-1",
     door,
-    ai: "off",
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async (_id, body) => {
-      if (body.screening) stored.push(body.screening);
-      facts = { ...facts, mailbox: { ...facts.mailbox!, organizeConsentedAt: "2026-09-02T09:00:00.000Z" } };
-      return "stored";
+    account: facts.account,
+    live: () => [rowOf()],
+    /* Absent means "nothing was ever chosen" — see the ground's `screening`. */
+    ...(o.screening ? { screening: o.screening } : {}),
+    verbs: {
+      ai: "off",
+      organize: async (_id, body) => {
+        if (body.screening) stored.push(body.screening as Stage["stored"][number]);
+        facts = { ...facts, mailbox: { ...facts.mailbox, organizeConsentedAt: "2026-09-02T09:00:00.000Z" } };
+        return "stored";
+      },
+      complete: async () => {},
+      setAiEnabled: async () => {},
     },
-    complete: async () => {},
-    setAiEnabled: async () => {},
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
-  let bump: (() => void) | null = null;
-  const Host = () => {
-    const [, set] = React.useState(0);
-    bump = () => set((n) => n + 1);
-    return h(FirstRun, {
-      host,
-      facts,
-      onRefresh: () => set((n) => n + 1),
-      onLeave: () => {},
-      pull: { screened: 0, history: 0, pulled: 0 },
-      decide: null,
-      mailboxId: "mb-1",
-      rerun: true,
-      /* Absent means "nothing was ever chosen" — see `FirstRunProps.screening`. */
-      ...(o.screening ? { screening: o.screening } : {}),
-    });
-  };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Host, null) }),
-    }));
   });
+  const el = st.el;
 
   const press = async (label: string) => {
     const button = [...el.querySelectorAll("button")]
@@ -153,20 +126,27 @@ async function mount(o: {
       throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
         + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
     }
-    await act(async () => { (button as HTMLButtonElement).click(); });
+    await act(async () => { (button as HTMLButtonElement).click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
   };
 
-  const rungs = (): HTMLInputElement[] =>
-    [...el.querySelectorAll<HTMLInputElement>("input[type=radio]")];
+  /** The window's rungs: each radio with the value its name says (`words.ts` RUNGS). */
+  const rungs = (): Array<{ el: HTMLElement; value: string; label: string; checked: boolean }> =>
+    [...el.querySelectorAll<HTMLElement>("[role=radio]")].map((r) => {
+      const label = (r.querySelector(".oh-radioline-word")?.textContent ?? "").trim();
+      const rung = RUNGS.find((g) => label.startsWith(t[g.label.slice("onboarding.".length) as keyof typeof t] as string));
+      return { el: r, value: rung?.value ?? label, label, checked: r.getAttribute("aria-checked") === "true" };
+    });
 
   return {
     el, press, stored,
-    rerender: async () => { await act(async () => { bump?.(); }); },
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    rerender: async () => { await st.move([rowOf()]); },
+    heading: st.heading,
     checked: () => rungs().find((i) => i.checked)?.value ?? null,
-    checkedLabel: () => {
-      const on = rungs().find((i) => i.checked);
-      return (on?.closest("label")?.querySelector("b")?.textContent ?? "").trim();
+    checkedLabel: () => rungs().find((i) => i.checked)?.label ?? "",
+    pick: async (value: string) => {
+      const rung = rungs().find((i) => i.value === value);
+      expect(rung, `the screen offers no ${value}-day rung`).toBeDefined();
+      await act(async () => { rung!.el.click(); });
     },
   };
 }
@@ -240,10 +220,7 @@ describe("a pick survives", () => {
     await toWindow(s);
     expect(s.checked()).toBe("365");
 
-    const ninety = [...s.el.querySelectorAll<HTMLInputElement>("input[type=radio]")]
-      .find((i) => i.value === "90");
-    expect(ninety, "the screen offers no 90-day rung").toBeDefined();
-    await act(async () => { ninety!.click(); });
+    await s.pick("90");
     expect(s.checked()).toBe("90");
 
     /* A RE-RENDER, NOT A REMOUNT. The shell re-renders this stage whenever the facts come back,

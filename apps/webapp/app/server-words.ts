@@ -3,7 +3,7 @@
 /**
  * WHAT THE SERVER'S HANDSHAKE SAYS a page builds its host from: pairing, pictures and search, read from ONE
  * `GET /hello` per mount that asks, until it answers ({@link serverHello} keeps no answer, so a page that needs
- * several words reads them here and hands them on rather than asking twice). Each word is `false` while pending, on
+ * several words reads them here and hands them on rather than asking twice). Mail capabilities are `false` while pending, on
  * an older server that does not send it, on a failed hello and on the demo, which pays no round trip: a word the
  * server has not said is the safe answer (search sends `to` or `party` only where `searchPeople` reads true).
  */
@@ -15,8 +15,10 @@ export interface ServerWords {
   readonly remoteImages: boolean;
   /** Its search takes a person, unread and the days. */
   readonly searchPeople: boolean;
+  /** Null while the handshake can still answer an incoming Calendar link. */
+  readonly calendar: boolean | null;
 }
-const SAYS_NOTHING: ServerWords = { pairing: false, remoteImages: false, searchPeople: false };
+const SAYS_NOTHING: ServerWords = { pairing: false, remoteImages: false, searchPeople: false, calendar: null };
 
 /** How long a page waits before it asks again after an ask that got no answer. */
 const ASK_AGAIN_AFTER_MS = 30_000;
@@ -42,11 +44,13 @@ export function useServerWords(demo: boolean): ServerWords {
         const pairing = h?.features?.pairing === true;
         const remoteImages = h?.features?.remoteImages === true;
         const searchPeople = h?.features?.searchPeople === true;
+        const retrying = h === null && again < ASK_AGAIN_AT_MOST;
+        const calendar = retrying ? null : h?.features?.calendar === true;
         setWords((was) =>
-          was.pairing === pairing && was.remoteImages === remoteImages && was.searchPeople === searchPeople
+          was.pairing === pairing && was.remoteImages === remoteImages && was.searchPeople === searchPeople && was.calendar === calendar
             ? was
-            : { pairing, remoteImages, searchPeople });
-        if (h !== null || again >= ASK_AGAIN_AT_MOST) return;
+            : { pairing, remoteImages, searchPeople, calendar });
+        if (!retrying) return;
         again += 1;
         const askAgain = (): void => {
           disarm();

@@ -6,77 +6,138 @@
  * is `taken`, a refusal that will not pass by itself is `refused` with its word and its details, and a refusal that
  * may pass (the queue keeps the act owed) is nothing yet. Verdicts live as long as the port, beside the engine.
  */
-import { CalendarWriteQueue, type CalendarWriteTransport } from "@ohmail/client-engine/calendar-writes";
+import {
+  CalendarWriteQueue,
+  refusalWordOf,
+  writeFaultOf,
+  type CalendarWriteTransport,
+} from "@ohmail/client-engine/calendar-writes";
 import { MutationRejectedError, type OhmailEngine } from "@ohmail/client-engine";
-import type { CalendarAct, CalendarSettingsWire, CalendarWindow, CalendarWriteAnswer } from "@ohmail/wire";
+import type {
+  CalendarAct,
+  CalendarSettingsWire,
+  CalendarWindow,
+  CalendarWriteAnswer,
+  CalendarWriteFault,
+} from "@ohmail/wire";
 import type { CalendarPort, CalendarRefusalWord, CalendarVerdict, HeldSpan } from "./port.js";
 
-/** The words our server's write routes refuse with; anything else is `unknown`, never shown as it came. */
-const WORDS: ReadonlySet<string> = new Set<CalendarRefusalWord>([
-  "calendar_off",
-  "calendar_read_only",
-  "calendar_writes_full",
-  "calendar_write_left",
-  "calendar_connection_stopped",
-  "validation_failed",
-  "not_found",
-  "payload_too_large",
-  "idempotency_replay",
-]);
-
-export const refusalWordOf = (code: string | null): CalendarRefusalWord =>
-  code !== null && WORDS.has(code) ? (code as CalendarRefusalWord) : "unknown";
+export { refusalWordOf };
 
 type Answered = { readonly answer: CalendarWriteAnswer; readonly seq: number | null };
 
 export interface PortParts {
   readonly engine: Pick<OhmailEngine, "store" | "subscribe" | "read">;
   readonly transport: CalendarWriteTransport;
+  readonly online?: Pick<EventTarget, "addEventListener" | "removeEventListener">;
+  readonly mayRun?: () => boolean;
   readonly clock: { readonly uuid: () => string; readonly now: () => number };
   /** `GET /calendar/settings` over the shell's transport. */
   readonly settings: () => Promise<CalendarSettingsWire>;
+  readonly setup?: CalendarPort["setup"];
   /** The window our server serves and the spans this device read (the engine's public read, once it has one). */
   readonly held: () => { readonly window: CalendarWindow; readonly loaded: readonly HeldSpan[] };
   /** Reads a span before the window (`engine.loadCalendar`), or `none` where this shell cannot ask for one. */
   readonly load: CalendarPort["load"];
 }
 
-export function calendarPortOf(parts: PortParts): CalendarPort {
+export function calendarPortOf(parts: PortParts) {
   const verdicts = new Map<string, CalendarVerdict>();
   const listeners = new Set<() => void>();
+  const watched = new Set<string>();
+  const reported = new Set<string>();
+  const reports = new Map<
+    (word: CalendarRefusalWord | CalendarWriteFault) => void,
+    (() => void) | undefined
+  >();
+  let reporting = true;
+  const retireReports = () => {
+    reporting = false;
+    watched.clear();
+    reported.clear();
+    for (const retire of reports.values()) retire?.();
+  };
+  const reportSettled = () => {
+    if (!reporting || reports.size === 0) return;
+    for (const key of watched) {
+      const result = queue.result(key);
+      if (result === null) continue;
+      // The frame takes ownership of the report before this key is consumed.
+      if (result.kind === "refused") for (const report of reports.keys()) report(result.word);
+      reported.add(key);
+      watched.delete(key);
+    }
+  };
+  const watchLateRefusal = (key: string) => {
+    if (!reporting || reported.has(key)) return;
+    watched.add(key);
+    reportSettled();
+  };
   let own = 0;
   const changed = () => {
     own += 1;
+    reportSettled();
     for (const listener of [...listeners]) listener();
   };
-  const keep = async (key: string, call: () => Promise<Answered>): Promise<Answered> => {
-    try {
-      const answered = await call();
-      verdicts.set(key, { kind: "taken", write: answered.answer.write });
-      return answered;
-    } catch (err) {
-      if (err instanceof MutationRejectedError && !err.retryable)
-        verdicts.set(key, { kind: "refused", word: refusalWordOf(err.code), details: err.details });
-      throw err;
-    }
-  };
-  const transport: CalendarWriteTransport = {
-    writeCalendar: (act, key) => keep(key, () => parts.transport.writeCalendar(act, key)),
-    retryCalendarWrite: (id, key) => keep(key, () => parts.transport.retryCalendarWrite(id, key)),
-    dismissCalendarWrite: (id, key) => keep(key, () => parts.transport.dismissCalendarWrite(id, key)),
-  };
+  const transport = calendarWriteTransport(parts.transport, verdicts);
   const queue = new CalendarWriteQueue(parts.engine.store, transport, {
     uuid: parts.clock.uuid,
     now: parts.clock.now,
     onChange: changed,
+    ...(parts.online ? { online: parts.online } : {}),
+    ...(parts.mayRun ? { mayRun: parts.mayRun } : {}),
   });
   return {
     newId: parts.clock.uuid,
     press: (act: CalendarAct) => queue.press(act),
+    async holdDelete(act, delay) {
+      const held = await queue.holdDelete(act, delay);
+      watchLateRefusal(held.key);
+      return {
+        ...held,
+        async undo() {
+          const undone = await held.undo();
+          if (undone) watched.delete(held.key);
+          return undone;
+        },
+      };
+    },
+    activate() {
+      reporting = true;
+      const stop = queue.activate();
+      return () => {
+        stop();
+        retireReports();
+      };
+    },
+    resumeWrites() {
+      reporting = true;
+      queue.resume();
+    },
+    suspendWrites() {
+      queue.suspend();
+      retireReports();
+    },
+    hasOwedWrites: () => queue.owed().length > 0,
     flush: () => queue.flush(),
-    verdict: (key) => verdicts.get(key) ?? null,
+    verdict(key) {
+      const own = verdicts.get(key);
+      if (own !== undefined) return own;
+      const result = queue.result(key);
+      if (result === null) return null;
+      return result.kind === "taken" ? { kind: "taken", write: null } : { ...result, details: null };
+    },
+    watchLateRefusal,
+    subscribeLateRefusals(report, retire) {
+      reports.set(report, retire);
+      reportSettled();
+      return () => {
+        reports.delete(report);
+      };
+    },
     events: () => queue.events(),
     settings: parts.settings,
+    setup: parts.setup,
     held: parts.held,
     load: parts.load,
     version: () => parts.engine.read().version() * 1_000_003 + own,
@@ -88,5 +149,40 @@ export function calendarPortOf(parts: PortParts): CalendarPort {
         off();
       };
     },
+  } satisfies CalendarPort & { resumeWrites(): void; suspendWrites(): void };
+}
+
+function calendarWriteTransport(
+  transport: CalendarWriteTransport,
+  verdicts: Map<string, CalendarVerdict>,
+): CalendarWriteTransport {
+  const keep = async (
+    key: string,
+    signal: AbortSignal | undefined,
+    call: () => Promise<Answered>,
+  ): Promise<Answered> => {
+    try {
+      const answered = await call();
+      if (signal?.aborted) return answered;
+      const write = answered.answer.write;
+      verdicts.set(
+        key,
+        write?.state === "refused"
+          ? { kind: "refused", word: writeFaultOf(write.reason), details: write }
+          : { kind: "taken", write },
+      );
+      return answered;
+    } catch (err) {
+      if (!signal?.aborted && err instanceof MutationRejectedError && !err.retryable)
+        verdicts.set(key, { kind: "refused", word: refusalWordOf(err.code), details: err.details });
+      throw err;
+    }
+  };
+  return {
+    writeCalendar: (act, key, signal) => keep(key, signal, () => transport.writeCalendar(act, key, signal)),
+    retryCalendarWrite: (id, key, signal) =>
+      keep(key, signal, () => transport.retryCalendarWrite(id, key, signal)),
+    dismissCalendarWrite: (id, key, signal) =>
+      keep(key, signal, () => transport.dismissCalendarWrite(id, key, signal)),
   };
 }

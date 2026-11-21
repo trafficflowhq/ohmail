@@ -17,32 +17,33 @@ describe("the piles", () => {
     expect(address.read()).toBe("#/triage/m/l1");
   });
 
-  it("starts the Reply Run with f while the list has the keys; f does nothing outside Answer Later or while a letter is open", () => {
+  it("starts the Reply Run with f, whatever letter stands open beside the list; f does nothing outside Answer Later", () => {
     const { address, said } = mountPiles({ piles: pilesOf({ replyLater: LATER }), letters: LATER });
-    fireEvent.keyDown(window, { key: "f" });
+    fireEvent.keyDown(document.body, { key: "f" });
     expect(said.opened).toEqual(["l1"]);
     expect(said.written).toEqual(["l1"]);
     expect(address.read()).toBe("#/triage/m/l1");
     cleanup();
     const aside = mountPiles({ piles: pilesOf({ setAside: LATER }), letters: LATER, at: "#/triage/aside" });
-    fireEvent.keyDown(window, { key: "f" });
+    fireEvent.keyDown(document.body, { key: "f" });
     expect(aside.said.opened).toEqual([]);
     cleanup();
-    // A letter open: the reading column has the keys, and f is not the list's.
+    // A letter open: the reading column has the keys, and f is still the Reply Run's, from the pile's first letter.
     const reading = mountPiles({
       piles: pilesOf({ replyLater: LATER }),
       letters: LATER,
       at: "#/triage/m/l2",
     });
-    fireEvent.keyDown(window, { key: "f" });
-    expect(reading.said.opened).toEqual([]);
-    expect(reading.said.written).toEqual([]);
+    fireEvent.keyDown(document.body, { key: "f" });
+    expect(reading.said.opened).toEqual(["l1"]);
+    expect(reading.said.written).toEqual(["l1"]);
+    expect(reading.address.read()).toBe("#/triage/m/l1");
   });
 
   it("starts no Reply Run on f with Ctrl, Cmd or Alt", () => {
     const { address, said } = mountPiles({ piles: pilesOf({ replyLater: LATER }), letters: LATER });
     for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }])
-      fireEvent.keyDown(window, { key: "f", ...mod });
+      fireEvent.keyDown(document.body, { key: "f", ...mod });
     expect(said.opened).toEqual([]);
     expect(said.written).toEqual([]);
     expect(address.read()).toBe("#/triage");

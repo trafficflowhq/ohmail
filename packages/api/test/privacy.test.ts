@@ -25,15 +25,11 @@ const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, s
  * THE NEW CONSUMER, named rather than implied — this is not a weakened assertion, it
  * is the same one re-decided against a fact that changed:
  *
- *   `apps/webapp/app/shell/remote-images.ts`   builds `/img?mid=…&u=…`
- *   `apps/webapp/app/shell/MessagePane.tsx`    hands it to `MessageBody` as `imageProxy`
- *   `apps/webapp/app/components/MessageBody.tsx` rewrites every consented `<img src>`
- *                                              and CSS `url()` through it
- *   `apps/webapp/test/remote-images.test.tsx`  asserts the RENDERED frame does it
- *
- * The reading path now blocks a pixel by default and offers one consented way to load
- * a picture — which is the sentence `MessageBody.tsx:96-101` said was waiting on a
- * route, and the reason the route exists at all.
+ *   `apps/webapp/app/(product)/mailbox/image-wire.ts` supplies the web proxy address.
+ *   `packages/app/src/mail/ground/door-inputs.ts` hands the image wire and consent policy to the reader.
+ *   `packages/app/src/reader/body/LetterBody.tsx` renders the shared body.
+ *   `packages/letter-body/src/MessageBody.tsx` rewrites consented images and CSS URLs.
+ *   `apps/webapp/test/remote-images.test.tsx` exercises the rendered body.
  *
  * WHAT MUST STAY TRUE is therefore no longer "it is absent". It is the two gates
  * below: the SSRF refusal in front of the fetch (proven in depth, with a real socket

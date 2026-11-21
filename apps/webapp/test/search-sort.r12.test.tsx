@@ -3,7 +3,8 @@ import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { fireEvent, within } from "@testing-library/react";
+import { TextProvider } from "@ohmail/app/text";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -15,10 +16,10 @@ import {
   STORE_SEARCH_FOLLOWUP_HOLD_MS,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { prepareSearchWindow, SearchSeat } from "./_search-mount";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
-import { TodaysScopeProvider } from "../app/shell/todays-scope";
+import type { SearchHit } from "@ohmail/client-engine";
 
 /**
  * THE ORDER CONTROL, AND THE HALF OF IT THAT IS NOT THE PARAMETER.
@@ -37,7 +38,6 @@ import { TodaysScopeProvider } from "../app/shell/todays-scope";
 // See `sync-liveness-shell.test.ts` for why React is published as a global.
 (globalThis as unknown as { React: unknown }).React = React;
 
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -98,12 +98,13 @@ let host: HTMLDivElement;
 let root: Root;
 
 /** The scope of the shell Search is drawn in: the order is kept under it. */
-const SEARCH_SCOPE = "acc-search";
+const SEARCH_SCOPE = "acct";
 
 beforeEach(() => {
   // The order lands under the key of the scope the shell hands the view (`SEARCH_SCOPE`). Cleared per test so
   // persistence is proven by a WRITE, never inherited.
   window.localStorage.clear();
+  prepareSearchWindow();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -114,18 +115,14 @@ afterEach(async () => {
   host.remove();
 });
 
-async function render(engine: OhmailEngine, query: string): Promise<void> {
+async function render(engine: OhmailEngine, query: string, onOpen?: (hit: SearchHit) => void): Promise<void> {
   await act(async () => {
     root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(TodaysScopeProvider, { value: SEARCH_SCOPE }, h(KeymapProvider, {
-          children: h(SearchView, {
-            engine, version: 1, now: NOW, query,
-            onQuery: () => {}, onOpen: () => {},
-          }),
-        })),
-      }),
+      <TextProvider locale="en" messages={messages} timeZone="UTC" now={NOW}>
+        <KeymapProvider>
+          <SearchSeat key={query} engine={engine} initialQuery={query} onOpen={onOpen} />
+        </KeymapProvider>
+      </TextProvider>,
     );
   });
 }
@@ -137,15 +134,21 @@ async function settleArchive(): Promise<void> {
   });
 }
 
-const control = (): HTMLSelectElement | null => host.querySelector<HTMLSelectElement>("#search-sort");
-const hits = (): string[] => [...host.querySelectorAll(".hit .subj")].map((n) => n.textContent ?? "");
+type Sort = typeof SERVER_SEARCH_SORTS[number];
 
-async function choose(value: string): Promise<void> {
-  const el = control();
-  if (!el) throw new Error("the sort control is not on screen");
+const control = () => within(host).queryByRole("button", { name: /^Sorted by / });
+const sortMenu = () => within(host).getByRole("menu", { name: messages.search.sortLabel });
+const resultRows = () => within(host).queryAllByRole("listitem");
+const hits = () => resultRows().map((row) =>
+  within(row).getByRole("button", { name: /Heron / }).textContent?.match(/Heron (?:one|two|three)/)?.[0],
+);
+const orderLabel = (value: Sort) => messages.search[`sort_${value}`];
+const announcedOrder = (value: Sort) => messages.search.sortedBy.replace("{order}", orderLabel(value));
+
+async function choose(value: Sort): Promise<void> {
+  await act(async () => { fireEvent.click(control()!); });
   await act(async () => {
-    el.value = value;
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+    fireEvent.click(within(sortMenu()).getByRole("menuitemradio", { name: orderLabel(value) }));
   });
 }
 
@@ -163,14 +166,11 @@ describe("the search header offers an order", () => {
     expect(control()).toBeNull();
 
     await render(engine, "heron");
-    const el = control();
-    expect(el).not.toBeNull();
-    expect([...el!.options].map((o) => o.value)).toEqual([...SERVER_SEARCH_SORTS]);
-    // The default is the behaviour that already existed.
-    expect(el!.value).toBe("relevance");
-    // Labelled, and by a real `for`/`id` pair rather than a floating caption.
-    const label = host.querySelector<HTMLLabelElement>('label[for="search-sort"]');
-    expect(label?.textContent).toBe("Sort by");
+    expect(control()?.getAttribute("aria-label")).toBe(announcedOrder("relevance"));
+    await act(async () => { fireEvent.click(control()!); });
+    expect(within(sortMenu()).getAllByRole("menuitemradio").map((item) => item.textContent))
+      .toEqual(SERVER_SEARCH_SORTS.map(orderLabel));
+    expect(within(sortMenu()).getByRole("menuitemradio", { name: orderLabel("relevance"), checked: true })).toBeTruthy();
   });
 
   it("choosing an order RE-ASKS the archive for it", async () => {
@@ -244,7 +244,7 @@ describe("the search header offers an order", () => {
     await render(fresh, "heron");
     await settleArchive();
 
-    expect(control()!.value).toBe("date_desc");
+    expect(control()?.getAttribute("aria-label")).toBe(announcedOrder("date_desc"));
     expect(hits()).toEqual(["Heron three", "Heron two", "Heron one"]);
   });
 
@@ -265,7 +265,7 @@ describe("the search header offers an order", () => {
     await render(engine, "heron");
     await settleArchive();
 
-    expect(control()!.value).toBe("relevance");
+    expect(control()?.getAttribute("aria-label")).toBe(announcedOrder("relevance"));
     expect(pages(asked).map((o) => o.sort)).toEqual(["relevance"]);
   });
 
@@ -292,21 +292,14 @@ describe("the search header offers an order", () => {
       },
     } as unknown as Partial<EngineAdapter>), store, now: () => NOW });
     const opened: string[] = [];
-    await act(async () => {
-      root.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(TodaysScopeProvider, { value: SEARCH_SCOPE }, h(KeymapProvider, { children: h(SearchView, {
-          engine, version: 1, now: NOW, query: "berth plan", onQuery: () => {}, onOpen: (hit) => { opened.push(hit.message.id); },
-        }) })),
-      }));
-    });
+    await render(engine, "berth plan", (hit) => { opened.push(hit.message.id); });
     const settle = () => act(async () => { await new Promise((r) => setTimeout(r, STORE_SEARCH_FOLLOWUP_HOLD_MS + 70)); });
     const press = (k: string) => act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
     });
-    const rows = (): string[] => [...host.querySelectorAll("[data-hit]")].map((el) => el.getAttribute("data-hit") ?? "");
-    const cursorRow = (): number => rows().indexOf(host.querySelector('[data-hit][aria-current="true"]')?.getAttribute("data-hit") ?? "");
-    const scrollTop = () => host.querySelector<HTMLElement>(".view-search .scroller")!.scrollTop;
+    const rows = () => resultRows().map((row) => row.getAttribute("data-hit"));
+    const cursorRow = () => resultRows().findIndex((row) => row.getAttribute("aria-current") === "true");
+    const scrollTop = () => host.querySelector<HTMLElement>(".sr-scroll")!.scrollTop;
     await settle();
     return { opened, settle, press, rows, cursorRow, scrollTop };
   }
@@ -359,9 +352,9 @@ describe("the search header offers an order", () => {
     const held = rows()[cursorRow()];
     expect(held, "the cursor's letter must survive the filter").toBe("b23");
 
-    const chip = [...host.querySelectorAll<HTMLElement>(".facets button")].find((b) => (b.textContent ?? "").includes("odd@"));
-    expect(chip, "no sender facet to press").toBeTruthy();
-    await act(async () => { chip!.click(); });
+    await act(async () => { fireEvent.click(within(host).getByRole("button", { name: messages.search.facetFrom })); });
+    const from = within(host).getByRole("menu", { name: messages.search.facetFrom });
+    await act(async () => { fireEvent.click(within(from).getByRole("menuitem", { name: /odd@/ })); });
     await settle();
     const top = rows()[0];
     expect(rows()).toContain(held);

@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -11,11 +12,10 @@ import {
   type SyncChange,
   type SyncResponse,
   STORE_SEARCH_FOLLOWUP_HOLD_MS,
+  SearchIndex,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
 import { createEngine } from "../app/shell/engine-config";
-import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * GAP SEARCH SAYS WHAT IT SEARCHED, AT EVERY MOMENT.
@@ -107,8 +107,10 @@ async function engineWith(
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 
 beforeEach(() => {
+  leaveSearch = enterSearchRoute();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -117,51 +119,14 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch();
 });
 
-/**
- * `version` is AppShell's mirror-version prop and it is what invalidates the view's local
- * search memo. Passing a constant here would make every re-render show the first pass's
- * result — which is how the hydration case below silently "passed" by never re-searching.
- */
-/** The index revision a case hands, which an engine built to hold it reports (`bigEngine`). */
-let handedRev = 0;
-
-async function render(engine: OhmailEngine, query: string, version = 1, indexRev = 0): Promise<void> {
-  handedRev = indexRev;
+async function render(engine: OhmailEngine, query: string, _version = 1): Promise<void> {
   await act(async () => {
-    root.render(
-      // `children` goes in the PROPS object, not as a third argument: `apps/webapp` is one of
-      // the three packages that really do typecheck their tests, and the positional form does
-      // not satisfy `NextIntlClientProvider`'s required `children`.
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages: intlMessages,
-        timeZone: "UTC",
-        now: NOW,
-        /**
-         * THE KEYBOARD REGISTRY IS PART OF MOUNTING THIS VIEW SINCE THAT CHANGE.
-         *
-         * `SearchView` declared zero bindings until that slice — which was the defect: with
-         * results on screen the keyboard did nothing at all. It now declares ↑/↓/↵ through
-         * `useKeyBindings`, and `useKeymap` throws without a provider ON PURPOSE, because a
-         * component that declares bindings into no registry is a silently dead surface. So
-         * this mounts the provider rather than routing around the throw.
-         */
-        children: h(KeymapProvider, {
-          children: h(SearchView, {
-            engine,
-            version,
-            indexRev,
-            now: NOW,
-            query,
-            onQuery: () => {},
-            onOpen: () => {},
-          }),
-        }),
-      }),
-    );
+    root.render(h(RegisteredSearch, { engine, now: NOW, catalogue: intlMessages }));
   });
+  await act(async () => { typeSearch(host, query); });
 }
 
 /** Past the 250 ms archive debounce, plus the microtasks its promise resolves through. */
@@ -174,7 +139,7 @@ async function settleArchive(): Promise<void> {
 
 const text = (): string => host.textContent ?? "";
 const hits = (): string[] =>
-  [...host.querySelectorAll(".hit .subj")].map((n) => n.textContent ?? "");
+  [...host.querySelectorAll('[role="listitem"] .oh-row-subject')].map((n) => n.textContent ?? "");
 
 describe("the local pass still paints first, with no round trip", () => {
   it("local hits are on screen BEFORE the archive is asked anything", async () => {
@@ -200,7 +165,7 @@ describe("the local pass still paints first, with no round trip", () => {
   });
 });
 
-describe("the sentence under the box is true at every moment (ARCHIVE-024: one list)", () => {
+describe("the sentence under the box is true at every moment", () => {
   it("while only the device's rows are in hand it says the whole mailbox is being searched, and claims nothing more", async () => {
     const engine = await engineWith([msg({ id: "a", subject: "Kingfisher invoice", snippet: snippetOf(LONG_BODY) })], {
       searchServer: async () => ({ items: [], total: 0 }),
@@ -269,9 +234,8 @@ describe("the sentence under the box is true at every moment (ARCHIVE-024: one l
     expect(warn.mock.calls.map((c) => c.join(" "))).toEqual(["[search] the whole-mailbox pass did not answer: Error"]);
     warn.mockRestore();
 
-    const retry = [...host.querySelectorAll("button")].find((b) => b.textContent === "Search your whole mailbox again");
-    expect(retry).toBeDefined();
-    await act(async () => { retry!.click(); });
+    const retry = within(host).getByRole("button", { name: /^Search again$/ });
+    await act(async () => { retry.click(); });
     await settleArchive();
     expect(attempts).toBe(2);
   });
@@ -301,7 +265,7 @@ describe("the sentence under the box is true at every moment (ARCHIVE-024: one l
     expect(text()).toContain("Searched your whole mailbox — nothing matched");
   });
 
-  it("MARKER — the LIVE Cloud engine reaches the archive, and this test is how that stops being true quietly", () => {
+  it("the LIVE Cloud engine reaches the archive, and this test is how that stops being true quietly", () => {
     /**
      * THE OTHER HALF OF THAT CHANGE, LANDED.
      *
@@ -345,43 +309,55 @@ describe("the sentence while the index is still filling", () => {
    */
   const MANY = 600; // one more than the engine's synchronous bound (500), and cheap to build
 
-  async function bigEngine(): Promise<OhmailEngine> {
+  async function bigEngine(): Promise<{ engine: OhmailEngine; release: () => void }> {
     const rows: EngineMessage[] = [];
     for (let i = 0; i < MANY; i++) {
       rows.push(msg({ id: `m-${i}`, subject: `Kingfisher invoice ${i}` }));
     }
     const engine = await engineWith(rows, { searchServer: async () => new Promise(() => {}) } as unknown as Partial<EngineAdapter>);
-    /* The list reads the index's revision off the engine itself: held at the one the case hands, so the first paint
-       is the one before the build settles, and the case says when the settled index is read. */
-    engine.searchIndexRevision = () => handedRev;
-    return engine;
+    /* The first paint is the one before the build settles: the slice builder is held, so the
+       first render sees an index still reading; the case says when the settled index is read. */
+    const build = SearchIndex.buildSliced.bind(SearchIndex);
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    const held = vi.spyOn(SearchIndex, "buildSliced").mockImplementation(async (...args) => {
+      await wait;
+      return build(...args);
+    });
+    onTestFinished(() => {
+      held.mockRestore();
+      release();
+    });
+    return { engine, release };
   }
 
   it("says it is still reading rather than that nothing matched", async () => {
-    const engine = await bigEngine();
+    const { engine } = await bigEngine();
     await render(engine, "kingfisher");
 
     expect(hits()).toEqual([]);
-    expect(text()).toContain(messages.search.scopeIndexing);
-    expect(text()).toContain(messages.search.emptyTitleIndexing);
+    expect(text()).toContain(messages.search.saidReading);
+    expect(text()).toContain(messages.search.stillReading);
     expect(text()).not.toContain(messages.search.emptyTitle);
   });
 
   it("…and once the build settles the hits are back and the indexing sentence is gone", async () => {
-    const engine = await bigEngine();
+    const { engine, release } = await bigEngine();
     await render(engine, "kingfisher");
     expect(hits()).toEqual([]);
 
-    await act(async () => { await engine.warmSearchIndex(); });
-    await render(engine, "kingfisher", 1, 1);
+    await act(async () => {
+      release();
+      await engine.warmSearchIndex();
+    });
 
     expect(hits().length).toBeGreaterThan(0);
     expect(text()).toContain("Searching your whole mailbox");
-    expect(text()).not.toContain(messages.search.scopeIndexing);
+    expect(text()).not.toContain(messages.search.saidReading);
   });
 });
 
-describe("FIX-024 — a desktop paired with ohmail Cloud: the account's verdict, or a sentence saying it is not", () => {
+describe("a desktop paired with ohmail Cloud: the account's verdict, or a sentence saying it is not", () => {
   /** The door's answer by part, as the paired desktop's engine sees it through its adapter. */
   function door(parts: Record<string, unknown>): Partial<EngineAdapter> {
     return {
@@ -409,7 +385,7 @@ describe("FIX-024 — a desktop paired with ohmail Cloud: the account's verdict,
     await settleArchive();
     expect(text()).toContain("Search covers the mail on this computer while ohmail Cloud is unreachable — 1 matched · ");
     expect(text()).not.toContain("Searched your whole mailbox");
-    expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Search your whole mailbox again")).toBe(true);
+    expect(within(host).getByRole("button", { name: /^Search again$/ })).toBeTruthy();
   });
 
   it("the verdict on screen hands ONE record of its timings to a door that takes them, and a re-render adds none", async () => {

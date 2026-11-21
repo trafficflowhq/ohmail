@@ -3,4 +3,4 @@
  * typecheck reads the entry's declared type (`reader-body-part.d.mts`) and not the body package's sources, which
  * its program would read under rules the package is not written for. The page's bundle takes the real entry.
  */
-export { letterBody } from "../../src/reader/body/index.js";
+export { letterBody } from "../../src/reader/body/index.ts";
