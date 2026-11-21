@@ -21,6 +21,9 @@
     overflow: hidden auto;
     scrollbar-width: none;
   }
+  .oh-dialog-body > .oh-text {
+    overflow-wrap: anywhere;
+  }
   /* What a press inside it came to: one line over the answers, which stays while the body scrolls. */
   .oh-dialog-said {
     flex: none;

@@ -81,7 +81,7 @@ async function paint(
 const text = (): string => host.textContent ?? "";
 const links = (): HTMLAnchorElement[] => [...host.querySelectorAll("a")];
 const buttons = (): HTMLButtonElement[] => [...host.querySelectorAll("button")];
-const primary = (): HTMLButtonElement | undefined => buttons().find((b) => b.classList.contains("primary"));
+const primary = (): HTMLButtonElement | undefined => buttons().find((b) => b.dataset.kind === "ink");
 
 /** The window's bridge, answering the mint; every request it carried is recorded. */
 type Carried = { method: string; url: string; body: string };
@@ -359,6 +359,24 @@ describe("the window's lift and first paint", () => {
       }));
     });
   }
+
+  it("keeps the account facts above the visible checking indicator and leaves sign-out available", async () => {
+    vi.useFakeTimers();
+    const { rememberHandoff } = await import("@ohmail/app-logic/doors/wall-lift");
+    rememberHandoff(null);
+    await lock(() => {});
+    const status = host.querySelector('[role="status"][aria-busy="true"]');
+    expect(status?.textContent).toBe(LOCK.checking);
+    expect(status?.querySelector(".oh-activity-line")).not.toBeNull();
+    expect(text().indexOf(LOCK.mailboxUntouched!)).toBeLessThan(text().indexOf(LOCK.checking!));
+    expect(buttons().some((b) => b.textContent === LOCK.signOut && !b.disabled)).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(host.querySelector("[aria-busy=true]")).toBeNull();
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(LOCK.pending);
+    expect(text().indexOf(LOCK.mailboxUntouched!)).toBeLessThan(text().indexOf(LOCK.pending!));
+    expect(buttons().some((b) => b.textContent === LOCK.checkAgain && !b.disabled)).toBe(true);
+
+  });
 
   it("a focus read answering open lifts the lock; refused and an older API's silence do not", async () => {
     // The return debounce reads the clock, so only `Date` is faked: past it by moving the clock,

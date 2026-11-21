@@ -25,6 +25,8 @@ export interface PageProps {
    */
   line?: string | readonly PageLinePart[];
   note?: string;
+  /** Feedback that belongs below the facts and before the page’s answers. */
+  afterLine?: ReactNode;
   /** One ink button, and the way on or back beside it. */
   acts: ReactNode;
   /**
@@ -60,6 +62,7 @@ export function Page(props: PageProps) {
     material,
     line,
     note,
+    afterLine,
     acts,
     columns = 1,
     lineFirst,
@@ -70,7 +73,7 @@ export function Page(props: PageProps) {
   const page = useRef<HTMLElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const holdsMaterial = Boolean(material);
-  const holdsLine = Boolean(line?.length || note);
+  const holdsLine = Boolean(line?.length || note || afterLine);
   /*
    * Two columns cannot scroll: where the sentence column is taller than the page, its act would stand under the
    * window's foot out of every pointer's reach. The page folds to one column then, which scrolls. A sheet cannot say
@@ -152,6 +155,7 @@ export function Page(props: PageProps) {
           <div className="oh-page-line">
             {typeof line === "string" ? <span className="oh-page-heavy">{line}</span> : line?.map(linePart)}
             {note ? <span className="oh-page-note">{note}</span> : null}
+            {afterLine ? <div className="oh-page-feedback">{afterLine}</div> : null}
           </div>
         ) : null}
         <div className="oh-page-acts">{acts}</div>

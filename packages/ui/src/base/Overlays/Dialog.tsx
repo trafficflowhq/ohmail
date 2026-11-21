@@ -11,8 +11,12 @@ import { portalRenderer } from "./portal-renderer.js";
 export interface DialogProps {
   open: boolean;
   onClose: () => void;
+  /** Whether a press outside closes the question. Escape always closes it. */
+  dismissOnScrim?: boolean;
   /** A decision that must be made before the requested action can continue. */
   alert?: boolean;
+  /** Keep the question in its host layer and make the surrounding document inert. */
+  inline?: boolean;
   /** The question, as a sentence. It ends in the dot. */
   title: string;
   /** Hot while the sentence holds something still to be decided. */
@@ -67,6 +71,7 @@ export function Dialog(props: DialogProps) {
   const {
     open,
     onClose,
+    dismissOnScrim,
     title,
     hot,
     product,
@@ -97,6 +102,8 @@ export function Dialog(props: DialogProps) {
     <Overlay
       open={open}
       onClose={onClose}
+      dismissOnScrim={dismissOnScrim}
+      inertBackground={props.inline}
       role={props.alert ? "alertdialog" : "dialog"}
       label={props.alert ? title : undefined}
       labelledBy={props.alert ? undefined : name}
@@ -158,7 +165,7 @@ export function Dialog(props: DialogProps) {
     </Overlay>
   );
   // An interrupting question must receive clicks above every column, including its opener's siblings.
-  return props.alert && open && typeof document !== "undefined"
+  return props.alert && !props.inline && open && typeof document !== "undefined"
     ? renderPortal(dialog, document.body)
     : dialog;
 }

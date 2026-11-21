@@ -28,7 +28,7 @@
     bottom: 0;
     left: var(--oh-scalebar-from);
     width: var(--oh-scalebar-share);
-    background: var(--ink);
+    background: var(--oh-hue-dot, var(--ink));
   }
 
   .oh-scalebar-part:first-child {

@@ -72,20 +72,43 @@ async function shipped(raw: Record<string, unknown>, linksOut: boolean, lang: "e
       </ThemeProvider>
     </Words>,
   );
-  const hidden = (el: Element) => el.getAttribute("aria-hidden") === "true";
+  const decorative = (el: Element) => el.matches('[aria-hidden="true"], .oh-scalebar');
   const title = container.querySelector("h2");
-  const table = container.querySelector("table");
+  const table = container.querySelector('[role="table"]');
   const said = {
-    outside: wordsOf(textNodes(container, (el) => hidden(el) || el === title || el === table)),
-    all: wordsOf(textNodes(container, (el) => hidden(el) || el === title)),
-    heads: [...container.querySelectorAll("thead th")].map((th) => th.textContent ?? ""),
-    rows: [...container.querySelectorAll("tbody tr, tfoot tr")].map((tr) =>
-      [...tr.querySelectorAll("td")].map((td) => td.textContent ?? ""),
+    outside: wordsOf(textNodes(container, (el) => decorative(el) || el === title || el === table)),
+    all: wordsOf(textNodes(container, (el) => decorative(el) || el === title)),
+    heads: [...container.querySelectorAll('[role="columnheader"]')].map((th) => th.textContent ?? ""),
+    rows: [...container.querySelectorAll('[role="row"]:not([data-head])')].map((tr) =>
+      [...tr.querySelectorAll('[role="cell"]')].map((td) => td.textContent ?? ""),
     ),
   };
   cleanup();
   return said;
 }
+
+it("plots account-wide expected storage independently of the mailbox total", async () => {
+  const { StoragePane: SharedPane } = await import("../../app/shell/StoragePane");
+  const facts = storageFactsOf(BLOCKS.keptSome)!;
+  const { container } = render(
+    <Words lang="en">
+      <SharedPane facts={facts} linksOut change={null} mail={null} />
+    </Words>,
+  );
+  const part = container.querySelector<HTMLElement>('.oh-scalebar-part[data-kind="rest"]')!;
+  const start = Number.parseFloat(part.style.getPropertyValue("--oh-scalebar-from"));
+  const share = Number.parseFloat(part.style.getPropertyValue("--oh-scalebar-share"));
+  expect(start).toBeCloseTo(100 * facts.usedBytes / facts.estimate!.expectedBytes);
+  expect(start + share).toBeCloseTo(100);
+  const mailParts = [...container.querySelectorAll<HTMLElement>(".oh-scalebar-part:not([data-kind=rest])")];
+  const rowDots = [...container.querySelectorAll<HTMLElement>(".oh-figuretable .oh-tagdot")];
+  expect(mailParts).toHaveLength(facts.mailboxes.length);
+  mailParts.forEach((mailPart, i) => {
+    const paint = mailPart.style.getPropertyValue("--oh-hue-dot");
+    expect(paint).toBeTruthy();
+    expect(paint).toBe(rowDots[i]!.style.getPropertyValue("--oh-hue-dot"));
+  });
+});
 
 /** The new pane over the web's real filling, the block published to the tab's feed as the shell's read would. */
 async function anew(raw: Record<string, unknown>, body: "pane" | "facts", lang: "en" | "de") {

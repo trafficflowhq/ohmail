@@ -48,6 +48,7 @@ interface ButtonRuns {
    */
   stop?: boolean;
   outside?: never;
+  onFollow?: never;
   onPress?: MouseEventHandler<HTMLButtonElement>;
   ref?: Ref<HTMLButtonElement>;
 }
@@ -62,6 +63,8 @@ interface ButtonGoes {
    * its word by itself (`go`), unless it is handed another `mark`.
    */
   outside?: boolean;
+  /** Record that the person followed the link without taking over its navigation. */
+  onFollow?: MouseEventHandler<HTMLAnchorElement>;
   pressed?: never;
   disabled?: never;
   busy?: never;
@@ -112,8 +115,9 @@ export function Button(props: ButtonProps) {
       <a
         ref={props.ref}
         href={props.href}
+        onClick={props.onFollow}
         target={props.outside ? "_blank" : undefined}
-        rel={props.outside ? "noreferrer noopener" : undefined}
+        rel={props.outside ? "noopener noreferrer" : undefined}
         {...look}
       >
         {inside}

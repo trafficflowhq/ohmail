@@ -1,12 +1,12 @@
 import { expect } from "vitest";
-import { EVERY_WEB, journey, journeysOf, personWith, signedIn, type Guard } from "../bench/web.js";
+import { EVERY_WEB, WEB, journey, journeysOf, signedIn, type Guard } from "../bench/web.js";
 
 import { PEOPLE } from "../vocabulary/world.js";
 
 const OFFLINE: Guard[] = ["new letter", "reply"].map<Guard>((surface) => ({
   title: `The first ${surface} accepts text offline after the Ohbox loads`,
   rows: [],
-  surfaces: ["W-s"],
+  surfaces: WEB,
   needs: [],
   // The browser deliberately refuses every request after we take it offline.
   tolerates: [/^console: Failed to load resource: net::ERR_INTERNET_DISCONNECTED$/],
@@ -64,9 +64,12 @@ journeysOf("compose", () => {
   [...OFFLINE, ...WHILE_LOADING].forEach((guard, index) => journey(guard, async (b) => {
     const reply = index % 2 === 1;
     const whileLoading = index >= OFFLINE.length;
-    const { person, named } = await personWith(b, {
+    const account = await b.account();
+    const [letter] = await account.planter.plant({ conversations: [{
       from: PEOPLE.ben, subject: "Kiln schedule", text: "The next firing is on Friday.", pile: "ohbox",
-    });
+    }] });
+    const named = `${letter!.from}: ${letter!.subject}`;
+    const person = await b.person({ account, clock: "driven" });
     await person.arrive("ohbox");
     await person.see("conversation", { named });
     if (reply) {
@@ -83,6 +86,7 @@ journeysOf("compose", () => {
     const text = "These words were written offline.";
     await person.see(body, {}, 5_000);
     await person.act("write", body, { value: text });
+    await person.later(30_000);
     expect(await person.text(body)).toBe(text);
   }));
 });

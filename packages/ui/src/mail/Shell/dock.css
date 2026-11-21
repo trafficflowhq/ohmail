@@ -9,6 +9,7 @@
     --oh-dock-badge-edge-on: 0 0 0 2px var(--nav-on);
     --oh-dock-entry-min: 36px;
     --oh-dock-entry-max: 56px;
+    --oh-dock-round-radius: 50%;
     --oh-dock-float: var(--float);
     --oh-dock-upright-r: calc(var(--r-sheet) + 8px);
     --oh-dock-word-size: 15px;
@@ -69,7 +70,7 @@
     width: var(--h-l);
     min-width: 0;
     max-width: none;
-    border-radius: var(--r-pill);
+    border-radius: var(--oh-dock-round-radius);
   }
 
   .oh-dock-entry[hidden] {

@@ -223,11 +223,7 @@ export function AccountPageLink(
 ): ReactElement {
   const link = useRef<HTMLAnchorElement>(null);
   useEffect(() => { link.current?.focus(); }, [href]);
-  return (
-    <a ref={link} className="btn primary" href={href} target="_blank" rel="noopener noreferrer" onClick={onFollow}>
-      {label}
-    </a>
-  );
+  return <Button ref={link} href={href} outside onFollow={onFollow}>{label}</Button>;
 }
 
 export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {

@@ -4884,6 +4884,8 @@
   "update": {
     "subhead": "Updates",
     "label": "Software-Update",
+    "version": "Version",
+    "checked": "Geprüft",
     "upToDate": "ohmail {version} ist die neueste Version.",
     "unchecked": "ohmail {version}. Es ist noch keine Update-Prüfung fertig geworden.",
     "checking": "Der Release-Feed wird gefragt …",

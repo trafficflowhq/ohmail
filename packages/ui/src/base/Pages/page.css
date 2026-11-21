@@ -142,6 +142,10 @@
     color: var(--ink2);
     font-weight: var(--w-text);
   }
+  .oh-page-feedback {
+    flex: 1 1 100%;
+    font-weight: var(--w-text);
+  }
   .oh-page-acts {
     display: flex;
     flex-wrap: wrap;
