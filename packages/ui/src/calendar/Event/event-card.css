@@ -51,6 +51,12 @@
     padding: var(--oh-ecard-pad);
     background: var(--oh-ecard-ground);
   }
+  .oh-ecard[data-editing] > .oh-ecard-head {
+    padding-block-end: var(--s4);
+  }
+  .oh-ecard[data-editing]:not([data-frame]) .oh-ecard-close > .oh-button {
+    inset: var(--s2) var(--s2) auto auto;
+  }
   .oh-ecard-close {
     display: contents;
   }
@@ -130,8 +136,9 @@
     --oh-ecard-title-line: inset 0 calc(var(--oh-hair) * -1) 0 var(--line);
     --oh-ecard-title-focus: inset 0 calc(var(--oh-focus) * -1) 0 currentColor;
     inline-size: calc(100% - var(--oh-ecard-beside));
-    padding-inline: 0;
-    padding-block-end: var(--s1);
+    padding: var(--oh-hair) var(--s1);
+    --oh-ecard-title-out: calc(var(--oh-hair) * -1) calc(var(--s1) * -1);
+    margin: var(--oh-ecard-title-out);
     background: transparent;
     border: 0;
     border-radius: var(--r-sq);
@@ -410,8 +417,19 @@
     font-variation-settings: var(--opsz-l);
     line-height: 1.12;
   }
+  .oh-ecard[data-frame="sheet"][data-editing] > .oh-ecard-head {
+    padding: 0;
+  }
+  .oh-ecard[data-frame="sheet"][data-editing] .oh-ecard-close > .oh-button {
+    top: calc(-1 * var(--oh-hair));
+    right: var(--s3);
+  }
   .oh-ecard[data-frame="sheet"] .oh-ecard-title-input {
-    padding-inline: 0;
+    inline-size: calc(100% - var(--cal-edit-title-inset));
+    padding-inline: var(--s1);
+  }
+  :root[data-touch="1"] .oh-ecard[data-frame="sheet"] .oh-ecard-title-input {
+    min-height: var(--cal-edit-touch);
   }
   .oh-ecard[data-frame="sheet"] .oh-ecard-when {
     margin-top: var(--s2);

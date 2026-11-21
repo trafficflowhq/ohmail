@@ -18,22 +18,30 @@ import type {
 import type { CalendarSuggestionRecord } from "@ohmail/app-logic/calendar/found";
 import calendarEn from "../../messages/calendar.en.json" with { type: "json" };
 import eventEn from "../../messages/event.en.json" with { type: "json" };
+import frameEn from "../../messages/frame.en.json" with { type: "json" };
 import frommailEn from "../../messages/frommail.en.json" with { type: "json" };
 import receiptsEn from "../../messages/receipts.en.json" with { type: "json" };
 import { calendar } from "../../src/calendar/entry.js";
 import { Frame } from "../../src/frame/Frame.js";
+import { usePress } from "../../src/frame/room.js";
 import type { CalendarEntry } from "../../src/frame/contract.js";
 import { fromMailPlace } from "../../src/frommail/index.js";
 import { MailGround, mailPlaces } from "../../src/mail/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import { fakeMail, letter } from "../reader/support/fake-mail.js";
 import { fakeHost } from "../support/fake-host.js";
-import { fakeAddress, type FakeAddress } from "../support/fake-window.js";
+import { fakeAddress, fakeWindow, type FakeAddress } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 
 const ZURICH = "Europe/Zurich";
 const UPDATED = "2026-11-01T08:00:00.000Z";
-const WORDS = { ...FRAME_WORDS.en, ...calendarEn, ...eventEn, ...frommailEn } as unknown as Messages;
+const WORDS = {
+  ...FRAME_WORDS.en,
+  ...calendarEn,
+  ...eventEn,
+  ...frommailEn,
+  viewError: frameEn.viewError,
+} as unknown as Messages;
 const withPlace: CalendarEntry = { ...calendar, places: { ...calendar.places, frommail: fromMailPlace } };
 
 const connection: CalendarConnectionRecord = {
@@ -214,6 +222,78 @@ const settle = () =>
     for (let i = 0; i < 20; i += 1) await Promise.resolve();
   });
 
+async function mountReceipt({
+  room = "desktop",
+  earlier,
+  restore,
+}: {
+  room?: "desktop" | "phone";
+  earlier?: () => void;
+  restore?: () => Promise<void>;
+} = {}) {
+  const m = mirror({ newEventsCalendarId: null });
+  const ticket = { ...found("ticket", "Train to Basel", "data"), messageId: "receipt" };
+  m.put("calendar_suggestion", ticket.id, ticket);
+  const mail = fakeMail([letter("receipt", { subject: "Your ticket", folder: "ohmail/Receipts" })]);
+  function Ground({ children }: Parameters<typeof MailGround>[0]) {
+    const press = usePress();
+    return (
+      <MailGround>
+        {children}
+        {earlier && (
+          <button
+            type="button"
+            onClick={() =>
+              press.undoToast("Earlier action done", {
+                undo: true,
+                action: "Undo earlier action",
+                onAction: earlier,
+              })
+            }
+          >
+            Do earlier action
+          </button>
+        )}
+      </MailGround>
+    );
+  }
+  const { host } = fakeHost({
+    engine: Object.assign(mail.engine, { store: m.engine.store }),
+    service: "managed",
+    scope: "acct-1",
+    calendar: withPlace,
+    products: "both",
+    wires: {
+      calendar: {
+        ...m.port,
+        async setSuggestionDismissed(id: string, dismissed: boolean) {
+          expect(id).toBe(ticket.id);
+          if (!dismissed) await restore?.();
+          m.put("calendar_suggestion", id, dismissed ? null : ticket);
+        },
+      },
+    },
+    places: mailPlaces(),
+    above: earlier ? Ground : MailGround,
+    address: fakeAddress("#/receipts"),
+    window: fakeWindow(room),
+  });
+  render(
+    <TextProvider locale="en" messages={{ ...WORDS, ...receiptsEn } as Messages} timeZone={ZURICH}>
+      <Frame host={host} />
+    </TextProvider>,
+  );
+  await settle();
+  const stream = () => within(screen.getByRole("region", { name: "Receipts stream" }));
+  return {
+    stream,
+    async dismiss() {
+      fireEvent.click(stream().getByRole("button", { name: "Dismiss" }));
+      await settle();
+    },
+  };
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
@@ -292,6 +372,58 @@ describe("From mail", () => {
     expect(m.pressed.map(({ act }) => act.kind === "calendar_event_create" && act.event.title)).toEqual([
       "Train to Basel",
     ]);
+  });
+
+  it.each(["desktop", "phone"] as const)(
+    "dismisses the receipt suggestion and offers Undo on %s",
+    async (room) => {
+      const { dismiss, stream } = await mountReceipt({ room });
+      await dismiss();
+      expect(stream().queryByText("Train to Basel")).toBeNull();
+      expect(stream().getByText("Your ticket")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      await settle();
+      expect(stream().getByText("Train to Basel")).toBeTruthy();
+    },
+  );
+
+  it.each([false, true])(
+    "z restores the receipt suggestion with an earlier Undo armed: %s",
+    async (armEarlier) => {
+      const earlier = vi.fn();
+      const { dismiss, stream } = await mountReceipt({ earlier });
+      if (armEarlier) {
+        fireEvent.click(screen.getByRole("button", { name: "Do earlier action" }));
+        expect(screen.getByRole("button", { name: "Undo earlier action" })).toBeTruthy();
+      }
+      await dismiss();
+      expect(stream().queryByText("Train to Basel")).toBeNull();
+      expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
+      fireEvent.keyDown(document.body, { key: "z" });
+      await settle();
+      expect(earlier).not.toHaveBeenCalled();
+      expect(stream().getByText("Train to Basel")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    },
+  );
+
+  it("keeps a way back when the first restore is rejected", async () => {
+    const restore = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Temporarily unavailable"))
+      .mockResolvedValue(undefined);
+    const { dismiss, stream } = await mountReceipt({ restore });
+    await dismiss();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await settle();
+    expect(stream().queryByText("Train to Basel")).toBeNull();
+    expect(restore).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date("2026-11-16T08:01:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await settle();
+    expect(restore).toHaveBeenCalledTimes(2);
+    expect(stream().getByText("Train to Basel")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 
   it("adds one event under one press into the settings' calendar, and then says it is on the calendar", async () => {

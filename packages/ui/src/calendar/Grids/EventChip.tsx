@@ -1,4 +1,11 @@
-import type { CSSProperties, MouseEventHandler, PointerEventHandler, ReactNode, Ref } from "react";
+import type {
+  CSSProperties,
+  KeyboardEventHandler,
+  MouseEventHandler,
+  PointerEventHandler,
+  ReactNode,
+  Ref,
+} from "react";
 import { Icon } from "../../icons/Icon.js";
 import { cx, toneOf, toneStyle, type CalendarTone } from "../tone.js";
 import { CalendarSquare } from "./CalendarSquare.js";
@@ -55,6 +62,8 @@ export interface EventBlockProps extends EventChipCommon {
   nowCrosses?: boolean;
   /** An event of your own: its top and bottom edges lengthen it. */
   handles?: boolean;
+  timeEdges?: { start?: string; end?: string };
+  onResizeKey?: KeyboardEventHandler<HTMLButtonElement>;
   /** The shortest a block is drawn here, in px. */
   shortest?: number;
 }
@@ -137,7 +146,18 @@ function Block(p: EventBlockProps) {
       data-tiny={p.tiny ? "" : undefined}
       data-lap={p.place.lap ? "" : undefined}
       data-now={p.nowCrosses ? "" : undefined}
-      data-fixed={handles ? undefined : ""}
+      data-fixed={handles || p.timeEdges ? undefined : ""}
+      aria-keyshortcuts={
+        p.onResizeKey
+          ? [
+              p.timeEdges?.start && "Alt+Shift+ArrowUp Alt+Shift+ArrowDown",
+              p.timeEdges?.end && "Alt+ArrowUp Alt+ArrowDown",
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : undefined
+      }
+      onKeyDown={p.onResizeKey}
       data-failed={p.status?.failed ? "" : undefined}
     >
       <span className="oh-ev-t">
@@ -153,8 +173,24 @@ function Block(p: EventBlockProps) {
           {p.status ? null : p.second}
         </span>
       ) : null}
-      {handles && layout.height >= 28 ? <span className="oh-ev-hd" data-edge="start" /> : null}
-      {handles ? <span className="oh-ev-hd" data-edge="end" /> : null}
+      {!p.viewOnly && (p.timeEdges?.start || (handles && layout.height >= 28)) ? (
+        <span
+          className="oh-ev-hd"
+          data-edge="start"
+          data-cal-resize="start"
+          title={p.timeEdges?.start}
+          aria-hidden
+        />
+      ) : null}
+      {!p.viewOnly && (p.timeEdges?.end || handles) ? (
+        <span
+          className="oh-ev-hd"
+          data-edge="end"
+          data-cal-resize="end"
+          title={p.timeEdges?.end}
+          aria-hidden
+        />
+      ) : null}
     </button>
   );
 }

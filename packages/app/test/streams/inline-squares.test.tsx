@@ -9,24 +9,27 @@ afterEach(cleanup);
 it.each([
   ["reads", "News", issue],
   ["receipts", "Receipts", receipt],
-] as const)("%s shows the conversation's shared squares when replying in place", (route, name, make) => {
-  const first = make("first", 13, { threadId: "thread", unread: false });
-  const sent = make("sent", 12, {
-    threadId: "thread",
-    local: true,
-    folder: "Sent" as EngineMessage["folder"],
-    unread: false,
-  });
-  const next = make("next", 11);
-  mountStreamFrame({ at: `#/${route}`, letters: [first, sent, next], withReply: true });
-  const region = screen.getByRole("region", { name: `${name} stream` });
-  region.querySelector<HTMLElement>(".oh-sheet-scroll")!.scrollTo = () => {};
-  fireEvent.click(within(region).getByRole("heading", { name: first.subject }));
-  expect(within(region).queryByLabelText("2 messages, all read")).toBeNull();
-  fireEvent.click(
-    within(screen.getByRole("toolbar", { name: "Actions" })).getByRole("button", { name: "Reply" }),
-  );
-  expect(within(region).getByRole("textbox", { name: "Reply body" })).toBeTruthy();
-  expect(within(region).getByRole("group", { name: "2 messages, all read" })).toBeTruthy();
-  expect(within(region).getByRole("heading", { name: next.subject })).toBeTruthy();
-});
+] as const)(
+  "%s shows the conversation's shared squares when replying in place",
+  async (route, name, make) => {
+    const first = make("first", 13, { threadId: "thread", unread: false });
+    const sent = make("sent", 12, {
+      threadId: "thread",
+      local: true,
+      folder: "Sent" as EngineMessage["folder"],
+      unread: false,
+    });
+    const next = make("next", 11);
+    mountStreamFrame({ at: `#/${route}`, letters: [first, sent, next], withReply: true });
+    const region = screen.getByRole("region", { name: `${name} stream` });
+    region.querySelector<HTMLElement>(".oh-sheet-scroll")!.scrollTo = () => {};
+    fireEvent.click(within(region).getByRole("heading", { name: first.subject }));
+    expect(within(region).queryByLabelText("2 messages, all read")).toBeNull();
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Actions" })).getByRole("button", { name: "Reply" }),
+    );
+    expect(await within(region).findByRole("textbox", { name: "Reply body" })).toBeTruthy();
+    expect(within(region).getByRole("group", { name: "2 messages, all read" })).toBeTruthy();
+    expect(within(region).getByRole("heading", { name: next.subject })).toBeTruthy();
+  },
+);

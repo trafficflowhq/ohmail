@@ -49,7 +49,7 @@ describe("answering within the stream", () => {
       scrollTo.mockClear();
       const actions = within(screen.getByRole("toolbar", { name: "Actions" }));
       await act(async () => { fireEvent.click(actions.getByRole("button", { name: "Reply" })); });
-      expect(within(stream).getByRole("textbox", { name: "Reply body" })).toBeTruthy();
+      expect(await within(stream).findByRole("textbox", { name: "Reply body" })).toBeTruthy();
       expect(within(stream).getAllByRole("article")).toHaveLength(1 + companions.length);
       expect(writes).toEqual([]);
       expect(scrollTo).not.toHaveBeenCalled();

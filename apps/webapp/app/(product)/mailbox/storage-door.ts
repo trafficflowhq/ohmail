@@ -133,6 +133,7 @@ export function storageFiguresOf(facts: StorageFacts, say: StorageSaying): Stora
       room.key === "storageRoomHeld"
         ? { kind: "held", limit: room.values.limit, until: room.values.date }
         : { kind: room.key === "storageRoomTrial" ? "trial" : "plan", limit: room.values.limit },
+    percent,
     tag: full ? { kind: "full" } : percent >= 80 ? { kind: "percent", percent } : null,
     bar: barOf(facts, size),
     rows: facts.mailboxes.map((m) => ({

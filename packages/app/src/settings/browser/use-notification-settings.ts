@@ -2,7 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { useText } from "../../text/index.js";
 import type { NoticePermission, NotificationChannels } from "@ohmail/client-engine";
-import { channelsAreLive, DEFAULT_CHANNELS } from "@ohmail/app-logic/notices/browser-channels";
+import {
+  channelsAreLive,
+  DEFAULT_CHANNELS,
+  useNoticesVersion,
+} from "@ohmail/app-logic/notices/browser-channels";
 import { isDemoOwned } from "@ohmail/app-logic/storage/storage-owner";
 import { NONE, type DeviceNotifications, type None } from "../../host/index.js";
 import type { NotificationsModel } from "../notifications/index.js";
@@ -12,6 +16,7 @@ import type { PushSyncOutcome } from "../../host/device.js";
 export interface NotificationPreferences {
   readChannels(scope: string | null): NotificationChannels;
   writeChannels(next: NotificationChannels, scope: string | null): DurableWrite;
+  onReturn?: (refresh: () => void) => () => void;
   subscriptionWanted(channels: NotificationChannels, permission: NoticePermission): boolean;
   applyWakeIntent?: (
     door: DeviceNotifications,
@@ -23,12 +28,24 @@ export interface NotificationPreferences {
 
 const CHANNEL_KEYS = Object.keys(DEFAULT_CHANNELS) as (keyof NotificationChannels)[];
 
+function deliveryNote(outcome: PushSyncOutcome | null): NotificationsModel["delivery"] {
+  if (
+    outcome === "no_server_key" ||
+    outcome === "row_remains" ||
+    outcome === "not_registered" ||
+    outcome === "unsupported"
+  ) {
+    return outcome;
+  }
+  return null;
+}
+
 /** One device's switches, its platform's answer, and the server's last word about waking this browser. */
 export function useNotificationSettings(
   door: DeviceNotifications | None,
   scope: string | null,
   visible: boolean,
-  { applyWakeIntent, readChannels, subscriptionWanted, writeChannels }: NotificationPreferences,
+  { applyWakeIntent, onReturn, readChannels, subscriptionWanted, writeChannels }: NotificationPreferences,
 ): NotificationsModel {
   const t = useText("settings");
   const [channels, setChannels] = useState(() => readChannels(scope));
@@ -61,13 +78,7 @@ export function useNotificationSettings(
 
   function showDelivery(outcome: PushSyncOutcome | null, at: number) {
     if (!alive.current || revision.current !== at || !owns()) return;
-    const note =
-      outcome === "no_server_key" ||
-      outcome === "row_remains" ||
-      outcome === "not_registered" ||
-      outcome === "unsupported"
-        ? outcome
-        : null;
+    const note = deliveryNote(outcome);
     if (note === lastDelivery.current) return;
     lastDelivery.current = note;
     setDelivery(note);
@@ -89,11 +100,16 @@ export function useNotificationSettings(
   // The language can change without making another registration. A press uses the current words.
   useEffect(() => enterPane(), [door, scope, enterPane]);
 
-  useLayoutEffect(() => {
-    if (!visible || door === NONE || !owns()) return;
-    setChannels(readCurrent().channels);
+  const preferenceVersion = useNoticesVersion(0);
+  const refresh = useCallback(() => {
+    if (door === NONE || !owns()) return;
+    const next = readCurrent().channels;
+    setChannels((current) => (CHANNEL_KEYS.every((key) => current[key] === next[key]) ? current : next));
     setPermission(door.permission());
-  }, [door, owns, readCurrent, visible]);
+  }, [door, owns, readCurrent]);
+  useLayoutEffect(() => refresh(), [refresh, preferenceVersion, visible]);
+
+  useEffect(() => onReturn?.(refresh), [onReturn, refresh]);
 
   function write(update: (current: NotificationChannels) => NotificationChannels, at: NoticePermission) {
     if (door === NONE || !alive.current || !owns()) return;

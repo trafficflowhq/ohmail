@@ -164,6 +164,40 @@
     height: var(--sq-more-y);
   }
 
+  /* A long column keeps its layout while the squares advance. The ring rides its square. */
+  .oh-readsquares[data-motion-track] > .oh-readsquares-slot {
+    position: absolute;
+    inset: var(--oh-readsquares-pad) 0 auto;
+    height: var(--oh-square-pitch);
+    transform: translateY(calc(var(--oh-square-y) - var(--oh-square-pitch) / 2))
+      scaleY(var(--oh-readsquares-k));
+    transition:
+      transform var(--d-sq) var(--e-swift),
+      opacity var(--d-sq) var(--e-swift);
+  }
+
+  .oh-readsquares[data-motion-track] > .oh-readsquares-slot[data-off] {
+    opacity: 0;
+  }
+
+  .oh-readsquares[data-motion-track] .oh-readsquares-face {
+    width: var(--oh-readsquares-sq);
+    height: var(--oh-readsquares-sq);
+    transform: scaleX(var(--oh-readsquares-k));
+    transition: transform var(--d-sq) var(--e-swift);
+  }
+
+  .oh-readsquares[data-motion-track][data-axis="column"] > .oh-readsquares-more {
+    position: absolute;
+    inset: var(--oh-readsquares-pad) 0 auto;
+    height: var(--sq-more-y);
+    transition: opacity var(--d-sq) var(--e-swift);
+  }
+
+  .oh-readsquares[data-motion-track] > .oh-readsquares-more[data-end] {
+    transform: translateY(var(--oh-square-end));
+  }
+
   /* Along the head, under a finger: larger squares, further apart. */
   .oh-readsquares[data-axis="head"] {
     --oh-readsquares-sq: 10px;

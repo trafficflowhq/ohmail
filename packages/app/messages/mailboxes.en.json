@@ -499,6 +499,7 @@
     "rail_decide": "First decision",
     "rail_done": "Done",
     "railSaid": "Step {n} of {total}, {phase}",
+    "railSaidSub": "Step {n} of {total}, {phase}, {screen} of {screens}",
     "cancel": "Cancel setup",
     "restart": "Start over",
     "back": "Back",

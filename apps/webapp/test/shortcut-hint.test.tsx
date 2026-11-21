@@ -1,30 +1,43 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { keySheetOver } from "@ohmail/app/keys/sheet";
+import { paletteOver } from "@ohmail/app/palette";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mountStreamFrame } from "../../../packages/app/test/streams/registered-world.js";
+import { stubDom } from "./_draft-shell.js";
+import en from "../messages/en.json";
 
-const view = (name: string): string =>
-  readFileSync(resolve(process.cwd(), `apps/webapp/app/views/${name}.tsx`), "utf8");
-
-const VIEWS = {
-  ReadsView: view("ReadsView"),
-  ReceiptsView: view("ReceiptsView"),
-  ScreenerView: view("ScreenerView"),
-} as const;
+beforeEach(() => stubDom());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("every pane-foot strip is the affordance, not a legend", () => {
   it("the four views that had strips now render <ShortcutHint />", () => {
-    // Ohbox and Screener through ListPane's `hints` slot; Reads and Receipts additionally in
-    // their `.stream-hints` foot. Count them so a dropped one is named.
-    const uses = Object.entries(VIEWS).map(
-      ([name, src]) => [name, (src.match(/<ShortcutHint \/>/g) ?? []).length] as const,
-    );
-    expect(Object.fromEntries(uses)).toEqual({
-      ReadsView: 2,
-      ReceiptsView: 2,
-      ScreenerView: 1,
-    });
+    for (const [at, name] of [
+      ["/ohbox", "Ohbox"], ["/reads", "News"], ["/receipts", "Receipts"], ["/screener", "Screener"],
+    ]) {
+      const { page } = mountStreamFrame({
+        at: "#" + at,
+        overs: { palette: paletteOver, keys: keySheetOver },
+        catalogue: en,
+      });
+      try {
+        const places = within(screen.getByRole("navigation", { name: "Places" }));
+        expect(places.getByRole("button", { name: new RegExp(`^${name}(?:$| \\d+$)`), current: "page" })).toBeTruthy();
+        fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+        const palette = within(screen.getByRole("dialog", { name: "Command palette" }));
+        const [command] = palette.getAllByRole("option", { name: /Keyboard shortcuts/ });
+        expect(palette.getAllByRole("option", { name: /Keyboard shortcuts/ })).toHaveLength(1);
+        expect(within(command!).getByText("?", { exact: true })).toBeTruthy();
+        fireEvent.click(command!);
+        expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+        expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+      } finally {
+        page.unmount();
+      }
+    }
   });
-
-  /* "the keys the legend used to teach are still BOUND in the Ohbox" moved to `ohbox-keys-still-bound.test.ts`. */
 });

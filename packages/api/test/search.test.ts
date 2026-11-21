@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { messages } from "@trafficflow/db";
+import { mailboxFolders, messages } from "@trafficflow/db";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { createLogger, reindexMessageSearch } from "@trafficflow/core/mail";
 import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, seedSearchDocuments, req, FIXED_NOW } from "./helpers.js";
@@ -17,6 +17,64 @@ const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, s
  * unknown q is handled, and results are account-scoped.
  */
 describe("GET /search — hybrid search endpoint", () => {
+  it("lists every searchable folder path with exact counts for the session's account", async () => {
+    const { db, deps } = await makeDeps();
+    const owner = await seedSession(db, { now: FIXED_NOW });
+    const other = await seedSession(db, { now: FIXED_NOW });
+    const first = await seedMailbox(db, { accountId: owner.accountId });
+    const second = await seedMailbox(db, { accountId: owner.accountId });
+    const unrelated = await seedMailbox(db, { accountId: other.accountId });
+    const folder = "Archive/Reports";
+    const filed = await seedMessage(db, {
+      accountId: owner.accountId, mailboxId: first, folder, observedFolder: "INBOX",
+    });
+    const native = await seedMessage(db, {
+      accountId: owner.accountId, mailboxId: second, nativeLocator: { folder, ref: "1:1" },
+    });
+    const deleted = await seedMessage(db, { accountId: owner.accountId, mailboxId: first, folder });
+    await db.update(messages).set({ deletedAt: FIXED_NOW }).where(eq(messages.id, deleted.id));
+    await seedMessage(db, { accountId: other.accountId, mailboxId: unrelated, folder });
+    await db.insert(mailboxFolders).values([
+      { accountId: owner.accountId, mailboxId: second, folder: "Archive/Empty" },
+      { accountId: other.accountId, mailboxId: unrelated, folder: "Elsewhere" },
+    ]);
+
+    const places = await H(req("GET", `/search?places=1&accountId=${other.accountId}&mailboxId=${unrelated}`, {
+      bearer: owner.token,
+    }), deps);
+    expect(places.status).toBe(200);
+    expect(await places.json()).toEqual({
+      places: [{ folder, count: 2 }, { folder: "Archive/Empty", count: 0 }],
+    });
+
+    const filtered = await H(req("GET", `/search?folder=${encodeURIComponent(folder)}&parts=page`, {
+      bearer: owner.token,
+    }), deps);
+    expect(filtered.status).toBe(200);
+    expect((await filtered.json()).items.map((m: { id: string }) => m.id).sort()).toEqual([filed.id, native.id].sort());
+  });
+
+  it("refuses an account with too many folders instead of returning a partial inventory", async () => {
+    const { db, deps } = await makeDeps();
+    const owner = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: owner.accountId });
+    const folders = Array.from({ length: 1_001 }, (_, i) => ({
+      accountId: owner.accountId, mailboxId, folder: `Archive/Folder-${i}`,
+    }));
+    await db.insert(mailboxFolders).values(folders.slice(0, 1_000));
+    const read = () => H(req("GET", "/search?places=1&limit=1", { bearer: owner.token }), deps);
+    const atLimit = await read();
+    expect(atLimit.status).toBe(200);
+    expect((await atLimit.json()).places).toHaveLength(1_000);
+
+    await db.insert(mailboxFolders).values(folders[1_000]!);
+    const overflow = await read();
+    expect(overflow.status).toBe(422);
+    expect(await overflow.json()).toMatchObject({
+      error: { code: "search_too_many_folders", message: expect.stringMatching(/too many folders/i) },
+    });
+  });
+
   it("returns items + facets + total for a lexical query", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });

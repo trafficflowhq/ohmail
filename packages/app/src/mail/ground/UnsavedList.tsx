@@ -17,7 +17,7 @@
  * of a confirmed Send + Done (`WritingMount`), so a retry the account confirms files its source; the notice's "Show
  * them" opens it through `useShowUnsaved()`, which reaches every piece and pane under it.
  */
-import { createContext, useContext, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useContext, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { AbandonedMutation, MutationResult, QueuedChange } from "@ohmail/client-engine";
 import { Dialog, WaitRow } from "@ohmail/ui/base";
 import { useAbandoned, useEngine } from "@ohmail/app-logic/engine";
@@ -32,6 +32,7 @@ import { useText } from "../../text/index.js";
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 /** What a press came to, by the row it was about. */
 type Said = { readonly id: string; readonly message: string };
+type Answer = "retry" | "discard";
 
 /**
  * WHAT THE PERSON WAS DOING, in their words: an explicit map (a computed key would throw for a verb with no words, on
@@ -103,39 +104,32 @@ export interface UnsavedListProps {
 
 /** The pure half: the rows and their answers in, the kit's dialog out. */
 export function UnsavedListOf(props: UnsavedListProps) {
-  const {
-    open,
-    onClose,
-    title,
-    abandoned,
-    queued,
-    held,
-    onRetry,
-    onDiscard,
-    onRetryQueued,
-    onDiscardQueued,
-  } = props;
+  const { abandoned, queued } = props;
   const t = useText("sync") as Translate;
   const drafts = useText("drafts");
-  const [busy, setBusy] = useState<string | null>(null);
+  const actionLocked = useRef(false);
+  const [busy, setBusy] = useState<{ id: string; act: Answer } | null>(null);
   /** The last press's own sentence, where it had one, by the row it was about. */
   const [said, setSaid] = useState<Said | null>(null);
 
-  /* One press a row at a time: a second press while one is under way does nothing. Stable for the list's life: the
-     list stands as long as the frame does, and a memoized closure would pin the render it was made in. */
-  const run = useStableCallback(async (id: string, press: () => Promise<Said | null | undefined>) => {
-    if (busy !== null) return;
-    setBusy(id);
-    try {
-      const next = await press();
-      if (next !== undefined) setSaid(next);
-    } finally {
-      setBusy(null);
-    }
-  });
+  // Lock before React renders the busy button, so two presses in one batch cannot both start.
+  const run = useStableCallback(
+    async (id: string, act: Answer, press: () => Promise<Said | null | undefined>) => {
+      if (actionLocked.current) return;
+      actionLocked.current = true;
+      setBusy({ id, act });
+      try {
+        const next = await press();
+        if (next !== undefined) setSaid(next);
+      } finally {
+        actionLocked.current = false;
+        setBusy(null);
+      }
+    },
+  );
   const retry = (id: string) =>
-    run(id, async () => {
-      const outcome = await onRetry(id);
+    run(id, "retry", async () => {
+      const outcome = await props.onRetry(id);
       if (outcome.status === "confirmed" && outcome.andDone !== undefined) props.release?.(outcome);
       /* A send whose key had already gone is answered from that delivery: said, never sent again. */
       if (outcome.status === "confirmed" && outcome.firstSend !== undefined)
@@ -144,8 +138,8 @@ export function UnsavedListOf(props: UnsavedListProps) {
       return e === null ? null : { id, message: e.message };
     });
   const retryQueued = (id: string) =>
-    run(id, async () => {
-      const outcome = await onRetryQueued(id);
+    run(id, "retry", async () => {
+      const outcome = await props.onRetryQueued(id);
       /* The one reading of a result: only a refusal has a sentence for its row. */
       const verdict = outcome === null ? null : pressVerdict(outcome);
       return verdict?.kind === "refused" ? { id, message: verdict.refusal?.message ?? "" } : null;
@@ -157,13 +151,13 @@ export function UnsavedListOf(props: UnsavedListProps) {
     said !== null && !abandoned.some((m) => m.id === said.id) && !queued.some((m) => m.id === said.id);
   const close = () => {
     setSaid(null);
-    onClose();
+    props.onClose();
   };
   return (
     <Dialog
-      open={open && (listed > 0 || said !== null)}
+      open={props.open && (listed > 0 || said !== null)}
       onClose={close}
-      title={title}
+      title={props.title}
       list
       keysOn="cancel"
       cancel={{ label: t("unsavedHide") }}
@@ -187,10 +181,19 @@ export function UnsavedListOf(props: UnsavedListProps) {
           refused
           acts={[
             /* No Try again once a newer change to the same thing was saved, nor on a refusal the record keeps. */
-            ...(m.retryable ? [{ label: t("unsavedRetry"), onPress: () => void retry(m.id) }] : []),
+            ...(m.retryable
+              ? [
+                  {
+                    label: t("unsavedRetry"),
+                    onPress: () => void retry(m.id),
+                    busy: busy?.id === m.id && busy.act === "retry",
+                  },
+                ]
+              : []),
             {
               label: t("unsavedDiscard"),
-              onPress: () => void run(m.id, () => onDiscard(m.id).then(() => undefined)),
+              onPress: () => void run(m.id, "discard", () => props.onDiscard(m.id).then(() => undefined)),
+              busy: busy?.id === m.id && busy.act === "discard",
             },
           ]}
         />
@@ -199,12 +202,18 @@ export function UnsavedListOf(props: UnsavedListProps) {
         <WaitRow
           key={m.id}
           what={whatOf(t, m.mutation.kind)}
-          why={said?.id === m.id ? sentence(said.message) : queuedWhy(m, t, held)}
+          why={said?.id === m.id ? sentence(said.message) : queuedWhy(m, t, props.held)}
           acts={[
-            { label: t("unsavedRetry"), onPress: () => void retryQueued(m.id) },
+            {
+              label: t("unsavedRetry"),
+              onPress: () => void retryQueued(m.id),
+              busy: busy?.id === m.id && busy.act === "retry",
+            },
             {
               label: t("unsavedDiscard"),
-              onPress: () => void run(m.id, () => onDiscardQueued(m.key).then(() => undefined)),
+              onPress: () =>
+                void run(m.id, "discard", () => props.onDiscardQueued(m.key).then(() => undefined)),
+              busy: busy?.id === m.id && busy.act === "discard",
             },
           ]}
         />

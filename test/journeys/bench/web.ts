@@ -36,6 +36,7 @@ function signedIn(a: Account) {
   ];
 }
 
+export { firstCachedOhboxPaint, resetOhboxPaint, sharedBrowserPaint, signInPaintWhileLeaving } from "../../support/first-list-paint.js";
 export { journey, journeysOf, personWith, signedIn } from "./journey.js";
 export { HOST } from "./seam.js";
 export type { Account, Bench, DoorFault, Found, Guard, Heard, Need, Setting, Spoken } from "./seam.js";

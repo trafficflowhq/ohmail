@@ -103,7 +103,7 @@ export function mirror(said: CalendarSettingsWire | null = null) {
   const engine = {
     store: { entries },
     subscribe,
-    read: () => ({ version: () => version }),
+    read: () => ({ version: () => version, list: (kind: string) => [...(kinds.get(kind)?.values() ?? [])] }),
   } as unknown as OhmailEngine;
   const port: CalendarPort = {
     newId: () => "new",
@@ -174,6 +174,7 @@ export function mountFrame(
     places?: Partial<FramePlaces>;
     entry?: Partial<CalendarEntry>;
     locale?: "en" | "de";
+    timeZone?: string;
     words?: Messages;
     /** The host has no calendar: no entry, no port, no switch. */
     noCalendar?: boolean;
@@ -192,7 +193,11 @@ export function mountFrame(
   });
   const locale = extra.locale ?? "en";
   const { unmount } = render(
-    <TextProvider locale={locale} messages={{ ...WORDS[locale], ...extra.words }} timeZone={ZURICH}>
+    <TextProvider
+      locale={locale}
+      messages={{ ...WORDS[locale], ...extra.words }}
+      timeZone={extra.timeZone ?? ZURICH}
+    >
       <SetupPortProvider value={setup}>
         <Frame host={made.host} />
       </SetupPortProvider>

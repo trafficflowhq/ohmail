@@ -15,6 +15,8 @@ export interface MenuItemProps {
   keyHint?: string;
   /** One of a few choices: whether this is the taken one. Left out: a verb. */
   checked?: boolean;
+  /** Use the kit check icon for the current choice. */
+  checkmark?: boolean;
   /** With `checked`: one of several that may all be taken (a tag), not one of a few. */
   many?: boolean;
   disabled?: boolean;
@@ -33,6 +35,7 @@ export function MenuItem({
   note,
   keyHint,
   checked,
+  checkmark,
   many,
   disabled,
   hue,
@@ -49,8 +52,10 @@ export function MenuItem({
       disabled={disabled}
       data-sub={hue === undefined ? undefined : ""}
       data-dot={dot ? "" : undefined}
+      data-checkmark={checkmark ? "" : undefined}
       onClick={onPress}
     >
+      {checkmark ? <Icon name="check" size={20} /> : null}
       {icon ? <Icon name={icon} size={20} /> : null}
       {dot ? <Dot kind={dot} /> : null}
       {hue === undefined ? null : <TagDot hue={hue} />}

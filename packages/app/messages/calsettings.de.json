@@ -46,6 +46,8 @@
       "noWritable": "Kein Kalender zum Schreiben",
       "week": "Woche",
       "weekNumbers": "Kalenderwochen",
+      "weekNumbersOn": "Kalenderwochen an",
+      "weekNumbersOff": "Kalenderwochen aus",
       "on": "Ein",
       "off": "Aus",
       "hours": "Stunden im Blick",

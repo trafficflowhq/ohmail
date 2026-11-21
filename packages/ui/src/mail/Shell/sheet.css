@@ -368,3 +368,42 @@
   content-visibility: auto;
   overflow-clip-margin: var(--ringw);
 }
+
+.oh-sheet[data-writing-keyboard] {
+  --oh-sheet-scroll-pad: var(--ringw);
+  max-block-size: var(--write-room);
+  translate: 0 var(--write-top);
+}
+
+.oh-sheet[data-writing-keyboard] > .oh-sheet-foot {
+  position: relative;
+  inset: auto;
+  flex: none;
+  padding-block: var(--s1);
+}
+
+.oh-sheet[data-writing-compact] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.oh-sheet[data-writing-compact] > .oh-sheet-body {
+  grid-area: 1 / 1 / 2 / -1;
+}
+
+:root[data-device="phone"] .oh-sheet[data-writing-compact] > .oh-sheet-top {
+  grid-area: 2 / 1;
+  align-self: center;
+  height: auto;
+}
+
+.oh-sheet[data-writing-compact] > .oh-sheet-foot {
+  grid-area: 2 / 2;
+  align-items: center;
+  padding-block: 0;
+}
+
+.oh-sheet[data-writing-compact]:not(:has(> .oh-sheet-top)) > .oh-sheet-foot {
+  grid-column: 1 / -1;
+}

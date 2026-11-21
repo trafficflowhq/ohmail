@@ -159,6 +159,8 @@ export interface UseListWindowOptions {
   /** First-frame row height, before one has been measured. */
   estimate?: number;
   overscan?: number;
+  /** A buffered list refreshes after this many slots, while its overscan still covers the viewport. */
+  scrollStep?: number;
   /** A changed list cursor must be mounted even when it jumps past the current slice. */
   cursor?: { readonly id: string; readonly index: number };
   /**
@@ -180,6 +182,7 @@ export function useListWindow({
   count,
   estimate = ESTIMATED_ROW_PX,
   overscan = OVERSCAN_ROWS,
+  scrollStep = 0,
   cursor,
   inserted = 0,
 }: UseListWindowOptions): ListWindow {
@@ -214,6 +217,7 @@ export function useListWindow({
   /** `inserted` as the last layout pass applied it. */
   const insertedAt = useRef(inserted);
 
+  const drawAt = useRef<(top: number) => void>(setScrollTop);
   const sample = useCallback(() => {
     const el = scrollerRef.current;
     if (!el) return;
@@ -226,24 +230,27 @@ export function useListWindow({
     if (!el) return;
     sample();
 
-    // One read per frame. A scroll fires far more often than it can be painted, and every one
-    // of them would otherwise be a React render over the whole pane.
+    // Let native scrolling use the already drawn overscan before a buffered list supplies another slice.
     let frame = 0;
     const onScroll = () => {
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        sample();
+        if (scrollStep > 0) drawAt.current(el.scrollTop);
+        else sample();
       });
     };
+    const resize = scrollStep > 0 && typeof ResizeObserver !== "undefined" ? new ResizeObserver(sample) : null;
+    resize?.observe(el);
     el.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
+    window.addEventListener("resize", sample);
     return () => {
       if (frame) cancelAnimationFrame(frame);
+      resize?.disconnect();
       el.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
+      window.removeEventListener("resize", sample);
     };
-  }, [scrollerRef, sample]);
+  }, [scrollerRef, sample, scrollStep]);
 
   /**
    * THE HEIGHT OF A ROW NOBODY HAS DRAWN AND NOBODY HAS SCROLLED PAST. The mean of the
@@ -308,6 +315,18 @@ export function useListWindow({
   const start = windowed ? visibleStart : 0;
   const end = windowed ? visibleEnd : count;
   const padTop = windowed ? (prefix[start] ?? 0) : 0;
+
+  useLayoutEffect(() => {
+    if (scrollStep <= 0) return;
+    const first = indexAt(rel);
+    const last = indexAt(rel + height);
+    const step = Math.min(scrollStep, Math.max(1, overscan));
+    drawAt.current = (top) => {
+      const edge = top - origin;
+      const moved = Math.max(Math.abs(indexAt(edge) - first), Math.abs(indexAt(edge + height) - last));
+      if (moved >= step || (edge > 0) !== (rel > 0)) setScrollTop(top);
+    };
+  });
 
   /**
    * MEASURE WHAT IS ON SCREEN, BY INDEX. `useLayoutEffect` so corrected spacers are in place

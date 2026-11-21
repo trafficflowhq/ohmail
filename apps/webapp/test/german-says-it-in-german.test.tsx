@@ -9,6 +9,7 @@
  *    touched; Settings' face row and About's version row carry German labels (R20-02).
  * English is the control in each case.
  */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -139,7 +140,7 @@ describe("ohmail's own names on German screens are German (R20-02)", () => {
   it("Settings → Devices: an unnamed desktop is 'ohmail für Linux'; a typed name stays as typed", async () => {
     answering(ROWS);
     const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
-    const text = (await underTheShell("de", h(DevicesSection))).textContent ?? "";
+    const text = (await underTheShell("de", h(WithReport, { view: DevicesSection }))).textContent ?? "";
     expect(text).toContain("ohmail für Linux");
     expect(text).not.toContain("ohmail for Linux");
     expect(text).toContain("Arbeitsrechner");
@@ -148,7 +149,7 @@ describe("ohmail's own names on German screens are German (R20-02)", () => {
   it("control: in English the unnamed desktop reads exactly as the server named it", async () => {
     answering(ROWS);
     const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
-    expect((await underTheShell("en", h(DevicesSection))).textContent).toContain("ohmail for Linux");
+    expect((await underTheShell("en", h(WithReport, { view: DevicesSection }))).textContent).toContain("ohmail for Linux");
   });
 
   it("Settings → About: the version row is labelled in German", async () => {

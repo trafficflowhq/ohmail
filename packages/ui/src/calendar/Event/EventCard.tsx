@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useRef,
   type CSSProperties,
   type KeyboardEvent,
@@ -100,6 +101,11 @@ export function EventCard(p: EventCardProps) {
     p.close.onPress?.(event as never);
   };
   const pulls = useSheetPull(frame === "sheet", p.close);
+  const focusTitle = useCallback((input: HTMLInputElement | null) => {
+    if (!input || input.ownerDocument.documentElement.dataset.touch === "1") return;
+    input.focus({ preventScroll: true });
+    input.select();
+  }, []);
   const why = p.why ? (
     <span className="oh-tag oh-ecard-tag oh-ecard-why">
       {p.why.locked ? <Icon name="lock" size={16} className="oh-ecard-why-ico" /> : null}
@@ -112,6 +118,7 @@ export function EventCard(p: EventCardProps) {
       className={cx("oh-ecard", own.className)}
       data-tone={own["data-tone"]}
       data-frame={frame === "card" ? undefined : frame}
+      data-editing={p.titleInput ? "" : undefined}
       data-side={p.side}
       data-still={p.still ? "" : undefined}
       style={{
@@ -149,7 +156,7 @@ export function EventCard(p: EventCardProps) {
         )}
         {p.titleInput ? (
           <input
-            autoFocus
+            ref={focusTitle}
             className="oh-control oh-display oh-ecard-title oh-ecard-title-input"
             aria-label={p.titleInput.label}
             readOnly={p.titleInput.readOnly}

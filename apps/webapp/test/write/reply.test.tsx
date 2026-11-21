@@ -6,12 +6,15 @@
  * until the person does, and a flagged letter is asked about first; offline it is kept and says so; Discard closes
  * it with its Undo.
  */
+import { Blob as NodeBlob } from "node:buffer";
+import type { Editor as TiptapEditor } from "@tiptap/react";
+import { MutationRejectedError } from "@ohmail/client-engine";
 import type { EngineMessage } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import en from "../../messages/en.json";
-import { act, message, replyDraft, stubDom } from "../_draft-shell.js";
+import { act, message, replyDraft, stubDom, waitFor } from "../_draft-shell.js";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { mountWriting, rounds, unmountWritings, type WritingWorld } from "../_write-1-writing.js"; // Write over parts that stay (share write-1): today's words and keys leave
 
@@ -133,6 +136,128 @@ describe("the reply's sheet", () => {
     expect(sends(w)).toHaveLength(1);
     expect(sends(w)[0]!.cc?.map((p) => p.address)).toEqual(["lena@example.invalid"]);
   });
+
+  it("sends the edited quoted history in both body formats", async () => {
+    const w = await open("reply", [message("m1", { body: "The original wording." })]);
+    const box = await screen.findByRole("textbox", { name: W.reply.text }) as HTMLElement & { editor: TiptapEditor };
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: W.reply.change }));
+    });
+    await rounds(2);
+    expect(screen.getByRole("group", { name: W.to }).textContent).toContain("The colleague");
+    await person(W.cc, "lena@example.invalid");
+    await write(W.reply.text, "Adding Lena.");
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: W.history.show })); });
+    const original = await screen.findByText(/The original wording/);
+    const text = Array.from(original.childNodes).find((node) => node.textContent === "The original wording.")!;
+    const start = box.editor.view.posAtDOM(text, 0);
+    await act(async () => {
+      box.editor.chain().setTextSelection({ from: start, to: start + "The original wording.".length })
+        .insertContent("The edited wording.").run();
+    });
+    await act(async () => {
+      fireEvent.click(sendButton());
+    });
+    await rounds(10);
+    expect(sends(w)).toHaveLength(1);
+    expect(sends(w)[0]!.cc?.map((p) => p.address)).toEqual(["lena@example.invalid"]);
+    expect(sends(w)[0]).toMatchObject({
+      inReplyTo: "m1",
+      body: expect.stringContaining("The edited wording."),
+      html: expect.stringContaining("The edited wording."),
+    });
+    expect(sends(w)[0]?.body).not.toContain("The original wording.");
+  });
+
+  it("says an inline quote edit could not be saved and keeps the edit", async () => {
+    const w = await open("reply");
+    const mutate = w.engine.mutate.bind(w.engine);
+    let refused = false;
+    w.engine.mutate = async (mutation, options) => {
+      if (mutation.kind !== "draft_save") return mutate(mutation, options);
+      refused = true;
+      return { id: "refused", key: "refused", status: "rolled_back", seq: null,
+        error: new MutationRejectedError("The server did not save the edited quoted history.", {
+          code: "draft_unsaved", retryable: false,
+        }),
+      };
+    };
+    const box = await screen.findByRole("textbox", { name: W.reply.text }) as HTMLElement & { editor: TiptapEditor };
+    const html = '<p>My reply</p><blockquote data-quoted-history="edited"><p>My edited quote</p></blockquote>';
+    await act(async () => { box.editor.commands.setContent(html, { emitUpdate: true }); });
+    await waitFor(() => refused, "the draft save was refused");
+    expect(screen.getByText(en.compose.draftNotSaved)).toBeTruthy();
+    expect(w.now().replyBody.html).toBe(html);
+  });
+
+  it("sends the destination's original after pasting from a folded forward", async () => {
+    const { FIXED_NOW, makeDeps, seedSession, seedMailbox, seedMessage, seedBody } =
+      await import("../../../../packages/api/test/helpers.js");
+    const { dbFor, draftsService, sendService } = await import("@trafficflow/services/mail");
+    // PGlite's template uses the Node Blob API, which jsdom's Blob does not implement.
+    vi.stubGlobal("Blob", NodeBlob);
+    const { db } = await makeDeps(FIXED_NOW).finally(() => vi.unstubAllGlobals());
+    const account = await seedSession(db, { now: FIXED_NOW });
+    const recipient = ["forward-recipient", "example.invalid"].join("@");
+    const mailboxId = await seedMailbox(db, { accountId: account.accountId, address: recipient });
+    const original = await seedMessage(db, { accountId: account.accountId, mailboxId, subject: "Destination letter",
+      fromAddress: recipient, date: FIXED_NOW, nativeLocator: { folder: "INBOX", ref: "7:2" } });
+    await seedBody(db, { messageId: original.id, text: "Destination original wording." });
+
+    const source = await open("forward", [message("m1", { body: "Source original wording." })]);
+    const sourceBox = await screen.findByRole("textbox", { name: W.reply.forwardText }) as HTMLElement & { editor: TiptapEditor };
+    await write(W.reply.forwardText, "Shared visible note.");
+    await act(async () => { sourceBox.editor.chain().selectAll().toggleBold().run(); });
+    fireEvent.click(screen.getByRole("button", { name: W.history.show }));
+    await screen.findByText(/Source original wording/);
+    fireEvent.click(screen.getByRole("button", { name: W.history.hide }));
+    await act(async () => { sourceBox.editor.commands.selectAll(); });
+    const clipboard = new Map<string, string>();
+    fireEvent(sourceBox, Object.assign(new Event("copy", { bubbles: true, cancelable: true }), {
+      clipboardData: { clearData: () => clipboard.clear(), setData: (kind: string, value: string) => clipboard.set(kind, value) },
+    }));
+    expect(clipboard.get("text/html")).toContain("data-pm-slice");
+    expect(clipboard.get("text/html")).toContain("<strong>Shared visible note.</strong>");
+    expect(clipboard.get("text/plain")).toBe("Shared visible note.");
+    expect(clipboard.get("text/html")).not.toContain("Source original wording.");
+    await source.unmount();
+
+    const destination = await mountWriting({ messages: [message(original.id, { body: "Destination original wording." })],
+      hash: "#/ohbox", sheet: [original.id] });
+    await act(async () => { destination.now().openForward(original.id); });
+    const box = await screen.findByRole("textbox", { name: W.reply.forwardText });
+    fireEvent(box, Object.assign(new Event("paste", { bubbles: true, cancelable: true }), {
+      clipboardData: { types: [...clipboard.keys()], getData: (kind: string) => clipboard.get(kind) ?? "" },
+    }));
+    await person(W.to, recipient);
+    await act(async () => { fireEvent.click(sendButton()); });
+    await waitFor(() => destination.sent.some((mutation) => mutation.kind === "mail_send"), "the forward was pressed");
+    const outgoing = destination.sent.find((mutation) => mutation.kind === "mail_send")!;
+    expect(outgoing.html).toContain("<strong>Shared visible note.</strong>");
+    expect(outgoing.forwardOf).toBe(original.id);
+    expect(outgoing.html ?? "").not.toContain("data-quoted-history");
+
+    const ctx = { db: dbFor(db, account.accountId), accountId: account.accountId, userId: account.userId,
+      now: () => FIXED_NOW, requestId: "clipboard-forward" };
+    const draft = await draftsService.create(ctx, { mailboxId, subject: outgoing.subject!,
+      forwardOfMessageId: original.id, to: outgoing.to!, ...(outgoing.html ? { html: outgoing.html } : { body: outgoing.body }) });
+    const delivered: Array<{ text?: string; html?: string }> = [];
+    const sent = await sendService.send(ctx, draft.draft.id, "clipboard-forward", {
+      openSendAdapter: async () => ({
+        async send(value) { delivered.push(value); return { providerMessageId: value.messageId! }; },
+        async messageInSent() { return false; },
+        async close() {},
+      }),
+    }, { forwardOf: original.id });
+    expect(sent.status).toBe("sent");
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.text).toContain("Shared visible note.");
+    expect(delivered[0]?.text).toContain("Destination original wording.");
+    expect(delivered[0]?.text).not.toContain("Source original wording.");
+    expect(delivered[0]?.html).toContain("<strong>Shared visible note.</strong>");
+    expect(delivered[0]?.html).toContain("Destination original wording.");
+    expect(delivered[0]?.html).not.toContain("Source original wording.");
+  }, 30_000);
 
   it("a reply-all folds into everyone the send goes to, the person's own address left out", async () => {
     const letter = message("m1", {

@@ -17,7 +17,7 @@ export type SearchSize = (typeof SEARCH_SIZES)[number];
 
 /** The closed facts beside the durations. */
 export interface SearchTimingFacts {
-  part?: "both" | "page" | "summary" | "estimate" | "address";
+  part?: "both" | "page" | "summary" | "estimate" | "address" | "places";
   tier?: "exact" | "similar";
   cut?: boolean;
   items?: number;

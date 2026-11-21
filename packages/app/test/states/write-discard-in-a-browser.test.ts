@@ -97,3 +97,99 @@ it("explains an unreachable mail server with the studio's retry wording", async 
     await page.close();
   }
 }, 30_000);
+
+it.each([344, 390, 884])(
+  "keeps Send and the editor above a keyboard at width %i",
+  async (width) => {
+    const page = await browser!.newPage({ viewport: { width, height: 844 }, hasTouch: true });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+      await page.goto(`${ORIGIN}/?state=draft&device=${width <= 390 ? "phone" : "fold"}`);
+      const letter = page.getByRole("region", { name: en.write.letter, exact: true });
+      const editor = letter.getByRole("textbox", { name: en.write.text, exact: true });
+      const send = letter.getByRole("button", { name: en.write.send, exact: true });
+      await editor.focus();
+      await page.evaluate(() => {
+        const viewport = window.visualViewport!;
+        Object.defineProperty(viewport, "height", { configurable: true, get: () => 400 });
+        viewport.dispatchEvent(new Event("resize"));
+      });
+      await page.waitForFunction(() => {
+        const pane = document.querySelector("[data-writing-keyboard]");
+        return pane && pane.getBoundingClientRect().bottom <= 401;
+      });
+      await editor.press("End");
+      await editor.press("Space");
+      const action = (await send.boundingBox())!;
+      const text = (await editor.boundingBox())!;
+      expect(action.y).toBeGreaterThanOrEqual(0);
+      expect(action.y + action.height).toBeLessThanOrEqual(400);
+      expect(action.y).toBeGreaterThan(text.y);
+      await expect
+        .poll(() =>
+          editor.evaluate((el) => {
+            const range = getSelection()?.getRangeAt(0).cloneRange();
+            range?.collapse(false);
+            const caret = range?.getBoundingClientRect();
+            const scroll = el.closest("[data-reading-scroll]")!.getBoundingClientRect();
+            return Boolean(
+              caret && caret.height > 0 && caret.top >= scroll.top - 1 && caret.bottom <= scroll.bottom + 1,
+            );
+          }),
+        )
+        .toBe(true);
+      await expect.poll(() => letter.getByText("From", { exact: true }).isVisible()).toBe(true);
+      expect(text.y).toBeLessThan(400);
+      expect(await page.evaluate(() => scrollY)).toBe(0);
+    } finally {
+      await page.close();
+    }
+  },
+  30_000,
+);
+
+it("keeps the Send target and typing line visible in a 105 px keyboard viewport", async () => {
+  const page = await browser!.newPage({ viewport: { width: 344, height: 780 }, hasTouch: true });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto(`${ORIGIN}/?state=draft&device=phone`);
+    const editor = page.getByRole("textbox", { name: en.write.text, exact: true });
+    const send = page.getByRole("button", { name: en.write.send, exact: true });
+    await editor.focus();
+    const resize = (height: number) =>
+      page.evaluate((h) => {
+        Object.defineProperty(visualViewport!, "height", { configurable: true, get: () => h });
+        visualViewport!.dispatchEvent(new Event("resize"));
+      }, height);
+    await editor.press("End");
+    await resize(105);
+    const visible = () =>
+      editor.evaluate((el) => {
+        const scroller = el.closest("[data-reading-scroll]")!.getBoundingClientRect();
+        const range = getSelection()?.getRangeAt(0).cloneRange();
+        range?.collapse(false);
+        const caret = range?.getBoundingClientRect();
+        return Boolean(
+          caret && caret.height > 0 && caret.top >= scroller.top - 1 && caret.bottom <= scroller.bottom + 1,
+        );
+      });
+    const sendBottom = async () => {
+      const box = (await send.boundingBox())!;
+      return box.y + box.height;
+    };
+    await expect.poll(sendBottom, { timeout: 1800 }).toBeLessThanOrEqual(105);
+    await expect.poll(visible, { timeout: 1800 }).toBe(true);
+    await page.keyboard.insertText(" still here");
+    await expect.poll(visible, { timeout: 1800 }).toBe(true);
+    expect(await sendBottom()).toBeLessThanOrEqual(105);
+    const draft = await editor.textContent();
+    expect(draft).toContain("still here");
+    await resize(780);
+    await page.waitForFunction(() => !document.querySelector("[data-writing-keyboard]"));
+    await expect.poll(() => editor.evaluate((el) => el === document.activeElement)).toBe(true);
+    expect(await editor.textContent()).toBe(draft);
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+  } finally {
+    await page.close();
+  }
+}, 30_000);

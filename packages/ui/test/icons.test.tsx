@@ -70,6 +70,14 @@ describe("Icon", () => {
     expect(svg.hasAttribute("aria-label")).toBe(false);
   });
 
+  it.each(["paragraph", "divider"] as const)("draws the composer %s in the same grid", (name) => {
+    expect(isDrawing(data.composer[name].svg)).toBe(true);
+    const { container } = render(<Icon name={name} size={18} />);
+    const svg = container.querySelector("svg");
+    expect(svg?.getAttribute("viewBox")).toBe("0 0 24 24");
+    expect(svg?.children.length).toBeGreaterThan(0);
+  });
+
   it("alone is an image with the name it was given", () => {
     const { getByRole } = render(<Icon name="send" size={18} label="Send" />);
     const svg = getByRole("img", { name: "Send" });

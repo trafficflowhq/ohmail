@@ -21,24 +21,20 @@ import {
 import { fragmentOf } from "../frame/route.js";
 import { useEventBrowse } from "./use-event-browse.js";
 import { useGridKeys } from "./use-grid-keys.js";
+import { CurrentView } from "./CalendarCurrentView.js";
 import { CalendarFrameHead } from "./CalendarFrameHead.js";
 import { CalendarPanels } from "./CalendarPanels.js";
 import { useFrame } from "../frame/commands.js";
 import type { CalendarPlaceId, FrameCommands, PaneProps, Route } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import { useText, useTimeZone } from "../text/index.js";
-import { dayView } from "../day/index.js";
-import { weekView } from "../week/index.js";
-import { MonthView } from "../month/index.js";
 import { useMonthViewport } from "../month/MonthRunScope.js";
 import type { MonthRun } from "../month/use-month-run.js";
-import { YearView } from "../year/index.js";
-import { AgendaView } from "../agenda/index.js";
-import { SearchView } from "../calsearch/index.js";
 import { useFaces, useSettings, useSources, useWhere, type Where } from "./where.js";
 import { useSharedCalendarSettings } from "../calsettings/settings-read.js";
 import { CalendarFirstStep, useCalendarFirstStep } from "./CalendarFirstStep.js";
-import { useNewEvent } from "./use-new-event.js";
+import { useNewEvent, useNewEventKey } from "./use-new-event.js";
+import { useSlotDraft } from "./use-slot-draft.js";
 import { DRAFT_EVENT } from "./event-draft.js";
 import type { CalendarViewProps } from "./view.js";
 import { NewEvent, type DraftPreview } from "./NewEvent.js";
@@ -58,20 +54,13 @@ export function CalendarBody(pane: PaneProps) {
   const disabled = useSharedCalendarSettings()?.said?.enabledAt === null;
   const firstStep = empty || disabled;
   const create = useNewEvent();
-  useKeyBindings(
-    create &&
-      !firstStep &&
-      port !== NONE &&
-      pane.keysHere &&
-      pane.route.open === null &&
-      pane.route.words.panel !== "new"
-      ? [{ chord: "c", group: "navigate", label: t("create.title"), run: create }]
-      : [],
-    "global",
+  useNewEventKey(
+    create,
+    !firstStep && pane.keysHere && pane.route.open === null && pane.route.words.panel !== "new",
   );
   if (port === NONE) return <RefusalLine>{t("unreadable")}</RefusalLine>;
   if (firstStep) return <CalendarFirstStep />;
-  return <CalendarOn port={port} sources={sources} {...pane} />;
+  return <CalendarOn port={port} sources={sources} create={create} {...pane} />;
 }
 
 function CalendarOn({
@@ -80,7 +69,12 @@ function CalendarOn({
   plan,
   keysHere,
   sources,
-}: PaneProps & { readonly port: CalendarPort; readonly sources: ReturnType<typeof useSources> }) {
+  create,
+}: PaneProps & {
+  readonly port: CalendarPort;
+  readonly sources: ReturnType<typeof useSources>;
+  readonly create: ReturnType<typeof useNewEvent>;
+}) {
   const { commands } = useFrame();
   const t = useText("calendar");
   const zone = useTimeZone();
@@ -110,6 +104,7 @@ function CalendarOn({
     panelOn,
   });
   const cursor = useGridKeys({
+    create,
     where,
     events: found?.events ?? [],
     route,
@@ -140,6 +135,7 @@ function CalendarOn({
         setTodayVisit((visit) => ({ id: (visit?.id ?? 0) + 1, place: where.place, top }));
       }}
       cursor={cursor}
+      create={create}
       openAgendaRow={openAgendaRow}
     />
   );
@@ -159,6 +155,7 @@ interface CalendarSurfaceProps extends Pick<PaneProps, "route" | "plan" | "keysH
   todayVisit: TodayVisit | null;
   onToday: (top: number | undefined) => void;
   cursor: number | null;
+  create: ReturnType<typeof useNewEvent>;
   openAgendaRow: (id: string, day: string) => void;
 }
 
@@ -236,9 +233,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
             <NewEvent
               port={port}
               onPreview={setPreview}
-              anchor={anchor}
-              today={today}
-              minute={now.minutes}
+              now={now}
               calendars={sources.calendars}
               tones={sources.tones}
               connections={sources.connections}
@@ -267,10 +262,14 @@ function CalendarSurface(props: CalendarSurfaceProps) {
 }
 
 function useCalendarCanvas(
-  { route, port, zones, where, found, zone, settings, plan, panelOn, cursor }: CalendarSurfaceProps,
+  { route, port, zones, where, found, zone, settings, plan, panelOn, cursor, create }: CalendarSurfaceProps,
   commands: FrameCommands,
 ) {
   const actions = useEventActions(port, zones);
+  const startSlot = useSlotDraft(
+    route.open === null && route.words.panel !== "new" ? create : null,
+    fragmentOf(route),
+  );
   const { drag, preview: dragged, suppressClick, rangePreview } = useEventDrag(actions, fragmentOf(route));
   const [preview, setPreview] = useState<DraftPreview | null>(null);
   const { place, anchor, anchorDay, today, now, nowMs } = where;
@@ -302,7 +301,7 @@ function useCalendarCanvas(
   };
   const onDrag: CalendarViewProps["onDrag"] =
     !actions.busy && !actions.question
-      ? (id, press) => {
+      ? (id, press, segment) => {
           if (route.words.panel === "new") {
             if (id === DRAFT_EVENT && preview?.face.start.kind === "date") {
               drag(preview.face, press, preview.moveRange);
@@ -310,7 +309,7 @@ function useCalendarCanvas(
             return;
           }
           const face = found.events.find((event) => event.id === id);
-          if (face && (route.open === null || route.open === face.id)) drag(face, press);
+          if (face && (route.open === null || route.open === face.id)) drag(face, press, undefined, segment);
         }
       : undefined;
   const timeProps: CalendarViewProps = {
@@ -329,67 +328,17 @@ function useCalendarCanvas(
         ? (direction: -1 | 1) => go({ place, sub: addDays(anchor, direction) })
         : undefined,
     onOpen: open,
+    onSlot: startSlot,
+    onResizeTime:
+      onDrag && route.words.panel !== "new"
+        ? (id, edge, minutes, anchor) => {
+            const face = found.events.find((event) => event.id === id);
+            if (face) actions.start(face, { kind: "resize-time", edge, minutes }, anchor);
+          }
+        : undefined,
     ...(onDrag ? { onDrag } : {}),
     ...(dragged ? { dragPreview: dragged } : {}),
     onDay: (day: PlainDate) => go({ place: "day", sub: isoOfDay(day) }),
   };
   return { actions, suppressClick, setPreview, rangePreview, go, closePanel, edge, input, acts, timeProps };
-}
-
-function CurrentView({
-  where,
-  monthRun,
-  route,
-  keysHere,
-  timeProps,
-  input,
-  acts,
-  edge,
-}: {
-  readonly where: Where;
-  readonly monthRun: MonthRun | null;
-  readonly route: Route;
-  readonly keysHere: boolean;
-  readonly timeProps: CalendarViewProps;
-  readonly input: RangeInput;
-  readonly acts: RangeActs;
-  readonly edge: HeldEdge;
-}) {
-  const { place, agenda, span } = where;
-  const { commands } = useFrame();
-  const t = useText("calendar");
-  return place === "week" ? (
-    <weekView.View {...timeProps} />
-  ) : place === "day" ? (
-    <dayView.View {...timeProps} />
-  ) : place === "month" ? (
-    <MonthView
-      input={input}
-      acts={acts}
-      edge={edge}
-      run={monthRun}
-      {...(timeProps.onDrag ? { onDrag: timeProps.onDrag } : {})}
-    />
-  ) : place === "year" ? (
-    <YearView input={input} acts={acts} edge={edge} />
-  ) : place === "agenda" ? (
-    <AgendaView
-      input={input}
-      acts={acts}
-      edge={edge}
-      days={agenda.days}
-      onMore={agenda.more}
-      keysHere={keysHere && route.open === null}
-    />
-  ) : place === "calsearch" ? (
-    <SearchView
-      input={input}
-      acts={acts}
-      query={route.words.q ?? ""}
-      onQuery={(q) => commands.go({ place: "calsearch", words: q === "" ? {} : { q } })}
-      held={{ from: span.first, to: span.last }}
-    />
-  ) : (
-    <RefusalLine>{t("notHere")}</RefusalLine>
-  );
 }

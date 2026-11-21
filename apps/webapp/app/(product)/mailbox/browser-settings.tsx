@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { onNoticeReturn } from "@ohmail/app-logic/notices/browser-channels";
 import {
   BrowserGeneralSettings as GeneralSettings, BrowserSettingsAbove, type GeneralSettingsProps,
 } from "@ohmail/app/settings/browser";
@@ -15,7 +16,10 @@ export function BrowserGeneralSettings(props: Omit<GeneralSettingsProps, "textSi
   return <GeneralSettings {...props} locale={useAppLocale()} textRoot={textRoot} />;
 }
 
-const notifications = { applyWakeIntent, readChannels, subscriptionWanted, writeChannels };
+const notifications = {
+  applyWakeIntent, readChannels, subscriptionWanted, writeChannels,
+  onReturn: (refresh: () => void) => onNoticeReturn(window, refresh),
+};
 
 export function BrowserNotificationSettings({ children }: { children: ReactNode }) {
   return <BrowserSettingsAbove preferences={notifications}>{children}</BrowserSettingsAbove>;

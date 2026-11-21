@@ -26,6 +26,7 @@ import {
   type Segment,
   type TimeGridDay,
 } from "@ohmail/app-logic/calendar";
+import { timedResizeProps } from "../calendar/view.js";
 import type { CalendarEventView, CalendarView, CalendarViewProps } from "../calendar/view.js";
 import { HeldNotice } from "../calendar/HeldNotice.js";
 import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
@@ -65,6 +66,7 @@ export function DayView(props: CalendarViewProps) {
   const said = (s: Segment<CalendarEventView>): string => `${clockOf(s.from)} ${s.item.title}`;
   const freeText = (minutes: number) => freeHours(t, minutes);
 
+  const calendar = useText("calendar");
   const kitDays: KitDay[] = model.days.map((d) => ({
     ...dayHead(d.day, locale),
     id: d.id,
@@ -80,12 +82,14 @@ export function DayView(props: CalendarViewProps) {
         {...blockChip(b, b.item.id === openId)}
         label={t("chip", { title: b.item.title, from: clockOf(b.from), to: clockOf(b.to) })}
         onPress={() => open(b.item)}
-        onPointerDown={props.onDrag ? (event) => props.onDrag?.(b.item.id, event) : undefined}
+        {...timedResizeProps(props, b, {
+          start: calendar("actions.resizeTimeStart"),
+          end: calendar("actions.resizeTimeEnd"),
+        })}
       />
     )),
   }));
 
-  const calendar = useText("calendar");
   const lane = model.lane.pills.map((p) => (
     <EventChip
       key={p.item.id}
@@ -142,6 +146,7 @@ export function DayView(props: CalendarViewProps) {
         now={
           model.now === null ? undefined : { minutes: model.now.minutes, label: clockOf(model.now.minutes) }
         }
+        onDayPointerDown={props.onSlot}
         scrollRef={hours.ref}
         scrollGestures={swipe}
         onScroll={hours.onScroll}

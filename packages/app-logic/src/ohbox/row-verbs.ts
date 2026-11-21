@@ -11,6 +11,7 @@ import type { OhboxListInput, OhboxListModel, OhboxStep } from "./types.js";
 export type RowVerbs = Pick<
   OhboxListModel,
   | "doneRow"
+  | "markRowRead"
   | "doneOffered"
   | "rowUnread"
   | "rowOpen"
@@ -55,6 +56,13 @@ export function ohboxRowVerbs(
   }: RowVerbParts,
 ): RowVerbs {
   const { bulk, onMarkSeen, onAction, onAddTag, threadSubject, threadMarksOf, onMarkAllRead } = input;
+  const unreadIds = (row: OhboxRowGroup) =>
+    row.members.filter((m) => m.unread && !isOwnSent(m)).map((m) => m.id);
+  const markRowRead = (row: OhboxRowGroup): void => {
+    const ids = unreadIds(row);
+    if (ids.length > 1 || (ids.length === 1 && row.resurfaced)) bulk.run("read", ids, { via: "glance" });
+    else if (ids.length === 1) onMarkSeen(ids, false, "glance");
+  };
   /**
    * DONE ON EVERY ROW THAT WAITS. A row carrying pins releases them in one press (the Resurfaced row's own Done).
    * The open row's Done is the reader's Mark as read, over the set its read slot draws. Any other row's reads its
@@ -70,11 +78,11 @@ export function ohboxRowVerbs(
       );
       return;
     }
-    if (selected != null && g.members.some((m) => m.id === selected.id)) {
+    if (selected !== null && g.members.some((m) => m.id === selected.id)) {
       markConversationRead(selected);
       return;
     }
-    const ids = g.members.filter((m) => m.unread && !isOwnSent(m)).map((m) => m.id);
+    const ids = unreadIds(g);
     if (ids.length === 1) onMarkSeen(ids, false);
     else if (ids.length > 1) bulk.run("read", ids);
   };
@@ -127,6 +135,7 @@ export function ohboxRowVerbs(
 
   return {
     doneRow,
+    markRowRead,
     doneOffered,
     rowUnread,
     rowOpen,

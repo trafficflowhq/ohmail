@@ -17,7 +17,7 @@ import {
 } from "@ohmail/client-engine";
 import { readerMoveRefusal } from "../mail-state/mail-state.js";
 import { dayStamp, PLACE_LABEL, resurfaceLabel, tomorrowAt } from "../text/format.js";
-import type { BulkAction } from "./actions.js";
+import type { BulkAction, BulkActionOptions } from "./actions.js";
 import {
   decidesAtGate,
   fileThroughRouting,
@@ -25,7 +25,7 @@ import {
   type RoutingPressPlan,
 } from "./move-to-place.js";
 import { dispatchScreeningChange, moveSubjectIds } from "./sender-screening.js";
-import { mailboxesOf, rowOf, setRead, withRow, type MoveContext, type VerbContext } from "./verb-context.js";
+import { mailboxesOf, rowOf, setRead, type MoveContext, type VerbContext } from "./verb-context.js";
 
 /**
  * A DELETE WAITS OUT ITS WINDOW, and the engine spends a filed pin's row when the delete is sent; the row is spent at
@@ -62,7 +62,7 @@ export function removeSpending(
  * chunk's verdict. The inverse is read ONCE before the first dispatch and chunked alike, so Undo flips back exactly
  * the ids this press flipped, and a press over the cap that partly lands offers an Undo for the chunks that landed.
  */
-function markSet(cx: VerbContext, unread: boolean, ids: string[]): boolean {
+function markSet(cx: VerbContext, unread: boolean, ids: string[], via?: "glance"): boolean {
   const { t } = cx;
   const pre = setRead(cx);
   /* A folded row hands in every member: a read takes them all, and Mark unread leaves our own reply read beside its
@@ -71,9 +71,9 @@ function markSet(cx: VerbContext, unread: boolean, ids: string[]): boolean {
   const chunks: string[][] = [];
   for (let i = 0; i < marked.length; i += MARK_SEEN_CHUNK) chunks.push(marked.slice(i, i + MARK_SEEN_CHUNK));
   const inverses = chunks.map((c) =>
-    chunkMarkSeen(inverseMutations(pre, { kind: "mark_seen", messageIds: c, unread })),
+    chunkMarkSeen(inverseMutations(pre, { kind: "mark_seen", messageIds: c, unread, via })),
   );
-  void Promise.all(chunks.map((c) => cx.markSeen(c, unread))).then((oks) => {
+  void Promise.all(chunks.map((c) => cx.markSeen(c, unread, via))).then((oks) => {
     const done = chunks.filter((_, i) => oks[i]).reduce((n, c) => n + c.length, 0);
     if (done === 0) return;
     const undo = inverses.filter((_, i) => oks[i]).flat();
@@ -203,24 +203,14 @@ function fileSenders(
  * (`planMoveToPlace` per sender, narrowed to that sender's picked messages) and names both numbers, because a
  * selection spanning senders changes where mail from every one of them goes from now on.
  */
-function moveSet(cx: MoveContext, view: OhmailView, ids: string[]): boolean {
+function moveSet(cx: MoveContext, view: OhmailView, ids: string[], gate: "decide" | "leave"): boolean {
   const { engine, t } = cx;
   /* The destination has to BE one: the single arm's own guard, asked here too. */
   const wanted = FOLDER_OF_VIEW[view];
   if (!wanted) return false;
   const bySender = new Map<string, string[]>();
   const unheld: EngineMutation[] = [];
-  /* A picked conversation whose newest letter is ours moves what other people sent in it. */
-  const verbs = engine.verbRead();
-  const picked = [
-    ...new Set(
-      ids.flatMap((id) => {
-        const row = rowOf(cx, id);
-        return row ? moveSubjectIds(withRow(verbs, row), id, cx.ownAddresses) : [id];
-      }),
-    ),
-  ];
-  for (const id of picked) {
+  for (const id of ids) {
     const m = rowOf(cx, id);
     /* A row neither the mirror nor a page holds is still moved, by id: the server answers. */
     if (!m) {
@@ -233,7 +223,7 @@ function moveSet(cx: MoveContext, view: OhmailView, ids: string[]): boolean {
     else bySender.set(key, [id]);
   }
   const plans = [...bySender.values()]
-    .map((of) => planMoveToPlace(cx, of[0]!, view, new Set(of)))
+    .map((of) => planMoveToPlace(cx, of[0]!, view, new Set(of), undefined, gate))
     .filter((x): x is RoutingPressPlan => x !== null);
   const place = PLACE_LABEL[view] ?? view;
   if (plans.length === 0) {
@@ -248,7 +238,12 @@ function moveSet(cx: MoveContext, view: OhmailView, ids: string[]): boolean {
 }
 
 /** Run a verb over the ids. `false`: refused at the press, nothing dispatched, the selection is kept. */
-export function runBulkAction(cx: VerbContext, action: BulkAction, ids: string[]): boolean {
+export function runBulkAction(
+  cx: VerbContext,
+  action: BulkAction,
+  ids: string[],
+  options?: BulkActionOptions,
+): boolean {
   if (ids.length === 0) return false;
   if (action === "delete") {
     /* ONE WINDOW, ONE REPORT, ONE UNDO FOR THE SET (`delete-undo.ts`, keyed by press). The reader's refusal is the
@@ -258,19 +253,40 @@ export function runBulkAction(cx: VerbContext, action: BulkAction, ids: string[]
       ids.map((id) => ({ id, mailboxId: rowOf(cx, id)?.mailboxId })),
     );
   }
-  if (action === "read" || action === "unread") return markSet(cx, action === "unread", ids);
+  if (action === "read" || action === "unread") return markSet(cx, action === "unread", ids, options?.via);
   if (action === "done") return releaseSet(cx, ids);
   if (action === "later" || action === "aside" || action === "resurface") return pileSet(cx, action, ids);
-  return pressMoveSet(cx, action.slice("move:".length) as OhmailView, ids);
+  return pressMoveSet(cx, action.slice("move:".length) as OhmailView, ids, {
+    conversationIds: options?.conversationIds,
+  });
 }
 
-export function pressMoveSet(cx: MoveContext, view: OhmailView, ids: string[]): boolean {
+export function pressMoveSet(
+  cx: MoveContext,
+  view: OhmailView,
+  pickedIds: string[],
+  selection?: { conversationIds?: ReadonlySet<string> },
+): boolean {
+  // A single-message row supplies its own id. Only folded rows can move their conversation's other letters.
+  const read = setRead(cx);
+  const ids = [
+    ...new Set(
+      pickedIds.flatMap((id) =>
+        selection?.conversationIds?.has(id) ? moveSubjectIds(read, id, cx.ownAddresses) : [id],
+      ),
+    ),
+  ];
   /* A READER MOVES NOTHING, and hears so before anything leaves: asked of EVERY mailbox this selection spans,
      through the three-state roster. The WHOLE press is refused. */
-  const refused = readerMoveRefusal(cx.press.rosterRef.current, mailboxesOf(cx, ids), cx.press.refusalCopy);
+  const refused = readerMoveRefusal(
+    cx.press.rosterRef.current,
+    mailboxesOf(cx, [...pickedIds, ...ids]),
+    cx.press.refusalCopy,
+  );
   if (refused !== null) {
     cx.toast(refused);
     return false;
   }
-  return moveSet(cx, view, ids);
+  // The single-row path may still decide a sender at the gate. A selection only names letters.
+  return moveSet(cx, view, ids, selection === undefined ? "decide" : "leave");
 }

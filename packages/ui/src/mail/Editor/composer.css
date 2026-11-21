@@ -423,3 +423,12 @@
     margin: 0 var(--s1);
   }
 }
+
+.oh-sheet[data-writing-keyboard] .oh-composer-editor {
+  --oh-composer-text-min: 3lh;
+}
+
+.oh-sheet[data-writing-keyboard] .oh-lettertext-plain {
+  max-block-size: max(3lh, calc(var(--write-room) / 2));
+  overflow-y: auto;
+}

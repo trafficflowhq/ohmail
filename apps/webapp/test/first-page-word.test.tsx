@@ -14,8 +14,9 @@ vi.mock("next-intl/server", () => ({ getTranslations: async () => (key: string) 
 
 type Page = (props: { searchParams?: Promise<Record<string, string>> }) => Promise<ReactElement<{ drawMail?: string }>>;
 
-async function wordFor(value: string | null): Promise<string | undefined> {
+async function wordFor(value: string | null, owner: string | null = "reader"): Promise<string | undefined> {
   sent = new Headers(value === null ? {} : { "x-ohmail-first-page": value });
+  if (owner !== null) sent.set("x-ohmail-first-page-owner", owner);
   const { default: page } = (await import("../app/(product)/mailbox/page")) as unknown as { default: Page };
   return (await page({ searchParams: Promise.resolve({}) })).props.drawMail;
 }
@@ -30,6 +31,7 @@ describe("the mailbox page's word", () => {
 
   it("is now only for the exact word now", async () => {
     expect(await wordFor("now")).toBe("now");
+    expect(await wordFor("now", null)).toBe("wait");
   });
 
   it("is wait for wait, for no word, and for any other spelling", async () => {

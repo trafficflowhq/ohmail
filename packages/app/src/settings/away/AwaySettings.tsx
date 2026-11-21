@@ -18,6 +18,7 @@ import {
   type AwayRules,
   type AwayState,
 } from "./model.js";
+import { useAwaySchedule } from "./schedule.js";
 import { AwayPane } from "./AwayPane.js";
 import { useAwayLeave } from "./use-away-leave.js";
 import { useFrame } from "../../frame/index.js";
@@ -57,6 +58,7 @@ export function AwaySettings() {
     wire,
     host.device.address,
   );
+  const { ended } = useAwaySchedule(saved);
   if (wire === NONE || runsOn === NONE) return null;
   const endsAt = draft?.endsAt ?? null;
   const now = new Date();
@@ -95,11 +97,7 @@ export function AwaySettings() {
       draft: draft?.endsAt ? dayStamp(draft.endsAt, locale, zone) : null,
       saved: saved?.endsAt ? dayStamp(saved.endsAt, locale, zone) : null,
     },
-    savedEnded:
-      saved !== null &&
-      saved.enabled &&
-      saved.endsAt !== null &&
-      new Date(saved.endsAt).getTime() < Date.now(),
+    savedEnded: ended,
     ...leave,
     edit: (patch) => step({ kind: "edit", patch }),
     pickEnd: (at) => setAnchor((open) => (open ? null : at)),

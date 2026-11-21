@@ -109,17 +109,12 @@ export function AllDecided() {
   const t = useText("screener");
   const places = useText("place");
   const { commands } = useFrame();
-  const { facts } = useScreenerBeside();
-  const hint = facts.notOrganizingYet === null ? "empty.waiting.hint" : "empty.waiting.mixedHint";
   return (
-    <>
-      <KitEmpty
-        mark="oh"
-        label={t("place.empty.waiting")}
-        act={{ label: places("ohbox"), onPress: () => commands.go({ place: "ohbox" }) }}
-      />
-      <ListLine>{t(hint)}</ListLine>
-    </>
+    <KitEmpty
+      mark="oh"
+      label={t("place.empty.waiting")}
+      act={{ label: places("ohbox"), onPress: () => commands.go({ place: "ohbox" }) }}
+    />
   );
 }
 

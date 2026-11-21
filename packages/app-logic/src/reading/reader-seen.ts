@@ -202,6 +202,30 @@ export function panelsOf(scroller: HTMLElement, names: ThreadDomNames = THREAD_D
   });
 }
 
+/** Cache the reading geometry in scroll coordinates. A scroll changes the view, not the panels. */
+function panelGeometry(scroller: HTMLElement, names: ThreadDomNames) {
+  const offset = () => scroller.scrollTop - cssRect(scroller).top;
+  const read = () => {
+    const panels = panelsOf(scroller, names);
+    const shape = [scroller.scrollHeight, scroller.clientHeight, scroller.clientWidth, ...panels.map((p) => p.height)];
+    return { panels, shape: shape.join(","), at: offset(), unread: unreadIn(scroller) };
+  };
+  let cached = read();
+  let dirty = false;
+  return {
+    initial: cached.shape,
+    invalidate: () => { dirty = true; },
+    look(view: ThreadView) {
+      if (dirty || typeof ResizeObserver === "undefined" || typeof MutationObserver === "undefined") {
+        cached = read();
+        dirty = false;
+      }
+      const delta = offset() - cached.at;
+      return { ...cached, view: { top: view.top + delta, bottom: view.bottom + delta } };
+    },
+  };
+}
+
 /** The scroller's visible box, its bottom above the sticky action bar or the reply dock. */
 export function viewOf(scroller: HTMLElement, names: Pick<ThreadDomNames, "stops" | "stopsRoot"> = THREAD_DOM): ThreadView {
   const top = cssRect(scroller).top;
@@ -299,10 +323,8 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
   /** Can the person be reading: the tab shown, and the window focused or under their hand just now. */
   const attended = (t: number): boolean => visible() && (documentFocused() || t - lastHand <= EVIDENCE_WINDOW_MS);
 
-  const shapeOf = (panels: readonly ThreadPanel[]): string =>
-    [scroller.scrollHeight, scroller.clientHeight, scroller.clientWidth, ...panels.map((p) => p.height)].join(",");
-  /** The layout the previous look saw (the mount's, first); a look that finds it moved counts nothing. */
-  let shape: string | null = shapeOf(panelsOf(scroller, names));
+  const panels = panelGeometry(scroller, names);
+  let shape = panels.initial;
   /** A dwell under way is looked at again when it is done. */
   const schedule = (): void => {
     dwell?.();
@@ -322,14 +344,13 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
       schedule();
       return;
     }
-    const panels = panelsOf(scroller, names);
-    const laid = shapeOf(panels);
-    if (laid !== shape) {
-      shape = laid;
+    const seen = panels.look(view);
+    if (seen.shape !== shape) {
+      shape = seen.shape;
       poke();
       return;
     }
-    const ids = record.observe(panels, view, unreadIn(scroller), t);
+    const ids = record.observe(seen.panels, seen.view, seen.unread, t);
     if (ids.length > 0) o.onRead(ids);
     schedule();
   };
@@ -421,7 +442,8 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
     return moved;
   };
   const onSelection = (): void => { lastSelection = now(); lastSel = selection(); lastEvidence = never; };
-  const onResize = (): void => { lastResize = now(); poke(); };
+  const invalidate = (): void => { panels.invalidate(); poke(); };
+  const onResize = (): void => { lastResize = now(); invalidate(); };
   const onVisibility = (): void => { armRest(); poke(); };
   const onWindowFocus = (): void => { armRest(); poke(); };
   const onScroll = (): void => {
@@ -464,21 +486,39 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
   win.addEventListener("focus", onWindowFocus);
   win.addEventListener("blur", onWindowFocus);
   win.addEventListener("resize", onResize);
-  const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(poke);
+  const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(invalidate);
   resized?.observe(scroller);
-  for (const child of scroller.children) resized?.observe(child);
+  const watched = new Set<Element>();
+  const watchPanels = () => {
+    const next = new Set<Element>([...scroller.children, ...scroller.querySelectorAll("[data-conv-id]")]);
+    for (const node of watched) {
+      if (next.has(node)) continue;
+      resized?.unobserve(node);
+      watched.delete(node);
+    }
+    for (const node of next) {
+      if (watched.has(node)) continue;
+      resized?.observe(node);
+      watched.add(node);
+    }
+  };
+  watchPanels();
   const mutated = typeof MutationObserver === "undefined" ? null : new MutationObserver((records) => {
-    for (const r of records) for (const n of r.addedNodes) if (n instanceof Element && n.parentElement === scroller) resized?.observe(n);
-    poke();
+    if (records.some((record) => record.type === "childList")) watchPanels();
+    invalidate();
   });
-  mutated?.observe(scroller, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-unseen", "data-body-ready"] });
+  mutated?.observe(scroller, {
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ["data-unseen", "data-body-ready", "data-body-pending", "class", "style"],
+  });
+  mutated?.observe(doc.documentElement, { attributes: true, attributeFilter: ["style", "data-face"] });
   armRest();
   let stay = o.restMs === undefined || !o.onStay ? null : wait(o.restMs, () => { stay = null; o.onStay!(); });
   poke();
 
   return {
     scroller,
-    poke,
+    poke: invalidate,
     dispose: () => {
       live = false;
       pending?.();

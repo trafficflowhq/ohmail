@@ -2,7 +2,7 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CalendarConnectionRecord, CalendarRecord, CalendarSettingsWire } from "@ohmail/wire";
-import { ISO, closeMailPage, mountMailPage, prepareMailPage, scopedSyncResponse, tick } from "./fixtures/mounted-mail-page";
+import { ACCOUNT, ISO, closeMailPage, mountMailPage, prepareMailPage, scopedSyncResponse, tick } from "./fixtures/mounted-mail-page";
 import { json } from "./account/account-harness";
 
 const calendarSettings: CalendarSettingsWire = {
@@ -130,4 +130,50 @@ it("opens the week and returns to the same dated Month for an account with a cal
   await tick(0);
   expect(location.hash).toBe(month);
   expect(screen.getByRole("region", { name: "Month" })).toBeTruthy();
+});
+
+it("creates on the signed-in calendar when the preferences request fails", async () => {
+  vi.stubGlobal("innerWidth", 1440);
+  const connection: CalendarConnectionRecord = {
+    id: "conn", provider: "caldav", label: "Studio", status: "active", errorCode: null,
+    grantMailboxId: null, serverHost: null, consentedAt: ISO, lastSyncedAt: ISO, createdAt: ISO, updatedAt: ISO,
+  };
+  const first: CalendarRecord = {
+    id: "work", connectionId: connection.id, name: "Work", color: null, access: "writer", shown: true,
+    timeZone: "UTC", window: null, defaultAlarms: [], lastSyncedAt: ISO, errorCode: null, updatedAt: ISO,
+  };
+  const calendars = [first, { ...first, id: "home", name: "Home" }];
+  const server = await prepareMailPage({
+    "GET /api/hello": hello,
+    "GET /api/calendar/settings": () => new Response(null, { status: 503 }),
+    "GET /api/sync": () => scopedSyncResponse({
+      changes: {
+        creates: [
+          { type: "calendar_connection", op: "create", id: connection.id, seq: 1, updatedAt: ISO, entity: connection },
+          { type: "settings", op: "create", id: ACCOUNT, seq: 2, updatedAt: ISO,
+            entity: { accountId: ACCOUNT, calendarEnabledAt: ISO, updatedAt: ISO } },
+          ...calendars.map((entity, index) =>
+            ({ type: "calendar", op: "create", id: entity.id, seq: index + 3, updatedAt: ISO, entity })),
+        ],
+        updates: [], moves: [], deletes: [],
+      },
+      cursor: "c4", hasMore: false, serverTime: ISO,
+    }),
+    "POST /api/calendar/writes": () => scopedSyncResponse({ write: null, events: [] }),
+  });
+  await mountMailPage();
+  fireEvent.click(products().getByRole("button", { name: "Calendar" }));
+  await tick(0);
+  const create = screen.getByRole("button", { name: "New event" });
+  fireEvent.click(create);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Workshop" } });
+  const add = form.getByRole<HTMLButtonElement>("button", { name: "Add" });
+  expect(add.disabled).toBe(false);
+  fireEvent.click(add);
+  await tick(250);
+  expect(server.on("POST /api/calendar/writes").map(({ body }) => body)).toEqual([
+    expect.objectContaining({ kind: "calendar_event_create", calendarId: first.id, event: expect.objectContaining({ title: "Workshop" }) }),
+  ]);
+  expect(screen.queryByRole("dialog", { name: "New event" })).toBeNull();
 });

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -94,7 +95,7 @@ async function mount(): Promise<void> {
   await act(async () => {
     root.render(
       h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-        h(ThemeProvider, null, h(ToastHost, null, h(DesktopDevices)))),
+        h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DesktopDevices })))),
     );
   });
   await act(async () => {

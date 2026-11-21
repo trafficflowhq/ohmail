@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = join(__dirname, "..", "..", "..");
-const RETAINED_SHELL = join(ROOT, "apps/webapp/app/shell");
 
 describe("the shell's document queries skip hidden piles", () => {
   it("the census bites: the queries it moved are still spelled the way it reads", () => {
@@ -22,13 +21,8 @@ describe("the shell's document queries skip hidden piles", () => {
     const menus = readFileSync(join(ROOT, "packages/app/src/reader/actions/ActionMenus.tsx"), "utf8");
     expect(menus).toContain('if (menu !== "cardDelete" || !isCardDeleteKey(e.nativeEvent)) return false;');
 
-    const messageVerbs = readFileSync(join(RETAINED_SHELL, "message-verbs.ts"), "utf8");
-    expect(messageVerbs, "the retained Delete confirmation no longer asks queryVisible")
-      .toContain('queryVisible<HTMLButtonElement>(".abar-delete .abar-danger")');
-    const cursor = readFileSync(join(RETAINED_SHELL, "cursor-placer.ts"), "utf8");
-    expect(cursor, "the retained cursor no longer asks queryVisible")
-      .toContain("queryVisible<HTMLElement>(`${host.scope} :is(.row, .oh-row)");
-    expect(messageVerbs, "the retained row action no longer asks queryVisible")
-      .toContain("return queryVisible<HTMLElement>(`${scope} :is(.row, [role=option])");
+    const walk = readFileSync(join(ROOT, "packages/app-logic/src/place-list/walk.ts"), "utf8");
+    expect(walk).toContain('useCursorPlacer(walk.place, "view")');
+    expect(walk).toMatch(/input\.rowRendered\?\.\(first\) === false\)\s*return false;/);
   });
 });

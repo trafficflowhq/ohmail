@@ -89,7 +89,7 @@ export function Failed({ view, letter }: { view: ScreenerView; letter: FailedAtG
         anchor={card?.anchor}
         onClose={() => setCard(null)}
         label={t("place.keyCard")}
-        closeWhenFull={screening("close")}
+        closeWhenFull={screening("auditClose")}
         person={{ name: letter.from.name?.trim() || address, address }}
         notice={<IdentityNotice>{caution}</IdentityNotice>}
       />

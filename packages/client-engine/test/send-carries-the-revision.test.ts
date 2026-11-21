@@ -95,6 +95,53 @@ describe("a send carries the draft version its own PUT returned", () => {
     expect(sendBodyOf(calls).ifContentRevision).toBeUndefined();
   });
 
+  it.each([undefined, "draft-1"])("does not send a forward whose quoted edit the server dropped (%s)", async (draftId) => {
+    const { calls, fetchImpl } = harness();
+    const adapter = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl });
+    await expect(adapter.mutate({
+      ...mutation(draftId),
+      forwardOf: "original",
+      html: '<blockquote data-quoted-history="edited"><p>My version.</p></blockquote>',
+    } as EngineMutation, { idempotencyKey: "edited-forward" })).rejects.toMatchObject({ code: "draft_unsaved" });
+    expect(calls.some((call) => call.url.endsWith("/send"))).toBe(false);
+  });
+
+  it.each([
+    ["mail_send", "draft-1", false],
+    ["mail_send", undefined, true],
+    ["draft_save", "draft-1", true],
+    ["draft_save", undefined, false],
+  ] as const)("refuses a %s echo with different quoted words and the same marker (%s)", async (kind, draftId, forward) => {
+    const { calls, fetchImpl } = harness();
+    const adapter = new HttpAdapter({ baseUrl: "http://localhost", fetch: async (url, init) => {
+      const answer = await fetchImpl(url, init);
+      return Response.json({ ...await answer.json(), html: '<blockquote data-quoted-history="edited"><p>Earlier version.</p></blockquote>' },
+        { status: answer.status });
+    } });
+    await expect(adapter.mutate({
+      ...mutation(draftId), kind, draftId: draftId ?? null,
+      ...(forward ? { forwardOf: "original", forwardOfMessageId: "original" } : { inReplyTo: "parent" }),
+      html: '<blockquote data-quoted-history="edited"><p>My version.</p></blockquote>',
+    } as EngineMutation, { idempotencyKey: "edited-quote" })).rejects.toMatchObject({ code: "draft_unsaved" });
+    expect(calls.some((call) => call.url.endsWith("/send"))).toBe(false);
+  });
+
+  it("accepts equivalent quote HTML from the draft writer", async () => {
+    const { calls, fetchImpl } = harness();
+    const adapter = new HttpAdapter({ baseUrl: "http://localhost", fetch: async (url, init) => {
+      const answer = await fetchImpl(url, init);
+      return Response.json({ ...await answer.json(),
+        html: '<blockquote data-quoted-history="edited"><p>Words &amp; lines<br />Here</p></blockquote>',
+      }, { status: answer.status });
+    } });
+    await adapter.mutate({
+      ...mutation("draft-1"),
+      html: '<blockquote data-quoted-history="edited"><p>Words &#38; lines<br>Here</p></blockquote>',
+    } as EngineMutation, { idempotencyKey: "same-quote" });
+    expect(calls[0]?.body).toHaveProperty("body");
+    expect(calls.some((call) => call.url.endsWith("/send"))).toBe(true);
+  });
+
   it("asks the door to answer before its copy echoes only where the host opted in", async () => {
     const plain = harness();
     await new HttpAdapter({ baseUrl: "http://localhost", fetch: plain.fetchImpl }).mutate(mutation("draft-1"), { idempotencyKey: "k5" });

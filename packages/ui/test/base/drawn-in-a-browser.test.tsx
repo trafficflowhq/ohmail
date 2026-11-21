@@ -199,6 +199,30 @@ async function opened<T>(
   }
 }
 
+it.each([
+  ["paper", "phone"],
+  ["ohmarchy", "desktop"],
+] as const)("keeps a Settings summary on one truncating line in %s on %s", async (face, device) => {
+  const reading = await drawn(
+    <Rows>
+      <Row entry who="Rules" people={[]} subject="On" preview={"Ohbox and News · ".repeat(50)} />
+    </Rows>,
+    () => {
+      const line = document.querySelector<HTMLElement>(".oh-row-second")!;
+      const style = getComputedStyle(line);
+      const value = line.querySelector(".oh-row-subject")!.getBoundingClientRect();
+      const detail = line.querySelector(".oh-row-preview")!.getBoundingClientRect();
+      return {
+        ellipsis: style.textOverflow,
+        singleLine: Math.abs(value.top - detail.top) < value.height,
+        clipped: line.scrollWidth > line.clientWidth,
+      };
+    },
+    { entry: "mail", face, device },
+  );
+  expect(reading).toEqual({ ellipsis: "ellipsis", singleLine: true, clipped: true });
+});
+
 describe("the product's mark", () => {
   it.each([
     ["paper", "desktop", 200],

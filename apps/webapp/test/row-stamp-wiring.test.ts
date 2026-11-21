@@ -20,7 +20,19 @@ const MAIL_LISTS = [
 ] as const;
 
 describe("the row stamp is wired into every mail list", () => {
-  it.each(MAIL_LISTS)("%s takes the shell's flip and puts both forms on its rows", (view) => {
+  it.each(MAIL_LISTS)("%s takes the shell's flip and puts both forms on its rows", async (view) => {
+    const place = mountedPlace(view);
+    if (place) {
+      const page = await mount(place);
+      await defaultListStamp(page, place);
+      const date = await openReader(page, place.reading);
+      const exact = date.title;
+      expect(exact).not.toBe(date.textContent);
+      await press(date);
+      expect((await readerStamp(page, true, place.reading)).textContent).toBe(exact);
+      await defaultListStamp(page, place);
+      return;
+    }
     const src = read(`views/${view}.tsx`);
     // (a) the props exist, with the shape the shell binds…
     expect(src).toMatch(/^\s*absoluteTime\?: boolean;$/m);
@@ -41,6 +53,21 @@ describe("the row stamp is wired into every mail list", () => {
    * `rowStamp` calls it internally; the views must not.
    */
   it.each(MAIL_LISTS)("%s no longer stamps a row with the bare relative form", (view) => {
+    const mounted = {
+      HistoryView: ["history/HistoryList", "stamp={model.stamp}"],
+      TagView: ["tags/TagsList", "stamp={model.stamp}"],
+      TriageView: ["piles/PilesList", "model.stamp(m.date)"],
+    } as const;
+    const wiring = view === "ReadsView" || view === "ReceiptsView"
+      ? ["stream/StreamList", "whenTitle={stamp.full}"] as const
+      : mounted[view];
+    if (wiring) {
+      const [file, stamp] = wiring;
+      const source = readFileSync(`packages/app/src/${file}.tsx`, "utf8");
+      expect(source).toContain(stamp);
+      expect(source).not.toContain("displayTime(");
+      return;
+    }
     expect(read(`views/${view}.tsx`)).not.toMatch(/time=\{displayTime\(/);
   });
 
@@ -65,6 +92,17 @@ describe("the row stamp is wired into every mail list", () => {
     { route: "tag/work", folder: "INBOX", name: "Tags", reading: "Open message" },
     { route: "triage", folder: "INBOX", name: "Answer Later", reading: "Open message" },
   ] as const;
+
+  function mountedPlace(view: typeof MAIL_LISTS[number]) {
+    switch (view) {
+      case "ReadsView": return places[1];
+      case "ReceiptsView": return places[2];
+      case "HistoryView": return places[3];
+      case "TagView": return places[4];
+      case "TriageView": return places[5];
+      default: return undefined;
+    }
+  }
 
   async function mount(place: typeof places[number]) {
     const row = { ...letter, folder: place.folder,

@@ -1,5 +1,6 @@
 import type { ChainedCommands, Editor } from "@tiptap/react";
 import { NodeSelection, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
+import type { ParagraphStyle } from "../ports.js";
 import type { ResolvedPos } from "@tiptap/pm/model";
 
 /**
@@ -46,12 +47,13 @@ function lineEdge($pos: ResolvedPos, pos: number, dir: -1 | 1): number {
  * Always answers `true`: a selection this cannot resolve (no textblock to stand in) is left
  * for the chained toggle's own semantics, never a refused button press.
  */
-function splitTargetLines(
+export function splitTargetLines(
   state: EditorState,
   tr: Transaction,
-  splitInner: boolean,
+  splitInner: boolean | "heading",
   quotationAsLines = false,
 ): boolean {
+  const mapFrom = tr.mapping.maps.length;
   const sel = state.selection;
   // A NODE selection — a whole list or block picked as a node — is not a run of lines, and narrowing it to the text
   // inside (what `between` does) would change which node the chained toggle acts on: unquoting a selected `<ul>` must
@@ -112,6 +114,19 @@ function splitTargetLines(
     });
   }
 
+  // Keep the last paragraph's authored blank lines as hard breaks when making a heading.
+  // Turning the final break into an empty paragraph would make it look like StarterKit's
+  // generated caret paragraph when the heading is converted back.
+  if (splitInner === "heading" && $to.depth === 1 && $to.after() === tr.doc.content.size) {
+    let trailing = $to.end();
+    for (let i = $to.parent.childCount - 1; i >= 0; i -= 1) {
+      const child = $to.parent.child(i);
+      if (child.type.name !== "hardBreak") break;
+      trailing -= child.nodeSize;
+      splits.delete(trailing);
+    }
+  }
+
   // Descending, so each delete+split leaves every EARLIER collected position untouched.
   for (const pos of [...splits].sort((a, b) => b - a)) {
     tr.delete(pos, pos + 1);
@@ -121,13 +136,14 @@ function splitTargetLines(
   // The mapped line range: bias inward on both ends, so a split exactly at an edge leaves the
   // position inside the lines rather than in the neighbour it just created. (The zero-width
   // line, where a bias has nothing to hold on to, returned above.)
-  const start = tr.mapping.map(lineStart, 1);
-  const end = tr.mapping.map(lineEnd, -1);
+  const mapping = tr.mapping.slice(mapFrom);
+  const start = mapping.map(lineStart, 1);
+  const end = mapping.map(lineEnd, -1);
   if (empty) {
     // A caret stays a caret — the command's TARGET is the line, but nothing was selected and
     // nothing should read as selected afterwards. Clamped, because a split exactly at the
     // caret can map it just outside the isolated line.
-    const caret = Math.min(Math.max(tr.mapping.map(from, -1), start), end);
+    const caret = Math.min(Math.max(mapping.map(from, -1), start), end);
     tr.setSelection(TextSelection.create(tr.doc, caret));
   } else {
     // A range takes the whole lines, INCLUDING when no split was needed: a mid-line selection
@@ -260,6 +276,60 @@ export function applyCode(editor: Editor): void {
     editor.chain().focus().toggleCode().run();
     return;
   }
+  applyCodeBlock(editor);
+}
+
+export function applyParagraphStyle(editor: Editor, style: ParagraphStyle): boolean {
+  const chain = editor.chain().focus();
+  if (style === 0) return chain.command(restoreParagraphLines).run();
+  return chain.command(({ state, tr }) => splitTargetLines(state, tr, "heading"))
+    .setHeading({ level: style }).run();
+}
+
+function restoreParagraphLines({ tr }: { tr: Transaction }): boolean {
+  const { from, to } = tr.selection;
+  const headings: number[] = [];
+  tr.doc.nodesBetween(from, to, (node, pos) => {
+    if (node.type.name === "heading") headings.push(pos);
+  });
+  const { paragraph, hardBreak } = tr.doc.type.schema.nodes;
+  const boundaries = new Set<number>();
+  for (const pos of headings) {
+    const heading = tr.doc.nodeAt(pos)!;
+    tr.setNodeMarkup(pos, paragraph);
+    boundaries.add(pos);
+    boundaries.add(pos + heading.nodeSize);
+  }
+  for (const pos of [...boundaries].sort((a, b) => b - a)) {
+    const { nodeBefore, nodeAfter } = tr.doc.resolve(pos);
+    if (nodeBefore?.type !== paragraph || nodeAfter?.type !== paragraph) continue;
+    // Authored terminal breaks are still inline. Drop only the generated caret paragraph.
+    const trailingPlaceholder = !nodeAfter.content.size && pos + nodeAfter.nodeSize === tr.doc.content.size;
+    tr.join(pos);
+    if (!trailingPlaceholder) tr.insert(pos - 1, hardBreak.create());
+  }
+  return true;
+}
+
+export function applyDivider(editor: Editor): void {
+  editor.chain().focus()
+    .command(({ state, tr }) => splitTargetLines(state, tr, false))
+    .command(({ tr }) => {
+      const { $to } = tr.selection;
+      if ($to.parent.isTextblock) tr.setSelection(TextSelection.create(tr.doc, $to.end()));
+      return true;
+    })
+    .setHorizontalRule()
+    .run();
+}
+
+export function applyCodeBlock(editor: Editor): boolean {
+  if (editor.isActive("codeBlock")) return editor.chain().focus().toggleCodeBlock().run();
+  if (editor.state.selection.empty) {
+    return editor.chain().focus()
+      .command(({ state, tr }) => splitTargetLines(state, tr, false))
+      .setCodeBlock().updateAttributes("codeBlock", { authored: true }).run();
+  }
   /**
    * The block, over WHOLE LINES. The selection is expanded and isolated first ({@link splitTargetLines}), for the two
    * defects the exact-range replacement had:
@@ -275,7 +345,7 @@ export function applyCode(editor: Editor): void {
    * A selection that never resolved to textblocks (nothing to isolate) keeps the old exact-range behaviour, which is
    * the select-all case the suite pins.
    */
-  editor.chain().focus()
+  return editor.chain().focus()
     .command(({ state, tr }) => splitTargetLines(state, tr, false))
     .command(({ state, commands }) => {
       const sel = state.selection;
@@ -287,7 +357,8 @@ export function applyCode(editor: Editor): void {
         : { from: sel.from, to: sel.to };
       return commands.insertContentAt(range, {
         type: "codeBlock",
-        content: [{ type: "text", text: lineText }],
+        attrs: { authored: true },
+        content: lineText ? [{ type: "text", text: lineText }] : [],
       });
     })
     .run();

@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { ThemeProvider } from "@ohmail/ui";
+import { FrameReports } from "@ohmail/app/frame";
 
 import { DesktopGate } from "../src/DesktopGate.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
@@ -98,7 +99,7 @@ async function render(): Promise<void> {
         IntlProvider as unknown as Loose,
         { locale: "en", messages: messages as never, timeZone: "UTC" },
         looseH(ThemeProvider as unknown as Loose, { storageKey: "ohmail.theme" },
-          looseH(ToastHost as unknown as Loose, null, h(DesktopGate, null))),
+          looseH(FrameReports as unknown as Loose, null, h(DesktopGate, null))),
       ),
     );
   });

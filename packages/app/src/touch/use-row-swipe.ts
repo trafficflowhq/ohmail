@@ -24,11 +24,11 @@ export const useRowSwipe: UseRowSwipe = (id: string, sides: RowSides): RowSwipe 
     rest,
   );
   if (!store) return undefined;
-  const { read, later } = sides;
+  const { right, left } = sides;
   /* `pulled` is always a number: the row is drawn where the layer says, and never by a gesture of its own. */
   return {
-    ...(read ? { right: { label: read.label, icon: read.icon } } : {}),
-    ...(later ? { left: { label: later.label, icon: later.icon } } : {}),
+    right,
+    left,
     pulled,
   };
 };

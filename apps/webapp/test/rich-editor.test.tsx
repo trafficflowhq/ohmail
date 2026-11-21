@@ -216,11 +216,10 @@ describe("the body says WHAT IT IS, not only what it is called", () => {
 });
 
 describe("the toolbar is the grammar, and the grammar is small", () => {
-  it("offers exactly nine controls, in the kit's fixed order", () => {
-    /* Re-pointed to Write's strip as the switch ruled the row: the kit's nine, underline among them. */
-    const ed = mount();
-    expect(ed.buttons().map((b) => b.getAttribute("aria-label"))).toEqual([
-      "Bold", "Italic", "Underline", "Strikethrough", "Link", "Numbered list", "Bulleted list", "Quote", "Code",
+  it("offers exactly twelve controls in order", () => {
+    expect(mount().buttons().map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Bold", "Italic", "Underline", "Strikethrough", "Paragraph style", "Link",
+      "Numbered list", "Bulleted list", "Quote", "Inline code", "Code block", "Divider",
     ]);
   });
 
@@ -241,11 +240,11 @@ describe("the toolbar is the grammar, and the grammar is small", () => {
     // out, so the user would see one message and the recipient another.
     const ed = mount();
     act(() => {
-      ed.editor().commands.setContent("<h1>Title</h1><hr><p>kept</p>");
+      ed.editor().commands.setContent("<h4>Title</h4><table><tr><td>Cell</td></tr></table><p>kept</p>");
     });
     const html = ed.editor().getHTML();
-    expect(html).not.toContain("<h1");
-    expect(html).not.toContain("<hr");
+    expect(html).not.toContain("<h4");
+    expect(html).not.toContain("<table");
     // …and the WORDS are kept. Refusing a node type must not silently delete somebody's text.
     expect(ed.editor().getText()).toContain("Title");
     expect(ed.editor().getText()).toContain("kept");
@@ -627,7 +626,7 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
     const start = "<p>run ".length - "<p>".length + 1; // "run " → text starts at pos 1
     act(() => {
       ed.editor().commands.setTextSelection({ from: start, to: start + "npm test".length });
-      ed.button("Code").click();
+      ed.button("Inline code").click();
     });
     expect(ed.value.html).toContain("<code>npm test</code>");
     expect(ed.value.html).not.toContain("<pre");
@@ -647,7 +646,7 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
     const ed = mount({ text: "", html: "<p>one<br>two<br>three</p>" });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     const html = ed.editor().getHTML();
     expect(count(html, "pre"), "not exactly one code block").toBe(1);
@@ -662,7 +661,7 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
     const ed = mount({ text: "", html: "<p>head<br><br>tail</p>" });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     expect(ed.editor().state.doc.textContent).toContain("head\n\ntail");
   });
@@ -676,7 +675,7 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
     act(() => { ed.editor().commands.setContent("<p>alpha</p><p>beta</p><p>gamma</p>"); });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     const html = ed.editor().getHTML();
     expect(count(html, "pre")).toBe(1);
@@ -684,17 +683,16 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
   });
 
   it("reports itself pressed inside a block, and pressing it again lifts the block out", () => {
-    // One button, two constructs: a caret in a code block with an unlit Code button would be a
-    // control claiming the text is not code while the text is code.
+    // The dedicated button reports the block at the caret and returns it to normal text.
     const ed = mount({ text: "", html: "<p>one<br>two</p>" });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     expect(ed.editor().isActive("codeBlock")).toBe(true);
-    expect(ed.button("Code").getAttribute("aria-pressed")).toBe("true");
+    expect(ed.button("Code block").getAttribute("aria-pressed")).toBe("true");
 
-    act(() => { ed.button("Code").click(); });
+    act(() => { ed.button("Code block").click(); });
     expect(ed.editor().getHTML()).not.toContain("<pre");
     // …and the lines the author typed all came back. `HardBreak` is the schema's
     // `linebreakReplacement`, so the block's newlines become `<br>`s again rather than running
@@ -711,7 +709,7 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
     const ed = mount({ text: "x", html: "<p>x</p>" });
     act(() => {
       ed.editor().commands.focus("end");
-      ed.button("Code").click();
+      ed.button("Inline code").click();
       ed.editor().commands.insertContent("y");
     });
     expect(ed.editor().getHTML()).toContain("<code>y</code>");
@@ -790,11 +788,11 @@ describe("block formats take LINES, not the whole message (owner-reported)", () 
   it("a mid-line code selection expands to whole lines and leaves no dangling break", () => {
     const ed = mount({ text: "", html: "<p>one<br>two<br>three<br>four</p>" });
     act(() => { ed.editor().commands.setTextSelection({ from: 6, to: 11 }); });
-    act(() => { ed.button("Code").click(); });
+    act(() => { ed.button("Code block").click(); });
     // The neighbours come out CLEAN — the pre-fix command left `<p>one<br></p>`, a dangling
     // break that rendered (and sent) as a stray blank line under "one".
     expect(ed.editor().getHTML()).toBe(
-      "<p>one</p><pre><code>two\nthree</code></pre><p>four</p>",
+      '<p>one</p><pre data-ohmail-code="1"><code>two\nthree</code></pre><p>four</p>',
     );
   });
 
@@ -991,7 +989,7 @@ describe("block formats take LINES, not the whole message (owner-reported)", () 
       const { state, view } = ed.editor();
       view.dispatch(state.tr.setSelection(NodeSelection.create(state.doc, 0)));
     });
-    act(() => { ed.button("Code").click(); });
+    act(() => { ed.button("Code block").click(); });
     const html = ed.editor().getHTML();
     expect((html.match(/<pre[ >]/g) ?? []).length).toBe(1);
     expect(html).not.toContain("<ul>");
@@ -1054,7 +1052,7 @@ describe("Enter leaves a block the way every editor leaves one", () => {
     const ed = mount({ text: "", html: "<p>one<br>two</p>" });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     // To the end of "one\ntwo" INSIDE the block (pre opens at 0, text 1–8) — `focus("end")`
     // would land in the trailing paragraph the replacement keeps after the block.
@@ -1063,7 +1061,7 @@ describe("Enter leaves a block the way every editor leaves one", () => {
     act(() => { pressEnter(ed); pressEnter(ed); pressEnter(ed); });
     expect(ed.editor().isActive("codeBlock"), "three Enters must leave the block").toBe(false);
     // …and the block kept the lines; the exits did not eat them.
-    expect(ed.editor().getHTML()).toContain("<pre><code>one\ntwo</code></pre>");
+    expect(ed.editor().getHTML()).toContain('<pre data-ohmail-code="1"><code>one\ntwo</code></pre>');
   });
 });
 
@@ -1317,7 +1315,7 @@ describe("a paste keeps its lines: line breaks only, never a paragraph (owner-re
     const code = mount({ text: "", html: "<pre><code>x</code></pre>" });
     act(() => { code.editor().commands.setTextSelection(2); });
     paste(code, { text: "\n  - y" });
-    expect(code.editor().getHTML()).toContain("<pre><code>x\n  - y</code></pre>");
+    expect(code.editor().getHTML()).toContain('<pre data-ohmail-code="1"><code>x\n  - y</code></pre>');
   });
 
   it("paste-as-plain-text (Ctrl+Shift+V) takes the text by the same rule, markup left behind", () => {

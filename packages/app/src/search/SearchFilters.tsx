@@ -38,6 +38,7 @@ export function SearchFilters({
       {folder ? (
         <FacetMenu
           word={t(model.searchBy === "people" ? "facetPlace" : "facetFolder")}
+          title={model.searchBy === "people" ? t("facetPlace") : undefined}
           items={folder.items}
           nameOf={nameOf}
           pick={model.pick}
@@ -53,18 +54,26 @@ export function SearchFilters({
   );
 }
 
+function itemKey({ pick }: SearchFacetItem): string {
+  if (pick.group === "refine") return "refine";
+  return pick.group === "folder" ? (pick.raw ?? pick.key) : pick.key;
+}
+
 function FacetMenu({
   word,
+  title,
   items,
   nameOf,
   pick,
 }: {
   word: string;
+  title?: string;
   items: readonly SearchFacetItem[];
   nameOf: (it: SearchFacetItem) => string;
   pick: SearchListModel["pick"];
 }) {
-  const [open, setOpen] = useState(false);
+  const [openedWith, setOpenedWith] = useState<readonly string[] | null>(null);
+  const open = openedWith !== null;
   const opener = useRef<HTMLButtonElement>(null);
   const set = items.find((it) => it.pressed);
   if (set) {
@@ -74,6 +83,14 @@ function FacetMenu({
       </Button>
     );
   }
+  // Keep the positions from the opening press. Newly available paths follow those that were visible.
+  const byKey = new Map(items.map((item) => [itemKey(item), item]));
+  const ordered = (openedWith ?? []).flatMap((key) => {
+    const item = byKey.get(key);
+    byKey.delete(key);
+    return item ? [item] : [];
+  });
+  ordered.push(...byKey.values());
   return (
     <>
       <Button
@@ -84,17 +101,17 @@ function FacetMenu({
         opens="menu"
         expanded={open}
         disabled={items.length === 0}
-        onPress={() => setOpen((was) => !was)}
+        onPress={() => setOpenedWith(open ? null : title ? items.map(itemKey) : [])}
       >
         {word}
       </Button>
-      <Menu open={open} onClose={() => setOpen(false)} anchor={opener} label={word}>
-        {items.map((it) => (
+      <Menu open={open} onClose={() => setOpenedWith(null)} anchor={opener} label={word} title={title}>
+        {ordered.map((it) => (
           <MenuItem
-            key={it.pick.group === "refine" ? "refine" : it.pick.key}
+            key={itemKey(it)}
             note={it.count === null ? undefined : String(it.count)}
             onPress={() => {
-              setOpen(false);
+              setOpenedWith(null);
               pick(it.pick);
             }}
           >

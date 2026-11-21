@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -79,7 +80,7 @@ async function mountNode(node: React.ReactNode): Promise<HTMLElement> {
 
 async function mountSection(): Promise<HTMLElement> {
   const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
-  return mountNode(h(DevicesSection));
+  return mountNode(h(WithReport, { view: DevicesSection }));
 }
 
 async function click(el: Element): Promise<void> {

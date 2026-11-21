@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { openPane } from "../bench/panes.js";
 import type { Bench, Person } from "../bench/seam.js";
-import { WEB, journey, journeysOf, type DoorFault, type Guard } from "../bench/web.js";
+import { WEB, journey, journeysOf, signInPaintWhileLeaving, type DoorFault, type Guard } from "../bench/web.js";
 
 /**
  * Where a signed-out person stands differs by setting: a self-hosted server shows its sign-in
@@ -23,6 +23,7 @@ export const GUARDS: Guard[] = [
     title: "A sign-out the server never answers still ends, and the sign-in page finishes it",
     rows: ["sign-out-hangs-then-loops"], surfaces: ["W-s"], needs: [], tolerates: [...TOLERATED, /SyncAbortedError/],
   },
+  { title: "A fresh sign-in page keeps the departed account's face off screen during sign-out", rows: [], surfaces: ["W-s"], needs: [], tolerates: [...TOLERATED, /SyncAbortedError/] },
 ];
 
 async function out(b: Bench, person: Person): Promise<void> {
@@ -74,5 +75,9 @@ journeysOf("sign-out", () => {
     await person.front();
     await person.here("gate");
     await person.see("login-continue");
+  });
+  journey(GUARDS[4]!, async (b) => {
+    const { person, account } = await openPane(b, "settings-account", "sign-out");
+    await signInPaintWhileLeaving(b, person, account!.accountId);
   });
 });

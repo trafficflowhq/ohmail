@@ -31,6 +31,7 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
     <div className="ob-foot" ref={foot} tabIndex={-1}>
       <SelectionBar
         label={t("bar.label")}
+        announceCount={false}
         count={{
           count: String(count),
           word: t("pickedWord"),

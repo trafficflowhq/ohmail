@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -187,7 +188,7 @@ async function mount(messages: Record<string, unknown> = en as never): Promise<v
         messages: messages as never,
         timeZone: "Europe/Zurich",
       },
-        h(ThemeProvider, null, h(ToastHost, null, h(DesktopDevices)))),
+        h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DesktopDevices })))),
     );
   });
   await flush();
@@ -698,7 +699,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
       root.render(
         h(React.StrictMode, null,
           h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-            h(ThemeProvider, null, h(ToastHost, null, h(DesktopDevices))))),
+            h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DesktopDevices }))))),
       );
     });
     await flush();

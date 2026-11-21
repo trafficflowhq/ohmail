@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Icon, type IconName } from "../../icons/Icon.js";
+import { Icon, type ComposerIconName, type IconName } from "../../icons/Icon.js";
 import "./composer.css";
 
 /** One mark of the editor: Bold, a link, a list. It is drawn as a letter or as a sign. */
@@ -10,11 +10,12 @@ export interface ComposerMark {
   title?: string;
   /** The letter that stands for it, drawn the way the mark draws text. */
   glyph?: { letter: string; as: "bold" | "italic" | "underline" | "strike" };
-  icon?: IconName;
+  icon?: IconName | ComposerIconName;
   /** The mark holds where the caret is. */
   pressed?: boolean;
   /** This control opens a dialog and reports whether it is open. */
   dialogExpanded?: boolean;
+  menuExpanded?: boolean;
   disabled?: boolean;
   /** A press hands the mark's own element: what the mark opens (a link's card) comes out of it. */
   onPress?: (anchor: HTMLElement) => void;
@@ -46,9 +47,15 @@ export function ComposerMarks({ label, groups }: ComposerMarksProps) {
               className="oh-control oh-composer-mark"
               aria-label={mark.label}
               title={mark.title ?? mark.label}
-              aria-pressed={mark.dialogExpanded === undefined ? (mark.pressed ?? false) : undefined}
-              aria-haspopup={mark.dialogExpanded === undefined ? undefined : "dialog"}
-              aria-expanded={mark.dialogExpanded}
+              aria-pressed={mark.pressed}
+              aria-haspopup={
+                mark.menuExpanded !== undefined
+                  ? "menu"
+                  : mark.dialogExpanded !== undefined
+                    ? "dialog"
+                    : undefined
+              }
+              aria-expanded={mark.menuExpanded ?? mark.dialogExpanded}
               disabled={mark.disabled}
               onClick={(event) => mark.onPress?.(event.currentTarget)}
             >
@@ -59,6 +66,7 @@ export function ComposerMarks({ label, groups }: ComposerMarksProps) {
                   {mark.glyph?.letter}
                 </span>
               )}
+              {mark.menuExpanded !== undefined ? <Icon name="down" size={18} /> : null}
             </button>
           ))}
         </Fragment>

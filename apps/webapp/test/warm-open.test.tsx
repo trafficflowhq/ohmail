@@ -440,13 +440,19 @@ describe("under the word wait, a remembered mailbox is opened but not drawn befo
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
     const { SESSION_TIMEOUT_MS } = await import("../app/session-gate");
-    const el = await mount(() => new Promise<OwnerOutcome>(() => {}), "wait");
+    const check = deferredOwner();
+    const el = await mount(check.fn, "wait");
     await act(async () => { vi.advanceTimersByTime(SESSION_TIMEOUT_MS - 1); });
     expect(mailbox(el)).toBeNull();
     await act(async () => { vi.advanceTimersByTime(1); });
-    expect(mailbox(el), "the copy stayed hidden after the budget").not.toBeNull();
+    expect(mailbox(el), "the copy appeared without confirmation").toBeNull();
     await act(async () => { vi.advanceTimersByTime(30_000); });
+    expect(mailbox(el)).toBeNull();
     expect(syncUrls, "an unconfirmed mirror asked the server for changes").toBe(0);
+    // The timeout alone never opens the copy. A matching answer can still open it later.
+    check.resolve({ kind: "owner", accountId: ACCOUNT_A });
+    await settle();
+    expect(mailbox(el), "the late confirmation did not open the copy").not.toBeNull();
   });
 
   it("under the word now, draws at once as before", async () => {

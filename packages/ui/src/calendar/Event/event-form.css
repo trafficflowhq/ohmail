@@ -244,11 +244,8 @@
     display: flex;
     justify-content: flex-end;
     flex: none;
-    gap: var(--s2);
+    gap: var(--s1);
     margin-inline-start: auto;
-  }
-  .oh-ecard .oh-evform-verbs {
-    flex-basis: 100%;
   }
   .oh-ecard .oh-evform-last,
   .oh-qa .oh-evform-last {
@@ -257,6 +254,49 @@
     inset-block-end: 0;
     z-index: var(--oh-evform-last-z);
     background: var(--sheet);
+  }
+  .oh-ecard[data-editing] .oh-evform-verbs .oh-button[data-kind="quiet"] {
+    color: var(--ink2);
+  }
+  .oh-ecard[data-editing] .oh-evform-verbs .oh-button[data-kind="quiet"]:hover {
+    color: var(--ink);
+  }
+  .oh-ecard[data-editing] .oh-evform-last {
+    --oh-evform-last-bleed: calc(var(--s3) * -1);
+    inset-block-end: var(--oh-evform-last-bleed);
+    margin-block-end: var(--oh-evform-last-bleed);
+    padding-block: var(--s2) var(--s3);
+  }
+  .oh-ecard[data-editing][data-frame="sheet"] .oh-evform-last {
+    inset-block-end: 0;
+    margin-block-end: 0;
+    padding-block-end: 0;
+  }
+  .oh-ecard[data-editing] .oh-evform-last::before {
+    position: absolute;
+    inset: auto 0 100%;
+    height: var(--s3);
+    background: linear-gradient(transparent, var(--sheet));
+    pointer-events: none;
+    content: "";
+  }
+  .oh-evform .oh-slot[data-kind="done"]:disabled {
+    background: var(--slot-soft);
+    color: var(--ink);
+    opacity: 1;
+  }
+  :root[data-touch="1"] .oh-ecard[data-editing][data-frame="sheet"] .oh-evform-field:not([data-kind="notes"]),
+  :root[data-touch="1"] .oh-evform-verbs .oh-button {
+    min-height: var(--cal-edit-touch);
+  }
+  :root[data-touch="1"] .oh-evform-verbs .oh-button {
+    padding-inline: var(--s4);
+  }
+  :root[data-touch="1"] .oh-ecard[data-editing][data-frame="sheet"] .oh-evform-field[data-kind="time"] {
+    width: var(--cal-edit-touch-time);
+  }
+  :root[data-touch="1"] .oh-ecard[data-editing][data-frame="sheet"] .oh-evform-field[data-kind="notes"] {
+    min-height: calc(2 * var(--cal-edit-touch));
   }
   .oh-evform-adds {
     --oh-evform-adds-gap: 2px;

@@ -257,7 +257,7 @@
     position: absolute;
     right: 0;
     left: 0;
-    height: 6px;
+    height: var(--cal-resize-hit);
     cursor: ns-resize;
     touch-action: none;
   }
@@ -266,6 +266,20 @@
   }
   .oh-ev-hd[data-edge="end"] {
     bottom: 0;
+  }
+  .oh-ev-hd::after {
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: var(--s5);
+    height: var(--oh-focus);
+    translate: -50% -50%;
+    border-radius: var(--r-pill);
+    background: currentColor;
+    opacity: 0;
+    content: "";
+  }
+  .oh-ev:is(:hover, :focus) .oh-ev-hd::after {
+    opacity: 1;
   }
   .oh-ev[data-fixed] {
     cursor: default;

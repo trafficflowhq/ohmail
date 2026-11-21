@@ -28,7 +28,8 @@ import {
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { answerEnvelopeRefusal, isInvitationAnswerDraft, threadHeadersFit, type AnswerCalendar } from "./invitation-answer-draft.js";
 import { requireUuid } from "./ids.js";
-import { htmlToPlainText, sanitizeOutboundHtml, sanitizeQuotedHtml } from "./outbound-html.js";
+import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
+import { htmlToPlainText, prepareOutboundDelivery, sanitizeQuotedHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
@@ -3277,17 +3278,11 @@ export class SendService {
         }
       }
 
-      /**
-       * THE LAST GATE BEFORE THE BYTES LEAVE THE BUILDING. `DraftsService` already sanitized this
-       * html, so this pass is normally a no-op — `sanitizeOutboundHtml` is idempotent, asserted
-       * rather than assumed. It is here because "DraftsService is the only writer" is a claim
-       * about today: the AI workflow code already inserts into `drafts` directly, and the next
-       * writer will not remember to ask; sanitizing where the envelope is assembled closes every
-       * writer at once. Promoted markup is a FIXED POINT of this pass, asserted. `text` stays
-       * `d.body` untouched: for a rich draft, `body` IS the alternative derived from this html at
-       * write time — deriving it again could differ from the stored one.
-       */
-      const html = d.html ? sanitizeOutboundHtml(d.html) : null;
+      // Re-sanitize at the envelope boundary for every draft writer. Add recipient-client styles here,
+      // after the grammar check, so draft storage and editing still use the same unstyled markup.
+      const delivery = d.html ? prepareOutboundDelivery(d.html, d.body) : null;
+      const html = delivery?.html ?? null;
+      const text = delivery?.text ?? d.body;
 
       // ── FORWARD: THE ORIGINAL IS QUOTED SERVER-SIDE, AND A no_forward ONE IS REFUSED ────────
       //
@@ -3373,12 +3368,15 @@ export class SendService {
             .orderBy(asc(attachments.id)).limit(FORWARD_MAX_PARTS);
           if (sentRows.length !== want.length) throw forwardPartsChanged();
         }
-        const words: ForwardWords = loadable
+        // An edited quote is stored with the draft body. The original was still checked above,
+        // and every inherited file follows the ordinary streaming path.
+        const editedHistory = hasEditedQuotedHistory(d.html);
+        const words: ForwardWords = loadable || editedHistory
           ? { kind: "stored" }
-          : { kind: "mailbox", banner, clock, note: d.body, noteHtml: html, blankNote };
-        if (loadable) {
+          : { kind: "mailbox", banner, clock, note: text, noteHtml: html, blankNote };
+        if (loadable && !editedHistory) {
           fwdBody = composeForward(
-            { text: d.body, html, blank: blankNote }, banner, body!.text ?? "", body!.html ?? null, clock, inlineCids(sentRows),
+            { text, html, blank: blankNote }, banner, body!.text ?? "", body!.html ?? null, clock, inlineCids(sentRows),
           );
         }
         forward = {
@@ -3418,7 +3416,7 @@ export class SendService {
         // (`composeForward`); otherwise the note alone — a normal send, or a forward whose words
         // are read from the mailbox at send and composed there by the same function. The html
         // half exists when the draft is rich or a forwarded original has html of its own.
-        ...(fwdBody ?? { text: d.body, ...(html ? { html } : {}) }),
+        ...(fwdBody ?? { text, ...(html ? { html } : {}) }),
         messageId: mintedMessageId,
         ...(inReplyTo && threadHeadersFit(input.calendar, inReplyTo, references) ? { inReplyTo, references } : {}),
         // ── ATTACHMENTS RIDE THE REQUEST, NOT THE ROW ──────────────────────────────────────

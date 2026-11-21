@@ -54,7 +54,7 @@ export function useOhboxWindow(groupedNew: OhboxRowGroup[], groupedPrev: OhboxRo
   const newBase = newCount > 0 ? 1 : 0;
   const prevLabelAt = newBase + newCount;
   const prevBase = prevLabelAt + (prevCount > 0 ? 1 : 0);
-  const win = useListWindow({ scrollerRef: listScrollerRef, count: prevBase + prevCount });
+  const win = useListWindow({ scrollerRef: listScrollerRef, count: prevBase + prevCount, scrollStep: 4 });
   const clamp = (i: number, hi: number): number => Math.min(Math.max(i, 0), hi);
   const newFrom = clamp(win.start - newBase, newCount);
   const newTo = clamp(win.end - newBase, newCount);

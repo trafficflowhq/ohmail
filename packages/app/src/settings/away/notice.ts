@@ -28,6 +28,7 @@ export function awayFeedOver(transport: AwayWire) {
     return reading;
   }
   const wire: AwayWire = {
+    snapshot: current,
     async state() {
       const at = ++serial;
       try {

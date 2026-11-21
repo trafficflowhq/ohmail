@@ -29,7 +29,7 @@ import type {
   AutoFiledItemWire, AutoFiledUndoWire, HeldReleaseGroupWire, HeldReleaseSenderWire, ScreenDecisionResult,
   ScreenerPendingDecision, ScreenRequestResult, StayedWire, UnscreenedGroupWire, UnscreenedPileWire, WaitingRequestWire,
 } from "./screener-answers.js";
-import type { AddressSearchResult, SearchResult } from "./search.js";
+import type { AddressSearchResult, SearchPlacesResult, SearchResult } from "./search.js";
 import type { AwayResponderBody, AwayResponderRead, AwayResponderSaveAnswer } from "./rest-only.js";
 import type { AttachmentWire, DraftDTO, DraftWrittenAnswer } from "./drafts.js";
 import type { InvitationAnswerBody, InvitationAnswerResult } from "./invitations.js";
@@ -159,6 +159,7 @@ export interface Routes {
   "GET /calendar/settings": { params: None; body: never; answer: CalendarSettingsWire };
   /** `X-Sync-Seq` names the settings change when a field changed; a request that changes nothing carries none. */
   "PATCH /calendar/settings": { params: None; body: CalendarSettingsBody; answer: CalendarSettingsWire };
+  "PATCH /calendar/suggestions/:id": { params: Id; body: { dismissed: boolean }; answer: { dismissed: boolean } };
   /** An act on an event, recorded under the press's `Idempotency-Key` (required) and carried out by the worker. `202`. */
   "POST /calendar/writes": { params: None; body: CalendarEventAct; answer: CalendarWriteAnswer };
   /** A refused write owed again, with the writes refused only because they waited for it. */
@@ -241,11 +242,11 @@ export interface Routes {
   "POST /attachments/staging": { params: None; body: StagingMintBody; answer: StagedUploadGrantWire };
 
   // ── search ──────────────────────────────────────────────────────────────────
-  /** Two arms on one route: the text search, and with `address` the letters to or from one address. */
+  /** Text search, an address lookup, or with `places=1` the folder inventory. */
   "GET /search": {
     params: None; body: never;
     /** `answeredFrom`: a desktop engine's own door answered from its copy of the account, not from the account's server. */
-    answer: (SearchResult | AddressSearchResult) & { answeredFrom?: "mirror" };
+    answer: (SearchResult | AddressSearchResult | SearchPlacesResult) & { answeredFrom?: "mirror" };
   };
 
   // ── the Screener ────────────────────────────────────────────────────────────

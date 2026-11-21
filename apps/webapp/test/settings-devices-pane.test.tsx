@@ -32,6 +32,7 @@
  *     self-host), only on rows the SERVER marks `named: false`, and never the current row or
  *     a paired device.
  */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { within } from "@testing-library/react";
 import { NONE, type FeatureEntry } from "@ohmail/app/host";
 import { mailSettings, NO_PANE_PARTS, type MailPaneParts } from "@ohmail/app/mail";
@@ -49,6 +50,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { MemoryMirrorStore, noticeChoicesOf, type Notice, type SyncChange } from "@ohmail/client-engine";
 import { EngineContext, type EngineBinding } from "@ohmail/app-logic/engine/context";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { NoticeCaller, noticeReadsOf, toldDevicesIn, type HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import messages from "../messages/en.json";
 import { decodeQr, matrixFromSvg } from "./fixtures/qr-decode";
@@ -158,6 +160,11 @@ async function mountNode(node: React.ReactNode): Promise<HTMLElement> {
   return host;
 }
 
+function DeviceConsent({ children }: { readonly children?: React.ReactNode }) {
+  const consent = useConsentState(false, DEVICE_ACCOUNT, NONE);
+  return h(ConsentContext.Provider, { value: consent }, children);
+}
+
 function mountDevices(part: MailPaneParts["devices"], first: "general" | "devices", binding?: EngineBinding) {
   const settings = mailSettings({ ...NO_PANE_PARTS, general: () => null, devices: part });
   const devices: FeatureEntry | typeof NONE = part === NONE ? NONE : { name: "devices", render: () => null };
@@ -171,7 +178,7 @@ function mountDevices(part: MailPaneParts["devices"], first: "general" | "device
     features: { devices },
   });
   const pairingHost = { ...host, capabilities: { ...host.capabilities, pairing: "account" as const } };
-  const frame = h(MailFrame, { host: pairingHost });
+  const frame = h(DeviceConsent, null, h(MailFrame, { host: pairingHost }));
   return mountNode(binding ? h(EngineContext.Provider, { value: binding }, frame) : frame);
 }
 
@@ -184,7 +191,10 @@ async function mountSection(binding?: EngineBinding): Promise<HTMLElement> {
     document.cookie = "tf_owner=; Path=/; Max-Age=0";
   };
   const { WEB_PANE_PARTS } = await import("../app/(product)/mailbox/pane-parts");
-  return mountDevices(WEB_PANE_PARTS.devices, "devices", binding);
+  const section = await mountDevices(WEB_PANE_PARTS.devices, "devices", binding);
+  await within(section).findByRole("button", { name: messages.devices.addAction });
+  await act(async () => { await Promise.resolve(); });
+  return section;
 }
 
 async function click(el: Element): Promise<void> {
@@ -659,7 +669,7 @@ describe("Strict Mode — development double-mount must not wedge the pane", () 
     answers["GET /api/devices"] = { status: 200, body: { items: [PAIRED_PHONE] } };
     answers["GET /api/pair"] = { status: 200, body: { items: [LIVE_CODE] } };
     const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
-    const c = await mountNode(h(React.StrictMode, null, h(DevicesSection)));
+    const c = await mountNode(h(React.StrictMode, null, h(WithReport, { view: DevicesSection })));
     expect(c.textContent).toContain("Mila's phone");
     expect(c.textContent).toContain("Codes not yet used");
   });

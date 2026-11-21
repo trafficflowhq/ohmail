@@ -14,6 +14,7 @@ export function useGridKeys({
   zone,
   zones,
   open,
+  create,
 }: {
   where: Where | null;
   events: readonly CalendarEventFace[];
@@ -22,6 +23,7 @@ export function useGridKeys({
   zone: string;
   zones: ZoneSource;
   open: (event: EventRef) => void;
+  create: ((day: string, from: number, to: number) => void) | null;
 }): number | null {
   const t = useText("calendar");
   const [picked, setPicked] = useState<{ span: string; minute: number } | null>(null);
@@ -58,11 +60,11 @@ export function useGridKeys({
             : [
                 bind("Escape", t("clearHour"), () => setPicked(null)),
                 {
-                  ...bind("Enter", t("openEvent"), () => {
+                  ...bind("Enter", t(hit() ? "openEvent" : "create.title"), () => {
                     const event = hit();
-                    if (!event) return;
+                    if (event) open(event.ref);
+                    else if (where) create?.(where.anchor, minute, minute + 60);
                     setPicked(null);
-                    open(event.ref);
                   }),
                   when: (event: KeyboardEvent) =>
                     !(event.target instanceof HTMLElement && event.target.closest("button, a")),

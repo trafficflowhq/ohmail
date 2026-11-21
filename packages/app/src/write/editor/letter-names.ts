@@ -11,10 +11,13 @@ import { letterText } from "@ohmail/ui/mail";
 
 const BLOCK: Readonly<Record<string, string>> = {
   paragraph: letterText.paragraph,
+  heading: letterText.heading,
+  horizontalRule: letterText.divider,
   bulletList: letterText.bullets,
   orderedList: letterText.numbers,
   listItem: letterText.item,
   blockquote: letterText.quote,
+  quotedHistory: "write-history-block",
   codeBlock: letterText.codeBlock,
 };
 
@@ -22,7 +25,11 @@ function blocksOf(doc: ProseMirrorNode): DecorationSet {
   const out: Decoration[] = [];
   doc.descendants((node, pos) => {
     const name = BLOCK[node.type.name];
-    if (name !== undefined) out.push(Decoration.node(pos, pos + node.nodeSize, { class: name }));
+    if (name !== undefined) {
+      const attrs: Record<string, string> = { class: name };
+      if (node.type.name === "heading") attrs["data-level"] = String(node.attrs.level);
+      out.push(Decoration.node(pos, pos + node.nodeSize, attrs));
+    }
   });
   return DecorationSet.create(doc, out);
 }

@@ -11,6 +11,7 @@
  * legacy read, so it would be a second thing to keep true in exchange for nothing.
  */
 
+import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
 import { withSupportBlock, withoutSupportBlock } from "@trafficflow/core/diagnostics";
 
 /** What the editor holds: the markup, and the plain text it renders as. */
@@ -22,6 +23,8 @@ export interface RichValue {
 }
 
 export const EMPTY_RICH: RichValue = { text: "", html: "" };
+
+export { hasEditedQuotedHistory, QUOTED_HISTORY_ATTRIBUTE } from "@trafficflow/core/outbound-text";
 
 /**
  * Is there anything here to send, or to keep?
@@ -73,7 +76,7 @@ export function parseRichValue(raw: string | null | undefined): RichValue {
  * {@link parseRichValue}, invisibly, until somebody's message came back wrong.
  */
 export function serializeRichValue(v: RichValue): string | null {
-  if (isRichEmpty(v)) return null;
+  if (isRichEmpty(v) && !hasEditedQuotedHistory(v.html)) return null;
   if (v.html === "" && parseRichValue(v.text).text === v.text) return v.text;
   return JSON.stringify({ text: v.text, html: v.html });
 }

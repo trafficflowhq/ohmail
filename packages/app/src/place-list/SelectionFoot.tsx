@@ -13,10 +13,25 @@ interface SelectionFootProps {
 }
 
 export function SelectionFoot(props: SelectionFootProps) {
-  return props.selection.pickedRows.length > 0 ? <PickedFoot {...props} /> : null;
+  const count = props.selection.pickedRows.length;
+  return (
+    <>
+      <SelectionStatus count={count} />
+      {count > 0 ? <PickedFoot {...props} /> : null}
+    </>
+  );
 }
 
-function PickedFoot({ selection, verbs, children }: SelectionFootProps) {
+export function SelectionStatus({ count }: { count: number }) {
+  const t = useText("ohbox");
+  return (
+    <span className="oh-vh" aria-live="polite" aria-atomic="true">
+      {count > 0 ? t("picked", { count }) : ""}
+    </span>
+  );
+}
+
+export function PickedFoot({ selection, verbs, children }: SelectionFootProps) {
   const t = useText("ohbox");
   const { pickedRows, clear } = selection;
   const [more, setMore] = useState(false);
@@ -28,6 +43,7 @@ function PickedFoot({ selection, verbs, children }: SelectionFootProps) {
     <div ref={foot} className="pl-selection-foot" tabIndex={-1}>
       <SelectionBar
         label={t("bar.label")}
+        announceCount={false}
         count={{
           count: String(count),
           word: t("pickedWord"),

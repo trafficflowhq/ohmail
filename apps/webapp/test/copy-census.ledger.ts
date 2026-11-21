@@ -44,9 +44,6 @@ export interface Exemption {
  * sentence — so listing them would be a stale row, which this ledger treats as an error.
  */
 export const EXEMPT: Record<string, Exemption[]> = {
-  "apps/webapp/app/views/HistoryRail.tsx": [
-    { text: "--history-gutter", why: "machine text — the CSS custom property the rows' gutter rule reads (history-rail.css)" },
-  ],
   "packages/ui/src/composites/RailNav.tsx": [
     { text: "oh", why: "wordmark — the first half of the brand, weighted by the stylesheet" },
     { text: "mail", why: "wordmark — the second half" },
@@ -72,22 +69,8 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "mod+Enter", why: "chord identifier — the keymap parses it; `mod` resolves per platform" },
     { text: "mod+shift+Enter", why: "chord identifier — Send + Done's, parsed by the keymap and printed by `chordKeys`" },
   ],
-  "apps/webapp/app/views/ComposeView.tsx": [
-    { text: "mod+Enter", why: "chord identifier — parsed by the keymap, not read by anyone" },
-  ],
   "apps/webapp/app/shell/MessagePane.tsx": [
     { text: "shift+Backspace", why: "chord identifier — the Trash bar's Restore keycap; the keymap parses it and `chordKeys` prints ⇧⌫, nobody reads this word" },
-  ],
-  /**
-   * A FOLDER PATH IS NOT A WORD, and this one is the fallback of a fallback. `restoreLabel`
-   * answers where a restore would put a message; a row from a server that predates the field
-   * carries no destination, and `"INBOX"` is the path that server's restore would in fact use.
-   * It goes straight into `placeLabel`, which is the ONE function that turns a folder into
-   * something a person reads — so the string never reaches a screen, and translating it would
-   * name a folder no mail server has.
-   */
-  "apps/webapp/app/views/TrashView.tsx": [
-    { text: "INBOX", why: "folder path — fed to `placeLabel`, which is what a reader sees; never rendered itself" },
   ],
   /**
    * MACHINE TEXT, ALL OF IT. These four files return documents, policies, selectors and wire
@@ -120,9 +103,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "if(f===\"ohmarchy\")try{document.documentElement.dataset.face=\"ohmarchy\"}catch(e){}", why: "the same script, the face stamp" },
     { text: "var l=null;try{l=localStorage.getItem({})}catch(e){}", why: "the same script, the layout read" },
     { text: "if(l===\"zero\")try{document.documentElement.dataset.layout=\"zero\"}catch(e){}})()", why: "the same script, the layout stamp and its close" },
-  ],
-  "apps/webapp/app/views/SearchView.tsx": [
-    { text: ".search-box input", why: "a CSS selector — how the view reaches its own query box inside its root, where the list selects the kept text and puts the caret back after Escape" },
   ],
   "apps/webapp/app/shell/ThreadMarks.tsx": [
     { text: ":focus-visible", why: "a CSS selector — `Element.matches` asks whether a square's focus came from the keyboard" },

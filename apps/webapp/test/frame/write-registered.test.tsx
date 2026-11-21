@@ -20,9 +20,10 @@ import { NONE, type ReaderEntry } from "@ohmail/app/host";
 import { MailGround, mailPlaces } from "@ohmail/app/mail";
 import { TextProvider, type Messages } from "@ohmail/app/text";
 import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
+import { openReplyOn, stubAnimate } from "../_writing-shell.js";
 import { fakeAddress, fakeWindow } from "../../../../packages/app/test/support/fake-window.js";
 import en from "../../messages/en.json";
-import { engineOver, message, replyDraft, ROSTER, storeWith, stubDom, waitFor } from "../_draft-shell.js";
+import { DraftServer, engineOver, message, mountShell, replyDraft, ROSTER, storeWith, stubDom, unmountAll, waitFor } from "../_draft-shell.js";
 
 const WORDS = en as unknown as Messages;
 const READER: ReaderEntry = { Reading: () => <output>the reading column</output>, Actions: () => null };
@@ -141,6 +142,55 @@ describe("the place that writes, registered for every host", () => {
     expect(sent.filter(m => m.kind === "draft_save" && !m.draftId)).toHaveLength(1);
     expect(sent.filter(m => m.kind === "mail_send")).toHaveLength(0);
   });
+
+  it("keeps a divider-only Compose draft across reload and lets it send", async () => {
+    const server = new DraftServer();
+    const shell = await mountShell("#/ohbox", [], [], {
+      server,
+      mailto: { to: ["reader@example.test"], cc: [], bcc: [], subject: "", body: "" },
+    });
+    try {
+      fireEvent.click(await within(shell.el).findByRole("button", { name: "Divider" }));
+      const draft = () => [...server.rows.values()].find(row => row.body === "--------");
+      await waitFor(() => draft() !== undefined, "the divider-only draft saved", 200);
+      expect(draft()!.html).toContain("<hr>");
+
+      await unmountAll();
+      stubDom();
+      stubAnimate();
+      const reloaded = await mountShell("#/drafts", [], [], { server });
+      fireEvent.click(await within(reloaded.el).findByRole("option", { name: /reader/ }));
+      const editor = await within(reloaded.el).findByRole("textbox", { name: en.write.text });
+      expect(await within(editor).findByRole("separator")).toBeTruthy();
+      fireEvent.click(within(reloaded.el).getByRole("button", { name: en.write.send }));
+      await waitFor(() => reloaded.sent.some(m => m.kind === "mail_send"), "the divider-only draft sends");
+    } finally {
+      await unmountAll();
+    }
+  }, 30_000);
+
+  it("keeps a divider-only Reply draft across reload", async () => {
+    const server = new DraftServer();
+    const shell = await mountShell("#/ohbox", [message("m1")], [], { server });
+    try {
+      await openReplyOn(shell);
+      fireEvent.click(await within(shell.el).findByRole("button", { name: "Divider" }));
+      const draft = () => [...server.rows.values()]
+        .find(row => row.inReplyToMessageId === "m1" && row.body === "--------");
+      await waitFor(() => draft() !== undefined, "the divider-only reply saved", 200);
+      expect(draft()!.html).toContain("<hr>");
+
+      await unmountAll();
+      stubDom();
+      stubAnimate();
+      const reloaded = await mountShell("#/ohbox", [message("m1")], [], { server });
+      await openReplyOn(reloaded);
+      const editor = await within(reloaded.el).findByRole("textbox", { name: en.write.reply.text });
+      expect(await within(editor).findByRole("separator")).toBeTruthy();
+    } finally {
+      await unmountAll();
+    }
+  }, 30_000);
 
   it("cancels an appointment before opening its letter for editing", async () => {
     const row: EngineDraft = {

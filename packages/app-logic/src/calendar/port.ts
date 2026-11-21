@@ -64,6 +64,8 @@ export interface CalendarPort {
   /** Each event with its waiting writes laid over, as the engine's one selector makes them. */
   events(): readonly EventWithWrites[];
   settings(): Promise<CalendarSettingsWire>;
+  /** Change whether the account sees this suggestion, then reconcile through the mirror. */
+  setSuggestionDismissed?(id: string, dismissed: boolean): Promise<void>;
   readonly setup?: CalendarSetupPort;
   /** The window our server serves, and the spans this device has read. */
   held(): { readonly window: CalendarWindow; readonly loaded: readonly HeldSpan[] };

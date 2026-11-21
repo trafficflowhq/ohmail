@@ -108,6 +108,60 @@ describe("a long conversation's row in a real browser", () => {
   }, 60_000);
 });
 
+it("keeps an older date on one line beside a conversation's squares", async () => {
+  const page = await browser!.newPage({ viewport: { width: 719, height: 781 }, hasTouch: true });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto(`${ORIGIN}/?open=none&screen=ohbox&device=fold&long=40&dated=1`);
+    const row = page.getByRole("option", { name: /The studio roof, again/ });
+    const date = row.getByText("15 Sept", { exact: false }).or(row.getByText("15 Sep", { exact: true }));
+    await date.waitFor();
+    const box = (await row.boundingBox())!;
+    const stamp = await date.evaluate((el) => {
+      const text = el.ownerDocument.createRange();
+      text.selectNodeContents(el);
+      const rects = Array.from(text.getClientRects()).filter((r) => r.width > 0);
+      return {
+        left: rects[0]!.left,
+        right: rects.at(-1)!.right,
+        lines: new Set(rects.map((r) => r.top)).size,
+      };
+    });
+    expect(stamp.lines).toBe(1);
+    expect(stamp.left).toBeGreaterThanOrEqual(box.x);
+    expect(stamp.right).toBeLessThanOrEqual(box.x + box.width);
+  } finally {
+    await page.close();
+  }
+}, 60_000);
+
+it("keeps desktop sender and date sizing at the default and minimum list widths", async () => {
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto(`${ORIGIN}/?screen=ohbox&open=none&long=40&dated=1`);
+    const row = page.getByRole("option", { name: /The studio roof, again/ });
+    await row.waitFor();
+    for (const width of [400, 320]) {
+      await page.evaluate((px) => {
+        document.documentElement.style.setProperty("--split-user", `${px}px 1fr`);
+      }, width);
+      const sizing = await row.evaluate((el) => {
+        const who = getComputedStyle(el.querySelector("b")!);
+        const stamp = getComputedStyle(el.querySelector("time")!);
+        return {
+          senderRoom: parseFloat(who.minWidth) / parseFloat(who.fontSize),
+          stampRoom: stamp.minInlineSize,
+        };
+      });
+      expect(sizing.senderRoom).toBeCloseTo(3);
+      expect(sizing.stampRoom).toBe("auto");
+    }
+  } finally {
+    await page.close();
+  }
+}, 60_000);
+
 describe("the Ohbox's states page draws both columns", () => {
   async function columns(query: string) {
     const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });

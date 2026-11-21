@@ -47,6 +47,7 @@ import { filesNotKeptFor, useScheduleFiles } from "./schedule-files.js";
 import { sendLine, sendLineValuesOver } from "./send-line.js";
 import { holdOf } from "./send-lock.js";
 import type { ShellCompose } from "./shell-compose.js";
+import { loadQuotedHistory } from "./quoted-history.js";
 import { replyOf } from "./writing-reply.js";
 
 /** A time for Send later must stand this far ahead of the press (the composer's floor). */
@@ -138,6 +139,10 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
     compose: compose.compose,
     composeEpochNow: compose.composeEpochNow,
     onComposeFields: compose.onComposeFields,
+    offeredDraft: ctx.drafts.find(
+      (draft) => draft.id === "draft-compose" && draft.status === "draft" && !draft.accepted,
+    ),
+    takeOfferedDraft: compose.takeOfferedDraft,
     plan: compose.plan,
     composeFrom: compose.composeFrom,
     composeElsewhere: compose.composeElsewhere,
@@ -146,6 +151,13 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
     composeWaitNote: compose.composeWaitNote,
     composeCloseRefusal: compose.composeCloseRefusal,
     composeForwardFiles: compose.composeForwardFiles,
+    composeHistoryTarget: compose.compose.forwardOf
+      ? { messageId: compose.compose.forwardOf, forward: true }
+      : (() => {
+          const parent = ctx.drafts.find((draft) => draft.id === row)?.inReplyToMessageId;
+          return parent ? { messageId: parent, forward: false } : null;
+        })(),
+    loadQuotedHistory: (messageId: string, forward: boolean) => loadQuotedHistory(engine, messageId, forward),
     sendCompose: compose.sendCompose,
     closeCompose: compose.closeCompose,
     discardKeepsCompose: compose.discardKeepsCompose,

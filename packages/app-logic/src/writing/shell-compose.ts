@@ -163,7 +163,7 @@ const KEPT_DRAFT_TOAST_MS = 8000;
 export async function openDraftDecision(
   draft: EngineDraft,
   io: {
-    readDraftBody: (draftId: string) => Promise<string | null>;
+    readDraftBody: OhmailEngine["readDraftBody"];
     openWithBody: (draft: EngineDraft, body: string) => void;
     unavailable: () => void;
   },
@@ -174,9 +174,10 @@ export async function openDraftDecision(
     io.openWithBody(draft, draft.body ?? "");
     return;
   }
-  const text = await io.readDraftBody(draft.id);
-  if (text === null) { io.unavailable(); return; }
-  io.openWithBody({ ...draft, body: text }, text);
+  const fetched = await io.readDraftBody(draft.id);
+  if (fetched === null) { io.unavailable(); return; }
+  const content = typeof fetched === "string" ? { body: fetched } : fetched;
+  io.openWithBody({ ...draft, ...content }, content.body);
 }
 
 /** No queued edit kept as a new draft, as one stable value. */
@@ -2973,6 +2974,20 @@ export function useShellCompose({
     setComposeForwardSaid(false);
     onComposeFields({ ...compose, forwardParts: next });
   });
+  const takeOfferedDraft = useStableCallback(async (id: string) => {
+    const draft = engine.read().get<EngineDraft>("draft", id);
+    if (id !== "draft-compose" || !draft || draft.accepted || draft.status !== "draft") return;
+    const fields = composeRef.current;
+    onComposeFields({
+      ...fields,
+      to: fields.to || formatRecipientChips(draft.to),
+      cc: fields.cc || formatRecipientChips(draft.cc),
+      subject: fields.subject || draft.subject,
+      body: draft.body ?? fields.body,
+      html: "",
+    });
+    await engine.mutate({ kind: "draft_accept", draftId: draft.id });
+  });
   const onComposeFields = useStableCallback((input: ComposeFields) => {
     // The composer's own edit of a recipient line: typed text, unlike a door's prefill.
     const prev = composeRef.current;
@@ -3388,6 +3403,7 @@ export function useShellCompose({
     mailSend,
     showSend,
     onComposeFields,
+    takeOfferedDraft,
     onReplyBody,
     onReplySig,
     onReplySubject,
@@ -3405,6 +3421,7 @@ export function useShellCompose({
     replyEnvelope,
     replyFromId,
     replyMode,
+    replySaveRefused: replyAutosave.saveRefused,
     replySendState,
     replySig,
     replySubjectEdit,

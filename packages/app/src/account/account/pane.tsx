@@ -15,6 +15,7 @@
  */
 import type { ReactNode } from "react";
 import { useFrame } from "../../frame/index.js";
+import { confirmedAccountForScope } from "../../host/session.js";
 import { NONE, type HostCapabilities, type HostContract, type None } from "../../host/index.js";
 import type { PaneSheet, SettingsPane } from "../../settings/contract.js";
 import { PANE_FACTS, paneOf } from "../../settings/facts.js";
@@ -91,6 +92,12 @@ function InBrowser({ parts }: { readonly parts: BrowserParts }): ReactNode {
 
 /** The Account section over one host's doors. Call it once per mount: a registration made again is a pane mounted again. */
 export function accountPane(parts: AccountPaneParts): SettingsPane {
+  function useSummary() {
+    const { host } = useFrame();
+    return confirmedAccountForScope(host) !== null && host.session.accountAddress
+      ? { value: host.session.accountAddress }
+      : null;
+  }
   function Body({ sheet }: { readonly sheet?: PaneSheet } = {}): ReactNode {
     const { host } = useFrame();
     const body = paneBodyOf(host, parts);
@@ -106,7 +113,7 @@ export function accountPane(parts: AccountPaneParts): SettingsPane {
     return sheet ? sheet(content) : content;
   }
   return {
-    ...paneOf("account", { Body }),
+    ...paneOf("account", { Body, useSummary }),
     hasFoot: true,
     listed: (host) => PANE_FACTS.account.listed(host) && paneBodyOf(host, parts) !== null,
   };

@@ -657,4 +657,22 @@ describe("how far the run is: the kit's dots, said as one sentence", () => {
     expect(place(O.rail_history)).toEqual({ n: organize.n + 1, total: organize.total });
     expect(screen.queryByRole("list", { name: O.rail_mailbox })).toBeNull();
   });
+
+  it("shows and says the screen count within the mailbox phase of first setup", async () => {
+    stage({ verbs: verbs(), ground: ground({ rows: [] }) });
+    await settle();
+    press(words(O.welcomeStart));
+    await settle();
+    expect(screen.getByText("2/2").getAttribute("aria-hidden")).toBe("true");
+    expect(
+      screen.getByRole("img", { name: new RegExp(`^Step 1 of \\d+, ${O.rail_mailbox}, 2 of 2$`) }),
+    ).toBeTruthy();
+  });
+
+  it("leaves out the screen count when adding a mailbox on its own", async () => {
+    stage({ verbs: verbs(), ground: ground({ rows: [] }), at: "#/first-run/add" });
+    await settle();
+    expect(place(O.rail_mailbox).n).toBe(1);
+    expect(screen.queryByText(/^\d+\/\d+$/)).toBeNull();
+  });
 });

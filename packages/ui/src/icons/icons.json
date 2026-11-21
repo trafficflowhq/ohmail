@@ -348,5 +348,15 @@
       "words": "",
       "svg": "<path d=\"M 5 13.200c2.200-3.600 4.600-3.600 7-.700s4.800 2.900 7-.700\"/>"
     }
+  },
+  "composer": {
+    "paragraph": {
+      "words": "paragraph pilcrow",
+      "svg": "<path d=\"M 20 5H9a4 4 0 0 0 0 8h3M12 5v14M16 5v14\"/>"
+    },
+    "divider": {
+      "words": "editor horizontal rule",
+      "svg": "<path d=\"M 4 12h16\"/>"
+    }
   }
 }

@@ -8,7 +8,8 @@ import { cookieFromStore } from "@ohmail/app-logic/storage/cookie-jar";
 import { OWNER_COOKIE, OWNER_SIGNED_OUT, pendingSignOutCookie } from "@ohmail/app-logic/storage/owner-cookie";
 import {
   APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, SIGNED_OUT_COOKIE, firstPageUnasked,
-  resolveSurface, type Surface,
+  FIRST_PAGE_OWNER_HEADER,
+  resolveFirstPage, type Surface,
 } from "./app/session-gate";
 
 /**
@@ -298,7 +299,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     ) {
       return credentialPage(request);
     }
-    return NextResponse.next();
+    return nextWithoutPageOwner(request);
   }
 
   const wakeEntry = request.nextUrl.searchParams.has("wake") &&
@@ -344,7 +345,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const signOutPending = cookieFromStore(request.cookies, OWNER_COOKIE) === OWNER_SIGNED_OUT;
   const signedOutJustNow = /^[a-z]{1,16}$/.test(cookieFromStore(request.cookies, SIGNED_OUT_COOKIE) ?? "");
 
-  const surface = await resolveSurface({
+  const answer = await resolveFirstPage({
     sessionToken: token,
     throttled,
     resumeMarker: marker,
@@ -355,6 +356,9 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     env: { NEXT_PUBLIC_DEMO: process.env.NEXT_PUBLIC_DEMO },
     firstPageUnasked: FIRST_PAGE_UNASKED,
   });
+
+  const surface = typeof answer === "string" ? answer : "app";
+  const owner = typeof answer === "string" ? null : answer.account;
 
   // A SIGN-OUT THE SERVER NEVER CONFIRMED goes to the sign-in page, on both builds: it paints at once
   // and finishes the sign-out behind its form (the splash did it behind a blank page). Nothing is
@@ -390,13 +394,13 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return response;
   }
 
-  const rewrite = (target: string, word?: "now" | "wait"): NextResponse =>
-    strict(request, (init) => NextResponse.rewrite(withPathname(request, target), init), word);
+  const rewrite = (target: string, word?: "now" | "wait", account?: string): NextResponse =>
+    strict(request, (init) => NextResponse.rewrite(withPathname(request, target), init), word, account);
   const response = answerFor(surface, {
-    marketing: () => (zone !== null ? zoneRewrite(request, zone, bypass, "/") : NextResponse.next()),
+    marketing: () => (zone !== null ? zoneRewrite(request, zone, bypass, "/") : nextWithoutPageOwner(request)),
     resume: () => rewrite(RESUME_ROUTE),
     demo: () => rewrite(APP_ROUTE),
-    app: () => rewrite(APP_ROUTE, "now"),
+    app: () => owner === null ? rewrite(APP_ROUTE, "wait") : rewrite(APP_ROUTE, "now", owner),
     "app-unasked": () => rewrite(APP_ROUTE, "wait"),
   });
 
@@ -442,7 +446,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
  * neither header costs it anything.
  */
 function credentialPage(request: NextRequest): NextResponse {
-  const response = strict(request, (init) => NextResponse.next(init));
+  const response = strict(request, (init) => NextResponse.next(init), "wait");
   response.headers.set("Referrer-Policy", "no-referrer");
   response.headers.set("Cache-Control", "private, no-store");
   return holdPendingSignOut(request, response);
@@ -478,17 +482,28 @@ function strict(
   request: NextRequest,
   make: (init: { request: { headers: Headers } }) => NextResponse,
   firstPage?: "now" | "wait",
+  account?: string,
 ): NextResponse {
   const nonce = newNonce();
   const csp = nonceCsp(nonce);
   const headers = new Headers(request.headers);
   headers.delete(FIRST_PAGE_HEADER);
+  headers.delete(FIRST_PAGE_OWNER_HEADER);
+  if (account !== undefined) headers.set(FIRST_PAGE_OWNER_HEADER, account);
   if (firstPage !== undefined) headers.set(FIRST_PAGE_HEADER, firstPage);
   headers.set("x-nonce", nonce);
   headers.set("content-security-policy", csp);
   const response = make({ request: { headers } });
   response.headers.set("Content-Security-Policy", csp);
   return response;
+}
+
+/** Also scrub a forged owner on paths that do not normally pass through the strict gate. */
+function nextWithoutPageOwner(request: NextRequest): NextResponse {
+  if (!request.headers.has(FIRST_PAGE_OWNER_HEADER)) return NextResponse.next();
+  const headers = new Headers(request.headers);
+  headers.delete(FIRST_PAGE_OWNER_HEADER);
+  return NextResponse.next({ request: { headers } });
 }
 
 /**
@@ -544,10 +559,9 @@ function withPathname(request: NextRequest, pathname: string): URL {
  *
  * The last arm takes a path with a `.` or `..` segment, which no literal matches although the router
  * serves it (`/./privacy` is the privacy page): the middleware sees it already resolved.
- * The two arms before it reach EVERY page — the catch-all and `/demo` too — but only for a request that
- * carries `Next-Action` or a body type, the only requests Next's action decoder reads; a plain
- * GET off the list still costs no edge invocation, and `/api`, the two refresh-scoped paths and
- * `/_next` never run this function.
+ * The conditional arms before it reach every page, including the catch-all and `/demo`, for requests
+ * that could reach Next's action decoder or carry a forged first-page owner. A plain GET off the list
+ * still costs no edge invocation. The API, refresh handlers and Next assets do not use these arms.
  */
 export const config = {
   matcher: [
@@ -559,6 +573,7 @@ export const config = {
     { source: "/((?:[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Ii][Mm][Pp][Rr][Ii][Nn][Tt]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc][Ee][Ss][Ss][Oo][Rr][Ss]|[Ss][Uu][Pp][Pp][Oo][Rr][Tt]|[Dd][Ee][Ll][Ee][Tt][Ee]-[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Dd][Ee]|[Oo][Hh][Cc][Aa][Ll]|[Aa][Pp][Ii]/[Ww][Aa][Ii][Tt][Ll][Ii][Ss][Tt]|[Ff][Ll][Aa][Tt][Hh][Uu][Bb]-[Vv][Ee][Rr][Ii][Ff][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|\\.[Ww][Ee][Ll][Ll]-[Kk][Nn][Oo][Ww][Nn]/[Oo][Rr][Gg]\\.[Ff][Ll][Aa][Tt][Hh][Uu][Bb]\\.[Vv][Ee][Rr][Ii][Ff][Ii][Ee][Dd][Aa][Pp][Pp][Ss]\\.[Tt][Xx][Tt])|(?:[Ss][Ii][Tt][Ee]-[Aa][Ss][Ss][Ee][Tt][Ss]|[Ll][Aa][Nn][Dd][Ii][Nn][Gg])/.*)" },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "next-action" }] },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "content-type" }] },
+    { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "x-ohmail-first-page-owner" }] },
     { source: "/((?:[^/]*/)*\\.\\.?(?:/.*)?)" },
   ],
 };

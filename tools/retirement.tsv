@@ -776,7 +776,7 @@ apps/webapp/test/page-body-refused.test.ts	source-text	reads source as text (js)
 apps/webapp/test/password-section.test.tsx	source-text	reads source as text (tsx): the Cloud shell	layer 2	removals	
 apps/webapp/test/pdf-worker-version.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	removals	
 apps/webapp/test/phone-holder-sentence.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
-apps/webapp/test/phone-width-screener-rules.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
+apps/webapp/test/phone-width-screener-rules.test.tsx	artifact	builds the browser fixture and measures the rendered controls	layer 2	screener	docs/tool-verdicts/stylelint-declaration-property-value-allowed-list.json
 apps/webapp/test/pile-nav.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
 apps/webapp/test/pill-snapshot.test.ts	source-text	reads source as text (ts, tsx)	layer 2: red with the reader's action panel no toolbar	reader	held:packages/ui/test/mail/reading.test.tsx#is a named toolbar of buttons; a toggle says whether it holds, and a verb that is off does not run
 apps/webapp/test/plain-text-line-breaks.test.tsx	source-text	reads source as text (css)	layer 2	removals	
@@ -833,6 +833,7 @@ apps/webapp/test/screener-decision-durable.test.tsx	data	through apps/sidecar/te
 apps/webapp/test/screener-dim-wiring.test.ts	source-text	reads source as text (css, tsx)	layer 2	screener	
 apps/webapp/test/screener-held-body-door.test.tsx	source-text	reads source as text (tsx)	layer 2	screener	
 apps/webapp/test/screener-held-keyboard.test.ts	source-text	reads the mounted Screener browser fixture through the state-page builder	layer 2	screener	
+apps/webapp/test/screener-mailbox-label.test.tsx	source-text	reads the phone badge width and clipping styles (css)	layer 2	removals	docs/tool-verdicts/stylelint-declaration-property-value-allowed-list.json
 apps/webapp/test/screener-row-actions-overlay.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
 apps/webapp/test/screening-count-is-what-you-gain.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	
 apps/webapp/test/search-locate.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	search	
@@ -893,7 +894,6 @@ apps/webapp/test/shell-composition-census.test.ts	source-text	the mounted frame 
 apps/webapp/test/shell-golden.test.tsx	behaviour	the old chrome's frozen markup, the sync strip's included	none	frame	gone:apps/webapp/app/shell/SyncBar.tsx
 apps/webapp/test/shell-verdict-sentence.test.ts	source-text	reads the Screener decision to check that the report uses the shared sentence	layer 2	screener	
 apps/webapp/test/short-viewport-and-touch-targets.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
-apps/webapp/test/shortcut-hint.test.tsx	source-text	reads source as text (css, tsx)	layer 2	removals	
 apps/webapp/test/shortcut-sheet-discovery.test.tsx	source-text	reads shortcut registrations, touch styles, and tokens	layer 2	keys	
 apps/webapp/test/shortcut-sheet-drift.test.tsx	source-text	reads source as text (css, ts)	layer 2	removals	
 apps/webapp/test/sign-out-clears-durable-stores.test.ts	source-text	reads source as text (ts)	layer 2	doors	

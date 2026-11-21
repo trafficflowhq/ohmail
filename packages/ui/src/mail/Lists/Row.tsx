@@ -3,11 +3,13 @@ import { Avatar, Sign } from "../../base/index.js";
 import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./row.css";
+import { SelectionCircle, SelectionMark, type CircleSelection } from "./SelectionCircle.js";
 import { RowFirst, type RowNameAction } from "./row-first.js";
+import { RowSecond } from "./row-second.js";
 import { RowPlaceFace, type RowPlace } from "./row-place.js";
 import { useKeysFollowStop } from "./row-stop.js";
 import { rowSwipe, type RowSwipe } from "./row-swipe.js";
-import { breakable, RowTickMark, type RowTick } from "./row-tick.js";
+import { RowTickMark, type RowTick } from "./row-tick.js";
 
 export type { RowPlace } from "./row-place.js";
 export type { RowSwipe, RowSwipeVerb } from "./row-swipe.js";
@@ -135,7 +137,7 @@ export interface RowProps {
   onContact?: (anchor: HTMLElement) => void;
   contactHref?: string;
   /** Toggle the row's avatar, or extend the selection when Shift is pressed. */
-  selection?: { label: string; onPress: (extend: boolean) => void };
+  selection?: CircleSelection;
   nameAction?: RowNameAction;
   nameActions?: readonly (RowNameAction & { id: string; text: string })[];
   addressAction?: (anchor: HTMLButtonElement) => void;
@@ -156,9 +158,10 @@ export function Row(props: RowProps) {
   const { subject, preview, unread, open, picked, entry, quick, own, leaving, onOpen, onContact, onMenu } =
     props;
   const swipe = rowSwipe(props.swipe);
-  const { listing, mark, place, tick } = props;
+  const { listing, mark, place, selection, tick } = props;
   const el = useKeysFollowStop(listing?.stop);
-  const slotted = Boolean(props.swipe || quick || own || place);
+  const circle = props.people[0] ? selection : undefined;
+  const slotted = Boolean(props.swipe || quick || own || place || circle);
   /* WebKitGTK does not expose aria-description; a description a hidden node carries, it does. */
   const saidId = useId();
   const said = listing?.spoken ? saidId : undefined;
@@ -166,6 +169,7 @@ export function Row(props: RowProps) {
   const press = tick?.settled ? undefined : onOpen;
   /* A section of Settings is named by its section alone; what line two says is its description. */
   const section = entry && !listing;
+  const hasSecond = !section || subject !== "" || Boolean(preview) || Boolean(place);
   const secondId = useId();
 
   const key = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -203,7 +207,7 @@ export function Row(props: RowProps) {
       aria-description={listing?.spoken || undefined}
       aria-checked={tick ? tick.on : undefined}
       aria-disabled={tick?.settled ? true : undefined}
-      aria-describedby={section ? secondId : said}
+      aria-describedby={section ? (hasSecond ? secondId : undefined) : said}
       aria-current={section && open ? "page" : undefined}
       aria-posinset={listing?.place?.at}
       aria-setsize={listing?.place?.of}
@@ -225,24 +229,13 @@ export function Row(props: RowProps) {
       aria-selected={listing ? listing.selected : picked ? true : undefined}
       inert={!slotted && leaving !== undefined}
       style={swipe.style}
-      onClick={press}
+      onClick={selection?.active ? (event) => selection.onPress(event.shiftKey) : press}
       onKeyDown={key}
       onContextMenu={slotted ? undefined : menu}
     >
       <RowFace {...props} />
       <RowFirst {...props} contact={contact} />
-      <span className="oh-row-second" id={section ? secondId : undefined} data-place={place ? "" : undefined}>
-        {/* A row that is about nothing (a person to tick) has no subject's line and no space before its preview. */}
-        {subject === "" ? null : <span className="oh-row-subject">{subject}</span>}
-        {preview && subject !== "" ? <> </> : null}
-        {preview ? (
-          <span className="oh-row-preview">
-            {entry && subject ? <i className="oh-row-sep">· </i> : null}
-            {tick ? breakable(preview) : preview}
-          </span>
-        ) : null}
-        {place ? <RowPlaceFace place={place} room /> : null}
-      </span>
+      {hasSecond ? <RowSecond {...props} id={section ? secondId : undefined} /> : null}
       {own ? <OwnRoom own={own} /> : null}
       {tick ? <RowTickMark tick={tick} /> : null}
       {said ? <span id={said} hidden aria-label={listing?.spoken} /> : null}
@@ -262,6 +255,7 @@ export function Row(props: RowProps) {
     >
       {swipe.back}
       {row}
+      {circle ? <SelectionCircle selection={circle} picked={picked} style={swipe.style} /> : null}
       <RowVerbs quick={quick} own={own} travel={swipe.style} />
       {place ? <RowBeside {...props} place={place} travel={swipe.style} /> : null}
     </div>
@@ -296,9 +290,6 @@ function RowFace({
       ) : second ? (
         <Avatar name={second.name} address={second.address} size="xs" />
       ) : null}
-      <i className="oh-row-check">
-        <Icon name="check" size={18} />
-      </i>
     </>
   );
   const pair = second || peopleMore ? "" : undefined;
@@ -313,22 +304,10 @@ function RowFace({
       {face}
     </span>
   );
-  return selection && lead ? (
-    <button
-      type="button"
-      className="oh-control oh-row-face"
-      tabIndex={-1}
-      aria-label={selection.label}
-      aria-pressed={picked ?? false}
-      onClick={(event) => {
-        event.stopPropagation();
-        selection.onPress(event.shiftKey);
-      }}
-    >
-      {art}
-    </button>
-  ) : (
-    <span className="oh-row-face">{art}</span>
+  return (
+    <span className="oh-row-face">
+      {picked || (selection?.active && lead) ? <SelectionMark picked={picked ?? false} /> : art}
+    </span>
   );
 }
 

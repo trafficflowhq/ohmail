@@ -79,7 +79,12 @@ function messageIdsOf(m: EngineMutation): string[] {
   return Array.isArray(r.messageIds) ? r.messageIds.filter((x): x is string => typeof x === "string") : [];
 }
 
-type PressOwner = { engine: OhmailEngine; report?: AbortController; pendingUndo?: UndoClaim };
+type PressOwner = {
+  engine: OhmailEngine;
+  lifetime: AbortController;
+  report?: AbortController;
+  pendingUndo?: UndoClaim;
+};
 
 /** A press that stands: applied, or on this client's retry queue to land on the next drive. */
 const stands = (v: PressVerdict): boolean => v.kind === "applied" || (v.kind === "queued" && v.wait === "retry");
@@ -106,6 +111,8 @@ export interface ShellDispatch {
   runArmedUndo: () => boolean;
   /** The toast every Undo offer is raised through, so `z` presses what the button presses. */
   undoToast: UndoToastFn;
+  /** Reserves the shared key for a write outside the mail mutation seam, for this account only. */
+  reserveUndo: () => { claim: UndoClaim; signal: AbortSignal; drop: () => void } | null;
   toastWithUndo: (
     sentence: string,
     inverses: readonly EngineMutation[] | (() => EngineMutation[]),
@@ -494,14 +501,29 @@ export function useShellDispatch({
 
   const committedOwner = useRef<PressOwner | null>(null);
   useLayoutEffect(() => {
-    const owner: PressOwner = { engine };
+    const owner: PressOwner = { engine, lifetime: new AbortController() };
     committedOwner.current = owner;
     return () => {
       committedOwner.current = null;
+      owner.lifetime.abort();
       owner.report?.abort();
       if (owner.pendingUndo) door.drop(owner.pendingUndo);
     };
-  }, [door, engine]);
+  }, [door, engine, scope]);
+  const reserveUndo = useStableCallback(() => {
+    const owner = committedOwner.current;
+    if (!owner) return null;
+    const claim = door.expect({ replace: true });
+    owner.pendingUndo = claim;
+    return {
+      claim,
+      signal: owner.lifetime.signal,
+      drop: () => {
+        if (owner.pendingUndo === claim) delete owner.pendingUndo;
+        door.drop(claim);
+      },
+    };
+  });
   const mutateAndReport = useStableCallback<ShellDispatch["mutateAndReport"]>(
     (...[mutation, okSentence, owner]) => {
       /* Read before the dispatch — the inverse names the state this press is about to leave.
@@ -619,6 +641,7 @@ export function useShellDispatch({
     queuedSentence,
     runArmedUndo,
     undoToast: toast,
+    reserveUndo,
     toastWithUndo,
     mutateAndReport,
     mutateAndReportConfirmed,

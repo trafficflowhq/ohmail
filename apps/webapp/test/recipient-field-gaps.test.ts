@@ -39,6 +39,38 @@ afterEach(async () => {
 });
 
 describe("a field seeded from stored addresses is ALL chips — CMP-F3", () => {
+  it("taking the offered draft fills the letter, keeps From and acknowledges the original draft", async () => {
+    stubDom();
+    const to = [{ name: "Pat", address: "pat" + "@" + "example.test" }];
+    const cc = [{ name: "Sam", address: "sam" + "@" + "example.test" }];
+    const draft = {
+      id: "draft-compose", mailboxId: "mb1", threadId: null, inReplyToMessageId: null,
+      subject: "Friday's plans", body: "Shall we meet on Friday? <b>", rationale: null,
+      to, cc, bcc: [], status: "draft" as const,
+      createdAt: "2026-09-07T09:00:00.000Z", updatedAt: "2026-09-07T09:00:00.000Z",
+    };
+    world = await mountWriting({ view: true, secondMailbox: true, drafts: [draft] });
+    await act(async () => {
+      world.now().onComposeFields({ ...world.now().compose, fromMailboxId: "mb2", body: "Old words", html: "<b>Old words</b>" });
+    });
+    await rounds(6);
+    const view = within(world.el);
+    const offer = await view.findByRole("button", { name: "Use draft" });
+    await act(async () => { fireEvent.click(offer); });
+    await rounds(6);
+
+    expect(view.getByRole("textbox", { name: "Subject" })).toHaveProperty("value", draft.subject);
+    expect(line().getByRole("button", { name: /^Pat / })).toBeTruthy();
+    expect(world.now().compose.to).toBe(formatRecipientChips(to));
+    expect(world.now().compose).toMatchObject({
+      fromMailboxId: "mb2", cc: formatRecipientChips(cc), body: draft.body, html: "",
+    });
+    expect(world.sent.filter((act) => act.kind === "draft_accept")).toEqual([
+      { kind: "draft_accept", draftId: draft.id },
+    ]);
+    expect(view.queryByRole("button", { name: "Use draft" })).toBeNull();
+  });
+
   it("every address-seeding surface goes through formatRecipientChips: an accepted AI draft", async () => {
     stubDom();
     const stored = ["one", "two"].map((local) => ({ name: null, address: local + "@example.test" }));

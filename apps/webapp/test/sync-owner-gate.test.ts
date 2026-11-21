@@ -830,6 +830,7 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     fetchBody: async () => { reads.push("fetchBody"); return null; },
     fetchBodies: async () => { reads.push("fetchBodies"); return []; },
     searchServer: async () => { reads.push("searchServer"); return { messages: [], nextCursor: null }; },
+    searchPlaces: async () => { reads.push("searchPlaces"); return [{ folder: "Archive/Reports", count: 28 }]; },
     listMessages: async () => { reads.push("listMessages"); return { messages: [], nextCursor: null }; },
     requestPull: async () => { reads.push("requestPull"); return { ok: true }; },
     reportSyncFailure: async () => { reads.push("reportSyncFailure"); },
@@ -1295,20 +1296,34 @@ describe("a CONTRADICTED browser reads nothing either", () => {
   it("discards a read whose session changed while it was in flight", async () => {
     setOwnerCookie(A);
     const gate = createSyncGate(A);
-    let served = 0;
+    const served: string[] = [];
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
     const guarded = gate.guard({
       ...capabilities(),
       fetchBody: async () => {
-        served += 1;
-        setOwnerCookie(B);            // the other tab signs in mid-flight
+        served.push("body");
+        await pending;
         return { text: "another account's message body" };
+      },
+      searchPlaces: async () => {
+        served.push("places");
+        await pending;
+        return [{ folder: "Archive/Reports", count: 28 }];
       },
     } as never) as unknown as Record<string, unknown>;
     gate.confirm(A);
 
-    await expect(call(guarded, "fetchBody"), "a body issued across a session change was returned")
+    const body = call(guarded, "fetchBody");
+    const places = call(guarded, "searchPlaces");
+    setOwnerCookie(B);
+    finish();
+
+    await expect(body, "a body issued across a session change was returned")
       .rejects.toBeInstanceOf(ForeignSessionError);
-    expect(served, "the request never left, so nothing was discarded").toBe(1);
+    await expect(places, "Place counts issued across a session change were returned")
+      .rejects.toBeInstanceOf(ForeignSessionError);
+    expect(served, "the requests never left, so nothing was discarded").toEqual(["body", "places"]);
     // The DEPARTURE check passed — identity was `holds` when this was issued — so the refusal
     // above can only have come from the arrival check. That is the property under test.
     expect(gate.identity()).toBe("contradicted");

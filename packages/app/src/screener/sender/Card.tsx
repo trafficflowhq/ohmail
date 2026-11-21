@@ -62,7 +62,7 @@ function OpenCard({ view, sender, anchor, choosing, subjectAction }: CardProps) 
       onClose={() => view.show(null)}
       anchor={anchor}
       label={t("place.keyCard")}
-      closeWhenFull={screening("close")}
+      closeWhenFull={screening("auditClose")}
       onKey={
         may
           ? (event) => {

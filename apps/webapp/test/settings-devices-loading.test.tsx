@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -78,7 +79,7 @@ async function mountSection(): Promise<HTMLElement> {
     root!.render(
       h(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "UTC",
-        children: h(ThemeProvider, null, h(ToastHost, null, h(DevicesSection))),
+        children: h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DevicesSection }))),
       }),
     );
     await Promise.resolve();

@@ -33,7 +33,7 @@
       "indexing": "Still reading your recent mail — more results will appear.",
       "device": "{count, plural, one {1 recent} other {# recent}}",
       "retry": "Try again",
-      "offline": "ohmail Cloud can't be reached — showing the mail on this computer.",
+      "offline": "ohmail Cloud can't be reached — showing the mail on <device>this computer</device>.",
       "unanswered": "Your server did not answer — showing the recent mail this device holds.",
       "searching": "Searching your whole mailbox…",
       "unavailable": "Search covers the sample mailbox.",

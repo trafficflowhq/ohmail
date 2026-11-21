@@ -200,11 +200,40 @@
   align-self: stretch;
   display: flex;
   flex-direction: column;
-  width: min(var(--rail-sheet, 320px), 85%);
+  width: min(var(--rail-drawer), 80vw);
   max-height: none;
   padding: var(--edge);
-  border-radius: 0;
-  background: var(--ground);
+  border-radius: 0 var(--r-sheet) var(--r-sheet) 0;
+  background: var(--sheet);
+  touch-action: pan-y;
+  animation: fr-rail-slide-in var(--d-pop) var(--e-out) backwards;
+}
+.fr-rail-preview {
+  animation-name: none;
+}
+:root[data-rm="1"] .fr-railsheet {
+  animation: none;
+}
+[data-drawer-dock],
+[data-drawer-toggle] {
+  touch-action: pan-y;
+}
+@keyframes fr-rail-slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fr-railsheet {
+    animation: none;
+  }
+}
+
+.fr-report,
+.fr-window-report,
+.fr-stage-report {
+  display: grid;
+  gap: var(--s2);
 }
 
 /* The one report: over the list's foot, or over the dock on a phone's width. */
@@ -250,6 +279,27 @@
   z-index: var(--oh-layer-top);
   overflow: auto;
   background: var(--ground);
+}
+
+/* Window feedback during boot and feedback inside the active setup dialog. */
+.fr-window-report,
+.fr-stage-report {
+  position: fixed;
+  inset-inline: var(--s4);
+  bottom: var(--s4);
+  max-width: var(--measure);
+  margin-inline: auto;
+  pointer-events: none;
+}
+
+.fr-window-report {
+  z-index: var(--oh-layer-top);
+  background: transparent;
+}
+
+.fr-window-report > *,
+.fr-stage-report > * {
+  pointer-events: auto;
 }
 
 .fr-hidden {

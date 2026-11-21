@@ -27,9 +27,9 @@ afterAll(async () => {
   await browser?.close();
 });
 
-async function open(query = ""): Promise<{ page: Page; cdp: CDPSession; errors: string[] }> {
+async function open(query = "", width = 390): Promise<{ page: Page; cdp: CDPSession; errors: string[] }> {
   const context = await browser!.newContext({
-    viewport: { width: 390, height: 844 },
+    viewport: { width, height: 844 },
     hasTouch: true,
     isMobile: true,
   });
@@ -50,7 +50,7 @@ async function run(
   cdp: CDPSession,
   from: Point,
   by: Point,
-  opts: { steps?: number; hold?: number } = {},
+  opts: { steps?: number; hold?: number; rest?: number; afterRelease?: () => Promise<void> } = {},
 ): Promise<void> {
   const steps = opts.steps ?? 10;
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [from] });
@@ -60,7 +60,9 @@ async function run(
     at = { x: from.x + (by.x * k) / steps, y: from.y + (by.y * k) / steps };
     await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [at] });
   }
+  if (opts.rest) await new Promise((resolve) => setTimeout(resolve, opts.rest));
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await opts.afterRelease?.();
   await new Promise((r) => setTimeout(r, 30));
 }
 
@@ -80,6 +82,84 @@ async function rowAt(page: Page, n: number): Promise<Point> {
 }
 
 describe("the touch layer under a real finger", () => {
+  it("opens the compact navigation by tap or rightward drag and closes it by dragging left", async () => {
+    const { page, cdp } = await open("motion=full");
+    const more = page.getByRole("button", { name: "More", exact: true });
+    const drawer = page.getByRole("dialog", { name: "More" });
+    await more.tap();
+    await drawer.waitFor();
+    await drawer.evaluate(async (el) =>
+      Promise.all(el.getAnimations().map((animation) => animation.finished)),
+    );
+    const box = (await drawer.boundingBox())!;
+    expect(box.width).toBe(300);
+    expect(box.x).toBeCloseTo(0);
+    await page.keyboard.press("Escape");
+    await drawer.waitFor({ state: "hidden" });
+    const handle = (await more.boundingBox())!;
+    await run(cdp, { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 }, { x: 120, y: 4 });
+    await drawer.waitFor();
+    await run(cdp, { x: 240, y: box.y + box.height / 3 }, { x: -130, y: 2 });
+    await drawer.waitFor({ state: "hidden" });
+    const dock = (await page.getByRole("navigation", { name: "Places" }).boundingBox())!;
+    const edge = { x: dock.x + 5, y: dock.y + dock.height / 2 };
+    await run(cdp, edge, { x: 3, y: -100 });
+    expect(await drawer.count()).toBe(0);
+    await run(cdp, edge, { x: 120, y: 3 });
+    await drawer.waitFor();
+    await page.touchscreen.tap(370, 100);
+    await drawer.waitFor({ state: "hidden" });
+    await page.context().close();
+  }, 60_000);
+
+  it("opens available Trash from More on the unfolded phone", async () => {
+    const { page } = await open("dock=full", 884);
+    await page.getByRole("button", { name: "More", exact: true }).tap();
+    const drawer = page.getByRole("dialog", { name: "More" });
+    await drawer.getByRole("button", { name: "Trash", exact: true }).tap({ timeout: 3000 });
+    await page.getByRole("heading", { name: "Trash", exact: true }).waitFor();
+    await drawer.waitFor({ state: "hidden" });
+    await page.context().close();
+  }, 10_000);
+
+  it("keeps the drawer closed when Escape interrupts a snap back", async () => {
+    const { page, cdp } = await open("motion=full");
+    await page.getByRole("button", { name: "More", exact: true }).tap();
+    const drawer = page.getByRole("dialog", { name: "More" });
+    await drawer.evaluate(async (el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+    await run(
+      cdp,
+      { x: 240, y: 290 },
+      { x: -55, y: 0 },
+      {
+        rest: 120,
+        afterRelease: async () => {
+          expect(await drawer.evaluate((el) => el.getAnimations().length)).toBeGreaterThan(0);
+          await page.keyboard.press("Escape");
+        },
+      },
+    );
+    await page.waitForTimeout(300);
+    expect(await drawer.count()).toBe(0);
+    await page.context().close();
+  }, 10_000);
+
+  it("marks the same thread read on a left swipe and unread on a right swipe", async () => {
+    const { page, cdp } = await open();
+    const point = await rowAt(page, 0);
+    await run(cdp, point, { x: -30, y: 0 });
+    expect(presses(await saidOf(page))).toBe(0);
+    await run(cdp, point, { x: -120, y: 0 });
+    await run(cdp, point, { x: 120, y: 0 });
+    const said = await saidOf(page);
+    expect(said.marked).toHaveLength(2);
+    expect(said.marked[0]).toEqual({ ids: said.marked[1]!.ids, unread: false });
+    expect(said.marked[1]!.unread).toBe(true);
+    expect(said.acted).toEqual([]);
+    expect(said.opened).toEqual([]);
+    await page.context().close();
+  }, 60_000);
+
   it("takes fifty swipes, each pressed exactly once, and opens no letter for them", async () => {
     const { page, cdp, errors } = await open();
     const each: number[] = [];
@@ -135,6 +215,32 @@ describe("the touch layer under a real finger", () => {
     expect((await saidOf(page)).picked).toBe(1);
     expect(await page.evaluate(() => getSelection()?.toString() ?? "")).toBe("");
     await page.context().close();
+  }, 60_000);
+
+  it("keeps the dock controls circular and moves a place into More at a narrower width", async () => {
+    const browserPage = async (width: number) => {
+      const page = await browser!.newPage({ viewport: { width, height: 844 }, hasTouch: true });
+      await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+      await page.goto(`${ORIGIN}/?dock=full`);
+      const dock = page.getByRole("navigation", { name: "Places" });
+      await dock.getByRole("button", { name: "More" }).waitFor();
+      const sizes = await dock
+        .getByRole("button")
+        .evaluateAll((buttons) =>
+          buttons.map((b) => [b.getBoundingClientRect().width, b.getBoundingClientRect().height]),
+        );
+      expect(sizes.every(([w, h]) => Math.abs(w! - h!) < 1)).toBe(true);
+      return { page, dock, count: sizes.length };
+    };
+    const wide = await browserPage(440);
+    const narrow = await browserPage(390);
+    expect(wide.count - narrow.count).toBe(1);
+    expect(await narrow.dock.getByRole("button", { name: "Receipts" }).count()).toBe(0);
+    await narrow.dock.getByRole("button", { name: "More" }).click();
+    const drawer = narrow.page.getByRole("dialog", { name: "More" });
+    await drawer.getByRole("button", { name: "Receipts" }).waitFor();
+    await wide.page.close();
+    await narrow.page.close();
   }, 60_000);
 
   it("stands the dock clear of the system's inset, its own margin where none is reported", async () => {

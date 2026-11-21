@@ -1,6 +1,5 @@
 /**
- * SEARCH, AS THE SERVER ANSWERS IT: the text search's page with its counts and facets, and the
- * address arm's page. One route serves both; which arm answered is said by the answer's shape.
+ * Search answers: text results, results for one address, or the folder inventory with counts.
  */
 import type { MessageDTO } from "./mail.js";
 
@@ -18,6 +17,16 @@ export type AddressSearchDirection = "any" | "from" | "to";
  */
 export type SearchFilterParam =
   "folder" | "sender" | "to" | "party" | "unread" | "hasAttachments" | "dateFrom" | "dateTo";
+
+export interface SearchPlaceCount {
+  /** The full path passed back to the folder filter. */
+  folder: string;
+  count: number;
+}
+
+export interface SearchPlacesResult {
+  places: SearchPlaceCount[];
+}
 
 export interface SearchResult {
   items: MessageDTO[];

@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import type { FolderEntity } from "@ohmail/wire";
 import { Frame } from "../../src/frame/Frame.js";
 import { NONE } from "../../src/host/index.js";
 import { TextProvider } from "../../src/text/index.js";
@@ -16,7 +17,7 @@ const project = {
 function mount(
   summary: (id: string) => Promise<{ folders: number; messages: number } | null>,
   writable = true,
-  extraFolders: readonly (typeof project)[] = [],
+  extraFolders: readonly FolderEntity[] = [],
 ) {
   const { host, mail } = listFrame({
     first: "#/ohbox",
@@ -106,6 +107,19 @@ it("asks without numbers on a count refusal and cancel sends nothing", async () 
   fireEvent.keyDown(cancel, { key: "Enter" });
   fireEvent.click(cancel);
   expect(mail.mutations).toHaveLength(0);
+});
+
+it("acknowledges only the failed folder change named by the notice", async () => {
+  const failed = { ...project, op: { kind: "rename" as const, to: "Archive", error: "exists" } };
+  const mail = mount(async () => null, true, [failed]);
+  const note = await screen.findByText("A folder with that name already exists.");
+  const dismiss = within(note.closest<HTMLElement>('[role="status"]')!).getByRole("button", { name: "OK" });
+  expect(mail.mutations).toHaveLength(0);
+  fireEvent.click(dismiss);
+  await waitFor(() => expect(mail.mutations).toEqual([{ kind: "folder_op_dismiss", folderId: project.id }]));
+  expect(
+    screen.queryByText("That folder change didn’t reach your mailbox — nothing was changed."),
+  ).toBeNull();
 });
 
 it("keeps a read-only folder rail free of mutation controls", async () => {

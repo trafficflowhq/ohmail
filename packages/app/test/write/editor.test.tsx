@@ -46,7 +46,11 @@ interface Mounted {
   land(value: RichValue): void;
 }
 
-function mount(Editor: WriteEditor, initial: RichValue = { text: "", html: "" }): Mounted {
+function mount(
+  Editor: WriteEditor,
+  initial: RichValue = { text: "", html: "" },
+  quotedHistory?: import("../../src/write/ports.js").EditorProps["quotedHistory"],
+): Mounted {
   const said: RichValue[] = [];
   const keys: string[] = [];
   let handle: EditorHandle | null = null;
@@ -69,6 +73,7 @@ function mount(Editor: WriteEditor, initial: RichValue = { text: "", html: "" })
           foot={{ label: W.foot, format: marks.format }}
         >
           <Editor
+            quotedHistory={quotedHistory}
             value={value}
             onChange={(next) => {
               said.push(next);
@@ -128,6 +133,102 @@ const type = (m: Mounted, text: string): void =>
   });
 
 describe("the rich editor", () => {
+  it("opens quoted history without changing the draft, keeps edits when reopened, and restores with undo", async () => {
+    const history = {
+      load: async () => ["Earlier message"],
+      show: "Show quoted history",
+      hide: "Hide quoted history",
+      restore: "Restore original",
+      unavailable: "Quoted history unavailable",
+    };
+    const draft = { text: "My reply", html: "" };
+    const m = mount(rich, draft, history);
+    fireEvent.click(mark(history.show));
+    const original = await screen.findByText("Earlier message");
+    expect(surface().contains(original)).toBe(true);
+    expect(m.said).toEqual([]);
+    const editor = (surface() as HTMLElement & { editor: TiptapEditor }).editor;
+    const start = editor.view.posAtDOM(original, 0);
+    act(() => {
+      editor.commands.setTextSelection({ from: start, to: start + "Earlier message".length });
+    });
+    type(m, "Edited message");
+    const edited = m.said.at(-1)!;
+    expect(edited.html).toContain("Edited message");
+    expect(edited.text).toContain("Edited message");
+
+    cleanup();
+    const reopened = mount(rich, edited, history);
+    fireEvent.click(mark(history.show));
+    expect(surface().contains(await screen.findByText("Edited message"))).toBe(true);
+    await act(async () => {
+      fireEvent.click(mark(history.restore));
+    });
+    expect(reopened.said.at(-1)).toEqual(draft);
+    fireEvent.keyDown(surface(), { key: "z", ctrlKey: true });
+    expect(reopened.said.at(-1)).toEqual(edited);
+  });
+
+  it("keeps folded history out of copy and cut and treats pasted history as an ordinary quote", () => {
+    const history = {
+      load: async () => ["Original"],
+      show: "Show history",
+      hide: "Hide history",
+      restore: "Restore original",
+      unavailable: "Unavailable",
+    };
+    const html =
+      '<p>Visible note</p><blockquote data-quoted-history="edited"><p>Folded edit</p></blockquote>';
+    const mounted = mount(rich, { text: "Visible note\nFolded edit", html }, history);
+    const editor = (surface() as HTMLElement & { editor: TiptapEditor }).editor;
+    for (const action of ["copy", "cut"]) {
+      const data = new Map<string, string>();
+      act(() => {
+        editor.commands.selectAll();
+      });
+      fireEvent(
+        surface(),
+        Object.assign(new Event(action, { bubbles: true, cancelable: true }), {
+          clipboardData: {
+            clearData: () => data.clear(),
+            setData: (kind: string, value: string) => data.set(kind, value),
+          },
+        }),
+      );
+      expect(data.get("text/plain")).toBe("Visible note");
+      expect(data.get("text/html")).not.toContain("Folded edit");
+    }
+    expect(mounted.said.at(-1)?.html).toContain("Folded edit");
+    cleanup();
+    const destination = mount(rich, { text: "", html: "" }, history);
+    fireEvent(
+      surface(),
+      Object.assign(new Event("paste", { bubbles: true, cancelable: true }), {
+        clipboardData: {
+          types: ["text/html"],
+          getData: (kind: string) => (kind === "text/html" ? html : ""),
+        },
+      }),
+    );
+    expect(destination.said.at(-1)?.html).toContain("Folded edit");
+    expect(destination.said.at(-1)?.html).not.toContain("data-quoted-history");
+  });
+
+  it("places the history controls between the body and signature", async () => {
+    const history = {
+      load: async () => ["Original"],
+      show: "Show history",
+      hide: "Hide history",
+      restore: "Restore original",
+      unavailable: "Unavailable",
+    };
+    mount(rich, { text: "Note", html: "" }, history);
+    fireEvent.click(mark(history.show));
+    const restore = await screen.findByRole("button", { name: history.restore });
+    const body = surface().parentElement!.parentElement!;
+    expect(body.nextElementSibling?.contains(restore)).toBe(true);
+  });
+
   it("reports a plain note with no markup, and a marked one with it", () => {
     const m = mount(rich);
     type(m, "hello");

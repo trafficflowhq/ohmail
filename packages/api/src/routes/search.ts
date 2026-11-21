@@ -80,6 +80,15 @@ export const searchRoutes: Route[] = [
         return timed(answer<"GET /search">()(found), timing, deps);
       }
 
+      if (url.searchParams.get("places") === "1") {
+        const timing = new SearchTiming();
+        const started = performance.now();
+        const result = await search(deps).places(serviceContext(deps, req));
+        timing.add("total", performance.now() - started);
+        timing.note({ part: "places" });
+        return timed(answer<"GET /search">()(result), timing, deps);
+      }
+
       const q = url.searchParams.get("q") ?? "";
       const limit = pagingNumber(url.searchParams.get("limit"));
 

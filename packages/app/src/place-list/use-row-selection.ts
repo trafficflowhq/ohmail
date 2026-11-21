@@ -1,11 +1,13 @@
 import { useLayoutEffect, useMemo } from "react";
+import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { usePickSet } from "@ohmail/app-logic/ohbox";
 import type { RowProps } from "@ohmail/ui/mail";
 import { useText } from "../text/index.js";
 
 export function useRowSelection(order: readonly { readonly id: string }[], scope?: string) {
-  const label = useText("ohbox")("keyPick");
+  const t = useText("ohbox");
+  const label = t("keyPick");
   const { rows, indices } = useMemo(
     () => ({
       rows: order.map((row) => ({ members: [row] })),
@@ -18,7 +20,22 @@ export function useRowSelection(order: readonly { readonly id: string }[], scope
   const reset = useStableCallback(clearPicked);
   useLayoutEffect(reset, [scope, reset]);
   const pickedRows = order.filter(({ id }) => picked.has(id));
+  const active = pickedRows.length > 0;
+  useOptionalKeyBindings(
+    active
+      ? [
+          {
+            chord: "Escape",
+            group: "message",
+            label: t("keyClear"),
+            inInput: true,
+            run: clearPicked,
+          },
+        ]
+      : [],
+  );
   return {
+    active,
     pickedRows,
     ids: [...new Set(pickedRows.map(({ id }) => id))],
     clear: clearPicked,
@@ -27,7 +44,7 @@ export function useRowSelection(order: readonly { readonly id: string }[], scope
         ? {}
         : {
             picked: picked.has(id),
-            selection: { label, onPress: (extend) => (extend ? pickRangeTo : togglePick)(id) },
+            selection: { label, active, onPress: (extend) => (extend ? pickRangeTo : togglePick)(id) },
           };
     },
   };

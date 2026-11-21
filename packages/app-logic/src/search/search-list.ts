@@ -48,6 +48,7 @@ export function useSearchList(input: SearchListInput): SearchListModel {
   const similarOn = storeReady ? ready.tier === "similar" && storeLength > 0 : paint.similarOn;
   const { hitAt, slotAt } = useSlots(result, walker, storeReady, paint, similarOn);
   const facets = useFacets({
+    scope,
     store,
     engine,
     trimmed,

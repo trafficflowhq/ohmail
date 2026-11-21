@@ -75,6 +75,7 @@ export function FolderRailSeat() {
   };
   return (
     <FolderRail
+      narrow={plan.rail === "dock"}
       tapMenus={plan.rail === "dock" || plan.pointer === "coarse"}
       scope={host.session.scope}
       folders={live.folders}

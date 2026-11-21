@@ -22,8 +22,8 @@ export interface UndoDoor {
   toast: UndoToastFn;
   /** The `z` key: take the live offer back. False when none is open. */
   press: () => boolean;
-  /** A press was sent whose offer comes with its answer: `z` from now on is meant for it. */
-  expect: () => UndoClaim;
+  /** Reserve `z` for a write awaiting its answer. `replace` also withdraws the current offer. */
+  expect: (opts?: { replace?: boolean }) => UndoClaim;
   /** That press answered with no offer (refused, or replaced by a newer one). */
   drop: (claim: UndoClaim) => void;
 }
@@ -41,7 +41,7 @@ const PENDING_MS = 8000;
 export const UNDO_PRESSED = Symbol("Undo pressed");
 
 export function createUndoDoor(show: ToastFn, now: () => number = () => Date.now()): UndoDoor {
-  let live: { take: () => boolean; until: number } | null = null;
+  let live: { take: () => boolean; cancel: () => void; until: number } | null = null;
   let owed: { claim: UndoClaim; since: number } | null = null;
   const settle = (claim: UndoClaim | undefined): void => { if (claim && owed?.claim === claim) owed = null; };
   const toast: UndoToastFn = (message, options) => {
@@ -62,22 +62,28 @@ export function createUndoDoor(show: ToastFn, now: () => number = () => Date.now
     const ends = new AbortController();
     let taken = false;
     const close = () => { if (live?.take === take) live = null; };
-    const take = (): boolean => {
+    const end = (reason?: symbol): boolean => {
       if (taken) return false;
       taken = true;
       close();
-      // The capsule leaves with the offer, whichever of the two took it.
-      ends.abort(UNDO_PRESSED);
+      plain.signal?.removeEventListener("abort", cancel);
+      ends.abort(reason);
+      return true;
+    };
+    const take = (): boolean => {
+      if (!end(UNDO_PRESSED)) return false;
       onAction();
       return true;
     };
-    plain.signal?.addEventListener("abort", () => { close(); ends.abort(); }, { once: true });
-    live = { take, until: now() + (plain.duration ?? TOAST_DEFAULT_MS) };
+    const cancel = () => { end(); };
+    plain.signal?.addEventListener("abort", cancel, { once: true });
+    live = { take, cancel, until: plain.actionUntilPressed ? Infinity : now() + (plain.duration ?? TOAST_DEFAULT_MS) };
     show(message, { ...plain, actionKey: UNDO_KEY, onAction: () => { take(); }, signal: ends.signal });
   };
   return {
     toast,
-    expect: () => {
+    expect: (opts) => {
+      if (opts?.replace) live?.cancel();
       const claim = { asked: false };
       owed = { claim, since: now() };
       return claim;

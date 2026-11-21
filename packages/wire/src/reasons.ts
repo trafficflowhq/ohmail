@@ -50,7 +50,7 @@ export type ServiceErrorCode =
   | "read_bound_exceeded" | "refresh_expired" | "refresh_missing" | "refresh_revoked" | "session_mismatch"
   | "remote_content_not_loaded" | "return_not_found" | "return_unconfirmed" | "rule_runs_here"
   | "run_in_flight" | "same_login" | "schedule_files_quota" | "schedule_files_too_far"
-  | "schedule_has_files" | "search_direction_unsupported" | "search_superseded"
+  | "schedule_has_files" | "search_direction_unsupported" | "search_superseded" | "search_too_many_folders"
   | "send_again_changed" | "send_again_in_flight" | "send_again_not_held" | "send_again_unchecked"
   | "send_busy" | "send_key_draft_discarded" | "send_login_refused" | "send_not_secured"
   | "send_recorded" | "send_refused_by_server" | "send_still_running" | "send_timeout"

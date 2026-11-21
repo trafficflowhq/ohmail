@@ -509,7 +509,7 @@ describe("a reader is refused AT THE PRESS, once, with the selection kept", () =
     const bulk = pressSliceOf("selection-verbs.ts", "runBulkAction");
     expect(bulk).toContain('return pressMoveSet(cx, action.slice("move:".length)');
     const move = pressSliceOf("selection-verbs.ts", "pressMoveSet");
-    const dispatchAt = move.indexOf("return moveSet(cx, view, ids)");
+    const dispatchAt = move.indexOf("return moveSet(cx, view, ids,");
     expect(dispatchAt, "fixture: the bulk move's dispatch is not in pressMoveSet").toBeGreaterThan(-1);
     const moveArm = move.slice(0, dispatchAt);
     expect(moveArm, "the bulk move arm no longer asks for the refusal before it dispatches")
@@ -614,9 +614,9 @@ describe("a reader is refused AT THE PRESS, once, with the selection kept", () =
     // a set thrown away by a press that did nothing has to be rebuilt before the person can try
     // the verb that would have worked.
     const view = readFileSync("packages/app-logic/src/ohbox/picks.ts", "utf8");
-    expect(view).toMatch(/if \(bulk\.run\(action, pickedIds\)\) clearPicked\(\);/);
+    expect(view).toMatch(/if \(bulk\.run\(action, pickedIds, \{ conversationIds \}\)\) clearPicked\(\);/);
     expect(view, "runBulk clears unconditionally again").not.toMatch(
-      /bulk\.run\(action, pickedIds\);\s*\n\s*clearPicked\(\);/,
+      /bulk\.run\(action, pickedIds, \{ conversationIds \}\);\s*\n\s*clearPicked\(\);/,
     );
   });
 });

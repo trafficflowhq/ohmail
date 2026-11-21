@@ -49,8 +49,12 @@ afterAll(async () => {
 });
 
 /** The demo at an address, on a phone under a finger. The page's body is the product layout's. */
-async function demo(at: string): Promise<Page> {
-  const context = await browser!.newContext({ viewport: PHONE, hasTouch: true, isMobile: true });
+async function demo(at: string, phone = true): Promise<Page> {
+  const context = await browser!.newContext({
+    viewport: phone ? PHONE : { width: 1440, height: 900 },
+    hasTouch: phone,
+    isMobile: phone,
+  });
   const page = await context.newPage();
   await page.route(`${ORIGIN}/**`, (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -198,3 +202,36 @@ describe("today's Ohbox selection bar on a phone, 390 by 844, under a finger", (
     expect(after, "no dock once the Ohbox is left").toBe(1);
   }, 60_000);
 });
+
+it.each([["desktop", false], ["phone", true]] as const)(
+  "the %s's native circle button activates with Enter and updates the already-mounted live region",
+  async (_device, phone) => {
+    const page = await demo("#/ohbox", phone);
+    try {
+      const circle = page.getByRole("button", { name: "Select the message" }).first();
+      const region = await page.locator('[aria-live="polite"][aria-atomic="true"]').elementHandle();
+      expect(await region?.textContent()).toBe("");
+      const isSeparate = await circle.evaluate(
+        (button) => button.parentElement?.closest('[role="option"], [role="button"], button') === null,
+      );
+      expect(isSeparate).toBe(true);
+      await circle.focus();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => picked(page)).toBe(1);
+      expect(await region?.textContent()).toBe("1 selected");
+      expect(await page.evaluate(() => location.hash)).toBe("#/ohbox");
+
+      await page.keyboard.press("Space");
+      await expect.poll(() => picked(page)).toBe(0);
+      expect(await region?.textContent()).toBe("");
+
+      if (phone) await circle.tap();
+      else await circle.click();
+      await expect.poll(() => picked(page)).toBe(1);
+      await page.keyboard.press("Escape");
+      await expect.poll(() => picked(page)).toBe(0);
+    } finally {
+      await page.context().close();
+    }
+  },
+);

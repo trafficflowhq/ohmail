@@ -1,3 +1,4 @@
+import type { SearchPlaceCount } from "@ohmail/wire";
 import { EngineLocalSearch } from "./local-search.js";
 import { SEARCH_WARM_IDLE_MS } from "./options.js";
 import {
@@ -7,6 +8,14 @@ import {
 } from "./server-wire.js";
 
 export abstract class EngineArchive extends EngineLocalSearch {
+  async searchPlaces(): Promise<readonly SearchPlaceCount[] | null> {
+    try {
+      return (await this.adapter.searchPlaces?.()) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   // ── the archive pass ─────────────────────────────────────────────────────
 
   /**

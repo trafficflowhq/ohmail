@@ -70,7 +70,16 @@ export function useReadWiring(
    * it. It outlives the reader — closed, the row keeps its ring where the person stopped — and is
    * cleared once another conversation is chosen.
    */
-  const [walk] = useState(createThreadWalkChannel);
+  const [walk] = useState(() => {
+    const channel = createThreadWalkChannel();
+    if (selectedId !== null && input.initialSquare) {
+      const messages = input.conversationOf?.(selectedId) ?? [];
+      if (messages.some((m) => m.id === input.initialSquare)) {
+        channel.publish({ messages, here: input.initialSquare, openedId: selectedId });
+      }
+    }
+    return channel;
+  });
   useEffect(() => {
     const s = walk.get();
     if (selectedId !== null && s !== null && !s.messages.some((m) => m.id === selectedId)) walk.clear();

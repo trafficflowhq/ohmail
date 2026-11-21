@@ -150,11 +150,30 @@ const ohbox: PlaceEntry = {
 };
 
 const made = fakeHost({
-  engine: NO_ENGINE,
+  engine: { ...NO_ENGINE, trashAvailable: () => true },
   service: "self",
   scope: "a",
-  places: { ohbox },
-  window: fakeWindow({ ...ROOMS.phone, posture: "flat", reducedMotion: true }),
+  places: q.has("dock")
+    ? {
+        ohbox,
+        screener: { ...ohbox, id: "screener", rail: { group: "main", icon: "screener", label: "title" } },
+        news: { ...ohbox, id: "news", rail: { group: "main", icon: "news", label: "title" } },
+        trash: {
+          id: "trash",
+          body: "trash",
+          rail: {
+            group: "more",
+            icon: "trash",
+            label: "title",
+            whileOpen: true,
+            navigationRefusal: ({ engine }) => (engine.trashAvailable?.() ? undefined : "trash_unavailable"),
+          },
+          panes: { kind: "columns", List: () => <h1>Trash</h1>, Reading: () => null },
+        },
+        receipts: { ...ohbox, id: "receipts", rail: { group: "main", icon: "receipts", label: "title" } },
+      }
+    : { ohbox },
+  window: fakeWindow({ ...ROOMS.phone, width: innerWidth, posture: "flat", reducedMotion: !q.has("motion") }),
   appearance: fakeAppearance(),
 }).host;
 const host: HostContract = {
@@ -173,7 +192,17 @@ document.documentElement.setAttribute("data-theme", "light");
 createRoot(document.getElementById("root")!).render(
   <TextProvider
     locale="en"
-    messages={{ ...FRAME_WORDS.en, ...ohboxEn, ...sharedEn } as Messages}
+    messages={
+      {
+        ...FRAME_WORDS.en,
+        ...ohboxEn,
+        ...sharedEn,
+        screener: { title: "Screener" },
+        news: { title: "News" },
+        receipts: { title: "Receipts" },
+        trash: { title: "Trash" },
+      } as Messages
+    }
     timeZone="UTC"
   >
     <Frame host={host} />

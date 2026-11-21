@@ -5,6 +5,8 @@ import { getTranslations } from "next-intl/server";
 import { LocaleShell } from "./LocaleShell";
 import { AppearanceBoot, Providers } from "./providers";
 import { SELF_HOST_BUILD } from "../self-host-marketing";
+import { faceMirrorOwner } from "../shell/face-mirror";
+import { FIRST_PAGE_OWNER_HEADER } from "../session-gate";
 import { DEFAULT_LOCALE, localeFromCookieHeader } from "../shell/locale";
 import { loadCatalog } from "../../i18n/catalog";
 import { firstScreenCatalog } from "../../i18n/first-screen";
@@ -103,6 +105,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  interactiveWidget: "resizes-content",
   colorScheme: "light dark",
   /* the canvas tokens — the browser chrome matches the tile the icon sits on */
   themeColor: [
@@ -141,14 +144,16 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // The mailbox has an account look to resolve. Until then, use the saved face or paper.
   const firstPage = h.get("x-ohmail-first-page");
   const deferLinuxFace = firstPage === "now" || firstPage === "wait";
+  const confirmedOwner = h.get(FIRST_PAGE_OWNER_HEADER);
+  const owner = firstPage === "now" && confirmedOwner === faceMirrorOwner(h.get("cookie") ?? "") ? confirmedOwner : null;
   return (
     <html lang={locale} suppressHydrationWarning>
       <head>
-        <AppearanceBoot nonce={nonce} deferLinuxFace={deferLinuxFace} />
+        <AppearanceBoot nonce={nonce} deferLinuxFace={deferLinuxFace} owner={owner} />
       </head>
       <body className="mo-canvas app-body today" style={{ backgroundColor: "var(--ground)" }}>
         <LocaleShell initialLocale={locale} initialMessages={messages}>
-          <Providers nonce={nonce} deferLinuxFace={deferLinuxFace}>{children}</Providers>
+          <Providers nonce={nonce} deferLinuxFace={deferLinuxFace} owner={owner}>{children}</Providers>
         </LocaleShell>
       </body>
     </html>

@@ -2,6 +2,7 @@
  * AN ADDRESS'S LIST: everything from and to one address, as All, From them or To them, each with its count, and the
  * place each letter is in on its row. Its head closes it, back to the list it was opened from.
  */
+import type { ReactNode } from "react";
 import { useAddressModel, type AddressModel, type AddressSide } from "@ohmail/app-logic/address";
 import { Button, Empty, Seg } from "@ohmail/ui/base";
 import { ListHead, ListLine } from "@ohmail/ui/mail";
@@ -83,7 +84,14 @@ function ArchiveScope({ model, t }: { model: AddressModel; t: Text }) {
     const offline = archive.errorClass.split(" ").includes("offline_read_only");
     return (
       <ListLine act={offline ? undefined : { label: t("archive.retry"), onPress: archive.retry }}>
-        <span>{recent}</span> · <span>{t(offline ? "archive.offline" : "archive.unanswered")}</span>
+        <span>{recent}</span> ·{" "}
+        <span>
+          {offline
+            ? t.rich("archive.offline", {
+                device: (name: ReactNode) => <strong style={{ fontWeight: 500 }}>{name}</strong>,
+              })
+            : t("archive.unanswered")}
+        </span>
       </ListLine>
     );
   }

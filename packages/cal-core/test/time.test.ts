@@ -8,7 +8,7 @@ import { parseDuration } from "../src/ical/values.js";
 import { parseRRule } from "../src/recur/rrule.js";
 import {
   addDays, civilFromDays, dayOfYear, daysFromCivil, daysInMonth, instantOf, instantOfFloating, isLeapYear, isValidDate, localDay, resolveWall, wallFromSeconds, wallIn,
-  wallSeconds, weekdayOf, weekOf, weeksInYear,
+  wallInstants, wallSeconds, weekdayOf, weekOf, weeksInYear,
 } from "../src/time/arith.js";
 import { addDuration } from "../src/time/duration.js";
 import { floating, instant, plainDate, wall, zoned, type Wall, type ZoneSource } from "../src/time/types.js";
@@ -27,6 +27,14 @@ const resolved = (compact: string, tzid: string, zones: ZoneSource = platform): 
   const ms = resolveWall(w(compact), tzid, zones);
   return ms === null ? null : iso(ms);
 };
+
+it("returns no exact time in a skipped hour and both ordered times in a repeated hour", () => {
+  expect(wallInstants(w("20260329T023000"), "Europe/Zurich", platform)).toEqual([]);
+  expect(wallInstants(w("20261025T023000"), "Europe/Zurich", platform).map(iso)).toEqual([
+    "2026-10-25T00:30:00Z",
+    "2026-10-25T01:30:00Z",
+  ]);
+});
 
 describe("calendar arithmetic", () => {
   it("counts days both ways, across leap years and centuries", () => {

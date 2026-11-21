@@ -8,7 +8,7 @@ export interface RowSwipeVerb {
 }
 
 /**
- * A row under a finger: to the right the read slot, to the left Later. The list's own layer listens for the
+ * A row under a finger reveals the verb in the direction of the swipe. The list's own layer listens for the
  * finger and says how far it has pulled this row; the row draws that, and takes no pointer for itself.
  */
 export interface RowSwipe {

@@ -4,7 +4,7 @@
  * the place above the line. A press opens the item in the stream. On a phone's width the place is the stream itself.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useContext, useRef, type ReactNode } from "react";
+import { useContext, useRef, type RefObject, type ReactNode } from "react";
 import { useZoneNav } from "@ohmail/app-logic/keys";
 import { useEngineOrNull } from "@ohmail/app-logic/engine";
 import { PileNoteContext } from "@ohmail/app-logic/lists/pile-note";
@@ -116,6 +116,7 @@ export function StreamList({ plan, keysHere }: PaneProps) {
   const t = useStreamText(model.place);
   useStreamKeys(keysHere, model.scroller, model);
   useZoneNav(useText("shortcuts"), { listFocusSelector: '.pl-list [role="option"][aria-selected="true"]' });
+  const selection = useRowSelection(model.items, model.place);
   const head = <StreamHead model={model} dock={plan.rail === "dock"} />;
   /* An empty stream's list says so, as the reference draws it; its reading column says All read. */
   const empty = model.mayState && model.items.length === 0 ? <Empty label={t("stream.empty")} /> : null;
@@ -125,29 +126,44 @@ export function StreamList({ plan, keysHere }: PaneProps) {
       <div className="pl-list st-phone-list" data-stream-phone-list="" data-cursor-tint="">
         {head}
         <div className="pl-fill">
-          <StreamColumn phone keysHere={keysHere} />
+          <StreamColumn phone keysHere={keysHere} selection={selection} />
         </div>
+        <MailSelectionFoot selection={selection} verbs={model.verbs} />
       </div>
     ) : (
       <ListColumn plan={plan} label={t("list.label")} head={head}>
         {empty}
       </ListColumn>
     );
-  return <StreamRowsList plan={plan} model={model} head={head} empty={empty} />;
+  return <StreamRowsList plan={plan} model={model} head={head} empty={empty} selection={selection} />;
 }
 
-function StreamRowsList({
-  plan,
-  model,
-  head,
-  empty,
-}: {
+function useRowsWindow(
+  model: StreamModel,
+  rowsRef: RefObject<HTMLDivElement | null>,
+  line: number,
+  chip: number,
+  after: number,
+) {
+  const cursor = model.openId === null ? -1 : model.items.findIndex((item) => item.id === model.openId);
+  const slot =
+    cursor + (line === 1 && cursor >= model.freshCount ? 1 : 0) + (chip === 1 && cursor > after ? 1 : 0);
+  return useListWindow({
+    scrollerRef: rowsRef,
+    count: model.items.length + line + chip,
+    cursor: model.openId === null ? undefined : { id: model.openId, index: slot },
+  });
+}
+
+interface StreamRowsListProps {
   plan: PaneProps["plan"];
   model: StreamModel;
   head: ReactNode;
   empty: ReactNode;
-}) {
-  const selection = useRowSelection(model.items);
+  selection: RowSelection;
+}
+
+function StreamRowsList({ plan, model, head, empty, selection }: StreamRowsListProps) {
   const contact = useRowContact();
   const reply = useContext(StreamReplyContext);
   const sentLabel = useSentLabel(useText("ohbox"));
@@ -171,7 +187,7 @@ function StreamRowsList({
   const after = filingChip ? model.items.slice(0, fresh).findIndex((m) => m.id === filingChip.afterId) : -1;
   const chip = after >= 0 ? 1 : 0;
   const lineAt = fresh + chip;
-  const win = useListWindow({ scrollerRef: rowsRef, count: model.items.length + line + chip });
+  const win = useRowsWindow(model, rowsRef, line, chip, after);
   const lineStamp = model.lineAt ? lineStampOf(model.lineAt, new Date(), locale) || undefined : undefined;
   /* The rows above the line, the line where it is in the window, the rows below it: each run its own list. */
   const above: ReactNode[] = [];

@@ -36,6 +36,7 @@ export interface LetterHeadProps {
   onPerson: (person: ContactOf) => void;
   card: string | null;
   preview?: boolean;
+  selection?: MessageHeadProps["selection"];
   streamCard?: "open";
 }
 
@@ -73,6 +74,7 @@ export function useLetterHeadPresentation(props: LetterHeadProps) {
   } = useLetterHead(props);
   const head: Omit<MessageHeadProps, "stamp"> = {
     preview: preview,
+    selection: props.selection,
     sender: {
       name: nameOf(message.from),
       address: message.from.address,

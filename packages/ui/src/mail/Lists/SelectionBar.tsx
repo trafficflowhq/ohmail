@@ -5,6 +5,8 @@ export interface SelectionBarProps {
   label: string;
   /** How many rows are picked: the number, its word, and the two as the control's name. A press lets go of them. */
   count: { count: string; word: string; label: string; onClear?: () => void };
+  /** The host supplies a live region that is already mounted. */
+  announceCount?: boolean;
   /** The verbs over the picked rows, in the app's order. */
   verbs: readonly PanelVerb[];
   /** What stands behind the bar: Delete. */
@@ -20,6 +22,7 @@ export interface SelectionBarProps {
 export function SelectionBar({
   label,
   count,
+  announceCount,
   verbs,
   more,
   keysShown,
@@ -34,7 +37,7 @@ export function SelectionBar({
     rank: 0,
     wordOrder: 1,
     wordFirst: true,
-    counted: { count: count.count, word: count.word },
+    counted: { count: count.count, word: count.word, announce: announceCount },
     onPress: count.onClear,
   };
   return (

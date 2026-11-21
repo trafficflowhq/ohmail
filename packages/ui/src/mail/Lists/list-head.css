@@ -86,6 +86,10 @@
 
   /* Under a finger a list is too narrow for the name and its sections on one line: they are the head's
      second line, whole, each as wide as its share of the list. */
+  :root[data-touch="1"] .oh-listhead[data-sections] {
+    --oh-listhead-seg-count: var(--s1);
+  }
+
   :root[data-touch="1"] .oh-listhead-sections {
     flex: 1 0 100%;
     order: 1;
@@ -115,7 +119,7 @@
      those that are still wider than their line at the closest stand, which then keep to their own share. */
   :root[data-device="fold"] .oh-listhead-sections .oh-seg-item,
   :root[data-touch="1"] .oh-listhead-sections .oh-seg[data-fit="tighter"] .oh-seg-item {
-    --oh-seg-item-pad: 0 var(--s1);
+    --oh-seg-item-pad: 0 var(--s2);
 
     font-size: var(--t-meta);
   }

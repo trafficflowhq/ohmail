@@ -166,7 +166,7 @@ export function useStreamLive(place: StreamPlace, args: PlaceLiveArgs, own: Stre
     textOf: (id) => readableText(previewOf(id)),
     hasPreviewMarkup: (id) => Boolean(previewOf(id)?.html),
     bodyReady: (id) => readableText(bodyFor(id)) !== null,
-    bodyStateOf: (id) => previewOf(id)?.state,
+    bodyStateOf: (id) => (place === "news" ? bodyFor(id) : previewOf(id))?.state,
     prefetch,
     prefetchSource: presented,
     revealPrefetch: (id) => {

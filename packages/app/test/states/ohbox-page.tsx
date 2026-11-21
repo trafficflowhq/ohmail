@@ -264,7 +264,7 @@ if (long > 1) {
       who: "rahel",
       subject: "Re: The studio roof, again",
       snippet: "Another note about the roof.",
-      date: today(9, 25),
+      date: q.has("dated") ? "2026-09-15T09:25:00.000Z" : today(9, 25),
       unread: true,
       file: true,
     }),

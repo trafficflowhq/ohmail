@@ -128,6 +128,18 @@ describe("a search on the hosted handle factory (real Postgres, on the wire)", (
     expect(flight.params[0]!).toBeGreaterThan(0);
   });
 
+  it("reads the account's folder counts under a transaction-local statement deadline", async () => {
+    wire.start();
+    expect(await svc.places(ctx(BUILT))).toEqual({ places: [{ folder: "INBOX", count: 9 }] });
+    const statements = wire.read().lines.find((line) =>
+      line.some(({ text }) => text.includes("sum(n) as total")),
+    )?.map(({ text }) => text) ?? [];
+    const aggregate = statements.findIndex((text) => text.includes("sum(n) as total"));
+    const deadline = statements.findIndex((text) => /set_config\('statement_timeout', '\d+', true\)/.test(text));
+    expect(deadline).toBeGreaterThanOrEqual(0);
+    expect(aggregate).toBeGreaterThan(deadline);
+  });
+
   it("the estimate and the summary are one wait too", async () => {
     for (const parts of ["estimate", "summary"] as const) {
       const r = await onWire(() => svc.search(ctx(BUILT), { q: "heron", parts, limit: 4 }));

@@ -17,6 +17,8 @@
  * measured failure mode of consent-adjacent UI is exactly "the component that owns the string
  * passes while the shell never wires it" (the fixture's own header).
  */
+import { createElement } from "react";
+import { ToastContext } from "@ohmail/ui";
 import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
@@ -176,7 +178,7 @@ describe("account adoption is LIVE-WIRE only", () => {
 
 const LOOK_ACCOUNT = "acct_live_1";
 
-async function mountGeneralLook(opts: Pick<NonNullable<Parameters<typeof mountShell>[1]>, "consentTransport"> = {}) {
+async function mountGeneralLook(opts: Pick<NonNullable<Parameters<typeof mountShell>[1]>, "consentTransport" | "wrap"> = {}) {
   setStorageOwner(LOOK_ACCOUNT);
   const page = await mountShell([mailbox()], { general: WEB_PANE_PARTS.general, ...opts });
   const { bindApiOwner } = await import("../app/api-client");
@@ -362,7 +364,9 @@ describe("Settings → General → Look", () => {
       }
       return inner(input as RequestInfo, init);
     }) as typeof globalThis.fetch;
-    const container = await mountGeneralLook();
+    const container = await mountGeneralLook({
+      wrap: (shell) => createElement(ToastContext.Provider, { value: null }, shell),
+    });
     await goTo("settings/general");
     await tick(10);
     await click(within(container).getByRole("button", { name: /^ohmarchy\b/ }));
@@ -370,6 +374,8 @@ describe("Settings → General → Look", () => {
     expect(window.localStorage.getItem("ohmail.face")).toBeNull();
     expect(window.localStorage.getItem("ohmail.face.account")).toBeNull();
     expect(container.textContent).toContain("Couldn't save that");
+    await tick(50);
+    expect(within(container).getByRole("status", { name: "Couldn't save that — try again." })).toBeTruthy();
   });
 
   /** Hold every `GET /consent` until `release()`; then answer them from the fixture. */

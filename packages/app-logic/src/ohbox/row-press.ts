@@ -67,7 +67,7 @@ export function ohboxDrag(
       if (m) onAction(target.action, m);
       return;
     }
-    bulk.run(target.action, source.ids);
+    bulk.run(target.action, source.ids, { conversationIds: new Set(source.ids) });
   };
 
   return { sourceFor: dragSourceFor, onDrop: onRailDrop };
@@ -94,10 +94,10 @@ export function ohboxPressRow({
   enter,
 }: PressParts): OhboxListModel["pressRow"] {
   /** A press on a row, singleton or folded: the open target answers, row MEMBERSHIP says whether it is the open one. */
-  const pressRow = (g: OhboxRowGroup): void => {
+  const pressRow: OhboxListModel["pressRow"] = (g, keyboard) => {
     const target = g.openTarget;
     const wholeThread = g.members.length > 1 ? true : undefined;
-    if (input.columnHidden() && picked.size > 0) {
+    if (!keyboard && input.columnHidden() && picked.size > 0) {
       // The same contract as the singleton row above — and a folded row toggles all of
       // its members, which is what `togglePick` does with a row id.
       togglePick(target.id);

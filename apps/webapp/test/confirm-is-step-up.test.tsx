@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -319,7 +320,7 @@ const PANES: Pane[] = [
     name: "InvitesSection: mint", verb: "pair.mint", signIn: inv.stepUpExpired!,
     walk: async () => {
       const { InvitesSection } = await import("../app/(product)/mailbox/InvitesSection.js");
-      const el = await render(h(InvitesSection));
+      const el = await render(h(WithReport, { view: InvitesSection }));
       await click(press(el, inv.mintAction!));
       return el;
     },

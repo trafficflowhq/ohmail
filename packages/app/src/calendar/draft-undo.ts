@@ -71,3 +71,24 @@ export function useDraftRestore<K extends Recovery["kind"]>(
     };
   });
 }
+
+/** Open a new, unsent copy. The same draft restore seam keeps the transfer within this account and port. */
+export function useDuplicateDraft(port: CalendarPort) {
+  const { commands, route, host } = useFrame();
+  return (draft: EventDraft, calendar: string) => {
+    const target: Route = {
+      ...route,
+      sub: draft.day,
+      open: null,
+      words: { panel: "new" },
+    };
+    const address = host.device.address;
+    const data: Recovery = { kind: "new", draft: { ...draft, invitees: [] }, calendar };
+    const recovery = { data, port, fragment: fragmentOf(target), engine: host.engine };
+    pending.set(address, recovery);
+    commands.go(target, { history: "open-dialog" });
+    setTimeout(() => {
+      if (pending.get(address) === recovery) pending.delete(address);
+    }, UNDO_MS);
+  };
+}

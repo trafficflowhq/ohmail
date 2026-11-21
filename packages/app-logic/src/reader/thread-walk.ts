@@ -7,7 +7,7 @@
  * squares show the same place and press through to this column.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { threadWalk, type Walk } from "@ohmail/client-engine";
 import { cssRect } from "../geometry/index.js";
 import { nextFrame, viewOf, THREAD_DOM, type ThreadDomNames } from "../reading/reader-seen.js";
@@ -45,7 +45,7 @@ export const OPEN_GAP_PX = 14;
 export const END_FAR_PX = 240;
 /** What may be a person's intent, heard first (capture) on the column's own window. */
 const HANDOVER = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
-const OPEN_TAIL = "--oh-sheet-open-tail";
+export const OPEN_TAIL = "--oh-sheet-open-tail";
 
 export interface ThreadWalk {
   /** The index of the letter the reader is on, or -1 before the column is measured. */
@@ -72,9 +72,13 @@ export function useThreadWalk({
   const list = useRef(ids);
   list.current = ids;
   const walk = useRef<Walk | null>(null);
-  const view = useRef(0);
+  const room = useRef({ view: 0, farEdge: END_FAR_PX });
+  const drawn = useRef({ id: null as string | null, far: false });
   const pin = useRef<string | null>(wholeThread ? null : openedId);
-  const [here, setHere] = useState<string | null>(null);
+  const [here, setHere] = useState(() => {
+    const last = channel?.get();
+    return last && last.openedId === openedId ? last.here : null;
+  });
   const [endFar, setEndFar] = useState(false);
   const startId = wholeThread ? (messages.find((m) => m.unread)?.id ?? ids[0] ?? null) : null;
   const latest = useRef({ onEnter, names, standsDown, startId });
@@ -91,24 +95,26 @@ export function useThreadWalk({
     const w = walk.current;
     if (!scroller || !w) return;
     const at = pin.current === null ? -1 : list.current.indexOf(pin.current);
-    const i = w.current(scroller.scrollTop, at >= 0 ? { index: at } : null);
-    if (i >= 0) setHere(list.current[i] ?? null);
+    const top = scroller.scrollTop;
+    const i = w.current(top, at >= 0 ? { index: at } : null);
+    const id = i >= 0 ? (list.current[i] ?? null) : drawn.current.id;
     const last = list.current.length - 1;
-    const far = Math.max(END_FAR_PX, scroller.clientHeight / 2);
-    setEndFar(last > 0 && view.current > 0 && w.scrollFor(last) - scroller.scrollTop > far);
+    const far = last > 0 && room.current.view > 0 && w.scrollFor(last) - top > room.current.farEdge;
+    if (id !== drawn.current.id) setHere(id);
+    if (far !== drawn.current.far) setEndFar(far);
+    drawn.current = { id, far };
   }, [scroller]);
 
   const measure = useCallback((): void => {
     if (!scroller) return;
     const top0 = cssRect(scroller).top;
-    const at = new Map<string, number>();
-    for (const p of scroller.querySelectorAll<HTMLElement>("[data-conv-id]"))
-      at.set(p.dataset.convId ?? "", cssRect(p).top - top0 + scroller.scrollTop);
+    room.current.farEdge = Math.max(END_FAR_PX, scroller.clientHeight / 2);
+    const at = conversationTops(scroller, top0);
     const v = viewOf(scroller, latest.current.names);
-    view.current = Math.max(0, v.bottom - v.top);
+    room.current.view = Math.max(0, v.bottom - v.top);
     let max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     if (anchored.current && latest.current.standsDown?.() === true) anchored.current = false;
-    const anchoring = anchored.current && list.current.length > 1 && view.current > 0;
+    const anchoring = anchored.current && list.current.length > 1 && room.current.view > 0;
     if (anchoring && wholeThread && pin.current === null) pin.current = latest.current.startId;
     const pinned = pin.current === null ? -1 : list.current.indexOf(pin.current);
     const top = at.get(pin.current ?? "");
@@ -124,7 +130,7 @@ export function useThreadWalk({
     walk.current = threadWalk({
       tops: list.current.map((id) => at.get(id) ?? Number.NaN),
       max,
-      view: view.current,
+      view: room.current.view,
       opened: pinned,
     });
     look();
@@ -134,7 +140,7 @@ export function useThreadWalk({
     (i: number): boolean => {
       measure();
       const id = list.current[i];
-      if (!scroller || id === undefined || view.current <= 0) return false;
+      if (!scroller || id === undefined || room.current.view <= 0) return false;
       anchored.current = false;
       const w = walk.current;
       if (!w) return false;
@@ -171,6 +177,15 @@ export function useThreadWalk({
   return { here: shown === null ? -1 : ids.indexOf(shown), jump: land, endFar };
 }
 
+function conversationTops(scroller: HTMLElement, top0: number): Map<string, number> {
+  const scrollTop = scroller.scrollTop;
+  const at = new Map<string, number>();
+  for (const panel of scroller.querySelectorAll<HTMLElement>("[data-conv-id]")) {
+    at.set(panel.dataset.convId ?? "", cssRect(panel).top - top0 + scrollTop);
+  }
+  return at;
+}
+
 /** Measured on every layout change, a frame after it; a scroll reads only the offset. */
 function useLayoutWatch(
   scroller: HTMLElement | null,
@@ -180,7 +195,7 @@ function useLayoutWatch(
   landOwed: () => void,
   onHand: () => void,
 ): void {
-  useEffect(() => {
+  useLayoutEffect(() => {
     const win = scroller?.ownerDocument.defaultView;
     if (!scroller || !win) return;
     let measuring: (() => void) | null = null;
@@ -269,7 +284,7 @@ function useWalkChannel(
   land: (index: number) => boolean,
 ): void {
   /* The channel keeps what it was told by its key: a second telling of the same squares is nothing. */
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!channel) return;
     channel.publish({ messages, here: shown, openedId });
   }, [channel, messages, shown, openedId]);

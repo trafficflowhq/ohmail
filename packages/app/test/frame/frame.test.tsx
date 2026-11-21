@@ -1,12 +1,14 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import { COLUMNS_KEY } from "@ohmail/app-logic/lists/column-store";
 import { EngineContext, useEngine } from "@ohmail/app-logic/engine";
 import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { Frame } from "../../src/frame/Frame.js";
+import { FrameReports, useWindowReport } from "../../src/frame/WindowReports.js";
 import {
   useConnectionFeed,
   useFrame,
@@ -74,6 +76,7 @@ const firstRun: StageEntry = { id: "firstRun", Body: () => <p>first run</p> };
 function mount(
   more: Partial<FakeHostInput> = {},
   places: Partial<FramePlaces> = { ohbox, news: today("news"), later: today("later") },
+  wrap: (frame: ReactNode) => ReactNode = (frame) => frame,
 ) {
   const made = fakeHost({
     engine: NO_ENGINE,
@@ -89,7 +92,7 @@ function mount(
       messages={{ ...FRAME_WORDS.en, ohbox: { title: "Ohbox" } }}
       timeZone="Europe/Zurich"
     >
-      <Frame host={made.host} />
+      {wrap(<Frame host={made.host} />)}
     </TextProvider>,
   );
   return { ...made, view };
@@ -378,6 +381,120 @@ describe("the frame", () => {
       expect(document.activeElement, "a press beside the sheet left the keys nowhere").toBe(more);
     });
   }
+
+  it("a window notice survives setup and a mail Undo until dismissed", () => {
+    function WindowNotice() {
+      const report = useWindowReport()!;
+      return (
+        <button type="button" onClick={() => report("Window recovered", { dismiss: "Dismiss" })}>
+          Recover
+        </button>
+      );
+    }
+    function WindowReports({ children }: { children: ReactNode }) {
+      const [ready, setReady] = useState(false);
+      return (
+        <FrameReports>
+          <WindowNotice />
+          <button type="button" onClick={() => setReady(true)}>
+            Finish setup
+          </button>
+          {ready ? children : null}
+        </FrameReports>
+      );
+    }
+    mount({}, undefined, (frame) => <WindowReports>{frame}</WindowReports>);
+    fireEvent.click(screen.getByRole("button", { name: "Recover" }));
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Park" }));
+    expect(screen.getByRole("button", { name: /Undo/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("Window recovered")).toBeNull();
+    expect(screen.getByRole("button", { name: /Undo/ })).toBeTruthy();
+  });
+
+  it("clears both the current and waiting mail reports when its account frame leaves", () => {
+    function MailReports() {
+      const report = useReport();
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            report("Archived", { action: "Undo", onAction: () => undefined });
+            report("Mail action refused");
+          }}
+        >
+          Report mail actions
+        </button>
+      );
+    }
+
+    function Window({ children }: { children: ReactNode }) {
+      const [shown, show] = useState(true);
+      return (
+        <FrameReports>
+          <button type="button" onClick={() => show(false)}>
+            Leave the account
+          </button>
+          {shown ? children : null}
+        </FrameReports>
+      );
+    }
+
+    mount({}, { ohbox: { ...ohbox, panes: { kind: "wide", Wide: MailReports } } }, (frame) => (
+      <Window>{frame}</Window>
+    ));
+    fireEvent.click(screen.getByRole("button", { name: "Report mail actions" }));
+    expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Leave the account" }));
+    expect(screen.queryByText("Archived")).toBeNull();
+    expect(screen.queryByText("Mail action refused")).toBeNull();
+  });
+
+  it("shows a setup confirmation inside the active dialog", () => {
+    function Pairing() {
+      const report = useReport();
+      return <button onClick={() => report("Link copied.")}>Copy pairing link</button>;
+    }
+    mount({ address: fakeAddress("#/first-run"), stages: { firstRun: { id: "firstRun", Body: Pairing } } });
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "Copy pairing link" }));
+    expect(dialog.getByRole("status").textContent).toBe("Link copied.");
+  });
+
+  it("shows waiting setup feedback after a hidden keyed Undo expires", async () => {
+    vi.useFakeTimers();
+    function Mail() {
+      const report = useReport();
+      return (
+        <button onClick={() => report("Parked", { action: "Undo", actionKey: "z", onAction: () => {} })}>
+          Park
+        </button>
+      );
+    }
+    function Pairing() {
+      const report = useReport();
+      return <button onClick={() => report("Link copied.")}>Copy pairing link</button>;
+    }
+    const { address } = mount(
+      { stages: { firstRun: { id: "firstRun", Body: Pairing } } },
+      { ohbox: { ...ohbox, panes: { kind: "wide", Wide: Mail } } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Park/ }));
+    expect(screen.getByRole("button", { name: /Undo/ })).toBeTruthy();
+    act(() => address.visit("#/first-run"));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByRole("button", { name: /Undo/ })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Copy pairing link" }));
+    expect(within(dialog).queryByText("Link copied.")).toBeNull();
+
+    await act(async () => vi.advanceTimersByTime(UNDO_MS + 500));
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(within(dialog).getByRole("status").textContent).toBe("Link copied.");
+    expect(within(dialog).queryByRole("button", { name: /Undo/ })).toBeNull();
+  });
 
   it("opens a registered stage over the app and holds the frame behind it inert", () => {
     mount({ address: fakeAddress("#/first-run") });

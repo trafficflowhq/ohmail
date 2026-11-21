@@ -14,9 +14,15 @@ import en from "../../messages/en.json";
 import { act, message, stubDom } from "../_draft-shell.js";
 import { letter } from "../_handoff-steps.js";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
-import { mountWriting, rounds, unmountWritings, type WritingWorld } from "../_write-1-writing.js"; // Write over parts that stay (share write-1): today's words and keys leave
+import { mountWriting as mountWritingSurface, rounds, unmountWritings, type WritingWorld } from "../_write-1-writing.js"; // Write over parts that stay (share write-1): today's words and keys leave
 
 const W = en.write;
+
+async function mountWriting(options: Parameters<typeof mountWritingSurface>[0]) {
+  const world = await mountWritingSurface(options);
+  await within(world.el).findByRole("textbox", { name: W.text });
+  return world;
+}
 
 /* Write's text is the ground's rich editor (ProseMirror): a drop asks the page which place is under the pointer,
    which every browser answers and jsdom does not. Nothing is under it here. */
@@ -688,6 +694,39 @@ describe("draft from your text, on a new letter", () => {
     await typeLetter("lena@example.invalid", "noon ok");
     expect(screen.queryByRole("button", { name: W.draft.fromText })).toBeNull();
     expect(d.asked).toEqual([]);
+  });
+
+  it("a delayed quote restore belongs to the draft it started in", async () => {
+    const make = (id: string, parent: string, note: string, quote: string) => ({
+      ...letter(id, "Fwd: Topic", note + "\n" + quote), forwardOfMessageId: parent,
+      html: `<p>${note}</p><blockquote data-quoted-history="edited"><p>${quote}</p></blockquote>`,
+    });
+    const first = make("first", "one", "First note", "First edited quote");
+    const second = make("second", "two", "Second note", "Second edited quote");
+    const w = await mountWriting({ view: true, drafts: [first, second], messages: [message("one"), message("two")] });
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const hydrate = w.engine.hydrateBodies.bind(w.engine);
+    w.engine.hydrateBodies = async (ids, options) => {
+      if (ids.includes("one")) await pending;
+      return hydrate(ids, options);
+    };
+    await act(async () => w.now().openDraft(first));
+    fireEvent.click(await screen.findByRole("button", { name: W.history.show }));
+    fireEvent.click(await screen.findByRole("button", { name: W.history.restore }));
+    await act(async () => w.now().openDraft(second));
+    await act(async () => { finish(); await pending; });
+    expect(w.now().compose.html).toBe(second.html);
+    expect(await screen.findByText("Second note")).toBeTruthy();
+    if (!screen.queryByRole("button", { name: W.history.restore })) {
+      fireEvent.click(await screen.findByRole("button", { name: W.history.show }));
+    }
+    expect(await screen.findByText("Second edited quote")).toBeTruthy();
+    await w.unmount();
+    const reopened = await mountWriting({ view: true, drafts: [first, second], messages: [message("two")] });
+    await act(async () => reopened.now().openDraft(second));
+    fireEvent.click(await screen.findByRole("button", { name: W.history.show }));
+    expect(await screen.findByText("Second edited quote")).toBeTruthy();
   });
 
   it("a forward opened from Drafts offers no draft: with words written no control is drawn and nothing is asked", async () => {

@@ -14,7 +14,7 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { useMemo, useRef } from "react";
-import type { BulkAction, MessageAction, MoveSubject } from "./actions.js";
+import type { BulkAction, BulkActionOptions, MessageAction, MoveSubject } from "./actions.js";
 import type { ActedMarker } from "./after-verb.js";
 import { runMessageAction } from "./message-verbs.js";
 import { planBulkScreening, screenBulk } from "./selection-screening.js";
@@ -60,8 +60,9 @@ export function useListVerbs(input: ListVerbsInput) {
       runMessageAction(cx, action, m, moveSubject);
     },
   );
-  const onBulkAction = useStableCallback((action: BulkAction, ids: string[]): boolean =>
-    runBulkAction(cx, action, ids),
+  const onBulkAction = useStableCallback(
+    (action: BulkAction, ids: string[], options?: BulkActionOptions): boolean =>
+      runBulkAction(cx, action, ids, options),
   );
   const onBulkScreen = useStableCallback((ids: string[], dest: ScreeningDest): boolean =>
     screenBulk(cx, ids, dest),
