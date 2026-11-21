@@ -162,6 +162,10 @@
     justify-self: stretch;
   }
 
+  .oh-messagehead-sep {
+    white-space: pre;
+  }
+
   .oh-messagehead-to[data-folded] .oh-messagehead-field {
     display: inline-flex;
     max-inline-size: 100%;

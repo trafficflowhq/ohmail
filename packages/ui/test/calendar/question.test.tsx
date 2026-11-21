@@ -33,6 +33,13 @@ describe("the question before an act", () => {
     expect(screen.queryByText("Every week on Tuesday")).not.toBeNull();
   });
 
+  it.each(["Change the event.", "Termin ändern."])("uses the ink dot as the full stop in %s", (question) => {
+    render(<QuestionBeforeAct open onClose={() => {}} anchor={at} question={question} cancel="Cancel" />);
+    const dialog = screen.getByRole("dialog", { name: question });
+    expect(dialog.querySelector("p")?.textContent).toBe(question.slice(0, -1));
+    expect(dialog.querySelector(".oh-dot")).toBeTruthy();
+  });
+
   it("a series offers which events, the first one holding the keys, each run by a press", () => {
     const one = vi.fn(),
       all = vi.fn();

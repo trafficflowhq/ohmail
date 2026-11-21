@@ -16,7 +16,9 @@ import { scrollProgrammatically, stampLive } from "../session/programmatic-scrol
 
 export interface ThreadWalkInput {
   readonly scroller: HTMLElement | null;
-  /** The letters in panel order, oldest first. */
+  /** The cards of this conversation when it shares a scroller with other conversations. */
+  readonly scope?: HTMLElement | null;
+  /** The letters in the order they appear in the scroller. */
   readonly messages: readonly EngineMessage[];
   readonly openedId: string | null;
   readonly channel?: ThreadWalkChannel;
@@ -28,8 +30,8 @@ export interface ThreadWalkInput {
    * a hand scroll, a square's press, or after {@link ANCHOR_CEILING_MS}.
    */
   readonly anchor?: boolean;
-  /** Open the conversation at its first unread message, or at the top when all are read. */
-  readonly wholeThread?: boolean;
+  readonly initialId?: string;
+  readonly newestFirst?: boolean;
   /**
    * The open's anchor stands down for good while this answers true: the person's own reply has joined the
    * conversation (`sent-reveal`'s `claims`), which the reveal brings into view; the open must not pull it away.
@@ -45,26 +47,27 @@ export const OPEN_GAP_PX = 14;
 export const END_FAR_PX = 240;
 /** What may be a person's intent, heard first (capture) on the column's own window. */
 const HANDOVER = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
-export const OPEN_TAIL = "--oh-sheet-open-tail";
 
 export interface ThreadWalk {
   /** The index of the letter the reader is on, or -1 before the column is measured. */
   readonly here: number;
   /** Put letter `index` on the reading line and hold it: false while the column is not laid out. */
   readonly jump: (index: number) => boolean;
-  /** The column stands far above where a jump to the conversation's last letter would land it. */
-  readonly endFar: boolean;
+  /** The column stands far from the latest letter's landing. */
+  readonly latestFar: boolean;
 }
 
 export function useThreadWalk({
   scroller,
+  scope = scroller,
   messages,
   openedId,
   channel,
   onEnter,
   names = THREAD_DOM,
   anchor = false,
-  wholeThread = false,
+  initialId,
+  newestFirst = false,
   standsDown,
 }: ThreadWalkInput): ThreadWalk {
   const ids = messages.map((m) => m.id);
@@ -74,22 +77,16 @@ export function useThreadWalk({
   const walk = useRef<Walk | null>(null);
   const room = useRef({ view: 0, farEdge: END_FAR_PX });
   const drawn = useRef({ id: null as string | null, far: false });
-  const pin = useRef<string | null>(wholeThread ? null : openedId);
+  const pin = useRef<string | null>(initialId ?? null);
   const [here, setHere] = useState(() => {
     const last = channel?.get();
     return last && last.openedId === openedId ? last.here : null;
   });
-  const [endFar, setEndFar] = useState(false);
-  const startId = wholeThread ? (messages.find((m) => m.unread)?.id ?? ids[0] ?? null) : null;
-  const latest = useRef({ onEnter, names, standsDown, startId });
-  latest.current = { onEnter, names, standsDown, startId };
+  const [latestFar, setLatestFar] = useState(false);
+  const latest = useRef({ onEnter, names, standsDown });
+  latest.current = { onEnter, names, standsDown };
   /* The open's anchor, live from the open until it is let go. */
   const anchored = useRef(anchor);
-
-  /* The first layout chooses the pin only for a whole thread. */
-  useEffect(() => {
-    pin.current = wholeThread ? null : openedId;
-  }, [wholeThread, openedId]);
 
   const look = useCallback((): void => {
     const w = walk.current;
@@ -98,33 +95,32 @@ export function useThreadWalk({
     const top = scroller.scrollTop;
     const i = w.current(top, at >= 0 ? { index: at } : null);
     const id = i >= 0 ? (list.current[i] ?? null) : drawn.current.id;
-    const last = list.current.length - 1;
-    const far = last > 0 && room.current.view > 0 && w.scrollFor(last) - top > room.current.farEdge;
+    const latest = w.scrollFor(newestFirst ? 0 : list.current.length - 1);
+    const distance = newestFirst ? top - latest : latest - top;
+    const far = list.current.length > 1 && room.current.view > 0 && distance > room.current.farEdge;
     if (id !== drawn.current.id) setHere(id);
-    if (far !== drawn.current.far) setEndFar(far);
+    if (far !== drawn.current.far) setLatestFar(far);
     drawn.current = { id, far };
-  }, [scroller]);
+  }, [scroller, newestFirst]);
 
   const measure = useCallback((): void => {
-    if (!scroller) return;
+    if (!scroller || !scope) return;
     const top0 = cssRect(scroller).top;
     room.current.farEdge = Math.max(END_FAR_PX, scroller.clientHeight / 2);
-    const at = conversationTops(scroller, top0);
+    const at = conversationTops(scope, top0, scroller.scrollTop);
     const v = viewOf(scroller, latest.current.names);
     room.current.view = Math.max(0, v.bottom - v.top);
-    let max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     if (anchored.current && latest.current.standsDown?.() === true) anchored.current = false;
     const anchoring = anchored.current && list.current.length > 1 && room.current.view > 0;
-    if (anchoring && wholeThread && pin.current === null) pin.current = latest.current.startId;
+    if (anchoring && (pin.current === null || !list.current.includes(pin.current))) {
+      pin.current = list.current.at(newestFirst ? 0 : -1) ?? null;
+    }
     const pinned = pin.current === null ? -1 : list.current.indexOf(pin.current);
     const top = at.get(pin.current ?? "");
     if (anchoring && pinned >= 0 && top !== undefined && Number.isFinite(top)) {
       const clearance = coverOf(scroller, latest.current.names, top0) + OPEN_GAP_PX;
-      const offset = wholeThread && pinned === 0 ? 0 : Math.max(0, top - clearance);
-      if (wholeThread && offset > max) {
-        const lastTop = at.get(list.current.at(-1)!) ?? top;
-        max = extendOpenRoom(scroller, top0, Math.max(offset, lastTop - clearance));
-      }
+      const offset = newestFirst && scope === scroller ? 0 : Math.max(0, top - clearance);
       scrollProgrammatically(scroller, Math.min(max, offset));
     }
     walk.current = threadWalk({
@@ -134,7 +130,7 @@ export function useThreadWalk({
       opened: pinned,
     });
     look();
-  }, [scroller, look, wholeThread]);
+  }, [scroller, scope, look, newestFirst]);
 
   const land = useCallback(
     (i: number): boolean => {
@@ -167,20 +163,19 @@ export function useThreadWalk({
     anchored.current = false;
     pin.current = null;
   }, []);
-  useLayoutWatch(scroller, key, measure, look, landOwed, onHand);
+  useLayoutWatch(scroller, scope, key, measure, look, landOwed, onHand);
   useAnchorRelease(scroller, anchored);
 
   /* The channel: this column's place, and its jump for a press on the list row's squares. */
   const shown = here !== null && ids.includes(here) ? here : null;
   useWalkChannel(channel, messages, shown, openedId, land);
 
-  return { here: shown === null ? -1 : ids.indexOf(shown), jump: land, endFar };
+  return { here: shown === null ? -1 : ids.indexOf(shown), jump: land, latestFar };
 }
 
-function conversationTops(scroller: HTMLElement, top0: number): Map<string, number> {
-  const scrollTop = scroller.scrollTop;
+function conversationTops(scope: HTMLElement, top0: number, scrollTop: number): Map<string, number> {
   const at = new Map<string, number>();
-  for (const panel of scroller.querySelectorAll<HTMLElement>("[data-conv-id]")) {
+  for (const panel of scope.querySelectorAll<HTMLElement>("[data-conv-id]")) {
     at.set(panel.dataset.convId ?? "", cssRect(panel).top - top0 + scrollTop);
   }
   return at;
@@ -189,6 +184,7 @@ function conversationTops(scroller: HTMLElement, top0: number): Map<string, numb
 /** Measured on every layout change, a frame after it; a scroll reads only the offset. */
 function useLayoutWatch(
   scroller: HTMLElement | null,
+  scope: HTMLElement | null,
   key: string,
   measure: () => void,
   look: () => void,
@@ -197,7 +193,7 @@ function useLayoutWatch(
 ): void {
   useLayoutEffect(() => {
     const win = scroller?.ownerDocument.defaultView;
-    if (!scroller || !win) return;
+    if (!scroller || !scope || !win) return;
     let measuring: (() => void) | null = null;
     let looking: (() => void) | null = null;
     const soon = (): void => {
@@ -223,7 +219,7 @@ function useLayoutWatch(
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(soon);
     ro?.observe(scroller);
     /* The letters grow while their bodies land: the stack is watched too. */
-    for (const child of scroller.children) ro?.observe(child);
+    for (const child of scope.children) ro?.observe(child);
     return () => {
       measuring?.();
       looking?.();
@@ -231,18 +227,7 @@ function useLayoutWatch(
       scroller.removeEventListener("scroll", onScroll);
       win.removeEventListener("resize", soon);
     };
-  }, [scroller, key, measure, look, landOwed, onHand]);
-}
-
-/** A short remainder needs space below the letters for the opening to align and still leave a way to the last one. */
-function extendOpenRoom(scroller: HTMLElement, top: number, end: number): number {
-  const run = scroller.lastElementChild;
-  if (run) {
-    const runEnd = cssRect(run).bottom - top + scroller.scrollTop;
-    const foot = Math.max(0, Math.ceil(end + scroller.clientHeight - runEnd));
-    scroller.style.setProperty(OPEN_TAIL, `${foot}px`);
-  }
-  return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  }, [scroller, scope, key, measure, look, landOwed, onHand]);
 }
 
 /** How much of the scroller's top its head covers while it stays there; nothing where it scrolls away with the rest. */

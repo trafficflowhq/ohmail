@@ -245,7 +245,7 @@ stay in the registry, and no picture of it is taken or packed.
 ```bash
 npx vitest run test/compare                           # the tool's own tests; needs no archive
 node test/compare/fetch.mjs --from <a folder>         # the canary shard, and one per screen with subjects
-npx vitest run --config vitest.compare.config.ts      # every subject against its picture
+npx vitest run --config test/compare/vitest.compare.config.ts      # every subject against its picture
 ```
 
 `COMPARE_REQUIRE_REFERENCE=1` on the last line fails the run when a shard it reads is not in
@@ -268,7 +268,7 @@ single controls and keep the rest failing. When a screen is accepted its keys go
 and from then on its picture fails too.
 
 A subject not named after a registered screen is one of the product's own (`own:` keys, pictures in
-`own/`, rows in `own/rows.json`). `COMPARE_WRITE_OWN=1 npx vitest run --config vitest.compare.config.ts`
+`own/`, rows in `own/rows.json`). `COMPARE_WRITE_OWN=1 npx vitest run --config test/compare/vitest.compare.config.ts`
 takes those pictures anew; read them before committing.
 
 ## After the reference is tagged again

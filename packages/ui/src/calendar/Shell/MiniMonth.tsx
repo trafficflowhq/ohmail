@@ -1,6 +1,6 @@
 import type { MouseEventHandler } from "react";
 import { Button } from "../../base/Primitives/Button.js";
-import { Dot } from "../../base/Primitives/Dot.js";
+import { EndDot } from "../../base/Primitives/EndDot.js";
 import { cx, toneOf, toneStyle, type CalendarTone } from "../tone.js";
 import { CalendarSquare } from "../Grids/CalendarSquare.js";
 import { WeekNumber } from "../Grids/WeekNumber.js";
@@ -188,13 +188,11 @@ function miniMonthHead(
           aria-label={head.open.label}
           onClick={head.open.onPress}
         >
-          {head.title}
-          <Dot kind={head.hot ? "hot" : "ink"} />
+          <EndDot kind={head.hot ? "hot" : "ink"}>{head.title}</EndDot>
         </button>
       ) : (
         <span className="oh-display oh-mini-title">
-          {head.title}
-          <Dot kind={head.hot ? "hot" : "ink"} />
+          <EndDot kind={head.hot ? "hot" : "ink"}>{head.title}</EndDot>
         </span>
       )}
       <Button

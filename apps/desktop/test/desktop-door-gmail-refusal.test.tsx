@@ -157,7 +157,7 @@ describe("the desktop's own-server door on Gmail", () => {
    press made with the tick carries it — on both blocks, one host on both legs. */
 describe("the desktop's own-server door and a server on this computer with its own certificate", () => {
   const PRINT = ["4A", ...Array.from({ length: 31 }, (_, i) => (i + 16).toString(16).toUpperCase())].join(":");
-  const LINE = en.mailboxes.trustCertificateLabelBoth.replace("{fingerprint}", PRINT);
+  const LINE = en.mailboxes.trustCertificateLabelBoth;
 
   /** The engine refuses every seal with the offer; the fingerprints each seal claimed, nothing else. */
   function bridgeShell(): Array<{ imap?: unknown; smtp?: unknown }> {
@@ -189,6 +189,9 @@ describe("the desktop's own-server door and a server on this computer with its o
   }
   const line = (el: HTMLElement): HTMLInputElement | null =>
     [...el.querySelectorAll("label")].find((l) => (l.textContent ?? "").includes(LINE))?.querySelector("input") ?? null;
+  /* The fingerprint as its own line of plain text: a paragraph whose whole text is it. */
+  const print = (el: HTMLElement): HTMLParagraphElement | null =>
+    [...el.querySelectorAll("p")].find((p) => (p.textContent ?? "").trim() === PRINT) ?? null;
 
   it("names the fingerprint unticked, and the tick's press claims it on both blocks", async () => {
     const claimed = bridgeShell();
@@ -212,6 +215,10 @@ describe("the desktop's own-server door and a server on this computer with its o
     await open(mount);
     expect(line(mount), "no trust line naming the fingerprint").not.toBeNull();
     expect(line(mount)!.checked).toBe(false);
+    expect(print(mount), "the fingerprint stands on no own line of text").not.toBeNull();
+    const described = document.getElementById(line(mount)!.getAttribute("aria-describedby") ?? "")?.textContent?.trim();
+    expect(described, "the trust line carries no fingerprint").toBe(PRINT);
+    expect(line(mount)!.closest("label")?.textContent ?? "", "the fingerprint sits inside the trust line, not on its own").not.toContain(PRINT);
     expect(claimed[0]).toEqual({ imap: undefined, smtp: undefined });
 
     await act(async () => { line(mount!)!.click(); });

@@ -18,8 +18,7 @@
     background: var(--sheet);
   }
   .oh-notice-say {
-    --oh-notice-say-gap: 0 0 var(--s2);
-    margin: var(--oh-notice-say-gap);
+    margin: 0;
   }
   .oh-notice-title {
     font-weight: var(--w-bold);
@@ -27,9 +26,6 @@
   .oh-notice[data-progress] {
     position: relative;
     --oh-notice-pad: var(--s3);
-  }
-  .oh-notice[data-progress] .oh-notice-say {
-    --oh-notice-say-gap: 0;
   }
   .oh-notice[data-progress] .oh-notice-title {
     display: block;
@@ -49,6 +45,9 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--s1);
+  }
+  .oh-notice:not([data-progress]) .oh-notice-say + .oh-notice-acts {
+    margin-top: var(--s2);
   }
   .oh-notice-related {
     margin-top: var(--s1);

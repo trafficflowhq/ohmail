@@ -17,6 +17,7 @@ import { FrameContext, type FrameInner } from "../../src/frame/commands.js";
 import type { LayoutPlan, RailModel } from "../../src/frame/contract.js";
 import { createFeed } from "../../src/frame/feeds.js";
 import { ListMenu } from "../../src/place-list/index.js";
+import { Blank } from "../../src/reader/blank/Blank.js";
 import { at, draw, inWords, msg, NO_HIT, pane, PHONE, stamp, walkAt } from "./lists-world.js";
 import { wideWindow } from "../ohbox/setup.js";
 import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
@@ -35,10 +36,10 @@ interface Seen {
 }
 
 /** The meeting as the reading column reads it: the open letter, its two steps, or what the place holds. */
-function Column() {
+function Column({ blank }: { blank?: ReactNode }) {
   const meeting = useContext(ListMeetingContext);
   const visit = meeting?.visit ?? null;
-  if (visit === null) return <p data-testid="column">{meeting?.blank?.label ?? ""}</p>;
+  if (visit === null) return <div data-testid="column">{blank ?? meeting?.blank?.label ?? ""}</div>;
   return (
     <div data-testid="column">
       <p>open {visit.openId}</p>
@@ -295,12 +296,19 @@ describe("Tags", () => {
     msg({ id: "b", subject: "Tax form", labels: ["t-paper"], date: at(3) }),
     msg({ id: "c", subject: "Kiln", labels: ["t-pottery", "t-paper"], date: at(5) }),
   ];
-  function Tags(props: { tagId: string | null; seen: Seen; renamed?: string[]; removed?: string[] }) {
+  const unreadMail = [{ ...mail[0]!, unread: true }, ...mail.slice(1)];
+  function Tags(props: {
+    tagId: string | null;
+    seen: Seen;
+    unread?: boolean;
+    renamed?: string[];
+    removed?: string[];
+  }) {
     const seat = useSeat(props.seen);
     const model = useTagsList({
       ...seat,
       tags,
-      messages: mail,
+      messages: props.unread ? unreadMail : mail,
       tagId: props.tagId,
       settled: true,
       owed: false,
@@ -312,7 +320,7 @@ describe("Tags", () => {
       <ListFrame route={propsForPane.route}>
         <TagsAbove model={model}>
           <TagsList {...propsForPane} />
-          <Column />
+          <Column blank={<Blank />} />
         </TagsAbove>
       </ListFrame>
     );
@@ -326,7 +334,7 @@ describe("Tags", () => {
   });
 
   it("with no tag named, lists every tag by name as a group that shuts and opens", () => {
-    draw(<Tags tagId={null} seen={fresh()} />);
+    draw(<Tags tagId={null} seen={fresh()} unread />);
     const groups = screen.getAllByRole("region");
     expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["Paperwork", "Pottery"]);
     expect(
@@ -334,8 +342,20 @@ describe("Tags", () => {
         .getAllByRole("option")
         .map((o) => o.getAttribute("data-id") ?? o.closest("[data-id]")?.getAttribute("data-id")),
     ).toHaveLength(2);
-    fireEvent.click(within(groups[1]!).getByRole("button", { name: /Pottery/ }));
+    const column = screen.getByTestId("column");
+    expect(column.textContent).toBe("1 unread");
+    expect(column.querySelector('[data-kind="hot"]')).toBeTruthy();
+    const pottery = within(groups[1]!).getByRole("button", { name: /Pottery/ });
+    fireEvent.click(pottery);
     expect(within(screen.getAllByRole("region")[1]!).queryAllByRole("option")).toEqual([]);
+    expect(column.textContent).toBe("Nothing open");
+    fireEvent.click(pottery);
+    expect(within(groups[1]!).getAllByRole("option")).toHaveLength(2);
+    expect(column.textContent).toBe("1 unread");
+  });
+
+  it("shows Nothing open when every tag's letters are read", () => {
+    draw(<Tags tagId={null} seen={fresh()} />);
     expect(screen.getByTestId("column").textContent).toBe("Nothing open");
   });
 
@@ -424,8 +444,11 @@ describe("Tags", () => {
   });
 
   it("speaks German", () => {
-    draw(<Tags tagId={null} seen={fresh()} />, "de");
+    const allRead = draw(<Tags tagId={null} seen={fresh()} />, "de");
     expect(screen.getByTestId("column").textContent).toBe("Nichts geöffnet");
+    allRead.unmount();
+    draw(<Tags tagId={null} seen={fresh()} unread />, "de");
+    expect(screen.getByTestId("column").textContent).toBe("1 ungelesen");
   });
 });
 

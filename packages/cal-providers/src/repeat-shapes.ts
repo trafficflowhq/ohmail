@@ -10,6 +10,7 @@ import {
   expandSeries,
   instant,
   momentOrUtc,
+  wallFromSeconds,
   MS_PER_DAY,
   newEventComponent,
   seriesOf,
@@ -19,6 +20,7 @@ import {
 } from "@ohmail/cal-core";
 import { endedRule } from "./series.js";
 import type { ProviderWord } from "./port.js";
+import { recurrenceFor } from "./microsoft/recurrence-write.js";
 
 /** The repeats a person can make, as the proof names them. */
 export type RepeatBase =
@@ -112,12 +114,16 @@ export function repeatShapeOf(rule: RRule): RepeatShape | null {
 const WEEK = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
 const monthLength = (year: number, month: number): number => new Date(Date.UTC(year, month, 0)).getUTCDate();
 
-/** The day a series starts on, on its own clock: a whole day's, or a clock time's in its zone. A series in UTC or on no zone is not written. */
+/** The day a series starts on, on its own clock. An edit can also keep a stored UTC series. */
 function startDay(
   start: EventTime,
+  allowUtc: boolean,
 ): { readonly year: number; readonly month: number; readonly day: number } | null {
   if (start.kind === "date") return start;
-  return start.kind === "zoned" ? start.wall : null;
+  if (start.kind === "zoned") return start.wall;
+  return allowUtc && start.kind === "instant" && Number.isFinite(start.epochMs)
+    ? wallFromSeconds(Math.floor(start.epochMs / 1000))
+    : null;
 }
 
 /** Is the start's day one the rule names (its lists filled from the start where the rule leaves them unsaid)? */
@@ -288,9 +294,10 @@ export function repeatShapeAt(
   start: EventTime,
   zones: ZoneSource,
   nowMs: number,
+  allowUtc = false,
 ): RepeatShape | null {
   const base = baseOf(rule);
-  const d = startDay(start);
+  const d = startDay(start, allowUtc);
   if (base === null || d === null || !inStep(rule, base, d)) return null;
   const u = rule.until;
   const from = momentOrUtc(start, zones);
@@ -323,6 +330,21 @@ export function repeatShapeAt(
  * is honest: nothing it is told by a server names what software keeps the rule.
  */
 export type ProofPlace = string;
+
+/** A stored rule the series edit writers can represent. New independent creates still use server proofs. */
+export function seriesEditShape(
+  place: ProofPlace | null,
+  rule: RRule,
+  start: EventTime,
+  zones: ZoneSource,
+  nowMs: number,
+): boolean {
+  if (place === "microsoft") return recurrenceFor(rule, start, zones) !== null;
+  return (
+    (place === "google" || place?.startsWith("caldav:") === true) &&
+    repeatShapeAt(rule, start, zones, nowMs, true) !== null
+  );
+}
 
 /** A connection's place (`serverUrl`: a CalDAV connection's stored address), or `null` where it has none: proven nowhere. */
 export function proofPlaceOf(provider: ProviderWord, serverUrl: string | null): ProofPlace | null {

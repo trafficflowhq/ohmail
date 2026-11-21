@@ -33,7 +33,7 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
  *    Microsoft — which is precisely the window two browser tabs occupy — and it passes identically
  *    on a single-connection engine.
  *
- * CLAUDE.md: *"PGlite green means nothing for transactional code."* Three production bugs were
+ * AGENTS.md: *"PGlite green means nothing for transactional code."* Three production bugs were
  * invisible to it. So the decisive cases run here, on :5433, over SEPARATE CONNECTIONS.
  *
  * ── AND THE REDIRECT ARM IS RE-ASSERTED IN THIS FILE, DELIBERATELY ────────────────────────

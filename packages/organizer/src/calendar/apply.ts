@@ -183,13 +183,14 @@ export function storedAsIs(rows: readonly MappedRow[], stored: readonly Pick<Sto
 
 /**
  * The work of writing an object: each row written, each stored row it leaves out, and where the
- * excluded days are united, a changed day's series that may lose that day from its excluded ones.
+ * a changed day's series that may be needed for a separately stored moved occurrence, or lose
+ * that day from its excluded ones.
  */
 export function objectWrite(providerId: string, rows: readonly MappedRow[], stored: readonly Pick<StoredRow, "recurrenceId">[], unite: boolean): ObjectWrite {
   const keep = new Set(rows.map((r) => r.values.recurrenceId));
   const remove = stored.filter((s) => !keep.has(s.recurrenceId)).length;
-  const series = unite ? rows.filter((r) => r.values.recurrenceId !== "").length : 0;
-  return { kind: "object", providerId, rows, keep, remove, changes: rows.length * (series > 0 ? 2 : 1) + remove };
+  const series = (unite || !keep.has("")) && rows.some((r) => r.values.recurrenceId !== "");
+  return { kind: "object", providerId, rows, keep, remove, changes: rows.length * (series ? 2 : 1) + remove };
 }
 
 /** A cancelled day as a work: one change for its series, one for each changed row of that day (one, where none is known yet). */
@@ -521,6 +522,7 @@ async function lockedRows(tx: Tx, ctx: ApplyContext, where: ReturnType<typeof an
   return dialect(tx).forUpdate(tx.select({
     id: calEvents.id, providerId: calEvents.providerId, recurrenceId: calEvents.recurrenceId,
     versionTag: calEvents.versionTag, uid: calEvents.uid, partial: calEvents.partial, excludedDates: calEvents.excludedDates,
+    startsAt: calEvents.startsAt, endsAt: calEvents.endsAt, repeatRule: calEvents.repeatRule,
   }).from(calEvents).where(and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id), where)), { mode: "update" });
 }
 
@@ -545,8 +547,8 @@ async function writeObject(tx: Tx, ctx: ApplyContext, w: ObjectWrite, changes: C
       changes.push({ kind: "calendar_event", id: eventId, op: "update" });
     }
     await replaceChildren(tx, ctx, eventId, row);
-    // A changed day stands where it was cancelled before: its day leaves the series' excluded days.
-    if (ctx.unite && row.values.recurrenceId !== "") await bringBack(tx, ctx, row.values.uid, new Set([row.values.recurrenceId]), changes);
+    if (row.values.recurrenceId !== "" && (ctx.unite || !w.keep.has("")))
+      await reflectException(tx, ctx, row.values, changes);
   }
   let budget = w.remove;
   for (const s of stored) {
@@ -580,10 +582,30 @@ async function writeExcluded(
   if (!changes.some((c) => c.id === seriesId)) changes.push({ kind: "calendar_event", id: seriesId, op: "update" });
 }
 
+/** Let the device recover the series of an exception that can be visible outside its range. */
+async function reflectException(
+  tx: Tx, ctx: ApplyContext, row: MappedRow["values"], changes: CalendarChange[],
+): Promise<void> {
+  const series = await seriesRow(tx, ctx, row.uid);
+  if (!series) return;
+  if (ctx.unite) await restoreExcluded(tx, ctx, series, new Set([row.recurrenceId]), changes);
+  if (series.repeatRule === null || row.status === "cancelled" || row.thisAndFuture) return;
+  const outside = row.startsAt < series.startsAt ||
+    (series.endsAt !== null && (row.endsAt === null || row.endsAt > series.endsAt));
+  if (outside && !changes.some((change) => change.id === series.id))
+    changes.push({ kind: "calendar_event", id: series.id, op: "update" });
+}
+
 /** These days back among a series' days: their keys out of its excluded days, where they stood there. */
 async function bringBack(tx: Tx, ctx: ApplyContext, uid: string, keys: ReadonlySet<string>, changes: CalendarChange[]): Promise<void> {
   const series = await seriesRow(tx, ctx, uid);
-  if (series === undefined) return;
+  if (series) await restoreExcluded(tx, ctx, series, keys, changes);
+}
+
+async function restoreExcluded(
+  tx: Tx, ctx: ApplyContext, series: NonNullable<Awaited<ReturnType<typeof seriesRow>>>,
+  keys: ReadonlySet<string>, changes: CalendarChange[],
+): Promise<void> {
   const was = times(series.excludedDates);
   const now = was.filter((t) => {
     const key = keyOfStored(t, ctx.zones);

@@ -130,7 +130,7 @@ describe("the sidecar drives the pipeline and is not a second one", () => {
   });
 
   it("the detector is not vacuous — it fires on the shapes it is looking for", () => {
-    // A guard nobody has watched fail is not evidence (CLAUDE.md). These are the violations.
+    // A guard nobody has watched fail is not evidence (AGENTS.md). These are the violations.
     expect(/\bplanChange\s*\(/.test(code("const plan = await planChange(change, deps);"))).toBe(true);
     expect(/["'`]ohmail\/(Screener|Reads|News)["'`]/.test(code('const dest = "ohmail/News";'))).toBe(true);
     // …and it ignores the same words in prose, so the rule can be explained without breaking it.
@@ -232,7 +232,7 @@ describe("the sidecar drives the DRAIN POLICY and does not define one", () => {
   });
 
   it("the detectors are not vacuous — they fire on the shapes they are looking for", () => {
-    // A guard nobody has watched fail is not evidence (CLAUDE.md). These are the violations,
+    // A guard nobody has watched fail is not evidence (AGENTS.md). These are the violations,
     // written out verbatim as they stood in this file before the adoption.
     const planted = code("const CLOUD_STALE_RESUME_MS = 5 * 60_000;");
     expect([...planted.matchAll(/(?:export\s+)?const\s+([A-Z][A-Z0-9_]*_MS)\s*=/g)].map((m) => m[1]))

@@ -23,7 +23,7 @@ import type { ScheduledFilesKeeping, ServiceContext } from "../src/index.js";
  * never BLOCKS behind a held row (a serverless invocation waiting on somebody's open
  * transaction is a deadline it cannot control) and never double-claims one appointment.
  *
- * ## Why REAL Postgres (CLAUDE.md)
+ * ## Why REAL Postgres (AGENTS.md)
  * Every case is one connection blocking (or deliberately NOT blocking) behind another's
  * uncommitted transaction, then re-evaluating. Three production bugs were invisible to PGlite;
  * this is exactly the class.

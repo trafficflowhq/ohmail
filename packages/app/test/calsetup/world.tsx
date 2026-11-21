@@ -101,7 +101,7 @@ export function mirror(said: CalendarSettingsWire | null = null) {
     };
   };
   const engine = {
-    store: { entries },
+    store: { entries, get: (type: string, id: string) => kinds.get(type)?.get(id) },
     subscribe,
     read: () => ({ version: () => version, list: (kind: string) => [...(kinds.get(kind)?.values() ?? [])] }),
   } as unknown as OhmailEngine;

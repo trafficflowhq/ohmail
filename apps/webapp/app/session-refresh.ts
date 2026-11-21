@@ -941,7 +941,8 @@ const CACHE_PURGE_HEADER = "x-ohmail-clear";
  * `use-delete-account-door.ts`, the refusals here), never for an unconfirmed one: an older API reads it as a
  * renewal. It runs outside `api()` and the refresh single flight. Explicit sign-out tracks its
  * answer separately from the press and aborts the attempt when the page leaves. The door answers it
- * before reading the jar and sets no cookie.
+ * before reading the jar and sets no cookie. The acknowledgement confirms that the server sent
+ * the directive. JavaScript cannot verify that the browser applied it.
  */
 export async function purgeSiteCache(signal?: AbortSignal): Promise<boolean> {
   try {
@@ -953,7 +954,9 @@ export async function purgeSiteCache(signal?: AbortSignal): Promise<boolean> {
       keepalive: true,
       signal,
     });
-    return reply.status === 202 && reply.headers.get("clear-site-data") === '"cache"';
+    return reply.status === 202 && (
+      reply.headers.get(CACHE_PURGE_HEADER) === "cache" || reply.headers.get("clear-site-data") === '"cache"'
+    );
   } catch {
     return false;
   }

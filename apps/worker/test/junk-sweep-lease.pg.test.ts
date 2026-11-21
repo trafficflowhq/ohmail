@@ -64,7 +64,7 @@ import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
  *
  * The claim is that a SECOND SESSION's committed `desired_folder` is seen by this pass's re-read
  * under READ COMMITTED, mid-pass. PGlite is single-connection: the interleave cannot exist there
- * and every assertion would pass vacuously — the blindness CLAUDE.md records for transactional
+ * and every assertion would pass vacuously — the blindness AGENTS.md records for transactional
  * code, and the reason three production bugs were invisible until they met real Postgres.
  *
  * ── THE TAKEOVER IS DRIVEN FOR REAL ──────────────────────────────────────────────────────────

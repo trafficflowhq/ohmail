@@ -1,11 +1,13 @@
 import type { MouseEventHandler, ReactNode, Ref } from "react";
 import { Button } from "../../base/Primitives/Button.js";
 import { Dot } from "../../base/Primitives/Dot.js";
+import { wordsBeforeDot } from "../../base/Primitives/EndDot.js";
 import type { IconName } from "../../icons/Icon.js";
 import "./calendar-head.css";
 
 interface Way {
   label: string;
+  title?: string;
   disabled?: boolean;
   onPress?: MouseEventHandler<HTMLButtonElement>;
   ref?: Ref<HTMLButtonElement>;
@@ -64,6 +66,7 @@ function tool(
         kind="quiet"
         icon={icon}
         label={way.label}
+        title={way.title}
         disabled={way.disabled}
         onPress={way.onPress}
         {...extra}
@@ -78,7 +81,8 @@ function tool(
  * about that. A key is a hint the app's own registry answers; the head only draws it.
  */
 export function CalendarHead(p: CalendarHeadProps) {
-  const dateWords = (title: string) => {
+  const dateWords = (written: string) => {
+    const title = wordsBeforeDot(written);
     if (!p.todayNumber) return title;
     const start = title.indexOf(p.todayNumber);
     if (start < 0) return title;

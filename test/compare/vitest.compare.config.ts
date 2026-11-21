@@ -1,5 +1,5 @@
 import { defineConfig } from "vitest/config";
-import base from "./vitest.config";
+import base from "../../vitest.config";
 
 /**
  * THE COMPARISON RUN: each subject in `test/compare/subjects/`, drawn in a real browser and held against

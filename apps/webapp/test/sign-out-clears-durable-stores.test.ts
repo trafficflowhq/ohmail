@@ -13,7 +13,7 @@ import { CALENDAR_NOTICES_KEY, NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/s
 import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
-import { SUBJECT_DISPLAY_PREFIX } from "@ohmail/app-logic/storage/persisted-ui";
+import { SUBJECT_DISPLAY_PREFIX, threadOrderKey } from "@ohmail/app-logic/storage/persisted-ui";
 import { SIGN_OUT_STORAGE_PREFIX } from "@ohmail/app-logic/storage/storage-owner";
 import { PENDING_SIGN_OUT_KEY } from "../app/pending-sign-out-storage";
 import { STORED_KEYS, type StoredKeyRow } from "../../../packages/client-engine/src/stored-keys";
@@ -314,6 +314,8 @@ describe("sign-out clears the durable decision stores", () => {
       [`${SEND_LOCKS_PREFIX}local`]: "[]",
       [`${SUBJECT_DISPLAY_PREFIX}acct-a`]: "each",
       [`${SUBJECT_DISPLAY_PREFIX}acct-b`]: "head",
+      [threadOrderKey("acct-a")]: "top",
+      [threadOrderKey("acct-b")]: "bottom",
       // A letter's Sent copy note: whom it was for and its subject.
       [`${SENT_COPY_NOTES_PREFIX}acct-a`]: "{}",
       [`${SCREENER_INTENTS_PREFIX}acct-a`]: "[]",

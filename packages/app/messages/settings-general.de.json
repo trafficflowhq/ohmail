@@ -7,6 +7,9 @@
     "subject": "Betreff",
     "subjectHead": "Eine Überschrift",
     "subjectEach": "In jeder Nachricht",
+    "threadOrder": "Reihenfolge in Unterhaltungen",
+    "threadOrderBottom": "Neueste unten",
+    "threadOrderTop": "Neueste oben",
     "subjectSample": "Glasurbestellung Nr. 2291",
     "subjectReplySample": "Re: Glasurbestellung Nr. 2291",
     "picture": {

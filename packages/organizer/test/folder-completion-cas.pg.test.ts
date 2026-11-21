@@ -61,7 +61,7 @@ import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "../src/junk-fi
  * REAL POSTGRES (:5433), and it has to be: the claim is that one UPDATE's `WHERE`/`CASE` sees
  * another connection's COMMITTED row under READ COMMITTED. PGlite is single-connection, so the
  * interleave below cannot exist there and every assertion would pass vacuously — the exact
- * blindness CLAUDE.md records for transactional code.
+ * blindness AGENTS.md records for transactional code.
  *
  * ── MUTATIONS WATCHED (each restored; see the run log at the bottom of this file) ────────────
  */

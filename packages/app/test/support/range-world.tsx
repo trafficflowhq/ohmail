@@ -22,6 +22,8 @@ import agendaEn from "../../messages/agenda.en.json" with { type: "json" };
 import agendaDe from "../../messages/agenda.de.json" with { type: "json" };
 import searchEn from "../../messages/calsearch.en.json" with { type: "json" };
 import searchDe from "../../messages/calsearch.de.json" with { type: "json" };
+import calsettingsEn from "../../messages/calsettings.en.json" with { type: "json" };
+import calsettingsDe from "../../messages/calsettings.de.json" with { type: "json" };
 import calendarEn from "../../messages/calendar.en.json" with { type: "json" };
 import calendarDe from "../../messages/calendar.de.json" with { type: "json" };
 
@@ -128,8 +130,8 @@ export const NO_EDGE: HeldEdge = { earlier: null, later: null, load: "none" };
 export const FIRST_REACH = { days: AGENDA_DAYS, onMore: () => undefined } as const;
 
 const WORDS: Record<"en" | "de", Messages> = {
-  en: { ...monthEn, ...yearEn, ...agendaEn, ...searchEn, ...calendarEn },
-  de: { ...monthDe, ...yearDe, ...agendaDe, ...searchDe, ...calendarDe },
+  en: { ...monthEn, ...yearEn, ...agendaEn, ...searchEn, ...calendarEn, ...calsettingsEn },
+  de: { ...monthDe, ...yearDe, ...agendaDe, ...searchDe, ...calendarDe, ...calsettingsDe },
 };
 
 export function Words({ lang = "en", children }: { lang?: "en" | "de"; children: ReactNode }) {

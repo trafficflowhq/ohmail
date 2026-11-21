@@ -51,6 +51,19 @@
     --oh-menu-max: calc(100% - 2 * var(--oh-menu-edge));
     --oh-menu-pad: var(--s3);
   }
+  .oh-menu[data-kind="picker"] {
+    --oh-menu-width: 304px;
+    --oh-menu-max: calc(100% - 2 * var(--oh-menu-edge));
+    --oh-field-height: var(--h-m);
+  }
+  .oh-menu[data-kind="picker"] .oh-menu-item {
+    --oh-menu-item-h: var(--h-l);
+  }
+  .oh-menu[data-kind="picker"] .oh-menu-item-note {
+    max-inline-size: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .oh-menu[data-kind="context"] .oh-key,
   .oh-menu[data-kind="card"] .oh-key {
     display: inline-flex;

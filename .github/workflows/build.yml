@@ -4486,7 +4486,7 @@ jobs:
             @types/mailparser@3.4.6 \
             @types/sanitize-html@2.16.1
           node scripts/apply-patches.mjs verify-tree --extra typescript --extra @types/node --extra @types/nodemailer --extra @types/mailparser --extra @types/sanitize-html
-          ./node_modules/.bin/tsc --noEmit -p tsconfig.engine.json
+          ./node_modules/.bin/tsc --noEmit -p tools/tsconfig.engine.json
 
       # Build the one-file engine from the published source. esbuild is pinned —
       # the bundler asserts its own version. It is a pinned devDependency of the

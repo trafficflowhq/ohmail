@@ -10,6 +10,11 @@ import type { PlaceEntry } from "../../src/frame/contract.js";
 import { MailGround, mailPlaces, mailReader } from "../../src/mail/index.js";
 import { readerEntry, type ReaderBody } from "../../src/reader/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
+import draftsEn from "../../messages/drafts.en.json" with { type: "json" };
+import frameEn from "../../messages/frame.en.json" with { type: "json" };
+import historyEn from "../../messages/history.en.json" with { type: "json" };
+import pilesEn from "../../messages/piles.en.json" with { type: "json" };
+import tagsEn from "../../messages/tags.en.json" with { type: "json" };
 import writeEn from "../../messages/write.en.json" with { type: "json" };
 import newsEn from "../../messages/news.en.json" with { type: "json" };
 import receiptsEn from "../../messages/receipts.en.json" with { type: "json" };
@@ -17,7 +22,17 @@ import { bodyDouble, fakeMail, letter, WORDS } from "../reader/support/mail.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, fakeWindow } from "../support/fake-window.js";
 
-const MESSAGES = { ...WORDS.en, ...writeEn, ...newsEn, ...receiptsEn } as Messages;
+const MESSAGES = {
+  ...WORDS.en,
+  ...draftsEn,
+  ...frameEn,
+  ...historyEn,
+  ...pilesEn,
+  ...tagsEn,
+  ...writeEn,
+  ...newsEn,
+  ...receiptsEn,
+} as Messages;
 
 function rule(id: string, match: string, destination: string) {
   return {

@@ -42,4 +42,4 @@ A	test/compare/subjects/specimen.ts
 A	test/compare/tolerance-pinned.test.ts
 A	test/compare/tolerance.json
 A	test/compare/unsteady.json
-A	vitest.compare.config.ts
+A	test/compare/vitest.compare.config.ts

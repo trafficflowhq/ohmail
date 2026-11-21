@@ -76,6 +76,8 @@ export interface RangeActs {
 
 /** The edges of what this device holds: earlier and later than them nothing is drawn. */
 export interface HeldEdge {
+  /** The provider name shown on the earlier notice when all shown calendars are Microsoft. */
+  readonly provider?: "microsoft";
   /** The first day held, where days before it exist at the provider; null when nothing lies before. */
   readonly earlier: DayId | null;
   /** The last day held, where days after it exist at the provider; null when nothing lies after. */

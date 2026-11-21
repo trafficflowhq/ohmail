@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tools/tsconfig.base.json",
   "compilerOptions": { "outDir": "dist", "rootDir": "src" },
   "include": ["src"],
   "references": [{ "path": "../wire" }, { "path": "../cal-core" }, { "path": "../cal-providers" }, { "path": "../core" }, { "path": "../db" }]

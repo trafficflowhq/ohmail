@@ -215,6 +215,6 @@ Bugs and ideas go to [GitHub issues](https://github.com/trafficflowhq/ohmail/iss
 
 ## License
 
-[AGPL-3.0](LICENSE) for the whole program: desktop, phone, web and server. The name and the icon are covered by [TRADEMARK.md](TRADEMARK.md).
+[AGPL-3.0](LICENSE) for the whole program: desktop, phone, web and server. The name and the icon are covered by [TRADEMARK.md](docs/legal/TRADEMARK.md).
 
 [app-store]: https://apps.apple.com/app/ohmail/id6810824816

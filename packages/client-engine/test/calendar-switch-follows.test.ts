@@ -3,6 +3,7 @@ import {
   MemoryMirrorStore, NAMED_FEED_KINDS, OhmailEngine, encodeSeqCursor,
   type EngineAdapter, type SyncChange, type SyncResponse,
 } from "../src/index.js";
+import { calendarSpanVictims } from "../src/engine/calendar-span.js";
 import type { CalendarWindow, MutationOutcome, SyncSnapshotPage } from "@ohmail/wire";
 
 /**
@@ -241,6 +242,35 @@ describe("a span read on purpose, and the window a server states", () => {
     await engine.syncOnce();
     expect(live(store, "calendar_event")).toEqual(["long-ago"]);
     expect(store.getCursor()).toBe(encodeSeqCursor(10));
+  });
+
+  it("retains a moved exception's finite series while the exception is held", async () => {
+    const s = server();
+    const store = await warm(day(0));
+    const engine = new OhmailEngine({ adapter: s.adapter, store, now: () => NOW });
+    const master = event("master", -800, 11);
+    const changed = event("changed", 1, 12);
+    const uid = "finite-series";
+    s.next([
+      { ...master, entity: { ...master.entity as object, uid, recurrenceId: "", repeat: { rules: ["FREQ=DAILY;COUNT=11"] } } },
+      { ...changed, entity: { ...changed.entity as object, uid, recurrenceId: "changed-day", occurrenceAt: day(-799) } },
+    ]);
+    await engine.syncOnce();
+    expect(live(store, "calendar_event")).toEqual(["changed", "master"]);
+    s.next([{ ...changed, seq: 13, op: "delete", entity: null }]);
+    await engine.syncOnce();
+    expect(live(store, "calendar_event")).toEqual([]);
+  });
+
+  it("counts the finite series toward the ceiling when keeping its moved exception", () => {
+    const master = { id: "master", seq: 1, entity: { uid: "finite-series", calendarId: "k1", recurrenceId: "", repeat: { rules: ["FREQ=DAILY"] },
+      startsAt: day(-800), endsAt: day(-799) } };
+    const exception = { id: "exception", seq: 2, entity: { uid: "finite-series", calendarId: "k1", recurrenceId: "changed-day",
+      startsAt: day(1), endsAt: day(1.1), occurrenceAt: day(-799) } };
+    const later = { id: "later", seq: 2, entity: { startsAt: day(60), endsAt: day(60.1) } };
+    const victims = (maxRows: number) => calendarSpanVictims([master, exception, later], NOW.getTime(), { ...WINDOW, maxRows }, []).map((row) => row.id).sort();
+    expect(victims(2)).toEqual(["later"]);
+    expect(victims(1)).toEqual(["exception", "master"]);
   });
 
   it("a first load's stated window is the span the prune keeps", async () => {

@@ -21,7 +21,6 @@ import {
   hourLabels,
   otherHourLabels,
   isoOfDay,
-  nowIn,
   pillChip,
   sameDay,
   useHoursScroller,
@@ -38,7 +37,6 @@ import type {
   CalendarViewSettings,
 } from "../calendar/view.js";
 import type { LayoutPlan } from "../frame/contract.js";
-import { HeldNotice } from "../calendar/HeldNotice.js";
 import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
 import { useLocale, useText } from "../text/index.js";
 import "./week.css";
@@ -189,13 +187,6 @@ export function WeekView(props: CalendarViewProps) {
 
   return (
     <section className="cw-week" aria-label={t("hours")} onKeyDown={context.key}>
-      <HeldNotice
-        edge={props.edge}
-        first={isoOfDay(days[0]!)}
-        last={isoOfDay(days.at(-1)!)}
-        today={isoOfDay(nowIn(clock.nowMs, clock.zone, clock.zones)?.day ?? anchor)}
-        className="cw-note"
-      />
       {model.unplaced.length > 0 ? (
         <RefusalLine>{t("unplaced", { count: model.unplaced.length })}</RefusalLine>
       ) : null}

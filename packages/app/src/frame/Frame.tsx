@@ -94,6 +94,7 @@ function useCommands(
   const [railOpen, setRailOpen] = useState(false);
   const [held, setHeld] = useState(false);
   const [over, setOver] = useState<OverId | null>(null);
+  const [readerOpen, setReaderOpen] = useState(0);
   const now = useRef(route);
   now.current = route;
   const layout = useRef(plan);
@@ -101,16 +102,13 @@ function useCommands(
   const places = host.features.places;
   const keeps = useCallback(
     (at: Route): boolean => {
-      /* A letter is kept by a mail place alone: the calendar's side opens an event, which the address carries. */
       if (isCalendarPlace(at.place)) return false;
       const place = places[at.place];
       return place !== NONE && place.panes.kind === "columns" && place.panes.keepsOpen === true;
     },
     [places],
   );
-  /* THE LETTERS THE PLACES KEEP (`keepsOpen`), for the frame's life: never stored, and gone with the scope. The
-     address is the one copy of what is open, so while it stands at such a place the memory follows it: the letter it
-     names, or none once that letter is closed, whichever way it was closed. */
+  /* The address keeps each mail place's last open letter for the life of this frame. */
   const kept = useRef(new Map<string, Pick<Route, "open" | "wholeThread">>());
   if (keeps(route)) {
     if (route.open === null) kept.current.delete(spot(route));
@@ -127,9 +125,11 @@ function useCommands(
           : undefined;
       const fragment = fragmentOf(again === undefined ? next : { ...next, ...again });
       if (host.device.address.heldBefore(fragment, () => go(to, how))) return;
-      /* A move to another place, or another part of one, is a switch: timed until its seat is on screen. */
       if (next.place !== now.current.place || next.sub !== now.current.sub) beginSwitch(placeSwitchKey(next));
       entered.set(how?.entered === true && next.open !== null ? { fragment, letter: next.open } : null);
+      if (how?.entered && next.open !== null && fragment === host.device.address.read()) {
+        setReaderOpen((count) => count + 1);
+      }
       host.device.address.write(
         fragment,
         how?.replace || how?.history === "dismiss-dialog" ? "replace" : "push",
@@ -146,16 +146,15 @@ function useCommands(
       go,
       open: (letter: string | null, how?: "replace", wholeThread?: true) => {
         entered.set(null);
-        host.device.address.write(
-          fragmentOf({ ...now.current, open: letter, wholeThread }),
-          how ?? "push",
-          letter === null ? "closed" : undefined,
-        );
+        const fragment = fragmentOf({ ...now.current, open: letter, wholeThread });
+        if (letter !== null && how === undefined && fragment === host.device.address.read()) {
+          setReaderOpen((count) => count + 1);
+        }
+        host.device.address.write(fragment, how ?? "push", letter === null ? "closed" : undefined);
       },
       closeAddress: () => go(memory.current.addressFrom, { replace: true }),
       closeSearch: () => go(memory.current.searchFrom),
-      /* A new letter passes the composer's door (a letter whose send is still on its way gives way by its own rule);
-         a letter handed in is taken by the composer's mount. */
+      /* A draft waits for the current composer to give way. */
       write: function write(letter?: LinkedDraft) {
         if (host.device.address.heldBefore(fragmentOf({ ...HOME, place: "write" }), () => write(letter)))
           return;
@@ -202,7 +201,7 @@ function useCommands(
     }),
     [go, host, draft, entered, memory],
   );
-  return { commands, railOpen, setRailOpen, held, over };
+  return { commands, railOpen, setRailOpen, held, over, readerOpen };
 }
 
 /** Keep the report with the pressing tab when it leaves the Calendar view. */
@@ -265,7 +264,7 @@ function FrameBody({ host }: { host: FrameHost }) {
   const slot = useFrameReportSlot();
   const calendarPort = host.wires.calendar;
   const inner = useFrameStores(address);
-  const { commands, railOpen, setRailOpen, held, over } = useCommands(
+  const { commands, railOpen, setRailOpen, held, over, readerOpen } = useCommands(
     host,
     route,
     plan,
@@ -277,8 +276,8 @@ function FrameBody({ host }: { host: FrameHost }) {
     [host, route, plan, commands, slot.report, over, product, previousProduct],
   );
   const context: FrameInner = useMemo(
-    () => ({ ...inner, api, initialPlace, railOpen: [railOpen, setRailOpen] as const }),
-    [inner, api, initialPlace, railOpen, setRailOpen],
+    () => ({ ...inner, api, initialPlace, readerOpen, railOpen: [railOpen, setRailOpen] as const }),
+    [inner, api, initialPlace, readerOpen, railOpen, setRailOpen],
   );
   const places = host.features.places;
   const place = isCalendarPlace(route.place)

@@ -170,13 +170,19 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
   const detailed = rows.filter((r) => r.access !== "busy");
   const candidates = detailed.filter((r) => (r.access === "owner" || r.access === "writer") && !r.heldBack && r.recurrenceId === "" && r.repeatRule).map((r) => r.id);
   const sources = candidates.length === 0 ? [] : await db.select({
-    id: calEvents.id, original: calEvents.original, provider: calConnections.provider, serverUrl: calConnections.serverUrl,
+    id: calEvents.id, original: calEvents.original, provider: calConnections.provider,
+    serverUrl: calConnections.serverUrl, principal: calConnections.principal, organizer: calEvents.organizer,
   }).from(calEvents)
     .innerJoin(calCalendars, and(eq(calEvents.calendarId, calCalendars.id), eq(calCalendars.accountId, accountId)))
     .innerJoin(calConnections, and(eq(calCalendars.connectionId, calConnections.id), eq(calConnections.accountId, accountId)))
-    .where(and(eq(calEvents.accountId, accountId), eq(calConnections.provider, "caldav"), inArray(calEvents.id, candidates)));
+    .where(and(eq(calEvents.accountId, accountId), inArray(calEvents.id, candidates)));
   const editable = new Set(sources.filter((r) => canEditPersonalSeries(r.provider, r.serverUrl) && personalSeriesOf(r.original)).map((r) => r.id));
+  const organized = new Set(sources.filter((r) =>
+    (r.provider === "caldav" || r.provider === "google" || r.provider === "microsoft") &&
+    r.organizer?.trim() && r.organizer.trim().toLowerCase() === r.principal?.trim().toLowerCase().replace(/^mailto:/, ""),
+  ).map((r) => r.id));
   const deletion = new Map(sources.flatMap((source) => {
+    if (source.provider !== "caldav") return [];
     const members = seriesDeleteMembers(source.original, ZONES);
     return members && !storedObjectFacts(source.original, null).excludesByRule
       ? [[source.id, { members, place: proofPlaceOf("caldav", source.serverUrl) }] as const] : [];
@@ -228,8 +234,9 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       endsAt: iso(r.endsAt),
       occurrenceAt: iso(r.occurrenceAt),
       repeat: rules.length > 0 || excluded.length > 0 || added.length > 0 ? { rules, excluded, added } : null,
-      ...(editable.has(r.id) && !invitees.has(r.id) && r.myAnswer === null && { personalSeries: true as const }),
-      ...(source && deleteScopes.length > 0 && { deleteMembers: source.members, deleteScopes }),
+      ...((organized.has(r.id) || (editable.has(r.id) && !invitees.has(r.id) && r.myAnswer === null)) &&
+        { personalSeries: true as const }),
+      ...(source && { deleteMembers: source.members, ...(deleteScopes.length > 0 && { deleteScopes }) }),
       busy: r.busy,
       private: r.private,
       organizer: r.organizer === null ? null : { address: r.organizer, name: r.organizerName },

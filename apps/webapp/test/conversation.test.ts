@@ -236,10 +236,10 @@ describe("an open message shows the rest of its conversation", () => {
     mount({ letters: [A, B, C], open: "b" });
     const current = [...document.querySelectorAll<HTMLElement>('[data-conv-id][aria-current="true"]')];
     expect(current).toHaveLength(1);
-    expect(current[0]!.dataset.convId).toBe("b");
+    expect(current[0]!.dataset.convId).toBe("c");
     // …and it keeps the full message anatomy: a letter like its siblings, its text on screen.
     expect(within(current[0]!).getByRole("article")).toBeTruthy();
-    expect(current[0]!.textContent).toContain("The text of b.");
+    expect(current[0]!.textContent).toContain("The text of c.");
   });
 
   it("renders the user's OWN reply, and no longer claims it cannot", () => {

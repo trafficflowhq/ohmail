@@ -5,7 +5,7 @@
  * this build has no step for, is never drawn and no address reaches its step.
  */
 import { useEffect, useState } from "react";
-import { Button, Dot, Page, Sentence } from "@ohmail/ui/base";
+import { Button, EndDot, Page, Sentence } from "@ohmail/ui/base";
 import {
   offeredWays,
   stepOf,
@@ -86,8 +86,9 @@ export function CalSetupStage({ route }: PaneProps) {
     return (
       <Page acts={leave}>
         <Sentence size="xl" level={1}>
-          {t("unread")}
-          <Dot kind="ink" product="cal" />
+          <EndDot kind="ink" product="cal">
+            {t("unread")}
+          </EndDot>
         </Sentence>
       </Page>
     );

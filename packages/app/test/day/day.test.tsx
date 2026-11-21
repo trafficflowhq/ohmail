@@ -4,8 +4,10 @@
  * between two events, what lies out of sight above and below with its time and title, and a press on it bringing
  * the event into view.
  */
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { AgendaView } from "../../src/agenda/index.js";
+import { actLog, FIRST_REACH, rangeInput, Words } from "../support/range-world.js";
 import { DayView } from "../../src/day/index.js";
 import { at, date, event, mountView } from "../support/time-views.js";
 
@@ -82,30 +84,38 @@ describe("the day", () => {
 
   it("says where it lies before what this device holds, and Load earlier reads from four weeks back", async () => {
     const asked: { from: string; to: string }[] = [];
-    mountView(DayView, {
-      anchor: DAY,
-      edge: {
-        earlier: "2026-11-20",
-        later: null,
-        load: async (span) => {
-          asked.push(span);
-          return true;
-        },
-      },
-    });
-    expect(screen.getByRole("status").textContent).toContain("Shown from");
+    const { acts } = actLog();
+    render(
+      <Words>
+        <AgendaView
+          input={rangeInput({ anchor: "2026-11-12" })}
+          acts={acts}
+          edge={{
+            provider: "microsoft",
+            earlier: "2026-11-20",
+            later: null,
+            load: async (span) => {
+              asked.push(span);
+              return true;
+            },
+          }}
+          {...FIRST_REACH}
+        />
+      </Words>,
+    );
+    expect(screen.getByRole("status").textContent).toContain("From Fri 20 Nov");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Load earlier" }));
     });
     expect(asked).toEqual([{ from: "2026-10-23", to: "2026-11-19" }]);
   });
 
-  it("says where it lies after what this device holds, and nothing on a day inside it", () => {
+  it("leaves the canvas clear outside and inside the held days", () => {
     const after = mountView(DayView, {
       anchor: DAY,
       edge: { earlier: null, later: "2026-11-11", load: "none" },
     });
-    expect(screen.getByText("Later days stay with the calendar.")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
     after.rerender({ edge: { earlier: "2026-11-01", later: "2026-11-30", load: "none" } });
     expect(screen.queryByRole("status")).toBeNull();
   });

@@ -24,7 +24,7 @@ export interface ReadingHeadProps {
   mailbox?: string;
   /** What ends the line on touch: the squares along the head. */
   squares?: ReactNode;
-  /** Something has scrolled under the head: a short fade of the ground under its edge says so. */
+  /** Whether the letter has scrolled under the heading. */
   under?: boolean;
 }
 
@@ -71,9 +71,9 @@ export function ReadingHead({
         byline
       )}
       {subject ? (
-        <b className="oh-readinghead-short" aria-hidden="true">
-          <span className="oh-readinghead-short-text">{subject}</span>
-        </b>
+        <span className="oh-readinghead-short" aria-hidden="true">
+          <span className="oh-text oh-display oh-readinghead-short-text">{subject}</span>
+        </span>
       ) : null}
     </header>
   );

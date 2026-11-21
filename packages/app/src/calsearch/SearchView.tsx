@@ -11,7 +11,6 @@ import {
   clockTime,
   dayDate,
   dayShort,
-  searchEvents,
   yearOf,
   type DayId,
   type RangeActs,
@@ -19,6 +18,7 @@ import {
   type SearchHit,
   type ViewEvent,
 } from "@ohmail/app-logic/calendar";
+import { findCalendarEvents } from "./find.js";
 import { useLocale, useText } from "../text/index.js";
 import "./calsearch.css";
 
@@ -32,23 +32,10 @@ export interface SearchViewProps {
   readonly held: { readonly from: DayId; readonly to: DayId } | null;
 }
 
-const keyOf = (e: ViewEvent): string => e.id;
-const textOf = (e: ViewEvent) => [e.title, e.second, ...e.people, e.notes];
-
-/** What the words find among the events the view is handed, placed by the zone rules it is handed. */
-function useFound(query: string, input: RangeInput) {
+function useFound(query: string, { events, today, zone, zones }: RangeInput) {
   return useMemo(
-    () =>
-      searchEvents({
-        query,
-        items: input.events,
-        keyOf,
-        textOf,
-        today: input.today,
-        zone: input.zone,
-        zones: input.zones,
-      }),
-    [query, input.events, input.today, input.zone, input.zones],
+    () => findCalendarEvents(query, events, today, zone, zones),
+    [query, events, today, zone, zones],
   );
 }
 

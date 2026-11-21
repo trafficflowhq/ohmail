@@ -8,7 +8,8 @@ import {
 import { addDays, clockOf, dayLong, isoOfDay, resizeSlot } from "@ohmail/app-logic/calendar";
 import { EventChip } from "@ohmail/ui/calendar";
 import type { CalendarEventFace } from "./faces.js";
-import { resizedDays, type EventActions } from "./use-event-actions.js";
+import { resizedDays } from "./event-time-change.js";
+import type { EventActions } from "./use-event-actions.js";
 import type { DayEdge, TimedSegment } from "./view.js";
 import { useLocale, useText } from "../text/index.js";
 

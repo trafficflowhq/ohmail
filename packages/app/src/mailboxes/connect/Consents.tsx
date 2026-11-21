@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { CheckLine, Switch } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import type { ConsentLine } from "@ohmail/app-logic/mailboxes/connect/consents";
@@ -32,17 +32,43 @@ interface ConsentsProps {
 export function Consents({ lines, tick, words, checkboxId }: ConsentsProps): ReactNode {
   if (lines.length === 0) return null;
   const label = (line: ConsentLine): string =>
-    line.kind === "plain" ? words(PLAIN[line.legs]) : words(TRUST[line.legs], { fingerprint: line.sha256 });
+    line.kind === "plain" ? words(PLAIN[line.legs]) : words(TRUST[line.legs]);
   const plain = lines.filter((line) => line.kind === "plain");
   const cert = lines.filter((line) => line.kind === "certificate");
   const renderLine = (line: ConsentLine) => {
     const key = `${line.kind}-${line.legs}`;
-    return checkboxId ? (
-      <CheckLine key={key} id={checkboxId(line)} checked={line.on} onChange={(on) => tick(line, on)}>
+    const printId = `${checkboxId?.(line) ?? key}-print`;
+    const control = checkboxId ? (
+      <CheckLine
+        key={key}
+        id={checkboxId(line)}
+        describedBy={printId}
+        checked={line.on}
+        onChange={(on) => tick(line, on)}
+      >
         {label(line)}
       </CheckLine>
     ) : (
-      <Switch key={key} label={label(line)} labelled on={line.on} onChange={(on) => tick(line, on)} />
+      <Switch
+        key={key}
+        label={label(line)}
+        describedBy={printId}
+        labelled
+        on={line.on}
+        onChange={(on) => tick(line, on)}
+      />
+    );
+    if (line.kind !== "certificate") return control;
+    /* The fingerprint the tick claims, on its own line under the line that asks for it:
+      plain text, readable whole by a reader, never an image. Tied to the control, so the
+      consent says out loud which certificate it trusts. */
+    return (
+      <Fragment key={key}>
+        {control}
+        <p id={printId} className="mbx-cert-fingerprint">
+          {line.sha256}
+        </p>
+      </Fragment>
     );
   };
   return (
@@ -54,7 +80,7 @@ export function Consents({ lines, tick, words, checkboxId }: ConsentsProps): Rea
         </SettingNote>
       ) : null}
       {cert.map(renderLine)}
-      {cert.length > 0 ? <SettingNote>{words("trustCertificateNote")}</SettingNote> : null}
+      {cert.length > 0 ? <SettingNote sign="info">{words("trustCertificateNote")}</SettingNote> : null}
     </>
   );
 }

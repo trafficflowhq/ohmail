@@ -104,7 +104,7 @@ describe("the two mirror drivers share one drain policy", () => {
   });
 
   it("the detectors are not vacuous — they fire on the shapes they are looking for", () => {
-    // A guard nobody has watched fail is not evidence (CLAUDE.md). Verbatim from the pre-adoption
+    // A guard nobody has watched fail is not evidence (AGENTS.md). Verbatim from the pre-adoption
     // sources of both drivers.
     expect(/\bconst\s+(STALE_RESUME_MS|CLOUD_STALE_RESUME_MS|BACKLOG_PAGE_LIMIT|STALE_REPLAY_PAGE_LIMIT)\s*=/
       .test("export const CLOUD_STALE_RESUME_MS = 5 * 60_000;")).toBe(true);

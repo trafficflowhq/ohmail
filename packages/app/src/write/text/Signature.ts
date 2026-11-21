@@ -27,6 +27,8 @@ export function useSignature(
     readonly state: SignatureState | undefined;
     readonly mailboxId: string | null;
     readonly set: (next: SignatureState) => void;
+    /** Taking it off this letter, with the report and its Undo the composition already keeps for a discard. */
+    readonly remove: () => void;
   },
   go: Readonly<Record<Going, () => void>>,
 ): { signature: ComposerProps["signature"]; then: (going: Going) => void } {
@@ -43,7 +45,7 @@ export function useSignature(
   /* The kit hands the field's words over while they are typed: a send or a leave pressed from inside it goes with
      what is on the screen. */
   const then = (going: Going): void => go[going]();
-  const remove = { label: t("signature.remove"), onPress: () => letter.set({ kind: "removed" }) };
+  const remove = { label: t("signature.remove"), onPress: letter.remove };
   const onChange = (text: string): void => {
     if (text !== (signed?.text ?? "")) letter.set({ kind: "edited", text });
   };

@@ -168,11 +168,11 @@ describe("the desktop window's Ohbox", () => {
     expect(marks()).toEqual([false, true, false]);
   });
 
-  /** A conversation opens on its first unread letter, and a reopen advances to its next unread letter. */
+  /** Earlier unread letters keep their state when the conversation opens on its newest. */
   it("a reopened conversation lands on its first unread and reads nothing it did not show", async () => {
     // The demo world has no threads: three of its unread letters get one, in chronological order.
     const members = ["ben", "petra", "giulia"];
-    const [firstUnread, nextUnread, newest] = members;
+    const newest = members[2]!;
     type ToMessage = { toMessage: (...a: unknown[]) => { id: string; threadId: string | null } };
     const proto = FixturesAdapter.prototype as unknown as ToMessage;
     const toMessage = proto.toMessage;
@@ -195,9 +195,7 @@ describe("the desktop window's Ohbox", () => {
       return { ...page, changes: { ...page.changes, creates } };
     });
     await mountWindow(new LaterTaskDisk());
-    // Each of the two openings puts only one message's top on screen.
-    layout.heights[firstUnread] = layout.viewport;
-    layout.heights[nextUnread] = layout.viewport;
+    layout.heights[newest] = layout.viewport;
     const group = [...host!.querySelectorAll<HTMLElement>('[role=option][data-unseen="1"][data-ids]')]
       .find((r) => (r.dataset.ids ?? "").split(" ").length >= 2);
     expect(group, "the fixture Ohbox shows no unread conversation").toBeTruthy();
@@ -215,8 +213,8 @@ describe("the desktop window's Ohbox", () => {
     await act(async () => { holding().click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
     await layout.passDwell();
-    expect(focused(), "the first open lands on the first unread member").toBe(firstUnread);
-    expect(reads(), "the first open reads only that member").toEqual([firstUnread]);
+    expect(focused(), "the first open lands on the latest member").toBe(newest);
+    expect(reads(), "the first open reads only that member").toEqual([newest]);
     const other = [...host!.querySelectorAll<HTMLElement>("[role=option][data-id]")].find((r) => !(r.dataset.ids ?? r.dataset.id!).split(" ").includes(newest));
     expect(other, "the fixture Ohbox shows one row only").toBeTruthy();
     await act(async () => { other!.click(); });
@@ -227,7 +225,7 @@ describe("the desktop window's Ohbox", () => {
     await act(async () => { holding().click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
     await layout.passDwell();
-    expect(focused(), "the reopen lands on the next unread member").toBe(nextUnread);
-    expect(reads().slice(before.length), "the reopen reads only the member it showed").toEqual([nextUnread]);
+    expect(focused(), "the reopen lands on the latest member").toBe(newest);
+    expect(reads().slice(before.length), "the latest is already read and its siblings are offscreen").toEqual([]);
   });
 });

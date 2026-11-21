@@ -44,6 +44,14 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .oh-doorbell[data-word] .oh-doorbell-count {
+    font-weight: var(--w-bold);
+  }
+
+  :root:not([data-device="desktop"]) .oh-doorbell[data-word] > :is(.oh-doorbell-word, .oh-key) {
+    display: none;
+  }
+
   .oh-doorbell > .oh-key {
     background: var(--oh-doorbell-key);
     box-shadow: var(--oh-doorbell-key-ring);

@@ -3,7 +3,7 @@
  * days. A press on a day opens its Day, on a month's name its Month.
  */
 import { useLayoutEffect, useMemo, useRef } from "react";
-import { Dot, RefusalLine } from "@ohmail/ui/base";
+import { EndDot, RefusalLine } from "@ohmail/ui/base";
 import { MiniMonth } from "@ohmail/ui/calendar";
 import {
   dayLong,
@@ -59,13 +59,7 @@ export function YearView({ input, acts, edge }: YearViewProps) {
   const tones = new Map(input.events.map((event) => [event.id, event.tone]));
   return (
     <div className="cal-yr" data-device={input.device}>
-      <HeldNotice
-        edge={edge}
-        first={`${year}-01-01`}
-        last={`${year}-12-31`}
-        today={input.today}
-        className="cal-yr-note"
-      />
+      <HeldNotice edge={edge} first={`${year}-01-01`} today={input.today} className="cal-yr-note" />
       {data.unplaced > 0 ? <RefusalLine>{t("unplaced", { count: data.unplaced })}</RefusalLine> : null}
       <div className="cal-yr-grid">
         {data.months.map((m) => {
@@ -84,8 +78,7 @@ export function YearView({ input, acts, edge }: YearViewProps) {
                   aria-label={t("monthLabel", { month: `${name} ${m.month.slice(0, 4)}` })}
                   onClick={() => acts.view("month", `${m.month}-01`)}
                 >
-                  {name}
-                  <Dot kind={m.hot ? "hot" : "ink"} />
+                  <EndDot kind={m.hot ? "hot" : "ink"}>{name}</EndDot>
                 </button>
               </h2>
               <MiniMonth

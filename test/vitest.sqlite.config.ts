@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import base from "./vitest.config";
+import base from "../vitest.config";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
@@ -42,7 +42,7 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
  * a reader who sees "the server twin resolved to something with no Postgres tables in it" goes
  * looking at this file. The claim in this comment is a measurement, not an argument.
  */
-const SQLITE_TWIN = r("./packages/db/src/schema-mail-sqlite.ts");
+const SQLITE_TWIN = r("../packages/db/src/schema-mail-sqlite.ts");
 const baseAlias = (base.resolve?.alias ?? []) as { find: string | RegExp; replacement: string }[];
 const alias = [
   { find: /^\.\/schema-mail\.js$/, replacement: SQLITE_TWIN },

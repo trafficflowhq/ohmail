@@ -25,6 +25,7 @@ import { usePlaceLiveArgs } from "../frame/place-live.js";
 import { NONE } from "../host/index.js";
 import { useScreener } from "../screener/contract.js";
 import { useText, useTimeZone } from "../text/index.js";
+import { useCalendarMatches } from "../calendar/mail-search.js";
 import type { SearchBeside } from "./beside.js";
 import { blankOf } from "./blank.js";
 import { SearchAbove } from "./SearchAbove.js";
@@ -98,6 +99,7 @@ export function SearchSeat({ children }: { readonly children: ReactNode }): Reac
   const live = useSearchLive(args, useOwn());
   const { model, archiveHit, now, placeOf, junk, junkReadable, people } = live;
   const { length, slotAt } = model;
+  const events = useCalendarMatches();
   const surface = useMemo(() => {
     const rows: EngineMessage[] = [];
     for (let i = 0; i < length; i++) {
@@ -126,10 +128,10 @@ export function SearchSeat({ children }: { readonly children: ReactNode }): Reac
       junkReadable,
       keysShown: plan.pointer !== "coarse",
       people,
-      events: NONE,
+      events,
       go: { address: (address) => commands.go({ place: "address", sub: address }) },
     }),
-    [now, placeOf, t, junk, junkReadable, plan.pointer, people, commands, surface, verbs],
+    [now, placeOf, t, junk, junkReadable, plan.pointer, people, events, commands, surface, verbs],
   );
   return (
     <SearchAbove model={model} archiveHit={archiveHit} beside={beside} blank={blankOf(model, t)}>

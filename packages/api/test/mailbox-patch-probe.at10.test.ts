@@ -285,7 +285,7 @@ describe("a credential rewrite is tried before it is stored", () => {
   /**
    * THE ENFORCEMENT ITSELF, EXERCISED RATHER THAN ASSUMED.
    *
-   * `UpdateMailboxOptions` is required in the type, and CLAUDE.md records that
+   * `UpdateMailboxOptions` is required in the type, and AGENTS.md records that
    * `packages/services` compiles `src` only — so for its ~17 `update` call sites that type is
    * never checked. This is the guard that actually runs. Called the way an un-typechecked caller
    * would call it: four arguments' worth of intent, three arguments supplied.

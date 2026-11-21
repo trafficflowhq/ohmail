@@ -109,6 +109,7 @@ export const StreamItem = memo(function StreamItem(props: StreamItemProps) {
           message={m}
           markUnread={props.markUnread}
           opened={opened}
+          addressed={addressed}
           conversation={conversation}
           scroller={scroller}
           onEnter={() => enter(m.id)}

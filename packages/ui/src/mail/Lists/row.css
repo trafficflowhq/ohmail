@@ -96,24 +96,14 @@
   .oh-row[data-open] {
     --oh-under: var(--row-open);
     --oh-row-second: var(--on-row-open2);
-    --oh-row-cursor: inset 0 0 0 var(--row-ringw) var(--row-ring);
+    --d-key-focus: var(--d-close);
 
     background: var(--row-open);
     color: var(--on-row-open);
   }
 
   .oh-row:is([data-cursor], :focus-visible):not([data-open]) {
-    --oh-row-cursor: var(--key-focus-ring);
-  }
-
-  .oh-row[data-open]:focus-visible {
-    --oh-row-cursor:
-      inset 0 0 0 var(--key-focus-w) var(--on-row-open), 0 0 0 var(--key-focus-w) var(--key-focus);
-  }
-
-  /* Walking the list can also open the letter. Paint the keyboard state in that same frame. */
-  .oh-row[data-open] {
-    --d-key-focus: var(--d-close);
+    --oh-row-cursor: var(--row-focus-ring);
   }
 
   /* The gutter: the lead's circle; a second voice, or the count of the others, merged into its lower right. */
@@ -900,9 +890,13 @@
   }
 
   :root[data-face="ohmarchy"] .oh-row:is(:hover, :where(.oh-row-slot:hover) > *),
-  :root[data-face="ohmarchy"] .oh-row[data-cursor],
-  :root[data-face="ohmarchy"] .oh-row[data-open] {
+  :root[data-face="ohmarchy"] .oh-row[data-cursor] {
     --oh-row-second: var(--ink2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-row[data-open] {
+    --oh-row-second: var(--on-row-open2);
+    --oh-row-cursor: inset 0 0 0 1px var(--row-ring);
   }
 
   :root[data-face="ohmarchy"] .oh-row-second {

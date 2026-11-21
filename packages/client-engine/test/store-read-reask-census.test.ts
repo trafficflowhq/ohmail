@@ -8,7 +8,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * EVERY STORE READ ON THE WEB AND THE PHONE GOES THROUGH THE ONE RE-ASK.
  *
  * SCANNED ROOTS: `apps/webapp/app`, `apps/mobile/src`, `apps/mobile/app` — none is this package,
- * so it runs by its scanned roots (CLAUDE.md's census rule). A store read is a render bind of a
+ * so it runs by its scanned roots (AGENTS.md's census rule). A store read is a render bind of a
  * History or Search walker (`useSyncExternalStore` over its `subscribe`); each one needs a
  * `useSessionReask` call in its file, and each platform's `useSessionReask` calls the engine's
  * `createSessionReask`. The phone's two reads had none: a 401 there stayed "did not answer".

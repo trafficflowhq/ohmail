@@ -33,7 +33,7 @@ import { join } from "node:path";
  * `deploy/selfhost/` has no test target of its own, and `selfhost-flavor.test.ts` beside this
  * file is already where the repo reasons about which owner performs the self-host origin
  * split — the Caddyfile is the other half of that same decision. This directory is also one
- * of the four whose tests are actually TYPECHECKED (CLAUDE.md), which a guard over deployment
+ * of the four whose tests are actually TYPECHECKED (AGENTS.md), which a guard over deployment
  * text should be.
  */
 

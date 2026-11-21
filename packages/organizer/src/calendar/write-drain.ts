@@ -17,16 +17,17 @@
 import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import type { ZoneSource } from "@ohmail/cal-core";
 import {
-  asWriteRefusal, proofPlaceOf, storedObjectFacts, type Clock, type ProofPlace, type ProviderWord, type ProvenRepeats, type SeriesContinuation, type WriteAnswer,
+  asWriteRefusal, proofPlaceOf, storedObjectFacts, type Clock, type ProofPlace, type ProviderWord, type ProvenRepeats, type SeriesContinuation, type WriteAnswer, type WriteTarget,
 } from "@ohmail/cal-providers";
 import type { Logger } from "@trafficflow/core";
 import { calAttendees, calCalendars, calEvents, calWrites, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  appliedPayloadOf, changedDaysOf, endedDayOf, ownOrganizerAddresses, parseWritePayload, writeRowOf, type CalendarWritePayload,
+  appliedPayloadOf, changedDaysOf, endedDayOf, exceptionBaseOf, ownOrganizerAddresses, parseWritePayload, someoneElses, writeRowOf, type CalendarWritePayload,
 } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { inConnection } from "./connection.js";
 import { ownAddressesOf } from "./reading.js";
+import { timeOfKey } from "./map.js";
 import { calendarEnabledAt } from "./state.js";
 import type { CalendarWriteDrain, CalendarWriteDrainInput, CalendarWriteWait } from "./types.js";
 import { TURN_MS, WORD_PLAN, type CalendarSyncFault } from "./words.js";
@@ -74,6 +75,8 @@ type Outcome = WriteAnswer | { readonly ok: false; readonly reason: "content_ref
 interface Second {
   readonly id: string;
   readonly payload: CalendarWritePayload;
+  readonly createdAt: Date;
+  readonly createdVersion: string | null;
 }
 
 type Claim =
@@ -88,6 +91,7 @@ type Claim =
       readonly second: Second | "unreadable" | null;
       /** The series a press's second part comes from, as the store holds it (`null`: gone from the store); `undefined` for any other write. */
       readonly source: StoredEvent | null | undefined;
+      readonly exception: WriteTarget["exception"] | "stale";
       /** A series' end found at the provider may be this write's own: an earlier attempt of it was claimed, and no other write may have made it. */
       readonly mayBeDone: boolean;
       /** A series' end claimed before and too old to send: looked at at the provider, never sent. */
@@ -174,7 +178,8 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
     for (let i = 0; i < EXPIRED_PER_CLAIM; i++) {
       const [head] = await tx.select({
         id: calWrites.id, key: calWrites.idempotencyKey, attempts: calWrites.attempts, op: calWrites.op, calendarId: calWrites.calendarId,
-        calendarProviderId: calCalendars.providerId, eventId: calWrites.eventId, baseVersionTag: calWrites.baseVersionTag,
+        calendarProviderId: calCalendars.providerId, calendarAccess: calCalendars.access,
+        eventId: calWrites.eventId, baseVersionTag: calWrites.baseVersionTag,
         payload: calWrites.payload, nextAttemptAt: calWrites.nextAttemptAt, createdAt: calWrites.createdAt,
         waiting: sql<boolean>`coalesce(${calWrites.nextAttemptAt} > now(), false)`,
         aged: sql<boolean>`${calWrites.createdAt} < now() - make_interval(secs => ${WRITE_MAX_AGE_MS / 1000})`,
@@ -223,7 +228,8 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         continue;
       }
       const provider = input.provider.reader.provider;
-      const readDeleteGuests = payload.act.kind === "calendar_event_delete" && (provider === "google" || provider === "microsoft");
+      const readDeleteGuests = payload.act.kind === "calendar_event_update" ||
+        (payload.act.kind === "calendar_event_delete" && (provider === "google" || provider === "microsoft"));
       const event = head.eventId === null ? undefined : await storedEventOf(tx, key.accountId, head.calendarId, head.eventId, readDeleteGuests);
       if (event === undefined && head.op !== "create") {
         // Its event is gone from the store: a removal is done; anything else has nothing left to change. And so has a removal of
@@ -278,6 +284,9 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
       if (claimedRow === undefined) return { kind: "busy" };
       const own = await ownAddressesOf(tx, key.accountId, held.principal);
       const owners = await ownOrganizerAddresses(tx, key.accountId, held.principal);
+      const exception = payload.exception === undefined ? undefined : await reviewedExceptionOf(
+        tx, key.accountId, head.calendarId, payload, event, owners, head.attempts === 0 && !payload.exception.masterReceipt,
+      );
       let ownInvitee: string | null = null;
       if (event !== undefined && head.op === "answer") {
         const people = await tx.select({ address: calAttendees.address }).from(calAttendees)
@@ -296,11 +305,11 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
       // The first of a press's two parts is sent only where its second could be sent after it: else neither is.
       let second: Second | "unreadable" | null = null;
       if (payload.part?.n === 1) {
-        const [next] = await tx.select({ id: calWrites.id, payload: calWrites.payload }).from(calWrites).where(and(
+        const [next] = await tx.select({ id: calWrites.id, payload: calWrites.payload, createdAt: calWrites.createdAt, createdVersion: calWrites.baseVersionTag }).from(calWrites).where(and(
           eq(calWrites.accountId, key.accountId), eq(calWrites.idempotencyKey, `${payload.part.of}:2`), eq(calWrites.state, "pending"),
         )).limit(1);
         const read = next === undefined ? null : parseWritePayload(next.payload);
-        second = next === undefined ? null : read === null ? "unreadable" : { id: next.id, payload: read };
+        second = next === undefined ? null : read === null ? "unreadable" : { id: next.id, payload: read, createdAt: next.createdAt, createdVersion: next.createdVersion };
       }
       // The second part of a press on a day and the days after it is made from the series it comes from, as the store holds it.
       const from = payload.part?.n === 2 ? payload.part.from : undefined;
@@ -313,8 +322,10 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         && !(await anotherMayHaveEnded(tx, key.accountId, { id: head.id, eventId: head.eventId }, endsAt));
       return {
         kind: "claimed",
-        write: { ...write, attempts: claimedRow.attempts, provisional: event !== undefined && event.providerId === `pending:${head.id}` },
-        payload, to, organizer, own, owners, second, source, mayBeDone, late, key: head.key, firstKey: first?.key ?? null,
+        write: { ...write, attempts: claimedRow.attempts, calendarAccess: head.calendarAccess, createdAt: head.createdAt,
+          provisional: event !== undefined && event.providerId === `pending:${head.id}`,
+          series: event !== undefined && writeRowOf(event) === "series" },
+        payload, to, organizer, own, owners, second, source, exception, mayBeDone, late, key: head.key, firstKey: first?.key ?? null,
         firstEnded: first !== undefined && first.state === "applied" ? endedDayOf(first.payload) : null,
         place: proofPlaceOf(input.provider.reader.provider, held.serverUrl),
         event: event === undefined ? null : { ...event, ownInvitee },
@@ -391,6 +402,7 @@ async function storedEventOf(
 ): Promise<StoredEvent | undefined> {
   const query = tx.select({
     providerId: calEvents.providerId, original: calEvents.original, partial: calEvents.partial, uid: calEvents.uid, versionTag: calEvents.versionTag,
+    updatedAt: calEvents.updatedAt, status: calEvents.status, thisAndFuture: calEvents.thisAndFuture,
     organizer: calEvents.organizer, myAnswer: calEvents.myAnswer,
     repeatRule: calEvents.repeatRule, recurrenceId: calEvents.recurrenceId, addedDates: calEvents.addedDates, excludedDates: calEvents.excludedDates,
     startKind: calEvents.startKind, startLocal: calEvents.startLocal, startZone: calEvents.startZone,
@@ -410,6 +422,28 @@ async function storedEventOf(
   return { ...event, changedDays: changedDaysOf(event, Number(changed?.n ?? 0)), ownInvitee: null, deleteGuests };
 }
 
+/** The named exception is from the same account, calendar and series. Provider writes still use its recorded tag. */
+async function reviewedExceptionOf(
+  tx: Tx, accountId: string, calendarId: string, payload: CalendarWritePayload,
+  master: StoredEvent | undefined, owners: ReadonlySet<string>, first: boolean,
+): Promise<NonNullable<WriteTarget["exception"]> | "stale"> {
+  const { act, exception } = payload;
+  if (!exception || !master || act.kind !== "calendar_event_update" || writeRowOf(master) !== "series") return "stale";
+  const occurrence = timeOfKey(exception.occurrence);
+  if (!occurrence) return "stale";
+  const paired = exceptionBaseOf(act.base);
+  if (act.scope.kind !== "occurrence" && paired === null) return "stale";
+  const selected = await storedEventOf(tx, accountId, calendarId, exception.id);
+  if (!selected && first) return "stale";
+  if (selected && (selected.uid !== master.uid || selected.recurrenceId !== exception.occurrence ||
+    selected.providerId !== exception.providerId || selected.partial || selected.thisAndFuture ||
+    selected.status === "cancelled" || someoneElses(selected, owners))) return "stale";
+  if (first && (selected?.updatedAt?.getTime() !== Date.parse(paired?.[0] ?? act.base) ||
+    selected?.versionTag !== exception.version ||
+    (paired && master.updatedAt?.getTime() !== Date.parse(paired[1])))) return "stale";
+  return { id: exception.providerId, version: exception.version, occurrence };
+}
+
 /** The writer's call, made with no transaction open; a throw out of a writer is this program's fault and is answered `unknown`. */
 async function carryOut(
   deps: WriteDrainDeps, input: CalendarWriteDrainInput, word: ProviderWord, claim: Extract<Claim, { kind: "claimed" }>,
@@ -417,6 +451,8 @@ async function carryOut(
   const refused = (reason: WriteWord): Outcome => ({ ok: false, reason, retryAfterMs: null } as Outcome);
   const writer = input.provider.writer;
   if (writer === null) return refused("unsupported");
+  if (claim.write.calendarAccess !== "owner" && claim.write.calendarAccess !== "writer")
+    return refused("read_only");
   const part = claim.payload.part;
   // A press's parts go only as the door records them: no part of a press is sent out of its press (a change of a day and the days
   // after it without its second part, their removal with one, a second part after another than its own first).
@@ -424,21 +460,33 @@ async function carryOut(
   if (!pressShaped({ act: claim.payload.act, part, key: claim.key, firstKey: claim.firstKey, second: claim.second !== null, firstEnded: claim.firstEnded })) return refused("content_refused");
   // A press's second part comes from its series: one that does not say where from would be made of the act's fields alone, and is not sent.
   if (part?.n === 2 && claim.payload.act.kind === "calendar_event_create" && (part.from === undefined || claim.source === undefined)) return refused("content_refused");
+  const second = claim.second;
+  if (claim.exception === "stale") return refused("version_stale");
+  const submitted = claim.payload.act;
+  const paired = submitted.kind === "calendar_event_create" ? null : exceptionBaseOf(submitted.base);
+  if ((!claim.exception && (paired || submitted.eventId !== claim.write.eventId)) ||
+    (claim.exception && (!claim.write.eventId || submitted.kind !== "calendar_event_update"))) return refused("content_refused");
+  const act = claim.exception && submitted.kind === "calendar_event_update" && claim.write.eventId
+    ? { ...submitted, eventId: claim.write.eventId, base: paired?.[1] ?? claim.event?.updatedAt?.toISOString() ?? submitted.base }
+    : submitted;
   const call = writeCallOf({
-    place: claim.place, act: claim.payload.act, event: claim.event, base: claim.write.baseVersionTag, organizer: claim.organizer, owners: claim.owners, to: claim.to,
+    place: claim.place, act, event: claim.event, base: claim.write.baseVersionTag, organizer: claim.organizer, owners: claim.owners, to: claim.to,
     zones: deps.zones, now: deps.clock.now(), proven: deps.proven,
     cancellationAttempted: claim.write.attempts > 1 || claim.payload.cancellationAttempted === true,
+    firstAttempt: claim.write.attempts === 1 && !claim.payload.exception?.masterReceipt,
+    confirmedFollowing: second?.payload.part?.from?.confirmed,
+    exception: claim.exception,
     ...(part?.from === undefined || claim.source === undefined ? {} : { continuation: { from: part.from, source: claim.source } }),
   });
   if (call.kind === "refuse") return refused(call.reason);
   // What the second part will ask, carried by the first: the writer makes the new series from the copy it ends before it sends
   // anything, so that nothing is sent of a press that cannot be finished.
   let then: SeriesContinuation | null = null;
-  if (claim.second !== null) {
-    const from = claim.second.payload.part?.from;
+  if (second !== null) {
+    const from = second.payload.part?.from;
     if (from === undefined) return refused("content_refused");
     const after = writeCallOf({
-      place: claim.place, act: claim.second.payload.act, event: null, base: null, organizer: claim.organizer, owners: claim.owners, to: null, zones: deps.zones,
+      place: claim.place, act: second.payload.act, event: null, base: null, organizer: claim.organizer, owners: claim.owners, to: null, zones: deps.zones,
       now: deps.clock.now(), proven: deps.proven,
       continuation: { from, source: claim.event },
     });
@@ -447,24 +495,66 @@ async function carryOut(
     // The second part is the series the press makes of the series it was made on: its start, its end, its repeat (an end on a day
     // moved with a new time). Where the store holds another copy now (this press's own end, taken in after its answer was lost, or
     // someone else's), the first part's own precondition decides, and the second goes only where the first is found done.
-    const act = claim.payload.act;
-    if (act.kind !== "calendar_event_update" || !secondPartIsThePress(act, claim.second.payload)) return refused("content_refused");
-    if (claim.event !== null && claim.event.versionTag === claim.write.baseVersionTag && !secondPartHolds(claim.event, act, claim.second.payload, deps.zones)) {
+    if (act.kind !== "calendar_event_update" || !secondPartIsThePress(act, second.payload)) return refused("content_refused");
+    if (claim.event !== null && claim.event.versionTag === claim.write.baseVersionTag && !secondPartHolds(claim.event, act, second.payload, deps.zones)) {
       return refused("content_refused");
     }
-    then = { key: { hex: claim.second.id.replaceAll("-", "") }, start: after.start, end: after.end, rule: after.rule, change: after.change };
+    then = { key: { hex: second.id.replaceAll("-", "") }, start: after.start, end: after.end, rule: after.rule, change: after.change,
+      event: after.event, requireExisting: after.requireExisting,
+      ...(after.requireExisting && { createdAtMs: second.createdAt.getTime() }),
+      ...((word === "google" || word === "microsoft") && after.requireExisting && {
+        createdVersion: second.createdVersion ?? undefined,
+        rememberCreatedVersion: async (version: string | null) => {
+          const saved = await inConnection(input.db, input.key, async ({ tx }) => {
+            const [holding] = await dialect(tx).forUpdate(tx.select({ id: calWrites.id }).from(calWrites).where(and(
+              eq(calWrites.accountId, input.key.accountId), eq(calWrites.id, claim.write.id),
+              eq(calWrites.state, "pending"), eq(calWrites.attempts, claim.write.attempts),
+            )).limit(1), { mode: "update" });
+            if (!holding) return false;
+            const [updated] = await tx.update(calWrites).set({ baseVersionTag: version }).where(and(
+              eq(calWrites.accountId, input.key.accountId), eq(calWrites.calendarId, claim.write.calendarId),
+              eq(calWrites.id, second.id), eq(calWrites.state, "pending"),
+            )).returning({ id: calWrites.id });
+            return updated !== undefined;
+          });
+          if (saved !== true) throw new Error("the continuation is no longer queued");
+        },
+      }) };
   }
   const cal = { id: claim.write.calendarProviderId };
+  const exceptionEdit = (word === "google" || word === "microsoft") &&
+    claim.exception && act.kind === "calendar_event_update" && act.scope.kind === "record";
+  const saveMasterReceipt: NonNullable<WriteTarget["rememberMasterReceipt"]> = async (receipt) => {
+    const saved = await inConnection(input.db, input.key, async ({ tx }) => {
+      const [updated] = await tx.update(calWrites).set({
+        payload: sql`jsonb_set(${calWrites.payload}, '{exception,masterReceipt}', ${JSON.stringify(receipt)}::jsonb)`,
+      }).where(and(eq(calWrites.id, claim.write.id), eq(calWrites.accountId, input.key.accountId),
+        eq(calWrites.calendarId, claim.write.calendarId), eq(calWrites.attempts, claim.write.attempts), eq(calWrites.state, "pending"),
+        sql`${calWrites.payload}->'exception' is not null`,
+        sql`coalesce(${calWrites.payload}->'exception'->'masterReceipt', ${JSON.stringify(receipt)}::jsonb) = ${JSON.stringify(receipt)}::jsonb`,
+      )).returning({ id: calWrites.id });
+      return updated !== undefined;
+    });
+    if (saved !== true) throw new Error("the master edit is no longer queued");
+  };
   try {
     switch (call.kind) {
       case "create": return await writer.create(input.connection, cal, { key: { hex: claim.write.id.replaceAll("-", "") }, event: call.draft }, input.signal);
-      case "change": return await writer.change(input.connection, cal, call.target, call.change, input.signal);
+      case "change": return await writer.change(input.connection, cal, call.target.recurringSeries ?
+        { ...call.target, writeKey: { hex: claim.write.id.replaceAll("-", "") },
+          ...(exceptionEdit && { masterReceipt: claim.payload.exception?.masterReceipt, rememberMasterReceipt: saveMasterReceipt }),
+        } : call.target, call.change, input.signal);
       case "remove": return await writer.remove(input.connection, cal, call.target, input.signal);
       case "answer": return await writer.answer(input.connection, cal, call.target, { as: call.as, reply: call.reply }, input.signal);
       case "move": return writer.moveEvent === null ? refused("unsupported") : await writer.moveEvent(input.connection, cal, { id: call.to }, call.target, input.signal);
       case "end": return await writer.endSeries(input.connection, cal, call.target, { then, mayBeDone: claim.mayBeDone, late: claim.late }, input.signal);
       case "continue": return await writer.continueSeries(input.connection, cal, {
-        key: { hex: claim.write.id.replaceAll("-", "") }, from: call.from, start: call.start, end: call.end, rule: call.rule, change: call.change,
+        key: { hex: claim.write.id.replaceAll("-", "") }, from: call.from, start: call.start, end: call.end, rule: call.rule,
+        change: call.change, event: call.event, requireExisting: call.requireExisting,
+        ...(call.requireExisting && {
+          createdAtMs: claim.write.createdAt?.getTime(),
+          ...((word === "google" || word === "microsoft") && { createdVersion: claim.write.baseVersionTag ?? undefined }),
+        }),
       }, input.signal);
     }
   } catch {

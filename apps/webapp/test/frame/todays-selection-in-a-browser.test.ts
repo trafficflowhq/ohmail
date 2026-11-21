@@ -283,25 +283,25 @@ it.each([["desktop", false], ["phone", true]] as const)(
   },
 );
 
-it.each([
-  { face: "paper", colorScheme: "light" },
-  { face: "paper", colorScheme: "dark" },
-  { face: "ohmarchy", colorScheme: "light" },
-  { face: "ohmarchy", colorScheme: "dark" },
-] as const)("shows keyboard focus on the accessible mail option in $face $colorScheme", async (look) => {
-  const page = await demo("#/ohbox", false, look);
+const looks = (["paper", "ohmarchy"] as const).flatMap((face) =>
+  (["light", "dark"] as const).flatMap((colorScheme) =>
+    [false, true].map((phone) => ({ face, colorScheme, phone })),
+  ),
+);
+
+it.each(looks)("shows the keyboard's indicator in $face $colorScheme (phone: $phone)", async (look) => {
+  const page = await demo("#/ohbox", look.phone, look);
   try {
     const rows = page.getByRole("option");
     const start = rows.filter({ hasText: /Your talk is in/ });
     await start.focus();
-    const focused = rows.and(page.locator(":focus"));
+    const focused = rows.and(page.locator(":focus-visible"));
     const paint = () => focused.evaluate((option) => {
       const css = getComputedStyle(option);
-      const canvas = document.createElement("canvas");
-      const sample = canvas.getContext("2d")!;
+      const sample = document.createElement("canvas").getContext("2d")!;
       const sheet = css.getPropertyValue("--sheet");
-      const luminance = (colour: string, behind = sheet) => {
-        sample.fillStyle = behind;
+      const luminance = (colour: string) => {
+        sample.fillStyle = sheet;
         sample.fillRect(0, 0, 1, 1);
         sample.fillStyle = colour;
         sample.fillRect(0, 0, 1, 1);
@@ -309,48 +309,87 @@ it.each([
         const linear = (c: number) => c / 255 <= 0.04045 ? c / 3294.6 : ((c / 255 + 0.055) / 1.055) ** 2.4;
         return 0.2126 * linear(r!) + 0.7152 * linear(g!) + 0.0722 * linear(b!);
       };
-      const colours = css.boxShadow.match(/(?:rgba?|color)\([^)]+\)/g) ?? [];
       const contrast = (colour: string | undefined, against: string) => {
         if (!colour) return 0;
         const [light, dark] = [luminance(colour), luminance(against)].sort((a, b) => b - a);
         return (light! + 0.05) / (dark! + 0.05);
       };
       const probe = document.createElement("span");
-      probe.style.backgroundColor = getComputedStyle(option.parentElement!).getPropertyValue("--row-open");
-      option.parentElement!.append(probe);
+      probe.style.backgroundColor = css.getPropertyValue("--row-open");
+      option.append(probe);
       const openFill = getComputedStyle(probe).backgroundColor;
       probe.remove();
+      const open = option.hasAttribute("data-open");
+      const ring = css.boxShadow.match(/(?:rgba?|color)\([^)]+\)/)?.[0];
+      const bounds = option.getBoundingClientRect();
+      const scroll = option.closest(".ob-scroll")!;
+      const edge = bounds.right - 0.5;
       return {
         outline: css.outlineStyle,
-        rings: css.boxShadow.match(/inset/g)?.length ?? 0,
-        fillContrast: contrast(colours[0], css.backgroundColor),
-        sheetContrast: contrast(colours[option.hasAttribute("data-open") ? 1 : 0], sheet),
-        shadowCount: colours.length,
+        shadow: css.boxShadow,
+        ringContrast: contrast(ring, sheet),
+        sheetContrast: contrast(css.backgroundColor, sheet),
+        fillContrast: contrast(ring, css.backgroundColor),
+        textContrast: contrast(css.color, css.backgroundColor),
         transition: css.transitionProperty,
-        open: option.hasAttribute("data-open"),
+        open,
         background: css.backgroundColor,
         openFill,
+        scrolled: scroll.scrollTop > 0,
+        rightVisible: edge < scroll.getBoundingClientRect().left + scroll.clientWidth &&
+          option.contains(document.elementFromPoint(edge, bounds.top + bounds.height / 2)),
       };
     });
-    for (let step = 0; step <= 3; step++) {
-      const current = await paint();
-      expect(current).toMatchObject({ outline: "none", rings: 1 });
-      expect(current.fillContrast).toBeGreaterThanOrEqual(3);
-      expect(current.sheetContrast).toBeGreaterThanOrEqual(3);
-      expect(current.shadowCount).toBe(current.open ? 2 : 1);
-      if (current.open) expect(current.background).toBe(current.openFill);
-      if (step === 3) {
-        expect(current.open).toBe(true);
-        break;
-      }
+    const expectInsetRing = (shadow: string) => {
+      expect(shadow.replace(/(?:rgba?|color)\([^)]+\)/, "").trim()).toBe("0px 0px 0px 1px inset");
+    };
+    const checkQuiet = async () => {
+      const quiet = await paint();
+      expect(quiet).toMatchObject({ open: false, outline: "none", rightVisible: true });
+      expectInsetRing(quiet.shadow);
+      expect(quiet.fillContrast).toBeGreaterThanOrEqual(3);
+      expect(quiet.ringContrast).toBeGreaterThanOrEqual(3);
+    };
+    await checkQuiet();
+
+    for (let step = 1; step <= 20; step++) {
       const old = await focused.elementHandle();
       await page.keyboard.press("ArrowDown");
       await expect.poll(() => old!.evaluate((row) => row === document.activeElement)).toBe(false);
       expect(await focused.count()).toBe(1);
+      const current = await paint();
+      expect(current).toMatchObject({ outline: "none", open: true, rightVisible: true });
+      expect(current.background).toBe(current.openFill);
+      if (look.face === "paper") {
+        expect(current.shadow).toBe("none");
+        expect(current.sheetContrast).toBeGreaterThanOrEqual(3);
+      } else {
+        expectInsetRing(current.shadow);
+        expect(current.ringContrast).toBeGreaterThanOrEqual(3);
+        expect(current.fillContrast).toBeGreaterThanOrEqual(3);
+      }
+      expect(current.textContrast).toBeGreaterThanOrEqual(4.5);
+      if (step >= 3 && current.scrolled) break;
     }
+    expect((await paint()).scrolled).toBe(true);
+
     await page.emulateMedia({ reducedMotion: "reduce" });
+    const previous = await focused.elementHandle();
     await page.keyboard.press("ArrowUp");
-    await expect.poll(async () => (await paint()).transition).toBe("none");
+    await expect.poll(() => previous!.evaluate((row) => row === document.activeElement)).toBe(false);
+    expect((await paint()).transition).toBe("none");
+
+    const scroller = page.locator(".ob-scroll");
+    await scroller.evaluate((list) => {
+      const view = list.getBoundingClientRect();
+      const closed = [...list.querySelectorAll<HTMLElement>('[role="option"]:not([data-open])')].find((row) => {
+        const box = row.getBoundingClientRect();
+        return box.top >= view.top && box.bottom <= view.bottom;
+      });
+      closed?.focus({ preventScroll: true });
+    });
+    expect((await paint()).scrolled).toBe(true);
+    await checkQuiet();
   } finally {
     await page.context().close();
   }

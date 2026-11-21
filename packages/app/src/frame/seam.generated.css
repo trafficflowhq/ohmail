@@ -15,6 +15,8 @@
   --ink2: #5A534B;
   --ink3: #6B645B;
   --focus: #12100E;
+  --key-focus-on-nav: color-mix(in srgb,var(--on-nav-on) 48%,var(--nav-on));
+  --key-focus-nav-ring: inset 0 0 0 var(--key-focus-w) var(--key-focus-on-nav);
   --sq-ring: var(--sq-mid);
   --scrim: rgba(18,16,14,.38);
   --float: 0 18px 48px -12px rgba(18,16,14,.28), 0 2px 6px rgba(18,16,14,.08);
@@ -56,6 +58,7 @@
   --ink2: #383635;
   --ink3: #5f5e5a;
   --focus: var(--hot);
+  --key-focus-on-nav: var(--key-focus);
   --sq-ring: var(--ink3);
   --scrim: rgba(255,252,240,.5);
   --float: 0 0 0 2px var(--hot);

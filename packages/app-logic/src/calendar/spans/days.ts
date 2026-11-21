@@ -26,6 +26,21 @@ export interface Placed {
   readonly end: EventTime;
 }
 
+export function boundariesOf({ start, end }: Placed, zone: string, zones: ZoneSource) {
+  const boundary = (time: EventTime) => {
+    const zoned =
+      time.kind === "date"
+        ? { kind: "zoned" as const, tzid: zone, wall: { ...time, hour: 0, minute: 0, second: 0 } }
+        : time.kind === "floating"
+          ? { kind: "zoned" as const, tzid: zone, wall: time.wall }
+          : time;
+    return instantOf(zoned, zones)?.epochMs ?? null;
+  };
+  const first = boundary(start);
+  const last = boundary(end);
+  return first === null || last === null || first >= last ? null : { first, last };
+}
+
 let platform: ZoneSource | null = null;
 /** The platform's zone rules, made once: what a view reads days with unless a test hands its own. */
 export const readerZones = (): ZoneSource => (platform ??= intlZones());

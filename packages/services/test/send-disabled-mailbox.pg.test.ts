@@ -27,7 +27,7 @@ import type { ServiceContext } from "../src/index.js";
  * for the organizer lease, and a plain `PATCH {status:'disabled'}`) leave the credentials in
  * place, so there was no accident at all: the mail was genuinely sent.
  *
- * ## Why REAL Postgres and not PGlite (CLAUDE.md)
+ * ## Why REAL Postgres and not PGlite (AGENTS.md)
  *
  * The property is not "reserve returns an error" — it is that the reservation's INSERT is
  * **rolled back**. The check sits with the other new-reservation preconditions, i.e. AFTER the

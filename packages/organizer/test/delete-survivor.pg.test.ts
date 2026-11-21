@@ -37,7 +37,7 @@ import { completeFiling, type SpecialFolderMap } from "../src/junk-filing.js";
  *
  * Real Postgres (:5433), not PGlite: every claim is `message_instances` bookkeeping under the
  * partial-unique primary index plus `folder_state`'s derived `reconcile_status` — exactly the
- * transactional class CLAUDE.md records PGlite being blind to.
+ * transactional class AGENTS.md records PGlite being blind to.
  *
  * Mutations watched (each restored, 2026-08-24):
  *  · revert `completeFiling`'s survivor branch (always write the converged park)

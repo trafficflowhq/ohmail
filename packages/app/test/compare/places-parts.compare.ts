@@ -23,7 +23,7 @@ import { comparedKeys, PLACE_SCREENS } from "../states/places-states.mjs";
 /**
  * THE PLACES' PARTS of the eleven screens news to address, each against the same part of the reference's picture and
  * data file (`node test/compare/fetch.mjs --from <the shards>`, then
- * `npx vitest run --config vitest.compare.config.ts packages/app/test/compare/places-parts.compare.ts`). The shards
+ * `npx vitest run --config test/compare/vitest.compare.config.ts packages/app/test/compare/places-parts.compare.ts`). The shards
  * are named to the fetch by `test/compare/subjects/<screen>.ts`, the tool's rule; a shard not in build/reference is
  * red here, never a skip, as in the kit's comparison.
  *

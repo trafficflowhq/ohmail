@@ -31,7 +31,7 @@ import type { Change } from "../../src/ports.js";
  * columns and not five — and a `timestamptz` round trip is not a thing PGlite can be trusted to
  * reproduce.
  *
- * **`UNIQUE (message_id) WHERE is_primary` is a PARTIAL index**, the class of object CLAUDE.md
+ * **`UNIQUE (message_id) WHERE is_primary` is a PARTIAL index**, the class of object AGENTS.md
  * records PGlite misleading this repository about. Every write path here touches it.
  *
  * So the rows below are seeded in the SHAPE a pre-slice ingest wrote them: `dedup_key` as

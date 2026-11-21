@@ -30,7 +30,7 @@ export function Hours({ said, save, step = false }: SettingsRead & { step?: bool
   };
   const choice = (minute: number) => ({
     key: String(minute),
-    label: minute === DAY ? t("view.endOfDay") : clockTime(minute, locale),
+    label: minute === DAY ? "24:00" : clockTime(minute, locale),
   });
   const editable = said !== null && save !== "none";
   const line = (which: "from" | "to") => {

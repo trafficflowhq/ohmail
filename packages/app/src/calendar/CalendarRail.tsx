@@ -50,7 +50,7 @@ function CountedNavigation({ port, ...props }: CalendarRailProps & { readonly po
 function Navigation(props: CalendarRailProps & { readonly waiting?: string; readonly found?: string }) {
   const { form, route, commands, switcher, plan } = props;
   const t = useText("calendar");
-  const open = useNewEvent();
+  const open = useNewEvent(undefined, true);
   const create = open
     ? { label: t("create.title"), icon: "plus" as const, onPress: () => open(), keyHint: "C" }
     : undefined;

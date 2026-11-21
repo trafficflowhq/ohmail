@@ -1,6 +1,7 @@
 import { parseRRule } from "@ohmail/app-logic/calendar";
 import { QuestionBeforeAct } from "@ohmail/ui/calendar";
 import { useLocale, useText, type Text } from "../text/index.js";
+import { guestNames } from "./event-words.js";
 import type { EventActions } from "./use-event-actions.js";
 
 type Rule = NonNullable<ReturnType<typeof parseRRule>>;
@@ -68,7 +69,7 @@ function patternLine(rule: Rule, start: CivilDate, t: Text, locale: string): str
   return null;
 }
 
-function repeatLine(value: string | undefined, start: string, t: Text, locale: string): string {
+export function repeatLine(value: string | undefined, start: string, t: Text, locale: string): string {
   const rule = value && parseRRule(value);
   const description =
     rule &&
@@ -92,17 +93,31 @@ function repeatLine(value: string | undefined, start: string, t: Text, locale: s
   return t("actions.repeat.until", { frequency: description, date });
 }
 
+export function editScopeLine(repeat: string, changed: boolean, first: boolean, t: Text) {
+  return changed ? t(first ? "edit.changedFirstScope" : "edit.changedScope", { repeat }) : repeat;
+}
+
 export function EventActionQuestion({ actions }: { readonly actions: EventActions }) {
   const t = useText("calendar");
   const locale = useLocale();
   const { question, chooseScope, cancel, confirm } = actions;
   if (!question) return null;
   const { anchor, change, face, guests, scope } = question;
-  const whom = new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(
-    change.kind !== "delete" && guests.length > 2
-      ? [...guests.slice(0, 2), t("edit.others", { count: guests.length - 2 })]
-      : guests,
-  );
+  const whom = guestNames(guests, locale, t, change.kind !== "delete");
+  const length = change.kind === "resize-time";
+  const when = question.when;
+  const prefix =
+    question.repeatRule && scope?.kind === "record"
+      ? t("edit.allEvents")
+      : scope?.kind === "following"
+        ? t("edit.following")
+        : null;
+  const detail =
+    change.kind === "delete"
+      ? t("actions.tellsDelete", { title: face.title })
+      : when
+        ? t("edit.now", { when })
+        : face.title;
   const options = [
     { id: "occurrence" as const, label: t("edit.thisEvent"), keyHint: "1" },
     { id: "following" as const, label: t("edit.following"), keyHint: "2" },
@@ -119,19 +134,22 @@ export function EventActionQuestion({ actions }: { readonly actions: EventAction
             question:
               change.kind === "delete"
                 ? t("actions.deleteTitle", { title: face.title })
-                : t("actions.whichMove"),
-            ...(change.kind === "delete" && {
-              follows: repeatLine(question.repeatRule, question.repeatStart, t, locale),
-            }),
+                : length && when
+                  ? when
+                  : t("actions.moveWhen", { when: when ?? face.title }),
+            follows: editScopeLine(
+              repeatLine(question.repeatRule, question.repeatStart, t, locale),
+              change.kind !== "delete" && question.changedOccurrence,
+              question.firstOccurrence,
+              t,
+            ),
             scopes: options
               .filter((option) => question.scopes.includes(option.id))
               .map((option) => ({ ...option, onPress: () => chooseScope(option.id) })),
           }
         : {
             question: t("edit.tell", { guests: whom }),
-            follows: t(change.kind === "delete" ? "actions.tellsDelete" : "edit.tells", {
-              title: face.title,
-            }),
+            follows: prefix ? `${prefix} · ${detail}` : detail,
             answers: [
               {
                 id: "send",

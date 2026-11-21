@@ -24,7 +24,7 @@ import { setFoldersEnabled } from "../src/consent-seed.js";
  *
  * `applyFolderRename` re-spells one canonical path across FIVE tables plus the change log in a
  * single transaction, with SQL fragments PGlite is exactly the wrong oracle for (three
- * production bugs were invisible to PGlite — CLAUDE.md): `jsonb_set` over `native_locator`,
+ * production bugs were invisible to PGlite — AGENTS.md): `jsonb_set` over `native_locator`,
  * `left(col, n) = path || '/'` subtree membership, `to || substr(col, n)` swaps, and the
  * `recordChanges` seq-range allocation under the account row lock. The kill test is the
  * brief's own sentence: a crash mid-rename must not leave half a swap — so the abort arm

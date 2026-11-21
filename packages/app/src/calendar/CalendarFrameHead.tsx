@@ -92,6 +92,7 @@ export function CalendarFrameHead(props: CalendarFrameHeadProps) {
           anchors={anchors}
           views={views}
           dated={dated}
+          desktop={props.plan.device === "desktop"}
           toDate={jump}
           goToView={(view, day) => go({ place: view, sub: day })}
           select={select}
@@ -310,8 +311,8 @@ function calendarHeadBar(
               ref: anchors.date,
               onPress: menu === "date" ? close : openDate,
             },
-            before: { label: t("before"), onPress: () => step(-1) },
-            after: { label: t("after"), onPress: () => step(1) },
+            before: { label: t("before"), title: `${t("before")} · [`, onPress: () => step(-1) },
+            after: { label: t("after"), title: `${t("after")} · ]`, onPress: () => step(1) },
             today: {
               label: t("today"),
               keyHint: "t",
@@ -351,6 +352,9 @@ function calendarHeadBar(
         waiting ? (
           <Doorbell
             count={String(waiting)}
+            word={t("toAnswer")}
+            keyHint="g i"
+            keyShown
             label={t("waiting", { count: waiting })}
             expanded={route.words.panel === "invitations"}
             onPress={invitations}

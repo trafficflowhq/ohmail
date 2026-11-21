@@ -4,7 +4,7 @@
  * out. Nothing here times out into a failure, and a refused sign-in is asked again only on a press.
  */
 import { useRef, useState, type ReactNode } from "react";
-import { Button, Dot, Menu, MenuItem, Page, Sentence, Slot } from "@ohmail/ui/base";
+import { Button, Dot, EndDot, Menu, MenuItem, Page, Sentence, Slot } from "@ohmail/ui/base";
 import type { CalendarRecord } from "@ohmail/app-logic/calendar";
 import {
   newEventsCalendarOf,
@@ -53,8 +53,9 @@ export function CalendarsStep({
         refusal={[t(setupFaultKeyOf(record.errorCode, way ?? wayOfConnection(record)))]}
       >
         <Sentence size="xl" level={1}>
-          {t("calendars.refused")}
-          <Dot kind="hot" product="cal" />
+          <EndDot kind="hot" product="cal">
+            {t("calendars.refused")}
+          </EndDot>
         </Sentence>
       </Page>
     );
@@ -63,8 +64,9 @@ export function CalendarsStep({
     return (
       <Page acts={leave} line={t("calendars.checkingLine")}>
         <Sentence size="xl" level={1}>
-          {t("calendars.checking")}
-          <Dot kind="hot" product="cal" />
+          <EndDot kind="hot" product="cal">
+            {t("calendars.checking")}
+          </EndDot>
         </Sentence>
       </Page>
     );
@@ -96,8 +98,9 @@ export function CalendarsStep({
       }
     >
       <Sentence size="xl" level={1}>
-        {t("calendars.sentence")}
-        <Dot kind="hot" product="cal" />
+        <EndDot kind="hot" product="cal">
+          {t("calendars.sentence")}
+        </EndDot>
       </Sentence>
     </Page>
   );
@@ -182,8 +185,9 @@ export function WaitStep({
       }
     >
       <Sentence size="xl" level={1}>
-        {t("wait.counts", { events, calendars: own.length })}
-        <Dot kind="ink" product="cal" />
+        <EndDot kind="ink" product="cal">
+          {t("wait.counts", { events, calendars: own.length })}
+        </EndDot>
       </Sentence>
     </Page>
   );

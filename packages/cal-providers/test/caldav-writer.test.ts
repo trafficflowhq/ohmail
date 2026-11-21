@@ -12,6 +12,8 @@ import {
   seriesOf,
   readCalendar,
   DEFAULT_LIMITS,
+  instant,
+  momentOrUtc,
   wall,
   zoned,
   parseRRule,
@@ -35,7 +37,7 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close();
 });
 
-async function bench(options: StandInOptions = {}) {
+async function bench(options: StandInOptions = {}, now = () => NOW) {
   const dav = await startCalDavStandIn(options);
   servers.push(dav);
   dav.addCalendar("studio");
@@ -47,7 +49,7 @@ async function bench(options: StandInOptions = {}) {
   };
   const writer: CalendarWriter = makeWriter({
     http: namedHostRequest({ writes: true, resolver, policy: { kind: "own-network" } }),
-    clock: { now: () => NOW },
+    clock: { now },
     zones: ZONES,
   });
   const cal = { id: `${base}${dav.paths.collection("studio")}` };
@@ -119,6 +121,657 @@ describe("CalDAV's writer", () => {
     rule: parseRRule("FREQ=DAILY;COUNT=3")!,
     change: { summary: "New firing" },
   };
+
+  const organizer = ["kiln-owner", "example.test"].join("@");
+  const guest = ["potter", "example.test"].join("@");
+  const hiddenGuest = ["extra", "example.test"].join("@");
+  const forkName = `${UID}.ics`;
+  async function ownedSeries(timed = false, now = () => NOW) {
+    const b = await bench({ autoSchedule: true }, now);
+    const withGuests = personalText([
+      "SEQUENCE:4",
+      `ORGANIZER:mailto:${organizer}`,
+      `ATTENDEE:mailto:${guest}`,
+    ]);
+    const text = timed
+      ? withGuests
+          .replace("DTSTART;VALUE=DATE:20261116", "DTSTART:20261116T090000Z")
+          .replace("DTEND;VALUE=DATE:20261117", "DTEND:20261116T100000Z")
+      : withGuests;
+    const occurrence = timed ? instant(Date.UTC(2026, 10, 18, 9)) : cut;
+    const end = timed ? instant(Date.UTC(2026, 10, 18, 10)) : continuation.end;
+    const target = {
+      id: b.member("kiln.ics"),
+      version: '"original"',
+      text,
+      occurrence,
+      recurringSeries: true as const,
+      audience: { organizer, guests: [guest] },
+    };
+    const then = { ...continuation, start: occurrence, end };
+    b.dav.put("studio", "kiln.ics", text, target.version);
+    return { ...b, target, then };
+  }
+
+  it.each([{ timed: true }, { timed: false }])(
+    "writes each scope of an owned series with confirmed guests (timed=$timed)",
+    async ({ timed }) => {
+      const b = await ownedSeries(timed);
+      const { target, then } = b;
+      const earlier = timed ? instant(Date.UTC(2026, 10, 17, 9)) : plainDate(2026, 11, 17);
+      const one = await b.writer.change(
+        b.connection,
+        b.cal,
+        { ...target, occurrence: earlier },
+        then.change,
+        never,
+      );
+      const occurrence =
+        one.ok && one.items.find((i) => i.kind === "upsert" && i.event.recurrenceId !== null);
+      if (!occurrence || occurrence.kind !== "upsert") throw new Error("missing override");
+      expect(occurrence.event.sequence).toBe(5);
+      expect(occurrence.event.summary).toBe(then.change.summary);
+      expect(b.writes()[0]?.headers["if-match"]).toBe(target.version);
+      const all = await b.writer.change(
+        b.connection,
+        b.cal,
+        {
+          ...target,
+          occurrence: null,
+          text: occurrence.text,
+          version: occurrence.version,
+        },
+        { summary: "All firings" },
+        never,
+      );
+      const master = all.ok && all.items.find((i) => i.kind === "upsert" && i.event.recurrenceId === null);
+      if (!master || master.kind !== "upsert") throw new Error("missing changed master");
+      expect(master.event.sequence).toBe(5);
+      expect(master.event.summary).toBe("All firings");
+      expect(b.writes()[1]?.headers["if-match"]).toBe(occurrence.version);
+
+      const ended = await b.writer.endSeries(
+        b.connection,
+        b.cal,
+        {
+          ...target,
+          text: master.text,
+          version: master.version,
+        },
+        { then, mayBeDone: false },
+        never,
+      );
+      expect(word(ended)).toBe("ok");
+      const item = ended.ok && ended.items.find((i) => i.kind === "upsert" && i.event.recurrenceId === null);
+      if (!item || item.kind !== "upsert") throw new Error("missing ended master");
+      expect(ended.ok && ended.items.every((i) => i.kind === "upsert" && i.id === target.id)).toBe(true);
+      expect(ended.ok && ended.items.some((i) => i.kind === "upsert" && i.event.recurrenceId !== null)).toBe(
+        true,
+      );
+      expect(item.event.sequence).toBe(6);
+      expect(item.text).toContain(timed ? "UNTIL=20261118T085959Z" : "UNTIL=20261117");
+      expect(
+        b
+          .writes()
+          .slice(2)
+          .map((w) => [w.method, w.path.split("/").at(-1)]),
+      ).toEqual([
+        ["PUT", forkName],
+        ["PUT", "kiln.ics"],
+      ]);
+      expect(b.writes()[2]?.headers["if-none-match"]).toBe("*");
+      expect(b.writes()[3]?.headers["if-match"]).toBe(master.version);
+      const continued = await b.writer.continueSeries(
+        b.connection,
+        b.cal,
+        {
+          ...then,
+          from: { ...target, text: item.text, version: item.version },
+        },
+        never,
+      );
+      const fork = continued.ok && continued.items[0];
+      if (!fork || fork.kind !== "upsert") throw new Error("missing continuation");
+      expect(fork.id).toBe(b.member(forkName));
+      expect(fork.event.summary).toBe(then.change.summary);
+      expect(fork.event.attendees.length).toBe(1);
+      expect(b.writes()).toHaveLength(4);
+    },
+  );
+
+  async function changedOccurrence(timed = false) {
+    const b = await ownedSeries(timed);
+    const altered = timed
+      ? { start: instant(Date.UTC(2026, 10, 18, 11)), end: instant(Date.UTC(2026, 10, 18, 12)) }
+      : {};
+    const changed = await b.writer.change(
+      b.connection,
+      b.cal,
+      b.target,
+      { summary: "Private firing", location: "Annex", ...altered },
+      never,
+    );
+    const item =
+      changed.ok && changed.items.find((i) => i.kind === "upsert" && i.event.recurrenceId !== null);
+    if (!item || item.kind !== "upsert") throw new Error("missing stored occurrence");
+    return {
+      ...b,
+      target: {
+        ...b.target,
+        text: item.text,
+        version: item.version,
+        exception: { id: item.id, version: item.version, occurrence: b.target.occurrence },
+      },
+    };
+  }
+
+  it("edits a previously changed occurrence under its reviewed resource version", async () => {
+    const b = await changedOccurrence();
+    const stale = { ...b.target, exception: { ...b.target.exception, version: '"older"' } };
+    const update = { summary: "Revised firing" };
+    expect(word(await b.writer.change(b.connection, b.cal, stale, update, never))).toBe("version_stale");
+    expect(b.writes()).toHaveLength(1);
+    const result = await b.writer.change(b.connection, b.cal, b.target, update, never);
+    expect(
+      result.ok &&
+        result.items.map(
+          (i) =>
+            i.kind === "upsert" && [
+              i.event.summary,
+              i.event.location,
+              i.event.sequence,
+              i.event.recurrenceId !== null,
+            ],
+        ),
+    ).toEqual([
+      ["Kiln check", null, 4, false],
+      ["Revised firing", "Annex", 6, true],
+    ]);
+    expect(b.writes()[1]?.headers["if-match"]).toBe(b.target.exception.version);
+    const repeated = await b.writer.change(b.connection, b.cal, b.target, update, never);
+    expect(word(repeated)).toBe("ok");
+    expect(b.writes()).toHaveLength(2);
+  });
+
+  it("applies an all-series edit from a changed occurrence to the named field and preserves its other changes", async () => {
+    const b = await changedOccurrence();
+    const result = await b.writer.change(
+      b.connection,
+      b.cal,
+      { ...b.target, occurrence: null },
+      { summary: "All firings" },
+      never,
+    );
+    expect(
+      result.ok &&
+        result.items.map(
+          (i) =>
+            i.kind === "upsert" && [
+              i.event.summary,
+              i.event.location,
+              i.event.sequence,
+              i.event.recurrenceId !== null,
+            ],
+        ),
+    ).toEqual([
+      ["All firings", null, 5, false],
+      ["All firings", "Annex", 6, true],
+    ]);
+    expect(b.writes()[1]?.headers["if-match"]).toBe(b.target.exception.version);
+  });
+
+  it("moves the original key of a reviewed timed override with its series and preserves its timing difference", async () => {
+    const b = await changedOccurrence(true);
+    const result = await b.writer.change(
+      b.connection,
+      b.cal,
+      { ...b.target, occurrence: null },
+      {
+        start: instant(Date.UTC(2026, 10, 16, 9, 30)),
+        end: instant(Date.UTC(2026, 10, 16, 10, 45)),
+      },
+      never,
+    );
+    const edited =
+      result.ok && result.items.find((item) => item.kind === "upsert" && item.event.recurrenceId !== null);
+    if (!edited || edited.kind !== "upsert") throw new Error(`timed edit did not land: ${word(result)}`);
+    expect(edited.event.recurrenceId).toEqual(instant(Date.UTC(2026, 10, 18, 9, 30)));
+    expect(edited.event.start).toEqual(instant(Date.UTC(2026, 10, 18, 11, 30)));
+    expect(edited.event.end).toEqual(instant(Date.UTC(2026, 10, 18, 12, 45)));
+    expect(edited.event.location).toBe("Annex");
+    expect(edited.event.summary).toBe("Private firing");
+  });
+
+  it("replaces the selected override with the first occurrence of the continuation before trimming the original", async () => {
+    const b = await changedOccurrence();
+    const then = { ...b.then, requireExisting: true as const, createdAtMs: NOW };
+    const result = await b.writer.endSeries(b.connection, b.cal, b.target, { then, mayBeDone: false }, never);
+    const ended = result.ok && result.items[0];
+    if (!ended || ended.kind !== "upsert") throw new Error(`split did not land: ${word(result)}`);
+    expect(result.ok && result.items).toHaveLength(1);
+    expect(
+      b
+        .writes()
+        .slice(1)
+        .map((write) => [write.method, write.path.split("/").at(-1)]),
+    ).toEqual([
+      ["PUT", forkName],
+      ["PUT", "kiln.ics"],
+    ]);
+    expect(b.writes()[1]?.headers["if-none-match"]).toBe("*");
+    expect(b.writes()[2]?.headers["if-match"]).toBe(b.target.exception.version);
+    const recovered = await b.writer.continueSeries(
+      b.connection,
+      b.cal,
+      { ...then, from: { ...b.target, version: ended.version, text: ended.text } },
+      never,
+    );
+    expect(
+      recovered.ok &&
+        recovered.items.map(
+          (i) => i.kind === "upsert" && [i.event.summary, i.event.location, i.event.recurrenceId],
+        ),
+    ).toEqual([["New firing", null, null]]);
+    expect(b.writes()).toHaveLength(3);
+  });
+
+  it("refuses a moved source version and an unconfirmed override audience before writing", async () => {
+    const b = await ownedSeries();
+    const { target, then } = b;
+    b.dav.put("studio", "kiln.ics", target.text, '"moved"');
+    expect(
+      word(await b.writer.endSeries(b.connection, b.cal, target, { then, mayBeDone: false }, never)),
+    ).toBe("version_stale");
+    const override = [
+      "BEGIN:VEVENT",
+      "UID:pottery",
+      "DTSTAMP:20261101T000000Z",
+      "RECURRENCE-ID;VALUE=DATE:20261118",
+      "DTSTART;VALUE=DATE:20261118",
+      "DTEND;VALUE=DATE:20261119",
+      `ORGANIZER:mailto:${organizer}`,
+      `ATTENDEE:mailto:${hiddenGuest}`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const live = target.text.replace("END:VCALENDAR", override);
+    b.dav.put("studio", "kiln.ics", live, target.version);
+    expect(word(await b.writer.change(b.connection, b.cal, target, then.change, never))).toBe(
+      "version_stale",
+    );
+    expect(
+      word(await b.writer.endSeries(b.connection, b.cal, target, { then, mayBeDone: false }, never)),
+    ).toBe("version_stale");
+    expect(b.writes()).toHaveLength(0);
+  });
+
+  it.each(["one", "following", "all"])(
+    "refuses changes to attendees of a confirmed recurring %s edit",
+    async (scope) => {
+      const b = await ownedSeries();
+      const change = { attendees: [] };
+      const result =
+        scope === "following"
+          ? await b.writer.endSeries(
+              b.connection,
+              b.cal,
+              b.target,
+              { then: { ...b.then, change }, mayBeDone: false },
+              never,
+            )
+          : await b.writer.change(
+              b.connection,
+              b.cal,
+              { ...b.target, occurrence: scope === "all" ? null : cut },
+              change,
+              never,
+            );
+      expect(word(result)).toBe("field_unwritable");
+      expect(b.writes()).toHaveLength(0);
+    },
+  );
+
+  it.each([403, 412])(
+    "rolls back the version it just created when the original refuses %s",
+    async (status) => {
+      const b = await ownedSeries();
+      b.dav.refuseNextWriteOf("kiln.ics", status);
+      expect(
+        word(
+          await b.writer.endSeries(
+            b.connection,
+            b.cal,
+            b.target,
+            {
+              then: b.then,
+              mayBeDone: false,
+            },
+            never,
+          ),
+        ),
+      ).toBe(status === 403 ? "read_only" : "version_stale");
+      expect(b.writes().map((w) => [w.method, w.path.split("/").at(-1)])).toEqual([
+        ["PUT", forkName],
+        ["PUT", "kiln.ics"],
+        ["DELETE", forkName],
+      ]);
+      expect(b.writes()[2]?.headers["if-match"]).toBe(`"studio-${forkName}-2"`);
+    },
+  );
+
+  it.each([{ refolded: false }, { refolded: true }])(
+    "rolls back the continuation under its verified read-back tag when create omits the tag (refolded=$refolded)",
+    async ({ refolded }) => {
+      const b = await ownedSeries();
+      b.dav.omitNextCreateTag();
+      if (refolded) {
+        b.dav.afterNextWrite(() => {
+          const same = textOf(b.dav, forkName).replace("SUMMARY:New firing", "SUMMARY:New \r\n firing");
+          b.dav.put("studio", forkName, same, '"refolded"');
+        });
+      }
+      b.dav.refuseNextWriteOf("kiln.ics", 403);
+      expect(
+        word(
+          await b.writer.endSeries(b.connection, b.cal, b.target, { then: b.then, mayBeDone: false }, never),
+        ),
+      ).toBe("read_only");
+      expect(b.writes().map((write) => [write.method, write.path.split("/").at(-1)])).toEqual([
+        ["PUT", forkName],
+        ["PUT", "kiln.ics"],
+        ["DELETE", forkName],
+      ]);
+      expect(b.writes()[2]?.headers["if-match"]).toBe(refolded ? '"refolded"' : `"studio-${forkName}-2"`);
+    },
+  );
+
+  it("does not adopt a headerless creation's read-back tag after an independent edit", async () => {
+    const b = await ownedSeries();
+    b.dav.omitNextCreateTag();
+    b.dav.afterNextWrite(() => {
+      const changed = textOf(b.dav, forkName).replace("END:VEVENT", "LOCATION:Annex\r\nEND:VEVENT");
+      b.dav.put("studio", forkName, changed, '"edited"');
+    });
+    b.dav.refuseNextWriteOf("kiln.ics", 403);
+    expect(
+      word(
+        await b.writer.endSeries(b.connection, b.cal, b.target, { then: b.then, mayBeDone: false }, never),
+      ),
+    ).toBe("read_only");
+    expect(b.writes().map((write) => [write.method, write.path.split("/").at(-1)])).toEqual([
+      ["PUT", forkName],
+      ["PUT", "kiln.ics"],
+    ]);
+  });
+
+  it("refuses a split before writing if it would discard an individually edited future occurrence", async () => {
+    const b = await ownedSeries();
+    const future = { ...b.target, occurrence: plainDate(2026, 11, 19) };
+    const edited = await b.writer.change(b.connection, b.cal, future, { location: "Annex" }, never);
+    const item = edited.ok && edited.items[0];
+    if (!item || item.kind !== "upsert") throw new Error("missing edited occurrence");
+    expect(
+      word(
+        await b.writer.endSeries(
+          b.connection,
+          b.cal,
+          {
+            ...b.target,
+            text: item.text,
+            version: item.version,
+          },
+          { then: b.then, mayBeDone: false },
+          never,
+        ),
+      ),
+    ).toBe("field_unwritable");
+    expect(b.writes()).toHaveLength(1);
+  });
+
+  it("cannot delete a continuation someone changed before rollback", async () => {
+    const b = await ownedSeries();
+    b.dav.refuseNextWriteOf("kiln.ics", () => {
+      b.dav.put("studio", forkName, textOf(b.dav, forkName).replace("New firing", "Another copy"), '"newer"');
+      return 403;
+    });
+    expect(
+      word(
+        await b.writer.endSeries(
+          b.connection,
+          b.cal,
+          b.target,
+          {
+            then: b.then,
+            mayBeDone: false,
+          },
+          never,
+        ),
+      ),
+    ).toBe("read_only");
+    expect(b.writes()[2]?.method).toBe("DELETE");
+    expect(b.writes()[2]?.headers["if-match"]).toBe(`"studio-${forkName}-2"`);
+  });
+
+  it.each(["unchanged", "edited", "restamped"] as const)(
+    "checks the full %s continuation before cleanup after its creation response was lost",
+    async (state) => {
+      let now = NOW;
+      const b = await ownedSeries(false, () => now);
+      const then = { ...b.then, requireExisting: true as const, createdAtMs: NOW };
+      b.dav.doneThen(500);
+      expect(
+        word(
+          await b.writer.endSeries(
+            b.connection,
+            b.cal,
+            b.target,
+            {
+              then,
+              mayBeDone: false,
+            },
+            never,
+          ),
+        ),
+      ).toBe("unavailable");
+      expect(b.writes()).toHaveLength(1);
+
+      now += 60_000;
+      const created = textOf(b.dav, forkName);
+      if (state !== "unchanged") {
+        const edited =
+          state === "edited"
+            ? created.replace("END:VEVENT", "LOCATION:Annex\r\nEND:VEVENT")
+            : created.replace(/DTSTAMP:[^\r\n]+/, "DTSTAMP:20261115T090100Z");
+        b.dav.put("studio", forkName, edited, '"newer"');
+      }
+      b.dav.refuseNextWriteOf("kiln.ics", 403);
+      expect(
+        word(
+          await b.writer.endSeries(
+            b.connection,
+            b.cal,
+            b.target,
+            {
+              then,
+              mayBeDone: true,
+            },
+            never,
+          ),
+        ),
+      ).toBe("read_only");
+      expect(b.writes().map((w) => w.method)).toEqual(
+        state === "unchanged" ? ["PUT", "PUT", "DELETE"] : ["PUT", "PUT"],
+      );
+      if (state === "unchanged") expect(b.writes()[2]?.headers["if-match"]).toBe(`"studio-${forkName}-2"`);
+    },
+  );
+
+  it("keeps the continuation after an uncertain end and recovers the split without repeating its writes", async () => {
+    const b = await ownedSeries();
+    const { target } = b;
+    const then = { ...b.then, requireExisting: true as const };
+    b.dav.afterNextWrite(() => b.dav.afterNextWrite(() => b.dav.doneThen(500)));
+    expect(
+      word(await b.writer.endSeries(b.connection, b.cal, target, { then, mayBeDone: false }, never)),
+    ).toBe("unavailable");
+    const ended = await b.writer.endSeries(b.connection, b.cal, target, { then, mayBeDone: true }, never);
+    const item = ended.ok && ended.items[0];
+    if (!item || item.kind !== "upsert") throw new Error("missing ended master");
+    const continued = await b.writer.continueSeries(
+      b.connection,
+      b.cal,
+      {
+        ...then,
+        from: { ...target, text: item.text, version: item.version },
+      },
+      never,
+    );
+    expect(word(continued)).toBe("ok");
+    expect(b.writes().map((w) => [w.method, w.path.split("/").at(-1)])).toEqual([
+      ["PUT", forkName],
+      ["PUT", "kiln.ics"],
+    ]);
+  });
+
+  it.each(["end", "continue"])(
+    "refuses replay of the %s step when another client made the same cut and no continuation exists",
+    async (step) => {
+      const b = await ownedSeries();
+      const { target } = b;
+      const then = { ...b.then, requireExisting: true as const };
+      const text = target.text.replace("COUNT=5", "UNTIL=20261117");
+      b.dav.put("studio", "kiln.ics", text, '"another-end"');
+      const result =
+        step === "end"
+          ? await b.writer.endSeries(b.connection, b.cal, target, { then, mayBeDone: true }, never)
+          : await b.writer.continueSeries(
+              b.connection,
+              b.cal,
+              {
+                ...then,
+                from: { ...target, text, version: '"another-end"' },
+              },
+              never,
+            );
+      expect(word(result)).toBe("version_stale");
+      expect(b.writes()).toHaveLength(0);
+    },
+  );
+
+  it("creates the missing continuation for an earlier already-ended queue row", async () => {
+    const b = await ownedSeries();
+    const { target, then } = b;
+    const text = target.text.replace("COUNT=5", "UNTIL=20261117");
+    b.dav.put("studio", "kiln.ics", text, '"ended"');
+    const req = { ...then, from: { ...target, text, version: '"ended"' } };
+    expect(word(await b.writer.continueSeries(b.connection, b.cal, req, never))).toBe("ok");
+    expect(word(await b.writer.continueSeries(b.connection, b.cal, req, never))).toBe("ok");
+    expect(b.writes().map((w) => [w.method, w.path.split("/").at(-1)])).toEqual([["PUT", forkName]]);
+  });
+
+  it("ends a recorded legacy request before its second row constructs the continuation", async () => {
+    const b = await ownedSeries();
+    const target = {
+      id: b.target.id,
+      version: b.target.version,
+      text: b.target.text,
+      occurrence: cut,
+    };
+    const ended = await b.writer.endSeries(
+      b.connection,
+      b.cal,
+      target,
+      { then: b.then, mayBeDone: false },
+      never,
+    );
+    const item = ended.ok && ended.items[0];
+    if (!item || item.kind !== "upsert") throw new Error("missing ended legacy series");
+    expect(b.writes().map((w) => w.path.split("/").at(-1))).toEqual(["kiln.ics"]);
+    expect(
+      word(
+        await b.writer.continueSeries(
+          b.connection,
+          b.cal,
+          {
+            ...b.then,
+            from: { ...target, text: item.text, version: item.version },
+            event: draft({ organizer, attendees: [{ email: guest, name: null, optional: false }] }),
+          },
+          never,
+        ),
+      ),
+    ).toBe("ok");
+    expect(b.writes().map((w) => w.path.split("/").at(-1))).toEqual(["kiln.ics", forkName]);
+  });
+
+  it.each([true, false])(
+    "compares a legacy continuation's live audience with its queued invitees (mirrored=%s)",
+    async (mirrored) => {
+      const b = await ownedSeries();
+      const ended = b.target.text.replace("COUNT=5", "UNTIL=20261117");
+      const live = ended.replace("END:VEVENT", `ATTENDEE:mailto:${hiddenGuest}\r\nEND:VEVENT`);
+      b.dav.put("studio", "kiln.ics", live, '"additional-guest"');
+      const from = {
+        id: b.target.id,
+        occurrence: cut,
+        text: mirrored ? live : ended,
+        version: mirrored ? '"additional-guest"' : '"before-guest"',
+      };
+      const event = draft({ organizer, attendees: [{ email: guest, name: null, optional: false }] });
+      expect(
+        word(await b.writer.continueSeries(b.connection, b.cal, { ...b.then, from, event }, never)),
+      ).toBe("version_stale");
+      expect(b.writes()).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    { copy: "stable", refolded: false, edited: false },
+    { copy: "refolded", refolded: true, edited: false },
+    { copy: "independently edited", refolded: true, edited: true },
+  ])(
+    "retries cleanup after a temporary CalDAV refusal for a $copy continuation",
+    async ({ refolded, edited }) => {
+      const b = await ownedSeries();
+      const then = { ...b.then, requireExisting: true as const, createdAtMs: NOW };
+      if (refolded) {
+        b.dav.omitNextCreateTag();
+        b.dav.afterNextWrite(() => {
+          const same = textOf(b.dav, forkName).replace("SUMMARY:New firing", "SUMMARY:New \r\n firing");
+          b.dav.put("studio", forkName, same, '"refolded"');
+        });
+      }
+      b.dav.refuseNextWriteOf("kiln.ics", () => {
+        b.dav.refuseNextWriteOf(forkName, 503);
+        return 403;
+      });
+      expect(
+        word(await b.writer.endSeries(b.connection, b.cal, b.target, { then, mayBeDone: false }, never)),
+      ).toBe("unavailable");
+      if (edited) {
+        const changed = textOf(b.dav, forkName).replace("END:VEVENT", "LOCATION:Annex\r\nEND:VEVENT");
+        b.dav.put("studio", forkName, changed, '"edited"');
+      }
+      b.dav.refuseNextWriteOf("kiln.ics", 403);
+      expect(
+        word(await b.writer.endSeries(b.connection, b.cal, b.target, { then, mayBeDone: true }, never)),
+      ).toBe("read_only");
+      expect(b.writes().map((w) => [w.method, w.path.split("/").at(-1)])).toEqual([
+        ["PUT", forkName],
+        ["PUT", "kiln.ics"],
+        ["DELETE", forkName],
+        ["PUT", "kiln.ics"],
+        ...(edited ? [] : [["DELETE", forkName]]),
+      ]);
+      const tag = refolded ? '"refolded"' : `"studio-${forkName}-2"`;
+      expect(
+        b
+          .writes()
+          .filter((w) => w.method === "DELETE")
+          .map((w) => w.headers["if-match"]),
+      ).toEqual(edited ? [tag] : [tag, tag]);
+    },
+  );
 
   it("keeps both halves of a personal series edit untouched if the provider copy names an unlisted guest", async () => {
     const b = await bench({ autoSchedule: true });
@@ -255,17 +908,24 @@ describe("CalDAV's writer", () => {
           ),
         ).toBe("ok");
       }
-      const titles = b.writes().flatMap((w) => {
-        const read = readCalendar(w.body, DEFAULT_LIMITS);
-        if (!read.ok) throw new Error("invalid written series");
-        return seriesOf(read.calendar.events, ZONES).flatMap((series) =>
-          expandSeries(
-            series,
-            { startMs: Date.UTC(2026, 10, 16), endMs: Date.UTC(2026, 10, 21), viewerZone: "UTC" },
-            ZONES,
-          ).occurrences.map((occurrence) => occurrence.event.summary),
-        );
-      });
+      const titles = b
+        .writes()
+        .flatMap((w) => {
+          const read = readCalendar(w.body, DEFAULT_LIMITS);
+          if (!read.ok) throw new Error("invalid written series");
+          return seriesOf(read.calendar.events, ZONES).flatMap((series) =>
+            expandSeries(
+              series,
+              { startMs: Date.UTC(2026, 10, 16), endMs: Date.UTC(2026, 10, 21), viewerZone: "UTC" },
+              ZONES,
+            ).occurrences.map((occurrence) => ({
+              at: momentOrUtc(occurrence.start, ZONES),
+              summary: occurrence.event.summary,
+            })),
+          );
+        })
+        .sort((a, b) => a.at - b.at)
+        .map((occurrence) => occurrence.summary);
       expect(titles).toEqual(
         [16, 17, 18, 19, 20].map((d) =>
           scope === "all" || (scope === "following" ? d >= 18 : d === 18) ? "New firing" : "Kiln check",

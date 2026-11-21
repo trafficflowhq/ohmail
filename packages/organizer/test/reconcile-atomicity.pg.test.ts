@@ -46,7 +46,7 @@ import { FIXTURE_LEASE } from "./_door.js";
  * constraint fires, the mailbox reports healthy. That is exactly why this file exists and why it
  * cannot be a unit test — a stub repo answers `listPendingFolderStates` from a literal and would
  * report the same rows after the crash as before it, whatever the writes did. The question is what
- * is ON DISK, and PGlite is not evidence for it either (CLAUDE.md: three production defects were
+ * is ON DISK, and PGlite is not evidence for it either (AGENTS.md: three production defects were
  * invisible to PGlite, and every one of them was transactional).
  *
  * ── SHAPE A: ONE REFUSED MUTATION POISONED EVERYTHING BEHIND IT ─────────────────────────────

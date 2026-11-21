@@ -242,7 +242,7 @@ describe("View", () => {
     });
     await act(async () => undefined);
     const row = screen.getByRole("button", { name: "View" });
-    expect(within(row).getByText("Week numbers off")).toBeTruthy();
+    expect(within(row).getByText("Week · Monday")).toBeTruthy();
     expect(row.textContent).toContain("Studio");
     const accounts = screen.getByRole("button", { name: "Calendar accounts" });
     expect(within(accounts).getByText("2")).toBeTruthy();

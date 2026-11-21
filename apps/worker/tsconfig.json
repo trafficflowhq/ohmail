@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tools/tsconfig.base.json",
   "compilerOptions": { "outDir": "dist", "rootDir": "src" },
   "include": ["src"],
   "//references": "FIVE, and the list is the same invariant `package.json` and `/.dockerignore` state in their own vocabularies (the dependency rule, test/deps.test.ts). The fifth is the organizer's package, whose cycle and passes the worker composes. The two calendar packages are the calendar's alone (`src/start/calendar.ts`, `src/calendar-notices.ts`). A sixth entry here is the compile-time face of a runtime dependency: it is what lets `src/` import a package the image would then have to install.",

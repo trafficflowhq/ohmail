@@ -218,6 +218,8 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
       : ("unknown" as const),
     discardCompose: compose.discardCompose,
     discardReply: compose.discardReply,
+    removeComposeSig: compose.removeComposeSig,
+    removeReplySig: compose.removeReplySig,
   };
 }
 

@@ -6,6 +6,8 @@
 import type { ReactNode } from "react";
 import type { SubjectDisplay } from "../../reader/subject-display.js";
 
+import type { ThreadOrder } from "../../reader/thread-order.js";
+
 export type ThemeChoice = "light" | "system" | "dark";
 export type LookFace = "paper" | "ohmarchy";
 
@@ -53,6 +55,7 @@ export interface GeneralModel {
     readonly choices: readonly string[];
     set(next: string): void;
   };
+  readonly threadOrder: { readonly value: ThreadOrder; set(next: ThreadOrder): void };
   readonly subject: { readonly value: SubjectDisplay; set(next: SubjectDisplay): void };
   /**
    * Load images in messages. Withheld until the server's consent row has answered, and where no proxy fetches a

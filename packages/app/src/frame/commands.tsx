@@ -85,7 +85,6 @@ export interface CalendarDraftSeed {
 export interface ReaderPosition {
   readonly address: string;
   readonly top: number;
-  readonly tail: string;
   readonly square: string | null;
 }
 
@@ -102,6 +101,7 @@ export interface FrameInner {
   readonly calendarDraftSeed: { current: CalendarDraftSeed | null };
   /** The letter a `go` named as entered, until the place that lists it takes the word or the address moves on. */
   readonly entered: Feed<EnteredTarget | null>;
+  readonly readerOpen?: number;
   readonly readerPosition: { current: ReaderPosition | null };
   readonly searchQuery: { current: string };
   /** Whether the whole rail stands over the app, and its setter (`commands.rail` is the same setter). */
@@ -123,6 +123,10 @@ export interface StageOwing {
 }
 
 export const FrameContext = createContext<FrameInner | null>(null);
+
+export function useReaderOpen() {
+  return useInner().readerOpen ?? 0;
+}
 
 export function useReaderPosition() {
   return useInner().readerPosition;

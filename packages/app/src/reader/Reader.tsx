@@ -15,6 +15,7 @@ import type { PaneProps, Route } from "../frame/contract.js";
 import { useText } from "../text/index.js";
 import { useNewEvent } from "../calendar/use-new-event.js";
 import { NONE } from "../host/index.js";
+import { useReaderOpen } from "../frame/commands.js";
 import { useOwnAddresses } from "../frame/room.js";
 import { ActionBar, type PanelRoom } from "./actions/ActionBar.js";
 import { RunReadingHead } from "./actions/ReplyRun.js";
@@ -32,6 +33,7 @@ const ConversationLetter = memo(Letter);
 
 export function Reader({ route, plan, keysHere }: PaneProps) {
   const tp = useText("place");
+  const readerOpen = useReaderOpen();
   /* The keyboard stood on the column's scroller when the letter it showed left: the next letter's takes it. */
   const keyboard = useRef(false);
   const blank = route.open === null;
@@ -49,7 +51,7 @@ export function Reader({ route, plan, keysHere }: PaneProps) {
   const from = tp.has(route.place) ? tp(route.place) : "";
   return (
     <Conversation
-      key={route.wholeThread ? `thread:${route.open}` : route.open}
+      key={`${readerOpen}:${route.wholeThread ? "thread" : "message"}:${route.open}`}
       route={route}
       openId={route.open}
       phone={plan.device === "phone"}
@@ -90,7 +92,9 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
   const {
     commands,
     host,
-    shown: { messages, presentedIds, subject: shownSubject },
+    shown: { presentedIds, subject: shownSubject },
+    messages,
+    newestFirst,
     opened,
     state,
     offMirrorRow,
@@ -105,7 +109,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     person,
     onPerson,
     closeCard,
-    screeningId,
+    screeningDialog,
     canScreen,
     screenSender,
     screenByKey,
@@ -118,17 +122,16 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
   useHeadingStepBack(scroller, phone, opened !== null);
   const back = phone ? readerBack(from, t("back"), () => commands.open(null)) : undefined;
   const calendarAction = useCalendarAction(opened, host.features.calendar !== NONE);
-  /* Only a letter the engine tombstoned is said to be gone; one not here yet is a sheet with nothing said. */
   if (opened === null && state === "gone") return <GoneLetter back={back} />;
   if (opened === null) return <Sheet kind="reading" label={t("pane")} back={back} />;
   const place = phone ? "top" : narrow ? "heading" : "column";
-  const squares = messages.length > 1 && (
+  const threaded = messages.length > 1;
+  const squares = threaded && (
     <Squares messages={messages} walk={walk} place={place} column={scroller.current} />
   );
-  const latest = phone && messages.length > 1 ? messages.at(-1) : undefined;
+  const latest = newestFirst ? 0 : messages.length - 1;
   const eachSubject = readSubjectDisplay(host.session.scope) === "each";
   const subject = baseSubject(shownSubject);
-  const screeningDialog = canScreen ? { id: screeningId, open: person?.cardId === screeningId } : undefined;
   return (
     <div
       className="rd-column"
@@ -143,7 +146,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
         kind="reading"
         extendTop={!phone}
         flushFoot
-        manualScrollAnchor={route.wholeThread}
+        manualScrollAnchor={threaded}
         label={t("pane")}
         back={back}
         top={phone ? squares : undefined}
@@ -154,7 +157,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             under={under}
             squares={narrow ? squares : undefined}
             subject={eachSubject ? undefined : shownSubject}
-            {...facesOf(messages.length > 1 ? people : [])}
+            {...facesOf(threaded ? people : [])}
             tags={opened.labels.length > 0 ? <Tags labels={opened.labels} /> : undefined}
             mailbox={mailboxWord(opened.mailboxId) ?? undefined}
           />
@@ -163,7 +166,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
           <ActionBar
             key={openId}
             verbs={verbs}
-            conversation={messages.length > 1}
+            conversation={threaded}
             room={room}
             keys={keysHere ? opened : null}
             reply={replyVerbs}
@@ -174,22 +177,20 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             onCalendar={calendarAction}
           />
         }
-        jump={messages.length > 1 ? <WayToLatest walk={walk} last={messages.length - 1} /> : undefined}
+        jump={squares && <WayToLatest walk={walk} index={latest} newestFirst={newestFirst} />}
       >
         {messages.map((m, index) => (
           <ConversationLetter
             key={m.id}
             message={m}
-            showSubject={
-              eachSubject ||
-              (messages.length > 1 && separateSubject(m, subject, phone && index === messages.length - 1))
-            }
+            showSubject={eachSubject || (threaded && separateSubject(m, subject, phone && index === latest))}
             offMirrorBody={offMirrorRow?.body ?? storeBody?.body}
             retryBody={offMirrorRow?.retry ?? storeBody?.retry}
             opened={m.id === openId}
+            current={index === (walk.here < 0 ? latest : walk.here)}
             previewSelection={`${route.place}:${openId}`}
             unread={m.id === openId && visit !== null ? visit.unread : m.unread}
-            subject={m === latest ? m.subject || shownSubject : undefined}
+            subject={phone && threaded && index === latest ? m.subject || shownSubject : undefined}
             look={column.wiring?.look ?? "dot"}
             reading={!column.wiring?.previewing}
             presented={presentedIds.has(m.id)}
@@ -273,16 +274,24 @@ function letterGuests(letter: EngineMessage, own: readonly string[]) {
   });
 }
 
-/** The way back to a conversation's latest message, standing while the column is far above it. */
-function WayToLatest({ walk, last }: { walk: ThreadWalk; last: number }) {
+/** The way back to a conversation's latest message, standing while the column is far from it. */
+function WayToLatest({
+  walk,
+  index,
+  newestFirst,
+}: {
+  walk: ThreadWalk;
+  index: number;
+  newestFirst: boolean;
+}) {
   const t = useText("reader");
   return (
     <JumpBack
       label={t("latest")}
-      to="end"
-      shown={walk.endFar}
+      to={newestFirst ? "top" : "end"}
+      shown={walk.latestFar}
       onPress={() => {
-        walk.jump(last);
+        walk.jump(index);
       }}
     />
   );

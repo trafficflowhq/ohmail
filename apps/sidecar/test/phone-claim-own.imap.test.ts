@@ -42,7 +42,7 @@
  * ── IT RUNS UNDER THE SQLITE PROJECT ──────────────────────────────────────────────────────
  *
  * `phone-engine-boot.test.ts`'s reason verbatim: this composes the whole engine over the DEVICE
- * store, so it needs `vitest.sqlite.config.ts`'s schema substitution. Under the default project it
+ * store, so it needs `test/vitest.sqlite.config.ts`'s schema substitution. Under the default project it
  * states the premise rather than skipping silently, and it names the closed port rather than
  * skipping in silence when the private server is down.
  */

@@ -2071,9 +2071,6 @@ const TABLE = {
   /* -------------------------------------------------------- message actions */
 
   routedBy: "Why it landed here",
-  earlierInThread: (n: number) => `Earlier in this conversation — all ${n} shown`,
-  laterInThread: (n: number) => `Later in this conversation — all ${n} shown`,
-  restOfThread: (n: number) => `The rest of this conversation — all ${n} shown`,
   openMessage: "Open",
   back: "Back",
 

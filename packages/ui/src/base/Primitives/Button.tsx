@@ -15,6 +15,7 @@ interface ButtonLook {
   mark?: IconName;
   /** The key that runs it, as it is printed. */
   keyHint?: string;
+  title?: string;
   /** Show the key whatever the face says. */
   keyShown?: boolean;
   /** The key that runs it, in `aria-keyshortcuts`' own spelling ("c", "Shift+A"): said to a screen reader, never drawn. */
@@ -95,7 +96,7 @@ export function Button(props: ButtonProps) {
     "data-bare": children === undefined ? "" : undefined,
     "data-mark": mark ? "" : undefined,
     "aria-label": label,
-    title: label,
+    title: props.title ?? label,
     "aria-keyshortcuts": shortcut,
   };
   const inside = (

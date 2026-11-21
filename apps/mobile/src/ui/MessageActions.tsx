@@ -183,12 +183,14 @@ export function useReaderVerbMode(inPane: boolean): ReaderVerbMode {
 
 export function MessageActions({
   m,
+  replyTo = m,
   onDeleted,
   onBack,
   inPane = false,
   record,
 }: {
   m: WorldMail;
+  replyTo?: WorldMail;
   /** The reader's visit: a Mark unread here keeps the message unread for it, a Mark read lets go. */
   record?: ThreadRead;
   /** Drawn in the list-detail pair's reading pane, which already starts past the rail. */
@@ -234,7 +236,11 @@ export function MessageActions({
   shownId.current = m.id;
 
   /** Every Reply and Reply all press: a kept reply is resumed, or said to be in Drafts (`replyOpen`). */
-  const openReply = (all: boolean) => setOpen(replyOpen(a.keptReply(m.id), all ? "replyAll" : "reply"));
+  const replyTarget = useRef(replyTo);
+  const openReply = (all: boolean) => {
+    replyTarget.current = replyTo;
+    setOpen(replyOpen(a.keptReply(replyTo.id), all ? "replyAll" : "reply"));
+  };
 
   /**
    * Forward is always offered (`forwardOffered`). A row the mirror does not hold has its body read
@@ -268,7 +274,7 @@ export function MessageActions({
     if (mode === "rail") standing(null);
   }, [mode, standing]);
   const facts: ReaderVerbFacts = {
-    canReplyAll: m.canReplyAll === true,
+    canReplyAll: replyTo.canReplyAll === true,
     forwardOffered: forwardOffered(m),
     junkOffered: moveTargetsFor(m).includes("spam"),
     // No Screening press on the account's own mail: it would be a rule about our own address.
@@ -792,7 +798,7 @@ export function MessageActions({
       {open !== null && typeof open === "object" ? (
         <SurfaceBoundary surface="composer" frame="sheet" onClose={close}>
           <ComposeSheet
-            m={m} mode={open.compose} forwardConfirmed={"confirmed" in open && open.confirmed === true}
+            m={open.compose === "forward" ? m : replyTarget.current} mode={open.compose} forwardConfirmed={"confirmed" in open && open.confirmed === true}
             {...("draft" in open && open.draft ? { draft: open.draft } : {})} replyAside={"aside" in open && open.aside === true}
             onClose={close}
           />

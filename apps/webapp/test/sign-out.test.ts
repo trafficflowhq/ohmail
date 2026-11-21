@@ -167,8 +167,8 @@ describe("the sign-out CONTROL is wired", () => {
     // The helper existed for weeks with zero callers — correct, tested and unreachable. That
     // is the failure this asserts against, and it is the same shape as the refresh route and
     // `flagChanges`: built, verified, never wired.
-    expect(account).toMatch(/import \{ [^}]*\bsignOut\b[^}]* \} from "\.\.\/\.\.\/sign-out"/);
-    expect(account).toMatch(/signOut\(account, \{ expectedFamily: family \}\)/);
+    expect(account).toMatch(/import \{ [^}]*\bsignOutAndSettle\b[^}]* \} from "\.\.\/\.\.\/sign-out"/);
+    expect(account).toMatch(/signOutAndSettle\(account, \{ expectedFamily: family \}\)/);
     expect(account).not.toMatch(/\bauth\.logout\s*\(/);
   });
 
@@ -177,7 +177,7 @@ describe("the sign-out CONTROL is wired", () => {
     // database. The account is read from state that was loaded before the call.
     expect(body).toMatch(/named = \{ account: user\.accountId, family: familyId \?\? heldFamily \?\? undefined \}/);
     expect(body).toMatch(/const session = named \?\? confirmedSignOutSession\(\)/);
-    expect(body).toMatch(/const \{ account, family \} = session;[\s\S]*signOut\(account, \{ expectedFamily: family \}\)/);
+    expect(body).toMatch(/const \{ account, family \} = session;[\s\S]*signOutAndSettle\(account, \{ expectedFamily: family \}\)/);
   });
 
   it("leaves the SPA after signing out — the session is gone, the server must re-decide", () => {
@@ -321,7 +321,7 @@ describe("the sign-out CONTROL is wired", () => {
     // a live HttpOnly session this page cannot expire. `signOut` no longer throws at all (both
     // failures ride its result), so a `catch` here would be dead code standing in for a
     // property it no longer holds. Its sibling case above pins the server half.
-    expect(body).toMatch(/const outcome = await signOut\(account, \{ expectedFamily: family \}\)/);
+    expect(body).toMatch(/const outcome = await signOutAndSettle\(account, \{ expectedFamily: family \}\)/);
     expect(reader).toMatch(/if \(!outcome\.cleared\) return \{ key: "signOutBlocked" \};/);
     expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
     expect(stayReason).toMatch(/return trouble\.key === "signOutUnverified" \? "unverified" : "blocked";/);

@@ -7,6 +7,7 @@ import { useFrame } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
 import { useAccountLook } from "../general/boot-face.js";
 import { readSubjectDisplay, writeSubjectDisplay } from "../../reader/subject-display.js";
+import { readThreadOrder, writeThreadOrder } from "../../reader/thread-order.js";
 import type { PaneBodyProps } from "../index.js";
 import { GeneralPane, type GeneralModel } from "../general/index.js";
 import { useConsent } from "@ohmail/app-logic/consent";
@@ -67,6 +68,7 @@ export function BrowserGeneralPane({ language, textSize, captureOwner }: General
     scope === null ? DEFAULT_AFTER_VERB : readAfterVerb(scope),
   );
   const [subject, showSubject] = useState(() => readSubjectDisplay(scope));
+  const [threadOrder, showThreadOrder] = useState(() => readThreadOrder(scope));
   const canFetchImages = host.wires.images !== NONE;
   const fromComputer = host.capabilities.imagesFrom === "computer";
 
@@ -107,6 +109,13 @@ export function BrowserGeneralPane({ language, textSize, captureOwner }: General
       set(next) {
         writeSubjectDisplay(scope, next);
         showSubject(next);
+      },
+    },
+    threadOrder: {
+      value: threadOrder,
+      set(next) {
+        writeThreadOrder(scope, next);
+        showThreadOrder(next);
       },
     },
     images:

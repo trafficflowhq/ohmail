@@ -10,6 +10,7 @@ import { fireEvent, screen, within } from "@testing-library/react";
 import { setFormatWords } from "@ohmail/app-logic/text";
 import { readComposeDraft, resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import { COMPOSE_ATTACH_MAX_TOTAL_BYTES, type ImageQualityLevel } from "@ohmail/client-engine";
+import { UNDO_MS } from "@ohmail/app-logic/press";
 import en from "../../messages/en.json";
 import { act, message, stubDom } from "../_draft-shell.js";
 import { letter } from "../_handoff-steps.js";
@@ -218,6 +219,82 @@ describe("the new letter", () => {
     await rounds(2);
     expect(w.now().compose.sig).toEqual({ kind: "removed" });
     expect(screen.queryByRole("textbox", { name: W.signature.label })).toBeNull();
+  });
+
+  it("taking the signature off says so with Undo, and Undo writes it back as it was written", async () => {
+    const w = await mountWriting({ view: true, signatures: { mb1: "Lena\nMakers Fest" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: W.signature.remove }));
+    });
+    await rounds(2);
+    const said = w.reports.find((r) => r.message === en.compose.signatureRemoved);
+    expect(said?.options?.action).toBe(en.ohbox.undo);
+    expect(said?.options?.duration).toBe(UNDO_MS);
+    await act(async () => said!.options!.onAction!());
+    await rounds(4);
+    const signed = screen.getByRole("textbox", { name: W.signature.label });
+    expect(signed.textContent).toBe("Lena\nMakers Fest");
+  });
+
+  it("the Undo of a signature removed on a letter that is gone writes nothing back", async () => {
+    const w = await mountWriting({
+      view: true,
+      signatures: { mb1: "Lena\nMakers Fest" },
+    });
+    // The signature is written over first, so the state the Undo holds is words that would show if written.
+    const signed = screen.getByRole("textbox", { name: W.signature.label }) as HTMLElement;
+    await act(async () => {
+      signed.focus();
+      signed.textContent = "Lena, on the road";
+      fireEvent.input(signed);
+    });
+    await rounds(2);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: W.signature.remove }));
+    });
+    await rounds(2);
+    const said = w.reports.find((r) => r.message === en.compose.signatureRemoved);
+    await act(async () => w.now().discardCompose());
+    await rounds(6);
+    await act(async () => said!.options!.onAction!());
+    await rounds(4);
+    expect(w.now().compose.sig).toBeUndefined();
+    expect(JSON.stringify(readComposeDraft("acc-1") ?? {})).not.toContain("on the road");
+  });
+
+  it("the Undo of a removal on a letter that is gone does not touch the next letter's removal", async () => {
+    const w = await mountWriting({
+      view: true,
+      signatures: { mb1: "Lena\nMakers Fest" },
+      drafts: [letter("d-second", "The next letter", "Its own words.")],
+    });
+    // The signature is written over first, so the state the Undo holds is words that would show if written.
+    const signed = screen.getByRole("textbox", { name: W.signature.label }) as HTMLElement;
+    await act(async () => {
+      signed.focus();
+      signed.textContent = "Lena, on the road";
+      fireEvent.input(signed);
+    });
+    await rounds(2);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: W.signature.remove }));
+    });
+    await rounds(2);
+    const said = w.reports.find((r) => r.message === en.compose.signatureRemoved);
+    await act(async () => w.now().discardCompose());
+    await rounds(6);
+    // A new letter takes the composer while the first Undo is still open, and takes its own signature off.
+    await act(async () => w.now().openDraft(letter("d-second", "The next letter", "Its own words.")));
+    await rounds(6);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: W.signature.remove }));
+    });
+    await rounds(2);
+    await act(async () => said!.options!.onAction!());
+    await rounds(4);
+    expect(w.now().compose.sig).toEqual({ kind: "removed" });
+    expect(screen.queryByRole("textbox", { name: W.signature.label })).toBeNull();
+    expect(JSON.stringify(readComposeDraft("acc-1") ?? {})).not.toContain("on the road");
   });
 
   it("a formatted signature is drawn as it is sent and takes no keys until Edit as text, which says what it costs", async () => {

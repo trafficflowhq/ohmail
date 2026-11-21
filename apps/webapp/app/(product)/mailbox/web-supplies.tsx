@@ -22,7 +22,7 @@ import { sessionMayAsk, subscribeSessionRevival, subscribeSessionTruth } from "@
 import { mailboxTotalOf } from "@ohmail/app-logic/search";
 import { ApiError, account, api, apiConfigured, away, boundApiFamily, boundApiOwner, screenerAutoFiled, screeningSettings, mailboxes as mailboxApi } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
-import { signOut, subscribeTabRetirement } from "../../sign-out";
+import { signOutAndSettle, subscribeTabRetirement } from "../../sign-out";
 import { dayStamp } from "../../shell/format";
 import { cloudWire as junkWire } from "./junk-wire";
 import { useOhmarchyNotice } from "./appearance-notice";
@@ -65,7 +65,7 @@ export const gapLettersOverApi: GapLettersWire = (id, answer) => mailboxApi.answ
 export const webRecover = (how: "signIn" | "reload"): void => window.location.assign(how === "signIn" ? "/login" : "/mailbox");
 
 const signOutHere = async (): Promise<void> => {
-  await signOut(readOwner() ?? undefined);
+  await signOutAndSettle(readOwner() ?? undefined);
   window.location.assign("/");
 };
 

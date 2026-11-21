@@ -18,7 +18,7 @@ import type { Db } from "../src/context.js";
 /**
  * INVARIANT 3, AS A TEST THAT CAN FAIL: **the re-screen pass never opens IMAP.**
  *
- * The IMAP mailbox is the master (the "Organize-in-place" invariant, CLAUDE.md). Re-routing means writing
+ * The IMAP mailbox is the master (the "Organize-in-place" invariant, AGENTS.md). Re-routing means writing
  * `folder_state.desired_folder` and letting the always-on worker apply it — the one code path
  * that already knows how to do a move crash-safely. A pass that dialled a mail server to file
  * hundreds of messages would be a second organizer racing the reconciler, and it would do it from a

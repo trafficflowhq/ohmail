@@ -127,7 +127,7 @@ function event(
  * A mirror as far as the calendar's body reads one: the records by kind, a version that moves with every change, and
  * who hears it move. The port reads the same records; the real queue over a real mirror is held in app-logic's tests.
  */
-function mirror() {
+function mirror(load: CalendarPort["load"] = "none") {
   const kinds = new Map<string, Map<string, unknown>>();
   const heard = new Set<() => void>();
   /* What the queue says waits for a record, by its id. */
@@ -185,7 +185,7 @@ function mirror() {
       },
     },
     held: () => ({ window: { daysBack: 30, daysAhead: 365, maxRows: 5000 }, loaded: [] }),
-    load: "none",
+    load,
     version: () => version,
     subscribe,
   };
@@ -394,7 +394,26 @@ describe("the calendar's body", () => {
     expect(document.body.textContent).not.toContain("Nothing found");
   });
 
-  it("says in the Week, the Day and the Year where their days reach past the last day this device holds", () => {
+  it.each([
+    { outlookOnly: true, title: "Microsoft 365" },
+    { outlookOnly: false, title: "Calendar" },
+  ])("names the earlier window $title for the calendars shown", ({ outlookOnly, title }) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 16, 9));
+    onTestFinished(() => vi.useRealTimers());
+    const { engine, port, put } = mirror(async () => true);
+    put("calendar_connection", connection.id, connection);
+    put("calendar", studio.id, { ...studio, shown: !outlookOnly });
+    const outlook = { ...connection, id: "outlook", provider: "microsoft" };
+    put("calendar_connection", outlook.id, outlook);
+    put("calendar", "outlook-cal", { ...studio, id: "outlook-cal", connectionId: outlook.id });
+    mount(engine, port, "#/cal/agenda/2026-05-04");
+    const notice = screen.getByRole("status");
+    expect(notice.textContent).toContain(`${title} From`);
+    expect(within(notice).getByRole("button", { name: "Load earlier" })).toBeTruthy();
+  });
+
+  it("keeps the Week, Day and Year clear past the last held day", () => {
     // The mirror holds 365 days ahead of today; a span 400 days ahead reaches past them.
     const far = new Date(Date.now() + 400 * 86_400_000).toISOString().slice(0, 10);
     for (const view of ["week", "day", "year"]) {
@@ -402,7 +421,7 @@ describe("the calendar's body", () => {
       put("calendar_connection", connection.id, connection);
       put("calendar", studio.id, studio);
       mount(engine, port, `#/cal/${view}/${far}`);
-      expect(screen.getByText("Later days stay with the calendar.")).toBeTruthy();
+      expect(screen.queryByText("Later days stay with the calendar.")).toBeNull();
       cleanup();
     }
   });
@@ -440,7 +459,7 @@ describe("the calendar's body", () => {
     expect(screen.getByText("Kiln service")).toBeTruthy();
   });
 
-  it("says on the Week's chips which of the two kinds of waiting each event waits for, never one for the other", () => {
+  it("uses Waiting on Week chips for both stages of an unsaved change", () => {
     const { engine, port, put, waits } = mirror();
     waits.set("ev-1", "device");
     waits.set("ev-2", "provider");
@@ -452,12 +471,8 @@ describe("the calendar's body", () => {
     put("calendar_event", "ev-1", event("ev-1", "Kiln check", "20261117", long("20261117")));
     put("calendar_event", "ev-2", event("ev-2", "Glaze firing", "20261118", long("20261118")));
     mount(engine, port, "#/cal/week/2026-11-16");
-    expect(screen.getByRole("button", { name: /Kiln check/ }).textContent).toContain(
-      "Not sent yet from this device",
-    );
-    expect(screen.getByRole("button", { name: /Glaze firing/ }).textContent).toContain(
-      "Waiting for the calendar",
-    );
+    expect(screen.getByRole("button", { name: /Kiln check/ }).textContent).toContain("Waiting");
+    expect(screen.getByRole("button", { name: /Glaze firing/ }).textContent).toContain("Waiting");
   });
 
   it("opens a changed day under the key our server stored, also where the device would key it otherwise", () => {
@@ -808,7 +823,7 @@ describe("the calendar frame", () => {
     const { engine, port } = mirror();
     const { host } = mount(engine, port, "#/cal/agenda/2026-11-16");
     const head = screen.getByRole("heading", { level: 1 }).closest("header")!;
-    fireEvent.click(within(head).getByRole("button", { name: "Next" }));
+    fireEvent.click(within(head).getByRole("button", { name: "After" }));
     expect(host.device.address.read()).toBe("#/cal/agenda/2026-11-17");
     fireEvent.keyDown(document.body, { key: "[" });
     expect(host.device.address.read()).toBe("#/cal/agenda/2026-11-16");
@@ -1019,9 +1034,9 @@ describe("the calendar frame", () => {
     const { engine, port } = mirror();
     const { host } = mount(engine, port, `#/cal/${view}/${start}`);
     const head = screen.getByRole("heading", { level: 1 }).closest("header")!;
-    fireEvent.click(within(head).getByRole("button", { name: "Next" }));
+    fireEvent.click(within(head).getByRole("button", { name: "After" }));
     expect(host.device.address.read()).toBe(`#/cal/${view}/${next}`);
-    fireEvent.click(within(head).getByRole("button", { name: "Previous" }));
+    fireEvent.click(within(head).getByRole("button", { name: "Before" }));
     expect(host.device.address.read()).not.toBe(`#/cal/${view}/${next}`);
     fireEvent.click(within(head).getByRole("button", { name: "Today" }));
     expect(host.device.address.read()).toBe(`#/cal/${view}`);

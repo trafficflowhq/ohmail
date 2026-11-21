@@ -39,7 +39,7 @@
  *
  * The services import their tables from the shared barrel and are typed against the SERVER's twin.
  * The device twin is substituted at the module the barrel itself reaches, and that substitution
- * lives in `vitest.sqlite.config.ts` — so under the default project this composition would run the
+ * lives in `test/vitest.sqlite.config.ts` — so under the default project this composition would run the
  * server's column types against a SQLite store. Measured, and it is not a subtle failure: the first
  * statement dies with `no such function: gen_random_uuid`, because the server twin's id columns
  * carry a Postgres default the other store has never heard of.

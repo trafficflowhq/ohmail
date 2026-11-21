@@ -185,7 +185,7 @@ describe("attach registers, the cycle drains", () => {
 
     // ── CLAIM 5: the ATTACH lease seam, still before the first write ─────────────────────
     // `ensureFolders` CREATES the `ohmail/*` tree in somebody's mailbox. Exactly one active
-    // organizer per mailbox (CLAUDE.md) requires the gate to have answered organize first, and
+    // organizer per mailbox (AGENTS.md) requires the gate to have answered organize first, and
     // this slice moved code either side of it.
     for (const [id, name] of names) {
       expect.soft(fleet.nth(id, "lease_organize", 1),

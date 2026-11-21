@@ -48,6 +48,10 @@
   inset-block-end: 0;
 }
 
+:root[data-product="cal"]:not([data-device="phone"]) .fr-frame:has(.cal-event-panel) .fr-report {
+  bottom: calc(var(--edge) + var(--s4) + var(--h-xl) + var(--s3));
+}
+
 .cal-event-panel[data-call] {
   display: flex;
   align-items: center;
@@ -91,4 +95,22 @@
   inset: 0;
   z-index: var(--cal-event-backdrop-z);
   background: var(--scrim);
+}
+
+.cal-invitee-search {
+  margin: var(--s1) var(--s1) var(--s2);
+}
+
+.cal-edit-conflict {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--s1) var(--s3);
+}
+
+.cal-edit-failure {
+  padding-block-start: var(--s3);
+}
+
+.cal-edit-conflict-copy {
+  margin: 0;
 }

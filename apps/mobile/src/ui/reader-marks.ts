@@ -19,30 +19,19 @@ export interface RailItem {
   file?: true;
 }
 
-/**
- * THE READER'S TIME ORDER. In the Ohbox the reader draws the conversation oldest first, newest at the
- * bottom, as the list row's squares run: the members older than the opened message `above` it, the
- * newer `below` (the reader opens at the opened message). Elsewhere it keeps its old shape: the opened
- * message first, every other member below it.
- */
+/** Split a chronological conversation around the addressed member. */
 export function readerGroups<H extends Pick<WorldEarlier, "later">>(
   m: { earlier: readonly H[] },
-  timeOrder: boolean,
 ): { above: H[]; below: H[] } {
-  if (!timeOrder) return { above: [], below: [...m.earlier] };
   return { above: m.earlier.filter((h) => h.later !== true), below: m.earlier.filter((h) => h.later === true) };
 }
 
-/**
- * The rail in TIME ORDER — the reader's order in the Ohbox and the list row's: oldest first, the
- * opened message in its own place, so a message has the same square everywhere and its spoken
- * position is its place in time. Empty for a single message.
- */
+/** The rail follows the conversation's time order. Empty for a single message. */
 type RailSource = Pick<WorldMail, "id" | "unread" | "ownMail" | "from" | "earlier"> & Partial<Pick<WorldMail, "date" | "body" | "snippet" | "attachments">>;
 
 export function railItemsOf(m: RailSource): RailItem[] {
   if (m.earlier.length === 0) return [];
-  const { above, below } = readerGroups(m, true);
+  const { above, below } = readerGroups(m);
   const facts = (x: { date?: string | null; body?: string; snippet?: string; attachments?: readonly WorldAttachment[] }) => {
     const line = markLine(x.body) || markLine(x.snippet);
     return {

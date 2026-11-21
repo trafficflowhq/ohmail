@@ -5,7 +5,7 @@ import type { AccountDoor } from "@ohmail/app/account";
 import { ApiError, auth } from "../../api-client";
 // The one correct way out: it revokes at the server and wipes this browser's copy. Every logout goes through it.
 import { readSessionFamily } from "../../signed-out-signal";
-import { confirmedLocalCleanup, confirmedSignOutSession, signOut, signOutStayReason } from "../../sign-out";
+import { confirmedLocalCleanup, confirmedSignOutSession, signOutAndSettle, signOutStayReason } from "../../sign-out";
 import { useRefusalSentence } from "../refusal-sentence";
 import { AccountCleanupContext, type AccountCleanup } from "./AccountCleanupGate";
 
@@ -51,7 +51,7 @@ export function accountDoor(
       const session = named ?? confirmedSignOutSession();
       if (session === null) return "unverified";
       const { account, family } = session;
-      const outcome = await signOut(account, { expectedFamily: family });
+      const outcome = await signOutAndSettle(account, { expectedFamily: family });
       const stay = signOutStayReason(outcome);
       if (stay !== null) return stay;
       const cleanup = showCleanup && confirmedLocalCleanup(outcome, account, family);

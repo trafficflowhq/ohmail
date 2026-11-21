@@ -50,7 +50,6 @@ import {
   readerGroups, type RailItem,
 } from "./reader-marks";
 import { endIdleVisit, hideVisit, showVisit, visitKnew, visitRecordFor } from "./visit-records";
-import { threadHeading } from "./thread-heading";
 import { MARK_RING, MarkRing, MarkSheet, MarkSquare, ringRest, useMarkHold, useSquaresWindow, type MarkHold } from "./MarkSquare";
 import {
   bindThreadJump, clearThreadPlace, publishThreadPlace, takeThreadPending, threadPending, threadPlace,
@@ -65,9 +64,12 @@ export const FROM_LINE_SPLIT_DP = 360;
 export function MessageReader({
   id,
   inPane = false,
+  selectMember = false,
   onClose,
 }: {
   id: string;
+  /** A message explicitly selected to read its full body from a thread. */
+  selectMember?: boolean;
   /** Mounted beside its list — no back bar of its own; the pane or the rail carries Back. */
   inPane?: boolean;
   /** Leaves the reader: `router.back()` on the route, clearing the selection in a pane. */
@@ -171,7 +173,7 @@ export function MessageReader({
   const knewRef = useRef<Set<string> | null>(null);
   knewRef.current = m ? visitKnew(id, () => ids, Date.now()) : null;
   const arrivedRef = useRef(false);
-  arrivedRef.current = m ? readerGroups(m, inOhbox).below.some((h) => knewRef.current?.has(h.id) === false) : false;
+  arrivedRef.current = m ? readerGroups(m).below.some((h) => knewRef.current?.has(h.id) === false) : false;
   const padRef = useRef(0);
   padRef.current = useListInsets().paddingBottom;
   /* A REPLY THAT ARRIVES INTO THE OPEN READER is asked its text, as the open asked every member it
@@ -230,11 +232,12 @@ export function MessageReader({
   shown.current = screenShown;
   /** The anchor on its way to a place: the view shows no place the person chose, so it reads nothing. */
   const anchorRef = useRef<OpenAnchor | null>(null);
-  /* THE CONVERSATION'S SQUARES (the Ohbox only), and A STRIP PRESS THIS OPEN CARRIES: the list row's
+  /* THE CONVERSATION'S SQUARES, and A STRIP PRESS THIS OPEN CARRIES: the Ohbox row's
      square pressed with no reader mounted opened the row and left that member pending
      (`thread-place.ts`); this reader lands on it. Read once per opened id, taken in an effect. */
   const railOf = useMemo(railItemsMemo, []);
-  const railItems = m && inOhbox ? railOf(m) : NO_RAIL;
+  const railItems = m ? railOf(m) : NO_RAIL;
+  const newestId = railItems.at(-1)?.id ?? id;
   /* A held square's sheet: the rail's, dropped by the reader's own drag too. */
   const markHold = useMarkHold();
   const landing = useRef<{ for: string; id: string | null } | null>(null);
@@ -243,6 +246,13 @@ export function MessageReader({
     landing.current = { for: id, id: p !== null && railItems.some((it) => it.id === p) ? p : null };
   }
   const landingId = landing.current?.for === id ? landing.current.id : null;
+  const opening = useRef<{ for: string; target: string | null }>({ for: id, target: null });
+  if (opening.current.for !== id) opening.current = { for: id, target: null };
+  if (opening.current.target === null && (selectMember || railItems.length > 0)) {
+    opening.current.target = selectMember ? id : newestId;
+  }
+  const openingId = opening.current.target ?? id;
+  const handed = useRef<string | null>(null);
   const seen = useMemo(
     () => createPhoneThreadRead({
       record,
@@ -266,8 +276,13 @@ export function MessageReader({
      neighbour of a short opened message. A remount that resumes a remembered place walks from there. */
   const freshOpen = useMemo(() => !hasPaneScroll(`msg:${id}`), [id]);
   useEffect(() => {
-    if (landingId !== null) { takeThreadPending(landingId); seen.pin(landingId); } else if (freshOpen) seen.pin(id);
-  }, [seen, id, landingId, freshOpen]);
+    if (landingId !== null) {
+      takeThreadPending(landingId);
+      seen.pin(landingId);
+    } else if (freshOpen && handed.current !== id) {
+      seen.pin(openingId);
+    }
+  }, [seen, id, landingId, freshOpen, openingId]);
   /* Back in the foreground, the window focused again, a sheet gone: look again (nothing is read while
      the app is away, its window blurred — Android's shade — or a modal stands over the reader). */
   useEffect(() => {
@@ -307,7 +322,7 @@ export function MessageReader({
       if (q !== null) { place.current = q; recordPanePlace(scrollKey, q); }
     } else if (a !== null && place.current === null) {
       /* The open stands clamped at the end, short of its message's top: a remount (one pane to two) aims at that top again. */
-      const mid = landingOf() ?? id;
+      const mid = landingOf() ?? opening.current.target ?? id;
       const top = seen.topOf(mid);
       const at = openTarget();
       const h = seen.layout(id).find((x) => x.id === mid)?.height ?? 0;
@@ -327,8 +342,7 @@ export function MessageReader({
   /** An animated jump's last frames may never reach `onScroll`: once it is done, the reader stands where it ends. */
   const jumpEnd = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (jumpEnd.current) clearTimeout(jumpEnd.current); }, []);
-  /** How many members stand above the opened message: with none, it opens at the top as before. */
-  const aboveCount = useRef(0);
+  const shouldLand = useRef(false);
   /* Until the anchor has placed the opened message the column is not drawn: its first frame stands at
      the oldest member, and would flash it. A bound in case no layout ever places it. */
   const [placed, setPlaced] = useState(false);
@@ -336,18 +350,10 @@ export function MessageReader({
     const t = setTimeout(() => setPlaced(true), ANCHOR_PLACE_BOUND_MS);
     return () => clearTimeout(t);
   }, []);
-  /* THE OPEN ANCHOR (the Ohbox's time order puts the older members above the opened message): until
-     the person's first drag or square, every layout that moves the opened section, the content or the
-     view puts it back at the top, and keeps aiming until the view stands there (`open-anchor.ts`: a
-     scroll asked on a fresh start is clamped before the members' bodies mount). Every scroll report
-     goes through it: the reader stands where the view reached, never where it asked. A remembered
-     offset — a fold's remount — is the person's own place and wins. */
+  /* Keep the opened position while the bodies above it reflow. A posture remount resumes the saved place. */
   const standRef = useRef(stand);
   standRef.current = stand;
-  const anchorFacts = useRef(() => (facts.current.inOhbox && aboveCount.current > 0 ? seen.topOf(id) : null));
-  anchorFacts.current = () => (facts.current.inOhbox && aboveCount.current > 0 ? seen.topOf(id) : null);
-  /** The person's own scroll or press in this reader: the strip's landing is spent. */
-  const handed = useRef<string | null>(null);
+  shouldLand.current = railItems.length > 0 && railItems[0]?.id !== openingId;
   /** The strip's pressed member this open lands on, if any. */
   const landingOf = (): string | null => {
     const l = landing.current;
@@ -362,13 +368,13 @@ export function MessageReader({
       /* A kept place whose message left the conversation gives way to the open's own landing. */
       if (y !== null || place.current.end === true || facts.current.has(place.current.id)) return y;
     }
-    const top = anchorFacts.current();
+    const top = shouldLand.current ? seen.topOf(opening.current.target ?? id) : null;
     return top === null ? null : top - 8;
   };
   const anchor = useMemo(
     () => createOpenAnchor({
       holding: !hasPaneScroll(scrollKey) || place.current !== null,
-      applies: () => landingOf() !== null || place.current !== null || (facts.current.inOhbox && aboveCount.current > 0),
+      applies: () => landingOf() !== null || place.current !== null || shouldLand.current,
       target: () => openTarget(),
       extent: () => knewBox(),
       scrollTo: (y) => { seen.asked(y); scrollRef.current?.scrollTo({ y, animated: false }); },
@@ -428,7 +434,7 @@ export function MessageReader({
   const openMember = (mid: string): void => {
     beginMark("open", mid);
     endIdleVisit(mid);
-    router.push(`/message/${mid}`);
+    router.push({ pathname: "/message/[id]", params: { id: mid, member: "1" } });
   };
   const pressSquare = (mid: string): void => {
     if (m?.earlier.some((h) => h.id === mid && h.wordless === true)) openMember(mid);
@@ -439,12 +445,12 @@ export function MessageReader({
      this reader shows squares, a strip press jumps it. */
   const hasRail = railItems.length > 0;
   useEffect(() => {
-    if (!m) return;
+    if (!m || !inOhbox) return;
     if (hasRail) publishThreadPlace(railItems, here);
     else if (!threadPlace()?.items.some((it) => it.id === id)) clearThreadPlace();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [railItems, here, id, m === undefined || m === null]);
-  useEffect(() => (hasRail ? bindThreadJump((mid) => jumpRef.current(mid)) : undefined), [hasRail]);
+  }, [railItems, here, id, inOhbox, m === undefined || m === null]);
+  useEffect(() => (hasRail && inOhbox ? bindThreadJump((mid) => jumpRef.current(mid)) : undefined), [hasRail, inOhbox]);
 
   /* THE REPLY THE PERSON SENT from the composer over this reader, shown once it is drawn (`sent-reveal.ts`): the
      one arrival that moves the reader. It answers the person's own act, so the anchor lets go as for theirs. */
@@ -477,11 +483,16 @@ export function MessageReader({
   );
   revealHand.current = reveal.hand;
   useEffect(() => () => reveal.dispose(), [reveal]);
+  const sendingFrom = useRef<string | null>(null);
   useEffect(() => onReplySend((n) => {
-    if (n.parentId !== id) return;
-    if (n.phase === "pressed") reveal.pressed();
-    else reveal.sent();
-  }), [reveal, id]);
+    if (n.phase === "pressed" && (n.parentId === id || n.parentId === newestId)) {
+      sendingFrom.current = n.parentId;
+      reveal.pressed();
+    } else if (n.phase === "sent" && n.parentId === sendingFrom.current) {
+      sendingFrom.current = null;
+      reveal.sent();
+    }
+  }), [reveal, id, newestId]);
   useEffect(() => onReaderCover(() => reveal.poke()), [reveal]);
   useEffect(() => { reveal.poke(); });
 
@@ -519,11 +530,8 @@ export function MessageReader({
 
   /** Continuity: the offset survives the remounts a posture change forces (`pane-memory`). */
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => anchor.reached(e.nativeEvent.contentOffset.y);
-  /** The Ohbox draws the conversation in time order around the opened message; elsewhere it leads. */
-  const { above, below } = readerGroups(m, inOhbox);
-  aboveCount.current = above.length;
-  /** Waiting for the open anchor: older members above, nothing remembered, not placed yet. */
-  const unplaced = inOhbox && above.length > 0 && anchor.holding && !placed;
+  const { above, below } = readerGroups(m);
+  const unplaced = shouldLand.current && anchor.holding && !placed;
   /** The opened html message's history row, when its frame found a history. */
   const openedHistory = frameHistory !== null && frameHistory.id === m.id ? frameHistory.at : null;
   const historyRow = (
@@ -620,8 +628,7 @@ export function MessageReader({
       {/* `.msg{padding:20px 20px 40px}` in the ≤900px block — the message needs
           air above the from-line, or the back bar reads as part of the mail. */}
       <View style={{ flex: 1, flexDirection: "row" }}>
-      {/* THE RAIL OF SQUARES, in time order — the order the reader draws the conversation in here,
-          and the list row's. Only in the Ohbox, and only for a conversation. */}
+      {/* The rail follows the letters in time order. */}
       {railItems.length > 0 ? (
         <ReaderRail items={railItems} here={here} over={chromeOver} onJump={pressSquare} marks={markHold} />
       ) : null}
@@ -648,7 +655,7 @@ export function MessageReader({
           style={{ paddingHorizontal: 20, paddingTop: 18, opacity: unplaced ? 0 : 1 }}
           onLayout={(e) => { seen.offset("padded", e.nativeEvent.layout.y); anchor.layout(); }}
         >
-          {/* In the Ohbox, the members older than the opened message, above it (oldest first). */}
+          {/* The members older than the addressed message stand above it. */}
           {above.length > 0 ? (
             <View style={{ marginBottom: 34, gap: 12 }} onLayout={(e) => { seen.offset("above", e.nativeEvent.layout.y); anchor.layout(); }}>
               {above.map((h) => memberPanel(h, "above"))}
@@ -839,13 +846,6 @@ export function MessageReader({
               style={{ marginTop: 34, gap: 12 }}
               onLayout={(e) => { seen.offset("below", e.nativeEvent.layout.y); anchor.layout(); }}
             >
-              {/* The heading over the members listed after the opened message — where it leads; in the
-                  Ohbox's time order the conversation reads on without one, as the web's column. */}
-              {inOhbox ? null : (
-                <Txt variant="caption" tone="ink3">
-                  {threadHeading(Copy, m.earlier)}
-                </Txt>
-              )}
               {below.map((h) => memberPanel(h, "below"))}
             </View>
           ) : null}
@@ -872,7 +872,14 @@ export function MessageReader({
           the thumb, the desktop ActionBar pinned at this pane's foot, or the right-edge rail.
           A confirmed delete leaves this reader at once: the tombstone already dropped the row,
           and "no longer here" over the reader's own act would read as a failure. */}
-      <MessageActions m={m} onDeleted={onClose} onBack={onClose} inPane={inPane} record={record} />
+      <MessageActions
+        m={m}
+        replyTo={newestId === id ? m : w.message(newestId) ?? m}
+        onDeleted={onClose}
+        onBack={onClose}
+        inPane={inPane}
+        record={record}
+      />
     </Screen>
   );
 }

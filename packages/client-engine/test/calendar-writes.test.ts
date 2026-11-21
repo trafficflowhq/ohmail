@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import type { CalendarEventAct, CalendarEventRecord, CalendarWriteAnswer, CalendarWriteMark } from "@ohmail/wire";
-import { applyCalendarActs, eventsWithWrites } from "../src/calendar-acts.js";
+import { applyCalendarActs, CalendarActKeys, eventsWithWrites } from "../src/calendar-acts.js";
 import { CALENDAR_OUTBOX_TYPE, CalendarWriteQueue, type CalendarWriteTransport } from "../src/calendar-writes.js";
 import { IndexedDbMirrorStore, MemoryMirrorStore } from "../src/index.js";
 import { MutationRejectedError } from "../src/types.js";
@@ -55,6 +55,36 @@ describe("the one overlay", () => {
     const act: CalendarEventAct = { kind: "calendar_event_update", eventId: "e1", base: BASE, scope: { kind: "occurrence", at: "1763456400000" }, change: { title: "x" } };
     expect(applyCalendarActs([record("e1")], [act])[0]!.title).toBe("Kiln check");
   });
+  it("lays the single changed occurrence over its own day and keeps the series times while a broader edit waits", () => {
+    const at = String(Date.UTC(2026, 10, 18, 9));
+    const child = record("occurrence", { recurrenceId: at });
+    const act = {
+      kind: "calendar_event_update" as const, eventId: child.id, base: BASE,
+      scope: { kind: "occurrence" as const, at }, change: { title: "One firing" },
+    };
+    expect(applyCalendarActs([child], [act])[0]?.title).toBe("One firing");
+    const seriesEdit = { ...act, scope: { kind: "record" as const }, base: `${BASE}/${BASE}`, change: { title: "New title for the series" } };
+    expect(applyCalendarActs([child], [seriesEdit])[0]).toEqual(child);
+    const keys = new CalendarActKeys();
+    keys.stamp(act, "first");
+    expect(keys.stamp(act, "next")).toEqual(act);
+    expect(keys.stamp(seriesEdit, "whole")).toEqual(seriesEdit);
+  });
+
+  it("shows a queued scoped write on the changed occurrence the person acted on", () => {
+    const at = String(Date.UTC(2026, 10, 18, 9));
+    const master = record("master", { uid: "weekly", repeat: { rules: ["FREQ=DAILY"], added: [], excluded: [] } });
+    const child = record("changed", { uid: master.uid, recurrenceId: at });
+    const act = {
+      kind: "calendar_event_update" as const, eventId: child.id, base: BASE,
+      scope: { kind: "occurrence" as const, at }, change: { title: "One firing" },
+    };
+    expect(eventsWithWrites([{ ...master, writes: [mark(act)] }, child], []).at(1))
+      .toMatchObject({ record: { title: "One firing" }, waiting: "provider" });
+    expect(eventsWithWrites([{ ...master, writes: [mark(act, { state: "refused", reason: "version_stale" })] }, child], []).at(1))
+      .toMatchObject({ record: { title: child.title }, waiting: null, refusal: "version_stale" });
+  });
+
 });
 
 describe("the selector", () => {

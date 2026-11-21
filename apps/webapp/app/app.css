@@ -3274,6 +3274,16 @@ input.set-tag-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   letter-spacing: 0.06em;
 }
+/* The fingerprint a trust line claims, on its own line under the line that asks for it. */
+.join-fingerprint {
+  margin: var(--s2) 0 0;
+  max-width: 34em;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--w-mid);
+  letter-spacing: .02em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 .join-hint,
 .join-note {
   font-size:calc(11.5px + var(--type-up));

@@ -215,10 +215,26 @@ describe("the way out, on the new shell", () => {
     localStorage.setItem(ANCHOR, "1");
     await mount("#/settings/account");
     server.forget();
-    await press(en.account.signOut);
-    expect(server.on(LOGOUT), "the session was not ended at the server").toHaveLength(1);
-    expect(deleted, "this browser's copy of the mail was not wiped").toContain(MIRROR);
+    const wire = globalThis.fetch;
+    let release!: (answer: Response) => void;
+    const cache = new Promise<Response>((resolve) => { release = resolve; });
+    const purge = vi.fn(() => cache);
+    globalThis.fetch = (input, init) => new Headers(init?.headers).get("x-ohmail-clear") === "cache"
+      ? purge()
+      : wire(input, init);
+    try {
+      await press(en.account.signOut);
+      expect(server.on(LOGOUT), "the session was not ended at the server").toHaveLength(1);
+      expect(deleted, "this browser's copy of the mail was not wiped").toContain(MIRROR);
+      expect(purge).toHaveBeenCalledTimes(1);
+      expect(tab.loads, "navigation interrupted the browser cache clear").toEqual([]);
+    } finally {
+      // Chromium handles Clear-Site-Data without exposing it to fetch.
+      release(new Response(null, { status: 202, headers: { "x-ohmail-clear": "cache" } }));
+      await settle();
+    }
     expect(tab.loads, "it did not leave by a full load of the front door").toEqual(["/"]);
+    expect(purge).toHaveBeenCalledTimes(1);
   });
 
   it("a browser that still holds the mail (another tab holds it open) stays, and says so", async () => {

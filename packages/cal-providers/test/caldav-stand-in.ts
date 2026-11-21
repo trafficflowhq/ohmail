@@ -106,6 +106,10 @@ export interface StandIn {
   forgetTokens(slug: string): void;
   /** The next request, whatever it is, is answered with this status (and this Retry-After, and this body). */
   answerNext(status: number, retryAfter?: string, body?: string): void;
+  /** Refuse the next write to this member before applying it. */
+  refuseNextWriteOf(name: string, status: number | (() => number)): void;
+  /** A successful create stores a tag but leaves it out of the response. */
+  omitNextCreateTag(): void;
   /** Once the next write (a PUT or a DELETE) is carried out and before it is answered, `fn` runs: someone else's write between it and what follows. */
   afterNextWrite(fn: () => void): void;
   /** The next write (a PUT or a DELETE) that is carried out is answered with this status all the same: a server that did it and said it failed. `null` takes it back. */
@@ -149,6 +153,8 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
   let forced: { status: number; retryAfter: string | undefined; body: string } | null = null;
   let afterWrite: (() => void) | null = null;
   let doneThenStatus: number | null = null;
+  let omitCreateTag = false;
+  let refusedWrite: { name: string; status: number | (() => number) } | null = null;
   /** The status a write carried out is answered with, where `doneThen` asked for one, once. */
   const doneAnswer = (): number | null => {
     const status = doneThenStatus;
@@ -313,6 +319,11 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
       if (c === undefined) return send(404, "");
       if (c.privileges !== null && !c.privileges.includes("write-content")) return send(403, failed("need-privileges"));
       const name = decodeURIComponent(path.slice(paths.collection(c.slug).length));
+      if (refusedWrite?.name === name) {
+        const { status } = refusedWrite;
+        refusedWrite = null;
+        return send(typeof status === "number" ? status : status(), "");
+      }
       const member = c.members.get(name);
       const ifMatch = typeof req.headers["if-match"] === "string" ? req.headers["if-match"] : null;
       const ifNoneMatch = typeof req.headers["if-none-match"] === "string" ? req.headers["if-none-match"] : null;
@@ -334,6 +345,10 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
       between?.();
       const failedAfter = doneAnswer();
       if (failedAfter !== null) return send(failedAfter, "");
+      if (member === undefined && omitCreateTag) {
+        omitCreateTag = false;
+        return send(201, "");
+      }
       return send(member === undefined ? 201 : 204, "", { etag });
     }
     return send(405, "");
@@ -391,6 +406,12 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     },
     answerNext(status, retryAfter, body = "") {
       forced = { status, retryAfter, body };
+    },
+    refuseNextWriteOf(name, status) {
+      refusedWrite = { name, status };
+    },
+    omitNextCreateTag() {
+      omitCreateTag = true;
     },
     afterNextWrite(fn) {
       afterWrite = fn;

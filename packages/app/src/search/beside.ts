@@ -34,7 +34,7 @@ export interface SearchBeside {
   readonly keysShown: boolean;
   /** The address book, built when asked (once per mirror version), for a person-first question; `none` offers none. */
   readonly people: (() => readonly AddressBookEntry[]) | None;
-  /** The calendar's events for the same words (the calendar's lane hands it); `none` until then. */
+  /** The current account's mirrored calendar events for the same words, where Calendar is enabled. */
   readonly events: ((text: string) => { readonly count: number; open(): void } | null) | None;
   readonly go: {
     /** An address's own view: everything from and to that person. */

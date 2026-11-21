@@ -9,7 +9,7 @@ import { DrizzleRepo } from "../src/adapters/drizzle-repo.js";
  * follows the instance-less rows. Every shape the predicate tells apart is planted beside a crowd
  * of ordinary messages; the ORACLE is the scan as it stood before (one statement, every live
  * message probed). The phone runs the worker's cycle over the device store, so this file is
- * registered in `vitest.sqlite.config.ts` too.
+ * registered in `test/vitest.sqlite.config.ts` too.
  */
 const ACCOUNT = "00000000-0000-4000-8000-0000000000a1";
 const MAILBOX = "00000000-0000-4000-8000-0000000000b1";

@@ -2,6 +2,7 @@ import { addressBook, matchAddresses, type EntityReader } from "@ohmail/client-e
 
 /** Offer people from the same local address book as the mail composer. */
 export function calendarInviteeSuggestions(reader: EntityReader, typed: string, exclude: readonly string[]) {
-  if (typed.trim() === "") return [];
-  return matchAddresses(addressBook(reader, { exclude }), typed.trim(), 6);
+  const people = addressBook(reader, { exclude });
+  const query = typed.trim();
+  return query ? matchAddresses(people, query, 6) : people.slice(0, 6);
 }

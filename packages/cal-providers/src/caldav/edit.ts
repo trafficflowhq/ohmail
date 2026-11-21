@@ -8,22 +8,30 @@
 import {
   ANSWER_PARAMS,
   DEFAULT_LIMITS,
+  addDays,
   calendarOf,
   changedOccurrence,
+  dayNumber,
   eventOf,
   formatInstant,
   formatRRule,
+  isValidDate,
+  isValidWall,
   makeParam,
   momentOrUtc,
   newCalendar,
   newEventComponent,
   occurrenceOf,
+  propertyOf,
   readCalendar,
   recurrenceKeyOf,
   recurrenceKeyString,
   sameName,
   seriesOf,
   timeProperty,
+  wallFromSeconds,
+  wallInstants,
+  wallSeconds,
   withEvent,
   withNewEvent,
   withPartstat,
@@ -56,6 +64,7 @@ import { alreadyHolds } from "../write-compare.js";
 
 const PRODID = "-//ohmail//calendar//EN";
 const DAY_MS = 86_400_000;
+const DAY_SECONDS = DAY_MS / 1000;
 
 export type Edited =
   | { readonly ok: true; readonly text: string }
@@ -209,6 +218,7 @@ export function changedObjectText(
   change: EventChange,
   nowMs: number,
   zones: ZoneSource,
+  reviewed?: EventTime,
 ): Edited {
   const stored = storedOf(text);
   if (!stored.ok) return stored;
@@ -216,6 +226,14 @@ export function changedObjectText(
   if (next === "field_unwritable") return { ok: false, reason: next };
   const sequenced = withSequence(eventOf(stamped(next, nowMs)), (stored.master.sequence ?? 0) + 1);
   let cal = withEvent(stored.cal, stored.master, sequenced);
+  if (reviewed !== undefined) {
+    const found = dayOf(stored, reviewed, zones);
+    const day = found && reviewedDay(stored, found.day, found.zones);
+    if (!day || !found) return { ok: false, reason: "not_found" };
+    const selected = changedWithSeries(stored, day, sequenced, change, nowMs, found.zones);
+    if (selected === null) return { ok: false, reason: "field_unwritable" };
+    cal = withEvent(cal, day.event, selected);
+  }
   const times = [change.start, change.end].filter((t): t is EventTime => t !== undefined);
   const series = (change.rule ?? null) !== null || stored.master.rules.length > 0;
   const tz = zonesFor(cal, times, series, zones);
@@ -240,6 +258,130 @@ function dayOf(
   return series === undefined ? null : { zones, day: occurrenceOf(series, was, zones) };
 }
 
+/** Require the exact standalone override at the original key. */
+function reviewedDay(
+  stored: { readonly cal: CalObject; readonly master: CalEvent },
+  day: Occurrence | null,
+  zones: ZoneSource,
+): Occurrence | null {
+  if (day === null || day.source !== "override" || day.event.thisAndFuture || day.event.recurrenceId === null)
+    return null;
+  const key = recurrenceKeyString(day.key);
+  return stored.cal.events.filter(
+    (event) =>
+      event.uid === stored.master.uid &&
+      event.recurrenceId !== null &&
+      recurrenceKeyString(recurrenceKeyOf(event.recurrenceId, zones)) === key,
+  ).length === 1
+    ? day
+    : null;
+}
+
+function clockDelta(before: EventTime | null, after: EventTime): number | null {
+  if (before?.kind !== after.kind) return null;
+  if (before.kind === "date" && after.kind === "date")
+    return (dayNumber(after) - dayNumber(before)) * DAY_SECONDS;
+  if (before.kind === "instant" && after.kind === "instant") return (after.epochMs - before.epochMs) / 1000;
+  if (before.kind === "zoned" && after.kind === "zoned" && before.tzid === after.tzid)
+    return wallSeconds(after.wall) - wallSeconds(before.wall);
+  return null;
+}
+
+function shifted(time: EventTime, delta: number, zones: ZoneSource): EventTime | null {
+  if (delta === 0) return time;
+  if (!Number.isSafeInteger(delta)) return null;
+  if (time.kind === "instant") {
+    const ms = time.epochMs + delta * 1000;
+    return isValidWall(wallFromSeconds(Math.floor(ms / 1000))) ? instant(ms) : null;
+  }
+  if (time.kind === "date") {
+    if (delta % DAY_SECONDS !== 0) return null;
+    const day = addDays(time, delta / DAY_SECONDS);
+    return isValidDate(day.year, day.month, day.day) ? day : null;
+  }
+  const wall = wallFromSeconds(wallSeconds(time.wall) + delta);
+  if (!isValidWall(wall) || (time.kind === "zoned" && wallInstants(wall, time.tzid, zones).length !== 1))
+    return null;
+  return { ...time, wall };
+}
+
+function generatedDay(master: CalEvent, at: EventTime, zones: ZoneSource): Occurrence | null {
+  const series = seriesOf([master], zones)[0];
+  const found = series && occurrenceOf(series, at, zones);
+  return found?.source === "rule" ? found : null;
+}
+
+function changedWithSeries(
+  stored: { readonly cal: CalObject; readonly master: CalEvent },
+  day: Occurrence,
+  master: CalEvent,
+  change: EventChange,
+  nowMs: number,
+  zones: ZoneSource,
+): CalEvent | null {
+  const { rule, start, end, ...fields } = change;
+  const changed = applied(day.event.component, fields);
+  if (changed === "field_unwritable") return null;
+  let next = eventOf(changed);
+  const id = day.event.recurrenceId;
+  if (id === null) return null;
+  if (start !== undefined && end !== undefined) {
+    const first = stored.master.start;
+    const firstEnd = stored.master.end ?? (first && generatedDay(stored.master, first, zones)?.end) ?? null;
+    const shiftStart = clockDelta(first, start);
+    const shiftEnd = clockDelta(firstEnd, end);
+    if (shiftStart === null || shiftEnd === null) return null;
+    // Changing the series clock moves occurrence keys. Do not strand unreviewed exceptions or EXDATEs.
+    if (
+      shiftStart !== 0 &&
+      (stored.master.excluded.length > 0 ||
+        stored.master.added.length > 0 ||
+        stored.cal.events.some(
+          (event) => event !== day.event && event.uid === master.uid && event.recurrenceId !== null,
+        ))
+    )
+      return null;
+    const key = shifted(id, shiftStart, zones);
+    const from = shifted(day.start, shiftStart, zones);
+    const to = shifted(day.end, shiftEnd, zones);
+    if (
+      key === null ||
+      from === null ||
+      to === null ||
+      (shiftStart !== 0 && !generatedDay(master, key, zones)) ||
+      momentOrUtc(to, zones) <= momentOrUtc(from, zones)
+    )
+      return null;
+    next = withTimes(next, from, to);
+    const params = propertyOf(next.component, "RECURRENCE-ID")?.params ?? [];
+    next = eventOf(withProperty(next.component, "RECURRENCE-ID", timeProperty("RECURRENCE-ID", key, params)));
+  } else if (rule !== undefined && !generatedDay(master, id, zones)) {
+    return null;
+  }
+  return withSequence(eventOf(stamped(next.component, nowMs)), (day.event.sequence ?? 0) + 1);
+}
+
+/** Compare an all-series retry including the selected occurrence, after discarding generated stamps. */
+export function sameReviewedSeries(wanted: string, found: string): boolean {
+  const eventsOf = (text: string) => {
+    const read = readCalendar(text, DEFAULT_LIMITS);
+    if (!read.ok || read.dropped.length > 0) return null;
+    return read.calendar.events
+      .map(({ component }) =>
+        JSON.stringify({
+          ...component,
+          properties: component.properties
+            .filter((p) => !["DTSTAMP", "LAST-MODIFIED"].some((name) => sameName(p.name, name)))
+            .map((p) => JSON.stringify(p))
+            .sort(),
+        }),
+      )
+      .sort();
+  };
+  const expected = eventsOf(wanted);
+  return expected !== null && JSON.stringify(expected) === JSON.stringify(eventsOf(found));
+}
+
 /** The component that stands for one day: its own where it has one, else one made from the series' (`changedOccurrence`). */
 const ownComponent = (
   day: Occurrence,
@@ -261,11 +403,17 @@ export function dayChangedText(
   change: EventChange,
   nowMs: number,
   platform: ZoneSource,
+  requireOverride = false,
 ): Edited {
   const stored = storedOf(text);
   if (!stored.ok) return stored;
   const found = dayOf(stored, was, platform);
-  if (found === null || found.day === null) return { ok: false, reason: "not_found" };
+  if (
+    found === null ||
+    found.day === null ||
+    (requireOverride && !reviewedDay(stored, found.day, found.zones))
+  )
+    return { ok: false, reason: "not_found" };
   const own = ownComponent(found.day, found.zones);
   const next = applied(own.event.component, change);
   if (next === "field_unwritable") return { ok: false, reason: next };
@@ -393,14 +541,19 @@ export function dayAbsent(
  * such day. `keepCancelled`, where those days go on as a series of their own: the days from that
  * day on that the series cancels by a component of their own stay excluded days of it, as EXDATE
  * lines (they exclude nothing past its end), so that the copy the new series is made from still
- * says which of its days are cancelled.
+ * says which of its days are cancelled. A split that cannot carry edited days refuses before it
+ * hides any of those days or a range override.
  */
 export function seriesEndedText(
   text: string,
   was: EventTime,
   nowMs: number,
   platform: ZoneSource,
-  o: { readonly keepCancelled: boolean } = { keepCancelled: false },
+  o: {
+    readonly keepCancelled: boolean;
+    readonly rejectFutureOverrides?: boolean;
+    readonly replaceReviewedOverride?: boolean;
+  } = { keepCancelled: false },
 ): Edited {
   const stored = storedOf(text);
   if (!stored.ok) return stored;
@@ -412,6 +565,20 @@ export function seriesEndedText(
   if (at === null || first === null || momentOrUtc(at, found.zones) <= momentOrUtc(first, found.zones))
     return { ok: false, reason: "field_unwritable" };
   const from = momentOrUtc(at, found.zones);
+  const reviewed = o.replaceReviewedOverride ? reviewedDay(stored, found.day, found.zones) : null;
+  if (o.replaceReviewedOverride && reviewed === null) return { ok: false, reason: "not_found" };
+  if (
+    o.rejectFutureOverrides &&
+    stored.cal.events.some(
+      (day) =>
+        day.uid === stored.master.uid &&
+        day.recurrenceId !== null &&
+        day !== reviewed?.event &&
+        (day.thisAndFuture ||
+          (day.status !== "CANCELLED" && momentOrUtc(day.recurrenceId, found.zones) >= from)),
+    )
+  )
+    return { ok: false, reason: "field_unwritable" };
   const ended: RRule = { ...rule, count: null, until: endBefore(at, found.zones) };
   const ruled = withProperty(stored.master.component, "RRULE", plain("RRULE", formatRRule(ended)));
   const kept = o.keepCancelled

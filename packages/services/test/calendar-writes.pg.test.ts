@@ -94,7 +94,7 @@ const refusal = async (p: Promise<unknown>): Promise<string> => {
 const rowsOf = (accountId: string) => db.select({
   id: calWrites.id, key: calWrites.idempotencyKey, op: calWrites.op, state: calWrites.state, refusal: calWrites.refusal,
   base: calWrites.baseVersionTag, eventId: calWrites.eventId, payload: calWrites.payload,
-}).from(calWrites).where(eq(calWrites.accountId, accountId)).orderBy(asc(calWrites.createdAt));
+}).from(calWrites).where(eq(calWrites.accountId, accountId)).orderBy(asc(calWrites.createdAt), asc(calWrites.idempotencyKey));
 
 const eventRows = (accountId: string) => db.select({ id: calEvents.id, providerId: calEvents.providerId, uid: calEvents.uid, title: calEvents.title, versionTag: calEvents.versionTag })
   .from(calEvents).where(eq(calEvents.accountId, accountId)).orderBy(asc(calEvents.title));
@@ -318,6 +318,137 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
   const following = (series: { id: string; updatedAt: Date }, newEventId: string, change: Partial<CalendarEventFields>, base = series.updatedAt.toISOString()): CalendarEventAct =>
     ({ kind: "calendar_event_update", eventId: series.id, base, scope: { kind: "following", at: DEC_14, newEventId }, change });
 
+  it.each(["caldav", "google", "microsoft"])("records the three scopes of a timed series owned by this account on %s", async (provider) => {
+    const w = await world({ provider });
+    const owner = ["owner", "example.test"].join("@");
+    const guest = ["guest", "example.test"].join("@");
+    await db.update(calConnections).set({ principal: owner }).where(eq(calConnections.id, w.connectionId));
+    const series = await weekly(w, { organizer: owner });
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: series.id, address: guest, name: "Guest", role: "required", answer: "accepted" });
+    const c = ctx(w.accountId);
+    const act = { kind: "calendar_event_update" as const, eventId: series.id, base: series.updatedAt.toISOString(),
+      change: { title: "New firing" }, audience: { organizer: owner, guests: [guest] } };
+    const wrong = await record(c, "wrong-audience", { ...act, scope: { kind: "occurrence", at: DEC_14 }, audience: { organizer: owner, guests: [] } });
+    expect(wrong.answer.write).toMatchObject({ state: "refused", reason: "version_stale" });
+    const scopes = [{ kind: "record" }, { kind: "occurrence", at: DEC_14 }, { kind: "following", at: DEC_14, newEventId: randomUUID() }];
+    for (const scope of scopes) {
+      const sent = await record(c, scope.kind, { ...act, scope });
+      expect(sent.answer.write).toMatchObject({ state: "pending", reason: null });
+      expect((await record(c, scope.kind, { ...act, scope })).answer.write).toEqual(sent.answer.write);
+    }
+  });
+
+  async function weeklyWithException(
+    w: World, provider: string, people: Pick<Partial<typeof calEvents.$inferInsert>, "organizer" | "myAnswer"> = {},
+  ) {
+    const uid = "weekly-clay";
+    const shared = provider === "caldav" ? "weekly-member" : "master";
+    const series = await weekly(w, { uid, providerId: shared, ...people });
+    const day = "2026-12-14T08:00:00Z";
+    const child = await weekly(w, {
+      uid, providerId: provider === "caldav" ? shared : "exception", ...people,
+      versionTag: provider === "caldav" ? '"w1"' : '"changed-1"',
+      recurrenceId: DEC_14, occurrenceAt: new Date(day), repeatRule: null,
+      startLocal: "20261214T110000", endLocal: "20261214T120000",
+      startsAt: new Date("2026-12-14T10:00:00Z"), endsAt: new Date("2026-12-14T11:00:00Z"),
+    });
+    return { series, child };
+  }
+
+  it.each(["caldav", "google", "microsoft"])("binds each edit of a changed occurrence to its reviewed version on %s", async (provider) => {
+    const w = await world({ provider });
+    const c = ctx(w.accountId);
+    const { series, child } = await weeklyWithException(w, provider);
+    const base = child.updatedAt.toISOString();
+    const reviewed = `${base}/${series.updatedAt.toISOString()}`;
+    const act = { kind: "calendar_event_update", eventId: child.id, change: { title: "Clay lesson" }, audience: { organizer: null, guests: [] } };
+    for (const [scope, named] of [
+      [{ kind: "occurrence", at: DEC_14 }, base],
+      [{ kind: "record" }, reviewed],
+      [{ kind: "following", at: DEC_14, newEventId: randomUUID() }, reviewed],
+    ] as const) {
+      const request = { ...act, scope, base: named };
+      const answer = await record(c, scope.kind, request);
+      expect(answer.answer.write).toMatchObject({ state: "pending", reason: null });
+      expect((await record(c, scope.kind, request)).answer.write).toEqual(answer.answer.write);
+    }
+    const stale = new Date(series.updatedAt.getTime() + 10_000);
+    await db.update(calEvents).set({ updatedAt: stale }).where(eq(calEvents.id, series.id));
+    expect((await record(c, "stale-master", { ...act, scope: { kind: "record" }, base: reviewed })).answer.write)
+      .toMatchObject({ state: "refused", reason: "version_stale" });
+    const forged = { ...act, scope: { kind: "occurrence", at: String(+DEC_14 + 86_400_000) }, base };
+    expect(await refusal(record(c, "wrong-day", forged))).toBe("400 validation_failed");
+  });
+
+  it.each(["caldav", "google", "microsoft"])("keeps an invitee from writing any scope of a timed series or its exception on %s", async (provider) => {
+    const w = await world({ provider });
+    const organizer = ["organizer", "example.test"].join("@");
+    const invitee = ["invitee", "example.test"].join("@");
+    await db.update(calConnections).set({ principal: invitee }).where(eq(calConnections.id, w.connectionId));
+    const { series, child } = await weeklyWithException(w, provider, { organizer, myAnswer: "none" });
+    await db.insert(calAttendees).values([series, child].map((event) => ({
+      accountId: w.accountId, eventId: event.id, address: invitee, name: "Guest", role: "required", answer: "none",
+    })));
+
+    const earlier = series.updatedAt.toISOString();
+    const selected = child.updatedAt.toISOString();
+    const audience = { organizer, guests: [invitee] };
+    const scopes = [{ kind: "record" }, { kind: "occurrence", at: DEC_14 }, { kind: "following", at: DEC_14, newEventId: randomUUID() }];
+    for (const scope of scopes) {
+      const act = { kind: "calendar_event_update", scope, audience, change: { title: "Unapproved change" } };
+      expect(await refusal(record(ctx(w.accountId), `series-${scope.kind}`, { ...act, eventId: series.id, base: earlier })))
+        .toBe("409 calendar_read_only");
+      expect(await refusal(record(ctx(w.accountId), `exception-${scope.kind}`, {
+        ...act, eventId: child.id, base: scope.kind === "occurrence" ? selected : `${selected}/${earlier}`,
+      }))).toBe("409 calendar_read_only");
+    }
+    expect(await rowsOf(w.accountId)).toEqual([]);
+  });
+
+  it.each([["google", "reader"], ["ics", "owner"]])("refuses a paired edit on a calendar that takes no writes (%s, %s)", async (provider, access) => {
+    const w = await world({ provider, access });
+    const { series, child } = await weeklyWithException(w, provider);
+    const act = {
+      kind: "calendar_event_update", eventId: child.id, scope: { kind: "record" },
+      base: `${child.updatedAt.toISOString()}/${series.updatedAt.toISOString()}`,
+      audience: { organizer: null, guests: [] }, change: { title: "Unapproved change" },
+    };
+    expect(await refusal(record(ctx(w.accountId), "edit-read-only", act))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+  });
+
+  it("cannot write another account's exception even with both of its versions", async () => {
+    const caller = await world();
+    const owner = await world();
+    const { series, child } = await weeklyWithException(owner, "google");
+    const act = {
+      kind: "calendar_event_update", eventId: child.id, scope: { kind: "record" },
+      base: `${child.updatedAt.toISOString()}/${series.updatedAt.toISOString()}`,
+      audience: { organizer: null, guests: [] }, change: { title: "Unapproved change" },
+    };
+    expect(await refusal(record(ctx(caller.accountId), "edit-other-account", act))).toBe("404 not_found");
+    expect(await rowsOf(caller.accountId)).toEqual([]);
+    expect(await rowsOf(owner.accountId)).toEqual([]);
+  });
+
+  it("cannot borrow the master of an exception from a different calendar", async () => {
+    const w = await world();
+    const { series, child } = await weeklyWithException(w, "google");
+    const [calendar] = await db.insert(calCalendars).values({
+      accountId: w.accountId, connectionId: w.connectionId, providerId: "another-calendar",
+      name: "Another calendar", access: "owner",
+    }).returning({ id: calCalendars.id });
+    const [moved] = await db.update(calEvents).set({ calendarId: calendar!.id }).where(eq(calEvents.id, child.id))
+      .returning({ updatedAt: calEvents.updatedAt });
+    const act = {
+      kind: "calendar_event_update", eventId: child.id, scope: { kind: "record" },
+      base: `${moved!.updatedAt.toISOString()}/${series.updatedAt.toISOString()}`,
+      audience: { organizer: null, guests: [] }, change: { title: "Unapproved change" },
+    };
+    expect(await refusal(record(ctx(w.accountId), "edit-unrelated-series", act))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+  });
+
   it("shows scopes only on a proven personal series and keeps that condition on both parts of a split", async () => {
     const w = await world({ provider: "caldav" });
     const original = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//EN", "BEGIN:VEVENT", "UID:term",
@@ -355,7 +486,7 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     expect(rows.map((r) => [r.key, r.op, r.state, r.base, r.eventId, (r.payload as { part: unknown }).part])).toEqual([
       ["split-1", "update", "pending", '"w1"', series.id, { of: "split-1", n: 1 }],
       // The second names where it comes from, so that the new series is made from the series' own component: the series, the day, the title named.
-      ["split-1:2", "create", "pending", null, newEventId, { of: "split-1", n: 2, from: { eventId: series.id, at: DEC_14, named: ["title"] } }],
+      ["split-1:2", "create", "pending", null, newEventId, { of: "split-1", n: 2, from: { eventId: series.id, at: DEC_14, named: ["title"], confirmed: true } }],
     ]);
     expect((rows[1]!.payload as { after: string }).after).toBe(rows[0]!.id);
     // The new series as the person wants it: from that day, its title changed, what is left of the count, the series' reminder.
@@ -376,12 +507,16 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     expect(await refusal(recordCalendarWrite(ctx(w.accountId), "first-day", first))).toBe("400 validation_failed");
     expect(await refusal(recordCalendarWrite(ctx(w.accountId), "k".repeat(CALENDAR_WRITE_LIMITS.keyChars - 1), following(series, randomUUID(), { title: "x" })))).toBe("400 idempotency_key_required");
     const v = await world({ provider: "caldav" });
-    const invited = await weekly(v);
-    await db.insert(calAttendees).values({ accountId: v.accountId, eventId: invited.id, address: "giulia@example.test", name: null, role: "required", answer: "accepted" });
+    const owner = ["owner", "example.test"].join("@");
+    const guest = ["anna", "example.test"].join("@");
+    await db.update(calConnections).set({ principal: owner }).where(eq(calConnections.id, v.connectionId));
+    const invited = await weekly(v, { organizer: owner });
+    await db.insert(calAttendees).values({ accountId: v.accountId, eventId: invited.id, address: guest, name: null, role: "required", answer: "accepted" });
     const carried = randomUUID();
-    expect(await refusal(recordCalendarWrite(ctx(v.accountId), "with-invitees", following(invited, carried, { title: "x" })))).toBe("accepted");
+    const invitedAct = { ...following(invited, carried, { title: "x" }), audience: { organizer: owner, guests: [guest] } };
+    expect(await refusal(recordCalendarWrite(ctx(v.accountId), "with-invitees", invitedAct))).toBe("accepted");
     expect(await db.select({ address: calAttendees.address, role: calAttendees.role, answer: calAttendees.answer }).from(calAttendees).where(eq(calAttendees.eventId, carried)))
-      .toEqual([{ address: "giulia@example.test", role: "required", answer: "none" }]);
+      .toEqual([{ address: guest, role: "required", answer: "none" }]);
     const newEventId = randomUUID();
     const stale = await recordCalendarWrite(ctx(w.accountId), "stale", following(series, newEventId, { title: "x" }, new Date(series.updatedAt.getTime() - 60_000).toISOString()));
     expect(stale.answer.write).toMatchObject({ state: "refused", reason: "version_stale" });

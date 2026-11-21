@@ -3175,6 +3175,33 @@ export function useShellCompose({
   const cancelCompose = useStableCallback(() => abandonCompose(false));
   const discardCompose = useStableCallback(() => abandonCompose(true));
   /**
+   * One turn per removal press, letter and reply alike: an Undo belongs to the removal that made it. A
+   * later removal anywhere moves the turn, so an older report's Undo writes nothing.
+   */
+  const sigUndoTurn = useRef(0);
+  /**
+   * TAKING THE SIGNATURE OFF THIS LETTER, with its Undo. The letter's state before the press is held, and the report
+   * offers it back for the undo window: Undo writes that state back exactly as it stood — a following signature,
+   * including its formatting, comes back as it was written; an edited one comes back with its words.
+   */
+  const removeComposeSig = useStableCallback(() => {
+    const letter = composeRef.current;
+    const prior = letter.sig;
+    const turn = ++sigUndoTurn.current;
+    onComposeFields({ ...letter, sig: { kind: "removed" } });
+    toast(t("compose.signatureRemoved"), {
+      action: t("ohbox.undo"),
+      duration: UNDO_MS,
+      // Undo belongs to the letter standing without its signature at the press: once it has been sent or
+      // discarded, there is no letter to write back into, and nothing is.
+      onAction: () => {
+        if (sigUndoTurn.current !== turn) return;
+        if (composeRef.current.sig?.kind !== "removed") return;
+        onComposeFields({ ...composeRef.current, sig: prior });
+      },
+    });
+  });
+  /**
    * THE REPLY'S DISCARD, with its Undo. The open lane is read whole first. A lane with a row goes through
    * `discardDraft` (its holds and refusals stand; a refusal keeps the lane and offers nothing back); a lane with words
    * alone is forgotten as `discardEditorsOf` forgets one. Undo opens the reply again and puts each part back through the
@@ -3217,6 +3244,28 @@ export function useShellCompose({
       if (mode === "reply") draftReply?.restore(id);
     };
     toast(t("compose.toastDiscard"), { action: t("ohbox.undo"), duration: UNDO_MS, onAction: back });
+  });
+  /**
+   * TAKING THE SIGNATURE OFF THIS REPLY, with its Undo: the same door as the new letter's, held for the open lane.
+   * The lane open at the press is held with the prior state: Undo belongs to that reply alone — if the lane has
+   * closed or moved to another letter in the undo window, nothing is written, and the other reply keeps its own.
+   */
+  const removeReplySig = useStableCallback(() => {
+    const id = replyToRef.current;
+    if (id === null) return;
+    const mode = replyModeRef.current;
+    const prior = replySig;
+    const turn = ++sigUndoTurn.current;
+    onReplySig({ kind: "removed" });
+    toast(t("compose.signatureRemoved"), {
+      action: t("ohbox.undo"),
+      duration: UNDO_MS,
+      onAction: () => {
+        if (sigUndoTurn.current !== turn) return;
+        if (replyToRef.current !== id || replyModeRef.current !== mode) return;
+        onReplySig(prior);
+      },
+    });
   });
 
   /**
@@ -3387,6 +3436,8 @@ export function useShellCompose({
     forwardAsk,
     composeFrom,
     discardCompose,
+    removeComposeSig,
+    removeReplySig,
     discardDraft,
     decideDraftDiscard,
     withdrawDraftWaiting,

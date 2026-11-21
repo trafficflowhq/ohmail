@@ -56,7 +56,7 @@ import type { ServiceContext } from "../src/index.js";
  * half — that no stand-down path anywhere can be added without this call — is
  * `packages/db/test/stand-down-sends-census.test.ts`.
  *
- * ## Why REAL Postgres (CLAUDE.md)
+ * ## Why REAL Postgres (AGENTS.md)
  * Two of the claims here are one connection blocking behind another's uncommitted transaction and
  * then re-evaluating its own predicate. PGlite is single-connection and cannot hold a lock against
  * anything, so it would report both as green without ever running them.

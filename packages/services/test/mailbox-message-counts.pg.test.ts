@@ -30,7 +30,7 @@ import { statementSeam } from "./helpers/statement-seam.js";
  *
  * ── WHY `.pg.test.ts` ───────────────────────────────────────────────────────────────────
  *
- * Two reasons, and the first is CLAUDE.md's rule about PGlite. The account-isolation case
+ * Two reasons, and the first is AGENTS.md's rule about PGlite. The account-isolation case
  * below turns on a `GROUP BY` over a real planner and a real `count(*)`, and the statement
  * census turns on what the postgres-js driver actually SENDS — neither is a property of the
  * TypeScript. The second is that the index premise is a Postgres fact:

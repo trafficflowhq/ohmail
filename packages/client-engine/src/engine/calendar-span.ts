@@ -81,27 +81,52 @@ export function spanFactsOf(entity: unknown): SpanFacts | null {
   };
 }
 
+/** An ordinary stored override and a series share a calendar and the provider's series identity. */
+function seriesKey(entity: unknown): { family: string; master: boolean } | null {
+  const e = entity as { calendarId?: unknown; uid?: unknown; recurrenceId?: unknown; repeat?: { rules?: unknown } } | null;
+  if (typeof e?.calendarId !== "string" || typeof e.uid !== "string" || !e.uid || typeof e.recurrenceId !== "string") return null;
+  const master = e.recurrenceId === "";
+  if (master && (!Array.isArray(e.repeat?.rules) || e.repeat.rules.length === 0)) return null;
+  return { family: JSON.stringify([e.calendarId, e.uid]), master };
+}
+
 /**
- * The events to let go: those no span holds, then, past the ceiling, the farthest from now. A row
- * newer than `graceAbove` stays this pass (the prune's one-page grace).
+ * Keep held occurrences with their series. A series needed by an occurrence counts toward the
+ * ceiling even when it falls outside every span. A row newer than `graceAbove` stays this pass.
  */
 export function calendarSpanVictims(
   events: ReadonlyArray<{ id: string; seq: number; entity: unknown }>,
   nowMs: number, window: CalendarWindow, loaded: readonly CalendarSpan[], graceAbove?: number,
 ): Array<{ type: "calendar_event"; id: string }> {
   const spans = [spanAround(nowMs, window), ...loaded];
-  const kept: Array<{ id: string; distance: number }> = [];
-  const out: Array<{ type: "calendar_event"; id: string }> = [];
-  for (const row of events) {
+  const rows = events.flatMap((row) => {
     const facts = spanFactsOf(row.entity);
-    if (facts === null) continue;
-    if (graceAbove !== undefined && row.seq > graceAbove) continue;
-    if (heldBySpan(facts, spans)) kept.push({ id: row.id, distance: distanceFrom(nowMs, facts) });
-    else out.push({ type: "calendar_event", id: row.id });
+    return facts === null ? [] : [{
+      id: row.id, series: seriesKey(row.entity), held: heldBySpan(facts, spans),
+      graced: graceAbove !== undefined && row.seq > graceAbove, distance: distanceFrom(nowMs, facts),
+    }];
+  });
+  const masters = new Map<string, string | null>();
+  for (const row of rows) {
+    if (row.series?.master) masters.set(row.series.family, masters.has(row.series.family) ? null : row.id);
   }
-  if (kept.length > window.maxRows) {
-    kept.sort((a, b) => a.distance - b.distance || (a.id < b.id ? -1 : 1));
-    for (const k of kept.slice(window.maxRows)) out.push({ type: "calendar_event", id: k.id });
+  const parentOf = (row: typeof rows[number]): string | null =>
+    row.series && !row.series.master ? masters.get(row.series.family) ?? null : null;
+  const graced = new Set(rows.filter((row) => row.graced).map((row) => row.id));
+  const kept = new Set<string>();
+  for (const row of rows) {
+    const parent = row.graced ? parentOf(row) : null;
+    if (parent && !graced.has(parent)) kept.add(parent);
   }
-  return out;
+  const held = rows.filter((row) => row.held && !row.graced).sort((a, b) =>
+    a.distance - b.distance || (a.id < b.id ? -1 : 1));
+  for (const row of held) {
+    if (kept.has(row.id)) continue;
+    const parent = parentOf(row);
+    const needsParent = parent !== null && !kept.has(parent) && !graced.has(parent);
+    if (kept.size + (needsParent ? 2 : 1) > window.maxRows) continue;
+    kept.add(row.id);
+    if (needsParent) kept.add(parent);
+  }
+  return rows.filter((row) => !row.graced && !kept.has(row.id)).map((row) => ({ type: "calendar_event", id: row.id }));
 }

@@ -193,11 +193,16 @@ export function foldersOpenedKey(owner: StorageScope): string {
   return `ohmail.ui.rail.foldersOpened.${scopeSuffix(owner)}`;
 }
 
-/** The reader's subject display choice is stored per account on this device. */
+/** Reader preferences under this prefix are stored per account on this device. */
 export const SUBJECT_DISPLAY_PREFIX = "ohmail.ui.reader.subject:";
 
 export function subjectDisplayKey(owner: StorageScope): string {
   return `${SUBJECT_DISPLAY_PREFIX}${scopeSuffix(owner)}`;
+}
+
+/** A separate value in the subject choice's account-scoped preference family. */
+export function threadOrderKey(owner: StorageScope): string {
+  return `${subjectDisplayKey(owner)}:thread-order`;
 }
 
 /** Ids the reader chose to view in their ORIGINAL (light) rendering despite a dark theme; per account, as above. */

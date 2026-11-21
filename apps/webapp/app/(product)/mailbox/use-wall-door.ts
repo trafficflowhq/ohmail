@@ -11,7 +11,7 @@ import { useCallback, useState } from "react";
 import { useLocale } from "next-intl";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
-import { signOut } from "../../sign-out";
+import { signOutAndSettle } from "../../sign-out";
 import { signOutTrouble, type SignOutTrouble } from "../../sign-out-trouble";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { saveBlob } from "../../shell/attachments";
@@ -128,7 +128,7 @@ export function useWallDoor({ facts, onLifted }: { facts: AccessRefusedFacts; on
     setSigningOut(true);
     setSignOutSaid(null);
     // `owner` is captured before the call: afterwards there is nobody to ask which mirror to wipe.
-    const result = await signOut(readOwner() ?? undefined);
+    const result = await signOutAndSettle(readOwner() ?? undefined);
     const said = signOutTrouble(result);
     /* A wipe that did not land keeps the button and says why under it; a finished sign-out leaves
        for the sign-in page, as the error page's does; a server half that went unconfirmed leaves

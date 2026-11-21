@@ -8,7 +8,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * NO SURFACE FOLDS A MUTATION'S STATUS TO A BOOLEAN.
  *
  * SCANNED ROOTS: `apps/webapp/app` and `apps/mobile/src` — neither is this package, so touched-
- * package selection never reaches this file and it is run by its scanned roots (CLAUDE.md's
+ * package selection never reaches this file and it is run by its scanned roots (AGENTS.md's
  * census rule).
  *
  * The defect is one expression. `r.status !== "rolled_back"` partitions four statuses into two

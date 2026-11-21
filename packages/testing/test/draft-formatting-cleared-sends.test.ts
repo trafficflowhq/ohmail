@@ -18,7 +18,7 @@ import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../api/test/he
  * `validation_failed`, rightly), so the save before Send failed and nothing was ever sent. The
  * editor now says `html: null`; the engine keeps it only for a row its mirror holds as formatted,
  * so every plain request stays what it was. The real engine and HttpAdapter over the real API, on
- * both stores (`vitest.sqlite.config.ts` lists this file: the desktop's and the phone's store).
+ * both stores (`test/vitest.sqlite.config.ts` lists this file: the desktop's and the phone's store).
  */
 const app = createApp(apiRoutes);
 const TO = [{ name: null, address: "lena@atelier.example" }];

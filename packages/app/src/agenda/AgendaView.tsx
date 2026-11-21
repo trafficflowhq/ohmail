@@ -113,13 +113,7 @@ export function AgendaView({
   const content = (
     <>
       {keysHere ? <AgendaTop scroller={scroller} /> : null}
-      <HeldNotice
-        edge={edge}
-        first={first}
-        last={addDays(first, days - 1)}
-        today={input.today}
-        className="cal-ag-note"
-      />
+      <HeldNotice edge={edge} first={first} today={input.today} className="cal-ag-note" />
       {unplaced > 0 ? <RefusalLine>{t("unplaced", { count: unplaced })}</RefusalLine> : null}
       {agendaGroups({ groups, input, acts, onRow, openRow, t, locale })}
     </>

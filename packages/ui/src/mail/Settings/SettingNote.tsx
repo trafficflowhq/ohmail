@@ -14,6 +14,8 @@ export interface SettingNoteProps {
   children: string | readonly SettingNotePart[];
   /** It warns: the warning sign leads it, and it is said when it appears. */
   warn?: boolean;
+  /** It explains: the info sign leads it, in place of the warning sign. */
+  sign?: "info";
   /** Keep a warning readable in place without announcing it when the note appears. */
   silent?: boolean;
   /** It says that something is being read: said when it appears, and gone when the lines it stands for arrive. */
@@ -28,7 +30,7 @@ export interface SettingNoteProps {
 }
 
 /** A note on a sheet of settings: the second ink, under the line it is about, at a reading measure. */
-export function SettingNote({ id, children, warn, silent, busy, said }: SettingNoteProps) {
+export function SettingNote({ id, children, warn, sign, silent, busy, said }: SettingNoteProps) {
   const parts = typeof children === "string" ? [children] : children;
   const live = Boolean((warn && !silent) || busy || said);
   /* Said when it appears: by a change inside the region once it stands, never by arriving full. */
@@ -41,7 +43,7 @@ export function SettingNote({ id, children, warn, silent, busy, said }: SettingN
       /* It never calls itself busy: that would ask a screen reader to wait with it. */
       role={live ? "status" : undefined}
     >
-      {warn ? <Icon name="warn" size={18} /> : null}
+      {warn ? <Icon name="warn" size={18} /> : sign === "info" ? <Icon name="info" size={16} /> : null}
       <span className="oh-settingnote-copy" aria-hidden={held ? true : undefined}>
         {parts.map((part, at) =>
           typeof part === "string" ? (

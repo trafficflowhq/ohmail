@@ -343,6 +343,8 @@ function useWritingDouble(): Writing {
     signatures: { text: { [MILA]: SIGNATURE, [HELLO]: SIGNATURE }, html: {} },
     discardCompose: nothing,
     discardReply: nothing,
+    removeComposeSig: nothing,
+    removeReplySig: nothing,
   };
 }
 

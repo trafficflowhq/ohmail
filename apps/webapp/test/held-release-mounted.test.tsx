@@ -29,7 +29,7 @@ beforeEach(() => {
 });
 afterEach(teardownConfirmEnv);
 
-async function mount(waitForConfirmation: boolean, refuse = false) {
+async function mount(waitForConfirmation: boolean, failure?: "file" | "refresh") {
   let confirm!: (response: Response) => void;
   const pending = new Promise<Response>((resolve) => { confirm = resolve; });
   scriptSession(waitForConfirmation ? () => pending : sessionFull);
@@ -38,13 +38,16 @@ async function mount(waitForConfirmation: boolean, refuse = false) {
   globalThis.fetch = async (input, init) => {
     const path = new URL(String(input), window.location.origin).pathname;
     const method = init?.method ?? "GET";
-    if (path === endpoint && method === "GET") return Response.json({
-      groups: released ? [] : groups, total: released ? 0 : 3,
-      max: 200, fingerprint: "fixture", dismissed: false,
-    }, scoped);
+    if (path === endpoint && method === "GET") {
+      if (released && failure === "refresh") return new Response(null, { ...scoped, status: 503 });
+      return Response.json({
+        groups: released ? [] : groups, total: released ? 0 : 3,
+        max: 200, fingerprint: "fixture", dismissed: false,
+      }, scoped);
+    }
     if (path === endpoint && method === "POST") {
       posts.push(path);
-      if (refuse) return Response.json({ error: { code: "conflict", message: "refused" } }, { ...scoped, status: 409 });
+      if (failure === "file") return Response.json({ error: { code: "conflict", message: "refused" } }, { ...scoped, status: 409 });
       released = true;
       return Response.json({ released: groups, total: 3 }, scoped);
     }
@@ -71,9 +74,8 @@ async function mount(waitForConfirmation: boolean, refuse = false) {
 const report = () => host.querySelector('.fr-report [role="status"]:not([data-leaving])')?.textContent;
 const releaseControl = () => within(host).queryByRole("button", { name: "Release 3" });
 
-// The case titles remain the ones named by the regression checklist.
-describe("a release pressed during the warm open", () => {
-  it("waits for the account's confirm, says the mailbox is still loading, then releases", async () => {
+describe("automatic filing when the Screener opens", () => {
+  it("files only after the account is confirmed", async () => {
     const confirm = await mount(true);
     expect(sessionCalls()).toBeGreaterThan(0);
     expect(releaseControl()).toBeNull();
@@ -84,11 +86,17 @@ describe("a release pressed during the warm open", () => {
     expect(report()).toBeUndefined();
   });
 
-  it("a confirmed account presses at once, with no loading sentence", async () => {
-    await mount(false, true);
+  it("tells the person when the automatic filing request fails", async () => {
+    await mount(false, "file");
     expect(posts).toEqual([endpoint]);
     expect(reports).toContain(messages.screener.heldReleaseFailed.replace(/\.$/u, ""));
     expect(releaseControl()).toBeNull();
+  });
+
+  it("stays quiet when filing succeeded and only the refreshed count failed", async () => {
+    await mount(false, "refresh");
+    expect(posts).toEqual([endpoint]);
+    expect(reports).not.toContain(messages.screener.heldReleaseFailed.replace(/\.$/u, ""));
   });
 
   it("the German catalogue carries the sentence", () => {

@@ -4,8 +4,8 @@
     "deleteUndone": "Termin wiederhergestellt",
     "undoLate": "Zu spät zum Rückgängigmachen",
     "waiting": {
-      "device": "Von diesem Gerät noch nicht gesendet",
-      "provider": "Wartet auf den Kalender"
+      "device": "Wartet",
+      "provider": "Wartet"
     },
     "notSaved": "Nicht gespeichert",
     "fault": {
@@ -14,7 +14,7 @@
       "gone": "Der Termin ist nicht mehr in diesem Kalender.",
       "unreachable": "Der Kalender war nicht erreichbar.",
       "notKept": "Der Kalender würde diese Änderung nicht so behalten.",
-      "stale": "Der Termin wurde inzwischen anderswo geändert. Ihre oder die andere Fassung behalten.",
+      "stale": "Anderswo geändert",
       "versionUnknown": "Die Fassung des Kalenders war nicht lesbar, darum wurde nichts gesendet.",
       "earlier": "Eine frühere Änderung dieses Termins wurde nicht gespeichert, darum wurde diese nicht gesendet.",
       "chained": "Erneut drücken, sobald die Änderung davor erledigt ist.",
@@ -35,14 +35,16 @@
       "unknown": "Die Änderung wurde nicht gespeichert."
     },
     "taken": {
-      "deleteAudience": "Termin entfernt. Absage für {guests}.",
+      "deleteAudience": "Absage an {guests} gesendet",
       "create": "Termin hinzugefügt",
-      "update": "Änderung gespeichert",
-      "delete": "Termin entfernt",
+      "update": "Geändert",
+      "delete": "Gelöscht",
       "move": "Termin verschoben",
       "answer": "Antwort gespeichert",
       "retry": "Wird erneut gesendet",
-      "dismiss": "Änderung verworfen"
+      "dismiss": "Änderung verworfen",
+      "updateAudience": "Änderung an {guests} gesendet",
+      "invitationAudience": "Einladung an {guests} gesendet"
     }
   }
 }

@@ -67,6 +67,7 @@ function expectSessionEnded(res: Response, what: string): void {
 async function expectPurged(res: Response, what: string): Promise<void> {
   expect(res.status, what).toBe(202);
   expect(res.headers.get(CLEARS), what).toBe('"cache"');
+  expect(res.headers.get("x-ohmail-clear"), what).toBe("cache");
   expect(res.headers.get("cache-control"), what).toBe("no-store");
   expect(res.headers.getSetCookie(), `${what}: the purge sets no cookie`).toEqual([]);
   expect(await res.text(), what).toBe("");

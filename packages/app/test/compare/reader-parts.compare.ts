@@ -24,7 +24,7 @@ import { comparedByParts, declaredTask, ohboxReaderKeys } from "./ohbox-reader-k
  * THE READER'S PARTS of the screens `reading` and `linkask`, and of the screen `ohbox` where its keys are the
  * reader's (`ohbox-reader-keys.ts`: the rule over the manifest), each against the same part of the reference's
  * picture and data file (`node test/compare/fetch.mjs --from <the shards>`, then
- * `npx vitest run --config vitest.compare.config.ts packages/app/test/compare/reader-parts.compare.ts`). The shards
+ * `npx vitest run --config test/compare/vitest.compare.config.ts packages/app/test/compare/reader-parts.compare.ts`). The shards
  * are named to the fetch by `test/compare/subjects/reading.ts`, `linkask.ts` and `ohbox.ts`, the tool's rule; a shard
  * not in build/reference is red here, never a skip, as in the kit's comparison. The screen `ohbox` is drawn on the
  * Ohbox's states page, the reader beside the Ohbox's list, over the reference's nine conversations.

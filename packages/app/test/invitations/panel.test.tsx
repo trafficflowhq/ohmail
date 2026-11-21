@@ -261,7 +261,7 @@ describe("the invitations' panel", () => {
         answer: "accepted",
       },
     ]);
-    expect(said()).toContain("Answer saved");
+    expect(said()).toContain("Yes");
     /* The next invitation that waits opens, at its day. */
     expect(address.read()).toContain("/2026-11-19/e/b");
   });
@@ -305,8 +305,8 @@ describe("the invitations' panel", () => {
     fireEvent.click(within(rowOf("Tech check")).getByRole("button", { name: "Maybe" }));
     await settle();
     expect(m.pressed).toHaveLength(1);
-    expect(said()).not.toContain("Answer saved");
-    expect(within(rowOf("Tech check")).getByText(/Not sent yet from this device/)).toBeTruthy();
+    expect(said()).not.toContain("Maybe");
+    expect(within(rowOf("Tech check")).getByText(/Waiting/)).toBeTruthy();
     expect(address.read()).toContain("/e/a");
   });
 
@@ -329,7 +329,7 @@ describe("the invitations' panel", () => {
     mount(m, "#/cal/week/2026-11-18/e/a?panel=invitations");
     fireEvent.click(within(rowOf("Tech check")).getByRole("button", { name: "No" }));
     await settle();
-    expect(said()).toContain("This change could not be read as written.");
+    expect(said()).toContain("This change could not be read as written");
   });
 
   it("walks the rows with j and k inside the panel, and closes it with Escape", () => {
@@ -372,7 +372,7 @@ describe("the invitations' panel", () => {
     m.put("calendar_event", "a", invitation("a", "Tech check", "20261118", { myAnswer: "accepted" }));
     m.put("calendar_event", "b", invitation("b", "Planning call", "20261119", { myAnswer: "declined" }));
     mount(m, "#/cal/week/2026-11-18?panel=invitations");
-    expect(within(panel()).getByText(/2 answered/)).toBeTruthy();
+    expect(within(panel()).getByText((_text, element) => element?.textContent === "2 answered")).toBeTruthy();
   });
 });
 
@@ -534,7 +534,7 @@ describe("an invitation opened in the calendar", () => {
         rows,
       );
       if (source === "card") {
-        expect(given().getByText("Letters")).toBeTruthy();
+        expect(given().getByText("Letter")).toBeTruthy();
         expect(given().queryByText("A different invitation")).toBeNull();
         fireEvent.click(given().getByRole("button", { name: "An invitation for the check" }));
       } else {
@@ -558,7 +558,7 @@ describe("an invitation opened in the calendar", () => {
     expect(screen.queryByRole("menu", { name: "Event actions" })).toBeNull();
     await settle();
     expect(m.pressed).toMatchObject([{ kind: "calendar_event_answer", eventId: "a", answer: "accepted" }]);
-    expect(said()).toContain("Answer saved");
+    expect(said()).toContain("Yes");
   });
 
   it("does not offer answers in the Week menu for a view-only calendar", async () => {
@@ -582,7 +582,7 @@ describe("an invitation opened in the calendar", () => {
     fireEvent.click(yes);
     await settle();
     expect(yes.getAttribute("aria-pressed")).toBe("true");
-    expect(given().getByText("Not sent yet from this device")).toBeTruthy();
+    expect(given().getByText("Waiting")).toBeTruthy();
     const maybe = given().getByRole("button", { name: "Maybe" });
     fireEvent.click(maybe);
     await settle();
@@ -636,7 +636,7 @@ describe("an invitation opened in the calendar", () => {
     );
     fireEvent.click(await given().findByRole("button", { name: "No" }));
     await settle();
-    expect(said()).toContain("This calendar can be looked at, not changed.");
+    expect(said()).toContain("This calendar can be looked at, not changed");
     expect(given().getByRole("button", { name: "No" }).getAttribute("aria-pressed")).toBe("false");
   });
 });

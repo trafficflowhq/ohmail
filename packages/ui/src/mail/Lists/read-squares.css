@@ -209,11 +209,11 @@
 
   /* Along the head, under a finger: larger squares, further apart. */
   .oh-readsquares[data-axis="head"] {
-    --oh-readsquares-sq: 10px;
-    --oh-readsquares-pitch: 20px;
-    --oh-readsquares-count: 28px;
+    --oh-readsquares-sq: var(--sq-head-size);
+    --oh-readsquares-pitch: calc(var(--sq-head-size) + var(--sq-head-gap));
+    --oh-readsquares-count: var(--sq-head-more);
     --oh-readsquares-h: 32px;
-    --oh-readsquares-pad: 8px;
+    --oh-readsquares-pad: var(--sq-head-pad);
     --oh-readsquares-box: inset 0 0 0 1px var(--ctl-ring);
 
     background: var(--sheet);

@@ -5,7 +5,7 @@
  * no box clips its words or ends them in an ellipsis while they are wider than it, nothing runs past its box, and no
  * box of words runs past its parent's content box or the box that clips it; no
  * control is left without a name, and no catalogue key is shown. The page is served on a routed origin; nothing
- * leaves the machine. It runs with the comparison (`npx vitest run --config vitest.compare.config.ts
+ * leaves the machine. It runs with the comparison (`npx vitest run --config test/compare/vitest.compare.config.ts
  * packages/app/test/compare/screener-german.compare.ts`), as the screen's pictures do: what it finds is the screen's
  * and the kit's to mend, named in the Screener's handover until it reads green.
  */

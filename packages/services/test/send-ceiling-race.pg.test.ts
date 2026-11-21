@@ -21,7 +21,7 @@ import type { ServiceContext } from "../src/index.js";
  * two connections writing the same `outbound_sends` row — one finalizing a delivery, one
  * resolving a retry.
  *
- * ## Why REAL Postgres, and not PGlite (CLAUDE.md)
+ * ## Why REAL Postgres, and not PGlite (AGENTS.md)
  * PGlite is one connection: nothing there can hold a row lock against anything else, so the
  * interleaving under test cannot occur at all and a green run would mean nothing. Three
  * production bugs were invisible to it and every one was this class.

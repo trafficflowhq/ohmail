@@ -17,7 +17,7 @@ import { basename, dirname, join, resolve } from "node:path";
  */
 export const ENGINE_DOOR = ((): string => {
   for (let dir = process.cwd(); ; dir = dirname(dir)) {
-    if (existsSync(join(dir, "tsconfig.base.json"))) return join(dir, "apps/sidecar/src/engine.ts");
+    if (existsSync(join(dir, "tools/tsconfig.base.json"))) return join(dir, "apps/sidecar/src/engine.ts");
     if (dirname(dir) === dir) throw new Error(`no repository root above ${process.cwd()}`);
   }
 })();

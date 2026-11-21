@@ -6,7 +6,7 @@ import { Button } from "@ohmail/ui";
 import { buildId } from "../build-id";
 import { reportRenderError } from "../error-report";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
-import { signOut } from "../sign-out";
+import { signOutAndSettle } from "../sign-out";
 import { signOutTrouble } from "../sign-out-trouble";
 
 /**
@@ -35,7 +35,7 @@ export default function ProductError({ error }: { error: Error & { digest?: stri
   const doSignOut = useCallback(async () => {
     setSigningOut(true);
     setTrouble(null);
-    const result = await signOut(readOwner() ?? undefined);
+    const result = await signOutAndSettle(readOwner() ?? undefined);
     const said = signOutTrouble(result);
     if (said !== null && said.key !== "signOutServerRefused" && readOwner() !== null && !result.replaced) {
       setTrouble(ta(said.key));

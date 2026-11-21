@@ -22,7 +22,7 @@
  * ── IT RUNS UNDER THE SQLITE PROJECT, AND THE OTHER RUN SAYS SO ───────────────────────────
  *
  * The services are typed against the server twin and the device twin is substituted by
- * `vitest.sqlite.config.ts`; under the default project the first statement dies on
+ * `test/vitest.sqlite.config.ts`; under the default project the first statement dies on
  * `gen_random_uuid`. So the default run gets a PREMISE CASE rather than a silent skip.
  */
 import { createRequire } from "node:module";

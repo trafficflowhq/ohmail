@@ -5,12 +5,15 @@
  * The list beside it is a stand-in drawn from the kit's rows: the reference's "Reading" list is its own catalogue,
  * no place of the product.
  */
+import { ConsentContext, type ConsentRow } from "@ohmail/app-logic/consent";
 import type { EngineMessage } from "@ohmail/wire";
 import { createRoot } from "react-dom/client";
+import { ThemeProvider } from "@ohmail/ui/theme";
 import { GroupHeading, ListHead, Row, Rows } from "@ohmail/ui/mail";
 import type { PictureSeam } from "@ohmail/app-logic/reader";
 import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { markSessionDead } from "@ohmail/app-logic/session/session-truth";
+import { BrowserGeneralPane } from "../../src/settings/browser/GeneralSettings.js";
 import { Frame } from "../../src/frame/Frame.js";
 import { useRailModel } from "../../src/frame/commands.js";
 import type { PaneProps, PlaceEntry, RailModel } from "../../src/frame/contract.js";
@@ -36,6 +39,11 @@ import doorsEn from "../../messages/doors.en.json" with { type: "json" };
 import doorsDe from "../../messages/doors.de.json" with { type: "json" };
 import tagsEn from "../../messages/tags.en.json" with { type: "json" };
 import tagsDe from "../../messages/tags.de.json" with { type: "json" };
+
+import settingsEn from "../../messages/settings.en.json" with { type: "json" };
+import settingsDe from "../../messages/settings.de.json" with { type: "json" };
+import generalEn from "../../messages/settings-general.en.json" with { type: "json" };
+import generalDe from "../../messages/settings-general.de.json" with { type: "json" };
 
 /* The reference is drawn on Tuesday 10 November 2026: the page's clock starts there and runs on, so the read
    rule's dwell still passes. */
@@ -79,7 +87,7 @@ if (q.get("read") === "1" || squareStates) {
         at: ["2026-11-07T09:00", "2026-11-08T09:00", "2026-11-09T09:00"][i]!,
         text: i === 0 ? LONG : "Agreed, see you there.",
       }),
-      threadId: "t-plan",
+      threadId: q.has("solo") ? null : "t-plan",
       ...(squareStates && i === 1 ? { folder: "Sent" } : {}),
       unread: !squareStates || i !== 0,
     } as (typeof letters)[number]);
@@ -254,6 +262,8 @@ const words: Messages = fillOver(
     ...(doorsEn as Messages),
     ...(tagsEn as Messages),
     ...(readerEn as Messages),
+    ...(settingsEn as Messages),
+    ...(generalEn as Messages),
   },
   lang === "de"
     ? {
@@ -265,6 +275,8 @@ const words: Messages = fillOver(
         ...(doorsDe as Messages),
         ...(tagsDe as Messages),
         ...(readerDe as Messages),
+        ...(settingsDe as Messages),
+        ...(generalDe as Messages),
       }
     : {},
 );
@@ -382,6 +394,23 @@ const place: PlaceEntry = {
   panes: { kind: "columns", List, Reading: "reader" },
 };
 
+const preferences = q.get("preferences") === "1";
+function General() {
+  return (
+    <ThemeProvider defaultPreference="light" storageKey={null}>
+      <ConsentContext.Provider value={{} as ConsentRow}>
+        <BrowserGeneralPane
+          language={null}
+          textSize={{ read: () => 100, set: () => undefined, choices: [100] }}
+        />
+      </ConsentContext.Provider>
+    </ThemeProvider>
+  );
+}
+const settings: PlaceEntry = preferences
+  ? { id: "settings", body: "settings", rail: null, panes: { kind: "wide", Wide: General } }
+  : { ...place, id: "settings" };
+
 const look = {
   face: q.get("face") === "ohmarchy" ? "ohmarchy" : "paper",
   scheme: q.get("scheme") === "dark" ? "dark" : "light",
@@ -391,9 +420,9 @@ document.documentElement.setAttribute("data-theme", look.scheme);
 const { host } = fakeHost({
   engine: mail.engine,
   service: "managed",
-  scope: "mila",
+  scope: q.has("otherAccount") ? "other" : "mila",
   /* Trash and Settings stand so the gone letter and the emptied one offer their way there; never opened here. */
-  places: { ohbox: place, trash: { ...place, id: "trash" }, settings: { ...place, id: "settings" } },
+  places: { ohbox: place, trash: { ...place, id: "trash" }, settings },
   reader,
   /* The way back to a live session stands, so an ended one offers Sign in. */
   recover: () => undefined,
@@ -418,7 +447,7 @@ const { host } = fakeHost({
     },
   ],
   window: fakeWindow({ ...room, ...size, posture: "flat", reducedMotion: q.get("motion") !== "full" }),
-  address: fakeAddress(open ? `#/ohbox/m/${open}` : "#/ohbox"),
+  address: fakeAddress(preferences ? "#/settings" : open ? `#/ohbox/m/${open}` : "#/ohbox"),
   appearance: fakeAppearance(look),
 });
 

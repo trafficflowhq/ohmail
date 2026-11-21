@@ -27,7 +27,7 @@
  *
  * ── IT RUNS UNDER THE SQLITE PROJECT, on `phone-engine-boot.test.ts`'s own argument ────────
  *
- * The whole engine is composed over the DEVICE store, so it needs `vitest.sqlite.config.ts`'s
+ * The whole engine is composed over the DEVICE store, so it needs `test/vitest.sqlite.config.ts`'s
  * schema substitution. Under the default project it states the premise rather than skipping in
  * silence. No socket is opened: the adapter is a double, and the only "request" anywhere is an
  * in-process `Request` object.

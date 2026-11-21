@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { Dot } from "../Primitives/Dot.js";
 import { KeyHint } from "../Primitives/KeyHint.js";
@@ -9,6 +10,8 @@ export interface MenuItemProps {
   children: string;
   label?: string;
   icon?: IconName;
+  /** A person or a coloured mark alongside the choice. */
+  leading?: ReactNode;
   /** A note at the right: when, how many. */
   note?: string;
   /** The key that runs it, as it is printed. */
@@ -32,6 +35,7 @@ export function MenuItem({
   children,
   label,
   icon,
+  leading,
   note,
   keyHint,
   checked,
@@ -59,6 +63,7 @@ export function MenuItem({
       {icon ? <Icon name={icon} size={20} /> : null}
       {dot ? <Dot kind={dot} /> : null}
       {hue === undefined ? null : <TagDot hue={hue} />}
+      {leading}
       <span className="oh-menu-word">{children}</span>
       {note ? <small className="oh-menu-item-note">{note}</small> : null}
       {keyHint ? <KeyHint unsaid>{keyHint}</KeyHint> : null}

@@ -27,13 +27,15 @@ import { RefusalLine } from "@ohmail/ui/base";
 import { useCalendarDraftSeed, useFrame, useReport, type CalendarGuest } from "../frame/commands.js";
 import { useOwnAddresses } from "../frame/room.js";
 import { fragmentOf, routeOf } from "../frame/route.js";
-import { useText, useTimeZone } from "../text/index.js";
+import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { useDiscardReport, useDraftRestore } from "./draft-undo.js";
+import { eventWhen, guestNames } from "./event-words.js";
 import { DraftTimeNotice } from "./DraftTimeNotice.js";
 import { DraftFields, readDraftEntry, type NewEventDraft } from "./DraftFields.js";
 import { DraftInvitation, useDraftInvitation, useGuestConfirmation } from "./DraftInvitation.js";
 import {
   draftCalendars,
+  draftCalendarIsReadOnly,
   draftTimes,
   fieldsOfDraft,
   previewOfDraft,
@@ -87,13 +89,7 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
   });
   const target = chosen === null ? (proposed ?? undefined) : choices.find((c) => c.id === chosen);
   const tone = target ? (tones.get(target.id) ?? "neutral") : null;
-  const unavailable = chosen ?? preferred;
-  const readOnly = calendars.some(
-    (calendar) =>
-      calendar.shown &&
-      (calendar.id === unavailable || choices.length === 0) &&
-      viewOnlyOf(calendar, connections.get(calendar.connectionId)),
-  );
+  const readOnly = draftCalendarIsReadOnly(calendars, connections, chosen ?? preferred, !choices.length);
   const { create, request, committed, busy, failure, setFailure } = useCreateEvent(port);
   const input = useNewDraftPreview(port, draft, target, zone, tone, request, onPreview, setDraft);
   const selectCalendar = (id: string) => {
@@ -114,67 +110,74 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
   const provider = target && connections.get(target.connectionId)?.provider;
   const extraAlert = (formDraft.alarms?.length ?? 0) > 1;
   const tooManyAlerts = provider === "microsoft" && (draft.alarms?.length ?? 0) > 1;
-  const ready = !!target && !tooManyAlerts && !!fieldsOfDraft(draft, target, draft.zone ?? zone);
+  const callNotSupported = !!draft.callLink?.trim() && provider !== "caldav";
+  const ready =
+    !!target && !tooManyAlerts && !callNotSupported && !!fieldsOfDraft(draft, target, draft.zone ?? zone);
+  const card = useRef<HTMLDivElement>(null);
   const { add, confirmation } = useGuestConfirmation(
+    card,
     draft,
     invitation.selected,
     () => ready && !request.current,
     (confirmedDraft) => void create(confirmedDraft, target),
   );
-  const refusal = failure ?? (tooManyAlerts ? e("fault.notAllowed") : null);
+  const refusal = failure ?? (tooManyAlerts || callNotSupported ? e("fault.notAllowed") : null);
   useNewDraftDeparture(written, chosen ?? target?.id ?? null, discardReport, busy, request, committed);
   const close = () => {
     if (!request.current) commands.go({ place: route.place, sub: route.sub }, { history: "dismiss-dialog" });
   };
   return (
-    <QuickAdd
-      busy={busy}
-      label={t("create.title")}
-      tone={tone}
-      line={{
-        label: t("create.name"),
-        placeholder: t("create.name"),
-        value: written.title,
-        found: parsed?.marks,
-        onChange: (title) => change({ title, typed: true }),
-        ref: input,
-      }}
-      close={{
-        label: t("closeEvent"),
-        onPress: close,
-      }}
-      onAdd={add}
-    >
-      <DraftInvitation invitation={invitation} />
-      <DraftTimeNotice issue={draftTimes(draft, draft.zone ?? zone).issue} />
-      <DraftFields
-        draft={formDraft}
-        proposedGuest={proposedGuest}
-        edit={{
-          canInvite: true,
-          canAddAlert: target !== undefined,
-          canAddSecondAlert: extraAlert || (provider !== "microsoft" && !draft.allDay),
-        }}
-        today={today}
-        calendar={target}
+    <>
+      <QuickAdd
+        ref={card}
+        busy={busy}
+        label={t("create.title")}
         tone={tone}
-        choices={choices}
-        choose={selectCalendar}
-        timeZone={draft.zone}
-        change={change}
-        cancel={{ label: t("edit.cancel"), onPress: close }}
-        submit={{
-          label: t("create.add"),
-          keyHint: "↵",
-          disabled: busy || !ready,
-          onPress: add,
+        line={{
+          label: t("create.title"),
+          placeholder: t("create.example"),
+          value: written.title,
+          found: parsed?.marks,
+          onChange: (title) => change({ title, typed: true }),
+          ref: input,
         }}
-      />
+        close={{
+          label: t("closeEvent"),
+          onPress: close,
+        }}
+        onAdd={add}
+      >
+        <DraftInvitation invitation={invitation} />
+        <DraftTimeNotice issue={draftTimes(draft, draft.zone ?? zone).issue} />
+        <DraftFields
+          draft={formDraft}
+          proposedGuest={proposedGuest}
+          edit={{
+            canInvite: true,
+            canAddAlert: target !== undefined,
+            canAddSecondAlert: extraAlert || (provider !== "microsoft" && !draft.allDay),
+            showCall: provider === "caldav" || callNotSupported,
+            inviteesAbove: card,
+          }}
+          today={today}
+          calendar={target}
+          tone={tone}
+          choices={choices}
+          choose={selectCalendar}
+          timeZone={draft.zone}
+          change={change}
+          cancel={{ label: t("edit.cancel"), onPress: close }}
+          submit={{
+            label: t("create.add"),
+            keyHint: "↵",
+            disabled: busy || !ready,
+            onPress: add,
+          }}
+        />
+        {(refusal || readOnly) && <RefusalLine>{refusal ?? e("refusal.readOnly")}</RefusalLine>}
+      </QuickAdd>
       {confirmation}
-      {refusal || readOnly || !choices.length ? (
-        <RefusalLine>{refusal ?? (readOnly ? e("refusal.readOnly") : t("create.noCalendar"))}</RefusalLine>
-      ) : null}
-    </QuickAdd>
+    </>
   );
 }
 
@@ -252,6 +255,8 @@ function useNewDraftPreview(
 function useCreateEvent(port: CalendarPort) {
   const { host, commands, route } = useFrame();
   const e = useText("event");
+  const t = useText("calendar");
+  const locale = useLocale();
   const report = useReport();
   const zone = useTimeZone();
   const request = useRef<symbol | null>(null);
@@ -269,6 +274,10 @@ function useCreateEvent(port: CalendarPort) {
     }
     const event = fieldsOfDraft(draft, actual, draft.zone ?? zone);
     if (!event) return;
+    if (event.callLink && connection?.provider !== "caldav") {
+      setFailure(e("fault.notAllowed"));
+      return;
+    }
     if (connection?.provider === "microsoft" && (draft.alarms?.length ?? 0) > 1) {
       setFailure(e("fault.notAllowed"));
       return;
@@ -293,7 +302,14 @@ function useCreateEvent(port: CalendarPort) {
         setFailure(e(heard.say!));
         return;
       }
-      if (heard.say) report(e(heard.say));
+      if (heard.verdict?.kind === "taken") {
+        const guests = (draft.invitees ?? []).map(({ name, address }) => name || address);
+        report(
+          guests.length
+            ? e("taken.invitationAudience", { guests: guestNames(guests, locale, t) })
+            : (eventWhen(event, zone, readerZones(), locale) ?? e("taken.create")),
+        );
+      } else if (heard.say) report(e(heard.say));
       committed.current = true;
       const now = nowIn(Date.now(), zone, readerZones());
       const staysOnToday = route.sub === null && now !== null && isoOfDay(now.day) === draft.day;

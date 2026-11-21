@@ -22,7 +22,7 @@ describe("the window's edge", () => {
         />
       </Words>,
     );
-    expect(screen.getByRole("status").textContent).toContain("Shown from Sun 10 May");
+    expect(screen.getByRole("status").textContent).toContain("From Sun 10 May");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Load earlier" }));
     });
@@ -43,19 +43,19 @@ describe("the window's edge", () => {
     expect(screen.queryByRole("button", { name: "Load earlier" })).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
   });
-  it("where the host cannot read a span, says so with no press", () => {
+  it("offers no edge notice or press where the host cannot read a span", () => {
     const { acts } = actLog();
     render(
       <Words>
         <AgendaView
           input={rangeInput({ anchor: "2026-05-04" })}
           acts={acts}
-          edge={{ earlier: "2026-05-10", later: null, load: "none" }}
+          edge={{ provider: "microsoft", earlier: "2026-05-10", later: null, load: "none" }}
           {...FIRST_REACH}
         />
       </Words>,
     );
-    expect(screen.getByText("Earlier days stay with the calendar.")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("button", { name: "Load earlier" })).toBeNull();
   });
   it("says when the read failed, and keeps the press", async () => {
@@ -65,7 +65,7 @@ describe("the window's edge", () => {
         <AgendaView
           input={rangeInput({ anchor: "2026-05-04" })}
           acts={acts}
-          edge={{ earlier: "2026-05-10", later: null, load: async () => false }}
+          edge={{ provider: "microsoft", earlier: "2026-05-10", later: null, load: async () => false }}
           {...FIRST_REACH}
         />
       </Words>,
@@ -100,7 +100,7 @@ describe("the window's edge", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("the Month, the Year and the Agenda say where their days reach after what this device holds", () => {
+  it("omits the later-edge notice in Month, Year and Agenda", () => {
     const { acts } = actLog();
     const later = { earlier: null, later: "2026-11-20", load: "none" } as const;
     render(
@@ -110,20 +110,21 @@ describe("the window's edge", () => {
         <AgendaView input={rangeInput()} acts={acts} edge={later} {...FIRST_REACH} />
       </Words>,
     );
-    expect(screen.getAllByText("Later days stay with the calendar.")).toHaveLength(3);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load earlier" })).toBeNull();
   });
-  it("the Year offers Load earlier where its first day lies before the edge", () => {
+  it("the Year offers to load days before what the device holds", async () => {
     const { acts } = actLog();
+    const load = vi.fn(async () => true);
     render(
       <Words>
-        <YearView
-          input={rangeInput()}
-          acts={acts}
-          edge={{ earlier: "2026-05-10", later: null, load: async () => true }}
-          {...FIRST_REACH}
-        />
+        <YearView input={rangeInput()} acts={acts} edge={{ earlier: "2026-05-10", later: null, load }} />
       </Words>,
     );
-    expect(screen.getByRole("button", { name: "Load earlier" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("From Sun 10 May");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Load earlier" }));
+    });
+    expect(load).toHaveBeenCalledWith({ from: "2026-01-01", to: "2026-05-09" });
   });
 });

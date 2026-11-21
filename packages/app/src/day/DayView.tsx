@@ -18,7 +18,6 @@ import {
   hourLabels,
   otherHourLabels,
   isoOfDay,
-  nowIn,
   pillChip,
   useHoursScroller,
   useTimeGrid,
@@ -28,7 +27,6 @@ import {
 } from "@ohmail/app-logic/calendar";
 import { timedResizeProps } from "../calendar/view.js";
 import type { CalendarEventView, CalendarView, CalendarViewProps } from "../calendar/view.js";
-import { HeldNotice } from "../calendar/HeldNotice.js";
 import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
 import { useLocale, useText } from "../text/index.js";
 import "./day.css";
@@ -112,13 +110,6 @@ export function DayView(props: CalendarViewProps) {
 
   return (
     <section className="cd-day" aria-label={t("hours")}>
-      <HeldNotice
-        edge={props.edge}
-        first={isoOfDay(days[0]!)}
-        last={isoOfDay(days.at(-1)!)}
-        today={isoOfDay(nowIn(clock.nowMs, clock.zone, clock.zones)?.day ?? anchor)}
-        className="cd-note"
-      />
       {model.unplaced.length > 0 ? (
         <RefusalLine>{t("unplaced", { count: model.unplaced.length })}</RefusalLine>
       ) : null}

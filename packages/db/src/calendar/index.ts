@@ -27,9 +27,9 @@ export {
   type CalWriteOp, type CalWriteState,
 } from "./writes.js";
 export {
-  CALENDAR_WRITE_LIMITS, CALENDAR_WRITE_PAYLOAD_VERSION, CONTINUED_FIELDS, appliedPayloadOf, changedDaysOf, endedDayOf, isOccurrenceKey, isSeriesRow, isWriteKey,
+  CALENDAR_WRITE_LIMITS, CALENDAR_WRITE_PAYLOAD_VERSION, CONTINUED_FIELDS, appliedPayloadOf, changedDaysOf, endedDayOf, exceptionBaseOf, isOccurrenceKey, isSeriesRow, isWriteKey,
   isWriteUuid, parseCalendarAct, parseWritePayload, someoneElses, writeActRefusal, writePayloadOf, writeRowOf,
-  type CalendarWriteActRefusal, type CalendarWriteContinuation, type CalendarWritePayload, type CalendarWriteRow, type CalendarWriteRowFacts,
+  type CalendarWriteActRefusal, type CalendarWriteContinuation, type CalendarWriteException, type CalendarWritePayload, type CalendarWriteRow, type CalendarWriteRowFacts,
   type ContinuedField,
 } from "./write-act.js";
 export { ownOrganizerAddresses } from "./own-organizers.js";

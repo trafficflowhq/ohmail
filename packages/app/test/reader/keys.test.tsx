@@ -49,6 +49,22 @@ describe("the column's keys", () => {
     expect(mail.mutations).toEqual([]);
   });
 
+  it("r replies to the latest letter when a link addresses an earlier one", () => {
+    const answer = vi.fn();
+    const letters = [
+      letter("first", { threadId: "thread", date: "2026-11-01T10:00:00Z" }),
+      letter("last", { threadId: "thread", date: "2026-11-02T10:00:00Z" }),
+    ];
+    const { mail } = mountReader({
+      letters,
+      open: "first",
+      parts: { reply: { Sheet: () => null, useOpen: () => answer, useVerbs: () => null } },
+    });
+    fireEvent.keyDown(document.body, { key: "r" });
+    expect(answer.mock.calls).toEqual([["last", "reply"]]);
+    expect(mail.mutations).toEqual([]);
+  });
+
   it("neither fires from a field, from editable text, or with a modifier", () => {
     const { mail, address } = mountReader({
       letters: [letter("m1")],

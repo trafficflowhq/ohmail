@@ -9,7 +9,7 @@ import { DrizzleRepo } from "../src/adapters/drizzle-repo.js";
 /**
  * THE OWN-MAIL RELEASE AND THE OWN-ADDRESS READ, ON BOTH STORES. The sidecar composes the worker's
  * visit over the device store too, so the release statement and the ingest's page read run there.
- * Registered in `vitest.sqlite.config.ts`. Addresses are `.invalid`.
+ * Registered in `test/vitest.sqlite.config.ts`. Addresses are `.invalid`.
  */
 const GATE = "ohmail/Screener";
 

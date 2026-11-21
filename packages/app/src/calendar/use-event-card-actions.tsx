@@ -1,7 +1,7 @@
-import { useEffect, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import { clockTime, dayShort, type CalendarRecord, type ZoneSource } from "@ohmail/app-logic/calendar";
 import { Button, Icon, Menu, MenuItem, MenuRule, type Point } from "@ohmail/ui/base";
-import { ActionPanel, type PanelVerb } from "@ohmail/ui/mail";
+import type { PanelVerb } from "@ohmail/ui/mail";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import type { CalendarEventFace } from "./faces.js";
 import { ANSWERS } from "../invitations/AnswerChoices.js";
@@ -16,6 +16,8 @@ import { editableEvent, moveDestinations, removableEvent } from "./editable-even
 import type { useNewEvent } from "./use-new-event.js";
 import { useDuplicateDraft } from "./draft-undo.js";
 import { draftForDuplicate } from "./edit-draft.js";
+import { ReadActionPanel } from "./ReadActionPanel.js";
+import { cardKeys } from "./event-card-keys.js";
 import { useEventCall } from "./event-call.js";
 import { useEventLetters } from "./use-event-letters.js";
 import type { CalendarPort } from "@ohmail/app-logic/calendar";
@@ -24,6 +26,9 @@ export function useEventCardActions({
   event,
   actions,
   edit,
+  duplicate,
+  hide,
+  retry,
   join,
   removable,
   destinations,
@@ -31,12 +36,17 @@ export function useEventCardActions({
   event: CalendarEventFace;
   actions: EventActions;
   edit: { onPress: () => void } | null;
+  duplicate?: () => void;
+  hide?: PanelVerb;
+  retry?: PanelVerb;
   join?: { href: string; label: string };
   removable: boolean;
   destinations: readonly CalendarRecord[];
 }) {
   const t = useText("calendar");
+  const { plan } = useFrame();
   const [moveMenu, setMoveMenu] = useState<HTMLElement | null>(null);
+  const [more, setMore] = useState<HTMLElement | null>(null);
   const canTransfer = destinations.length > 0;
   useEffect(() => {
     if (!canTransfer) setMoveMenu(null);
@@ -45,40 +55,17 @@ export function useEventCardActions({
   const deleteEvent = (anchor: HTMLElement) => {
     actions.start(event, { kind: "delete" }, anchor);
   };
-  const onKeyDown = (key: KeyboardEvent<HTMLDivElement>) => {
-    const target = key.target as HTMLElement;
-    if (
-      blocked ||
-      moveMenu ||
-      (key.ctrlKey && !key.altKey) ||
-      key.metaKey ||
-      key.repeat ||
-      target.closest("input, textarea, select, [contenteditable]")
-    )
-      return;
-    const pressed = key.key;
-    if (key.altKey) {
-      if (!key.shiftKey || !edit || event.start.kind !== "date") return;
-      const days = pressed === "ArrowLeft" ? -1 : pressed === "ArrowRight" ? 1 : 0;
-      if (!days) return;
-      actions.start(event, { kind: "resize", edge: key.ctrlKey ? "start" : "end", days }, target);
-    } else if (!key.shiftKey && pressed === "e" && edit) {
-      edit.onPress();
-    } else if (!key.shiftKey && pressed === "m" && canTransfer) {
-      setMoveMenu(target);
-    } else if (!key.shiftKey && removable && ["d", "Delete", "Backspace"].includes(pressed)) {
-      deleteEvent(target);
-    } else if (key.shiftKey && edit) {
-      const days = pressed === "ArrowLeft" ? -1 : pressed === "ArrowRight" ? 1 : 0;
-      const delta = pressed === "ArrowUp" ? -15 : pressed === "ArrowDown" ? 15 : 0;
-      const minutes = delta ? (actions.moveTime(event, delta, false)?.minutes ?? 0) : 0;
-      if (!days && !minutes) return;
-      actions.start(event, { kind: "time", days, minutes }, target);
-    } else return;
-    key.preventDefault();
-    key.stopPropagation();
-  };
-
+  const onKeyDown = cardKeys({
+    event,
+    actions,
+    edit,
+    duplicate,
+    canTransfer,
+    removable,
+    blocked: blocked || !!moveMenu || !!more,
+    setMoveMenu,
+    deleteEvent,
+  });
   const items: PanelVerb[] = [];
   if (canTransfer)
     items.push({
@@ -86,7 +73,7 @@ export function useEventCardActions({
       label: t("actions.moveTo"),
       icon: "calendar",
       shortcut: "m",
-      keyHint: "M",
+      keyHint: "m",
       rank: 0,
       disabled: blocked,
       onPress: setMoveMenu,
@@ -97,19 +84,26 @@ export function useEventCardActions({
       label: t("actions.delete"),
       icon: "trash",
       shortcut: "d Delete Backspace",
-      keyHint: "D",
+      keyHint: "d",
       rank: 0,
       disabled: blocked,
       onPress: deleteEvent,
     });
-  const panel = items.length ? <ActionPanel label={t("actions.panel")} items={items} /> : null;
-
+  const panel =
+    items.length || duplicate || retry || hide ? (
+      <ReadActionPanel
+        {...{ items, duplicate, blocked, more, setMore, retry, hide }}
+        edit={retry && plan.device !== "phone" ? edit?.onPress : undefined}
+        duplicatePrimary={event.viewOnly && !join && !retry}
+      />
+    ) : null;
   const toolbar = join ? (
     <>
-      <Button href={join.href} outside icon="video">
+      {retry && panel}
+      <Button href={join.href} outside icon="video" kind={retry ? "quiet" : undefined}>
         {join.label}
       </Button>
-      {panel}
+      {!retry && panel}
     </>
   ) : (
     panel
@@ -130,7 +124,14 @@ export function useEventCardActions({
         ))}
       </Menu>
     ) : null;
-  return { blocked, onKeyDown, panel, toolbar, menu, items };
+  return {
+    blocked,
+    onKeyDown,
+    panel,
+    toolbar,
+    menu,
+    items,
+  };
 }
 
 export function WeekMenus({
@@ -272,7 +273,7 @@ export function EventContextMenu(props: EventContextMenuProps) {
   const known = useKnownOwnAddresses();
   const zone = useTimeZone();
   const duplicate = useDuplicateDraft(port);
-  const current = event.viewOnly ? null : editableEvent(host, port, event.recordId, known);
+  const current = event.viewOnly ? null : editableEvent(host, port, event, known);
   const removable = removableEvent(host, port, event, known, zones) !== null;
   const destinations = current ? moveDestinations(host, current) : [];
   const [moving, setMoving] = useState(false);
@@ -341,7 +342,10 @@ export function EventContextMenu(props: EventContextMenuProps) {
               icon="copy"
               disabled={blocked}
               onPress={onPress(() =>
-                duplicate(draftForDuplicate(current.record, event, zone), current.calendar.id),
+                duplicate(
+                  draftForDuplicate(current.exception ?? current.record, event, zone),
+                  current.calendar.id,
+                ),
               )}
             >
               {t("edit.duplicate")}

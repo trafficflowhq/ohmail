@@ -7,7 +7,7 @@
  */
 import { useRef, useState } from "react";
 import { useKeyBindings } from "@ohmail/app-logic/keys";
-import { Notice, RefusalLine } from "@ohmail/ui/base";
+import { RefusalLine } from "@ohmail/ui/base";
 import {
   addDays,
   clockOf,
@@ -46,6 +46,7 @@ import { OpenEvent } from "./OpenEvent.js";
 import { EventActionQuestion } from "./EventActionQuestion.js";
 import { useEventActions } from "./use-event-actions.js";
 import { useEventDrag } from "./use-event-drag.js";
+import { calendarDragHandler, canvasClickHandler } from "./canvas-gestures.js";
 import { useTodayPulse, type TodayVisit } from "./use-today-pulse.js";
 import { WeekMenus } from "./use-event-card-actions.js";
 import "./placement.css";
@@ -195,7 +196,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
     anchor === today && todayVisit?.place === place ? todayVisit : null,
     monthRun?.scrollRef,
   );
-  const { actions, suppressClick, setPreview, rangePreview, go, closePanel, edge, input, acts, timeProps } =
+  const { actions, canvasClick, setPreview, rangePreview, go, closePanel, edge, input, acts, timeProps } =
     useCalendarCanvas(props, commands);
   const opened =
     route.open === null || route.words.panel === "new"
@@ -221,9 +222,8 @@ function CalendarSurface(props: CalendarSurfaceProps) {
         monthRun={monthRun}
         onToday={onToday}
       />
-      {port.hasOwedWrites?.() && <Notice place="bar" title={t("waiting.device")} />}
       <div className="cal-body-views">
-        <div ref={view} className="cal-body-view" onClickCapture={suppressClick}>
+        <div ref={view} className="cal-body-view" onClickCapture={canvasClick}>
           <WeekMenus
             {...{ actions, reply, zones, editNext }}
             events={found.events}
@@ -255,7 +255,12 @@ function CalendarSurface(props: CalendarSurfaceProps) {
             />
           )}
           {opened && (
-            <OpenEvent key={opened.id} event={opened} {...{ zones, today, actions, editNext, reply }} />
+            <OpenEvent
+              key={opened.id}
+              event={opened}
+              events={found.events}
+              {...{ zones, today, actions, editNext, reply }}
+            />
           )}
           <EventActionQuestion actions={actions} />
         </div>
@@ -266,7 +271,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
           keysHere={keysHere}
           input={beside ? { ...input, events: beside.events } : input}
           acts={acts}
-          edge={beside ? { ...beside.edge, load: port.load } : edge}
+          edge={beside ? { ...beside.edge, load: port.load, provider: edge.provider } : edge}
           onClose={closePanel}
           onAgendaRow={openAgendaRow}
         />
@@ -298,12 +303,22 @@ function useCalendarCanvas(
     fragmentOf(route),
   );
   const { drag, preview: dragged, suppressClick, rangePreview } = useEventDrag(actions, fragmentOf(route));
+  const canvasClick = canvasClickHandler(route.open !== null, () => commands.event(null), suppressClick);
   const [preview, setPreview] = useState<DraftPreview | null>(null);
   const { place, anchor, anchorDay, today, now, nowMs } = where;
   const go = (to: Partial<Route> & { place: CalendarPlaceId }) =>
     commands.go({ words: route.words.panel ? { panel: route.words.panel } : {}, ...to });
   const closePanel = () => commands.go({ place, sub: route.sub, open: route.open, words: {} });
-  const edge: HeldEdge = { ...found.edge, load: port.load };
+  const shown = sources.calendars.filter((calendar) => calendar.shown);
+  const edge: HeldEdge = {
+    ...found.edge,
+    load: port.load,
+    provider:
+      shown.length > 0 &&
+      shown.every((calendar) => sources.connections.get(calendar.connectionId)?.provider === "microsoft")
+        ? "microsoft"
+        : undefined,
+  };
   const events = route.words.panel === "new" && preview ? [...found.events, preview.face] : found.events;
   const open: FrameCommands["event"] = (ref) => {
     if (ref?.event !== DRAFT_EVENT) commands.event(ref);
@@ -326,19 +341,7 @@ function useCalendarCanvas(
     view: (view, day) => go({ place: view, sub: day }),
     reveal: (e) => go({ place: "week", sub: e.ref.day, open: e.id }),
   };
-  const onDrag: CalendarViewProps["onDrag"] =
-    !actions.busy && !actions.question
-      ? (id, press, segment) => {
-          if (route.words.panel === "new") {
-            if (id === DRAFT_EVENT && preview?.face.start.kind === "date") {
-              drag(preview.face, press, preview.moveRange);
-            }
-            return;
-          }
-          const face = found.events.find((event) => event.id === id);
-          if (face && (route.open === null || route.open === face.id)) drag(face, press, undefined, segment);
-        }
-      : undefined;
+  const onDrag = calendarDragHandler(actions, drag, route.words.panel === "new", preview, found.events);
   const target =
     slot &&
     newEventsCalendarOf(
@@ -388,5 +391,5 @@ function useCalendarCanvas(
     ...(dragPreview ? { dragPreview } : {}),
     onDay: (day: PlainDate) => go({ place: "day", sub: isoOfDay(day) }),
   };
-  return { actions, suppressClick, setPreview, rangePreview, go, closePanel, edge, input, acts, timeProps };
+  return { actions, canvasClick, setPreview, rangePreview, go, closePanel, edge, input, acts, timeProps };
 }

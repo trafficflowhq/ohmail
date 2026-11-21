@@ -210,13 +210,12 @@ describe("the week", () => {
     expect(html.match(/<button[^>]*>/g)!.every((b) => b.includes('type="button"'))).toBe(true);
   });
 
-  it("says where its days reach before and after what this device holds, never drawing them as empty alone", () => {
+  it("leaves held-window notices to Month and Agenda", () => {
     const m = mountView(WeekView, {
       anchor: date(2026, 11, 18),
       edge: { earlier: "2026-11-18", later: "2026-11-20", load: "none" },
     });
-    expect(screen.getByText("Earlier days stay with the calendar.")).toBeTruthy();
-    expect(screen.getByText("Later days stay with the calendar.")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("button", { name: "Load earlier" })).toBeNull();
     m.rerender({ edge: { earlier: "2026-11-16", later: "2026-11-22", load: "none" } });
     expect(screen.queryByRole("status")).toBeNull();

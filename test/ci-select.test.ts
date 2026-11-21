@@ -172,7 +172,7 @@ describe("the scope: the paths that make a pull request whole", () => {
     const triggers: Array<[string, RegExp, string?]> = [
       ["patches/some-dep@1.0.0.patch", /a dependency patch/],
       ["scripts/apply-patches.mjs", /a dependency patch/],
-      ["tsconfig.base.json", /a tsconfig/],
+      ["tools/tsconfig.base.json", /a tsconfig/],
       ["packages/core/tsconfig.json", /a tsconfig/],
       ["vitest.config.ts", /the vitest config/],
       ["test/setup/services.global.ts", /the test harness/],
@@ -215,7 +215,7 @@ describe("the scope: the paths that make a pull request whole", () => {
   });
 
   it("makes only the SQLite run whole for its config, and selects every Dovecot file for test/dovecot", () => {
-    const sq = whole("vitest.sqlite.config.ts");
+    const sq = whole("test/vitest.sqlite.config.ts");
     expect(sq).toMatchObject({ scope: "selected", sqliteWhole: true, dovecotAll: false });
     expect(whole("test/dovecot/dovecot.conf")).toMatchObject({ scope: "selected", sqliteWhole: false, dovecotAll: true });
   });
@@ -675,7 +675,7 @@ describe("the direct set: a pull request into next", () => {
   /** p's test imports p's module, q's test imports it across the workspaces, r's test and a root census name its path. */
   const planted = () => plantTree({
     "vitest.config.ts": 'export default { test: { include: ["packages/*/test/**/*.test.ts", "test/**/*.test.ts"] } };\n',
-    "vitest.sqlite.config.ts": `export default { test: { include: ${JSON.stringify([own, across, "packages/s/test/far0.test.ts"])} } };\n`,
+    "test/vitest.sqlite.config.ts": `export default { test: { include: ${JSON.stringify([own, across, "packages/s/test/far0.test.ts"])} } };\n`,
     "packages/p/src/x.ts": "export const x = 1;\n",
     [own]: 'import { x } from "../src/x";\nexport const a = x;\n',
     [across]: 'import { x } from "../../p/src/x";\nexport const b = x;\n',
@@ -748,7 +748,7 @@ describe("the harness: a pull request into next that only adds a package's lines
   });
   const link = (name: string) => ({ [`node_modules/@m/${name}`]: { resolved: `packages/${name}`, link: true } });
   const dep = { "node_modules/dep": { version: "1.0.0", resolved: "https://registry.example.invalid/dep-1.0.0.tgz", dev: true } };
-  const qTsconfig = (note: string, paths: string, refs: string) => `{\n  /* ${note} */\n  "extends": "../../tsconfig.base.json",\n  "compilerOptions": { "outDir": "dist", "paths": { ${paths} } },\n  "include": ["src"],\n  "references": [${refs}]\n}\n`;
+  const qTsconfig = (note: string, paths: string, refs: string) => `{\n  /* ${note} */\n  "extends": "../../tools/tsconfig.base.json",\n  "compilerOptions": { "outDir": "dist", "paths": { ${paths} } },\n  "include": ["src"],\n  "references": [${refs}]\n}\n`;
   /** p, q (which depends on p) and s; the pull request adds n, and q's and s's lines for it. */
   const world = (): World => ({
     dirs: ["packages/p", "packages/q", "packages/s"],
@@ -761,7 +761,7 @@ describe("the harness: a pull request into next that only adds a package's lines
       [QP]: j({ name: "@m/q", version: "0.0.0", exports: { ".": "./src/index.ts" }, dependencies: { "@m/p": "*" } }),
       [QT]: qTsconfig("q reads p", '"@m/p": ["../p/src/index.ts"]', '{ "path": "../p" }'),
       [SP]: j({ name: "@m/s", version: "0.0.0" }),
-      [B]: j({ "//": "the alias table, mirrored", extends: "../tsconfig.base.json", compilerOptions: { noEmit: true, paths: { "@m/p": ["../packages/p/src/index.ts"] } } }),
+      [B]: j({ "//": "the alias table, mirrored", extends: "../tools/tsconfig.base.json", compilerOptions: { noEmit: true, paths: { "@m/p": ["../packages/p/src/index.ts"] } } }),
       [T]: j({ files: [], references: [{ path: "./packages/p" }, { path: "./packages/q" }] }),
       [V]: config(held),
     },
@@ -775,11 +775,11 @@ describe("the harness: a pull request into next that only adds a package's lines
       [NP]: j({ name: "@m/n", version: "0.0.0", exports: { ".": "./src/index.ts" } }),
       "packages/n/src/index.ts": "export const n = 1;\n",
       "packages/n/test/n.test.ts": 'import { n } from "@m/n";\nexport const got = n;\n',
-      [NT]: j({ extends: "../../tsconfig.base.json", include: ["src"] }),
+      [NT]: j({ extends: "../../tools/tsconfig.base.json", include: ["src"] }),
       [QP]: j({ name: "@m/q", version: "0.0.0", exports: { ".": "./src/index.ts", "./extra": "./src/extra.ts" }, dependencies: { "@m/n": "*", "@m/p": "*" } }),
       [QT]: qTsconfig("q reads p and n", '"@m/n": ["../n/src/index.ts"], "@m/p": ["../p/src/index.ts"]', '{ "path": "../n" }, { "path": "../p" }'),
       [SP]: j({ name: "@m/s", version: "0.0.0", exports: { "./door": "./src/door.ts" } }),
-      [B]: j({ "//": "the alias table, mirrored", extends: "../tsconfig.base.json", compilerOptions: { noEmit: true, paths: { "@m/p": ["../packages/p/src/index.ts"], "@m/n": ["../packages/n/src/index.ts"] } } }),
+      [B]: j({ "//": "the alias table, mirrored", extends: "../tools/tsconfig.base.json", compilerOptions: { noEmit: true, paths: { "@m/p": ["../packages/p/src/index.ts"], "@m/n": ["../packages/n/src/index.ts"] } } }),
       [T]: j({ files: [], references: [{ path: "./packages/p" }, { path: "./packages/n" }, { path: "./packages/q" }] }),
       [V]: config([...added, ...held]),
     },
@@ -827,7 +827,7 @@ describe("the harness: a pull request into next that only adds a package's lines
     expect(admittedTsconfig(QT, w.base[QT]!, w.head[QT]!, { newAreas: areas })).toBe("a reference to ../n; paths for @m/n");
     expect(admittedTsconfig(NT, null, w.head[NT]!, { newAreas: areas })).toBe("new with packages/n");
     expect(admittedTsconfig(QT, w.base[QT]!, w.base[QT]!.replace("q reads p", "q reads p, still"), { newAreas: areas })).toBe("comments or layout only");
-    expect(admittedTsconfig("tsconfig.base.json", w.base[T]!, w.head[T]!, { newAreas: areas })).toBeNull();
+    expect(admittedTsconfig("tools/tsconfig.base.json", w.base[T]!, w.head[T]!, { newAreas: areas })).toBeNull();
     expect(admittedTsconfig("packages/q/tsconfig.x.json", null, w.head[NT]!, { newAreas: areas })).toBeNull();
 
     const sets = { newAreas: areas, newNames: names, links: new Set(["@m/n", "@m/p", "@m/q", "@m/s"]), depended: new Set(["@m/p"]) };
@@ -935,10 +935,10 @@ describe("the harness: a pull request into next that only adds a package's lines
   const runnable = (w: World, test: string[] = []) => {
     const far = Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`packages/t/test/far${i}.test.ts`, "export {};\n"]));
     const shared: Files = {
-      "tsconfig.base.json": j({ compilerOptions: { target: "ES2022", module: "NodeNext" } }),
-      "vitest.sqlite.config.ts": 'export default { test: { include: ["packages/n/test/n.test.ts", "packages/p/test/p.test.ts"] } };\n',
+      "tools/tsconfig.base.json": j({ compilerOptions: { target: "ES2022", module: "NodeNext" } }),
+      "test/vitest.sqlite.config.ts": 'export default { test: { include: ["packages/n/test/n.test.ts", "packages/p/test/p.test.ts"] } };\n',
       "packages/p/src/index.ts": "export const p = 1;\n",
-      "packages/p/tsconfig.json": j({ extends: "../../tsconfig.base.json", include: ["src"] }),
+      "packages/p/tsconfig.json": j({ extends: "../../tools/tsconfig.base.json", include: ["src"] }),
       "packages/p/test/p.test.ts": 'import { p } from "@m/p";\nexport const got = p;\n',
       "packages/t/test/pkg.test.ts": 'import pkg from "../../../package.json";\nexport const v = pkg.version;\n',
       "test/census.test.ts": 'import { readFileSync } from "node:fs";\nexport const text = readFileSync(new URL("../package.json", import.meta.url), "utf8");\n',
@@ -1019,7 +1019,7 @@ describe("the last pull requests, as each base plans them", () => {
     return files.filter((f, i) => (areas.has(areaOf(f)) && i % 3 === 0) || i % 13 === 0);
   };
   const graph = async (_root: string, related: string[], { config }: GraphOptions) =>
-    (config === "vitest.sqlite.config.ts" ? { related: hit(related).filter((f) => sqliteAll.includes(f)), all: sqliteAll } : { related: hit(related), all: files });
+    (config === "test/vitest.sqlite.config.ts" ? { related: hit(related).filter((f) => sqliteAll.includes(f)), all: sqliteAll } : { related: hit(related), all: files });
   const handed = (plan: Plan) => [...plan.shards.flatMap((s) => s.files.split("\n")), ...plan.alone].sort();
   const sqliteHanded = (plan: Plan) => (plan.sqlite ?? []).flatMap((s) => s.files.split("\n")).sort();
   const plans = new Map<string, { changes: { s: string; p: string }[]; main: Plan; next: Plan }>();
@@ -1183,7 +1183,7 @@ describe("main's plan for each of them, on the merge commit itself", () => {
   const graph = async (root: string, related: string[], { config }: GraphOptions) => {
     const files = testFiles(root);
     const areas = new Set(related.map(areaOf).filter(Boolean));
-    return config === "vitest.sqlite.config.ts" ? { related: [], all: [] } : { related: files.filter((f, i) => areas.has(areaOf(f)) || i % 5 === 0), all: files };
+    return config === "test/vitest.sqlite.config.ts" ? { related: [], all: [] } : { related: files.filter((f, i) => areas.has(areaOf(f)) || i % 5 === 0), all: files };
   };
   const planted = new Map<string, ReturnType<typeof plant>>();
   beforeAll(() => { for (const name of history) planted.set(name, plant(name)); }, 300_000);
@@ -1252,7 +1252,7 @@ describe("the packing", () => {
   });
   const costs = { measuredAt: "planted", suite: { "packages/q/test/big.test.ts": 900_000, "packages/q/test/small.test.ts": 10_000, "packages/q/test/other.test.ts": 40_000, "test/root.test.ts": 1000, "packages/q/test/condstore.imap.test.ts": 20_000 }, sqlite: {} };
   const graph = (sqlite: string[], main: string[] = []) => async (_root: string, _related: string[], { config }: { config?: string | false }) =>
-    config === "vitest.sqlite.config.ts"
+    config === "test/vitest.sqlite.config.ts"
       ? { related: sqlite, all: ["packages/q/test/small.test.ts", "packages/q/test/other.test.ts", "packages/q/test/sqonly.test.ts"] }
       : { related: main, all: [] };
 
@@ -1275,7 +1275,7 @@ describe("the packing", () => {
     expect(plan.shards).toEqual([{ shard: 0, files: "packages/q/test/condstore.imap.test.ts\npackages/q/test/other.test.ts\npackages/q/test/small.test.ts\ntest/root.test.ts", dovecot: "yes" }]);
     expect(plan.sqlite).toEqual([{ shard: 0, files: "packages/q/test/other.test.ts\npackages/q/test/small.test.ts\npackages/q/test/sqonly.test.ts" }]);
     expect(plan.summary!.rules).toEqual({ changed: 3, graph: 1, root: 1, named: 0, tree: 0, area: 0, always: 0, sweep: 0, dovecot: 0 });
-    const whole = await select({ root: dir, ctx: pr(), graph: graph([]), costs, changes: [M("vitest.sqlite.config.ts")] }) as Plan;
+    const whole = await select({ root: dir, ctx: pr(), graph: graph([]), costs, changes: [M("test/vitest.sqlite.config.ts")] }) as Plan;
     expect(whole.sqlite).toBeNull();
   });
 });
@@ -1373,7 +1373,7 @@ describe("the cap: a pull request into next", () => {
   const floor = ["packages/b/test/bundle.test.ts", "packages/g/test/git.test.ts", "packages/w/test/census.test.ts", "test/root-a.test.ts", "test/root-b.test.ts"];
   /** vitest's two graphs, planted: what the main config relates, and the second store's project. */
   const graphOf = (main: string[], sqlite: { related: string[]; all: string[] } = { related: [], all: [] }) =>
-    async (_root: string, _related: string[], { config }: GraphOptions) => (config === "vitest.sqlite.config.ts" ? sqlite : { related: main, all: [] });
+    async (_root: string, _related: string[], { config }: GraphOptions) => (config === "test/vitest.sqlite.config.ts" ? sqlite : { related: main, all: [] });
   const unmeasured = { measuredAt: "planted", suite: {}, sqlite: {} };
   const handed = (p: Plan) => [...p.shards.flatMap((s) => s.files.split("\n")), ...p.alone].sort();
   const migration = { s: "A", p: "packages/db/drizzle/0999_planted.sql" };
@@ -1403,7 +1403,7 @@ describe("the cap: a pull request into next", () => {
     expect(isJudge(ROOT, "vitest.config.ts", false)).toBe(true);
     // An admitted alias line for a new package is deferred as today, under the collection guard.
     expect(isJudge(ROOT, "vitest.config.ts", true)).toBe(false);
-    for (const p of [".github/workflows/build.yml", ".github/scripts/pr-build-scope.sh", "test/support/ci-shards.json", "test/support/public-root.mjs", "vitest.sqlite.config.ts", "test/setup-notes.md", "packages/db/drizzle/meta/_journal.json"]) {
+    for (const p of [".github/workflows/build.yml", ".github/scripts/pr-build-scope.sh", "test/support/ci-shards.json", "test/support/public-root.mjs", "test/vitest.sqlite.config.ts", "test/setup-notes.md", "packages/db/drizzle/meta/_journal.json"]) {
       expect(isJudge(ROOT, p, false), p).toBe(false);
     }
     // The shard walker and the service reader are the judge's by their path alone: into next they are whole in a tree
@@ -1420,7 +1420,7 @@ describe("the cap: a pull request into next", () => {
     const kinds: Array<[string, string]> = [
       ["packages/db/drizzle/0999_planted.sql", "a migration"], ["packages/db-mail/drizzle-sqlite/0999_planted.sql", "a migration"],
       ["packages/db/drizzle/meta/_journal.json", "a migration"], ["patches/some-dep@1.0.0.patch", "a dependency patch"], ["scripts/apply-patches.mjs", "a dependency patch"],
-      ["tsconfig.base.json", "a tsconfig"], ["packages/core/tsconfig.json", "a tsconfig"], ["test/support/ci-shards.json", "the shard map"],
+      ["tools/tsconfig.base.json", "a tsconfig"], ["packages/core/tsconfig.json", "a tsconfig"], ["test/support/ci-shards.json", "the shard map"],
       ["test/support/ci-shards-sqlite.json", "the shard map"], ["scripts/lane-db.sh", "the lane database"], ["scripts/lane-db.mjs", "the lane database"],
     ];
     for (const [p, what] of kinds) {
@@ -1601,7 +1601,7 @@ describe("the cap: a pull request into next", () => {
     expect(plan.mode).toBe("capped");
     expect(plan.why).toBe(`CAPPED into next: the second store's set costs 800 s, over the cap of ${SQLITE_CAP_S} s`);
     // Its own config changed, the second store runs whole, as today.
-    const whole = await select({ root: dir, ctx: intoNext, changes: [...changes, M("vitest.sqlite.config.ts")], graph, costs }) as Plan;
+    const whole = await select({ root: dir, ctx: intoNext, changes: [...changes, M("test/vitest.sqlite.config.ts")], graph, costs }) as Plan;
     expect(whole.sqlite).toBeNull();
     expect(whole.sqliteLeft).toBeUndefined();
     expect(whole.mode).toBe("direct");
@@ -1610,7 +1610,7 @@ describe("the cap: a pull request into next", () => {
   it("says CAPPED on the plan's first log line with the pull request, its head, its base and the reason, FAST when nothing was cut, and never both", () => {
     const base = {
       "vitest.config.ts": 'export default { test: { include: ["packages/*/test/**/*.test.ts", "test/**/*.test.ts"] } };\n',
-      "vitest.sqlite.config.ts": 'export default { test: { include: ["packages/p/test/own.test.ts"] } };\n',
+      "test/vitest.sqlite.config.ts": 'export default { test: { include: ["packages/p/test/own.test.ts"] } };\n',
       "packages/p/src/x.ts": "export const x = 1;\n", "packages/q/src/gone.ts": "export const gone = 1;\n",
       "packages/p/test/own.test.ts": 'import { x } from "../src/x";\nexport const a = x;\n', "test/root.test.ts": "export {};\n",
     };
@@ -1877,7 +1877,7 @@ describe("what only adds: a line for a new entry, a root file, a shard map", () 
     // The plan names it in its harness group.
     const dir = plantTree(w.head);
     const all = testFiles(dir);
-    const graph = async (_root: string, _related: string[], o: GraphOptions) => (o.config === "vitest.sqlite.config.ts" ? { related: [], all: [] } : { related: ["packages/p/test/door.test.ts"], all });
+    const graph = async (_root: string, _related: string[], o: GraphOptions) => (o.config === "test/vitest.sqlite.config.ts" ? { related: [], all: [] } : { related: ["packages/p/test/door.test.ts"], all });
     const plan = await select({ root: dir, ctx: intoNext, changes: w.changes, base: tree(w.base), graph, costs: unmeasured }) as Plan;
     expect(plan.scope, plan.why).toBe("selected");
     expect(plan.harness).toEqual([{ p: V, what: "the vitest config", shape: "an alias for @m/p/door" }]);
@@ -1975,7 +1975,7 @@ describe("what only adds: a line for a new entry, a root file, a shard map", () 
     // cap leaves one by name; the second store holds p's own test and q's.
     const base: Record<string, string> = {
       "package-lock.json": lock, [V]: config(held),
-      "vitest.sqlite.config.ts": `export default { test: { include: ${JSON.stringify(["packages/p/test/own.test.ts", "packages/q/test/across.test.ts"])} } };\n`,
+      "test/vitest.sqlite.config.ts": `export default { test: { include: ${JSON.stringify(["packages/p/test/own.test.ts", "packages/q/test/across.test.ts"])} } };\n`,
       "packages/p/src/index.ts": 'export * from "./x";\n', "packages/p/src/leaf.ts": "export const leaf = 1;\n", "packages/p/src/x.ts": "export const x = 1;\n",
       "packages/p/test/own.test.ts": 'import { x } from "../src/x";\nexport const a = x;\n',
       "packages/q/test/across.test.ts": 'import { x } from "@m/p";\nexport const b = x;\n',
@@ -2012,7 +2012,7 @@ describe("what only adds: a line for a new entry, a root file, a shard map", () 
    *  second store holds q's test. */
   const rootWorld = () => plantTree({
     [V]: 'export default { test: { include: ["packages/*/test/**/*.test.ts", "test/**/*.test.ts"] } };\n',
-    "vitest.sqlite.config.ts": `export default { test: { include: ${JSON.stringify(["packages/q/test/across.test.ts"])} } };\n`,
+    "test/vitest.sqlite.config.ts": `export default { test: { include: ${JSON.stringify(["packages/q/test/across.test.ts"])} } };\n`,
     "packages/p/src/x.ts": "export const x = 1;\n",
     "packages/p/test/own.test.ts": 'import { x } from "../src/x";\nexport const a = x;\n',
     "packages/q/test/across.test.ts": 'import { x } from "../../p/src/x";\nexport const b = x;\n',
@@ -2046,7 +2046,7 @@ describe("what only adds: a line for a new entry, a root file, a shard map", () 
     const asked: Array<string[] | undefined> = [];
     /** vitest's graph, planted: what it relates to the diff, and to the root files alone (null: that listing failed). */
     const graph = (related: string[], rootsRelated: string[] | null) => async (_root: string, _related: string[], o: GraphOptions) => {
-      if (o.config === "vitest.sqlite.config.ts") return { related: [], all: [] };
+      if (o.config === "test/vitest.sqlite.config.ts") return { related: [], all: [] };
       asked.push(o.roots);
       return { related, all: [], ...(o.roots ? { rootsRelated } : {}) };
     };
@@ -2167,7 +2167,7 @@ describe("what only adds: a line for a new entry, a root file, a shard map", () 
     const dir = rootWorld();
     const asked: GraphOptions[] = [];
     const graph = async (_root: string, _related: string[], o: GraphOptions) => {
-      if (o.config === "vitest.sqlite.config.ts") return { related: [], all: [] };
+      if (o.config === "test/vitest.sqlite.config.ts") return { related: [], all: [] };
       asked.push(o);
       return { related: [ownTest, acrossTest, toolTest], all: [], ...(o.roots ? { rootsRelated: [toolTest] } : {}) };
     };

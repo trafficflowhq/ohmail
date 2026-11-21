@@ -114,6 +114,7 @@ export function useVerbs(
   message: EngineMessage | null,
   visit: ListVisit | null,
   own: Pick<ThreadReadWiring, "onMarkUnread"> | null,
+  latest?: EngineMessage,
 ): Verbs {
   /* The seam is taken only where an own verb may run: a list's visit runs every verb on the list's path. */
   const press = usePressWhereOn();
@@ -156,12 +157,20 @@ export function useVerbs(
       : message?.unread
         ? "markRead"
         : "markUnread";
+  const replyTo = latest ?? message;
   const act = (asked: MessageAction): void => {
     if (message === null) return;
     let action = asked;
-    if (answer !== null && (action === "reply" || action === "reply_all" || action === "forward")) {
-      answer(message.id, action);
-      return;
+    if (action === "reply" || action === "reply_all" || action === "forward") {
+      const target = (action === "forward" ? message : replyTo) ?? message;
+      if (answer !== null) {
+        answer(target.id, action);
+        return;
+      }
+      if (visit === null || target.id !== message.id) {
+        commands.write(draftFor(action, target));
+        return;
+      }
     }
     if (visit !== null) {
       visit.act(action);
@@ -169,10 +178,6 @@ export function useVerbs(
     }
     if (listMove && action.startsWith("move:")) {
       listMove(message, action.slice("move:".length) as MoveTarget);
-      return;
-    }
-    if (action === "reply" || action === "reply_all" || action === "forward") {
-      commands.write(draftFor(action, message));
       return;
     }
     /* The quick return (`b` on a letter with no booking), where no list's visit runs it: tomorrow at the account's
@@ -197,7 +202,7 @@ export function useVerbs(
   };
   const tagVerbs = useTagVerbs(message, press);
   const moves = (visit !== null || listMove !== null) && message !== null ? moveTargetsOf(message) : [];
-  const replyAll = hasReplyAll(message, useOwnAddresses());
+  const replyAll = hasReplyAll(replyTo, useOwnAddresses());
   const pile = message?.triage?.state;
   const filed = pile === "reply_later" || pile === "set_aside" || pile === "bubbled_up" ? pile : null;
   return {
@@ -209,7 +214,7 @@ export function useVerbs(
     ...tagVerbs,
     moves,
     replyAll,
-    draft: drafter !== null && message !== null ? () => drafter(message.id) : null,
+    draft: drafter !== null && replyTo !== null ? () => drafter(replyTo.id) : null,
     filed,
   };
 }

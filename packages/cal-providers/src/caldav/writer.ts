@@ -13,7 +13,16 @@
  * Invitees are written only where the server says it sends invitations itself
  * (`calendar-auto-schedule`): this program sends none.
  */
-import { DEFAULT_LIMITS, readCalendar, type EventTime, type PartStat } from "@ohmail/cal-core";
+import {
+  DEFAULT_LIMITS,
+  deleteAudienceOf,
+  momentOrUtc,
+  sameTime,
+  readCalendar,
+  sameDeleteAudience,
+  type EventTime,
+  type PartStat,
+} from "@ohmail/cal-core";
 import type {
   CalendarRef,
   CalendarWriter,
@@ -36,7 +45,7 @@ import {
   type HttpResponse,
   type Precondition,
 } from "../request/index.js";
-import { personalSeriesOf, spelledAs } from "../series.js";
+import { personalSeriesOf, seriesDeleteMembers, spelledAs } from "../series.js";
 import { alreadyHolds, sameAudience } from "../write-compare.js";
 import { addressOf, isUnder, leave, propfindOf, scopeOf, type Session } from "./ask.js";
 import {
@@ -53,6 +62,7 @@ import {
   heldEvent,
   inviteesOf,
   newObjectText,
+  sameReviewedSeries,
   seriesEndedText,
   seriesEndsBefore,
   seriesGoesOnFrom,
@@ -66,6 +76,13 @@ type Refusal = {
   readonly reason: ProviderRefusal | WriteRefusal;
   readonly retryAfterMs: number | null;
 };
+type Accepted = Extract<WriteAnswer, { ok: true }>;
+type Continuation = {
+  readonly collection: string;
+  readonly member: string;
+  readonly uid: string;
+  readonly text: string;
+};
 
 /** Does a change name nothing but the account's own reminders, which no invitee is ever told of? */
 const remindersOnly = (change: EventChange): boolean =>
@@ -76,15 +93,15 @@ const refused = (reason: ProviderRefusal | WriteRefusal, wait: number | null = n
   retryAfterMs: wait,
 });
 /** Done, as found: a write's own request was not what made it so (a refused precondition and a compare, an object already so). */
-const answered = (items: readonly ChangeItem[]): WriteAnswer => ({ ok: true, items });
+const answered = (items: readonly ChangeItem[]): Accepted => ({ ok: true, items });
 /** Done by the write's own request: what waits behind it may be re-based onto `items`. */
-const wrote = (items: readonly ChangeItem[]): WriteAnswer => ({ ok: true, items, written: true });
+const wrote = (items: readonly ChangeItem[]): Accepted => ({ ok: true, items, written: true });
 const failedRead = (v: Fetched | Refusal): v is Refusal => typeof v === "object" && "ok" in v;
 
 /** A rejected conditional write can already be done only for the same series and dates.
  * A one-date success contains its new override. Compare the dates and recipients of every
  * component, including properties a server can schedule but the mirror does not understand. */
-function samePersonalDates(wanted: string, found: string): boolean {
+function sameSchedule(wanted: string, found: string): boolean {
   const signature = (text: string): string | null => {
     const read = readCalendar(text, DEFAULT_LIMITS);
     if (!read.ok || read.dropped.length || read.calendar.events.length === 0) return null;
@@ -114,12 +131,50 @@ function samePersonalDates(wanted: string, found: string): boolean {
   return expected !== null && expected === signature(found);
 }
 
+/** Only a definitive rejection can permit cleanup. A transport or server failure may follow a committed PUT. */
+const canRollBack = (status: number): boolean =>
+  [400, 401, 403, 405, 409, 412, 413, 415, 422].includes(status);
+const rollbackTag = (tag: string | null): string | null =>
+  tag !== null && sendableTag(tag) && !tag.startsWith("W/") ? tag : null;
+const canRetryCleanup = (reason: Refusal["reason"]): boolean =>
+  ["unavailable", "throttled", "timeout", "connection_failed"].includes(reason);
+
+/** XML can normalize line endings. Every line and value, including the creation stamps, must match. */
+const sameCalendarText = (a: string, b: string): boolean =>
+  a.replace(/\r\n/g, "\n") === b.replace(/\r\n/g, "\n");
+
+/** Ignore serialization changes such as line folding, while retaining every content line. */
+function sameCalendarContent(wanted: string, found: string): boolean {
+  if (sameCalendarText(wanted, found)) return true;
+  const expected = readCalendar(wanted, DEFAULT_LIMITS);
+  const stored = readCalendar(found, DEFAULT_LIMITS);
+  return (
+    expected.ok &&
+    stored.ok &&
+    expected.dropped.length === 0 &&
+    stored.dropped.length === 0 &&
+    JSON.stringify(expected.calendar.tree) === JSON.stringify(stored.calendar.tree)
+  );
+}
+
 /** The write's key as the UUID a member and its UID are named by. */
 function uuidOf(key: WriteKey): string | null {
   const h = key.hex;
   return /^[0-9a-f]{32}$/.test(h)
     ? `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
     : null;
+}
+
+/** The exception and its series share one CalDAV resource and entity tag. */
+function exceptionMatchesTarget(target: WriteTarget): boolean {
+  const reviewed = target.exception;
+  return (
+    reviewed === undefined ||
+    (target.recurringSeries === true &&
+      reviewed.id === target.id &&
+      reviewed.version === target.version &&
+      (target.occurrence === null || sameTime(reviewed.occurrence, target.occurrence)))
+  );
 }
 
 export function makeWriter(deps: AdapterDeps): CalendarWriter {
@@ -186,7 +241,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     member: string,
     res: HttpResponse,
     text: string | null,
-  ): Promise<WriteAnswer> {
+  ): Promise<Accepted> {
     const back = await readMember(s, collection, member);
     const tag = res.header("etag");
     if (failedRead(back)) {
@@ -196,6 +251,22 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     return back !== "gone" && (tag === null || tag === back.tag)
       ? wrote(itemsOf(member, back))
       : answered(itemsOf(member, back));
+  }
+
+  async function rollBack(
+    s: Session,
+    created: { readonly member: string; readonly tag: string },
+  ): Promise<Refusal | null> {
+    const res = await send(s, "DELETE", created.member, null, { kind: "unchanged", tag: created.tag });
+    const failure =
+      "ok" in res
+        ? res
+        : res.status === 408
+          ? refused("timeout")
+          : res.status === 423
+            ? refused("throttled", retryAfterMs(res, deps.clock))
+            : refusalOf(res, "event_gone");
+    return canRetryCleanup(failure.reason) ? failure : null;
   }
 
   /** The collection and a member under it, as a reading stored them; `null` where either is no such address. */
@@ -264,6 +335,27 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     return { tag: now.tag, text: now.text };
   }
 
+  function seriesAudienceHolds(
+    text: string,
+    target: WriteTarget,
+    scope: "change" | "following" | "master",
+  ): boolean {
+    const members = seriesDeleteMembers(text, deps.zones);
+    if (members === null) return false;
+    const selected = scope === "master" ? members.filter((member) => member.at === null) : members;
+    const actual = deleteAudienceOf(
+      selected,
+      target.occurrence === null || scope === "master"
+        ? { kind: "record" }
+        : {
+            kind: scope === "following" ? "following" : "occurrence",
+            at: String(momentOrUtc(target.occurrence, deps.zones)),
+          },
+    )?.audience;
+    if (!actual) return false;
+    return target.audience ? sameDeleteAudience(actual, target.audience) : actual.guests.length === 0;
+  }
+
   /**
    * The series the days of the series in `text` become from its day `was` on, as `then` asks it: its
    * member under the collection, named from its key alone, and its text, made from that copy of the
@@ -274,7 +366,8 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     text: string,
     was: EventTime,
     then: SeriesContinuation,
-  ): { readonly collection: string; readonly member: string; readonly text: string } | Refusal {
+  ): Continuation | Refusal {
+    if (then.change.attendees !== undefined) return refused("field_unwritable");
     const uid = uuidOf(then.key);
     const collection = addressOf(cal.id);
     if (uid === null || collection === null) return refused("not_found");
@@ -289,11 +382,76 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       then.end,
       then.rule,
       then.change,
-      deps.clock.now(),
+      then.createdAtMs ?? deps.clock.now(),
       deps.zones,
     );
     if (!made.ok) return refused(made.reason === "not_found" ? "event_gone" : made.reason);
-    return { collection, member, text: made.text };
+    return { collection, member, uid, text: made.text };
+  }
+
+  /** Same series after a lost creation answer. A matching address alone is insufficient for a new split. */
+  function continuationHolds(
+    made: Continuation,
+    now: Exclude<Fetched, "gone">,
+    change: EventChange,
+    compare: boolean,
+  ): boolean {
+    if (uidOfText(now.text) !== made.uid) return false;
+    if (!compare) return true;
+    const event = heldEvent(now.text);
+    return event !== null && sameSchedule(made.text, now.text) && alreadyHolds(change, event, deps.zones);
+  }
+
+  /** Ensure one resource across both rows. Recovery can authorize cleanup only under its exact generated copy. */
+  async function ensureContinuation(
+    s: Session,
+    made: Continuation,
+    change: EventChange,
+    options: {
+      readonly compare: boolean;
+      readonly requireExisting?: true;
+      readonly recoverRollback?: boolean;
+      readonly sendLegacy?: boolean;
+    },
+  ): Promise<{ readonly answer: Accepted; readonly rollbackTag: string | null } | Refusal> {
+    const { collection, member, text } = made;
+    const found = options.sendLegacy ? "gone" : await readMember(s, collection, member);
+    if (failedRead(found)) return found;
+    if (found !== "gone")
+      return continuationHolds(made, found, change, options.compare)
+        ? {
+            answer: answered(itemsOf(member, found)),
+            rollbackTag:
+              options.recoverRollback && sameCalendarContent(text, found.text)
+                ? rollbackTag(found.tag)
+                : null,
+          }
+        : refused("version_stale");
+    if (options.requireExisting) return refused("version_stale");
+    const hear = await inviteesHear(s, collection, text);
+    if (hear !== true) return hear;
+    const res = await send(s, "PUT", member, text, { kind: "new" });
+    if ("ok" in res) return res;
+    if (res.status !== 412 && res.status !== 200 && res.status !== 201 && res.status !== 204)
+      return refusalOf(res, "not_found");
+    if (options.sendLegacy && res.status !== 412)
+      return { answer: await afterWrite(s, collection, member, res, text), rollbackTag: null };
+    const now = await readMember(s, collection, member);
+    if (failedRead(now)) return now;
+    if (now === "gone") return refused(options.sendLegacy ? "unknown" : "unavailable");
+    if (!continuationHolds(made, now, change, options.compare))
+      return refused(options.sendLegacy && !options.compare ? "unknown" : "version_stale");
+    const tag = res.status === 412 ? null : res.header("etag");
+    // A fresh create can omit its ETag. The read-back can supply it only if no content changed.
+    const readBackTag =
+      res.status !== 412 && tag === null && options.compare && sameCalendarContent(text, now.text)
+        ? now.tag
+        : null;
+    const items = itemsOf(member, now);
+    return {
+      answer: res.status !== 412 && (tag === null || tag === now.tag) ? wrote(items) : answered(items),
+      rollbackTag: rollbackTag(tag ?? readBackTag),
+    };
   }
 
   /** A change refused for its version: done where the member already holds every field of it; else made on another copy. */
@@ -303,12 +461,16 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     member: string,
     change: EventChange | null,
     wantedSeries?: string,
+    known?: Fetched,
+    reviewedException = false,
   ): Promise<WriteAnswer> {
-    const now = await readMember(s, collection, member);
+    const now = known ?? (await readMember(s, collection, member));
     if (failedRead(now)) return now;
     if (now === "gone")
       return change === null ? answered([{ kind: "gone", id: member }]) : refused("event_gone");
-    if (change === null || (wantedSeries && !samePersonalDates(wantedSeries, now.text)))
+    if (change === null || (wantedSeries && !sameSchedule(wantedSeries, now.text)))
+      return refused("version_stale");
+    if (reviewedException && (!wantedSeries || !sameReviewedSeries(wantedSeries, now.text)))
       return refused("version_stale");
     const event = heldEvent(now.text);
     return event !== null && alreadyHolds(change, event, deps.zones)
@@ -330,12 +492,13 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     change: EventChange | null,
     wantedSeries?: string,
     requireExclusion = false,
+    known?: Fetched,
   ): Promise<WriteAnswer> {
-    const now = await readMember(s, collection, member);
+    const now = known ?? (await readMember(s, collection, member));
     if (failedRead(now)) return now;
     if (now === "gone")
       return change === null ? answered([{ kind: "gone", id: member }]) : refused("event_gone");
-    if (wantedSeries && !samePersonalDates(wantedSeries, now.text)) return refused("version_stale");
+    if (wantedSeries && !sameSchedule(wantedSeries, now.text)) return refused("version_stale");
     if (change === null && dayOfAnotherCopy(now.text, was, deps.zones)) return refused("version_stale");
     const done =
       change === null
@@ -385,20 +548,38 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     },
 
     async change(c, cal, target, change, signal) {
+      if (!exceptionMatchesTarget(target)) return refused("version_stale");
       const opened = caldavSession(deps, c, signal);
       if (!opened.ok) return opened;
       const s = opened.session;
       const place = placeOf(cal, target.id);
       if (place === null) return refused("address_not_allowed");
+      const live = target.recurringSeries ? await readMember(s, place.collection, place.member) : null;
+      if (live === "gone") return refused("event_gone");
+      if (live !== null && failedRead(live)) return live;
+      if (live !== null && live.tag !== target.version && target.text === null)
+        return refused("version_stale");
+      const stood =
+        live?.tag === target.version && sendableTag(live.tag)
+          ? { tag: live.tag, text: live.text }
+          : await standing(s, place.collection, place.member, target);
+      if ("ok" in stood) return stood;
+      if (target.personalSeries && !personalSeriesOf(stood.text)) return refused("version_stale");
+      if (target.recurringSeries && !seriesAudienceHolds(stood.text, target, "change"))
+        return refused("version_stale");
       // A change that names invitees (an empty list too) is told to them, and to those it takes off, by the server alone.
       if (change.attendees !== undefined) {
+        if (
+          target.recurringSeries ||
+          target.personalSeries ||
+          target.occurrence !== null ||
+          heldEvent(stood.text)?.rules.length
+        )
+          return refused("field_unwritable");
         const sends = await sendsInvitations(s, place.collection);
         if (sends !== true) return sends === false ? refused("invitees_unsupported") : sends;
       }
-      const stood = await standing(s, place.collection, place.member, target);
-      if ("ok" in stood) return stood;
-      if (target.personalSeries && !personalSeriesOf(stood.text)) return refused("version_stale");
-      if (target.audience) {
+      if (target.audience && !target.recurringSeries) {
         const read = readCalendar(stood.text, DEFAULT_LIMITS);
         const event =
           read.ok && read.dropped.length === 0 && read.calendar.events.length === 1
@@ -415,37 +596,33 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
           return refused("version_stale");
       }
       const was = target.occurrence;
-      // Any other change of an event with invitees is theirs to hear of, from the server alone: only where it tells them. The one
-      // change none of them hears of is the account's own reminders.
+      // One day of a series is written in that day's own component; the series and its other days stay as they were.
+      const text =
+        was === null
+          ? changedObjectText(stood.text, change, deps.clock.now(), deps.zones, target.exception?.occurrence)
+          : dayChangedText(
+              stood.text,
+              was,
+              change,
+              deps.clock.now(),
+              deps.zones,
+              target.exception !== undefined,
+            );
+      if (!text.ok) return refused(text.reason === "not_found" ? "event_gone" : text.reason);
+      const wanted = target.personalSeries || target.recurringSeries ? text.text : undefined;
+      const checkStale = (now?: Fetched) =>
+        was === null
+          ? afterStale(s, place.collection, place.member, change, wanted, now, target.exception !== undefined)
+          : afterStaleDay(s, place.collection, place.member, was, change, wanted, false, now);
+      if (live !== null && live.tag !== stood.tag) return checkStale(live);
+      // Other changes are sent by the server to the event's invitees. The account's own reminders are private.
       if (change.attendees === undefined && !remindersOnly(change)) {
         const hear = await inviteesHear(s, place.collection, stood.text);
         if (hear !== true) return hear;
       }
-      // One day of a series is written in that day's own component; the series and its other days stay as they were.
-      const text =
-        was === null
-          ? changedObjectText(stood.text, change, deps.clock.now(), deps.zones)
-          : dayChangedText(stood.text, was, change, deps.clock.now(), deps.zones);
-      if (!text.ok) return refused(text.reason === "not_found" ? "event_gone" : text.reason);
       const res = await send(s, "PUT", place.member, text.text, { kind: "unchanged", tag: stood.tag });
       if ("ok" in res) return res;
-      if (res.status === 412)
-        return was === null
-          ? afterStale(
-              s,
-              place.collection,
-              place.member,
-              change,
-              target.personalSeries ? text.text : undefined,
-            )
-          : afterStaleDay(
-              s,
-              place.collection,
-              place.member,
-              was,
-              change,
-              target.personalSeries ? text.text : undefined,
-            );
+      if (res.status === 412) return checkStale();
       if (res.status !== 200 && res.status !== 201 && res.status !== 204) return refusalOf(res, "event_gone");
       return afterWrite(s, place.collection, place.member, res, text.text);
     },
@@ -539,6 +716,8 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     },
 
     async endSeries(c, cal, target, req, signal) {
+      if (!exceptionMatchesTarget(target) || (target.exception !== undefined && req.then === null))
+        return refused("version_stale");
       const opened = caldavSession(deps, c, signal);
       if (!opened.ok) return opened;
       const s = opened.session;
@@ -547,62 +726,104 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       const was = target.occurrence;
       if (was === null) return refused("field_unwritable");
       const readOnly = req.late === true || target.caldavReadOnly === true;
+      const keepCancelled = req.then !== null;
+      const createFirst =
+        req.then !== null && (target.recurringSeries === true || req.then.requireExisting === true);
+      const endedText = (text: string) =>
+        seriesEndedText(text, was, deps.clock.now(), deps.zones, {
+          keepCancelled,
+          rejectFutureOverrides: keepCancelled && target.recurringSeries === true,
+          replaceReviewedOverride: target.exception !== undefined,
+        });
+      const recoveredEnd = async (now: Exclude<Fetched, "gone">): Promise<WriteAnswer> => {
+        // The same cutoff can be another client's edit. New queue rows require proof of their own first write.
+        if (req.then?.requireExisting) {
+          const made = continuation(cal, now.text, was, req.then);
+          if ("ok" in made) return made;
+          const proof = await ensureContinuation(s, made, req.then.change, {
+            compare: true,
+            requireExisting: true,
+          });
+          if ("ok" in proof) return proof;
+        }
+        return answered(itemsOf(place.member, now));
+      };
       // The copy the write was made on, as the store holds it; where the store holds another, the member as it is now: done
       // where it ends exactly where this write ends it and that end may be this write's own (an earlier attempt of it landed, and
       // no other write may have made it), else made on another copy. An end too old to send (`late`) is only looked at, at the
       // member itself: found so on another version than the copy it was made on, it is done; nothing of it goes late.
       let stood: { readonly tag: string; readonly text: string };
-      if (!readOnly && target.text !== null && sendableTag(target.version))
+      if (!readOnly && !createFirst && target.text !== null && sendableTag(target.version))
         stood = { tag: target.version, text: target.text };
       else {
         const now = await readMember(s, place.collection, place.member);
         if (failedRead(now)) return now;
         if (now === "gone") return refused("event_gone");
+        const expected = target.recurringSeries && target.text !== null ? endedText(target.text) : null;
         if (
           req.mayBeDone &&
           (!target.personalSeries || personalSeriesOf(now.text)) &&
-          (!readOnly || now.tag !== target.version) &&
+          ((!createFirst && !readOnly) || now.tag !== target.version) &&
+          (expected === null || (expected.ok && sameSchedule(expected.text, now.text))) &&
           seriesEndsBefore(now.text, was, deps.zones)
         )
-          return answered(itemsOf(place.member, now));
+          return recoveredEnd(now);
         if (readOnly) return refused("version_stale");
         if (now.tag === null || !sendableTag(now.tag)) return refused("version_unknown");
         if (now.tag !== target.version) return refused("version_stale");
         stood = { tag: now.tag, text: now.text };
       }
       if (target.personalSeries && !personalSeriesOf(stood.text)) return refused("version_stale");
+      if (target.recurringSeries && !seriesAudienceHolds(stood.text, target, "following"))
+        return refused("version_stale");
       // The press's own copy ends before that day already: there are no days from it on to let go, and none to make a series of.
       if (seriesEndsBefore(stood.text, was, deps.zones))
         return req.then === null ? answered([]) : refused("event_gone");
-      // Nothing is sent of a press that cannot be finished: the series its days from that day on become is made first, from
-      // this very copy, and where it cannot be made the series is not ended either.
-      if (req.then !== null) {
-        const made = continuation(cal, stood.text, was, req.then);
-        if ("ok" in made) return made;
-      }
+      const made = req.then === null ? null : continuation(cal, stood.text, was, req.then);
+      if (made !== null && "ok" in made) return made;
       // The ended series' invitees hear of the days it gives up from the server alone, where it sends invitations itself; the
       // series those days become asks the same invitees (the series' own, its organizer's own line kept).
       const hear = await inviteesHear(s, place.collection, stood.text);
       if (hear !== true) return hear;
-      // Where those days go on as a series of their own, the days the series cancels from that day on stay excluded days of it.
-      const text = seriesEndedText(stood.text, was, deps.clock.now(), deps.zones, {
-        keepCancelled: req.then !== null,
-      });
+      const text = endedText(stood.text);
       if (!text.ok) return refused(text.reason === "not_found" ? "event_gone" : text.reason);
+      // DECIDED BY THE BUILDER: confirm the continuation exists while the original still holds its days.
+      // The second queue row recovers this deterministic member and publishes it in the mirror.
+      let created: { readonly member: string; readonly tag: string } | null = null;
+      if (createFirst && req.then !== null && made !== null) {
+        const result = await ensureContinuation(s, made, req.then.change, {
+          compare: true,
+          recoverRollback:
+            req.mayBeDone && req.then.requireExisting === true && req.then.createdAtMs !== undefined,
+        });
+        if ("ok" in result) return result;
+        if (result.rollbackTag !== null) created = { member: made.member, tag: result.rollbackTag };
+      }
       const res = await send(s, "PUT", place.member, text.text, { kind: "unchanged", tag: stood.tag });
       if ("ok" in res) return res;
-      if (res.status === 412) {
+      if (res.status === 200 || res.status === 201 || res.status === 204)
+        return afterWrite(s, place.collection, place.member, res, text.text);
+      if (res.status === 412 || (created !== null && canRollBack(res.status))) {
         const now = await readMember(s, place.collection, place.member);
-        if (failedRead(now)) return now;
-        if (now === "gone") return refused("event_gone");
-        return req.mayBeDone &&
-          (!target.personalSeries || samePersonalDates(text.text, now.text)) &&
-          seriesEndsBefore(now.text, was, deps.zones)
-          ? answered(itemsOf(place.member, now))
-          : refused("version_stale");
+        if (created !== null && failedRead(now) && canRetryCleanup(now.reason)) return now;
+        if (!failedRead(now) && now !== "gone") {
+          if (
+            res.status === 412 &&
+            req.mayBeDone &&
+            (!(target.personalSeries || target.recurringSeries) || sameSchedule(text.text, now.text)) &&
+            seriesEndsBefore(now.text, was, deps.zones)
+          )
+            return recoveredEnd(now);
+          // Someone else may have shortened or removed the original. Keep the continuation if its days are in doubt.
+          if (created !== null && now.tag === stood.tag && sameSchedule(stood.text, now.text)) {
+            const retry = await rollBack(s, created);
+            if (retry !== null) return retry;
+          }
+        }
+        if (res.status === 412)
+          return failedRead(now) ? now : refused(now === "gone" ? "event_gone" : "version_stale");
       }
-      if (res.status !== 200 && res.status !== 201 && res.status !== 204) return refusalOf(res, "event_gone");
-      return afterWrite(s, place.collection, place.member, res, text.text);
+      return refusalOf(res, "event_gone");
     },
 
     async continueSeries(c, cal, req, signal) {
@@ -615,18 +836,26 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       if (source === null) return refused("address_not_allowed");
       const was = req.from.occurrence;
       if (was === null) return refused("field_unwritable");
+      const legacy = !req.from.recurringSeries && !req.requireExisting;
+      const legacyDraft = legacy ? req.event : undefined;
       // The series as the store holds it is what its days are made from (read once where the store keeps no text of it). They are
       // made only where the series no longer has them: where the store's copy goes on from that day, the member is read, and where
       // that goes on from it too (given a new repeat since its end, by the person or by another program) those days stand there,
       // and making them here would make them twice: refused for its copy, nothing sent.
       let from = req.from.text;
-      if (req.from.personalSeries || from === null || seriesGoesOnFrom(from, was, deps.zones)) {
+      if (
+        legacyDraft !== undefined ||
+        req.from.personalSeries ||
+        req.from.recurringSeries ||
+        from === null ||
+        seriesGoesOnFrom(from, was, deps.zones)
+      ) {
         const now = await readMember(s, source.collection, source.member);
         if (failedRead(now)) return now;
         if (now === "gone") return refused("event_gone");
         // The two parts are distinct writes. The cached end can have been reversed between them.
         if (
-          req.from.personalSeries &&
+          (req.from.personalSeries || req.from.recurringSeries) &&
           (now.tag !== req.from.version || !seriesEndsBefore(now.text, was, deps.zones))
         )
           return refused("version_stale");
@@ -634,35 +863,26 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         from = now.text;
       }
       if (req.from.personalSeries && !personalSeriesOf(from)) return refused("version_stale");
+      if (req.from.recurringSeries && !seriesAudienceHolds(from, req.from, "master"))
+        return refused("version_stale");
+      // The legacy second row can still create the member. Its queued invitees, not later mirrored ones,
+      // determine who may hear of that creation.
+      if (legacyDraft !== undefined) {
+        const organizer = legacyDraft.organizer?.trim().toLowerCase() ?? null;
+        const guests = legacyDraft.attendees
+          .map(({ email }) => email.trim().toLowerCase())
+          .filter((address) => address !== organizer);
+        if (!seriesAudienceHolds(from, { ...req.from, audience: { organizer, guests } }, "master"))
+          return refused("version_stale");
+      }
       const made = continuation(cal, from, was, req);
       if ("ok" in made) return made;
-      const { collection, member } = made;
-      // Its invitees (not its organizer's own line) hear of it from the server alone, where it sends invitations itself.
-      const event = heldEvent(made.text);
-      if (event !== null && inviteesOf(event).length > 0) {
-        const sends = await sendsInvitations(s, collection);
-        if (sends !== true) return sends === false ? refused("invitees_unsupported") : sends;
-      }
-      const res = await send(s, "PUT", member, made.text, { kind: "new" });
-      if ("ok" in res) return res;
-      if (res.status === 412) {
-        // The member is there: an earlier attempt of this very write made it, if its UID is ours. Read where it was written.
-        const now = await readMember(s, collection, member);
-        if (failedRead(now)) return now;
-        if (now === "gone") return refused("unknown");
-        if (req.from.personalSeries) {
-          const event = heldEvent(now.text);
-          if (
-            !event ||
-            !samePersonalDates(made.text, now.text) ||
-            !alreadyHolds(req.change, event, deps.zones)
-          )
-            return refused("version_stale");
-        }
-        return uidOfText(now.text) === uid ? answered(itemsOf(member, now)) : refused("unknown");
-      }
-      if (res.status !== 201 && res.status !== 204 && res.status !== 200) return refusalOf(res, "not_found");
-      return afterWrite(s, collection, member, res, made.text);
+      const result = await ensureContinuation(s, made, req.change, {
+        compare: !!(req.from.personalSeries || req.from.recurringSeries || req.requireExisting),
+        ...(req.requireExisting && { requireExisting: req.requireExisting }),
+        sendLegacy: legacy,
+      });
+      return "ok" in result ? result : result.answer;
     },
 
     // CalDAV has no move this program uses (MOVE is never sent): a move is a new member and a removal.

@@ -47,7 +47,7 @@ import { makeMailboxService, ScheduleService, type ServiceContext } from "@traff
  * The close runs inside `MailboxService.delete`'s transaction, which already holds the mailbox
  * row `FOR UPDATE`. That re-entrancy — a nested `db.transaction` taking a lock the outer one owns
  * — is a real-Postgres property; PGlite is single-connection and would report a green that says
- * nothing about it (CLAUDE.md). The scoping and mirror-image guards ride along on the same store
+ * nothing about it (AGENTS.md). The scoping and mirror-image guards ride along on the same store
  * rather than being split across two harnesses.
  *
  * ── HOW TO WATCH IT FAIL ──────────────────────────────────────────────────────────────────
@@ -172,7 +172,7 @@ describe.skipIf(!PG_UP)("removing a mailbox closes the appointments it orphans",
     // row existed — which `seeded()` had already guaranteed, because `ScheduleService.schedule`
     // records one when it makes the appointment. The check was therefore true before `delete`
     // ran and stayed true with `recordChanges` deleted from the close: a guard that cannot fail
-    // is not evidence (CLAUDE.md). Caught by review, not by the mutation set, because the
+    // is not evidence (AGENTS.md). Caught by review, not by the mutation set, because the
     // mutations that were run all changed the UPDATE rather than the notification beside it.
     //
     // So the bar is a row NEWER than everything the setup wrote: the max seq is captured before

@@ -35,13 +35,13 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
       .where(and(eq(calWrites.accountId, accountId), eq(calWrites.idempotencyKey, after))))[0]?.id ?? null;
     return recordWrite(w, { accountId, key, act, after: prior });
   };
-  const connection = (tag: string): Connection => ({
-    provider: "google", start: null,
+  const connection = (tag: string, word: "google" | "microsoft" | "caldav" = "google"): Connection => ({
+    provider: word, start: null,
     credential: { kind: "bearer", accessToken: async () => ({ ok: true, token: `token-${tag}` }) },
   });
 
   /** An account with its calendar on, a connection (Google's unless named), one calendar, and one event the provider holds at version 1. */
-  async function account(word: "google" | "caldav" = "google") {
+  async function account(word: "google" | "microsoft" | "caldav" = "google") {
     const seeded = await seedConnection(w, { provider: word, credential: null, serverUrl: word === "caldav" ? DAV_URL : null });
     const [cal] = await w.db.insert(calCalendars).values({
       accountId: seeded.accountId, connectionId: seeded.connectionId, providerId: `cal-${seeded.accountId.slice(0, 6)}`, name: "Studio", access: "owner",
@@ -66,15 +66,15 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
   const update = (a: Account, title: string, base = a.base, after?: string) =>
     ({ kind: "calendar_event_update", eventId: a.eventId, base, ...(after === undefined ? {} : { after }), scope: { kind: "record" }, change: { title } });
 
-  const provider = (writer: CalendarProvider["writer"], word: "google" | "caldav" = "google"): CalendarProvider =>
+  const provider = (writer: CalendarProvider["writer"], word: "google" | "microsoft" | "caldav" = "google"): CalendarProvider =>
     ({ reader: scriptedReader(word, { readings: new Map() }), writer, notices: null, http: { request: async () => ({ arrived: false, reason: "unknown" }) } });
 
-  const run = (a: Account, writer: CalendarProvider["writer"], o: { tag?: string; clock?: () => number; turnMs?: number; signal?: AbortSignal; word?: "google" | "caldav"; proven?: ProvenRepeats } = {}) =>
+  const run = (a: Account, writer: CalendarProvider["writer"], o: { tag?: string; clock?: () => number; turnMs?: number; signal?: AbortSignal; word?: "google" | "microsoft" | "caldav"; proven?: ProvenRepeats } = {}) =>
     calendarWriteDrain({
       clock: { now: o.clock ?? (() => Date.now()) }, zones: ZONES, log: capturedLog().log, ...(o.turnMs === undefined ? {} : { turnMs: o.turnMs }),
       ...(o.proven === undefined ? {} : { proven: o.proven }),
     })({
-      db: passDb(calendarPool(w.db), a.accountId), key: a.key, provider: provider(writer, o.word), connection: connection(o.tag ?? a.accountId), signal: o.signal ?? never,
+      db: passDb(calendarPool(w.db), a.accountId), key: a.key, provider: provider(writer, o.word), connection: connection(o.tag ?? a.accountId, o.word), signal: o.signal ?? never,
     });
 
   const rows = (a: Account) => w.db.select({
@@ -106,6 +106,105 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
   }
   const retitle = (e: { id: string; updatedAt: Date }, title: string) =>
     ({ kind: "calendar_event_update", eventId: e.id, base: e.updatedAt.toISOString(), scope: { kind: "record" }, change: { title } });
+
+  it.each(["google", "microsoft"] as const)("passes the saved creation version through both rows of a %s split", async (word) => {
+    const a = await account(word);
+    await w.db.update(calEvents).set({ repeatRule: "FREQ=DAILY;COUNT=5" }).where(eq(calEvents.id, a.eventId));
+    const at = String(Date.UTC(2026, 10, 20, 9));
+    const next = randomUUID();
+    const first = await recordWrite(w, {
+      accountId: a.accountId, key: "split", part: { of: "split", n: 1 },
+      act: { ...update(a, "Continued"), scope: { kind: "following", at, newEventId: next }, audience: { organizer: null, guests: [] } },
+    });
+    const continuation = create(a, "Continued", next);
+    await recordWrite(w, {
+      accountId: a.accountId, key: "split:2", after: first.id,
+      part: { of: "split", n: 2, from: { eventId: a.eventId, at, named: ["title"], confirmed: true } },
+      act: { ...continuation, event: { ...continuation.event, repeat: "FREQ=DAILY;COUNT=3",
+        start: { kind: "instant", value: "20261120T090000Z" }, end: { kind: "instant", value: "20261120T100000Z" } } },
+    });
+    const seen: (string | undefined)[] = [];
+    const version = '"created-copy"';
+    await run(a, {
+      ...scriptedWriter(word),
+      endSeries: async (_connection, _calendar, _target, request) => {
+        await request.then?.rememberCreatedVersion?.(version);
+        return { ok: true, items: [] };
+      },
+      continueSeries: async (_connection, _calendar, request) => {
+        seen.push(request.createdVersion);
+        return { ok: true, items: [] };
+      },
+    }, { word });
+    expect((await rows(a)).map((row) => [row.state, row.refusal, row.base])).toEqual([
+      ["applied", null, '"v1"'], ["applied", null, version],
+    ]);
+    expect(seen).toEqual([version]);
+  });
+
+  it.each(["google", "microsoft", "caldav"] as const)("drains the exact reviewed exception on %s and refuses a copy changed in the queue", async (word) => {
+    const a = await account(word);
+    await w.db.update(calEvents).set({ repeatRule: "FREQ=DAILY;COUNT=5" }).where(eq(calEvents.id, a.eventId));
+    const at = String(Date.UTC(2026, 10, 20, 9));
+    const version = word === "caldav" ? '"v1"' : '"exception-v3"';
+    const providerId = word === "caldav" ? "evt-1" : "moved-occurrence";
+    const [child] = await w.db.insert(calEvents).values({
+      accountId: a.accountId, calendarId: a.calendarId, providerId, versionTag: version, uid: "uid-1", recurrenceId: at,
+      occurrenceAt: new Date(Number(at)), title: "Moved lesson",
+      startKind: "instant", startLocal: "20261120T110000Z", endKind: "instant", endLocal: "20261120T120000Z",
+      startsAt: new Date("2026-11-20T11:00:00Z"), endsAt: new Date("2026-11-20T12:00:00Z"),
+    }).returning({ id: calEvents.id, updatedAt: calEvents.updatedAt });
+    const act = {
+      kind: "calendar_event_update", eventId: child!.id, base: child!.updatedAt.toISOString(),
+      scope: { kind: "occurrence", at }, change: { title: "Confirmed firing" }, audience: { organizer: null, guests: [] },
+    };
+    const exception = { id: child!.id, providerId, version, occurrence: at };
+    const queued = async (key: string) => {
+      const row = await recordWrite(w, { accountId: a.accountId, key, act });
+      await w.db.update(calWrites).set({ eventId: a.eventId, baseVersionTag: '"v1"',
+        payload: sql`${calWrites.payload} || ${JSON.stringify({ exception })}::jsonb`,
+      }).where(eq(calWrites.id, row.id));
+    };
+    const writer = scriptedWriter(word, { answer: () => ({ ok: true, items: [] }) });
+    await queued("reviewed");
+    await run(a, writer, { word });
+    expect(writer.calls).toHaveLength(1);
+    expect(writer.calls[0]).toMatchObject({ kind: "change", change: { summary: "Confirmed firing" },
+      target: { id: "evt-1", version: '"v1"', exception: { id: providerId, version, occurrence: { kind: "instant", epochMs: Number(at) } } },
+    });
+    expect((await rows(a)).map((r) => [r.key, r.state])).toEqual([["reviewed", "applied"]]);
+    await queued("changed");
+    await w.db.update(calEvents).set({ versionTag: '"newer"' }).where(eq(calEvents.id, child!.id));
+    await run(a, writer, { word });
+    expect(writer.calls).toHaveLength(1);
+    expect((await rows(a)).at(-1)).toMatchObject({ key: "changed", state: "refused", refusal: "version_stale" });
+
+    if (word === "caldav") return;
+    const [master] = await w.db.select({ updatedAt: calEvents.updatedAt }).from(calEvents).where(eq(calEvents.id, a.eventId));
+    const pressed = await recordWrite(w, { accountId: a.accountId, key: "both", act: {
+      ...act, scope: { kind: "record" }, base: `${act.base}/${master!.updatedAt.toISOString()}`,
+    } });
+    await w.db.update(calWrites).set({ eventId: a.eventId, baseVersionTag: '"v1"',
+      payload: sql`${calWrites.payload} || ${JSON.stringify({ exception: { ...exception, version: '"newer"' } })}::jsonb`,
+    }).where(eq(calWrites.id, pressed.id));
+    const receipt = { version: '"saved-master"', exceptionSnapshot: "2".repeat(64),
+      ...(word === "microsoft" ? { exceptionEndMs: Date.UTC(2026, 10, 20, 12, 15) } : {}) };
+    await run(a, { ...writer, change: async (_connection, _calendar, target) => {
+      await target.rememberMasterReceipt?.(receipt);
+      return { ok: false, reason: "unavailable", retryAfterMs: null };
+    } }, { word });
+    expect((await rows(a)).at(-1)).toMatchObject({ key: "both", state: "pending", payload: { exception: { masterReceipt: receipt } } });
+    await w.db.update(calEvents).set({ versionTag: receipt.version, updatedAt: new Date() }).where(eq(calEvents.id, a.eventId));
+    // An explicit Retry resets the attempt counter while keeping the acknowledged receipt.
+    await w.db.update(calWrites).set({ attempts: 0, nextAttemptAt: null }).where(eq(calWrites.id, pressed.id));
+    const held: unknown[] = [];
+    await run(a, { ...writer, change: async (_connection, _calendar, target) => {
+      held.push(target.masterReceipt);
+      return { ok: true, items: [] };
+    } }, { word });
+    expect(held).toEqual([receipt]);
+    expect((await rows(a)).at(-1)).toMatchObject({ key: "both", state: "applied", payload: {} });
+  });
 
   it("applies a new event once: the writer is asked under the row's own name, the row closes with nothing of the act kept, and the store holds the provider's object in the row the write stood in", async () => {
     const a = await account();

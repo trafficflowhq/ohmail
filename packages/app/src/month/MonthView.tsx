@@ -87,7 +87,6 @@ export function MonthView({ input, acts, edge, run, top: at, onDrag }: MonthView
       <HeldNotice
         edge={edge}
         first={run?.visibleFirst ?? grid.weeks[0]!.id}
-        last={run?.visibleLast ?? addDays(grid.weeks.at(-1)!.id, 6)}
         today={input.today}
         className="cal-mo-note"
       />

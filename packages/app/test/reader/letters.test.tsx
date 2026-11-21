@@ -594,6 +594,8 @@ describe("the head", () => {
     });
     await screen.findByRole("button", { name: "you" });
     const one = screen.getByRole("heading", { name: "Kiln schedule" }).closest("header")!;
+    expect(within(one).getByRole("heading", { name: "Kiln schedule" })).toBeTruthy();
+    expect(within(one).queryByText("Studio")).toBeNull();
     const subjectOnly = one.cloneNode(true) as HTMLElement;
     subjectOnly.querySelector(".oh-readinghead-short")?.remove();
     expect(subjectOnly.textContent).toBe("Kiln schedule");

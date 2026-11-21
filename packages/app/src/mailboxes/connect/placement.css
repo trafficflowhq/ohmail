@@ -7,3 +7,14 @@
   gap: var(--s4);
   min-width: 0;
 }
+
+/* The fingerprint a certificate tick claims, standing on its own line under the line that asks for it. */
+.mbx-cert-fingerprint {
+  margin: var(--s2) 0 0;
+  max-width: 34em;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--w-mid);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}

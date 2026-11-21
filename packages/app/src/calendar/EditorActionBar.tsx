@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Menu, MenuItem } from "@ohmail/ui/base";
 import { ActionPanel, type PanelVerb } from "@ohmail/ui/mail";
 import { useText } from "../text/index.js";
+import { ShowAsMenu } from "./ShowAsMenu.js";
 import { ZoneMenu } from "./ZoneMenu.js";
 import type { EventDraft } from "./event-draft.js";
 
@@ -23,7 +24,7 @@ export function EditorActionBar({
   change: (edit: Partial<EventDraft>) => void;
 }) {
   const t = useText("calendar");
-  const [popup, show] = useState<{ anchor: HTMLElement; kind: "more" | "zone" } | null>(null);
+  const [popup, show] = useState<{ anchor: HTMLElement; kind: "more" | "zone" | "busy" } | null>(null);
   const more = popup?.kind === "more" ? popup.anchor : null;
   const [folded, fold] = useState<readonly string[]>([]);
   const verbs: PanelVerb[] = [
@@ -54,6 +55,14 @@ export function EditorActionBar({
       {popup?.kind === "zone" && timeZone && !blocked && (
         <ZoneMenu anchor={popup.anchor} zone={timeZone} close={hide} pick={(zone) => change({ zone })} />
       )}
+      {popup?.kind === "busy" && !blocked && (
+        <ShowAsMenu
+          anchor={popup.anchor}
+          busy={draft.busy}
+          choose={(busy) => change({ busy })}
+          close={hide}
+        />
+      )}
       {more && !blocked && (
         <Menu open anchor={more} label={t("more")} onClose={hide}>
           {verbs
@@ -73,15 +82,7 @@ export function EditorActionBar({
           {timeZone && (
             <MenuItem onPress={() => show({ anchor: more, kind: "zone" })}>{t("create.timeZone")}</MenuItem>
           )}
-          <MenuItem
-            checked={draft.busy}
-            onPress={() => {
-              change({ busy: !draft.busy });
-              hide();
-            }}
-          >
-            {t("create.busy")}
-          </MenuItem>
+          <MenuItem onPress={() => show({ anchor: more, kind: "busy" })}>{t("create.showAs")}</MenuItem>
           <MenuItem
             checked={draft.private}
             onPress={() => {

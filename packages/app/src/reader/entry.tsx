@@ -8,6 +8,7 @@ import {
   isProtected,
   useConversationBodies,
   useLetterBody,
+  useOpenConversation,
   useThreadWalk,
   type ConversationShown,
 } from "@ohmail/app-logic/reader";
@@ -23,6 +24,9 @@ import { useAnsweredInPlace } from "./answered-in-place.js";
 import type { LetterNotice, ReaderParts } from "./ports.js";
 import { Reader } from "./Reader.js";
 import { Squares } from "./Squares.js";
+import { useFrame } from "../frame/commands.js";
+import { readThreadOrder } from "./thread-order.js";
+import { useOwnGone } from "../frame/own-gone.js";
 import { READER_DOM } from "./read-dom.js";
 
 const ignoreControls = (): void => {};
@@ -33,22 +37,39 @@ function StreamConversation({
   openedId,
   scroller,
   onEnter,
+  anchor,
+  newestFirst,
 }: {
-  children: ReactNode;
+  children: (current: string | null) => ReactNode;
   messages: readonly EngineMessage[];
   openedId: string;
   scroller: HTMLElement | null;
   onEnter: () => void;
+  anchor: boolean;
+  newestFirst: boolean;
 }) {
-  const walk = useThreadWalk({ scroller, messages, openedId, onEnter, names: READER_DOM });
+  const [scope, setScope] = useState<HTMLDivElement | null>(null);
+  const latest = messages.at(newestFirst ? 0 : -1)?.id;
+  const walk = useThreadWalk({
+    scroller,
+    scope,
+    messages,
+    openedId,
+    onEnter,
+    names: READER_DOM,
+    anchor,
+    initialId: latest,
+    newestFirst,
+  });
+  const current = messages[walk.here]?.id ?? latest ?? null;
   return (
-    <div className="rd-stream-conversation" data-thread={messages.length > 1 || undefined}>
+    <div ref={setScope} className="rd-stream-conversation" data-thread={messages.length > 1 || undefined}>
       <div className="rd-stream-squares">
         {messages.length > 1 && (
           <Squares messages={messages} walk={walk} place="column" column={scroller} waitForFit={false} />
         )}
       </div>
-      <div className="rd-stream-letters">{children}</div>
+      <div className="rd-stream-letters">{children(current)}</div>
     </div>
   );
 }
@@ -90,6 +111,7 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
   function OpenCard({
     message,
     opened,
+    addressed = false,
     clip,
     markUnread,
     conversation,
@@ -98,6 +120,7 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
   }: {
     message: EngineMessage;
     opened: boolean;
+    addressed?: boolean;
     clip?: MessageClip;
     markUnread?: (id: string) => void;
     conversation?: ConversationShown;
@@ -106,28 +129,46 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
   }) {
     const parts = useParts();
     const [person, onPerson, close] = useOpenCard();
-    useConversationBodies(conversation ? message.id : null, conversation?.messages ?? []);
-    const members = conversation?.messages ?? [message];
-    const letters = members.map((m) => (
-      <Letter
-        key={m.id}
-        message={m}
-        clip={m.id === message.id ? clip : undefined}
-        markUnread={m.id === message.id ? markUnread : undefined}
-        opened={opened && m.id === message.id}
-        previewSelection={message.id}
-        streamCard="open"
-        unread={m.unread}
-        look="dot"
-        reading
-        presented={conversation?.presentedIds.has(m.id) ?? true}
-        onPerson={onPerson}
-        card={person?.slot ?? null}
-      />
-    ));
+    const shown = useOpenConversation(
+      conversation === undefined && message.threadId ? message.id : null,
+      useOwnGone(),
+    );
+    const thread = conversation ?? (shown.messages.length > 1 ? shown : undefined);
+    const { host } = useFrame();
+    const newestFirst = readThreadOrder(host.session.scope) === "top";
+    const chronological = thread?.messages ?? [message];
+    const members = newestFirst ? [...chronological].reverse() : chronological;
+    useConversationBodies(thread ? (chronological.at(-1)?.id ?? message.id) : null, chronological);
+    const letters = (current: string | null) =>
+      members.map((m) => (
+        <Letter
+          key={m.id}
+          message={m}
+          clip={m.id === message.id ? clip : undefined}
+          markUnread={m.id === message.id ? markUnread : undefined}
+          opened={opened && m.id === message.id}
+          current={opened && m.id === current}
+          previewSelection={message.id}
+          streamCard="open"
+          unread={m.unread}
+          look="dot"
+          reading
+          presented={thread?.presentedIds.has(m.id) ?? true}
+          onPerson={onPerson}
+          card={person?.slot ?? null}
+        />
+      ));
     return (
       <PartsContext.Provider value={parts}>
-        <StreamConversation messages={members} openedId={message.id} scroller={scroller} onEnter={onEnter}>
+        <StreamConversation
+          key={addressed && conversation === undefined ? "open" : "card"}
+          messages={members}
+          openedId={message.id}
+          scroller={scroller}
+          onEnter={onEnter}
+          anchor={addressed && conversation === undefined}
+          newestFirst={newestFirst}
+        >
           {letters}
         </StreamConversation>
         <Contact person={person} onClose={close} />

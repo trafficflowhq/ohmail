@@ -427,7 +427,7 @@ describe("the selection's keys", () => {
      * WHAT THIS ASSERTS, AND WHY IT IS NOT THE OBVIOUS SHAPE. The obvious test — press ⌫, then
      * press it twice more with `repeat` — passes with the guard DELETED, because the first
      * press clears the pick and the binding is then absent. It was written that way first and
-     * watched pass under the mutation, which is exactly the blind guard CLAUDE.md warns about.
+     * watched pass under the mutation, which is exactly the blind guard AGENTS.md warns about.
      *
      * The guard's real contract is on the EVENT: a keydown carrying `repeat` is not a press.
      * So the repeat is dispatched FIRST, over a live selection, where the binding is present

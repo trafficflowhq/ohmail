@@ -33,7 +33,7 @@
  * — because a parser that quietly finds nothing makes three empty sets equal and reports success.
  *
  * NOTE: the root `test/` directory is in no tsconfig project, so `pnpm typecheck` says nothing
- * about this file (CLAUDE.md). It was checked with an explicit `tsc --noEmit` when it landed.
+ * about this file (AGENTS.md). It was checked with an explicit `tsc --noEmit` when it landed.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

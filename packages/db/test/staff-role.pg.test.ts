@@ -1135,7 +1135,7 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
 
      Every test here follows the same three beats, and the FIRST of them is the one that
      matters: prove the sabotage TOOK. A repair test whose sabotage silently failed is a green
-     test that proves nothing, which is the failure mode `CLAUDE.md` calls "a guard nobody has
+     test that proves nothing, which is the failure mode `AGENTS.md` calls "a guard nobody has
      watched fail". */
 
   /**

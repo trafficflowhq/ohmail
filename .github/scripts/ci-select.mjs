@@ -308,7 +308,7 @@ function canonical(v) {
  *   a tsconfig        added in a new app or package, its files and its output inside it (a `tsconfig.json`
  *                     there must be one of the root's new references); or gaining `references` entries,
  *                     `compilerOptions.paths` keys that point into apps/ or packages/, `include` entries
- *                     inside a new one. Never tsconfig.base.json.
+ *                     inside a new one. Never tools/tsconfig.base.json.
  *   vitest.config.ts  lines inserted into the alias table: a line comment, or one entry on a line whose
  *                     `find` can match a new package's name alone and whose target is inside it, or one
  *                     for a new entry of a workspace the base holds that no file of the base names.
@@ -407,7 +407,7 @@ export function tsconfigAdditions(p, before, after) {
 
 /** What an admitted tsconfig change is, in words, or null. `before` is null for an added file. */
 export function admittedTsconfig(p, before, after, { newAreas = new Set() } = {}) {
-  if (p === "tsconfig.base.json" || typeof after !== "string") return null;
+  if (p === "tools/tsconfig.base.json" || typeof after !== "string") return null;
   const inNew = (x) => [...newAreas].some((n) => under(x, n));
   if (before === null) {
     // A new package's own program: its files and what it writes stay in its folder (`paths` only reads).
@@ -765,7 +765,7 @@ export function pathTriggers(root, changes, { direct = false, base = null, head 
     }
     for (const [re, what] of TRIGGERS) if (re.test(p)) trigger(`${p}: ${what}`, p, what);
     if (closure.has(p)) trigger(`${p}: ${HARNESS}`, p, HARNESS);
-    if (p === "vitest.sqlite.config.ts") sqliteWhole = true;
+    if (p === "test/vitest.sqlite.config.ts") sqliteWhole = true;
     if (p.startsWith("test/dovecot/")) dovecotAll = true;
   }
   if (!direct) return { whole, sqliteWhole, dovecotAll };
@@ -1451,7 +1451,7 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
   const sqliteLeft = [];
   let sqliteSetMs = 0;
   if (!scope.sqliteWhole) {
-    const sq = await graph(root, related, { config: "vitest.sqlite.config.ts" });
+    const sq = await graph(root, related, { config: "test/vitest.sqlite.config.ts" });
     sqliteAll = sq.all;
     const inProject = new Set(sq.all);
     const ofProject = (graphed, selected) => [...new Set([...graphed, ...selected.filter((f) => inProject.has(f))])].filter((f) => inProject.has(f)).sort();

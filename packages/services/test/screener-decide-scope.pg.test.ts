@@ -24,7 +24,7 @@ import {
  * lock inside the decide's own transaction before its bag moves, and the request rows for
  * reader-role mailboxes commit IN THE SAME transaction as the decision — a crash between them
  * would leave a decision half-travelled. PGlite runs the statements but cannot witness the lock,
- * and CLAUDE.md pins transactional guarantees on real Postgres.
+ * and AGENTS.md pins transactional guarantees on real Postgres.
  *
  * MUTATION-WATCHED (each restored `cmp`-verified): (1) restore the mailbox filter on the held-bag
  * read (`heldRowsForSender(…, mailboxId)`) and the two-mailbox case goes red — one bag survives;

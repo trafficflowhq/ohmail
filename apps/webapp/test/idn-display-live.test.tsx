@@ -126,7 +126,7 @@ describe("a malformed A-label falls back to the raw form, and never throws", () 
     // FULLWIDTH FULL STOP, RIGHT-TO-LEFT OVERRIDE, ZERO WIDTH SPACE and IDEOGRAPHIC FULL STOP all
     // change what the address APPEARS to be, which is a different problem from a lookalike letter.
     // Written as escapes on purpose: a literal invisible character in a source file makes `file`
-    // report it as data, after which plain `grep` silently skips the whole file (see CLAUDE.md).
+    // report it as data, after which plain `grep` silently skips the whole file (see AGENTS.md).
     for (const cp of ["\uFF0E", "\u202E", "\u200B", "\u3002"]) {
       const forged = domainToASCII(`a${cp}b.example`);
       if (forged === "" || !forged.includes("xn--")) continue;

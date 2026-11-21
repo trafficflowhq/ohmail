@@ -4,8 +4,8 @@
     "deleteUndone": "Event restored",
     "undoLate": "Too late to undo",
     "waiting": {
-      "device": "Not sent yet from this device",
-      "provider": "Waiting for the calendar"
+      "device": "Waiting",
+      "provider": "Waiting"
     },
     "notSaved": "Not saved",
     "fault": {
@@ -14,7 +14,7 @@
       "gone": "The event is no longer in that calendar.",
       "unreachable": "The calendar could not be reached.",
       "notKept": "The calendar would not keep this change as written.",
-      "stale": "The event was changed elsewhere since. Keep yours or theirs.",
+      "stale": "Changed elsewhere",
       "versionUnknown": "The calendar's copy could not be read, so nothing was sent.",
       "earlier": "An earlier change to this event was not saved, so this one was not sent.",
       "chained": "Press again once the change before it is done.",
@@ -35,14 +35,16 @@
       "unknown": "The change was not saved."
     },
     "taken": {
-      "deleteAudience": "Event removed. Cancellation for {guests}.",
+      "deleteAudience": "Cancellation sent to {guests}",
       "create": "Event added",
-      "update": "Change saved",
-      "delete": "Event removed",
+      "update": "Changed",
+      "delete": "Deleted",
       "move": "Event moved",
       "answer": "Answer saved",
       "retry": "Sending again",
-      "dismiss": "Change let go"
+      "dismiss": "Change let go",
+      "updateAudience": "Update sent to {guests}",
+      "invitationAudience": "Invitation sent to {guests}"
     }
   }
 }

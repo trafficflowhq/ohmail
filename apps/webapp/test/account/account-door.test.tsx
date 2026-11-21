@@ -34,7 +34,7 @@ const wipe = vi.hoisted(() => ({
 }));
 vi.mock("../../app/sign-out", async (original) => ({
   ...await original<typeof import("../../app/sign-out")>(),
-  signOut: async (owner?: string) => {
+  signOutAndSettle: async (owner?: string) => {
     wipe.handed.push(owner);
     try {
       const answer = await fetch("/auth/refresh/logout", { method: "POST" });

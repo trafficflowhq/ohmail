@@ -16,7 +16,7 @@ import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.
  * THE NEW CONCURRENCY PAIR, AGAINST REAL POSTGRES ON :5433.
  *
  * Putting `bubbleUpPass` in `cycle()` creates a pair that did not exist before: the always-on
- * worker and the CLI backstop can both be pointed at the same rows. CLAUDE.md's standing rule
+ * worker and the CLI backstop can both be pointed at the same rows. AGENTS.md's standing rule
  * applies without argument — "PGlite green means nothing for transactional code; three
  * production bugs were invisible to PGlite and only appeared against real Postgres" — and the
  * mechanism at risk is exactly the one those three shared: `allocateSeq`'s row lock inside the

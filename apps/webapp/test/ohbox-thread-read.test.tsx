@@ -292,9 +292,10 @@ describe("a preview reads nothing until rested on", () => {
     bodies(["p1", "p2", "p3", "p4"]);
     const host = await mountThread(four());
     await click(theRow(host), "the conversation's row");
-    expect(layout.scroller().scrollTop).toBe(0);
+    expect(layout.scroller().scrollTop).toBeGreaterThan(500);
+    expect(ring()).toBe("p4");
     await dwell();
-    expect(glances()).toEqual([["p1", "p2"]]);
+    expect(glances()).toEqual([["p4"]]);
   }, 30_000);
 
   it("a click on the bar's Later in a preview files the conversation unread; its Mark read is one write", async () => {
@@ -495,7 +496,8 @@ describe("a single message", () => {
     layout.heights.s1 = 2000;
     const host = await mountThread([...four(), msg("s1", 1, { threadId: "S" })]);
     await click(rowOf(host, "p4"), "the conversation's row");
-    expect(layout.scroller().scrollTop, "the conversation opens at its first unread").toBe(0);
+    expect(layout.scroller().scrollTop, "the conversation opens on its newest").toBeGreaterThan(500);
+    expect(ring()).toBe("p4");
     await layout.handScroll(layout.topOf("p3"));
     expect(layout.scroller().scrollTop).toBeGreaterThan(500);
     await click(rowOf(host, "s1"), "the single letter's row");
@@ -615,7 +617,7 @@ describe("a reply that arrives into the open conversation", () => {
   }, 60_000);
 });
 
-/** A row opens at the first unread. The keyboard preview can still address the newest letter. */
+/** A row opens on the newest letter whether clicked or entered from the keyboard. */
 describe("a conversation opens on its newest, every time", () => {
   const holding = (host: HTMLElement, id: string): HTMLElement | null =>
     host.querySelector<HTMLElement>(`[role="listbox"] :is(.row, [role=option])[data-ids~="${id}"]`) ?? rowOf(host, id);
@@ -626,8 +628,10 @@ describe("a conversation opens on its newest, every time", () => {
     bodies(["p1", "p2", "p3", "p4", "s1"]);
     const host = await mountThread([...four(), msg("s1", 40, { threadId: "S" })]);
     await click(holding(host, "p4"), "the conversation's row");
-    expect(focused(), "the first open").toBe("p1");
-    expect(layout.scroller().scrollTop).toBe(0);
+    expect(focused(), "the first open").toBe("p4");
+    expect(layout.scroller().scrollTop).toBeGreaterThan(500);
+    await click(squareOf("p1"), "the oldest message square");
+    expect(focused()).toBe("p1");
     await dwell();
     expect(glances()).toEqual([["p1"]]);
     await click(holding(host, "s1"), "another conversation");
@@ -640,13 +644,15 @@ describe("a conversation opens on its newest, every time", () => {
     const host = await a20();
     expect(holding(host, "p4")?.dataset.id, "the row stands for its newest").toBe("p4");
     await click(holding(host, "p4"), "the conversation again");
-    expect(focused(), "the reopen lands on the first unread").toBe("p2");
+    expect(focused(), "the reopen lands on the newest").toBe("p4");
     await dwell();
-    expect(glances(), "the reopen reads nothing it did not show").toEqual([["p1"], ["s1"]]);
-    await click(holding(host, "p4"), "a second click");
-    expect(focused(), "a second click stays on the first unread").toBe("p2");
+    expect(glances(), "the reopen reads nothing it did not show").toEqual([["p1"], ["s1"], ["p4"]]);
+    await click(squareOf("p2"), "an earlier square");
+    expect(focused()).toBe("p2");
+    await click(holding(host, "p4"), "the same row again");
+    expect(focused(), "the same row returns to the newest").toBe("p4");
     await dwell();
-    expect(glances()).toEqual([["p1"], ["s1"]]);
+    expect(glances()).toEqual([["p1"], ["s1"], ["p4"]]);
     await layout.handScroll(layout.topOf("p3") - 10);
     await settle();
     await dwell();

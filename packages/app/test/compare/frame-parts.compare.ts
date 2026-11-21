@@ -29,7 +29,7 @@ import { openFramePage } from "../states/frame-page.js";
 /**
  * THE FRAME'S PARTS of the screen `states`, each against the same part of the reference's picture and data file
  * (`node test/compare/fetch.mjs --all --from <the shards>`, then
- * `npx vitest run --config vitest.compare.config.ts packages/app/test/compare`).
+ * `npx vitest run --config test/compare/vitest.compare.config.ts packages/app/test/compare`).
  *
  * The reference of `states` is the design's state browser: its columns (the head "States", the list of kinds, the
  * specimens) are the design's catalogue and no screen of the app. What is the frame's in that picture is cut out of

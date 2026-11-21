@@ -43,7 +43,7 @@ import { FIXTURE_LEASE } from "./_door.js";
  * really did retire the pending row, that `message_instances` holds one instance and not two,
  * and that a second pass over the real table finds nothing left to do.
  *
- * PGlite is not evidence for it either: CLAUDE.md's standing rule is that PGlite green says
+ * PGlite is not evidence for it either: AGENTS.md's standing rule is that PGlite green says
  * nothing about transactional code, and three production defects were invisible to it. The
  * per-message writes here run through the real driver's `ON CONFLICT` paths, which is where a
  * convergence bug would actually live.

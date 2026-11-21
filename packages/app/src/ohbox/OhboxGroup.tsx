@@ -3,6 +3,7 @@
  * says comes from the model (who waits, whether it is open, Done) and from the shell's words (names, times, tags).
  */
 import { useContext, useState } from "react";
+import { readThreadOrder } from "../reader/thread-order.js";
 import { Contact } from "../reader/contact/Screening.js";
 import type { EngineMessage } from "@ohmail/wire";
 import type { OhboxRow, ThreadMark } from "@ohmail/client-engine";
@@ -57,7 +58,9 @@ export function OhboxGroup({
   heading,
 }: OhboxGroupProps) {
   const t = useText("ohbox");
-  const reader = useContext(FrameContext)?.api.host.features.reader;
+  const host = useContext(FrameContext)?.api.host;
+  const reader = host?.features.reader;
+  const newestFirst = readThreadOrder(host?.session.scope ?? null) === "top";
   const ScreenContact = reader === NONE ? undefined : reader?.Screening;
   const [contact, setContact] = useState<{ person: ContactOf; openId: string | undefined } | null>(null);
   const openId = model.selected?.id;
@@ -99,6 +102,7 @@ export function OhboxGroup({
             <OhboxRowItem
               key={row.key}
               model={model}
+              newestFirst={newestFirst}
               beside={beside}
               showTaggedByline={showTaggedByline}
               row={row}
@@ -143,6 +147,7 @@ export function OhboxGroup({
 const sameAddress = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
 interface OhboxRowItemProps {
+  newestFirst: boolean;
   model: OhboxListModel;
   beside: OhboxBeside;
   showTaggedByline: boolean;
@@ -173,6 +178,7 @@ function rowStamp(format: Stamp, message: EngineMessage): ReturnType<Stamp> {
 
 function OhboxRowItem({
   model,
+  newestFirst,
   beside,
   showTaggedByline,
   row,
@@ -204,8 +210,8 @@ function OhboxRowItem({
   const subject = model.subjectOf(row);
   const unread = model.rowUnread(row);
   const own = model.marksOf(row);
-  const walked = useWalkedSquares(model, row, own);
-  const marks = walked?.marks ?? own;
+  const walked = useWalkedSquares(model, row, own, newestFirst);
+  const marks = walked?.marks ?? (newestFirst && own ? [...own].reverse() : own);
   const run = useSquaresRun(marks?.length ?? 0, walked?.here ?? -1);
   const unreadMarks = marks ? marks.filter((k) => k === "unread").length : 0;
   const marksWords = marks ? t("row.marks", { count: marks.length, unread: unreadMarks }) : null;
