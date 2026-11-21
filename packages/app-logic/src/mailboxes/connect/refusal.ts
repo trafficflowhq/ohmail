@@ -239,13 +239,16 @@ const TLS_KEYS: Readonly<Partial<Record<ProbeTlsKind, string>>> = {
 
 function probeSaid(r: Refusal, reason: ProbeReason, ctx: SaidContext): Said {
   const transport = r.details.transport ?? "imap";
+  const tls = reason === "tls" ? r.details.tls : null;
+  // A local certificate offer explains why the connection stopped and what the opt-in trusts.
+  if (tls?.kind === "self_signed" && tls.certificate !== null)
+    return mailboxes("probe_tls_self_signed_local");
   // A form with no port field names none: the server name on the manual entry, nothing behind a preset.
   if (!ctx.ports) {
     const tlsKinds = ctx.testing && r.details.tls?.kind !== "tls_unavailable" ? "generic" : "own";
     const noPort = noPortProbeSentence(r, ctx.manual, tlsKinds);
     if (noPort) return mailboxes(noPort.key, { field: noPort.field });
   }
-  const tls = reason === "tls" ? r.details.tls : null;
   if (tls !== null) {
     const protocol = transport === "smtp" ? "SMTP" : "IMAP";
     if (tls.kind === "tls_unavailable")
@@ -259,9 +262,6 @@ function probeSaid(r: Refusal, reason: ProbeReason, ctx: SaidContext): Said {
         ? mailboxes("probe_tls_hostname_suggest", { ...values, suggestedHost: tls.suggestedHost })
         : mailboxes("probe_tls_hostname", values);
     }
-    // A server on this computer whose own certificate the person may trust (the line under the sentence).
-    if (tls.kind === "self_signed" && tls.certificate !== null)
-      return mailboxes("probe_tls_self_signed_local");
     if ((tls.kind === "self_signed" || tls.kind === "untrusted") && tls.trustVariable !== null)
       return mailboxes(
         tls.kind === "self_signed" ? "probe_tls_self_signed_private" : "probe_tls_untrusted_private",

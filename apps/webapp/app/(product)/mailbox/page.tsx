@@ -2,6 +2,8 @@ import { headers } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import { DEFAULT_LOCALE } from "../../shell/locale";
 import { NoPageRoute } from "../NoPageRoute";
+import { SETTINGS_HANDOFF, settingsReference } from "../../settings-handoff";
+import { SettingsHandoffGate } from "./SettingsHandoffGate";
 import { CloudShell } from "./CloudShell";
 import { isDemoBuild, isDemoRequested, type SearchParamsLike } from "../../demo-mode";
 
@@ -21,6 +23,9 @@ import { isDemoBuild, isDemoRequested, type SearchParamsLike } from "../../demo-
  */
 export default async function Page(props: { searchParams?: Promise<SearchParamsLike> }) {
   const searchParams = await props.searchParams;
+  if (searchParams && Object.hasOwn(searchParams, SETTINGS_HANDOFF)) {
+    return <SettingsHandoffGate key={String(searchParams[SETTINGS_HANDOFF])} reference={settingsReference(searchParams[SETTINGS_HANDOFF]) ?? ""} />;
+  }
   const serverDemo = isDemoBuild(process.env) || isDemoRequested(searchParams);
   const apiConfigured = Boolean(process.env.NEXT_PUBLIC_API_BASE);
 

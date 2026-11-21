@@ -18,7 +18,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { SettingsNote, SettingsSubhead } from "@ohmail/ui";
+import { SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 
 import { OhboxWords } from "../../webapp/app/shell/OhboxWords";
 import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
@@ -74,19 +74,17 @@ export function DesktopScreeningWords({
 
   if (read.state === "offline") {
     return (
-      <>
-        <SettingsSubhead>{t("wordsHead")}</SettingsSubhead>
+      <SettingsSheet title={t("wordsHead")}>
         {/* NAMED, NOT HIDDEN. The words are on the hosted account and this install cannot reach it
             — which is a sentence somebody can act on, where an absent section is one they would
             read as their writing having gone. */}
-        <SettingsNote>{t(managed ? "wordsOffline" : "wordsOfflineServer")}</SettingsNote>
-      </>
+        <SettingNote>{t(managed ? "wordsOffline" : "wordsOfflineServer")}</SettingNote>
+      </SettingsSheet>
     );
   }
 
   return (
-    <>
-      <SettingsSubhead>{t("wordsHead")}</SettingsSubhead>
+    <SettingsSheet title={t("wordsHead")}>
       {/* WHAT THE WORDS ACTUALLY REACH, stated in full and no wider than that.
           Both places a model is asked about a sender are covered: the filing loop, which hands
           them to the classifier for mail it cannot settle by rules, and the Screener's suggestion
@@ -98,7 +96,7 @@ export function DesktopScreeningWords({
           WHEN a model judges — which is the claim the sentence makes. */}
       {/* "the words SIMPLY wait" went with the move — a banned word, and it was doing nothing
           the sentence needed. */}
-      <SettingsNote>{t("wordsWhy")}</SettingsNote>
+      <SettingNote>{t("wordsWhy")}</SettingNote>
       <OhboxWords
         bar={read.pref.ohboxBar}
         defaultBar={read.pref.defaultBar}
@@ -108,6 +106,6 @@ export function DesktopScreeningWords({
           return said?.(landed) ? { bar: landed.ohboxBar, travelled: true } : landed.ohboxBar;
         }}
       />
-    </>
+    </SettingsSheet>
   );
 }

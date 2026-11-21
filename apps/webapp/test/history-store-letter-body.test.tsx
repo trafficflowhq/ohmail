@@ -4,7 +4,7 @@ import { within } from "@testing-library/react";
 import { readingColumn } from "./ohbox/_finders.js";
 import { storeMessage } from "./_store-fixture.js";
 import {
-  ISO, act, answerStoreWith, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, page,
+  ISO, act, answerStoreWith, answerSyncWith, goTo, installShellEnv, liveAccountResponse, mailbox, mountShell, page,
   teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
 
@@ -27,7 +27,7 @@ it("THE FIRST MESSAGE: a row only the store holds opens, and its body is read an
   globalThis.fetch = (input, init) => {
     if ((init?.method ?? "GET") === "GET" && /\/messages\/first-ever(?:\?|$)/.test(String(input))) {
       lookups.push(first.id);
-      return Promise.resolve(Response.json(first));
+      return Promise.resolve(liveAccountResponse(Response.json(first)));
     }
     return fetchMail(input, init);
   };

@@ -15,7 +15,7 @@ import { desktopHost, type DesktopFacts, type DesktopSupplies } from "../src/hos
 
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "images", "olderBody", "junk", "trash",
-  "draftReply", "firstRun", "connect", "screening", "autoFiled", "ownModelAutoSuggest", "mailboxes",
+  "draftReply", "firstRun", "connect", "screening", "autoFiled", "ownModelAutoSuggest", "mailboxes", "suggest",
 ] as const;
 /** A stand-in that is only ever compared: which thing was handed on, not what it does. */
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
@@ -149,24 +149,25 @@ describe("the desktop signed in to the managed service", () => {
   it("answers each capability as its control showed it", () => {
     expect(host.capabilities).toEqual({
       service: "managed", prices: "none", sendCeiling: desktopSendSurface(managed.status), awayRunsOn: "service",
-      rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "none",
+      rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "pressed",
       pairing: "inBrowser", account: "inBrowser", firstRunDoor: "none", mailboxes: "resyncAndOut", language: "install", searchBy: "words", products: "none",
     });
     expect(typeof host.capabilities.sendCeiling).toBe("number");
   });
 
-  it("hands the mail ground no suggestion wire and says no suggestion, on the managed service and on a server of one's own", () => {
-    /* An account whose row says "suggest by itself" opens the Screener in this window: the ground's one run is handed
-       no wire and draws no control, so nothing is priced, bought or listed as bought without a press on the
-       window's own control. */
+  it("offers suggestions only on a press for live accounts on both servers", () => {
     for (const signedIn of [managed, selfHosted]) {
       const answers = desktopHost(engine, signedIn, has);
-      expect({ wire: answers.wires.suggest, says: answers.capabilities.suggest }).toEqual({ wire: NONE, says: "none" });
+      expect({ wire: answers.wires.suggest, says: answers.capabilities.suggest })
+        .toEqual({ wire: has.wires.suggest, says: "pressed" });
+      const signedOut = desktopHost(engine, { ...signedIn, session: "out" }, has);
+      expect({ wire: signedOut.wires.suggest, says: signedOut.capabilities.suggest })
+        .toEqual({ wire: NONE, says: "none" });
     }
   });
 
   it("carries the account's wires over the pipe, and no first run", () => {
-    expect(withheld(host)).toEqual(["calendar", "connect", "firstRun", "folderSummary", "ownModelAutoSuggest", "seedReview", "suggest"]);
+    expect(withheld(host)).toEqual(["calendar", "connect", "firstRun", "folderSummary", "ownModelAutoSuggest", "seedReview"]);
     expect(host.wires.consent).toBe(has.wires.consent.account);
     expect(host.reads).toEqual(has.reads);
     expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: "live", scope: "a-mailbox", mirrorAccount: null, account: null, accountAddress: null, signOut: has.signOut, recover: FRAME.recover, today: NONE });
@@ -205,9 +206,9 @@ describe("the desktop signed in to the managed service", () => {
 describe("the desktop signed in to a self-hosted server", () => {
   const host = desktopHost(engine, selfHosted, has);
 
-  it("lists what the managed door lists, and hands on what it hands on", () => {
-    expect(listed(host)).toEqual(listed(desktopHost(engine, managed, has)));
-    expect(host.features).toEqual(entries(has.features, ...AN_ACCOUNT));
+  it("lists the signed-in sections except the managed Account link", () => {
+    expect(listed(host)).toEqual(without(listed(desktopHost(engine, managed, has)), "account"));
+    expect(host.features).toEqual(entries(has.features, ...AN_ACCOUNT.filter((feature) => feature !== "account")));
     expect(host.device).toEqual(DESKTOP_DEVICE);
     expect(host.signals).toEqual({ ...NO_SIGNAL, hostConnection: has.hostConnection, linkIn: has.linkIn });
   });
@@ -215,7 +216,7 @@ describe("the desktop signed in to a self-hosted server", () => {
   it("answers each capability as its control showed it", () => {
     expect(host.capabilities).toEqual({
       service: "self", prices: "none", sendCeiling: DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES, awayRunsOn: "service",
-      rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "none",
+      rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "pressed",
       pairing: "inBrowser", account: "inBrowser", firstRunDoor: "none", mailboxes: "resyncAndOut", language: "install", searchBy: "words", products: "none",
     });
   });
@@ -262,7 +263,8 @@ describe("a preview build of the desktop", () => {
     const noAccount = EVERY_DOOR.filter((feature) => feature !== "defaultMail");
     expect(desktopHost(engine, { ...onItsOwn, ...preview }, has).features).toEqual(entries(has.features, ...noAccount, "devices"));
     expect(desktopHost(engine, { ...managed, ...preview }, has).features).toEqual(entries(has.features, ...account));
-    expect(desktopHost(engine, { ...selfHosted, ...preview }, has).features).toEqual(entries(has.features, ...account));
+    expect(desktopHost(engine, { ...selfHosted, ...preview }, has).features)
+      .toEqual(entries(has.features, ...account.filter((feature) => feature !== "account")));
     expect(desktopHost(engine, { ...paired, ...preview }, has).features).toEqual(entries(has.features, ...noAccount));
   });
 });

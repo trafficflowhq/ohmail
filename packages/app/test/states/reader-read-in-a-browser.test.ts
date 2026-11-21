@@ -63,6 +63,29 @@ describe("the read rule in a real browser", () => {
     expect(errors).toEqual([]);
     await page.close();
   }, 60_000);
+
+  it("marks the visible middle and newest messages when the newest message is chosen", async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) =>
+        route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+      );
+      await page.goto(`${ORIGIN}/?open=rd-c&read=1&screen=reading`);
+      await page.waitForSelector('[data-conv-id="rd-c"][data-body-ready]');
+      const marked = () =>
+        page.evaluate(() =>
+          ((globalThis as { readerMutations?: Read[] }).readerMutations ?? [])
+            .filter((m) => m.kind === "mark_seen" && m.unread === false)
+            .flatMap((m) => m.messageIds ?? [])
+            .sort(),
+        );
+      await expect.poll(marked, { timeout: 4000 }).toEqual(["rd-b", "rd-c"]);
+      await page.waitForTimeout(850);
+      expect(await marked()).toEqual(["rd-b", "rd-c"]);
+    } finally {
+      await page.close();
+    }
+  }, 20_000);
 });
 
 describe("the wide window in a real browser", () => {
@@ -276,3 +299,91 @@ describe("the panel's menus in a real browser", () => {
     await page.close();
   }, 60_000);
 });
+
+it("fades the sticky Paper heading only while it covers the letter", async () => {
+  const page = await browser!.newPage({
+    viewport: { width: 1440, height: 900 },
+    reducedMotion: "reduce",
+  });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+    );
+    await page.goto(`${ORIGIN}/?open=rd-a&read=1&screen=reading`);
+    const heading = page.getByRole("heading", { name: "Open studio: the plan" });
+    const fade = () =>
+      heading.evaluate((heading) => {
+        const edge = getComputedStyle(heading.parentElement!, "::after");
+        return edge.content === "none" ? null : [edge.height, edge.backgroundImage];
+      });
+    expect(await fade()).toBeNull();
+    await heading.evaluate((heading) => heading.parentElement!.parentElement!.scrollBy(0, 300));
+    await expect.poll(fade).toEqual(["24px", expect.stringContaining("linear-gradient(")]);
+    await heading.evaluate((heading) => heading.parentElement!.parentElement!.scrollTo(0, 0));
+    await expect.poll(fade).toBeNull();
+  } finally {
+    await page.close();
+  }
+}, 20_000);
+
+it("aligns the first unread letter when the rest of the thread is short and can still scroll to the last", async () => {
+  const { readerStatesPage } = await import("./reader-states.mjs");
+  const threadHtml = await readerStatesPage("packages/app/test/states/squares-reader-1-page.tsx");
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: threadHtml }),
+    );
+    await page.goto(`${ORIGIN}/?n=6&whole=1&open=5&firstUnread=4`);
+    const heading = page.getByRole("heading", { name: "Q3 plan" });
+    const group = page.getByRole("group", { name: /^6 messages,/ });
+    const here = (position: number) =>
+      group
+        .getByRole("button", { name: new RegExp(`^Message ${position} of 6 `) })
+        .and(group.locator('[aria-current="true"]'));
+    const letter = page.locator('[data-conv-id="w4"]');
+    await here(5).waitFor();
+    const gap = () =>
+      heading.evaluate((h) => {
+        const panel = h.closest("[data-reading-scroll]")!.querySelector('[data-conv-id="w4"]')!;
+        return panel.getBoundingClientRect().top - h.parentElement!.getBoundingClientRect().bottom;
+      });
+    await expect.poll(gap).toBeLessThanOrEqual(16);
+    expect(await gap()).toBeGreaterThanOrEqual(13);
+
+    await letter.hover();
+    await page.mouse.wheel(0, 10_000);
+    await here(6).waitFor();
+  } finally {
+    await page.close();
+  }
+}, 60_000);
+
+it("lands the last message on the reading line after jumping away in a short thread", async () => {
+  const { readerStatesPage } = await import("./reader-states.mjs");
+  const threadHtml = await readerStatesPage("packages/app/test/states/squares-reader-1-page.tsx");
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: threadHtml }),
+    );
+    await page.goto(`${ORIGIN}/?n=6&whole=1&open=5&firstUnread=4`);
+    const heading = page.getByRole("heading", { name: "Q3 plan" });
+    const group = page.getByRole("group", { name: /^6 messages,/ });
+    const square = (position: number) =>
+      group.getByRole("button", { name: new RegExp(`^Message ${position} of 6 `) });
+    await expect.poll(() => square(5).getAttribute("aria-current")).toBe("true");
+    await square(1).click();
+    await expect.poll(() => square(1).getAttribute("aria-current")).toBe("true");
+    await square(6).click();
+    await expect.poll(() => square(6).getAttribute("aria-current")).toBe("true");
+    const gap = await heading.evaluate((h) => {
+      const panel = h.closest("[data-reading-scroll]")!.querySelector('[data-conv-id="w5"]')!;
+      return panel.getBoundingClientRect().top - h.parentElement!.getBoundingClientRect().bottom;
+    });
+    expect(gap).toBeGreaterThan(100);
+    expect(gap).toBeLessThan(300);
+  } finally {
+    await page.close();
+  }
+}, 60_000);

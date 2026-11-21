@@ -477,6 +477,8 @@ describe("the wiring, from source", () => {
       ...todays,
       // Write's editor on the mail ground, handed the body's link reading (today's RichEditor's).
       "packages/app/src/mail/write-entry.ts",
+      // The held-letter unsubscribe panel registers its fallback and refusal links through the same gate.
+      "packages/app/src/screener/held/HeldUnsubscribe.tsx",
       "packages/letter-body/src/BodyText.tsx",
       "packages/letter-body/src/MessageBody.tsx",
     ]);

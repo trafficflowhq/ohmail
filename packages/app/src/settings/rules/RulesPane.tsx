@@ -39,10 +39,33 @@ export function RulesPane({
     if (!canRevokeGroup) setBulkOpen(false);
   }, [canRevokeGroup]);
   const { yours, ohmail } = rulesByDecider(shown);
-  const rows = ohmail.length > 0 ? [...yours, null, ...ohmail] : yours;
+  const headingIndex = yours.length;
   const noScroller = useRef<HTMLDivElement>(null);
-  const win = useListWindow({ scrollerRef: scroller ?? noScroller, count: rows.length });
+  const win = useListWindow({
+    scrollerRef: scroller ?? noScroller,
+    count: shown.length + (ohmail.length > 0 ? 1 : 0),
+  });
   const locked = model.locked !== null;
+  const list = (rules: readonly RuleItem[], start: number, label: string) => {
+    const from = Math.max(0, win.start - start);
+    const until = Math.max(0, win.end - start);
+    if (from >= rules.length || until <= from) return null;
+    return (
+      <div role="list" aria-label={label}>
+        {rules.slice(from, until).map((rule, offset) => (
+          <div
+            key={rule.id}
+            data-index={start + from + offset}
+            role="listitem"
+            aria-setsize={rules.length}
+            aria-posinset={from + offset + 1}
+          >
+            <RuleRow rule={rule} model={model} />
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -71,26 +94,15 @@ export function RulesPane({
         ) : shown.length === 0 ? (
           <Empty label={t("noMatch")} />
         ) : (
-          <div role="list" aria-label={settings("rules")}>
+          <div>
             <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
-            {rows.slice(win.start, win.end).map((rule, offset) => {
-              const index = win.start + offset;
-              return rule === null ? (
-                <div key="ohmail-heading" data-index={index}>
-                  <GroupHeading count={String(ohmail.length)}>{t("groupByOhmail")}</GroupHeading>
-                </div>
-              ) : (
-                <div
-                  key={rule.id}
-                  data-index={index}
-                  role="listitem"
-                  aria-setsize={shown.length}
-                  aria-posinset={rule.byOhmail ? index : index + 1}
-                >
-                  <RuleRow rule={rule} model={model} />
-                </div>
-              );
-            })}
+            {list(yours, 0, settings("rules"))}
+            {ohmail.length > 0 && win.start <= headingIndex && headingIndex < win.end ? (
+              <div key="ohmail-heading" data-index={headingIndex}>
+                <GroupHeading count={String(ohmail.length)}>{t("groupByOhmail")}</GroupHeading>
+              </div>
+            ) : null}
+            {list(ohmail, headingIndex + 1, t("groupByOhmail"))}
             {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
           </div>
         )}

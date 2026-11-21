@@ -200,7 +200,9 @@ function Verb({ verb, apart, keysShown, folded, short }: VerbProps) {
       title={
         verb.refused !== undefined && !verb.disabled
           ? verb.refused
-          : (verb.name ?? (verb.keyHint ? `${verb.label} · ${verb.keyHint}` : verb.label))
+          : verb.keyHint
+            ? `${verb.name ?? verb.label} · ${verb.keyHint}`
+            : (verb.name ?? verb.label)
       }
       aria-pressed={verb.pressed}
       aria-haspopup={verb.dialog ? "dialog" : undefined}

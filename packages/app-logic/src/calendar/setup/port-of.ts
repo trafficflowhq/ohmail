@@ -23,12 +23,13 @@ export function calendarSetupPortOf(
   sync: () => Promise<void>,
   uuid: () => string,
 ): CalendarSetupPort {
-  const saveSettings = transport.saveCalendarSettings;
+  const { calendarConnections, saveCalendarSettings: saveSettings } = transport;
   const refresh = () => {
     void sync().catch(() => undefined);
   };
   return {
     ways: () => transport.calendarWays(),
+    ...(calendarConnections ? { hasConnections: async () => (await calendarConnections()).length > 0 } : {}),
     connect: (ask) => connect(() => transport.connectCalendar(ask, uuid()), refresh),
     signInAgain: (ask) =>
       connect(

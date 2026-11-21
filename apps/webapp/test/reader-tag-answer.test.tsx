@@ -4,7 +4,7 @@ import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OhmailEngine } from "@ohmail/client-engine";
 import {
-  ISO, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  ISO, act, answerSyncWith, goTo, installShellEnv, liveAccountFetch, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 
 beforeEach(installShellEnv);
@@ -57,14 +57,14 @@ function tagWire() {
     cursor: String(seq), hasMore: false, serverTime: ISO,
   }));
   const fetchShell = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = liveAccountFetch(async (input, init) => {
     const path = String(input);
     if (init?.method !== "POST" || !/\/messages\/[^/?]+\/tags$/.test(path)) return fetchShell(input, init);
     const body = JSON.parse(String(init.body)) as { tagId: string; assigned: boolean };
     requests.push({ path: new URL(path, "https://fixture.invalid").pathname, body });
     keys.push(new Headers(init.headers).get("Idempotency-Key"));
     return new Promise<Response>((resolve) => { pending = resolve; });
-  }) as typeof fetch;
+  });
 
   return {
     requests,

@@ -154,7 +154,7 @@ afterEach(async () => {
 
 const landedInSettings = (): void => {
   expect(mockReplacedWith, "a stale wizard landing took the browser to /join").toBeNull();
-  expect(window.location.hash).toBe("#/settings");
+  expect(window.location.hash).toBe("#/settings/mailboxes");
   expect(new URLSearchParams(window.location.search).get("settings")).toBe("mailboxes");
 };
 

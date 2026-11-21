@@ -14,7 +14,7 @@
  *
  * Mounted exactly as the keymap census mounts the shipped shell on the fixture world.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { screen, within } from "@testing-library/react";
@@ -100,6 +100,11 @@ function setup(px: number): void {
   vi.spyOn(console, "error").mockImplementation(() => {});
 }
 
+// The first case measures a keypress. Warm the full mail entry outside that case's clock.
+beforeAll(async () => {
+  await import("./_todays-shell.js");
+}, 90_000);
+
 beforeEach(() => {
   setup(1280);
   window.localStorage.clear();
@@ -123,11 +128,12 @@ afterEach(async () => {
 });
 
 /*
- * THE NEW SHELL's PROBES (one layout): under 700 the frame stands an open letter over the list (its root then says
- * `data-letter`), from 700 in the reading column beside it. Found by role and name where the part has them.
+ * THE FRAME'S PROBES: a letter over the list stands in the reading overlay. A letter beside the list stays in the
+ * reading region. The keyboard help and palette are the frame's own overlays.
  */
 const OPEN_ROW = 'section[aria-label="Messages"] [role=option][data-open][data-id]';
 const letterOver = (): Element | null => document.querySelector(".fr-frame[data-letter]");
+const readingOver = (): Element | null => document.querySelector(".fr-reading[data-over]");
 const letterOpen = (): Element | null => document.querySelector('[role="region"][aria-label="Open message"]');
 const replyBody = (root: ParentNode = document): HTMLElement | null =>
   root.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"]');
@@ -193,6 +199,8 @@ async function openLetter(container: HTMLElement, shown: () => Element | null): 
   expect(shown(), "the reader sheet never rose").toBeTruthy();
 }
 
+const openSheet = (container: HTMLElement): Promise<void> => openLetter(container, readingOver);
+
 describe("`w` — the layout cycle through the one provider", () => {
   it("stamps zero, persists the device choice, and cycles back", async () => {
     setup(800);
@@ -214,9 +222,9 @@ describe("`w` — the layout cycle through the one provider", () => {
     setup(800);
     const container = await shell();
     await key("?");
-    const sheet = container.querySelector(".ks");
+    const sheet = within(container).queryByRole("dialog", { name: messages.shortcuts.title });
     expect(sheet, "the ? sheet is not open").toBeTruthy();
-    const caps = [...sheet!.querySelectorAll(".ks-keys")].map((el) => el.textContent ?? "");
+    const caps = [...sheet!.querySelectorAll(".oh-keyhelp-keys")].map((el) => el.textContent ?? "");
     // `w` carries no modifier, but `chordKeys` requires the glyph from every caller now —
     // a default would be the shipped Mac-cap-on-Linux bug waiting in the signature.
     expect(caps).toContain(chordKeys("w", modGlyph()).join(""));
@@ -228,15 +236,15 @@ describe("`w` is live only where the two layouts look different", () => {
   /** The sheet's `w` row: whether it rests, and the reason it gives. */
   const sheetRow = async (container: HTMLElement): Promise<{ off: boolean; why: string | null } | null> => {
     await key("?");
-    const row = [...container.querySelectorAll<HTMLElement>(".ks li")]
-      .find((li) => li.querySelector(".ks-lab")?.textContent === messages.shortcuts.layout);
-    const out = row ? { off: row.classList.contains("off"), why: row.getAttribute("title") } : null;
+    const row = [...container.querySelectorAll<HTMLElement>(".oh-keyhelp-row")]
+      .find((li) => li.querySelector(".oh-keyhelp-label")?.textContent === messages.shortcuts.layout);
+    const out = row ? { off: row.getAttribute("aria-disabled") === "true", why: row.getAttribute("title") } : null;
     await key("Escape");
     return out;
   };
   const paletteLabels = async (): Promise<string[]> => {
     await key("k", { ctrlKey: true });
-    const labels = [...document.querySelectorAll(".palette li[role=option]")].map((el) => el.textContent ?? "");
+    const labels = [...document.querySelectorAll(".oh-palette [role=option]")].map((el) => el.textContent ?? "");
     await key("Escape");
     return labels;
   };
@@ -290,19 +298,7 @@ describe("the ladder's JS boundary is exact (shell/narrow.ts)", () => {
 });
 
 describe("the fix round — reconcile, exits, names", () => {
-  const openSheet = async (container: HTMLElement): Promise<void> => {
-    await key("j");
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) {
-      await tick();
-    }
-    await key("Enter");
-    const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reader")) {
-      await tick();
-    }
-    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
-  };
+
 
   /**
    * SINCE THE WIDTH LADDER (DESIGN-FOLD-WIDTHS §0) classic seats two panes from 700, so there is
@@ -319,7 +315,7 @@ describe("the fix round — reconcile, exits, names", () => {
     await tick();
     expect(document.documentElement.dataset.layout).toBeUndefined();
     expect(
-      document.querySelector(".reader"),
+      readingOver(),
       "the sheet stood over the two-pane column it duplicates",
     ).toBeNull();
   });
@@ -329,14 +325,14 @@ describe("the fix round — reconcile, exits, names", () => {
     const container = await shell();
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) await tick();
+    while (Date.now() < deadline && !container.querySelector(OPEN_ROW)) await tick();
     await key("Enter");
     await tick();
-    expect(document.querySelector(".reader"), "a sheet rose at 800 under classic — the two-pane band lost its column").toBeNull();
+    expect(readingOver(), "a sheet rose at 800 under classic — the two-pane band lost its column").toBeNull();
     await key("w");
     await tick();
     expect(document.documentElement.dataset.layout).toBe("zero");
-    expect(document.querySelector(".reader")).toBeNull();
+    expect(readingOver()).toBeNull();
   });
 
   it("`h` leaves the re-housed reader at the push tier (one meaning for h)", async () => {
@@ -345,7 +341,7 @@ describe("the fix round — reconcile, exits, names", () => {
     await openSheet(container);
     await key("h");
     await tick();
-    expect(document.querySelector(".reader"), "`h` did not put the list back").toBeNull();
+    expect(readingOver(), "`h` did not put the list back").toBeNull();
     // …and under CLASSIC the sheet cedes h exactly as before (modal grammar).
     setup(600);
   });
@@ -387,7 +383,7 @@ describe("the fix round — reconcile, exits, names", () => {
     setup(600);
     let container = await shell({ zero: true });
     await openSheet(container);
-    expect(document.querySelector(".reader")?.getAttribute("aria-modal")).toBeNull();
+    expect(readingOver()?.getAttribute("aria-modal")).toBeNull();
     await key("Escape");
     await tick();
     for (const root of roots) {
@@ -401,24 +397,12 @@ describe("the fix round — reconcile, exits, names", () => {
     document.documentElement.dataset.layout = "zero";
     container = await shell({ zero: true });
     await openSheet(container);
-    expect(document.querySelector(".reader")?.getAttribute("aria-modal")).toBe("true");
+    expect(readingOver()?.getAttribute("aria-modal")).toBe("true");
   });
 });
 
 describe("the fix round, round 2 — tiers, transitions, the drawer's zone", () => {
-  const openSheet = async (container: HTMLElement): Promise<void> => {
-    await key("j");
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) {
-      await tick();
-    }
-    await key("Enter");
-    const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reader")) {
-      await tick();
-    }
-    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
-  };
+
 
   it("the floating tier's modal sheet cedes `h` — Escape stays its one exit", async () => {
     setup(390);
@@ -433,11 +417,11 @@ describe("the fix round, round 2 — tiers, transitions, the drawer's zone", () 
     setup(600);
     const container = await shell({ zero: true });
     await openSheet(container);
-    expect(document.querySelector(".reader")?.getAttribute("aria-modal")).toBeNull();
+    expect(readingOver()?.getAttribute("aria-modal")).toBeNull();
     await key("w"); // zero → classic at 600: the column stays hidden in both
     await tick();
     await tick();
-    const sheet = document.querySelector(".reader");
+    const sheet = readingOver();
     expect(sheet, "a narrow→narrow cycle must not take the open message away").toBeTruthy();
     expect(
       sheet?.getAttribute("aria-modal"),
@@ -448,19 +432,7 @@ describe("the fix round, round 2 — tiers, transitions, the drawer's zone", () 
 });
 
 describe("the fix round, round 3 — the reconcile asks at the current width", () => {
-  const openSheet = async (container: HTMLElement): Promise<void> => {
-    await key("j");
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) {
-      await tick();
-    }
-    await key("Enter");
-    const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reader")) {
-      await tick();
-    }
-    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
-  };
+
 
   /**
    * A RESIZE BETWEEN CYCLES must not be remembered as the old answer. The reconcile only
@@ -478,7 +450,7 @@ describe("the fix round, round 3 — the reconcile asks at the current width", (
     const container = await shell({ zero: true });
     // the premise: wide zero reads its message in the standing column, no sheet stands
     expect(
-      document.querySelector(".reader"),
+      readingOver(),
       "a sheet stood at 1280 — this test's premise is gone",
     ).toBeNull();
 
@@ -493,7 +465,7 @@ describe("the fix round, round 3 — the reconcile asks at the current width", (
     await tick();
     expect(document.documentElement.dataset.layout).toBeUndefined();
     expect(
-      document.querySelector(".reader"),
+      readingOver(),
       "the sheet stood over the column classic just brought back (a stale narrow answer)",
     ).toBeNull();
   });

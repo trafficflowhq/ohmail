@@ -77,9 +77,18 @@ export interface StreamLiveOwn {
   readonly onPageHide: (leave: () => void) => () => void;
 }
 
-/** A fetch started by the stream may fill the cache, but its folded preview stays as it was. */
+/** A background fetch keeps the folded snippet until a complete body is available. */
 type PrefetchedBodies = Map<string, MessageBody | null>;
 const PREFETCHED = new WeakMap<OhmailEngine, { scope: string; bodies: PrefetchedBodies }>();
+
+function prefetchesFor(engine: OhmailEngine, scope: string): PrefetchedBodies {
+  let record = PREFETCHED.get(engine);
+  if (record?.scope !== scope) {
+    record = { scope, bodies: new Map() };
+    PREFETCHED.set(engine, record);
+  }
+  return record.bodies;
+}
 
 function prefetchBodies(
   engine: OhmailEngine,
@@ -87,12 +96,7 @@ function prefetchBodies(
   presented: EntityReader,
   ids: readonly string[],
 ) {
-  let record = PREFETCHED.get(engine);
-  if (record?.scope !== scope) {
-    record = { scope, bodies: new Map() };
-    PREFETCHED.set(engine, record);
-  }
-  const asked = record.bodies;
+  const asked = prefetchesFor(engine, scope);
   for (const id of ids) {
     if (asked.has(id)) continue;
     const body = streamBody(engine, presented, id);
@@ -146,7 +150,10 @@ export function useStreamLive(place: StreamPlace, args: PlaceLiveArgs, own: Stre
     return record?.scope === scope ? record.bodies : undefined;
   };
   const snapshotOf = (id: string) => scopedPrefetch()?.get(id) ?? null;
-  const previewOf = (id: string) => snapshotOf(id) ?? bodyFor(id);
+  const previewOf = (id: string) => {
+    const body = bodyFor(id);
+    return readableText(body) === null ? (snapshotOf(id) ?? body) : body;
+  };
   const model = useStream({
     place,
     settled: mail.settled,
@@ -157,16 +164,16 @@ export function useStreamLive(place: StreamPlace, args: PlaceLiveArgs, own: Stre
     markUnread: (id) => void markSeen([id], true),
     markAllRead: (ids) => writes.markAllRead(ids, top),
     textOf: (id) => readableText(previewOf(id)),
+    hasPreviewMarkup: (id) => Boolean(previewOf(id)?.html),
     bodyReady: (id) => readableText(bodyFor(id)) !== null,
     bodyStateOf: (id) => previewOf(id)?.state,
     prefetch,
     prefetchSource: presented,
-    hidePrefetchedNotice: (id) => snapshotOf(id) !== null,
     revealPrefetch: (id) => {
-      const asked = scopedPrefetch();
-      if (!asked?.get(id)) return;
+      const asked = prefetchesFor(engine, scope);
+      const snapshot = asked.get(id);
       asked.set(id, null);
-      refreshPreview((version) => version + 1);
+      if (snapshot) refreshPreview((version) => version + 1);
     },
     hydrate: (ids) => {
       for (const id of ids) void engine.hydrateBody(id);

@@ -113,6 +113,8 @@ describe("the connection said by the mail ground", () => {
     });
     await answered();
     const said = notice(frameEn.frame.connection.act.mailboxes);
+    expect(said?.querySelector("b")?.textContent).toContain("is not syncing");
+    expect(said?.querySelector("b")?.textContent).not.toContain(frameEn.sync.blocked_mailbox_full);
     expect(said?.textContent, "the frame's own words stood where the strip's sentence belongs").toContain(
       frameEn.sync.blocked_mailbox_full,
     );
@@ -144,4 +146,17 @@ describe("the connection said by the mail ground", () => {
     fireEvent.click(screen.getByRole("button", { name: connect }));
     expect(resume).toHaveBeenCalledOnce();
   });
+});
+
+it("keeps a provider's wait reason in the notice body", async () => {
+  const since = new Date(Date.now() - 5 * 60_000).toISOString();
+  mount({
+    mailboxes: async () => [
+      mailbox("mbx-1", { syncBlockedReason: "provider_unavailable", syncBlockedSince: since }),
+    ],
+  });
+  await answered();
+  const said = notice(frameEn.frame.connection.act.mailboxes);
+  expect(said?.querySelector("b")?.textContent).toContain("is not syncing");
+  expect(said?.textContent).toContain(frameEn.sync.blocked_provider_unavailable);
 });

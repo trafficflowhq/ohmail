@@ -29,6 +29,7 @@ export interface SlotReport {
   /** Default time once drawn when no deadline is supplied; `null` until pressed. */
   readonly stands: number | null;
   readonly actionDeadline?: number;
+  readonly undoDuringFade?: boolean;
 }
 export interface ReportState {
   readonly standing:
@@ -68,6 +69,7 @@ export function reportOf(
       press: { label: options.action, keyHint: options.actionKey, onPress: onAction },
       stands: UNDO_MS,
       ...(options.actionDeadline !== undefined ? { actionDeadline: options.actionDeadline } : {}),
+      ...(options.undoDuringFade ? { undoDuringFade: true } : {}),
     };
   }
   if (options?.dismiss)

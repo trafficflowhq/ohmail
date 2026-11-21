@@ -47,13 +47,13 @@ async function stand(drafts: EngineDraft[] = [], send?: SendState) {
   }
 
   const mounted = await mountShell("#/compose", [], drafts, {
-    handOff: true,
     signatures: KNOWN.signatures,
     places: { write: { ...writing, panes: { ...writing.panes, Reading: ReadPane } } },
   });
   await waitFor(() => current !== undefined, "the registered Write pane");
   const letter = within(mounted.el).getByRole("region", { name: en.write.letter });
-  return { ...mounted, read: () => current!, inLetter: within(letter) };
+  const sendLines = () => [...letter.querySelectorAll<HTMLElement>('[role="status"][data-place]')];
+  return { ...mounted, read: () => current!, sendLines };
 }
 
 beforeEach(() => {
@@ -130,7 +130,7 @@ describe("the send line's words", () => {
   for (const send of SPOKEN) {
     it(`says its own sentence for ${JSON.stringify(send)}`, async () => {
       const w = await stand([], send);
-      const said = w.inLetter.getAllByRole("status").map((line) => line.textContent ?? "");
+      const said = w.sendLines().map((line) => line.textContent ?? "");
       expect(said.length).toBe(1);
       expect(said[0]).not.toBe("");
       expect(said[0]).not.toBe(en.write.status.unknown);
@@ -140,13 +140,15 @@ describe("the send line's words", () => {
 
   it("names the limit in the too-long sentence", async () => {
     const w = await stand([], { phase: "failed", code: "draft_too_large" });
-    expect(w.inLetter.getByRole("status").textContent).toMatch(/\d/);
+    const lines = w.sendLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.textContent).toMatch(/\d/);
   });
 
   for (const phase of ["idle", "sent"] as const) {
     it(`says nothing for a letter whose send is ${phase}`, async () => {
       const w = await stand([], { phase });
-      expect(w.inLetter.queryAllByRole("status")).toEqual([]);
+      expect(w.sendLines()).toEqual([]);
     });
   }
 });

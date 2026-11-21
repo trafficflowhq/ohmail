@@ -86,7 +86,7 @@ async function mountCloud(): Promise<HTMLElement> {
 const languageButton = (host: HTMLElement, name: string): HTMLButtonElement =>
   within(host).getByRole<HTMLButtonElement>("button", { name });
 const pressedLanguage = (host: HTMLElement): string[] =>
-  within(host).getAllByRole("button", { name: /^(Deutsch|English)$/ })
+  within(host).queryAllByRole("button", { name: /^(Deutsch|English)$/ })
     .filter((button) => button.getAttribute("aria-pressed") === "true")
     .map((button) => button.textContent ?? "");
 
@@ -209,12 +209,12 @@ describe("the registered Cloud General pane keeps its confirmed language owner",
   });
 
   it.each([
-    ["the browser signs in to another account", () => rememberOwner("acct_other_locale")],
+    ["the browser signs in to another account", () => rememberOwner("acct_other_locale"), []],
     ["the same account is only pending", () => {
       bindApiOwner(null);
       pendApiOwner(ACCOUNT);
-    }],
-  ] as const)("keeps the existing language if %s while the new catalog is loading", async (_case, leaveOwner) => {
+    }, ["English"]],
+  ] as const)("keeps the existing language if %s while the new catalog is loading", async (_case, leaveOwner, pressedAfter) => {
     const requests: unknown[] = [];
     const fetch = globalThis.fetch;
     globalThis.fetch = async (input, init) => {
@@ -253,7 +253,7 @@ describe("the registered Cloud General pane keeps its confirmed language owner",
     leaveOwner();
     await act(async () => { release(); });
     await tickCloud(250);
-    expect(rendering(host)).toEqual(english);
+    expect(rendering(host)).toEqual({ ...english, pressed: pressedAfter });
     expect(requests).toEqual([{ locale: "de" }]);
   });
 });

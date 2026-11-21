@@ -1,3 +1,4 @@
+import type { ListVerbs } from "@ohmail/app-logic/place-list";
 /**
  * WHAT SEARCH'S LIST NEEDS BESIDE THE MODEL, and is not Search's to work out: how the shell writes a name, an
  * address, a time and a place; what it says of the provider's Junk folder; whether key hints show; the address
@@ -23,6 +24,7 @@ export interface SearchWords {
 }
 
 export interface SearchBeside {
+  readonly selection?: { rows: readonly EngineMessage[]; verbs: ListVerbs };
   readonly words: SearchWords;
   /** What the empty answer says of the provider's Junk folder, which no pass searches; `none` says nothing. */
   readonly junk: { readonly named: string } | "unnamed" | None;

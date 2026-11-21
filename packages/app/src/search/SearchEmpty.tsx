@@ -32,7 +32,11 @@ export function SearchEmpty({
       </>
     );
   }
-  const title = model.indexing ? t("stillReading") : model.settledEmpty ? t("nothingMatched") : null;
+  const title = model.indexing
+    ? t("stillReading")
+    : model.settledEmpty || model.nothingMatched
+      ? t("nothingMatched")
+      : null;
   const junk = beside.junk;
   /* The pass that does not exist: nothing here ever searched the provider's Junk folder. */
   const junkSaid =

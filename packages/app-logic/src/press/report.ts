@@ -14,6 +14,8 @@ export interface ToastOptions {
   duration?: number;
   /** The stored deadline of an action whose window started before the report was shown. */
   actionDeadline?: number;
+  /** The button still reverses the mail move during the fade, after the routing decision is committed. */
+  undoDuringFade?: boolean;
   /**
    * Aborted by the caller when its window closes EARLY — leaving the Screener commits every
    * pending decision — and the Undo capsule is withdrawn at once if it still holds the slot, so a

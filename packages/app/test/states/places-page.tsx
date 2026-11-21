@@ -7,15 +7,7 @@
  * itself takes it): what the reading column draws in the reader's places is the reader's, and the composer in a
  * column is the writing column's; the comparison declares both.
  */
-import {
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import { useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { useAddressList } from "@ohmail/app-logic/address";
@@ -24,6 +16,7 @@ import { EngineContext, type EngineBinding } from "@ohmail/app-logic/engine";
 import { useFolderList } from "@ohmail/app-logic/folder";
 import { useHistoryList } from "@ohmail/app-logic/history";
 import { PilesModelContext, type PileId, type PilesInput } from "@ohmail/app-logic/piles";
+import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import type { StreamInput } from "@ohmail/app-logic/streams";
 import { useTagsList } from "@ohmail/app-logic/tags";
 import { useTrashList } from "@ohmail/app-logic/trash";
@@ -34,6 +27,7 @@ import { routeOf } from "../../src/frame/route.js";
 import { AddressAbove, addressPlace } from "../../src/address/index.js";
 import { DraftsAbove, draftsPlace } from "../../src/drafts/index.js";
 import { FolderAbove, folderPlace } from "../../src/folder/index.js";
+import { MailStateProvider } from "../../src/mail-state/MailStateProvider.js";
 import { HistoryAbove, historyPlace } from "../../src/history/index.js";
 import { NewsAbove, newsPlace } from "../../src/news/index.js";
 import { PilesAbove, laterPlace, parkedPlace, resurfacePlace } from "../../src/piles/index.js";
@@ -41,7 +35,8 @@ import { ReceiptsAbove, receiptsPlace } from "../../src/receipts/index.js";
 import { TagsAbove, tagsPlace } from "../../src/tags/index.js";
 import { TrashAbove, trashPlace } from "../../src/trash/index.js";
 import { fillOver, TextProvider, type Messages } from "../../src/text/index.js";
-import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
+import { fakeMail } from "../reader/support/fake-mail.js";
+import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, fakeAppearance, fakeWindow, ROOMS, type FakeAddress } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 import { unseated } from "../support/unseated.js";
@@ -246,7 +241,7 @@ function streamSeat(place: "news" | "receipts"): Seat {
   const base = place === "news" ? "#/reads" : "#/receipts";
   const first = show === "open" || q.has("reply") ? (open ?? letters[0]!.id) : open;
   return {
-    places: place === "news" ? { news: newsPlace } : { receipts: receiptsPlace },
+    places: place === "news" ? { news: unseated(newsPlace) } : { receipts: unseated(receiptsPlace) },
     start: first ? `${base}/m/${first}` : base,
     Above: function StreamSeat({ address, children }) {
       const route = useRoute(address);
@@ -517,6 +512,7 @@ const draftsSeat = (): Seat => ({
 const trashBinding: EngineBinding = {
   engine: {
     trashAvailable: () => true,
+    onMessagesRemoved: () => () => {},
     listTrash: async () => ({ state: "ready", items: empty ? [] : W.TRASHED, nextCursor: null }),
   } as unknown as OhmailEngine,
   demo: false,
@@ -594,8 +590,30 @@ const look = {
 document.documentElement.setAttribute("data-face", look.face);
 document.documentElement.setAttribute("data-theme", look.scheme);
 const address = fakeAddress(seat.start);
+const mail = fakeMail([
+  ...W.NEWS,
+  ...W.RECEIPTS,
+  ...W.HISTORY,
+  ...W.TAGGED,
+  ...W.LATER,
+  ...W.PARKED,
+  ...W.RESURFACE.map(({ message }) => message),
+  ...Object.values(W.IN_FOLDER).flat(),
+  ...W.BY_ADDRESS,
+]);
+const Above = seat.Above;
+function Ground({ children }: { children: ReactNode }) {
+  return (
+    <MailStateProvider scope="mila" mirrored={mail.engine.read().list("message").length}>
+      <PresentedMirrorContext.Provider value={mail.engine.read()}>
+        <Above address={address}>{children}</Above>
+      </PresentedMirrorContext.Provider>
+    </MailStateProvider>
+  );
+}
 const { host } = fakeHost({
-  engine: NO_ENGINE,
+  engine: mail.engine,
+  above: Ground,
   service: "managed",
   scope: "mila",
   places,
@@ -604,17 +622,8 @@ const { host } = fakeHost({
   appearance: fakeAppearance(look),
 });
 
-function Page() {
-  const [Above] = useState(() => seat.Above);
-  return (
-    <Above address={address}>
-      <Frame host={host} />
-    </Above>
-  );
-}
-
 createRoot(document.getElementById("root")!).render(
   <TextProvider locale={lang} messages={words} timeZone="UTC">
-    <Page />
+    <Frame host={host} />
   </TextProvider>,
 );

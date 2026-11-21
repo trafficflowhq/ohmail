@@ -230,8 +230,8 @@ export async function screenerAutoSuggestPass(
   if (!classifier) return EMPTY();
   if (!gate && !deps.unmetered) return EMPTY();
 
-  // Read the stored watermark and cutline together. A failed read leaves the pass idle.
-  const settings = await readAccountSettings(db, accountId).catch(() => undefined);
+  // Read the stored watermark and cutline together. The caller reports a read failure before any model work.
+  const settings = await readAccountSettings(db, accountId);
   const watermark = settings?.autoSuggestAt;
   if (!(watermark instanceof Date) || !Number.isFinite(watermark.getTime())) return EMPTY();
 

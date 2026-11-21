@@ -66,6 +66,9 @@ export interface OhboxBeside {
   };
 }
 
+/** The host’s decorative placeholder for an Ohbox that has yet to load. */
+export const OhboxShapeContext = createContext<ReactNode>(null);
+
 export const OhboxBesideContext = createContext<OhboxBeside | null>(null);
 
 export function useOhboxBeside(): OhboxBeside {

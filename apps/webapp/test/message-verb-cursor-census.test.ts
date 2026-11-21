@@ -36,7 +36,7 @@ import { join, relative } from "node:path";
  * are the new parts' (`packages/app/src/`, beside `packages/app-logic/src/` and `packages/letter-body/src/` as before).
  * Its two tables name those files (the composer's chords are `write/keys.ts` now; the Ohbox's placer, which answers
  * for its own keys, its cursor row's verbs and the reader's verbs beside it, is `ohbox/live.ts`'s `useOhboxPlacer`; the
- * sentence it says is `cursor("placed")` there). Every expectation is as it stood. No file of the web's own that stays
+ * shared placement sentence lives with the key registry). Every expectation is as it stood. No file of the web's own that stays
  * declares a message verb (`apps/webapp/app/` holds none after the switch's deletions).
  */
 
@@ -74,10 +74,16 @@ const EXEMPT: Record<string, string> = {
     "`Enter` opens the hit under this view's OWN cursor, which exists whenever there are hits "
     + "(`cursor = shown.length === 0 ? -1 : min(at, …)`); it rests on an empty result set or on "
     + "focus being outside the list, neither of which a placement would answer",
-  "mail/ground/MailKeys.tsx":
-    "⌘⇧↩ is the open reply's Send + Done, bound beside the mail for the reply's editor (`inInput`); it rests "
-    + "where no reply stands open or the reply offers no Send + Done (`sendAndDone === null`), which no placement "
-    + "answers (today's twin was declared in `shell-keys.tsx` beside verbs that name the reason)",
+  "piles/PilesAbove.tsx":
+    "Reply Run opens Answer Later with its queue, regardless of the cursor in the current place.",
+  "piles/PilesList.tsx":
+    "Reply Run starts from the eligible Answer Later queue, regardless of which row has the cursor.",
+  "stream/StreamColumn.tsx":
+    "Escape collapses the addressed reading card on the phone; the binding exists only while that card is open.",
+  "trash/keys.ts":
+    "Restore runs for the open deleted letter alone; placing a cursor cannot select a restore target.",
+  "../../app-logic/src/trash/live.ts":
+    "Trash documents that erasing or moving a deleted letter is unavailable even with a cursor."
 };
 
 /**
@@ -92,6 +98,8 @@ const PLACED_BY: Record<string, string> = {
   "../../app-logic/src/ohbox/keys.ts": "../../app-logic/src/ohbox/live.ts",
   "../../app-logic/src/ohbox/cursor-verbs.ts": "../../app-logic/src/ohbox/live.ts",
   "reader/keys.ts": "../../app-logic/src/ohbox/live.ts",
+  "mail/ground/MailKeys.tsx": "../../app-logic/src/ohbox/live.ts",
+  "../../app-logic/src/place-list/walk.ts": "../../app-logic/src/place-list/walk.ts",
 };
 
 const claimsAPlacer = (n: string): boolean =>
@@ -137,7 +145,9 @@ describe("one placement, not one per host", () => {
        three lists come to place a cursor three different ways. The sentence is the tell: the
        catalogue's `cursor.placed`, read off the `cursor` words. */
     const producers = files.filter((p) => /cursor\("placed"/.test(read(p))).map(name);
-    expect(producers).toEqual(["../../app-logic/src/ohbox/live.ts"]);
+    expect(producers).toEqual(["../../app-logic/src/keys/keymap.ts"]);
+    expect(read(join(APP, "../../app-logic/src/ohbox/live.ts"))).toContain("cursorPlacementText(own.cursor, label)");
+    expect(read(join(APP, "place-list/own.ts"))).toContain("cursorPlacementText(cursor, label)");
   });
 
   it("and one spelling of the placement itself", () => {

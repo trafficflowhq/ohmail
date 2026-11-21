@@ -16,9 +16,28 @@ import { useEffect, useRef } from "react";
 import { setBesideClose, setReaderSheet, useKeyBindings } from "@ohmail/app-logic/keys";
 import { useTextLookup } from "../text/index.js";
 
-export function LetterOverKeys({ close }: { readonly close: () => void }): null {
-  const label = useTextLookup()("shortcuts")("escape");
-  useKeyBindings([{ chord: "Escape", group: "app", label, inInput: true, run: close }], "overlay");
+export function LetterOverKeys({
+  close,
+  push,
+}: {
+  readonly close: () => void;
+  readonly push: boolean;
+}): null {
+  const t = useTextLookup()("shortcuts");
+  useKeyBindings(
+    [
+      { chord: "Escape", group: "app", label: t("escape"), inInput: true, run: close },
+      ...(push
+        ? ["h", "ArrowLeft"].map((chord) => ({
+            chord,
+            group: "navigate" as const,
+            label: t("zoneList"),
+            run: close,
+          }))
+        : []),
+    ],
+    "overlay",
+  );
   /* The letter over the list is the zone walk's sheet while it stands, as today's reader sheet was: ↑ and ↓ scroll it
      from wherever the keyboard was left (a field under it too), never the list hidden under it; a dialog over it keeps
      its own arrows. */

@@ -5,21 +5,26 @@
  * `packages/app/test/ohbox/ohbox-world.tsx`'s `ohbox()` with the list's parts imported from their own files, as the
  * seat imports them (`ohbox/Seat.tsx`), not through `ohbox/index.ts`, which no host's entry reaches.
  */
+import { createContext, useContext, type ReactNode } from "react";
 import { render, type RenderResult } from "@testing-library/react";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
 import { rowAddress, senderName } from "@ohmail/app-logic/text/format";
 import { useSentLabel } from "@ohmail/app-logic/text/row-copy";
-import type { LayoutPlan, PaneProps, Route } from "../../../packages/app/src/frame/contract.js";
+import type { LayoutPlan, PaneProps } from "../../../packages/app/src/frame/contract.js";
 import type { OhboxBeside } from "../../../packages/app/src/ohbox/beside.js";
+import { Frame } from "../../../packages/app/src/frame/Frame.js";
+import { ohboxPlace } from "../../../packages/app/src/ohbox/place.js";
 import { OhboxAbove } from "../../../packages/app/src/ohbox/OhboxAbove.js";
 import { OhboxList } from "../../../packages/app/src/ohbox/OhboxList.js";
 import { TextProvider, useText, type Messages } from "../../../packages/app/src/text/index.js";
 import ohboxEn from "../../../packages/app/messages/ohbox.en.json" with { type: "json" };
 import sharedEn from "../../../packages/app/messages/shared.en.json" with { type: "json" };
 
-const WORDS = { ...ohboxEn, ...sharedEn } as Messages;
+import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
+import { FRAME_WORDS } from "../../../packages/app/test/support/frame-words.js";
 
+const WORDS = { ...FRAME_WORDS.en, ...ohboxEn, ...sharedEn } as Messages;
 const DESKTOP: LayoutPlan = {
   size: "expanded",
   short: false,
@@ -30,7 +35,36 @@ const DESKTOP: LayoutPlan = {
   columns: 2,
   handles: true,
 };
-const ROUTE: Route = { place: "ohbox", sub: null, open: null, stage: null, words: {} };
+
+const ListContent = createContext<((pane: PaneProps) => ReactNode) | null>(null);
+
+function List(pane: PaneProps) {
+  return useContext(ListContent)?.(pane);
+}
+
+const { host } = fakeHost({
+  engine: NO_ENGINE,
+  service: "self",
+  scope: "test",
+  places: {
+    ohbox: {
+      ...ohboxPlace,
+      rail: null,
+      panes: { kind: "columns", List, Reading: "reader", keepsOpen: true },
+    },
+  },
+});
+
+/** Mount the list with the frame's real route, layout and context. */
+export function OhboxListFrame({ list }: { list: (pane: PaneProps) => ReactNode }) {
+  return (
+    <TextProvider locale="en" messages={WORDS} timeZone="UTC">
+      <ListContent.Provider value={list}>
+        <Frame host={host} />
+      </ListContent.Provider>
+    </TextProvider>
+  );
+}
 
 /** What the list says beside it: names and stamps as a shell words them, and nothing pressed. */
 function beside(): OhboxBeside {
@@ -56,14 +90,13 @@ function beside(): OhboxBeside {
  * `seatWords`: the row's words as the seat makes them (`ohbox/Seat.tsx`: the sender's name and address, and the
  * own-sent label "Me → <name>" from `useSentLabel` over the place's words), for a case about what a row says.
  */
-function Ohbox({ input, side, seatWords }: { input: OhboxListInput; side: OhboxBeside; seatWords: boolean }) {
+function Ohbox({ input, side, seatWords, pane }: { input: OhboxListInput; side: OhboxBeside; seatWords: boolean; pane: PaneProps }) {
   const sentLabelOf = useSentLabel(useText("ohbox"));
   if (seatWords) {
     input = { ...input, senderName, sentLabelOf };
     side = { ...side, words: { ...side.words, name: senderName, address: (m) => rowAddress(m), sentTo: (m) => sentLabelOf(m) } };
   }
   const model = useOhboxList(input);
-  const pane: PaneProps = { route: ROUTE, plan: DESKTOP, keysHere: true };
   return (
     <OhboxAbove model={model} beside={side}>
       <OhboxList {...pane} />
@@ -110,9 +143,7 @@ export function ohboxList(over: Partial<OhboxListInput>, opts: { seatWords?: boo
   };
   const side = beside();
   const tree = () => (
-    <TextProvider locale="en" messages={WORDS} timeZone="UTC">
-      <Ohbox input={props} side={side} seatWords={opts.seatWords === true} />
-    </TextProvider>
+    <OhboxListFrame list={(pane) => <Ohbox input={props} side={side} seatWords={opts.seatWords === true} pane={{ ...pane, plan: DESKTOP }} />} />
   );
   const view = render(tree());
   return view;

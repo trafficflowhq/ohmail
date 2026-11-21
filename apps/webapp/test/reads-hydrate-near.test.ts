@@ -57,6 +57,8 @@ beforeEach(() => {
   Element.prototype.scrollIntoView ??= () => undefined;
   HTMLElement.prototype.scrollTo ??= function () {} as typeof HTMLElement.prototype.scrollTo;
   Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
+  // The bounded opening slice must fit both piles to exercise the unobserved tail.
+  vi.stubGlobal("innerHeight", 1800);
   MockIO.all = [];
   vi.stubGlobal("IntersectionObserver", MockIO);
   hydrated = [];

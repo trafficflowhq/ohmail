@@ -1,7 +1,6 @@
 /**
  * THE KEY SHEET'S ROWS, from one reading of the registry. One row per sentence: two chords that do the same thing
- * (`1` and `g o` both go to the Ohbox) are one instruction with two spellings. A row resting on every chord stands when there is
- * a reason to show. Columns: moving around; this message and the Screener; the app.
+ * (`1` and `g o` both go to the Ohbox) are one instruction with two spellings. A row with no usable chord remains listed as unavailable. Columns: moving around; this message and the Screener; the app.
  */
 import type { KeyHelpGroup, KeyHelpRow } from "@ohmail/ui/base";
 import {
@@ -31,13 +30,12 @@ export function foldRows(
       if (row.reason !== reason) row.reason = "";
     } else rows.push({ label: b.label, chords: [b.chord], live: b.disabled !== true, reason });
   }
-  return rows
-    .filter((r) => r.live || r.reason)
-    .map((r) => ({
-      label: r.label,
-      keys: r.chords.map((c) => chordKeys(c, mod)),
-      ...(r.reason ? { disabledReason: r.reason } : {}),
-    }));
+  return rows.map((r) => ({
+    label: r.label,
+    keys: r.chords.map((c) => chordKeys(c, mod)),
+    ...(!r.live ? { disabled: true } : {}),
+    ...(r.reason ? { disabledReason: r.reason } : {}),
+  }));
 }
 
 export function sheetColumns(

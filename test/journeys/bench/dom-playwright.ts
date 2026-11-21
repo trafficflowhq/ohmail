@@ -132,7 +132,7 @@ export class PlaywrightPerson implements Person {
     return {
       description: (await attr("aria-description")) ?? "", pressed: await attr("aria-pressed"),
       selected: await attr("aria-selected"), current: await attr("aria-current"),
-      expanded: await attr("aria-expanded"), disabled: await target.isDisabled(),
+      expanded: await attr("aria-expanded"), checked: await attr("aria-checked"), disabled: await target.isDisabled(),
     };
   }
 
@@ -175,6 +175,27 @@ export class PlaywrightPerson implements Person {
   /** The install's front door, as a person who types its name reaches it. */
   async front(): Promise<void> {
     await this.page.goto(`${this.origin}/`, { waitUntil: "commit" });
+  }
+
+  async reload(): Promise<void> {
+    await this.page.reload();
+  }
+
+  async hearsLanguage(lang: Language): Promise<void> {
+    await this.until(async () => await this.page.evaluate(() => document.documentElement.lang) === lang, `the window to declare ${lang}`);
+    this.lang = lang;
+  }
+
+  async inTag(): Promise<void> {
+    await this.until(async () => /^#\/tag\/[^/]+$/.test(new URL(this.page.url()).hash), "a tag's own route");
+  }
+
+  async refuseNotificationPrompt(): Promise<void> {
+    await this.page.addInitScript(() => {
+      if (typeof Notification !== "undefined") {
+        Notification.requestPermission = async () => { throw new Error("Demo Settings asked for notification permission"); };
+      }
+    });
   }
 
   /** A link handed to this person, opened as they open it. */

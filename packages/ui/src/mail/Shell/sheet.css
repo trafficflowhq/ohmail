@@ -133,6 +133,8 @@
 
   .oh-sheet-scroll[data-manual-anchor] {
     overflow-anchor: none;
+    --oh-sheet-open-foot: max(var(--oh-sheet-foot-room), var(--oh-sheet-open-tail, 0px));
+    padding-block-end: var(--oh-sheet-open-foot);
   }
 
   .oh-sheet-run {
@@ -219,6 +221,11 @@
     gap: var(--s2);
     height: var(--oh-sheet-top-h);
     padding: 0 var(--s2) 0 var(--s3);
+  }
+
+  :root[data-device="phone"] .oh-sheet-top > .oh-readsquares[data-axis="head"] {
+    margin-inline-start: auto;
+    margin-inline-end: var(--s2);
   }
 
   /* The way back: the place it returns to, a capsule of the sheet's own tone, first in the bar. It is whole up to

@@ -96,6 +96,22 @@ describe("CalDAV's writer", () => {
       "",
     ].join("\r\n");
   const cut = plainDate(2026, 11, 18);
+  it("checks an unanswered occurrence cancellation without writing to the newer copy", async () => {
+    const b = await bench();
+    const target = {
+      id: b.member("kiln.ics"),
+      version: '"before"',
+      text: null,
+      occurrence: cut,
+      caldavReadOnly: true as const,
+    };
+    b.dav.put("studio", "kiln.ics", personalText(["EXDATE;VALUE=DATE:20261118"]), '"cancelled"');
+    expect(await b.writer.remove(b.connection, b.cal, target, never)).toMatchObject({ ok: true });
+    b.dav.put("studio", "kiln.ics", personalText().replace("FREQ=DAILY", "FREQ=WEEKLY"), '"different"');
+    expect(word(await b.writer.remove(b.connection, b.cal, target, never))).toBe("version_stale");
+    expect(b.writes()).toEqual([]);
+  });
+
   const continuation = {
     key: { hex: KEY },
     start: cut,

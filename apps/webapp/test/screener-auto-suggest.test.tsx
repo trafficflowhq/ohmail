@@ -95,7 +95,7 @@ let mounted = false;
 
 async function mountView(
   initial: EngineMessage[],
-  opts: { autoSuggest?: boolean; subscriptionPane?: boolean; forgetOwner?: boolean } = {},
+  opts: { autoSuggest?: boolean; subscriptionPane?: boolean } = {},
 ) {
   installConfirmEnv();
   mounted = true;
@@ -185,7 +185,6 @@ async function mountView(
     const report = host?.querySelector('.fr-report [role="status"]:not([data-leaving])')?.textContent;
     if (report) toasts.push(report);
   };
-  if (opts.forgetOwner) document.cookie = "tf_owner=; Path=/; Max-Age=0";
   await go("Screener");
   await tick(1500);
   readReport();
@@ -396,12 +395,20 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
   });
 
   it("A CLIENT REFUSAL DOES NOT DISARM, and speaks in this client's voice, not the server's", async () => {
-    // The account gate refuses before the request leaves, so the server is never asked — and the
-    // state it refuses for here is the one reported: a live session whose `tf_owner` marker
-    // has gone. Disarming on it stopped the automatic pass for the whole mount over a condition
-    // the next page load undoes, and the sentence shown was the server's voice for a refusal no
-    // server made.
-    const view = await mountView(TWELVE, { autoSuggest: true, forgetOwner: true });
+    // The browser loses its marker between the pane's permission check and the API client's check.
+    // Restore the same owner once the client answers, before the next visit.
+    const { screener: api } = await import("../app/api-client");
+    const suggest = api.suggest;
+    const attempt = vi.spyOn(api, "suggest").mockImplementation(async (...args) => {
+      document.cookie = "tf_owner=; Path=/; Max-Age=0";
+      try {
+        return await suggest(...args);
+      } finally {
+        rememberOwner();
+      }
+    });
+    const view = await mountView(TWELVE, { autoSuggest: true });
+    expect(attempt).toHaveBeenCalledTimes(1);
     expect(suggestCalls()).toHaveLength(0);
     expect(toasts.join(" | ")).toContain(messages.screener.suggest.refusedOwnerAbsent);
     expect(toasts.join(" | ")).not.toContain("different account");
@@ -409,6 +416,8 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
 
     const before = toasts.length;
     await view.revisit();
+    expect(attempt).toHaveBeenCalledTimes(2);
+    expect(suggestCalls()).toHaveLength(0);
     expect(toasts.length, "a client-side refusal disarmed the automatic pass").toBeGreaterThan(before);
   });
 

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  liveAccountResponse,
 } from "./fixtures/live-walk-shell";
 import {
   decideScreenerRow,
@@ -185,7 +186,7 @@ class World {
 let w: World;
 
 function installWorld(): void {
-  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+  const respond = async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.includes("/sync")) {
@@ -213,7 +214,9 @@ function installWorld(): void {
       return w.decide(scn[1]!, dest);
     }
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+    liveAccountResponse(await respond(input, init)));
 }
 
 const noteOf = (c: HTMLElement, id: string): string => screenerRow(c, id)?.textContent ?? "";

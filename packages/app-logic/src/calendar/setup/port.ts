@@ -40,6 +40,8 @@ export interface CalendarChange {
 export interface CalendarSetupPort {
   /** The ways this account may connect, as our server lists them; `[]` on any failure. */
   ways(): Promise<readonly CalendarWay[]>;
+  /** True or false only after the server confirms what the account has connected. */
+  hasConnections?(): Promise<boolean>;
   /**
    * One ask, once. A rejection means the ask was not sent and nothing was connected: the step says so, and a new press
    * is a new ask with a new connection id.

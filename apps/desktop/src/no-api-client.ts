@@ -11,6 +11,13 @@
 
 import type { AnswerOf, AwayResponderEdit, AwayResponderSaveReading } from "@ohmail/wire";
 import type { StorageFacts } from "../../webapp/app/shell/storage-state";
+import type {
+    ProfileImportAppliedWire, ProfileImportCandidateWire, ProfileImportPendingWire, ProfileImportStatusWire,
+} from "@ohmail/app/profile-import";
+
+export type {
+    ProfileImportAppliedWire, ProfileImportCandidateWire, ProfileImportCountsWire, ProfileImportPendingWire, ProfileImportStatusWire,
+} from "@ohmail/app/profile-import";
 
 const UNAVAILABLE = "the ohmail Cloud API is not part of this build — the desktop tier talks to its own local engine";
 
@@ -505,61 +512,6 @@ export type MailboxRelease = {
     outcome: "disconnected";
 };
 
-export interface ProfileImportCountsWire {
-    screener: number;
-    rules: number;
-    notifyRules: number;
-    tags: number;
-    awayResponder: boolean;
-    signature?: boolean;
-    signatureReplaces?: string;
-    signatureKept?: boolean;
-    removedRules?: number;
-}
-
-export type ProfileImportCandidateWire = {
-    state: "none";
-} | {
-    state: "found";
-    fingerprint: string;
-    updatedAt: string;
-    producer: {
-        kind: string;
-        version: string;
-    };
-    counts: ProfileImportCountsWire;
-} | {
-    state: "newer";
-    v: number;
-};
-
-export interface ProfileImportAppliedWire {
-    imported: ProfileImportCountsWire;
-    skippedRules: number;
-    retiredRules?: number;
-    seq: number | null;
-}
-
-export interface ProfileImportPendingWire {
-    state: "importing";
-    fingerprint: string;
-    reason?: "slow" | "unreachable";
-}
-
-export type ProfileImportStatusWire = {
-    state: "importing";
-    fingerprint: string;
-} | {
-    state: "imported";
-    imported: ProfileImportCountsWire | null;
-    skippedRules: number;
-    retiredRules?: number;
-} | {
-    state: "refused";
-    reason: string;
-    message: string;
-};
-
 export const profileImport: {
     candidate: (mailboxId: string) => Promise<ProfileImportCandidateWire>;
     apply: (mailboxId: string, fingerprint: string, signatureReplaces?: string) => Promise<ProfileImportAppliedWire | ProfileImportPendingWire>;
@@ -833,6 +785,11 @@ export interface AwayResponderWire {
 }
 export type AwayResponderSaveWire = AwayResponderSaveReading;
 
+export interface AwayTransport {
+    state: () => Promise<AwayResponderWire>;
+    save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>;
+}
+
 export const away: {
     state: () => Promise<AwayRead>;
     save: (next: AwayResponderEdit) => Promise<AnswerOf<"PUT /away-responder">>;
@@ -975,6 +932,7 @@ export interface JunkSweepWire {
     mailboxes: JunkSweepMailboxWire[];
     movable: number;
     pending: boolean;
+    confirmationRequired?: boolean;
     confirmation?: string;
     held?: {
         ids: string[];

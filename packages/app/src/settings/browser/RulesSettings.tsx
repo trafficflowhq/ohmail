@@ -2,7 +2,7 @@
 
 import { usePlaceLiveArgs } from "../../frame/index.js";
 import { browserClipboard } from "../../host/browser/index.js";
-import { ContactDetails, useOpenCard } from "../../reader/index.js";
+import { ContactDetails, useOpenCard } from "../../reader/contact/Contact.js";
 import type { PaneBodyProps } from "../index.js";
 import { RulesPane, type RuleItem, type RulesModel } from "../rules/index.js";
 import { useText } from "../../text/index.js";

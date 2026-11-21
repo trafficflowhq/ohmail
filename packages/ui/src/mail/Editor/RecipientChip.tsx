@@ -8,6 +8,8 @@ export interface RecipientPerson {
   name: string;
   /** Left out where the name is all there is: an address typed by hand. */
   address?: string;
+  /** The displayed name or address, where the wire form needs decoding or shortening. */
+  display?: { name: string; address?: string; accessible: string };
   /** Refused: it stays on its line, marked. Never dropped silently. */
   refused?: boolean;
   /** The way off, said with the name: "Remove Ben Arnold". */
@@ -30,6 +32,7 @@ export interface RecipientChipProps {
 /** A person on a line: the circle, the name, the address, and a way off. */
 export function RecipientChip(props: RecipientChipProps) {
   const { person, locked, said, lifted, onPress, onRemove, onKeyDown, onPointerDown } = props;
+  const { name, address } = person.display ?? person;
   return (
     <span
       className="oh-recipients-person"
@@ -41,6 +44,7 @@ export function RecipientChip(props: RecipientChipProps) {
         className="oh-control oh-recipients-who"
         data-person={person.id}
         aria-haspopup="menu"
+        aria-label={person.display?.accessible}
         aria-invalid={person.refused || undefined}
         aria-describedby={person.refused ? said : undefined}
         disabled={locked}
@@ -53,10 +57,8 @@ export function RecipientChip(props: RecipientChipProps) {
         ) : (
           <Avatar name={person.name} address={person.address ?? person.name} size="xs" />
         )}
-        <b className="oh-recipients-name">{person.name}</b>
-        {person.address && person.address !== person.name ? (
-          <span className="oh-recipients-address">{person.address}</span>
-        ) : null}
+        <b className="oh-recipients-name">{name}</b>
+        {address && address !== name ? <span className="oh-recipients-address">{address}</span> : null}
       </button>
       {locked ? null : (
         <span className="oh-recipients-off">

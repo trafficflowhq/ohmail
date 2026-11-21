@@ -4,7 +4,7 @@ import { within } from "@testing-library/react";
 import type { EngineMessage } from "@ohmail/wire";
 import { storeMessage } from "./_store-fixture.js";
 import {
-  ISO, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, page, teardownShellEnv, tick,
+  ISO, act, answerSyncWith, goTo, installShellEnv, liveAccountResponse, mailbox, mountShell, page, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
 
 const contact = "correspondent@example.invalid";
@@ -29,7 +29,7 @@ async function openAddress(answer: (direction: Direction) => Answer | Response |
     const direction = url.searchParams.get("direction") as Direction;
     asked.push(direction);
     const value = await answer(direction);
-    return value instanceof Response ? value : Response.json(value);
+    return liveAccountResponse(value instanceof Response ? value : Response.json(value));
   };
   const host = await mountShell([mailbox({ lastSyncAt: ISO })]);
   await goTo("address/" + encodeURIComponent(contact));

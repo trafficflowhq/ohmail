@@ -12,8 +12,8 @@ import { DesktopFrame, type DesktopFrameProps } from "../src/DesktopFrame";
 import { DesktopLocale } from "../src/DesktopLocale";
 import { linkSlot } from "../src/link-in";
 
-vi.mock("../src/local-mailbox-facts", async (load) => ({
-  ...await load<typeof import("../src/local-mailbox-facts")>(),
+vi.mock("../src/local-mailbox-facts", async () => ({
+  ...await vi.importActual<typeof import("../src/local-mailbox-facts")>("../src/local-mailbox-facts"),
   readMailboxFacts: async () => ROSTER,
 }));
 
@@ -115,7 +115,6 @@ it("loads the stored reply over the desktop bridge and saves one complete row", 
   await tick(0);
   expect(calls).toEqual([
     { method: "GET", body: undefined },
-    { method: "GET", body: undefined },
     { method: "PUT", body: { ...row, body: "Back Tuesday." } },
   ]);
 });
@@ -124,7 +123,7 @@ it("says when the desktop bridge cannot read the Away responder", async () => {
   const calls = await mount(true);
   const pane = openPane();
   expect(pane.queryByText(en.away.unreachable)).not.toBeNull();
-  expect(calls).toEqual([{ method: "GET", body: undefined }, { method: "GET", body: undefined }]);
+  expect(calls).toEqual([{ method: "GET", body: undefined }]);
 });
 
 it("announces the enabled responder above the desktop mail and opens its settings", async () => {
@@ -197,7 +196,7 @@ it("the paired Away pane names its host and its complete save updates the notice
 
   await go("#/ohbox");
   expect(screen.getByRole("heading", { name: "Ohbox" })).toBeTruthy();
-  const sentence = "everyone who writes whose mail lands in Ohbox and in Receipts gets a reply at most once a week";
+  const sentence = "everyone who writes whose mail lands in Ohbox or in Receipts gets a reply at most once a week";
   const more = screen.queryByRole("button", { name: /more notices?$/ });
   if (!screen.queryByRole("button", { name: en.away.noticeSettings }) && more) {
     await act(async () => { fireEvent.click(more); });
@@ -207,7 +206,6 @@ it("the paired Away pane names its host and its complete save updates the notice
   }
   expect(screen.queryAllByRole("status").filter((status) => status.textContent?.includes(sentence))).toHaveLength(1);
   expect(calls).toEqual([
-    { method: "GET", body: undefined },
     { method: "GET", body: undefined },
     { method: "PUT", body: {
       ...row, body: "Back Tuesday.", audience: "everyone", throttle: "per_week", piles: ["INBOX", "ohmail/Receipts"],

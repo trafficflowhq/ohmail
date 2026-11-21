@@ -47,14 +47,13 @@ function setJar(account: Acct | null, access: number): void {
 }
 
 function serve(url: string, init?: RequestInit): Promise<Response> {
-  const h = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)
-    .map(([k, v]) => [k.toLowerCase(), v]));
+  const h = new Headers(init?.headers);
   const method = (init?.method ?? "GET").toUpperCase();
   // The cache purge after a refusal presents nothing: not a request this file counts.
-  if (h["x-ohmail-clear"] !== undefined) return Promise.resolve(new Response(null, { status: 202 }));
+  if (h.has("x-ohmail-clear")) return Promise.resolve(new Response(null, { status: 202 }));
   const carried = { ...jar };
   const row: Sent = {
-    at: Date.now(), url, method, status: null, csrf: h["x-csrf-token"] ?? null, key: h["idempotency-key"] ?? null,
+    at: Date.now(), url, method, status: null, csrf: h.get("x-csrf-token"), key: h.get("idempotency-key"),
     account: carried.account,
   };
   sent.push(row);
@@ -95,6 +94,7 @@ function serve(url: string, init?: RequestInit): Promise<Response> {
       row.appliedAs = carried.account;
       res = json(200, {});
     }
+    if (res.ok) res.headers.set("X-Ohmail-Account", `acct_${carried.account}`);
     row.status = res.status;
     return res;
   }).then((res) => later(ARRIVE, () => res));

@@ -9,14 +9,16 @@
  * the read has not answered, failed, or found nothing.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsRow } from "@ohmail/ui";
+import { Button } from "@ohmail/ui/base";
+import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { placeLabel } from "./format";
 import { screenerAutoFiled, type AutoFiledWire } from "../api-client";
 
 export function AutoFiledReview() {
   const t = useTranslations("settings");
+  const summaryNote = useId();
   const [page, setPage] = useState<AutoFiledWire | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -63,15 +65,14 @@ export function AutoFiledReview() {
   const count = page.items.length;
   return (
     <>
-      <SettingsRow
-        label={t("screening.autoFiledTitle")}
-        description={t(page.more ? "screening.autoFiledSummaryMore" : "screening.autoFiledSummary", { count })}
-        control={
-          <Button variant="ghost" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-            {t("screening.autoFiledReview")}
-          </Button>
-        }
-      />
+      <SettingLine label={t("screening.autoFiledTitle")} describedBy={summaryNote}>
+        <Button kind="quiet" size="s" expanded={open} onPress={() => setOpen((o) => !o)}>
+          {t("screening.autoFiledReview")}
+        </Button>
+      </SettingLine>
+      <SettingNote id={summaryNote}>
+        {t(page.more ? "screening.autoFiledSummaryMore" : "screening.autoFiledSummary", { count })}
+      </SettingNote>
       {open ? (
         <div className="scn-autofiled">
           <ul>
@@ -80,13 +81,13 @@ export function AutoFiledReview() {
                 <span className="scn-autofiled-what">
                   {t("screening.autoFiledRow", { from: i.from ?? "", subject: i.subject ?? "", place: placeLabel(i.to) })}
                 </span>
-                <Button variant="ghost" disabled={busy} onClick={() => putBack([i.messageId])}>
+                <Button kind="quiet" size="s" disabled={busy} onPress={() => putBack([i.messageId])}>
                   {t("screening.autoFiledPutBack")}
                 </Button>
               </li>
             ))}
           </ul>
-          <Button disabled={busy} aria-busy={busy || undefined} onClick={() => putBack(page.items.map((i) => i.messageId))}>
+          <Button disabled={busy} busy={busy} onPress={() => putBack(page.items.map((i) => i.messageId))}>
             {t("screening.autoFiledPutBackAll", { count })}
           </Button>
         </div>

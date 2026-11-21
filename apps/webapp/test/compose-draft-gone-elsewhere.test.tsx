@@ -186,7 +186,8 @@ describe("a draft deleted on another device while it is open here", () => {
 
   it("Cancel says what it closes: the draft is already gone", async () => {
     await openThenDeletedElsewhere();
-    const discard = within(shell.el).getByRole("button", { name: /^Discard/ });
+    const editor = within(shell.el).getByRole("region", { name: "New message" });
+    const discard = within(editor).getByRole("button", { name: /^Discard/ });
     expect(discard.getAttribute("title"), "Discard promised to delete a draft that is gone")
       .toContain(compose.cancelWhatDeletedElsewhere);
     await press(discard, "Discard");

@@ -184,7 +184,9 @@ describe("the standalone door's unsubscribe believes each mailbox's own provider
     const id = await heldLetter(s, await addSecond(s, gmail));
     expect(await storedVerdict(s, id)).toBe("pass");
 
-    const res = await call(s, "POST", `/screener/${id}`, { decision: "no" });
+    const res = await call(s, "POST", `/screener/${id}`, {
+      decision: "no", scope: "confirmed_sender", confirmedIds: [id], unsubscribeIds: [id], applyRetro: false,
+    });
     expect(res.status, await res.clone().text()).toBe(200);
     expect(post.calls, "the confirmed letter's unsubscribe was refused").toEqual([ONE_CLICK_URL]);
     expect(await records(s)).toHaveLength(1);
@@ -255,7 +257,9 @@ describe("the standalone door's unsubscribe believes each mailbox's own provider
     expect(await senderCheckOf(s, id), "a confirmed sender carries no did-not-confirm line").toBeNull();
     expect(await providerConfirmsOf(s)).toEqual({ [s.world.mailboxId]: true, [second]: true });
 
-    const res = await call(s, "POST", `/screener/${id}`, { decision: "no" });
+    const res = await call(s, "POST", `/screener/${id}`, {
+      decision: "no", scope: "confirmed_sender", confirmedIds: [id], unsubscribeIds: [id], applyRetro: false,
+    });
     expect(res.status, await res.clone().text()).toBe(200);
     expect(post.calls).toEqual([ONE_CLICK_URL]);
     expect(await records(s)).toHaveLength(1);

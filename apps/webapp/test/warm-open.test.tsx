@@ -5,7 +5,8 @@ import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import { readFileSync } from "node:fs";
-import { mirrorDbName } from "@ohmail/client-engine";
+import { IndexedDbMirrorStore, mirrorDbName } from "@ohmail/client-engine";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import messages from "../messages/en.json";
 // TYPE-ONLY: the module itself is imported lazily below (see `Engine`), so the namespace
 // does not exist in type position — the resolver contract is named directly instead.
@@ -62,7 +63,14 @@ const mockLogout = vi.fn(async () => {});
  */
 vi.mock("../app/api-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../app/api-client")>()),
-  auth: { logout: mockLogout, armLogoutOnLeave: () => undefined },
+  auth: {
+    logout: mockLogout,
+    armLogoutOnLeave: () => undefined,
+    clearLogoutCookies: async () => {
+      document.cookie = `${Cookie.OWNER_COOKIE}=; Path=/; Max-Age=0`;
+      document.cookie = "tf_family=; Path=/; Max-Age=0";
+    },
+  },
 }));
 
 type EngineModule = typeof import("../app/shell/engine");
@@ -170,7 +178,7 @@ function recordingFactory(deleted: string[]): IDBFactory {
   } as unknown as IDBFactory;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   confirmedOwners = [];
   seenEngines = [];
   mockLogout.mockClear();
@@ -178,12 +186,18 @@ beforeEach(() => {
   // default for every test here except the wipe, which installs a recorder for its own duration.
   delete (globalThis as unknown as { indexedDB?: unknown }).indexedDB;
   document.cookie = `${Cookie.OWNER_COOKIE}=; Path=/; Max-Age=0`;
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  const client = await import("../app/api-client");
+  client.bindApiOwner(null);
   syncUrls = 0;
   // Every drain answers "nothing new". The wire is not the subject here; what paints is —
   // except for the two gate cases below, which count what LEAVES for `/sync`, because the
   // mirror is named for the remembered account and a page that lands before the server has
   // agreed whose mailbox this is lands in the wrong one.
-  globalThis.fetch = (async (input?: unknown) => {
+  globalThis.fetch = (async (input?: unknown, init?: RequestInit) => {
+    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") {
+      return new Response(null, { status: 202, headers: { "Clear-Site-Data": '"cache"' } });
+    }
     if (String(input).includes("/sync")) syncUrls += 1;
     return new Response(
       JSON.stringify({
@@ -192,7 +206,7 @@ beforeEach(() => {
         hasMore: false,
         serverTime: new Date().toISOString(),
       }),
-      { status: 200, headers: { "content-type": "application/json" } },
+      { status: 200, headers: { "content-type": "application/json", "X-Ohmail-Account": ACCOUNT_A } },
     );
   }) as unknown as typeof fetch;
 });
@@ -206,6 +220,7 @@ afterEach(async () => {
   host?.remove();
   host = null;
   globalThis.fetch = originalFetch;
+  vi.unstubAllGlobals();
 });
 
 describe("a remembered account opens its mailbox in the first render", () => {
@@ -517,10 +532,25 @@ describe("the shared-browser hazard: signing out takes the name and the mail tog
    * pending sign-out for ever after a perfectly ordinary one.
    */
   it("a sign-out the server CONFIRMED erases the marker, as before", async () => {
-    const deleted: string[] = [];
-    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = recordingFactory(deleted);
+    const factory = new IDBFactory();
+    const deleted = vi.spyOn(factory, "deleteDatabase");
+    vi.stubGlobal("indexedDB", factory);
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    const mirror = new IndexedDbMirrorStore({ owner: ACCOUNT_A });
+    await mirror.load();
+    mirror.close();
     document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
-    await SignOut.signOut(ACCOUNT_A);
+    document.cookie = "tf_family=fixture-family; Path=/";
+    vi.stubGlobal("navigator", Object.create(navigator, {
+      locks: {
+        value: {
+          request: async (_name: string, optionsOrRun: unknown, run?: () => Promise<unknown>) =>
+            (run ?? (optionsOrRun as () => Promise<unknown>))(),
+        },
+      },
+    }));
+    const outcome = await SignOut.signOut(ACCOUNT_A);
+    await outcome.cacheCleanup?.settled;
     expect(Cookie.readOwnerMarker().kind, "an ordinary sign-out left a pending claim behind")
       .toBe("absent");
     // …and the client returns to public: there is no session left to be wrong about, and a
@@ -528,7 +558,7 @@ describe("the shared-browser hazard: signing out takes the name and the mail tog
     const client = await import("../app/api-client");
     expect(client.apiOwnerBinding().kind, "a confirmed sign-out left the client bound or blocked")
       .toBe("public");
-    expect(deleted).toContain(mirrorDbName(ACCOUNT_A));
+    expect(deleted).toHaveBeenCalledWith(mirrorDbName(ACCOUNT_A));
   });
 
   it("THE CONSEQUENCE: the next person's tab has nothing to paint from", async () => {

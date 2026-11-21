@@ -69,7 +69,7 @@ function menu() {
   return within(screen.getByRole("navigation", { name: /Settings sections|Einstellungsbereiche/ }));
 }
 
-const navLabels = () => menu().getAllByRole("button").map((button) => button.textContent?.trim());
+const navLabels = () => menu().getAllByRole("button").map((button) => button.getAttribute("aria-label"));
 
 const choose = async (label: string) => {
   await act(async () => { menu().getByRole("button", { name: label }).click(); });
@@ -94,7 +94,7 @@ describe("the pane exists exactly where the shell wired it", () => {
 
   it("the menu says which section is open, to a screen reader too, and only that one", async () => {
     mountSettings(folders({ on: false, setFoldersEnabled: async () => false }));
-    const current = () => menu().getAllByRole("button", { current: "page" }).map((button) => button.textContent?.trim());
+    const current = () => menu().getAllByRole("button", { current: "page" }).map((button) => button.getAttribute("aria-label"));
     expect(current()).toEqual(["General"]);
     await choose("Folders");
     expect(current()).toEqual(["Folders"]);

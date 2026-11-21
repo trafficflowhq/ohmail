@@ -2841,6 +2841,10 @@ impl Shell {
     /// Keep the engine and its hosted session current through the OS submission. A withdrawal
     /// takes the alert book, an engine replacement takes its slot, and sign-out takes its state.
     fn with_live_mailbox<T>(&self, submit: impl FnOnce(crate::alerts::Live) -> T) -> T {
+        self.with_live_engine(|live, _| submit(live))
+    }
+
+    fn with_live_engine<T>(&self, submit: impl FnOnce(crate::alerts::Live, &Arc<Engine>) -> T) -> T {
         use crate::alerts::Live;
         let engine = self.engine.lock().expect("shell engine");
         let state = engine.inner.shared.lock().expect("engine state");
@@ -2855,7 +2859,14 @@ impl Shell {
             (Some(_), EngineState::Serving { mailbox_id }) if !mailbox_id.is_empty() => Live::Mailbox(mailbox_id.clone(), state.local_session),
             _ => Live::Unknown,
         };
-        submit(live)
+        submit(live, &engine)
+    }
+
+    fn calendar_engine(&self, expected: u64) -> Option<Arc<Engine>> {
+        self.with_live_engine(|live, engine| match live {
+            crate::alerts::Live::Mailbox(_, session) if session == expected => Some(Arc::clone(engine)),
+            _ => None,
+        })
     }
 
     /// What the window renders. See [`status_json`]; this adds the facts only the shell holds.
@@ -5843,13 +5854,23 @@ fn engine_request(
     body: Option<Vec<u8>>,
     body_text: Option<String>,
     body64: Option<String>,
+    expected_calendar_session: Option<u64>,
 ) -> Result<tauri::ipc::Response, String> {
     let body = window_request_body(body, body_text, body64)?;
     let headers = window_headers(headers);
     // Read ONCE, into an `Arc` this request holds for its whole life. A reconfigure can replace the
     // engine while this is in flight, and the answer must come from the engine the question went to
     // — re-reading the slot for the reply would deliver it against a different child's bookkeeping.
-    let answer = shell.engine().request(EngineRequest { method, url, headers, body })?;
+    let engine = match expected_calendar_session {
+        Some(session) => shell.calendar_engine(session).ok_or("the calendar session changed")?,
+        None => shell.engine(),
+    };
+    let answer = engine.request(EngineRequest { method, url, headers, body })?;
+    if let Some(session) = expected_calendar_session {
+        if shell.calendar_engine(session).is_none_or(|current| !Arc::ptr_eq(&current, &engine)) {
+            return Err("the calendar session changed".into());
+        }
+    }
     let meta = serde_json::json!({
         "status": answer.status,
         "statusText": answer.status_text,
@@ -5895,7 +5916,12 @@ pub(crate) fn window_headers(headers: Vec<(String, String)>) -> Vec<(String, Str
 /// may drive the notification API". The plugin is reached only from here.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn notify<R: tauri::Runtime>(app: tauri::AppHandle<R>, notice: serde_json::Value) -> Result<(), String> {
+fn notify<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    notice: serde_json::Value,
+    opening: Option<serde_json::Value>,
+) -> Result<(), String> {
+    use tauri::Manager;
     use tauri_plugin_notification::{NotificationExt, PermissionState};
     let notice = crate::notice::read(&notice).map_err(|refused| refused.to_string())?;
     let (title, body) = crate::notice::compose(&notice, crate::shell_language::spoken());
@@ -5911,12 +5937,123 @@ fn notify<R: tauri::Runtime>(app: tauri::AppHandle<R>, notice: serde_json::Value
         },
         Err(err) => return Err(format!("this computer would not say whether ohmail may post notifications ({err})")),
     }
+    if let crate::notice::Notice::Ohbox { count } = notice {
+        let refused = || crate::alerts::Refused::Superseded.to_string();
+        let shell = app.try_state::<Arc<Shell>>().ok_or_else(refused)?;
+        let alerts = app.try_state::<Arc<crate::alerts::Alerts>>().ok_or_else(refused)?;
+        return submit_mail_notice(&shell, &alerts, opening.as_ref(), |live, document| {
+            show_mail_notice(&app, &title, &body, count, opening.as_ref(), live, document)
+        }).map_err(|error| error.to_string())?;
+    }
     app.notification()
         .builder()
         .title(title)
         .body(body)
         .show()
         .map_err(|err| format!("the notification could not be shown ({err})"))
+}
+
+#[cfg(any(feature = "local-engine", test))]
+fn submit_mail_notice<T>(
+    shell: &Shell, alerts: &crate::alerts::Alerts, opening: Option<&serde_json::Value>,
+    submit: impl FnOnce(crate::alerts::Live, u64) -> T,
+) -> Result<T, crate::alerts::Refused> {
+    use crate::alerts::{Live, Refused};
+
+    let opening = opening.ok_or(Refused::Superseded)?;
+    let document = opening["document"].as_u64().ok_or(Refused::Superseded)?;
+    let session = opening["session"].as_u64().ok_or(Refused::Superseded)?;
+    alerts.with_document(document, || shell.with_live_mailbox(|live| {
+        if !matches!(live, Live::Mailbox(_, current) if current == session) {
+            return Err(Refused::Superseded);
+        }
+        Ok(submit(live, document))
+    })).ok_or(Refused::Superseded)?
+}
+
+#[cfg(all(feature = "local-engine", not(target_os = "macos")))]
+fn show_mail_notice<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>, title: &str, body: &str, count: u32, opening: Option<&serde_json::Value>,
+    live: crate::alerts::Live, document: u64,
+) -> Result<(), String> {
+    let letter = opening.and_then(|value| value["letter"].as_str()).filter(|id| count == 1 && !id.is_empty() && id.len() <= 128
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'));
+
+    let mut notification = notify_rust::Notification::new();
+    notification.summary(title).body(body).auto_icon();
+    #[cfg(target_os = "windows")]
+    if let Ok(executable) = tauri::utils::platform::current_exe() {
+        if let Some(directory) = executable.parent() {
+            if !directory.ends_with("target/debug") && !directory.ends_with("target/release") {
+                notification.app_id(&app.config().identifier);
+            }
+        }
+    }
+    if let Some(result) = show_openable_notice(app, &mut notification, live, document, serde_json::json!({ "letter": letter })) {
+        return result;
+    }
+    notification.show().map(|_| ()).map_err(|error| format!("the notification could not be shown ({error})"))
+}
+
+#[cfg(all(feature = "local-engine", target_os = "macos"))]
+fn show_mail_notice<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>, title: &str, body: &str, _count: u32, _opening: Option<&serde_json::Value>,
+    _live: crate::alerts::Live, _document: u64,
+) -> Result<(), String> {
+    // The plugin detaches submission. Keep the existing backend and submit while ownership is held.
+    let _ = notify_rust::set_application(if tauri::is_dev() { "com.apple.Terminal" } else { &app.config().identifier });
+    mac_notification_sys::Notification::new().title(title).message(body).asynchronous(false).send()
+        .map(|_| ()).map_err(|error| format!("the notification could not be shown ({error})"))
+}
+
+#[cfg(all(feature = "local-engine", not(target_os = "macos")))]
+fn show_openable_notice<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>, notification: &mut notify_rust::Notification,
+    live: crate::alerts::Live, document: u64, mut target: serde_json::Value,
+) -> Option<Result<(), String>> {
+    use tauri::{Emitter, Manager};
+
+    // A notification center may keep a dismissible notice for a long time.
+    static WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    struct WaitSlot;
+    impl Drop for WaitSlot {
+        fn drop(&mut self) { WAITING.fetch_sub(1, Ordering::Relaxed); }
+    }
+
+    let shell = Arc::clone(app.try_state::<Arc<Shell>>()?.inner());
+    let alerts = Arc::clone(app.try_state::<Arc<crate::alerts::Alerts>>()?.inner());
+    let crate::alerts::Live::Mailbox(scope, session) = &live else { return None };
+    target["scope"] = serde_json::json!(scope);
+    target["session"] = serde_json::json!(session);
+    target["document"] = serde_json::json!(document);
+    WAITING.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| (count < 32).then_some(count + 1)).ok()?;
+    let slot = WaitSlot;
+    let open = match crate::shell_language::spoken() {
+        crate::words::Language::En => "Open",
+        crate::words::Language::De => "Öffnen",
+    };
+    notification.action("default", open);
+    let handle = match notification.show() {
+        Ok(handle) => handle,
+        Err(error) => return Some(Err(format!("the notification could not be shown ({error})"))),
+    };
+    let app = app.clone();
+    let _ = thread::Builder::new().name("notification-open".into()).spawn(move || {
+        let _slot = slot;
+        let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+            use notify_rust::NotificationResponse;
+            let activate = matches!(response, NotificationResponse::Default)
+                || matches!(response, NotificationResponse::Action(action) if action == "default");
+            if !activate || alerts.document() != document || shell.live_mailbox() != live { return; }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.emit("notice:open", target);
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        });
+    });
+    Some(Ok(()))
 }
 
 /// Milliseconds since the epoch, by this computer's clock.
@@ -5961,13 +6098,15 @@ fn alerts_set(
 
 /// Show one alert whose minute has come, in the shell's own words. Nothing of it is logged.
 #[cfg(feature = "local-engine")]
-fn show_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, alert: &crate::alerts::Alert) {
+fn show_alert<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>, alert: &crate::alerts::Alert, live: crate::alerts::Live, document: u64,
+) {
     let (title, body) = crate::alerts::compose(alert, crate::shell_language::spoken());
     // The plugin queues a task before calling this backend. Submit here, on the existing
     // timer thread, while withdrawal and redaction are still serialized with delivery.
     let mut notification = notify_rust::Notification::new();
     notification.summary(&title).body(&body).auto_icon();
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     {
         let Ok(executable) = tauri::utils::platform::current_exe() else { return };
         let Some(directory) = executable.parent() else { return };
@@ -5975,10 +6114,16 @@ fn show_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, alert: &crate::alert
             notification.app_id(&app.config().identifier);
         }
     }
+    #[cfg(not(target_os = "macos"))]
+    if let Some(result) = show_openable_notice(app, &mut notification, live, document, serde_json::json!({ "event": alert.event_id })) {
+        if result.is_err() { log_line(format_args!("a calendar alert could not be shown")); }
+        return;
+    }
     #[cfg(target_os = "macos")]
-    let _ = notify_rust::set_application(if tauri::is_dev() { "com.apple.Terminal" } else { &app.config().identifier });
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let _ = app;
+    {
+        let _ = (live, document);
+        let _ = notify_rust::set_application(if tauri::is_dev() { "com.apple.Terminal" } else { &app.config().identifier });
+    }
     if notification.show().is_err() {
         log_line(format_args!("a calendar alert could not be shown"));
     }
@@ -5994,8 +6139,8 @@ fn ring_alerts<R: tauri::Runtime>(app: tauri::AppHandle<R>, shell: Arc<Shell>, a
         let (sleep, turn) = alerts.dispatch(
             || shell.live_mailbox(), unix_ms,
             || matches!(app.notification().permission_state(), Ok(PermissionState::Granted)),
-            |alert, expected| shell.with_live_mailbox(|current| {
-                if current == *expected { show_alert(&app, alert); }
+            |alert, expected, document| shell.with_live_mailbox(|current| {
+                if current == *expected { show_alert(&app, alert, current, document); }
             }),
         );
         alerts.sleep(turn, sleep);
@@ -6369,38 +6514,58 @@ fn named(value: Option<&str>) -> bool {
     value.map(str::trim).is_some_and(|v| !v.is_empty())
 }
 
-/// Settings → Mailboxes on the self-hosted server this install is signed in to.
-///
-/// A key of its own and not a row of [`LINKS`], whose every address is ohmail.app's: this page is
-/// on the operator's server. The window still names no address — [`server_link_for`] composes it
-/// from the door THIS shell's configuration holds, and refuses on any other door.
 #[cfg(feature = "local-engine")]
-pub const SERVER_MAILBOXES_KEY: &str = "server-mailboxes";
-
-/// The self-hosted server's Settings → Mailboxes page for `config`, through the external gate.
-#[cfg(feature = "local-engine")]
-pub fn server_link_for(config: Option<&Config>) -> Result<String, String> {
-    let origin = config
-        .and_then(config::self_hosted_origin)
-        .ok_or_else(|| "ohmail: this install is not signed in to a server of its own".to_string())?;
-    let url = format!("{origin}/mailbox?settings=mailboxes#/settings");
-    external_url(&url)?;
-    Ok(url)
+fn server_settings_pane(key: &str) -> Option<&'static str> {
+    match key {
+        "server-account" => Some("account"),
+        "server-security" => Some("security"),
+        "server-devices" => Some("devices"),
+        "server-storage" => Some("storage"),
+        "server-mailboxes" => Some("mailboxes"),
+        _ => None,
+    }
 }
 
-/// What `open_link` opens for [`SERVER_MAILBOXES_KEY`]: the key takes NO value — a challenge or a
-/// request offered to it is refused, so neither can ride to the operator's page — and the page is
-/// [`server_link_for`] over the door this shell configured.
 #[cfg(feature = "local-engine")]
-pub fn server_open_target(
-    challenge: Option<&str>,
-    request: Option<&str>,
-    config: Option<&Config>,
-) -> Result<String, String> {
-    if named(challenge) || named(request) {
-        return Err(format!("ohmail: {SERVER_MAILBOXES_KEY} takes no value"));
+fn server_settings_origin(config: Option<&Config>, server: &str) -> Option<String> {
+    let config = config?;
+    let Config::Cloud(cloud) = config else { return None };
+    if cloud.cloud_url != server || config.is_identity_pending() || config.is_door_pending() {
+        return None;
     }
-    server_link_for(config)
+    config::self_hosted_origin(config)
+}
+
+#[cfg(feature = "local-engine")]
+fn server_settings_request(pane: &str, challenge: Option<&str>, request: Option<&str>) -> Result<EngineRequest, String> {
+    if named(challenge) || named(request) {
+        return Err("ohmail: server Settings takes no sign-in value".to_string());
+    }
+    Ok(EngineRequest {
+        method: "GET".into(),
+        url: format!("/auth/session?settingsPane={pane}"),
+        headers: Vec::new(),
+        body: Vec::new(),
+    })
+}
+
+#[cfg(feature = "local-engine")]
+fn server_settings_target(origin: &str, account: &str, response: EngineResponse) -> Result<String, String> {
+    let refused = || "ohmail: the server could not prepare Settings for this account".to_string();
+    if response.status != 200 || response.body.len() > 2_048 || account.is_empty() {
+        return Err(refused());
+    }
+    let body: serde_json::Value = serde_json::from_slice(&response.body).map_err(|_| refused())?;
+    let reference = body["reference"].as_str().ok_or_else(refused)?;
+    if body["account"].as_str() != Some(account)
+        || !(40..=720).contains(&reference.len())
+        || !reference.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(refused());
+    }
+    let target = format!("{origin}/login?settingsHandoff={reference}");
+    external_url(&target)?;
+    Ok(target)
 }
 
 /// What `open_link` opens: the approval page by its request, every other key by [`link_url_for`].
@@ -6669,10 +6834,32 @@ fn open_link(
     key: String,
     challenge: Option<String>,
     request: Option<String>,
+    expected_server: Option<String>,
+    expected_account: Option<String>,
 ) -> Result<(), String> {
-    if key == SERVER_MAILBOXES_KEY {
-        let config = shell.paths.config();
-        return spawn_opener(&server_open_target(challenge.as_deref(), request.as_deref(), config.as_ref())?);
+    if let Some(pane) = server_settings_pane(&key) {
+        let request = server_settings_request(pane, challenge.as_deref(), request.as_deref())?;
+        let moved = || "ohmail: this install's server or account changed".to_string();
+        let server = expected_server.as_deref().ok_or_else(moved)?;
+        let account = expected_account.as_deref().filter(|id| !id.is_empty()).ok_or_else(moved)?;
+        let (engine, origin) = {
+            let _door = shell.door.lock().expect("shell door");
+            if shell.pending_door.lock().expect("pending door").is_some() {
+                return Err(moved());
+            }
+            let origin = server_settings_origin(shell.paths.config().as_ref(), server).ok_or_else(moved)?;
+            (shell.engine(), origin)
+        };
+        let response = engine.request(request)?;
+        let target = server_settings_target(&origin, account, response)?;
+        let _door = shell.door.lock().expect("shell door");
+        if shell.pending_door.lock().expect("pending door").is_some()
+            || !Arc::ptr_eq(&engine, &shell.engine())
+            || server_settings_origin(shell.paths.config().as_ref(), server).as_deref() != Some(origin.as_str())
+        {
+            return Err(moved());
+        }
+        return spawn_opener(&target);
     }
     let target = open_target(&key, challenge.as_deref(), request.as_deref())?;
     spawn_opener(&target)

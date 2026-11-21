@@ -1,22 +1,30 @@
 /** @vitest-environment jsdom */
-import { fireEvent, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fireEvent, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, message, mountShell, stubDom, unmountAll } from "./_draft-shell.js";
 
 beforeEach(() => stubDom());
-afterEach(unmountAll);
+afterEach(async () => {
+  await unmountAll();
+  vi.restoreAllMocks();
+});
 
 describe("the answer Search shows", () => {
   it("shows the exact match count and the measured wait", async () => {
     const match = message("kiln", { subject: "Kiln inventory" });
     const asked: string[] = [];
+    const now = vi.spyOn(performance, "now");
     await mountShell("#/search", [match], [], {
       prepareEngine: (engine) => {
         engine.serverSearchAvailable = () => true;
-        engine.searchServer = async (query) => {
-          asked.push(query);
+        engine.searchServer = async (query, opts) => {
+          if (opts?.parts === "page") {
+            asked.push(query);
+            now.mockReturnValue(109);
+          }
           return {
-            state: "ready", items: [match], total: 936, totalEstimate: null, totalExact: true,
+            state: "ready", items: opts?.parts === "page" ? [match] : [],
+            total: 936, totalEstimate: null, totalExact: true,
             tier: "exact", ms: 109, nextCursor: null, bounded: false, indexed: null, facets: null,
           };
         };
@@ -24,11 +32,12 @@ describe("the answer Search shows", () => {
     });
 
     const search = await screen.findByRole("textbox", { name: "Search" });
+    now.mockReturnValue(0);
     await act(async () => { fireEvent.change(search, { target: { value: "kiln" } }); });
-    await screen.findByText("936", { exact: true });
-    expect(asked).toContain("kiln");
-    expect(screen.getByRole("heading", { name: /Results/ }).textContent).toContain("936");
-    const wait = await screen.findByText(/^\d+ ms$/);
+    const count = await screen.findByText("936 matched · 109 ms", { exact: true });
+    expect(asked).toEqual(["kiln"]);
+    expect(count.parentElement?.textContent).toBe("Searched your whole mailbox — 936 matched · 109 ms");
+    const wait = await within(search.parentElement!).findByText("109 ms", { exact: true });
     expect(wait.closest("[hidden], [aria-hidden=true]")).toBeNull();
   });
 });

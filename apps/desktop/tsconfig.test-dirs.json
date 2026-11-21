@@ -72,6 +72,8 @@
       "@ohmail/ui/file-size": ["../../packages/ui/src/format/file-size.ts"],
       "@ohmail/ui/long-text": ["../../packages/ui/src/format/long-text.ts"],
       "@ohmail/ui/squares-window": ["../../packages/ui/src/squares-window.ts"],
+      "@ohmail/ui/stream-estimate": ["../../packages/ui/src/composites/stream-estimate.ts"],
+      "@ohmail/ui/portal-renderer": ["../../packages/ui/src/base/Overlays/portal-renderer.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
       "@ohmail/organizer/sync": ["../../packages/organizer/src/sync.ts"],
       "@ohmail/organizer/lease": ["../../packages/organizer/src/lease.ts"],

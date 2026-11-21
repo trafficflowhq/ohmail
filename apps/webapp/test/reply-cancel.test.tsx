@@ -397,7 +397,7 @@ describe("an open reply keeps the keyboard", () => {
   it("removing a file by keyboard keeps focus in the reply; a typed e parks nothing", async () => {
     const surface = await replyWithFile(["one.txt", "two.txt"]);
     const subject = openSubject();
-    const remove = reply()?.querySelector<HTMLButtonElement>('button[aria-label*="two.txt"]') ?? null;
+    const remove = reply()?.querySelector<HTMLButtonElement>('button[aria-label="Remove two.txt"]') ?? null;
     expect(remove, "no remove control for two.txt").not.toBeNull();
     await act(async () => { remove!.focus(); });
     await act(async () => { remove!.click(); });

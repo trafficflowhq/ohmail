@@ -4,7 +4,7 @@
  * first render, and the address is put back without it so a later reload says nothing.
  */
 import { useEffect } from "react";
-import { useToast } from "@ohmail/ui";
+import { useToast } from "@ohmail/ui/toast";
 
 import { DOOR_COPY } from "./door-copy.js";
 

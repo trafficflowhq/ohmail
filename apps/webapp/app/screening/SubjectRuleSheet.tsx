@@ -21,7 +21,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Avatar, InfoNote, TextField } from "@ohmail/ui";
+import { Avatar, InfoNote } from "@ohmail/ui/sender-sheet";
+import { TextField } from "@ohmail/ui/text-field";
 import { usePileNames } from "../shell/decision-copy";
 import { avatarHue, initialsOf } from "../shell/format";
 import { displayAddress, displayAddressee, displayRuleMatch } from "@ohmail/app-logic/text/idn";

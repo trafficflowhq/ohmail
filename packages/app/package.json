@@ -82,6 +82,12 @@
       "node": "./dist/frame/boot-stamp.js",
       "default": "./src/frame/boot-stamp.ts"
     },
+    "./frame/scope": {
+      "types": "./src/frame/scope.tsx",
+      "ohmail-source": "./src/frame/scope.tsx",
+      "node": "./dist/frame/scope.js",
+      "default": "./src/frame/scope.tsx"
+    },
     "./frame/route": {
       "types": "./src/frame/route.ts",
       "ohmail-source": "./src/frame/route.ts",
@@ -111,6 +117,18 @@
       "ohmail-source": "./src/settings/notifications/index.ts",
       "node": "./dist/settings/notifications/index.js",
       "default": "./src/settings/notifications/index.ts"
+    },
+    "./settings/travelled-change": {
+      "types": "./src/settings/browser/TravelledChangeLine.tsx",
+      "ohmail-source": "./src/settings/browser/TravelledChangeLine.tsx",
+      "node": "./dist/settings/browser/TravelledChangeLine.js",
+      "default": "./src/settings/browser/TravelledChangeLine.tsx"
+    },
+    "./settings/face": {
+      "types": "./src/settings/browser/face-settings.ts",
+      "ohmail-source": "./src/settings/browser/face-settings.ts",
+      "node": "./dist/settings/browser/face-settings.js",
+      "default": "./src/settings/browser/face-settings.ts"
     },
     "./settings/browser": {
       "types": "./src/settings/browser/index.ts",
@@ -237,6 +255,12 @@
       "ohmail-source": "./src/account/way-out/index.ts",
       "node": "./dist/account/way-out/index.js",
       "default": "./src/account/way-out/index.ts"
+    },
+    "./host/contract": {
+      "types": "./src/host/contract.ts",
+      "ohmail-source": "./src/host/contract.ts",
+      "node": "./dist/host/contract.js",
+      "default": "./src/host/contract.ts"
     },
     "./host/browser": {
       "types": "./src/host/browser/index.ts",
@@ -495,6 +519,12 @@
       "ohmail-source": "./src/write/index.ts",
       "node": "./dist/write/index.js",
       "default": "./src/write/index.ts"
+    },
+    "./write/diagnostics": {
+      "types": "./src/write/text/SupportDiagnostics.tsx",
+      "ohmail-source": "./src/write/text/SupportDiagnostics.tsx",
+      "node": "./dist/write/text/SupportDiagnostics.js",
+      "default": "./src/write/text/SupportDiagnostics.tsx"
     },
     "./write/editor": {
       "types": "./src/write/editor/index.ts",

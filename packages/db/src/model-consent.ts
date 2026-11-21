@@ -28,6 +28,7 @@ export function modelConsentGate(read: () => boolean | Promise<boolean>, withdra
     try {
       if (await read() !== true) withdrawn = true;
     } catch {
+      // An unavailable consent read leaves the request without permission to continue.
       withdrawn = true;
     }
     return !withdrawn;

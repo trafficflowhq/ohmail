@@ -10,6 +10,7 @@ import {
   filterCounts,
   isSharedDomain,
   nextAfterDecision,
+  NO_RUN,
   screenerKeys,
   suggestionWords,
   useScreenerView,
@@ -377,11 +378,12 @@ describe("the model's input", () => {
 });
 
 describe("what the open sender's sentence says", () => {
-  const keys = (s: ScreenerSenderDTO) => suggestionWords(s).lines.map((l) => l.key);
+  const keys = (s: ScreenerSenderDTO) => suggestionWords(s, NO_RUN).lines.map((l) => l.key);
 
   it("a real suggestion is the slot's proposal, with how sure it is and its reason", () => {
     const w = suggestionWords(
       sender("lena", { ai: { dest: "ohbox", confidence: 0.92, rationale: "A note" } as never }),
+      NO_RUN,
     );
     expect(w.dest).toBe("ohbox");
     expect(w.sure).toBe(0.92);
@@ -394,8 +396,8 @@ describe("what the open sender's sentence says", () => {
       ai: { dest: "screener", confidence: 0, rationale: "x", noAnswer: "over_quote" } as never,
     });
     for (const s of [hold, cut, sender("n"), sender("q", { noAi: true })]) {
-      expect(suggestionWords(s).dest).toBeNull();
-      expect(suggestionWords(s).sure).toBeNull();
+      expect(suggestionWords(s, NO_RUN).dest).toBeNull();
+      expect(suggestionWords(s, NO_RUN).sure).toBeNull();
     }
     expect(keys(hold)).toEqual(["aiHolds"]);
     expect(keys(cut)).toEqual(["aiSkip.over_quote"]);

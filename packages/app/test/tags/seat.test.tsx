@@ -4,9 +4,11 @@
  * read in place; its Rename and Delete, each one act through the frame's one seam with its sentence; and the rail's
  * Tags group, drawn by the place off the ground.
  */
-import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineMessage } from "@ohmail/wire";
+import { TagPicker } from "../../src/tags/TagPicker.js";
+import { TextProvider } from "../../src/text/index.js";
 import { letter } from "../reader/support/mail.js";
 import { dwell, layOutLetter, listSeat, readerTime, sent } from "../places/list-seat.js";
 
@@ -53,6 +55,43 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+});
+
+it("the tag picker focuses the menu field and Enter applies the filtered choice", () => {
+  const onToggle = vi.fn();
+  const onCreate = vi.fn();
+  const words = {
+    tag: {
+      pickerAria: "Tag",
+      pickerPlaceholder: "Tag this message…",
+      pickerCreate: "Create {name}",
+      pickerNone: "No tags",
+      notOnServer: "Tags are stored here",
+    },
+  };
+  render(
+    <TextProvider locale="en" messages={words} timeZone="Europe/Zurich">
+      <TagPicker
+        anchor={null}
+        tags={[TAG("t1", "Invoices"), TAG("t2", "Family")]}
+        assigned={["t2"]}
+        onToggle={onToggle}
+        onCreate={onCreate}
+        onClose={() => {}}
+      />
+    </TextProvider>,
+  );
+  const field = screen.getByRole("textbox", { name: "Tag this message…" });
+  expect(field.closest(".oh-field")?.hasAttribute("data-row")).toBe(true);
+  expect(document.activeElement).toBe(field);
+  fireEvent.change(field, { target: { value: "family" } });
+  expect(screen.getByRole("menuitemcheckbox", { name: "Family" }).getAttribute("aria-checked")).toBe("true");
+  expect(screen.queryByRole("menuitemcheckbox", { name: "Invoices" })).toBeNull();
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(onToggle.mock.calls).toEqual([["t2", false]]);
+  fireEvent.change(field, { target: { value: "  Travel  " } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(onCreate.mock.calls).toEqual([["Travel"]]);
 });
 
 describe("Tags' own seat, over the mail ground", () => {

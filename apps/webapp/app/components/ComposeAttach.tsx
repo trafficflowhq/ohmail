@@ -67,7 +67,7 @@ import {
   type DroppedSource,
 } from "@ohmail/app-logic/write/dropped-files";
 import { activeFormatLocale } from "../shell/locale";
-import { useScopeHere } from "@ohmail/app/frame";
+import { useScopeHere } from "@ohmail/app/frame/scope";
 import { AttachThumb, ComposeAttachPreview, useImageUrls, type ComposeLookEntry } from "./compose-attach-look";
 
 /**

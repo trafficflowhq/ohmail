@@ -3,7 +3,7 @@ import { Avatar, Sign } from "../../base/index.js";
 import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./row.css";
-import { RowFirst } from "./row-first.js";
+import { RowFirst, type RowNameAction } from "./row-first.js";
 import { RowPlaceFace, type RowPlace } from "./row-place.js";
 import { useKeysFollowStop } from "./row-stop.js";
 import { rowSwipe, type RowSwipe } from "./row-swipe.js";
@@ -33,10 +33,7 @@ export interface RowListing {
   selected: boolean;
   /** Its place in its group, "2 of 7", where the list draws only some of its rows. */
   place?: { at: number; of: number };
-  /**
-   * The list's one tab stop (the row the cursor is on) or not; left out, the row is a stop as every row is. A row
-   * that becomes the stop takes the keys along from a row that lost it: `row-stop.ts` says when.
-   */
+  /** Whether this row is the list's tab stop. Omit it to keep this row tabbable. */
   stop?: boolean;
 }
 
@@ -90,7 +87,6 @@ export interface RowProps {
   onWhen?: () => void;
   /** An amount in place of the time. */
   amount?: string;
-  /** The amount in words, said in the figure's place: "2 messages". */
   amountSaid?: string;
   /** It carries a file: the paper-clip, by this name. */
   file?: string;
@@ -136,11 +132,12 @@ export interface RowProps {
   swipe?: RowSwipe;
   onOpen?: () => void;
   onKeyboardOpen?: () => void;
-  /** A press on the address: the contact card opens at it. */
   onContact?: (anchor: HTMLElement) => void;
-  /** A native contact link. When supplied, the address leads to this fragment. */
   contactHref?: string;
-  faceAction?: { label: string; onPress: (anchor: HTMLElement) => void };
+  /** Toggle the row's avatar, or extend the selection when Shift is pressed. */
+  selection?: { label: string; onPress: (extend: boolean) => void };
+  nameAction?: RowNameAction;
+  nameActions?: readonly (RowNameAction & { id: string; text: string })[];
   addressAction?: (anchor: HTMLButtonElement) => void;
   /** A right click, the menu key or the other key that opens the context menu: the row's menu, where the pointer is. */
   onMenu?: (at: { x: number; y: number }) => void;
@@ -188,7 +185,8 @@ export function Row(props: RowProps) {
           event.stopPropagation();
           if (!onContact) return;
           if (props.contactHref) {
-            if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+            if (event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey)
+              return;
             event.preventDefault();
           }
           onContact(event.currentTarget);
@@ -280,7 +278,8 @@ function RowFace({
   unread,
   tick,
   stream,
-  faceAction,
+  selection,
+  picked,
 }: RowProps) {
   const [lead, second] = people;
   const face = (
@@ -303,24 +302,9 @@ function RowFace({
     </>
   );
   const pair = second || peopleMore ? "" : undefined;
-  return faceAction ? (
-    <button
-      type="button"
-      className="oh-control oh-row-face"
-      data-pair={pair}
-      title={faceAction.label}
-      aria-label={faceAction.label}
-      aria-haspopup="dialog"
-      onClick={(event) => {
-        event.stopPropagation();
-        faceAction.onPress(event.currentTarget);
-      }}
-    >
-      {face}
-    </button>
-  ) : (
+  const art = (
     <span
-      className="oh-row-face"
+      className="oh-row-face-art"
       data-pair={pair}
       role={peopleLabel ? "img" : undefined}
       aria-label={peopleLabel}
@@ -328,6 +312,23 @@ function RowFace({
     >
       {face}
     </span>
+  );
+  return selection && lead ? (
+    <button
+      type="button"
+      className="oh-control oh-row-face"
+      tabIndex={-1}
+      aria-label={selection.label}
+      aria-pressed={picked ?? false}
+      onClick={(event) => {
+        event.stopPropagation();
+        selection.onPress(event.shiftKey);
+      }}
+    >
+      {art}
+    </button>
+  ) : (
+    <span className="oh-row-face">{art}</span>
   );
 }
 

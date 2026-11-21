@@ -1,5 +1,4 @@
-import { useId, useState } from "react";
-import { createPortal } from "react-dom";
+import { useId, useLayoutEffect, useState } from "react";
 import { Menu } from "../../base/index.js";
 import { Icon } from "../../icons/Icon.js";
 import "./blocked-images.css";
@@ -19,6 +18,18 @@ export interface BlockedImagesProps {
 export function BlockedImages({ caption, sentence, describe, open, onOpen, onClose }: BlockedImagesProps) {
   const description = useId();
   const [chip, setChip] = useState<HTMLButtonElement | null>(null);
+  useLayoutEffect(() => {
+    if (!describe || !chip) return;
+    const doc = chip.ownerDocument;
+    // The description is addressable by the chip without becoming part of the reader’s body.
+    const note = doc.createElement("span");
+    note.id = description;
+    note.setAttribute("role", "tooltip");
+    note.hidden = true;
+    note.textContent = sentence;
+    doc.body.append(note);
+    return () => note.remove();
+  }, [chip, describe, description, sentence]);
   return (
     <>
       <button
@@ -33,14 +44,6 @@ export function BlockedImages({ caption, sentence, describe, open, onOpen, onClo
         <Icon name="shield" size={16} />
         <span>{caption}</span>
       </button>
-      {describe && chip
-        ? createPortal(
-            <span id={description} role="tooltip" hidden>
-              {sentence}
-            </span>,
-            chip.ownerDocument.body,
-          )
-        : null}
       <Menu open={open} onClose={onClose} anchor={chip ?? undefined} label={caption} kind="card" right>
         <p className="oh-text oh-blocked-said" role="note">
           {sentence}

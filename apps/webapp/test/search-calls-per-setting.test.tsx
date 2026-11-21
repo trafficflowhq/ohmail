@@ -68,6 +68,12 @@ let calls: Call[] = [];
 async function engineFor(setting: Setting): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
   await store.load();
+  if (setting === "none") {
+    const local = msg(0);
+    await store.applyChanges([
+      { type: "message", op: "create", id: local.id, entity: local, seq: 1, updatedAt: local.updatedAt },
+    ]);
+  }
   const searchServer = async (q: string, o: ServerSearchOpts) => {
     calls.push({
       q,

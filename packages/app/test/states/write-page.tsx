@@ -49,6 +49,8 @@ import {
   TYPED,
   type Pick,
 } from "./write-world.js";
+import draftsDe from "../../messages/drafts.de.json" with { type: "json" };
+import draftsEn from "../../messages/drafts.en.json" with { type: "json" };
 import writeDe from "../../messages/write.de.json" with { type: "json" };
 import writeEn from "../../messages/write.en.json" with { type: "json" };
 import sharedDe from "../../messages/shared.de.json" with { type: "json" };
@@ -408,8 +410,10 @@ async function steps(): Promise<void> {
 /* ------------------------------------------------------------------ the frame */
 
 const words: Messages = fillOver(
-  { ...FRAME_WORDS.en, ...(writeEn as Messages), ...(sharedEn as Messages) },
-  lang === "de" ? { ...FRAME_WORDS.de, ...(writeDe as Messages), ...(sharedDe as Messages) } : {},
+  { ...FRAME_WORDS.en, ...(draftsEn as Messages), ...(writeEn as Messages), ...(sharedEn as Messages) },
+  lang === "de"
+    ? { ...FRAME_WORDS.de, ...(draftsDe as Messages), ...(writeDe as Messages), ...(sharedDe as Messages) }
+    : {},
 );
 
 const entry = (

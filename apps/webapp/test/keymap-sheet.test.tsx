@@ -110,7 +110,7 @@ describe("the ? sheet is GENERATED from the registry", () => {
     const dialog = sheet();
     expect(dialog).toBeTruthy();
     expect(dialog!.textContent).toContain("Keyboard shortcuts");
-    expect(within(dialog!).getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual([
+    expect(within(dialog!).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual([
       "Move around",
       "App",
     ]);
@@ -161,6 +161,11 @@ describe("no cursor is its own reason", () => {
         disabled: true, run: () => {},
       })],
     });
+    expect(row()!.getAttribute("title"), "the open overlay keeps its original registry snapshot")
+      .toBe(messages.shortcuts.needsCursor);
+    act(() => press("Escape"));
+    expect(sheet()).toBeNull();
+    act(() => press("?"));
     expect(row()!.getAttribute("aria-disabled"), "the row stopped resting").toBe("true");
     expect(
       row()!.getAttribute("title"),

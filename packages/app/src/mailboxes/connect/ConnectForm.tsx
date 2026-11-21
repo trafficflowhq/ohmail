@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useConnectForm } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
-import { NONE } from "../../host/index.js";
+import { NONE } from "../../host/contract.js";
 import { useTextLookup } from "../../text/index.js";
 import type { ConnectFormProps, ConnectSubject } from "./contract.js";
 import type { Drawn } from "./drawn.js";

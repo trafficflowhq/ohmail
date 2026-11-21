@@ -13,6 +13,9 @@ import { CALENDAR_NOTICES_KEY, NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/s
 import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
+import { SUBJECT_DISPLAY_PREFIX } from "@ohmail/app-logic/storage/persisted-ui";
+import { SIGN_OUT_STORAGE_PREFIX } from "@ohmail/app-logic/storage/storage-owner";
+import { PENDING_SIGN_OUT_KEY } from "../app/pending-sign-out-storage";
 import { STORED_KEYS, type StoredKeyRow } from "../../../packages/client-engine/src/stored-keys";
 import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
@@ -68,6 +71,7 @@ const BODY = resolve("packages/letter-body/src");
 const SWEPT = [
   "ohmail.boot.",
   SEND_LOCKS_PREFIX,
+  SUBJECT_DISPLAY_PREFIX,
   SENT_COPY_NOTES_PREFIX,
   SCREENER_INTENTS_PREFIX,
   DELETE_INTENTS_PREFIX,
@@ -175,6 +179,10 @@ const SURVIVES_SIGN_OUT = new Set([
  * purpose on exactly the browsers it exists for.
  */
 const SWEPT_ELSEWHERE = new Set([
+  // The pending operation stays until revocation and cache cleanup finish. The cleanup prefix is
+  // swept by clearAccountCleanup only after an exclusive wipe, and per account on a later retry.
+  PENDING_SIGN_OUT_KEY,
+  SIGN_OUT_STORAGE_PREFIX,
   "ohmail.mirror.",
   /*
    * `ohmail.deviceCeremony` — the in-flight Microsoft device-code ceremony's HANDLE, and the first
@@ -305,6 +313,8 @@ describe("sign-out clears the durable decision stores", () => {
     const jar: Record<string, string> = {
       [`${SEND_LOCKS_PREFIX}acct-a`]: "[]",
       [`${SEND_LOCKS_PREFIX}local`]: "[]",
+      [`${SUBJECT_DISPLAY_PREFIX}acct-a`]: "each",
+      [`${SUBJECT_DISPLAY_PREFIX}acct-b`]: "head",
       // A letter's Sent copy note: whom it was for and its subject.
       [`${SENT_COPY_NOTES_PREFIX}acct-a`]: "{}",
       [`${SCREENER_INTENTS_PREFIX}acct-a`]: "[]",
@@ -344,6 +354,7 @@ describe("sign-out clears the durable decision stores", () => {
     expect(src).toContain("dropLocalStorageKeys(");
     for (const name of [
       "SEND_LOCKS_PREFIX",
+      "SUBJECT_DISPLAY_PREFIX",
       "SENT_COPY_NOTES_PREFIX",
       "SCREENER_INTENTS_PREFIX",
       "DELETE_INTENTS_PREFIX",
@@ -573,9 +584,12 @@ describe("sign-out clears the durable decision stores", () => {
       .toMatch(/if \(entry\?\.account === account[\s\S]*return \{ account, handle:/);
     expect(recall, "a mismatch must remove the stored handle").toMatch(/forget\(\);\s*return null;/);
     expect(device).toMatch(/resume\(\): void \{\s*const account = owner\(\);\s*if \(account === null[\s\S]*const entry = recall\(account\);/);
-    expect(device).toContain("view.account === owner() ? view.value : null");
-    expect(part).toContain("deviceReady={host.session.account !== null && host.session.account === host.session.scope}");
-    expect(pane).toContain("const code = resting && deviceReady && microsoft.device");
+    expect(device).toContain("view !== null && stillOwns(view) ? view.value : null");
+    expect(device).toMatch(/return owner\(\) === entry\.account && familyOf\(entry\.account\) === entry\.family\s*&& \(current === null \|\| current === entry\.family\);/);
+    const session = readFileSync(`${APP_PARTS}/host/session.ts`, "utf8");
+    expect(part).toContain("deviceReady={confirmedAccountForScope(host) !== null}");
+    expect(session).toMatch(/const owner = mirrorOwnerOf\(engine\) \?\? session\.scope;\s*return session\.account === owner \? owner : null;/);
+    expect(pane).toMatch(/const code =\s*resting && deviceReady && microsoft\.device && signIn !== NONE && signIn\.code !== NONE/);
     expect(pane).toContain("useEffect(() => code?.resume?.(), [code]);");
   });
 
@@ -586,15 +600,15 @@ describe("sign-out clears the durable decision stores", () => {
     expect(device).toContain("const account = owner();");
     expect(device).toContain("if (account === null || starting !== null || active !== null) return");
     expect(device).toMatch(/await mailboxes\.deviceOAuthStart\(\{ expectedOwner: account,[^\n]+/);
-    expect(device).toContain("if (starting !== request || owner() !== account || !stillWanted()) return");
+    expect(device).toContain("if (starting !== request || !stillOwns({ account, family }) || !stillWanted()) return");
     expect(device).toMatch(/const entry: StoredCeremony = \{ handle: reply\.state, deadline, account \};\s*durableSessionSet\(DEVICE_SIGN_IN_KEY, JSON\.stringify\(entry\)/);
   });
 
   it("a TERMINAL poll failure is shown outside the ceremony block it destroys", () => {
     const device = readFileSync(`${APP}/(product)/mailbox/device-sign-in.ts`, "utf8");
     const pane = readFileSync(`${APP_PARTS}/mailboxes/pane/OutlookConnect.tsx`, "utf8");
-    expect(device).toContain('finish(entry.account, { kind: "ended", why: "refused", refusal });');
-    expect(device).toMatch(/function finish\(account: string, value: CodeCeremony\): void \{\s*retireWork\(\);\s*forget\(\);\s*publish\(\{ account, value \}\);/);
+    expect(device).toContain('finish(entry, { kind: "ended", why: "refused", refusal });');
+    expect(device).toMatch(/function finish\(\{ account, family \}: ActiveCeremony, value: CodeCeremony\): void \{\s*retireWork\(\);\s*forget\(\);\s*publish\(\{ account, family, value \}\);/);
     expect(pane).toContain('if (code !== null && (result?.kind === "checking" || result?.kind === "shown"))');
     expect(pane).toContain('{result?.kind === "ended" && !offer ? <DeviceSignIn result={result}');
   });
@@ -612,6 +626,20 @@ describe("sign-out clears the durable decision stores", () => {
       row.owner === "web" && row.words === false && row.erased === "never" && row.mark === "kept" &&
       row.holds.includes("on this device"),
     );
+    const signalFile = resolve(APP, "signed-out-signal.ts");
+    const signals = readFileSync(signalFile, "utf8");
+    const sessionSignal = /const SESSION_CHANGE_SIGNAL = "([^"]+)";/.exec(signals)?.[1];
+    const tabEvent = /const LOCAL_SIGN_OUT = "([^"]+)";/.exec(signals)?.[1];
+    expect(sessionSignal).toBeDefined();
+    expect(tabEvent).toBeDefined();
+    expect(signals).toContain("post(SESSION_CHANGE_SIGNAL);");
+    expect(signals).toMatch(/localStorage\.setItem\(key, JSON\.stringify\(message\)\);\s*window\.localStorage\.removeItem\(key\);/);
+    expect(signals).toContain("window.dispatchEvent(new CustomEvent(LOCAL_SIGN_OUT");
+    const cleanup = readFileSync(resolve(APP, "pending-sign-out-storage.ts"), "utf8");
+    const signOut = readFileSync(resolve(APP, "sign-out.ts"), "utf8");
+    expect(cleanup).toContain("dropLocalStorageKeys([CLEANUP_PREFIX])");
+    expect(cleanup).toContain('durableRemove(cleanupKey(owner), "session.signOut")');
+    expect(signOut).toContain('durableRemove(PENDING_SIGN_OUT_KEY, "session.signOut")');
     const files = [
       ...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : []), ...(existsSync(APP_PARTS) ? walk(APP_PARTS) : []),
       ...(existsSync(LOGIC) ? walk(LOGIC) : []), ...(existsSync(BODY) ? walk(BODY) : []),
@@ -631,7 +659,8 @@ describe("sign-out clears the durable decision stores", () => {
         const keepsCalendarChoice = key === CALENDAR_NOTICES_KEY && calendarPreference?.at.some(
           (path) => resolve(project, path) === resolve(file),
         );
-        if (!swept && !exempt && !keepsCalendarChoice) undecided.push(`${file}: ${key}`);
+        const transientSignal = file === signalFile && (key === sessionSignal || key === tabEvent);
+        if (!swept && !exempt && !keepsCalendarChoice && !transientSignal) undecided.push(`${file}: ${key}`);
       }
     }
     expect(

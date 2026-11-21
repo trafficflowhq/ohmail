@@ -63,7 +63,8 @@ export interface NoticeEmitter {
   /** The acts its notices can carry. A notice is handed only these. */
   readonly acts: readonly NoticeAct[];
   /** Draw one notice, and say whether the platform took it. Never throws: a notice that cannot be shown takes nothing down. */
-  post(notice: Notice, current?: () => boolean): NoticeTaken | void;
+  /** A single new letter can be opened locally. The id belongs to the opening act, outside the notice. */
+  post(notice: Notice, current?: () => boolean, letter?: string): NoticeTaken | void;
   /**
    * THE CALENDAR'S HALF. A surface that can ring by itself (the desktop's shell, a phone's alarms)
    * takes the whole set here, replacing the one before: an alert missing from the new set is taken

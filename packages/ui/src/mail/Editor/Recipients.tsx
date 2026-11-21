@@ -53,7 +53,8 @@ export interface RecipientsProps {
   /** While the letter sends nothing can be changed. */
   locked?: boolean;
   onType?: (line: string, value: string) => void;
-  /** Enter or Tab on typed words: they become a person. */
+  onTypeFocus?: (line: string, focused: boolean) => void;
+  /** Enter, Tab, or leaving the line settles typed words as a person. */
   onCommit?: (line: string, value: string) => void;
   /**
    * A paste containing a separator, inserted into the typed text at the selection. The app makes each whole
@@ -141,6 +142,8 @@ export function Recipients(props: RecipientsProps) {
                 suggest={props.suggest}
                 more={more && l === 0 && !locked ? more : undefined}
                 onType={onType}
+                onCommit={onCommit}
+                onTypeFocus={props.onTypeFocus}
                 onKeys={(e) => typeKey(e, line)}
                 onPaste={props.onPaste}
               />

@@ -15,6 +15,7 @@ import {
   screenerListSteps,
   useJunkView,
   useScreenerView,
+  PILE_VERB_KEY,
   viewSender,
   type ScreenerState,
 } from "@ohmail/app-logic/screener";
@@ -42,10 +43,22 @@ import { Tools } from "./list/Tools.js";
 import { JunkLetter } from "./held/JunkLetter.js";
 import type { ScreenerJunkItem } from "./ports.js";
 import { Failed } from "./sender/Failed.js";
+import { keptVerbs } from "./sender/Kept.js";
 import { Sender, type SenderWindow } from "./sender/Sender.js";
 import { useText } from "../text/index.js";
 import { useKeyWords } from "./words.js";
 import "./screener.css";
+
+import { SelectionFoot } from "../place-list/SelectionFoot.js";
+import { useRowContact } from "../place-list/use-row-contact.js";
+import { useRowSelection } from "../place-list/use-row-selection.js";
+
+const PICK_DECISIONS = [
+  { id: "ohbox", icon: "ohbox" },
+  { id: "reads", icon: "news" },
+  { id: "receipts", icon: "receipts" },
+  { id: "screened", icon: "screenout" },
+] as const;
 
 const NO_SPAM: ScreenerState["spam"] = [];
 const NO_JUNK: readonly ScreenerJunkItem[] = [];
@@ -168,6 +181,21 @@ export function ScreenerList(pane: PaneProps) {
   const { t, segment, go, phoneWindow, listScroller, setShelfPicked, view, junk, junkView, quarantine } =
     useScreenerList(pane);
   const junkOn = junk !== null;
+  const model = useScreener();
+  const selection = useRowSelection(view.rows.map(viewSender), segment);
+  const contact = useRowContact();
+  const selected = view.rows.filter((row) => selection.ids.includes(viewSender(row).id));
+  const verbs =
+    segment === "waiting"
+      ? PICK_DECISIONS.map(({ id, icon }) => ({
+          id,
+          icon,
+          label: t(PILE_VERB_KEY[id]),
+          disabled: view.decidePicked === undefined,
+          onPress: () => view.decidePicked?.(selection.ids, id),
+        }))
+      : keptVerbs(model, segment, selected, t);
+  const foot = <SelectionFoot selection={selection} verbs={verbs} />;
   const asks = (
     <>
       <BulkDecision view={view} />
@@ -210,6 +238,8 @@ export function ScreenerList(pane: PaneProps) {
                 <GroupHeading>{t("quarantineShelf")}</GroupHeading>
                 <Rows
                   label={t("quarantineShelf")}
+                  contact={contact}
+                  selection={selection}
                   view={{
                     ...view,
                     openId: quarantine ? view.openId : null,
@@ -225,12 +255,14 @@ export function ScreenerList(pane: PaneProps) {
         ) : (
           <>
             <Tools view={view} />
-            <Rows view={view} scroller={listScroller} />
+            <Rows view={view} scroller={listScroller} selection={selection} contact={contact} />
             <Empty view={view} />
             {segment === "waiting" ? <Tail /> : null}
           </>
         )}
       </div>
+      {foot}
+      {contact.card}
       {asks}
     </div>
   );

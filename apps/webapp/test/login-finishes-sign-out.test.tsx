@@ -12,6 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
+import { clearSignOutJar, installSessionLocks, markPendingSignOut } from "./fixtures/sign-out-jar.js";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -89,8 +90,7 @@ beforeEach(() => {
     if (url.endsWith("/auth/refresh/logout")) {
       if (new Headers(init?.headers).get("X-Ohmail-Clear-Logout") === "1") {
         wire.push("clear");
-        document.cookie = "tf_owner=; Path=/; Max-Age=0";
-        document.cookie = "tf_family=; Path=/; Max-Age=0";
+        clearSignOutJar();
         return noContent();
       }
       wire.push("door");
@@ -118,8 +118,7 @@ afterEach(async () => {
   for (const root of roots) await act(() => root.unmount());
   roots = [];
   document.body.innerHTML = "";
-  document.cookie = "tf_owner=; Path=/; Max-Age=0";
-  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  clearSignOutJar();
   globalThis.fetch = originalFetch;
   Reflect.deleteProperty(globalThis.navigator, "locks");
   vi.useRealTimers();
@@ -179,42 +178,9 @@ async function submit(el: HTMLElement): Promise<void> {
   });
 }
 
-/** A minimal Web Locks manager: exclusive, FIFO, and an abort of the WAIT honoured. */
-function installLocks(): void {
-  const queues = new Map<string, Array<() => void>>();
-  const busy = new Set<string>();
-  const request = async (name: string, opts: { signal?: AbortSignal }, fn: () => Promise<unknown>): Promise<unknown> => {
-    if (busy.has(name)) {
-      await new Promise<void>((resolve, reject) => {
-        const waiter = (): void => resolve();
-        const queue = queues.get(name) ?? [];
-        queue.push(waiter);
-        queues.set(name, queue);
-        opts.signal?.addEventListener("abort", () => {
-          const q = queues.get(name) ?? [];
-          const at = q.indexOf(waiter);
-          if (at >= 0) q.splice(at, 1);
-          reject(new DOMException("The request was aborted.", "AbortError"));
-        });
-      });
-    }
-    busy.add(name);
-    try {
-      return await fn();
-    } finally {
-      busy.delete(name);
-      (queues.get(name) ?? []).shift()?.();
-    }
-  };
-  Object.defineProperty(globalThis.navigator, "locks", { value: { request }, configurable: true });
-}
-
 function installKnownPendingFamily(): void {
-  installLocks();
-  document.cookie = "tf_family=fixture-family; Path=/";
-  localStorage.setItem("ohmail.session.pendingSignOut", JSON.stringify({
-    press: "fixture-press", account: "acct_1", family: "fixture-family",
-  }));
+  installSessionLocks();
+  markPendingSignOut("acct_1");
 }
 
 describe("a pending sign-out is finished behind the sign-in form", () => {
@@ -427,7 +393,7 @@ describe("a jar another tab signed in to is not this page's to end", () => {
   });
 
   it("while the door waits for the cookie lock another tab's sign-in holds: the door is never asked", async () => {
-    installLocks();
+    installSessionLocks();
     doorScript = [noContent];
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     let release!: () => void;
@@ -504,7 +470,7 @@ describe.each(["en", "de"] as const)("web recovery copy in %s", (locale) => {
   });
 
   it("shows a whole sentence while cache cleanup is pending", async () => {
-    installLocks();
+    installSessionLocks();
     localStorage.setItem("ohmail.session.pendingSignOut", JSON.stringify({
       press: "prior-tab", account: "acct_1", family: "fixture-family", revoked: true, cachePending: true,
     }));
@@ -540,7 +506,7 @@ it("the recovery finisher announces pending cleanup while its purge response is 
 });
 
 it("the manual recovery retry returns to an actionable pending state while its purge response is held", async () => {
-  installLocks();
+  installSessionLocks();
   sessionScript = [() => json({ scope: "enrollment" }, 200)];
   localStorage.setItem("ohmail.session.pendingSignOut", JSON.stringify({
     press: "prior-tab", account: "acct_1", family: "fixture-family", revoked: true, cachePending: true,

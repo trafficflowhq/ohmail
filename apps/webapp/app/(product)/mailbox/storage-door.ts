@@ -10,7 +10,7 @@ import {
   estimatedEmails, formatStorageBytes, formatStoragePrice, storageDayName, storageFitExtraBytes, storageFitIsChange,
   storageMonthName, storagePercent, storageRefillOf, storageRoomLine, type StorageFacts, type StorageOffer,
 } from "../../shell/storage-state";
-import { leaveForManagePage } from "./SubscriptionSection";
+import { leaveForManagePage } from "./manage-navigation";
 
 /** The account's mailboxes as the shell holds them: their names for the table, and whether the refill runs. */
 export type StorageRoster = ReadonlyArray<{

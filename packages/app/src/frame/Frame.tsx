@@ -70,6 +70,11 @@ function calendarOf(host: FrameHost): CalendarEntry | null {
   return host.capabilities.products === "both" && entry !== NONE ? entry : null;
 }
 
+function noticePlaceAt(host: FrameHost, fragment: string) {
+  const notice = host.features.calendar === NONE ? undefined : host.features.calendar.notice;
+  return notice?.fragment === fragment ? notice.place : null;
+}
+
 const HOME: Route = { place: MAIL_HOME, sub: null, open: null, stage: null, words: {} };
 
 const calendarHome = (plan: LayoutPlan): Route => ({
@@ -104,10 +109,10 @@ function useCommands(
   /* THE LETTERS THE PLACES KEEP (`keepsOpen`), for the frame's life: never stored, and gone with the scope. The
      address is the one copy of what is open, so while it stands at such a place the memory follows it: the letter it
      names, or none once that letter is closed, whichever way it was closed. */
-  const kept = useRef(new Map<string, string>());
+  const kept = useRef(new Map<string, Pick<Route, "open" | "wholeThread">>());
   if (keeps(route)) {
     if (route.open === null) kept.current.delete(spot(route));
-    else kept.current.set(spot(route), route.open);
+    else kept.current.set(spot(route), { open: route.open, wholeThread: route.wholeThread });
   }
   const memory = useRouteMemory(route, HOME);
   const go = useCallback(
@@ -118,7 +123,7 @@ function useCommands(
         to.open === undefined && next.stage === null && layout.current.columns === 2 && keeps(next)
           ? kept.current.get(spot(next))
           : undefined;
-      const fragment = fragmentOf(again === undefined ? next : { ...next, open: again });
+      const fragment = fragmentOf(again === undefined ? next : { ...next, ...again });
       if (host.device.address.heldBefore(fragment, () => go(to, how))) return;
       /* A move to another place, or another part of one, is a switch: timed until its seat is on screen. */
       if (next.place !== now.current.place || next.sub !== now.current.sub) beginSwitch(placeSwitchKey(next));
@@ -137,10 +142,10 @@ function useCommands(
   const commands: FrameCommands = useMemo(
     () => ({
       go,
-      open: (letter: string | null, how?: "replace") => {
+      open: (letter: string | null, how?: "replace", wholeThread?: true) => {
         entered.set(null);
         host.device.address.write(
-          fragmentOf({ ...now.current, open: letter }),
+          fragmentOf({ ...now.current, open: letter, wholeThread }),
           how ?? "push",
           letter === null ? "closed" : undefined,
         );
@@ -159,21 +164,25 @@ function useCommands(
       rail: setRailOpen,
       hold: setHeld,
       over: setOver,
-      switchProduct: (to) => {
+      switchProduct: (to, setupHome) => {
         if (calendarOf(host) === null) return;
         const here = now.current.place;
         const { calendarView, lastCalendar, lastMail } = memory.current;
+        const home = setupHome === undefined ? null : { place: setupHome };
         if (productOf(here) === to) {
           if (here === "calsettings" || here === "frommail" || here === "calsearch") {
-            go(calendarView ?? calendarHome(layout.current));
+            go(home ?? calendarView ?? calendarHome(layout.current));
           }
           return;
         }
-        go(to === "mail" ? lastMail : (lastCalendar ?? calendarHome(layout.current)));
+        go(to === "mail" ? lastMail : (home ?? lastCalendar ?? calendarHome(layout.current)));
       },
       closeCalendarSettings: () => go(memory.current.beforeCalendarSettings ?? calendarHome(layout.current)),
       event: (ref: EventRef | null) => {
-        if (calendarOf(host) === null) return;
+        if (calendarOf(host) === null) {
+          if (ref === null && noticePlaceAt(host, host.device.address.read())) go(HOME);
+          return;
+        }
         const here = now.current;
         if (ref === null) {
           if (isCalendarPlace(here.place))
@@ -224,17 +233,21 @@ function CalendarWriteReports({
 function FrameBody({ host }: { host: FrameHost }) {
   const facts = useSignal(host.device.window);
   const look = useSignal(host.device.appearance);
-  const plan: LayoutPlan = useMemo(() => layoutPlan(facts), [facts]);
   const address = host.device.address;
   const fragment = useSyncExternalStore(address.subscribe, address.read, address.read);
   const addressed = useMemo(() => routeOf(fragment), [fragment]);
   const calendar = calendarOf(host);
+  const noticePlace = noticePlaceAt(host, fragment);
   /* A calendar address where the switch is absent folds back to mail's home: the bar is replaced, and mail's home is
      drawn meanwhile, never a blank frame. */
   const folded =
-    calendar === null && (isCalendarPlace(addressed.place) || addressed.stage?.id === "calSetup");
+    calendar === null &&
+    noticePlace === null &&
+    (isCalendarPlace(addressed.place) || addressed.stage?.id === "calSetup");
   const route = folded ? HOME : addressed;
   const product = productOf(route.place);
+  const layout = product === "mail" ? look.layout : undefined;
+  const plan: LayoutPlan = useMemo(() => layoutPlan(facts, layout), [facts, layout]);
   const stoodProduct = useRef(product);
   const previousProduct = stoodProduct.current;
   useLayoutEffect(() => {
@@ -260,7 +273,9 @@ function FrameBody({ host }: { host: FrameHost }) {
     [inner, api, railOpen, setRailOpen],
   );
   const places = host.features.places;
-  const place = isCalendarPlace(route.place) ? (calendar?.places[route.place] ?? NONE) : places[route.place];
+  const place = isCalendarPlace(route.place)
+    ? (noticePlace ?? calendar?.places[route.place] ?? NONE)
+    : places[route.place];
   const entry = place === NONE ? null : place;
   /* AN ADDRESS THAT NAMES A PLACE THIS HOST DOES NOT HAND (a stored link, a notice's link) is replaced by the
      Ohbox's: nothing of that place exists here, no page stands in for it, and Back does not lead there again. On a

@@ -139,15 +139,17 @@ export async function openWeb(place: WebPlace, challenge?: string): Promise<void
   await shell.invoke(OPEN_COMMAND, challenge ? { key: place, challenge } : { key: place });
 }
 
-/**
- * Open Settings → Mailboxes on the SELF-HOSTED server this install is signed in to. A key and
- * still no address: the shell composes the page from the door its own configuration holds, and
- * refuses on any other door — so this window cannot point the browser anywhere by it.
- */
-export async function openServerMailboxes(): Promise<void> {
+export type ServerSettingsPane = "account" | "security" | "devices" | "storage" | "mailboxes";
+
+/** Ask the native shell to prepare a browser handoff for the account shown by this frame. */
+export async function openServerSettings(
+  place: ServerSettingsPane,
+  expectedServer: string | undefined,
+  expectedAccount: string | null,
+): Promise<void> {
   const shell = internals();
-  if (!shell) return;
-  await shell.invoke(OPEN_COMMAND, { key: "server-mailboxes" });
+  if (!shell || !expectedServer || !expectedAccount) throw new Error("No server account is confirmed");
+  await shell.invoke(OPEN_COMMAND, { key: `server-${place}`, expectedServer, expectedAccount });
 }
 
 /**
@@ -426,14 +428,48 @@ export interface OsNotice {
  * notice's full type is the emitter's (`NoticeShell.post`); this file keeps its own shape of it: the
  * first frame's stamp reaches this file and may reach no package, not even for a type.
  */
-export async function postOsNotice(notice: OsNotice): Promise<void> {
+export async function postOsNotice(
+  notice: OsNotice, opening?: NoticeWriter & { letter?: string },
+): Promise<void> {
   const shell = internals();
   if (!shell) return;
-  await shell.invoke(NOTIFY_COMMAND, { notice });
+  await shell.invoke(NOTIFY_COMMAND, opening === undefined ? { notice } : { notice, opening });
 }
 
 /** The shell's current document and sign-in, captured when the frame mounts. */
 export interface NoticeWriter { document: number; session: number }
+type NoticeOpening = NoticeWriter & { scope: string } & ({ letter: string | null } | { event: string });
+
+let noticeOpening: ((opening: NoticeOpening) => void) | null = null;
+let noticeOpeningShell: ReturnType<typeof internals> = null;
+
+/** Keep one native listener and dispatch only to the mounted frame. */
+export function watchNoticeOpening(run: (opening: NoticeOpening) => void): () => void {
+  noticeOpening = run;
+  const shell = internals();
+  if (shell && shell !== noticeOpeningShell) {
+    noticeOpeningShell = shell;
+    void listen("notice:open", readNoticeOpening, (opening) => noticeOpening?.(opening)).catch(() => {
+      if (noticeOpeningShell === shell) noticeOpeningShell = null;
+    });
+  }
+  return () => { if (noticeOpening === run) noticeOpening = null; };
+}
+
+function readNoticeOpening(event: unknown): NoticeOpening | null {
+  const value = (event as { payload?: Partial<NoticeWriter> & {
+    scope?: unknown; letter?: unknown; event?: unknown;
+  } } | null)?.payload;
+  if (!value || typeof value.scope !== "string" || typeof value.document !== "number" ||
+      typeof value.session !== "number" || !Number.isSafeInteger(value.document) || !Number.isSafeInteger(value.session)) return null;
+  const owner = { document: value.document, session: value.session, scope: value.scope };
+  if (typeof value.event === "string" && /^[\w:-]{1,128}$/.test(value.event)) return { ...owner, event: value.event };
+  if (value.letter === null || (typeof value.letter === "string" && /^[\w-]{1,128}$/.test(value.letter))) {
+    return { ...owner, letter: value.letter };
+  }
+  return null;
+}
+
 let noticeRevision = 0;
 
 /**

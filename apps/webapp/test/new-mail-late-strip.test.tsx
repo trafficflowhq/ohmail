@@ -249,7 +249,8 @@ describe("a self-hosted server is never called ohmail Cloud", () => {
     for (const locale of ["en", "de"] as const) {
       const el = await mount({ managed: false, locale });
       const t = locale === "en" ? tEn : tDe;
-      expect(said(el)).toContain(t("behindLineServer", { hasSince: since === null ? "no" : "yes", since: stamp }));
+      const localStamp = locale === "de" && stamp === "Thu 10:00" ? "Do 10:00" : stamp;
+      expect(said(el)).toContain(t("behindLineServer", { hasSince: since === null ? "no" : "yes", since: localStamp }));
       expect(el.textContent ?? "", `${locale}: a self-hosted server was called Cloud`).not.toMatch(/Cloud/);
       // "On us" is said of our own service only.
       expect(said(el)).not.toContain(locale === "en" ? "on us" : "liegt an uns");

@@ -99,6 +99,13 @@ describe("drafts CRUD + X-Sync-Seq", () => {
     expect((await discard("?ifContentRevision=invalid")).status).toBe(400);
     expect((await discard(at("invalid"))).status).toBe(400);
     expect((await discard(at(new Date(Date.parse(draft.updatedAt) - 1).toISOString()))).status).toBe(409);
+    const other = await seedSession(db, { now: FIXED_NOW });
+    const foreign = await H(req("DELETE", path + at(draft.updatedAt), { bearer: other.token }), deps);
+    expect(foreign.status).toBe(204);
+    expect(foreign.headers.get("x-sync-seq")).toBeNull();
+    const preserved = await H(req("GET", `/drafts/${draft.id}`, { bearer: s.token }), deps);
+    expect(preserved.status).toBe(200);
+    expect((await preserved.json()).body).toBe("Keep until the press is verified");
     const deleted = await discard(at(draft.updatedAt));
     expect(deleted.status).toBe(204);
     expect(deleted.headers.get("x-sync-seq")).toBeTruthy();

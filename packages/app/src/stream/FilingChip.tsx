@@ -1,6 +1,7 @@
 import { createContext } from "react";
-import { Chip } from "@ohmail/ui";
+import { Button, Icon } from "@ohmail/ui/base";
 import { useText } from "../text/index.js";
+import "./filing-chip.css";
 
 /** The filing example supplied in the demo's local mirror. */
 export interface FilingChipData {
@@ -27,17 +28,24 @@ export function FilingChip({
   choose: (choice: FilingChoice) => void;
 }) {
   const t = useText("reads");
-  if (choice === "approved") return <Chip icon="check">{example.approvedLabel}</Chip>;
-  if (choice === "corrected") return <Chip icon="route">{example.correctedLabel}</Chip>;
+  if (choice) {
+    return (
+      <span className="st-filing-control" data-chip="rationale">
+        <Icon name={choice === "approved" ? "check" : "move"} size={16} />
+        {choice === "approved" ? example.approvedLabel : example.correctedLabel}
+      </span>
+    );
+  }
   return (
-    <Chip
-      variant="ai"
-      actions={[
-        { label: t("aiApprove"), onPress: () => choose("approved") },
-        { label: t("aiCorrect"), onPress: () => choose("corrected") },
-      ]}
-    >
+    <span className="st-filing-control" data-chip="ai">
+      <Icon name="spark" size={16} />
       <span className="st-filing-label">{example.label}</span>
-    </Chip>
+      <Button kind="quiet" size="s" onPress={() => choose("approved")}>
+        {t("aiApprove")}
+      </Button>
+      <Button kind="quiet" size="s" onPress={() => choose("corrected")}>
+        {t("aiCorrect")}
+      </Button>
+    </span>
   );
 }

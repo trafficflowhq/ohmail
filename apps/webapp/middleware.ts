@@ -301,6 +301,14 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
+  if (request.nextUrl.searchParams.has("settingsHandoff")) {
+    const response = strict(request, (init) =>
+      NextResponse.rewrite(withPathname(request, APP_ROUTE), init), "wait");
+    response.headers.set("Cache-Control", "private, no-store");
+    response.headers.set("Referrer-Policy", "no-referrer");
+    return response;
+  }
+
   const token = cookieFromStore(request.cookies, SESSION_COOKIE);
 
   // THE FIRST-RUN DOOR, self-host builds only (SELF_HOST_BUILD is compiled; this branch does

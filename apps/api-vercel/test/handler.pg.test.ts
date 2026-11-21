@@ -378,7 +378,7 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
       expect(refused.status).toBe(401);
       expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("refresh_revoked");
       expect(refused.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]).sort())
-        .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+        .toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
       expect(refused.headers.get("clear-site-data"), "the refusal is held for a cache walk").toBeNull();
 
       const purge = await handleApiRequest(at("/auth/refresh", {
@@ -393,17 +393,19 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
      * THE SIGN-OUT DOOR AND THE ERASE, the same: a held 204 outlived the press's deadline and a
      * confirmed sign-out was recorded as unconfirmed; a held erase receipt kept the cookie lock.
      */
-    it("on the web's rewrite, the sign-out door's 401 and 204 and the erase's 200 clear the jar with no cache clear", async () => {
+    it("on the web's rewrite, only explicit sign-out cleanup and account erase clear the browser jar without a cache walk", async () => {
       install(envFor({ TF_COOKIE_HOSTS: "api.ohmail.app,ohmail.app" }));
       const browser = { origin: "https://ohmail.app", "x-forwarded-host": "ohmail.app" };
       const ended = async (res: Response, status: number, what: string): Promise<void> => {
         expect(res.status, `${what}: ${await res.clone().text()}`).toBe(status);
         expect(res.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]).sort(), what)
-          .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+          .toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
         expect(res.headers.get("clear-site-data"), `${what}: held for a cache walk`).toBeNull();
       };
-      await ended(await handleApiRequest(at("/auth/refresh/logout", { method: "POST", headers: browser })), 401,
-        "an empty jar at the door");
+      const empty = await handleApiRequest(at("/auth/refresh/logout", { method: "POST", headers: browser }));
+      expect(empty.status).toBe(401);
+      expect(empty.headers.getSetCookie()).toEqual([]);
+      expect(empty.headers.get("clear-site-data")).toBeNull();
 
       // One account, two sessions: the first signs out at the door, the second (step-up fresh) erases.
       const db = makePooledDb(PG_TEST_URL);
@@ -412,7 +414,7 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
       const [user] = await db.insert(users).values({
         accountId: acct!.id, email: `so-${randomUUID()}@so.example`, displayName: "SO", emailVerifiedAt: now,
       }).returning();
-      const jarFor = async (): Promise<{ cookie: string; csrf: string }> => {
+      const jarFor = async (): Promise<{ cookie: string; csrf: string; familyId: string }> => {
         const access = generateToken();
         const refresh = generateToken();
         const familyId = randomUUID();
@@ -425,13 +427,23 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
           accountId: acct!.id, userId: user!.id, sessionId: s!.id, familyId, tokenHash: hashToken(refresh),
           expiresAt: new Date(now.getTime() + 7_200_000),
         });
-        return { cookie: `tf_session=${access}; tf_refresh=${refresh}; tf_csrf=${csrfTokenFor(access)}`, csrf: csrfTokenFor(access) };
+        return { cookie: `tf_session=${access}; tf_refresh=${refresh}; tf_csrf=${csrfTokenFor(access)}`, csrf: csrfTokenFor(access), familyId };
       };
       const first = await jarFor();
       const second = await jarFor();
+      const pending = {
+        ...browser,
+        cookie: `${first.cookie}; tf_owner=signed_out_pending; tf_family=${first.familyId}`,
+        "x-csrf-token": first.csrf,
+        "x-ohmail-expected-family": first.familyId,
+      };
+      const revoked = await handleApiRequest(at("/auth/refresh/logout", { method: "POST", headers: pending }));
+      expect(revoked.status).toBe(204);
+      expect(revoked.headers.getSetCookie()).toEqual([]);
+      expect(revoked.headers.get("clear-site-data")).toBeNull();
       await ended(await handleApiRequest(at("/auth/refresh/logout", {
-        method: "POST", headers: { ...browser, cookie: first.cookie, "x-csrf-token": first.csrf },
-      })), 204, "a live family at the door");
+        method: "POST", headers: { ...pending, "x-ohmail-clear-logout": "1" },
+      })), 204, "explicit cleanup of the ended family");
       await ended(await handleApiRequest(at("/account", {
         method: "DELETE", headers: { ...browser, cookie: second.cookie, "x-csrf-token": second.csrf },
       })), 200, "the erase");

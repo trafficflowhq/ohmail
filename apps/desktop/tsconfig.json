@@ -79,9 +79,16 @@
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui/body-parts": ["../../packages/ui/src/body-parts.ts"],
       "@ohmail/ui/file-size": ["../../packages/ui/src/format/file-size.ts"],
+      "@ohmail/ui/sender-sheet": ["../../packages/ui/src/sender-sheet.ts"],
+      "@ohmail/ui/viewport": ["../../packages/ui/src/ui-zoom.ts"],
+      "@ohmail/ui/text-field": ["../../packages/ui/src/primitives/TextField.tsx"],
+      "@ohmail/ui/date-picker-view": ["../../packages/ui/src/primitives/DatePicker.tsx"],
+      "@ohmail/ui/toast": ["../../packages/ui/src/primitives/toast-context.ts"],
       "@ohmail/ui/base": ["../../packages/ui/src/base/index.ts"],
       "@ohmail/ui/mail": ["../../packages/ui/src/mail/index.ts"],
       "@ohmail/ui/squares-window": ["../../packages/ui/src/squares-window.ts"],
+      "@ohmail/ui/stream-estimate": ["../../packages/ui/src/composites/stream-estimate.ts"],
+      "@ohmail/ui/portal-renderer": ["../../packages/ui/src/base/Overlays/portal-renderer.ts"],
       "@ohmail/ui/calendar": ["../../packages/ui/src/calendar/index.ts"],
       "@ohmail/ui/theme": ["../../packages/ui/src/theme/ThemeProvider.tsx"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
@@ -125,6 +132,8 @@
       "@ohmail/app/palette": ["../../packages/app/src/palette/index.ts"],
       "@ohmail/app/text/fill": ["../../packages/app/src/text/fill.ts"],
       "@ohmail/app/frame/boot": ["../../packages/app/src/frame/boot-stamp.ts"],
+      "@ohmail/app/settings/travelled-change": ["../../packages/app/src/settings/browser/TravelledChangeLine.tsx"],
+      "@ohmail/app/frame/scope": ["../../packages/app/src/frame/scope.tsx"],
       "@ohmail/app/frame": ["../../packages/app/src/frame/index.ts"],
       "@ohmail/app/text": ["../../packages/app/src/text/index.ts"],
       "use-intl/core": ["./node_modules/use-intl/core.d.ts"],
@@ -197,6 +206,7 @@
       /* The one matcher that decides whether a configured model is on the endpoint's list —
          imported by `AiProviderForm.tsx` and by the engine's Ollama probe, so the picker and
          the verdict cannot disagree. Same story as the leaves above in the mirror. */
+      "@trafficflow/core/suggestion-consent": ["../../packages/core/src/suggestion-consent.ts"],
       "@trafficflow/core/model-name": ["../../packages/core/src/model-name.ts"],
       /* The diagnostic file's builder, shared with the phone (Settings → About). */
       "@trafficflow/core/diagnostics": ["../../packages/core/src/diagnostics/index.ts"]

@@ -1,7 +1,9 @@
-import { useLayoutEffect, useRef, type MouseEvent } from "react";
-import { AddressText, Tag, Where } from "../../base/index.js";
+import { Fragment, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from "react";
+import { Tag, Where } from "../../base/index.js";
 import { useMeasuredMark } from "../../base/measured-mark.js";
+import { cssRect } from "../../base/ui-zoom.js";
 import { Icon } from "../../icons/Icon.js";
+import { AddressText } from "../AddressText.js";
 import type { RowProps } from "./Row.js";
 import { RowAmount } from "./row-tick.js";
 
@@ -20,9 +22,9 @@ function fitFirstLine(line: HTMLElement, fitAddress: boolean) {
   const name = line.querySelector<HTMLElement>(":scope > .oh-tag[data-own] > .oh-tag-name");
   if (!name || !name.getClientRects().length) return;
 
-  const text = document.createRange();
+  const text = name.ownerDocument.createRange();
   text.selectNodeContents(name);
-  const clipped = () => text.getBoundingClientRect().width > name.getBoundingClientRect().width;
+  const clipped = () => cssRect(text).width > cssRect(name).width;
   if (!clipped()) return;
 
   if (words > room) line.dataset.foldAddress = "";
@@ -40,6 +42,8 @@ function useFirstLineFit(enabled: boolean, fitAddress: boolean) {
     const fit = () => fitFirstLine(el, fitAddress);
     const watch = typeof ResizeObserver === "function" ? new ResizeObserver(fit) : null;
     watch?.observe(el);
+    const address = el.querySelector(":scope > .oh-row-address");
+    if (fitAddress && address) watch?.observe(address);
     document.fonts?.addEventListener("loadingdone", fit);
     return () => {
       watch?.disconnect();
@@ -51,13 +55,65 @@ function useFirstLineFit(enabled: boolean, fitAddress: boolean) {
   return line;
 }
 
+export interface RowNameAction {
+  label: string;
+  onPress: (anchor: HTMLButtonElement) => void;
+}
+
+const openContact =
+  (action: (anchor: HTMLButtonElement) => void) => (event: MouseEvent<HTMLButtonElement>) => {
+    if (event.shiftKey) return;
+    event.stopPropagation();
+    action(event.currentTarget);
+  };
+
+function rowName(
+  text: ReactNode,
+  {
+    href,
+    contact,
+    nameAction,
+    nameActions,
+  }: Pick<RowProps, "nameAction" | "nameActions"> & {
+    href?: string;
+    contact?: (event: MouseEvent<HTMLElement>) => void;
+  },
+) {
+  const nameButton = (text: ReactNode, action: RowNameAction) => (
+    <button
+      className="oh-control oh-row-contact-name"
+      type="button"
+      aria-label={action.label}
+      aria-haspopup="dialog"
+      onClick={openContact(action.onPress)}
+    >
+      {text}
+    </button>
+  );
+  if (nameActions?.length)
+    return nameActions.map((part, index) => (
+      <Fragment key={part.id}>
+        {index > 0 ? ", " : null}
+        {nameButton(part.text, part)}
+      </Fragment>
+    ));
+  if (nameAction) return nameButton(text, nameAction);
+  if (href)
+    return (
+      <a className="oh-row-contact" href={href} onClick={contact}>
+        {text}
+      </a>
+    );
+  return text;
+}
+
 /** Line one: who, the address, and at its end the marks and the time. */
 export function RowFirst(
   props: RowProps & { contact?: (event: MouseEvent<HTMLElement>) => void; twin?: boolean },
 ) {
   const { who, address, contact, onWhen, keepAddressDomain } = props;
   const href = props.twin ? undefined : props.contactHref;
-  const addressAction = props.twin ? undefined : props.addressAction;
+  const { nameAction, nameActions, addressAction } = props.twin ? {} : props;
   const addressStyle = {
     className: "oh-row-address",
     "data-press": contact || addressAction ? "" : undefined,
@@ -86,13 +142,7 @@ export function RowFirst(
   return (
     <span ref={line} className="oh-row-first" aria-hidden={props.twin ? true : undefined}>
       <b className="oh-row-who" data-domain={keepAddressDomain && !address ? "" : undefined}>
-        {href && !address ? (
-          <a className="oh-row-contact" href={href} onClick={contact}>
-            {shownWho}
-          </a>
-        ) : (
-          shownWho
-        )}
+        {rowName(shownWho, { href: address ? undefined : href, contact, nameAction, nameActions })}
       </b>
       {props.senderCheck ? <Tag title={props.senderCheck.title}>{props.senderCheck.label}</Tag> : null}
       {props.flag ? (
@@ -114,11 +164,7 @@ export function RowFirst(
             type="button"
             aria-label={address}
             aria-haspopup="dialog"
-            onClick={(event) => {
-              if (event.shiftKey) return;
-              event.stopPropagation();
-              addressAction(event.currentTarget);
-            }}
+            onClick={openContact(addressAction)}
           >
             {shownAddress}
           </button>

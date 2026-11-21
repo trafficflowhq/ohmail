@@ -1,6 +1,6 @@
 import { createContext, useEffect, useState, type ReactNode } from "react";
 import { Button } from "@ohmail/ui/base";
-import { FileQuickLook } from "@ohmail/ui/mail";
+import { QuickLook } from "@ohmail/ui/mail";
 import { faultOf, fileLookOf, isHeldUrl } from "@ohmail/app-logic/reader";
 import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
 import { useText } from "../../text/index.js";
@@ -110,8 +110,9 @@ export function FilePreview(props: PreviewProps) {
   const show = (content: ReactNode, page?: PdfPage) => {
     const paging = page !== undefined && page.total > 1;
     return (
-      <FileQuickLook
+      <QuickLook
         open
+        portal
         onClose={onClose}
         label={t("ariaLabel")}
         name={item.filename}
@@ -137,7 +138,7 @@ export function FilePreview(props: PreviewProps) {
         ]}
       >
         {content}
-      </FileQuickLook>
+      </QuickLook>
     );
   };
   const pdfBlob = kind === "pdf" && item.state === "ready" ? blob : undefined;

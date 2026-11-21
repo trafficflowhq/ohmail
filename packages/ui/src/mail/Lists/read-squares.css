@@ -197,6 +197,34 @@
     touch-action: pan-y;
   }
 
+  .oh-square-tip {
+    position: fixed;
+    z-index: var(--oh-layer-top);
+    width: max-content;
+    max-width: min(34ch, calc(100dvw / var(--ui-zoom, 1) - 16px));
+    padding: var(--s2) var(--s3);
+    background: var(--sheet);
+    color: var(--ink);
+    border-radius: var(--r-row);
+    box-shadow: var(--float);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+    line-height: 1.5;
+    letter-spacing: 0;
+    text-align: left;
+    text-wrap: pretty;
+    white-space: normal;
+    animation: oh-square-tip-in var(--d-pop) var(--e-pop);
+    pointer-events: none;
+  }
+
+  @keyframes oh-square-tip-in {
+    from {
+      transform: var(--x-pop);
+      opacity: 0;
+    }
+  }
+
   .oh-square-tip-time {
     margin-inline-start: var(--s2);
     color: var(--ink2);
@@ -211,4 +239,16 @@
   -webkit-touch-callout: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* The preview is portalled to the app root, or to the document body when there is no root. */
+.oh-square-tip.oh-square-tip {
+  z-index: var(--oh-layer-top);
+  background: var(--sheet);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--float);
+  color: var(--ink);
+  font-family: var(--f-text);
+  font-size: var(--t-meta);
+  font-weight: var(--w-text);
 }

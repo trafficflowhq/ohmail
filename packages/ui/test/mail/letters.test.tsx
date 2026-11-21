@@ -190,7 +190,12 @@ describe("BlockedImages", () => {
 
   it("says the one sentence while open; Esc closes it and the keys go back to the chip", () => {
     const onClose = vi.fn();
-    const { rerender } = render(<BlockedImages {...chip} open onOpen={() => {}} onClose={onClose} />);
+    const view = (open: boolean) => (
+      <BlockedImages {...chip} open={open} onOpen={() => {}} onClose={onClose} />
+    );
+    const { rerender } = render(view(false));
+    screen.getByRole("button", { name: "Tracker blocked" }).focus();
+    rerender(view(true));
     const card = screen.getByRole("dialog", { name: "Tracker blocked" });
     expect(within(card).getByRole("note").textContent).toBe(chip.sentence);
     expect(screen.getByRole("button", { name: "Tracker blocked" }).getAttribute("aria-expanded")).toBe(
@@ -198,7 +203,7 @@ describe("BlockedImages", () => {
     );
     fireEvent.keyDown(card, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
-    rerender(<BlockedImages {...chip} open={false} onOpen={() => {}} onClose={onClose} />);
+    rerender(view(false));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Tracker blocked" }));
   });

@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ScreenerSenderDTO } from "@ohmail/wire";
 import type { LetterProps, ReaderFiles } from "../../src/reader/index.js";
+import { fakeMail, letter } from "../reader/support/fake-mail.js";
 import { BESIDE, modelOf, mountPlace, screenerEngine, sender } from "./screener-world.js";
 
 const bag = sender("held", "Held correspondence", {
@@ -13,6 +14,8 @@ const bag = sender("held", "Held correspondence", {
     snippet: `Preview ${i + 1}`,
   })),
 }) as ScreenerSenderDTO;
+
+const heldMirror = () => fakeMail(bag.held.map(({ id }) => letter(id))).engine.read();
 
 const reading = () => within(screen.getByRole("region", { name: "Reading" }));
 
@@ -57,6 +60,7 @@ it.each(["screened", "spam"] as const)(
     mountPlace(modelOf({ flushes: 0 }, queues), {
       at: `#/screener/${segment}`,
       engine,
+      presented: heldMirror(),
       beside: { ...BESIDE, letters: { body: Body, files: files(hold), pictures: "none", look: "none" } },
     });
     const feed = reading().getByRole("feed", { name: "Held correspondence" });
@@ -245,6 +249,7 @@ it.each(["Screened out", "Spam"])(
     const queues = section === "Spam" ? { spam: [{ sender: bag, pinned: false }] } : { screenedOut: [bag] };
     mountPlace(modelOf({ flushes: 0 }, queues), {
       engine,
+      presented: heldMirror(),
       beside: {
         ...BESIDE,
         letters: {

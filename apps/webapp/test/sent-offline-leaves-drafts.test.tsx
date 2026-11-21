@@ -703,8 +703,11 @@ describe("a first save named by its key while it waits — at the gate, behind a
     await rounds(10);
     return { release, local };
   }
-  const opened = (deadline: boolean): Promise<DraftShell> =>
-    mountShell("#/ohbox", [message("m1"), message("m2")], [], deadline ? { outboxReplayDeadlineMs: 50 } : {});
+  const opened = (deadline: boolean, options: { versions?: boolean } = {}): Promise<DraftShell> =>
+    mountShell("#/ohbox", [message("m1"), message("m2")], [], {
+      ...options,
+      ...(deadline ? { outboxReplayDeadlineMs: 50 } : {}),
+    });
 
   async function typedOnAfterTheGate(deadline: boolean, twice: boolean): Promise<DraftShell> {
     const s = await opened(deadline);
@@ -891,7 +894,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("32 — Discard in Drafts of a reply whose first save waits, then of one on the wire: nothing of either is left", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [], { versions: true });
     s.offline.on = true;
     await replyOn(s, "m1", "Never mind this one");
     await waitFor(() => createsOf(s, "m1").length === 1, "the create waiting", PAUSE_ROUNDS);
@@ -999,7 +1002,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("36 — the same, then Discard in Drafts before it lands: nothing of the reply is left", async () => {
-    const s = await opened(true);
+    const s = await opened(true, { versions: true });
     const landed = await hungReply(s);
     await discardListed(s, "Hung words");
     await landed();

@@ -603,7 +603,8 @@ describe("what the ground's one suggestion run hands a seat", () => {
   async function seated(wire: SuggestWire | "none") {
     const { engine } = await world();
     const { host } = fakeHost({
-      engine, service: "self", scope: "acct-1",
+      engine, service: "managed", scope: "acct-1",
+      wires: { consent: consentNoAuto },
       places: { news: { id: "news", body: "news", rail: null, panes: { kind: "wide", Wide: Away } } },
       above: seatedOver(wire),
       address: fakeAddress("#/reads"),

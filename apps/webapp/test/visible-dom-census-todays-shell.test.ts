@@ -19,8 +19,8 @@ describe("the shell's document queries skip hidden piles", () => {
     const keys = readFileSync(join(ROOT, "packages/app/src/reader/keys.ts"), "utf8");
     expect(keys).toContain('run: () => open.menu("cardDelete")');
     expect(keys).toContain('verb("d", ts("key.deleteAsk"), show("cardDelete"), { when: isCardDeleteKey })');
-    const bar = readFileSync(join(ROOT, "packages/app/src/reader/actions/ActionBar.tsx"), "utf8");
-    expect(bar).toContain('if (menu !== "cardDelete" || !isCardDeleteKey(e.nativeEvent)) return false;');
+    const menus = readFileSync(join(ROOT, "packages/app/src/reader/actions/ActionMenus.tsx"), "utf8");
+    expect(menus).toContain('if (menu !== "cardDelete" || !isCardDeleteKey(e.nativeEvent)) return false;');
 
     const messageVerbs = readFileSync(join(RETAINED_SHELL, "message-verbs.ts"), "utf8");
     expect(messageVerbs, "the retained Delete confirmation no longer asks queryVisible")

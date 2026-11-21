@@ -92,6 +92,10 @@ export function connectionReason(
           : state.reason
             ? t(`blocked_${state.reason}`)
             : t("blockedUnknown");
+      /* These remedies belong on the notice's line, not as a long bold heading. */
+      if (state.reason === "mailbox_full" || state.reason === "provider_unavailable") {
+        return { line: joined(why, since(state.minutes ?? null, t)), href: MAILBOXES };
+      }
       /* The reason is the fact, as the strip's title was; the mailbox and how long under it. */
       return {
         title: why,

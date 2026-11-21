@@ -181,12 +181,12 @@ describe("the sheet says it and hands the press the same rows", () => {
     expect(sheet).toMatch(/w\.actions\.reachOf\(row, w\.screener\.waiting\)/);
     expect(sheet).toMatch(/Copy\.domainAlsoFiles\(/);
     expect(sheet).toMatch(/\{also !== null \? \(\s*<Txt[^>]*testID="decide-domain-also">\s*\{also\}/);
-    expect(sheet).toMatch(/w\.actions\.decide\(row, dest, read, w\.screener\.waiting\)/);
+    expect(sheet).toMatch(/w\.actions\.decide\(row, dest, read, w\.screener\.waiting, unsubscribeIds\)/);
   });
 
   it("the world forwards both to the live actions", () => {
     const w = source("src/state/world.tsx");
-    expect(w).toMatch(/decide: \(row, dest, read, peers\) => void acts\.decide\(row, dest, read, row\.scope, peers\)/);
+    expect(w).toMatch(/decide: \(row, dest, read, peers, ids\) => void acts\.decide\(row, dest, read, row\.scope, peers, ids\)/);
     expect(w).toMatch(/reachOf: \(row, peers\) => acts\.reachOf\(row, peers, row\.scope\)/);
   });
 

@@ -74,7 +74,7 @@ async function mount(letter: EngineMessage, standing: RuleEntity, segment = copy
         id: "mb_1", address: "mailbox@fixture.example", status: "connected",
         organizerRole: "organizer", initialImportCompletedAt: ISO, organizeConsentedAt: ISO,
         lastSyncAt: ISO, createdAt: ISO,
-      }] });
+      }] }, { headers: { "X-Ohmail-Account": ACCOUNT } });
     }
     if (method === "GET" || !/^\/api\/(rules|messages|screener)(?:\/|$)/.test(path)) {
       return fixture(input, init);
@@ -82,7 +82,7 @@ async function mount(letter: EngineMessage, standing: RuleEntity, segment = copy
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     writes.push({ method, path, body });
     const seq = ++sequence;
-    const headers = { "x-sync-seq": String(seq) };
+    const headers = { "x-sync-seq": String(seq), "X-Ohmail-Account": ACCOUNT };
     if (method === "POST" && path === `/api/messages/${letter.id}/move`) {
       const from = current.folder;
       current = { ...current, folder: body.folder };

@@ -72,7 +72,7 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
       </PartsContext.Provider>
     );
   };
-  function useInlineReply(keyLetter: string | null, items: readonly EngineMessage[]) {
+  function useInlineReply(items: readonly EngineMessage[]) {
     const { reply } = useParts();
     const { host, conversations } = useAnsweredInPlace(reply, items);
     if (conversations.size === 0) return null;
@@ -80,9 +80,8 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
     return {
       messageId: host,
       conversations,
-      sheet: members && (
-        <InlineReply reply={reply} letters={members.map((m) => m.id)} keysHere={keyLetter === host} />
-      ),
+      sheet: (keysHere: boolean) =>
+        members && <InlineReply reply={reply} letters={members.map((m) => m.id)} keysHere={keysHere} />,
     };
   }
   const PreviewHead = previewHeadOf(useParts);

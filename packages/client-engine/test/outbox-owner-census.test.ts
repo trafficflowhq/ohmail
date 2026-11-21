@@ -66,7 +66,7 @@ describe("every committed write of a shared outbox disk tells the other windows"
     const src = readFileSync(IDB, "utf8");
     const committing = methodsOf(parse(src), "IndexedDbMirrorStore").filter((m) => m.body!.getText().includes("commitWrite("));
     expect(committing.map(nameOf).sort(), "the write sites this census reads").toEqual(
-      ["adoptOrphans", "bindOwner", "decideOnDisk", "persist", "purge", "transact", "wipe"],
+      ["adoptOrphans", "bindOwner", "decideCalendarOnDisk", "decideOnDisk", "persist", "purge", "transact", "wipe"],
     );
     expect(unheardWrites(src, "IndexedDbMirrorStore", "commitWrite", IDB_NOTICE)).toEqual([]);
   });

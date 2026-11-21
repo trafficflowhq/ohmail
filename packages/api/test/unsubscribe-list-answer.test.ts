@@ -59,7 +59,7 @@ const headersFor = (path: string) => ({
   "list-unsubscribe": [`<https://list.example${path}?t=${path.slice(1)}>`],
   "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
   "list-id": [`<${path.slice(1)}.list.example>`],
-  // The mailbox's provider (Gmail's position, `GMAIL` below) confirming the sender: the drain's licence.
+  // The mailbox's provider confirms the sender even before anyone presses unsubscribe.
   "authentication-results": ["mx.google.com; dmarc=pass"],
 });
 const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
@@ -134,16 +134,16 @@ describe("POST /messages/:id/unsubscribe — what the list answered decides what
   });
 });
 
-describe("GET /internal/unsubscribe/drain — the worker's pass counts a refusal as not delivered", () => {
+describe("a background tick leaves each list's answer to a person's press", () => {
   const SECRET = "s".repeat(32);
   const drain = (deps: ApiDeps) => H(new Request("http://api.test/internal/unsubscribe/drain", {
     method: "GET", headers: { authorization: `Bearer ${SECRET}` },
   }), { ...deps, alerts: { secret: SECRET, cronSecret: SECRET, sinks: [] } } as ApiDeps);
 
   it.each([
-    ["/refuses", { delivered: 0, failed: 1 }, { state: "refused", refusal: "list_refused", httpStatus: 405 }],
-    ["/accepts", { delivered: 1, failed: 0 }, { state: "sent", httpStatus: 200 }],
-  ])("%s", async (path, counts, row) => {
+    ["/refuses", { state: "refused", refusal: "list_refused", httpStatus: 405 }],
+    ["/accepts", { state: "sent", httpStatus: 200 }],
+  ])("%s", async (path, row) => {
     hits.clear();
     const { db, deps } = await makeDeps(undefined, {}, { oneClickPost: fixturePort(), trustedAuthservIds: GMAIL });
     const s = await seedSession(db, { now: deps.now() });
@@ -157,13 +157,23 @@ describe("GET /internal/unsubscribe/drain — the worker's pass counts a refusal
 
     const res = await drain(deps);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ claimed: 1, ...counts });
-    const [rec] = await db.select().from(unsubscribeRecords).where(eq(unsubscribeRecords.messageId, id));
+    expect(await res.json()).toMatchObject({ accounts: 0, claimed: 0, delivered: 0, skipped: 0, failed: 0, remaining: 0 });
+    const records = () => db.select().from(unsubscribeRecords).where(eq(unsubscribeRecords.messageId, id));
+    expect(await records()).toEqual([]);
+    expect(hits.get(path) ?? 0).toBe(0);
+
+    const press = () => H(req("POST", `/messages/${id}/unsubscribe`, { bearer: s.token }), deps);
+    const first = await press();
+    expect(first.status).toBe(path === "/refuses" ? 409 : 200);
+    const firstAnswer = (await first.json()) as Wire;
+    if (path === "/refuses") expect(firstAnswer.error?.code).toBe("unsubscribe_list_refused");
+    else expect(firstAnswer).toMatchObject({ posted: true, status: 200, refusal: null });
+    const [rec] = await records();
     expect(rec).toMatchObject(row);
 
-    const pressed = await H(req("POST", `/messages/${id}/unsubscribe`, { bearer: s.token }), deps);
+    const pressed = await press();
     const body = (await pressed.json()) as Wire;
-    if (path === "/refuses") expect(body.error?.code, "the preview's press after the pass").toBe("unsubscribe_list_refused");
+    if (path === "/refuses") expect(body.error?.code, "the preview still reports the list's refusal").toBe("unsubscribe_list_refused");
     else expect(body.refusal).toBe("already_recorded");
     expect(hits.get(path)).toBe(1);
   });

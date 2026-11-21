@@ -12,21 +12,32 @@ import { ListHead, Row, Rows } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
 import { useFrame } from "../frame/index.js";
 import { ListColumn, ListMenu } from "../place-list/index.js";
+import { useRowPeople } from "../place-list/people.js";
 import { useLocale, useText, type Text } from "../text/index.js";
 import { backStamp } from "./words.js";
 
+import { MailSelectionFoot } from "../place-list/MailSelectionFoot.js";
+import { useRowContact, type RowContact } from "../place-list/use-row-contact.js";
+import { useRowSelection, type RowSelection } from "../place-list/use-row-selection.js";
+
 function PileItem({
   row,
+  selection,
+  contact,
   index,
   model,
   tl,
   locale,
+  rowPeople,
 }: {
   row: PileRow;
+  selection: RowSelection;
+  contact: RowContact;
   index: number;
   model: PilesModel;
   tl: Text;
   locale: string;
+  rowPeople: ReturnType<typeof useRowPeople>;
 }) {
   const m = row.message;
   const who = m ? { name: m.from.name?.trim() || m.from.address, address: m.from.address } : null;
@@ -34,11 +45,14 @@ function PileItem({
   const name = who?.name ?? row.entry.title;
   const subject = m?.subject || row.entry.subtitle || row.entry.title;
   const open = m !== null && model.cursor === m.id;
+  const pick = selection.rowProps(row.key);
   return (
     <Row
+      {...pick}
+      {...(m ? contact.rowProps(m.from, m.id) : {})}
       who={name}
       address={who?.address}
-      people={who ? [who] : []}
+      {...(m && who ? rowPeople(m, who) : { people: [] })}
       subject={subject}
       preview={row.entry.preview ?? m?.snippet ?? undefined}
       when={back ? tl("row.resurfaces", { when: back }) : m?.date ? model.stamp(m.date) : undefined}
@@ -50,7 +64,12 @@ function PileItem({
           : undefined
       }
       onOpen={m ? () => model.open(row) : undefined}
-      listing={{ name: `${name}: ${subject}`, selected: open, stop: open }}
+      listing={{
+        name: `${name}: ${subject}`,
+        selected: selection.ids.length ? pick.picked === true : open,
+        stop: open,
+        place: { at: index + 1, of: model.rows.length },
+      }}
       mark={{ id: row.key, index }}
     />
   );
@@ -63,6 +82,8 @@ export function PilesList({ plan }: PaneProps) {
 
 function PileColumn({ plan, model }: { plan: PaneProps["plan"]; model: PilesModel }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const selection = useRowSelection(model.rows.flatMap(({ key, message }) => (message ? [{ id: key }] : [])));
+  const contact = useRowContact();
   const { cursor } = model;
   const win = useListWindow({
     scrollerRef: scroller,
@@ -77,6 +98,7 @@ function PileColumn({ plan, model }: { plan: PaneProps["plan"]; model: PilesMode
   const tp = useText("parked");
   const tr = useText("resurface");
   const locale = useLocale();
+  const rowPeople = useRowPeople();
   const runs = model.run.canStart;
   /* The list is inside the key provider even when its model is supplied above the frame. */
   useKeyBindings(
@@ -105,6 +127,7 @@ function PileColumn({ plan, model }: { plan: PaneProps["plan"]; model: PilesMode
     <ListColumn
       plan={plan}
       cursor={model.cursor}
+      foot={<MailSelectionFoot selection={selection} verbs={model.verbs} done={model.pile === "resurface"} />}
       scrollerRef={scroller}
       manualScrollAnchor={win.end - win.start < model.rows.length}
       head={
@@ -134,21 +157,25 @@ function PileColumn({ plan, model }: { plan: PaneProps["plan"]; model: PilesMode
       {model.mayState && model.rows.length === 0 ? (
         <Empty label={t("empty")} />
       ) : (
-        <Rows label={t("title")}>
+        <Rows label={t("title")} many>
           <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
           {model.rows.slice(win.start, win.end).map((row, offset) => (
             <PileItem
               key={row.key}
               row={row}
+              selection={selection}
+              contact={contact}
               index={win.start + offset}
               model={model}
               tl={tl}
               locale={locale}
+              rowPeople={rowPeople}
             />
           ))}
           {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         </Rows>
       )}
+      {contact.card}
     </ListColumn>
   );
 }

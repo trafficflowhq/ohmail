@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import {
   DEFAULT_CHANNELS,
   noticeChoicesOf,
+  type CalendarNoticeKind,
   type NoticeChoices,
   type NoticePermission,
   type NotificationChannels,
@@ -69,6 +70,14 @@ export function readCalendarNotices(): unknown {
   } catch {
     return null;
   }
+}
+
+export function writeCalendarNotice(key: CalendarNoticeKind | "showTitles", value: boolean): DurableWrite {
+  const held = readCalendarNotices();
+  const record = typeof held === "object" && held !== null && !Array.isArray(held) ? held : {};
+  const written = preferences.set(CALENDAR_NOTICES_KEY, JSON.stringify({ ...record, [key]: value }));
+  choicesWritten();
+  return written;
 }
 
 /*

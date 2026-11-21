@@ -175,7 +175,7 @@ export function Gloss({ text, caption, placement = "meta", className }: GlossPro
         role={caption ? "tooltip" : undefined}
         aria-hidden={caption ? undefined : true}
         hidden={!open}
-        className="gloss-pop"
+        className="gloss-pop oh-gloss-pop"
         data-side={pos?.side}
         style={pos ? { top: pos.top, left: pos.left } : undefined}
       >

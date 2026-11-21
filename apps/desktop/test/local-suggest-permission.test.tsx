@@ -7,7 +7,10 @@ import { LocalSuggest } from "../src/local-suggest.js";
 import type { LocalAiStatus } from "../src/local-ai.js";
 import { bridgeFetch } from "../src/bridge-fetch.js";
 
-vi.mock("../src/bridge-fetch.js", () => ({ bridgeFetch: vi.fn() }));
+vi.mock("../src/bridge-fetch.js", async () => ({
+  ...await vi.importActual<typeof import("../src/bridge-fetch.js")>("../src/bridge-fetch.js"),
+  bridgeFetch: vi.fn(),
+}));
 
 const bridge = vi.mocked(bridgeFetch);
 const ai: LocalAiStatus = {

@@ -268,7 +268,13 @@ function wrong(routes: Route[], calls: Call[]): string[] {
 
 describe("the census — every bridge call to a route that probes rides the local deadline", () => {
   const engine = probingRoutes(readEngineAsOneText());
-  const files = sources(DESKTOP_SRC);
+  const files = [
+    ...sources(DESKTOP_SRC),
+    {
+      file: "packages/core/src/suggestion-consent.ts",
+      code: readFileSync(new URL("../../../packages/core/src/suggestion-consent.ts", import.meta.url), "utf8"),
+    },
+  ];
   const calls = bridgeCalls(files);
 
   it("the probing routes are read off the engine's own handlers, and the three known ones are among them", () => {

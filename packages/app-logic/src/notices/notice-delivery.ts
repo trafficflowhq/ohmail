@@ -10,6 +10,19 @@ import {
 } from "@ohmail/client-engine";
 import type { NoticeReads } from "./notice-reads.js";
 
+export function singleArrival(
+  previous: ReadonlySet<string>,
+  current: ReadonlySet<string>,
+): string | undefined {
+  let found: string | undefined;
+  for (const id of current) {
+    if (previous.has(id)) continue;
+    if (found !== undefined) return undefined;
+    found = id;
+  }
+  return found;
+}
+
 function sameNoticeLabel(left: NoticeAhead["label"], right: NoticeAhead["label"]): boolean {
   return left.as === right.as && (left.as !== "title" || (right.as === "title" && left.text === right.text));
 }

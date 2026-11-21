@@ -2,6 +2,7 @@
 import { fireEvent, within } from "@testing-library/react";
 import type { EngineMessage, EngineMutation, ScreenerSuggestionEntity } from "@ohmail/wire";
 import { MemoryMirrorStore, OhmailEngine, mutationEffects, type SyncChange } from "@ohmail/client-engine";
+import { confirmSyncOwner, createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import type { SuggestWire } from "@ohmail/app-logic/screener/screener-suggest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -90,6 +91,8 @@ async function mount(mail: EngineMessage[], opts: { advice?: ScreenerSuggestionE
       fetchBody: async () => null,
     },
   });
+  registerSyncGate(engine, createSyncGate(account));
+  confirmSyncOwner(engine, account);
   const pendingWire: SuggestWire = {
     configured: () => true,
     list: async () => ({

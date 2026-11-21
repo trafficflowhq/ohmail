@@ -81,22 +81,28 @@ async function open(rules: RuleDTO[]): Promise<void> {
 }
 
 const lists = (): HTMLElement[] => within(host).getAllByRole("list");
-const rowsIn = (list: HTMLElement): HTMLElement[] => [...list.querySelectorAll<HTMLElement>("[data-rule-id]")];
+const rowsIn = (list: HTMLElement): HTMLElement[] => within(list).getAllByRole("listitem");
+const namesIn = (list: HTMLElement): Array<string | null | undefined> =>
+  rowsIn(list).map((row) => row.querySelector(".oh-ruleline-name")?.textContent);
 
 describe("the act's rules in their own group", () => {
   it("draws them under their own label, each saying where it came from", async () => {
-    await open([
+    const rules = [
       rule("p1", "friend@press.example", { destination: "INBOX" }),
       rule("a1", "news@act.example", { byOhmail: true }),
       rule("p2", "shop@press.example"),
       rule("a2", "promo@act.example", { byOhmail: true }),
-    ]);
+    ].map((row, index) => ({
+      ...row,
+      createdAt: new Date(Date.parse(ISO) - index * 1000).toISOString(),
+    }));
+    await open(rules);
     const [yours, ohmail] = lists();
     expect(lists()).toHaveLength(2);
     expect(host.textContent).toContain(R.groupByOhmail);
     expect(ohmail!.getAttribute("aria-label")).toBe(R.groupByOhmail);
-    expect(rowsIn(yours!).map((r) => r.dataset.ruleId)).toEqual(["p1", "p2"]);
-    expect(rowsIn(ohmail!).map((r) => r.dataset.ruleId), "the act's rules are listed as a person's").toEqual(["a1", "a2"]);
+    expect(namesIn(yours!)).toEqual([rules[0]!.match, rules[2]!.match]);
+    expect(namesIn(ohmail!), "the act's rules are listed as a person's").toEqual([rules[1]!.match, rules[3]!.match]);
     for (const r of rowsIn(ohmail!)) {
       expect(r.textContent).toContain(R.origin.byOhmail);
       expect(r.textContent).not.toContain(R.origin.promoted);

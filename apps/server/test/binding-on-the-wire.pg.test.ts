@@ -12,7 +12,7 @@ import {
   PG_TEST_URL, carries, flightsOf, keyEquals, realPgAvailable, recordPgWire, type PgWireFlight,
 } from "@trafficflow/db/testing";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
-import { ALLOW_ANY_PROBE_HOST, createApp, apiRoutes } from "@trafficflow/api";
+import { ALLOW_ANY_PROBE_HOST, createApp, apiRoutes, UNSUB_DRAIN_CRON_PATH } from "@trafficflow/api";
 import { ScheduleService, dbFor, generateToken, hashToken } from "@trafficflow/services";
 import { buildProgram, type Program } from "../src/program.js";
 import { loadSettings } from "../src/settings.js";
@@ -805,10 +805,11 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
       it("the other clocks' routes: every statement on their walk is one the lists admit", async () => {
         for (const path of [
           "/internal/sends/reconcile/run", "/internal/sends/sent-copies/run", "/internal/away/run", "/internal/sessions/reap",
-          "/internal/unsubscribe/drain", "/internal/mailboxes/smtp-size", "/internal/security-notices/run",
+          UNSUB_DRAIN_CRON_PATH, "/internal/mailboxes/smtp-size", "/internal/security-notices/run",
         ]) {
           const r = await through(arm(), arm().forA, "GET", path, { bearer: CLOCK_WORD });
           expect(r.status, `${path}: ${r.text}`).toBe(200);
+          if (path === UNSUB_DRAIN_CRON_PATH) expect(r.flights, path).toEqual([]);
           expect(r.flights.filter((f) => f.keyed), path).toEqual([]);
           // What a pass does for one row names that row's account and no key; the rest is its walk.
           for (const f of r.flights) expect(["nothing", "account"], path).toContain(doorOf(f));

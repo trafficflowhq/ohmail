@@ -9,12 +9,13 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { findByRole, getByRole } from "@testing-library/react";
 import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { NONE } from "@ohmail/app/host";
+import { mirror } from "../../../packages/app/test/calsetup/world.js";
 import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
 import messages from "../messages/en.json";
 import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
 import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
 import {
-  NOTIFICATION_CHANNELS_KEY, NOTIFY_CACHE, NOTIFY_STATE_URL,
+  CALENDAR_NOTICES_KEY, NOTIFICATION_CHANNELS_KEY, NOTIFY_CACHE, NOTIFY_STATE_URL, storedNoticeChoices,
   type NotificationHost, type PushSyncOutcome,
 } from "../app/shell/notification-settings";
 
@@ -117,17 +118,22 @@ afterEach(async () => {
   window.localStorage.clear();
 });
 
-function WebSettings({ door }: { door: NotificationHost }) {
+const calendarPort = mirror().port;
+
+function WebSettings({ door, calendar }: { door: NotificationHost; calendar: boolean }) {
   const scope = "account-b";
   const frame = useBrowserMail(NONE, WEB_MAIL_PARTS);
-  const { host } = fakeHost({ engine: NO_ENGINE, scope, service: "self", places: { settings: frame.places.settings } });
+  const { host } = fakeHost({
+    engine: NO_ENGINE, scope, service: "self", places: { settings: frame.places.settings },
+    wires: { calendar: calendar ? calendarPort : NONE },
+  });
   const consent = useConsentState(false, scope, "none");
   return h(ConsentContext.Provider, { value: consent }, h(MailFrame, {
     host: { ...host, device: { ...host.device, address: frame.address, notifications: door } },
   }));
 }
 
-async function renderPane(pane: string, notificationHost: NotificationHost): Promise<void> {
+async function renderPane(pane: string, notificationHost: NotificationHost, calendar = false): Promise<void> {
   window.history.replaceState(null, "", `#/settings/${pane}`);
   await act(async () => {
     root!.render(
@@ -135,7 +141,7 @@ async function renderPane(pane: string, notificationHost: NotificationHost): Pro
         locale: "en", messages, timeZone: "UTC",
         children: h(ThemeProvider, {
           children: h(ToastHost, {
-            children: h(WebSettings, { door: notificationHost }),
+            children: h(WebSettings, { door: notificationHost, calendar }),
           }),
         }),
       }),
@@ -168,7 +174,14 @@ describe("browser notification preferences during a Settings visit", () => {
   it("shows and keeps another tab's notification choices when opening Notifications from General", async () => {
     window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
     const wired = hostAnswering("subscribed");
-    await renderPane("general", wired);
+    let scope = "account-b";
+    localStorage.setItem(CALENDAR_NOTICES_KEY, JSON.stringify({ showTitles: false, summaryAt: 570 }));
+    await renderPane("general", {
+      ...wired,
+      liveNoticeScope: () => scope,
+      choices: storedNoticeChoices,
+      emitter: { carries: ["cal_alert"], acts: [], ahead: "none", post: () => false, takeBack: () => undefined },
+    }, true);
 
     const changed = JSON.stringify({ ...JSON.parse(ALL_ON), master: false, screener: false });
     await act(async () => {
@@ -181,6 +194,16 @@ describe("browser notification preferences during a Settings visit", () => {
     expect(wired.asked).toEqual([{ wanted: true, forced: true }]);
     await pressFirstSwitch();
     expect(JSON.parse(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY)!)).toMatchObject({ master: true, screener: false });
+    const reminder = getByRole(host, "switch", { name: "An alert" });
+    expect(reminder.getAttribute("aria-checked")).toBe("false");
+    await act(async () => reminder.click());
+    expect(reminder.getAttribute("aria-checked")).toBe("true");
+    expect(JSON.parse(localStorage.getItem(CALENDAR_NOTICES_KEY)!)).toEqual({
+      cal_alert: true, showTitles: false, summaryAt: 570,
+    });
+    scope = "account-c";
+    await act(async () => reminder.click());
+    expect(JSON.parse(localStorage.getItem(CALENDAR_NOTICES_KEY)!)).toMatchObject({ cal_alert: true });
   });
 
   it("shows a permission revoked while General was open", async () => {

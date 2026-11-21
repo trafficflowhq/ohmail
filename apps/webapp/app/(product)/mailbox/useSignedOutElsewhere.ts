@@ -48,6 +48,8 @@ type ExitReason = "signOut" | "accountChange";
 export interface SignedOutElsewhere {
   /** The shell is gone and the tab is leaving; render nothing of the mailbox. */
   gone: boolean;
+  /** The browser changed accounts while this tab still held its previous session. */
+  accountChanged: boolean;
   /**
    * The confirm named this account — the channel it listens on. `false`: a sign-out is pending on
    * this jar and the tab is leaving, so nothing may be bound or drawn for that answer.
@@ -249,5 +251,5 @@ export function useSignedOutElsewhere(demo: boolean, resolveOwner: OwnerResolver
     };
   }, [demo, owner, resolveOwner, leave, pendingPressHere, exitForJar, exitReason]);
 
-  return { gone: exitReason !== null, confirmed };
+  return { gone: exitReason !== null, accountChanged: exitReason === "accountChange", confirmed };
 }

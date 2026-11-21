@@ -8,6 +8,8 @@ import { bridge, kept } from "./boot";
 import catalogue from "./catalogue";
 import mounted from "./mounted";
 import { createRoot, type Root } from "react-dom/client";
+import { createPortal } from "react-dom";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { mailboxTotalOf, readSearchBy } from "@ohmail/app-logic/search";
 import { startSyncScheduler, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
 import { unsentDraftsOf, type NoticePermission } from "./engine-package";
@@ -106,15 +108,17 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
       pushWakes: (woke) => signals.wake.subscribe(() => woke()),
     });
   root.render(
-    <PhonePage
-      host={host}
-      locale={config.language}
-      catalogue={catalogue}
-      timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
-      sync={sync}
-      drawn={() => void bridge.request("ready", { place: frame.address.read() }).catch(() => {})}
-      noticeChoices={() => storedNoticeChoices(localStorage, config.app === "ohcal")}
-    />,
+    <portalRenderer.Provider value={createPortal}>
+      <PhonePage
+        host={host}
+        locale={config.language}
+        catalogue={catalogue}
+        timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
+        sync={sync}
+        drawn={() => void bridge.request("ready", { place: frame.address.read() }).catch(() => {})}
+        noticeChoices={() => storedNoticeChoices(localStorage, config.app === "ohcal")}
+      />
+    </portalRenderer.Provider>,
   );
 }
 

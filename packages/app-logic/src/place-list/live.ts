@@ -6,6 +6,7 @@
  */
 import type { EngineMessage, TagDTO } from "@ohmail/wire";
 import { queryAllVisible } from "../lists/visible-dom.js";
+import { beginOpen } from "../session/ui-vitals.js";
 import type { PlaceLiveArgs } from "../lists/place-live.js";
 import type { PlaceList, PlaceListInput } from "./place-list.js";
 import { usePlaceVerbs, type PlaceVerbsOwn } from "./verbs.js";
@@ -54,6 +55,7 @@ export function usePlaceListFeed(
     open: args.commands.open,
     markSeen,
     act: verbs.onMessageAction,
+    verbs,
     entered: args.entered,
     walk: {
       columns: args.plan.columns,
@@ -61,6 +63,7 @@ export function usePlaceListFeed(
       /* A tag, a folder and an address are each a list of their own under the place's one seat. */
       list: `${route.place}/${route.sub ?? ""}`,
       labels,
+      markOpen: beginOpen,
       rowRendered:
         rowsSelector === undefined
           ? undefined

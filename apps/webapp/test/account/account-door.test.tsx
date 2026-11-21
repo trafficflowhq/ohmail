@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { forgetOwner, rememberOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { FactorSlot } from "@ohmail/app/account";
 import {
   catchConsole,
@@ -15,7 +16,7 @@ import {
   type Server,
 } from "./account-harness";
 import { AccountPane, useAccount, usePassword } from "../../../../packages/app/src/account/account/index.js";
-import { ApiError, auth } from "../../app/api-client";
+import { ApiError, auth, bindApiOwner } from "../../app/api-client";
 import { accountDoor, useAccountDoor } from "../../app/(product)/mailbox/account-door";
 import { usePasswordDoor } from "../../app/(product)/mailbox/password-door";
 
@@ -61,6 +62,8 @@ const toSignIn = vi.fn();
 
 beforeEach(() => {
   wipe.handed = [];
+  rememberOwner(ACCOUNT);
+  document.cookie = "tf_family=fixture-family; Path=/";
   wipe.held = { cleared: true, remaining: [], inventoryComplete: true, serverRefused: null };
   written = catchConsole();
   tab = catchLoads();
@@ -71,6 +74,9 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  bindApiOwner(null);
+  forgetOwner();
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
   server.restore();
   tab.restore();
   written.restore();
@@ -229,6 +235,7 @@ describe("the erase is not in the pane", () => {
     vi.spyOn(auth, "session").mockRejectedValueOnce(new ApiError(401, "unauthorized", "x"));
     await opened();
     cleanup();
+    bindApiOwner(ACCOUNT, "fixture-family");
     await opened(true);
     expect(server.on(ERASE)).toEqual([]);
     expect(server.sent.filter((s) => s.line.startsWith("DELETE"))).toEqual([]);
@@ -237,6 +244,7 @@ describe("the erase is not in the pane", () => {
 
 describe("the sign-out alone", () => {
   it("asks the server nothing as it opens, asks the person first, and signs out only from the question's Confirm", async () => {
+    bindApiOwner(ACCOUNT, "fixture-family");
     await opened(true);
     expect(server.asked()).toEqual([]);
     await press(en.pairLanding.signOut);

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { clearSignedInSync, serveSignedInSync, SYNC_FIXTURE_OWNER, writeSignedInSync } from "./fixtures/signed-in-sync";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -97,7 +98,7 @@ beforeEach(() => {
     get: () => visibility,
   });
   originalFetch = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown) => {
+  globalThis.fetch = vi.fn(serveSignedInSync(async (input) => {
     const url = String(input);
     /**
      * THE COLD-START READER IS NEITHER COUNTED NOR SERVED HERE.
@@ -133,7 +134,7 @@ beforeEach(() => {
       return answer();
     }
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  }));
   vi.spyOn(console, "error").mockImplementation(() => {});
   // Longest jittered delay, so backoff timings are deterministic.
   vi.spyOn(Math, "random").mockReturnValue(0.999999);
@@ -148,6 +149,7 @@ afterEach(async () => {
   roots = [];
   document.body.innerHTML = "";
   globalThis.fetch = originalFetch;
+  clearSignedInSync();
   // Unconditionally, HERE: a test that defines a fake and then fails before its own cleanup
   // line would leak the fake into every later test in the file (measured — the wake-slice
   // rewrite found three tests red because of exactly this).
@@ -209,7 +211,10 @@ async function shell(
   const tree = intl(
     h(EngineProvider, {
       demo: false,
-      resolveOwner: async () => ({ kind: "owner", accountId: "acct_live_1" }) as const,
+      resolveOwner: async () => {
+        writeSignedInSync();
+        return { kind: "owner", accountId: SYNC_FIXTURE_OWNER } as const;
+      },
       children,
     }),
   );

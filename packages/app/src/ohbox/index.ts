@@ -4,4 +4,10 @@ export { OhboxList } from "./OhboxList.js";
 export { OhboxAbove } from "./OhboxAbove.js";
 export { OhboxSeat } from "./Seat.js";
 export { blankOf } from "./blank.js";
-export { OhboxBesideContext, useOhboxBeside, type OhboxBeside, type OhboxWords } from "./beside.js";
+export {
+  OhboxBesideContext,
+  OhboxShapeContext,
+  useOhboxBeside,
+  type OhboxBeside,
+  type OhboxWords,
+} from "./beside.js";

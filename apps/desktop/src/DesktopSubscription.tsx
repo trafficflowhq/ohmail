@@ -2,7 +2,7 @@
  * THE SUBSCRIPTION PANE ON THE CLOUD DOOR — the same one row the browser tab shows. This window used to
  * render the plan, the renewal date, a storage meter and a managed-AI switch; none of that is this
  * program's business, and the entitlements port answers where the operator's own page is. A pane and not
- * an omission, for `DesktopWebSection`'s reason: an absent entry reads as "this product does not have
+ * an omission: an absent entry reads as "this product does not have
  * that". Absent when there is no page to link to — see {@link useDesktopManageOffer} for why that
  * decision is the GATE's. THE ADDRESS IS MINTED BY THE PRESS: it used to be minted by the MOUNT, so
  * every launch asked for a link nobody had asked to follow. The offer is read without minting; the
@@ -12,7 +12,8 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSection } from "@ohmail/ui";
+import { Button } from "@ohmail/ui/base";
+import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { StoragePane } from "../../webapp/app/shell/StoragePane";
 import type { StorageChange } from "../../webapp/app/shell/StorageNotice";
 import { openWeb } from "./native.js";
@@ -269,23 +270,18 @@ export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {
   }, [onNowhere, show]);
 
   return (
-    <SettingsSection>
+    <SettingsSheet title={t("webBillingTitle")}>
       {failed ? <p className="acct-warn" role="alert">{t("subscriptionManageFailed")}</p> : null}
-      <SettingsRow
-        label={t("subscription")}
-        control={
-          /* A BUTTON until there is an address: an anchor with nowhere to point is the control
-             this pane exists to avoid. The answered press draws the address as the link. */
-          href !== null
-            ? <AccountPageLink href={href} label={t("subscriptionOpen")} onFollow={followed} />
-            : (
-              <button type="button" className="btn" disabled={busy} onClick={() => { void press(); }}>
-                {t("subscriptionManage")}
-              </button>
-            )
-        }
-      />
-    </SettingsSection>
+      <SettingLine label={t("subscription")}>
+        {href !== null
+          ? <AccountPageLink href={href} label={t("subscriptionOpen")} onFollow={followed} />
+          : (
+            <Button kind="quiet" size="s" disabled={busy} onPress={() => void press()}>
+              {t("subscriptionManage")}
+            </Button>
+          )}
+      </SettingLine>
+    </SettingsSheet>
   );
 }
 
@@ -305,10 +301,10 @@ export async function writeStorageChoice(body: { dismiss: string } | { mail: boo
 
 /**
  * CHANGE PLAN AND ADD STORAGE in this window: the page that changes the plan is minted only after a
- * recent second factor, which this window cannot assert (`DesktopWebSection`). So the press opens
+ * recent second factor, which this window cannot assert. So the press opens
  * Settings → Storage in the browser, where the factor is asked and the page minted.
  */
-export function useDesktopStorageChange(): StorageChange {
+export function useDesktopStorageChange(openServer?: () => Promise<void>): StorageChange {
   const t = useTranslations("settings");
   const [noBrowser, setNoBrowser] = useState(false);
   const alive = useRef(true);
@@ -318,9 +314,10 @@ export function useDesktopStorageChange(): StorageChange {
   }, []);
   const press = useCallback(() => {
     setNoBrowser(false);
-    void openWeb("storage").catch(() => { if (alive.current) setNoBrowser(true); });
-  }, []);
-  const note = noBrowser ? <p className="acct-warn" role="alert">{t("webNoBrowser")}</p> : null;
+    const opened = openServer ? openServer() : openWeb("storage");
+    void opened.catch(() => { if (alive.current) setNoBrowser(true); });
+  }, [openServer]);
+  const note = noBrowser ? <p className="acct-warn" role="alert">{t(openServer ? "webNoBrowserServer" : "webNoBrowser")}</p> : null;
   return { press, busy: false, note };
 }
 
@@ -329,12 +326,13 @@ export function useDesktopStorageChange(): StorageChange {
  * over the bridge. A build that may not link out (the Mac App Store) gets the numbers and the plans
  * with no amount, no purchase button and no link.
  */
-export function DesktopStorage({ facts, linksOut, reread }: {
+export function DesktopStorage({ facts, linksOut, reread, openServer }: {
   facts: StorageFacts;
   linksOut: boolean;
   reread: () => void;
+  openServer?: () => Promise<void>;
 }): ReactElement {
-  const change = useDesktopStorageChange();
+  const change = useDesktopStorageChange(openServer);
   const [mail, setMail] = useState<{ on: boolean; busy: boolean; failed: boolean } | null>(null);
   const alive = useRef(true);
   useEffect(() => {

@@ -14,17 +14,17 @@ import {
   MAX_SUBJECT_TERM_CHARS,
   planSubjectRule,
   subjectRuleContext,
+  subjectOrganizerMissing,
   subjectRuleToast,
   type SubjectRuleContext,
   type TermField,
 } from "@ohmail/app-logic/press/subject-rule";
 import { confirmedSyncEngine, mirrorOwnerOf } from "@ohmail/app-logic/session/sync-scheduler";
 import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
-import { useReport, useScopeHere } from "@ohmail/app/frame";
+import { usePress, useReport, useScopeHere } from "@ohmail/app/frame";
 import type { SubjectRulePartProps } from "@ohmail/app/screener";
 import { ruleKeyOf } from "@ohmail/client-engine";
-import { cssRect } from "@ohmail/ui";
-import { Button } from "@ohmail/ui/base";
+import { Button, cssRect } from "@ohmail/ui/base";
 import type { EngineMessage } from "@ohmail/wire";
 import { SenderAuditPanel } from "../../screening/SenderAuditPanel";
 import { usePileNames } from "../../shell/decision-copy";
@@ -50,6 +50,7 @@ export function useWebSubjectRule(
   const engine = useEngine();
   const scope = useScopeHere();
   const report = useReport();
+  const { mutateSetAndReport } = usePress();
   const { ownAddresses } = usePartition();
   const { mailboxes, rosterProbed } = useMailState();
   const t = useTranslations("screening");
@@ -125,7 +126,7 @@ export function useWebSubjectRule(
     if (!seed.writable) {
       report(seed.posture.mode === "blocked" && seed.posture.reason === "organizer_outdated"
         ? seed.posture.name ? refused("outdated", { name: seed.posture.name }) : refused("outdatedUnknown")
-        : t("subjectOrgNobody"));
+        : t(subjectOrganizerMissing));
       return;
     }
 
@@ -142,11 +143,13 @@ export function useWebSubjectRule(
 
     close();
     receipt.current = pressed;
-    const rules = plan.ruleMutations.map((mutation) => engine.mutate(mutation));
-    for (const mutation of plan.mutations) {
-      if (!plan.ruleMutations.includes(mutation)) void engine.mutate(mutation);
+    if (plan.already && plan.mutations.length > 0) {
+      await mutateSetAndReport(plan.mutations, (count) =>
+        t("subjectAlreadyFiled", { count, place: piles[destination] }),
+      );
+      return;
     }
-    const results = await Promise.all(rules);
+    const results = await Promise.all(plan.ruleMutations.map((mutation) => engine.mutate(mutation)));
     if (receipt.current !== pressed || !ownsEngine()) return;
 
     const key = subjectRuleToast(plan, worstStatus(results), queuedWaitOf(results, browserOffline()));

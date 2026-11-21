@@ -11,7 +11,7 @@
  * one spelling, and a host supplies only its rows and the row selector it already has.
  */
 import { useTranslations } from "next-intl";
-import { useOptionalToast } from "@ohmail/ui";
+import { useOptionalToast } from "@ohmail/ui/toast";
 import { useCursorPlacer, type PlacerScope } from "@ohmail/app-logic/keys/keymap";
 import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 

@@ -12,5 +12,6 @@ export function useThemeLook(): Appearance {
   const theme = useOptionalTheme();
   const face = theme?.face ?? "paper";
   const scheme = theme?.resolved ?? "light";
-  return useMemo(() => ({ face, scheme }), [face, scheme]);
+  const layout = theme?.layoutEnabled ? theme.layout : undefined;
+  return useMemo(() => ({ face, scheme, layout }), [face, scheme, layout]);
 }

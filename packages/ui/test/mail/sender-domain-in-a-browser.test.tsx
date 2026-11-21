@@ -11,8 +11,7 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launch } from "../../../../test/compare/render.mjs";
-import { AddressText } from "../../src/base/index.js";
-import { MessageHead } from "../../src/mail/index.js";
+import { AddressText, MessageHead } from "../../src/mail/index.js";
 import { DEVICES, entryCss, fontsCss, type Device } from "../compare/harness.js";
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));

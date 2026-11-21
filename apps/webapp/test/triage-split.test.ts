@@ -196,7 +196,9 @@ describe("the pile switcher and the Reply Run are header furniture", () => {
     await select(/^Parked/);
     await waitFor(() => expect(within(switcher()).getByRole("button", { name: /^Parked/ }).getAttribute("aria-pressed")).toBe("true"));
     expect(screen.queryByRole("button", { name: "Reply Run" })).toBeNull();
-    expect(screen.getByText("Held here until you come back for it.")).toBeTruthy();
+    const parked = within(screen.getByRole("listbox", { name: "Parked" }));
+    expect(parked.getAllByRole("option").map((row) => row.querySelector(".oh-row-who")?.textContent))
+      .toEqual(triage.setAside.map((letter) => letter.title));
   });
 
   it("switching horizons drops the cursor — the reader never keeps the last pile's mail", async () => {

@@ -475,6 +475,7 @@ describe("hand back 1: the keyboard, the accessibility tree, the Screener at 360
       const next = list.getByRole("option", { name: /Issue 1$/ });
       const card = stream.getByRole("article").filter({ has: page.getByRole("heading", { name: "Issue 1", exact: true }) });
       await first.focus();
+      await browserExpect(first).toHaveAttribute("aria-selected", "true");
       await page.keyboard.press("j");
       await browserExpect(next).toBeFocused();
       await browserExpect(next).toHaveAttribute("aria-selected", "true");

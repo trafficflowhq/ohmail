@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 /**
- * THE MAILBOXES ENTRY's NOTICES ON THE DESKTOP's HOST (the switch's point 58): the organizer's change and the gap's
+ * THE MAILBOXES ENTRY's NOTICES ON THE DESKTOP's HOST: the organizer's change and the gap's
  * offer reach the frame's notice slot through the entry the window hands, over the window's own two wires. The
  * frame itself is not drawn here: the host is captured as the window hands it to the frame.
  */
@@ -71,8 +71,8 @@ describe("the desktop's Mailboxes entry", () => {
     const host = await hostOf(props(s));
     const entry = host.features.mailboxes;
     if (entry === NONE) throw new Error("the window lists its Mailboxes section");
-    /* The mail ground's own notices of the section (`mailboxesNotices` of `@ohmail/app/mailboxes`), by their name. */
-    expect(entry.notice?.name).toBe("useMailboxesNotices");
+    /* The window composes the shared Mailboxes notices and its Away notice in this entry. */
+    expect(entry.notice?.name).toBe("useMailboxNotices");
     expect(host.wires.organizerNotice).not.toBe(NONE);
     expect(host.wires.gapLetters).not.toBe(NONE);
   });

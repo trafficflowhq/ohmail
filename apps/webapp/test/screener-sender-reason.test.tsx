@@ -94,7 +94,7 @@ async function mount(
         id: "mb_1", address: ["mailbox", "example.invalid"].join("@"), status: "connected",
         organizerRole: "organizer", initialImportCompletedAt: ISO, organizeConsentedAt: ISO,
         lastSyncAt: ISO, createdAt: ISO,
-      }] });
+      }] }, { headers: { "X-Ohmail-Account": ACCOUNT } });
     }
     if (method === "GET" && path === "/api/screener" && (advised || claimsOnly.length > 0)) {
       const items = mail.filter((item) => item.folder === "ohmail/Screener").map((item) => ({
@@ -108,13 +108,15 @@ async function mount(
           decision: "yes", destination: "INBOX", confidence: 0.92, rationale: "a real person writing",
         },
       }));
-      return Response.json({ items, nextCursor: null, total: items.length, suggestable: { senders: [], maxPerRequest: 50 } });
+      return Response.json({ items, nextCursor: null, total: items.length, suggestable: { senders: [], maxPerRequest: 50 } },
+        { headers: { "X-Ohmail-Account": ACCOUNT } });
     }
     if (method === "GET" && path.endsWith("/body")) return new Response(null, { status: 503 });
     if (method !== "GET" && /^\/api\/(rules|messages|screener)(?:\/|$)/.test(path)) {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       writes.push({ path, body });
-      return Response.json({ messageId: path.split("/").at(-1), appliedFolder: body?.dest, createdRuleId: null });
+      return Response.json({ messageId: path.split("/").at(-1), appliedFolder: body?.dest, createdRuleId: null },
+        { headers: { "X-Ohmail-Account": ACCOUNT } });
     }
     return fixture(input, init);
   };

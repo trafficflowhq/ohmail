@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { Frame } from "../../src/frame/Frame.js";
 import { keySheetOver, sheetColumns } from "../../src/keys/sheet/index.js";
-import { TextProvider } from "../../src/text/index.js";
+import { TextProvider, useText } from "../../src/text/index.js";
 import searchEn from "../../messages/search.en.json" with { type: "json" };
 import trashEn from "../../messages/trash.en.json" with { type: "json" };
 import { LIST_WORDS, listFrame } from "../places/list-seat.js";
@@ -37,14 +37,21 @@ it("the key sheet says why Delete is disabled in Trash", async () => {
 });
 
 it("a live chord on the same row keeps that row free of disabled reasons", () => {
+  const { result } = renderHook(() => ({ shortcuts: useText("shortcuts"), trash: useText("trash") }), {
+    wrapper: ({ children }) => (
+      <TextProvider locale="en" messages={{ ...searchEn, ...trashEn }} timeZone="Europe/Zurich">
+        {children}
+      </TextProvider>
+    ),
+  });
   const columns = sheetColumns(
     [
       { chord: "Backspace", group: "message", label: "Delete", disabled: true, disabledReason: "no_erase" },
       { chord: "Delete", group: "message", label: "Delete" },
     ],
     "Ctrl",
-    (key) => key,
-    trashEn.trash.noErase,
+    result.current.shortcuts,
+    result.current.trash,
   );
   expect(columns[0]?.[0]?.rows).toEqual([{ label: "Delete", keys: [["⌫"], ["⌦"]] }]);
 });

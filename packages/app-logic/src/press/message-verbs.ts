@@ -249,13 +249,19 @@ export function runMessageAction(cx: VerbContext, action: MessageAction, m: Engi
     case "resurface":
       pressResurface(cx, m);
       return;
-    case "delete":
+    case "delete": {
+      const current = rowOf(cx, m.id);
+      if (current === undefined) return;
       /* A move to the provider's own Trash, NEVER an expunge, held for its Undo window (`delete-undo.ts`). THE
          REFUSAL DECIDES FIRST, and the letter over the list closes only if the press acted, and only over ITS own
          message: reversed, a refused delete closed the letter it had just declined to touch. */
-      if (removeSpending(cx, [{ id: m.id, mailboxId: m.mailboxId }]) && cx.letterUp === m.id)
+      if (
+        removeSpending(cx, [{ id: current.id, mailboxId: current.mailboxId }]) &&
+        cx.letterUp === current.id
+      )
         cx.closeLetterUp();
       return;
+    }
     case "restore":
       /* Held exactly as the delete is: the row leaves Trash at the press and the restore goes out when the window
          closes; the place is named by the SERVER, afterwards. */

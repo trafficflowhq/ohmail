@@ -172,6 +172,10 @@ describe("the send hold is answered in one place, and every write site asks", ()
         // Not the hold: it decides whether this device's own editor state may seed the reopened
         // form, which is about where the block state was last written, not about a send.
         'if (d.status !== "draft") return {};',
+        // A resolution cannot change a confirmed sent row or cancel an appointment.
+        'if (starting !== shown || starting.status === "sent" || starting.status === "scheduled") return;',
+        // Reopen only the changed, newly confirmed draft after resolving the held send.
+        'if (!current || current === starting || current.status !== "draft") return;',
       ],
       [WRITING_PROJECTION]: [],
       // The predicate's own file, where the question is allowed to be answered — and, in source
@@ -578,7 +582,7 @@ describe("what a site may do under each answer", () => {
     expect(decideDraftDiscard).toMatch(/return decision\.kind === "refuse" \? decision : \{ kind: "go" \}/);
     const discardDraftRow = sliceOfDeclaration(shell, "discardDraftRow");
     expect(discardDraftRow, "the Drafts list's Delete writes without asking the predicate")
-      .toMatch(/const decision = decideDraftDiscard\(draftId\);\s*if \(decision\.kind === "refuse"\) return \{ kind: "blocked", why: decision\.why \};[\s\S]+engine\.mutate\(\{ kind: "draft_discard", draftId \}\)/);
+      .toMatch(/const decision = decideDraftDiscard\(draftId\);\s*if \(decision\.kind === "refuse"\) return \{ kind: "blocked", why: decision\.why \};[\s\S]+engine\.mutate\(\{ kind: "draft_discard", draftId, \.\.\.version \},/);
     expect(sliceOfDeclaration(shell, "discardDraft")).toMatch(
       /const v = await discardDraftRow\(listed\);[\s\S]+case "blocked": setDiscardRefusal\(/,
     );
@@ -689,8 +693,8 @@ describe("a compose's ending is written in one place", () => {
     const shell = SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts");
     expect(() => sliceOfDeclaration(shell, "noSuchName")).toThrow("anchor not found: noSuchName");
     /* The positive half finds the shared Discard action and the call that detaches its editor. */
-    expect(sliceOfDeclaration(shell, "discardDraftRow")).toContain(
-      'discardEditorsOf(draftId, heldRow, engine.read().get<EngineDraft>("draft", draftId))();',
+    expect(sliceOfDeclaration(shell, "discardDraftRow")).toMatch(
+      /const row = engine\.read\(\)\.get<EngineDraft>\("draft", draftId\);[\s\S]+const clearEditors = discardEditorsOf\(draftId, heldRow, row\);\s*if \(!shown\) clearEditors\(\);/,
     );
   });
 });

@@ -180,7 +180,7 @@ describe("no container takes the line breaks away", () => {
     const sheet = document.createElement("style");
     sheet.textContent = readFileSync(resolve("packages/ui/src/mail/Reading/message.css"), "utf8")
       .replace(/^@layer oh \{/m, "")
-      .replace(/\}\s*$/, "");
+      .replace(/^}$/m, "");
     document.head.appendChild(sheet);
     styles.push(sheet);
     expect(sheet.sheet?.cssRules.length).toBeGreaterThan(5);

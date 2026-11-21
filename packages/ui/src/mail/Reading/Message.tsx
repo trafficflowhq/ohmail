@@ -12,6 +12,8 @@ export interface MessageClip {
   goes?: boolean;
   /** How the list opens this folded card from the keyboard. */
   description?: string;
+  /** Only a snippet is available, so opening the message can still reveal more. */
+  incomplete?: boolean;
   /** A body is arriving and the available preview is still provisional. */
   pending?: boolean;
   onPress?: () => void;
@@ -66,7 +68,7 @@ export function Message({
   const amountLine = amount ? <p className="oh-text oh-display oh-message-amount">{amount}</p> : null;
   const cutId = useId();
   const shut = clip ? !clip.open : false;
-  const waits = Boolean(lead || after || files || clip?.pending);
+  const waits = Boolean(lead || after || files || clip?.incomplete || clip?.pending);
   const [cut, fits] = useFits(shut);
   return (
     <article

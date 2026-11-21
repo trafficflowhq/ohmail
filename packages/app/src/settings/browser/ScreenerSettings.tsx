@@ -10,7 +10,13 @@ import { useMailState } from "@ohmail/app-logic/mail-state";
 import { screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
 import { useFrame } from "../../frame/index.js";
 import { useScreenerBeside } from "../../screener/index.js";
-import { ScreenerPane, screenerOffers, type ScreenerAct, type ScreenerSuggest } from "../screener/index.js";
+import {
+  ScreenerPane,
+  screenerOffers,
+  type ScreenerAct,
+  type ScreenerModel,
+  type ScreenerSuggest,
+} from "../screener/index.js";
 import { ruleDate } from "@ohmail/app-logic/press/rule-list";
 import { standingNote } from "@ohmail/app-logic/consent/travelled-change";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
@@ -114,7 +120,10 @@ export function useScreenerWindowSetting() {
     : null;
 }
 
-export function PairedScreenerSettings() {
+export function PairedScreenerSettings({
+  ohbox = null,
+  filed = null,
+}: Partial<Pick<ScreenerModel, "ohbox" | "filed">> = {}) {
   const t = useText("screener");
   const consent = useConsent();
   const unsubscribe = useUnsubscribeSetting();
@@ -129,8 +138,8 @@ export function PairedScreenerSettings() {
       </SettingsSheet>
       <ScreenerPane
         model={{
-          ohbox: null,
-          filed: null,
+          ohbox,
+          filed,
           suggest: null,
           act: null,
           ownSuggest: null,

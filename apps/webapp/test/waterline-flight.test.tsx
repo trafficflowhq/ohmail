@@ -47,7 +47,7 @@ function visit() {
       const top = Number(card.dataset.streamItem!.slice(1)) * CARD - scroller.scrollTop;
       if (this === card) return box(top, CARD);
       if (this.matches("[data-sender-line]")) return box(top + 16, 20);
-      if (this.matches(".oh-message-clip")) return box(top + 70, CARD - 100);
+      if (this.matches(".oh-message-clip, .oh-message-body, [data-read-body]")) return box(top + 70, CARD - 100);
     }
     return rect.call(this);
   });

@@ -45,6 +45,10 @@
   transform-origin: var(--x-app-origin);
 }
 
+.fr-frame:has(> .fr-columns[data-ribbon]) {
+  --fr-rail: 52px;
+}
+
 .fr-columns {
   position: relative;
   flex: 1 1 auto;
@@ -82,7 +86,8 @@
   min-height: 0;
 }
 
-:root[data-device="desktop"] .fr-main {
+:root[data-device="desktop"] .fr-main,
+.fr-columns[data-ribbon="split"] .fr-main {
   position: relative;
   grid-template-columns: var(--split-user, var(--fr-listw) minmax(0, 1fr));
 }
@@ -125,6 +130,10 @@
 /* One column: the reading column stands over the list, which keeps its place under it. */
 .fr-columns[data-columns="1"] {
   padding: 0;
+}
+
+.fr-columns[data-ribbon="push"] {
+  padding: var(--edge);
 }
 
 .fr-columns[data-columns="1"] .fr-main {
@@ -217,6 +226,11 @@
   right: var(--s4);
   width: auto;
   bottom: calc(var(--s4) + var(--h-xl) + var(--s3));
+}
+
+.fr-frame:has(> .fr-columns[data-ribbon="push"]) .fr-report {
+  right: calc(var(--edge) + var(--s3));
+  width: auto;
 }
 
 /* One column from 600 wide: the report keeps a phone's measure with the dock, 440 in the middle of the foot. */

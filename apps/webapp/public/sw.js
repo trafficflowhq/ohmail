@@ -152,15 +152,49 @@ self.addEventListener("push", (event) => {
   })());
 });
 
+function askNoticeWindow(client, open) {
+  return new Promise((resolve, reject) => {
+    const channel = new MessageChannel();
+    const finish = (accepted) => {
+      clearTimeout(timer);
+      channel.port1.close();
+      if (accepted) resolve(client);
+      else reject();
+    };
+    const timer = setTimeout(() => finish(false), 600);
+    channel.port1.onmessage = ({ data }) => finish(data === true);
+    try {
+      client.postMessage({ type: "ohmail:notice-open", open }, [channel.port2]);
+    } catch {
+      channel.port2.close();
+      finish(false);
+    }
+  });
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil((async () => {
     const scope = self.registration.scope;
     const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    // Prefer an existing window — opening a second copy of a mail client is not what the tap meant.
-    for (const c of all) {
-      if (c.url.startsWith(scope) && "focus" in c) return c.focus();
+    const windows = all.filter((client) => client.url.startsWith(scope) && "focus" in client);
+    const { tag, data } = event.notification;
+    const open = typeof data?.open === "string" ? data.open : "";
+    if (typeof tag === "string" && (tag === "ohmail-new-mail" || tag.startsWith("ohmail-cal-")) && /^[a-f0-9-]{36}$/.test(open)) {
+      // Only the window that drew the notice can resolve its opaque handle.
+      const owner = await Promise.any(windows.map((client) => askNoticeWindow(client, open))).catch(() => null);
+      return owner?.focus();
     }
+    if (tag === "ohmail-new-mail") {
+      const ohbox = new URL("mailbox#/ohbox", scope).href;
+      const mailbox = windows.find((client) => client.url.split("#")[0] === ohbox.split("#")[0]);
+      if (mailbox && "navigate" in mailbox) {
+        const moved = await mailbox.navigate(ohbox).catch(() => null);
+        if (moved) return moved.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(ohbox);
+    }
+    if (windows.length > 0) return windows[0].focus();
     if (self.clients.openWindow) return self.clients.openWindow(scope);
     return undefined;
   })());

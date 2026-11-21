@@ -1,4 +1,4 @@
-import { applyTextSize as applyAtRoot, type TextSize } from "@ohmail/app-logic/text/text-size";
+import { applyTextSize as applyAtRoot, setTextSize as setAtRoot, type TextSize } from "@ohmail/app-logic/text/text-size";
 
 export * from "@ohmail/app-logic/text/text-size";
 
@@ -8,4 +8,8 @@ function textRoot(): HTMLElement | null {
 
 export function applyTextSize(size: TextSize): void {
   applyAtRoot(size, textRoot());
+}
+
+export function setTextSize(size: TextSize): void {
+  setAtRoot(size, textRoot());
 }

@@ -447,7 +447,10 @@ describe("an install that organizes the mailbox", () => {
     await shell(ORGANIZER_ROSTER);
     await key("?");
     const resting = await screen.findByRole("dialog", { name: messages.shortcuts.title });
-    expect(within(resting).queryByText(messages.shortcuts.deleteKey, { exact: true })).toBeNull();
+    const unavailable = within(resting).getByText(messages.shortcuts.deleteKey, { exact: true }).closest("p");
+    expect(unavailable?.getAttribute("aria-disabled")).toBe("true");
+    expect(unavailable?.getAttribute("title")).toBe(messages.shortcuts.needsCursor);
+    expect([...unavailable!.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["⌫", "⌦"]);
     await key("Escape");
     await key("j");
     await key("?");
@@ -720,14 +723,16 @@ describe("a refused press changes nothing on screen", () => {
        screen (review finding). `remove` answers whether it acted so the caller can order this. */
     /* NARROW, because the sheet is what a narrow layout raises: at a standing reading column
        there is no `readerFor` to close and the ordering under test is not reachable. */
-    narrow = true;
-    /* The frame reads a phone's width off the window's own width, not only the media query. */
-    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
-    const container = await shell(READER_ROSTER);
-    await waitFor(() => rowIds(container).length > 0, "rows");
+    await shell(READER_ROSTER);
     await key("j");
     await key("Enter");
-    await waitFor(() => openLetter(document) != null, "the reading sheet to open");
+    await act(() => {
+      narrow = true;
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+      window.dispatchEvent(new Event("resize"));
+    });
+    await waitFor(() => document.querySelector(".fr-reading[data-over]") !== null && openLetter(document) !== null,
+      "the letter standing inside the narrow reading sheet");
     await key("Backspace");
     await settle();
     expect(openLetter(document), "the sheet must still be there").not.toBeNull();

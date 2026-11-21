@@ -104,25 +104,26 @@ describe("the seams", () => {
       }, cursor: "c1", hasMore: false, serverTime: ISO }));
       const inner = globalThis.fetch;
       const asked: string[] = [];
+      const accountJson = (body: unknown) => Response.json(body, { headers: { "X-Ohmail-Account": ACCOUNT } });
       globalThis.fetch = async (input, init) => {
         const url = new URL(String(input), window.location.origin);
         if (url.pathname.endsWith("/load-remote") || url.pathname === "/api/img" || url.host === sender) {
           asked.push(url.pathname);
-          return Response.json({});
+          return accountJson({});
         }
         if (url.pathname === "/api/hello") {
           return Response.json({ product: "ohmail", flavor: "selfhost", needsSetup: false, features: { pairing: false, remoteImages: true } });
         }
         if (url.pathname === "/api/consent") {
           const consent = await (await inner(input, init)).json();
-          return Response.json({ ...consent, foldersEnabledAt: ISO, blockRemoteImagesAt: ISO });
+          return accountJson({ ...consent, foldersEnabledAt: ISO, blockRemoteImagesAt: ISO });
         }
         if (url.pathname === "/api/mailboxes") {
-          return Response.json({ items: [{ id: letter.mailboxId, address: letter.from.address,
+          return accountJson({ items: [{ id: letter.mailboxId, address: letter.from.address,
             displayName: "Fixture", lastSyncAt: ISO, syncBlockedReason: null, createdAt: ISO }] });
         }
         if (url.pathname === `/api/messages/${letter.id}/body`) {
-          return Response.json({ text: "Two pictures", html: pictures, loadedRemoteContent: false });
+          return accountJson({ text: "Two pictures", html: pictures, loadedRemoteContent: false });
         }
         return inner(input, init);
       };

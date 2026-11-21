@@ -49,7 +49,7 @@ export type ListArrival = "first" | "rest";
  * How long the placer's sentence stands. Shorter than a report's own time: it carries nothing to press, and the
  * second press is meant to follow it at once.
  */
-export const CURSOR_HINT_MS = 2400;
+export { CURSOR_HINT_MS } from "../keys/index.js";
 
 /** What the walk reads of the window and the address, and says in the key sheet: the same for every list of a place. */
 export interface ListWalkSeat {
@@ -67,6 +67,8 @@ export interface ListWalkSeat {
   readonly say?: (label: string) => void;
   /** Whether the list has drawn the row that a verb would place the cursor on. */
   readonly rowRendered?: (id: string) => boolean;
+  /** Starts the reading time for a letter explicitly opened by the pointer or keyboard. */
+  readonly markOpen?: (id: string) => void;
 }
 
 export interface ListWalkInput extends ListWalkSeat {
@@ -116,7 +118,7 @@ export interface ListWalk {
 const notOnAButton = (e: KeyboardEvent): boolean => (e.target as HTMLElement | null)?.tagName !== "BUTTON";
 
 export function useListWalk(input: ListWalkInput): ListWalk {
-  const { order, openId, open, columns, arrival, list, enter, land, scrolled, labels, say } = input;
+  const { order, openId, open, columns, arrival, list, enter, land, scrolled, labels, say, markOpen } = input;
   const one = columns === 1;
   const [row, setRow] = useState<{ readonly list: string; readonly id: string } | null>(null);
   /* The row follows the letter the address names: when that letter closes, the cursor stays on the row read. */
@@ -136,10 +138,15 @@ export function useListWalk(input: ListWalkInput): ListWalk {
      A step, a press or a placed cursor is the person's own choice of a row, and spends it too: an arrival owed in
      the very commit a row was pressed in never opens another letter over that choice. */
   const arrived = useRef<string | null>(null);
+  const openFromInput = (id: string): void => {
+    if (id === openId) return;
+    markOpen?.(id);
+    open(id);
+  };
   const select = useStableCallback((id: string) => {
     arrived.current = list;
     setRow({ list, id });
-    if (!one || openId !== null) open(id);
+    if (!one || openId !== null) openFromInput(id);
   });
   const stepTo = useStableCallback((id: string) => {
     select(id);
@@ -149,7 +156,7 @@ export function useListWalk(input: ListWalkInput): ListWalk {
     arrived.current = list;
     setRow({ list, id });
     /* The open letter pressed again writes the address no second time. */
-    if (id !== openId) open(id);
+    openFromInput(id);
     enter?.(id);
   });
   const last = order.length - 1;

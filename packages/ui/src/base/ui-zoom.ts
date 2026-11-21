@@ -30,9 +30,10 @@ export interface CssRect {
 }
 
 /** `el.getBoundingClientRect()` in CSS px — the very rect object when no zoom is stamped. */
-export function cssRect(el: Element): CssRect {
-  const r = el.getBoundingClientRect();
-  const z = uiZoom(el.ownerDocument);
+export function cssRect(target: Element | Range): CssRect {
+  const r = target.getBoundingClientRect();
+  const node = "ownerDocument" in target ? target : target.commonAncestorContainer;
+  const z = uiZoom(node.ownerDocument);
   if (z === 1) return r;
   return {
     top: r.top / z,

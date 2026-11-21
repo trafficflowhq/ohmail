@@ -70,3 +70,10 @@
   gap: var(--s3) var(--s4);
   padding: var(--s2) var(--s3) var(--cal-phone-sheet-foot);
 }
+
+/* At enlarged text sizes there is room for only one legible month on a narrow phone. */
+@container (max-width: 320px) {
+  .cal-yr[data-device="phone"] .cal-yr-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { within } from "@testing-library/react";
 import { storeMessage } from "./_store-fixture";
 import {
-  ISO, act as shellAct, answerStoreWith, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, page, teardownShellEnv, tick,
+  ISO, act as shellAct, answerStoreWith, answerSyncWith, goTo, installShellEnv, liveAccountResponse, mailbox, mountShell, page, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 
 /** Open a message served only by the backend's History page. The sync fixture serves one different message. */
@@ -27,11 +27,11 @@ async function openStoreLetter(holdBody = false) {
     const method = init?.method ?? "GET";
     if (url.endsWith(`${endpoint}/body`)) {
       calls.push("body");
-      return (await bodyAnswer).clone();
+      return liveAccountResponse((await bodyAnswer).clone());
     }
     if (url.endsWith(endpoint)) {
       if (method === "DELETE") calls.push("delete");
-      return Response.json(message);
+      return liveAccountResponse(Response.json(message));
     }
     return fetch(input, init);
   };

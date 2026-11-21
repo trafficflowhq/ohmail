@@ -150,7 +150,7 @@ describe("a sign-in retires the family its jar's resume marker names", () => {
         const late = await renew(deps, refresh);
         expect(`${late.status} ${await codeOf(late)}`, "the browser's earlier family still renews").toBe("401 refresh_revoked");
         expect(((await late.json()) as { error: { details?: unknown } }).error.details).toBeUndefined();
-        expect(cleared(late)).toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+        expect(cleared(late)).toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
       }
       expect(await trail(db, await userOf(first), "refresh_reuse_revoked"), "a retired family was swept").toEqual([]);
       expect((await renew(deps, setCookieMap(again).tf_refresh!)).status, "the new sign-in does not renew").toBe(204);
@@ -407,7 +407,7 @@ describe("every server reader takes both cookie spellings, and the server still 
     const res = await H(req("POST", "/auth/refresh", { cookie: `__Host-tf_refresh=${refresh}`, body: "{}" }), deps);
     expect(res.status, await res.clone().text()).toBe(204);
     const names = Object.keys(setCookieMap(res)).sort();
-    expect(names).toEqual(["tf_csrf", "tf_refresh", "tf_resume", "tf_session"]);
+    expect(names).toEqual(["tf_csrf", "tf_family", "tf_refresh", "tf_resume", "tf_session"]);
     expect(res.headers.getSetCookie().some((c) => /domain=/i.test(c)), "a cookie grew a Domain=").toBe(false);
   });
 });

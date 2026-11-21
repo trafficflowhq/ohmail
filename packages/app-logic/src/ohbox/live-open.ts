@@ -76,7 +76,7 @@ export function useOpenAndCursor(args: PlaceLiveArgs, own: OpenAndCursorOwn) {
   const oneColumn = args.plan.columns === 1;
   const open = args.route.open;
   const nameIt = useArrivalInView(open, own.row);
-  const onSelect = useStableCallback((id: string | null) => {
+  const onSelect = useStableCallback((id: string | null, wholeThread?: true) => {
     const m = id === null ? undefined : presented.get<EngineMessage>("message", id);
     const next = m
       ? { id: m.id, ownFace: ownFaceOfRow(presented, m, engine.openRowHeld())?.id ?? null }
@@ -97,7 +97,7 @@ export function useOpenAndCursor(args: PlaceLiveArgs, own: OpenAndCursorOwn) {
       void engine.hydrateBody(id, { urgent: true });
     }
     nameIt(id);
-    args.commands.open(id);
+    args.commands.open(id, undefined, wholeThread);
   });
   /* THE ROW OPEN, AND WHAT IT IS ACTED ON: Forward's target. Only a row that was ENTERED records it, taken at the
      open from the rows the Ohbox draws, so a later change to the row cannot move it; a cursor, a link or a landing
@@ -107,7 +107,7 @@ export function useOpenAndCursor(args: PlaceLiveArgs, own: OpenAndCursorOwn) {
     rowOpen !== null && rowOpen.id === m.id ? rowOpen.target : m,
   );
   /* A ROW ENTERED. Where one column stands the letter is named in the address and stands over the list. */
-  const onEnterReader = useStableCallback((messageId: string) => {
+  const onEnterReader = useStableCallback((messageId: string, wholeThread?: true) => {
     const opened = presented.get<EngineMessage>("message", messageId);
     setRowOpen(
       opened ? { id: messageId, target: rowOpenTarget(presented, opened, engine.openRowHeld()) } : null,
@@ -118,7 +118,7 @@ export function useOpenAndCursor(args: PlaceLiveArgs, own: OpenAndCursorOwn) {
       void engine.hydrateBody(messageId, { urgent: true });
     }
     nameIt(messageId);
-    args.commands.open(messageId);
+    args.commands.open(messageId, undefined, wholeThread);
     onRowEntered(messageId);
   });
   /* THE OPEN'S MEASURE IS ABANDONED WHEN THE LETTER IS LET GO: a letter closed before its text arrived, by whatever

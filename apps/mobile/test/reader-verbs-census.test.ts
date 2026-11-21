@@ -205,11 +205,11 @@ describe("the bar's row order is the webapp's own BAR_VERB_ORDER", () => {
        the row between Reply all and the horizons (the reader's panel). The web ROW is that order with
        Forward in its DOM seat, and a Forward back in the order would be counted twice here. */
     expect(webOrder, "Forward is admissible on the web again — it would fold").not.toContain("forward");
-    /* The web's bar is the reader's panel (`packages/app/src/reader/actions/ActionBar.tsx`): Forward stands at rank 0,
+    /* The web's bar is the reader's panel (`packages/app/src/reader/actions/panel-verbs.ts`): Forward stands at rank 0,
        beside Reply, the panel's floor that never folds behind More. */
-    const pane = read("../../../packages/app/src/reader/actions/ActionBar.tsx");
+    const pane = read("../../../packages/app/src/reader/actions/panel-verbs.ts");
     expect(pane, "the web bar's Forward is no longer a floor group").toMatch(
-      /id: "forward",\s*label: tm\("menuForward"\),\s*icon: "forward",\s*rank: 0,/,
+      /id: "forward",\s*label: words\.forward,\s*icon: "forward",\s*rank: 0,/,
     );
     /* The phone's bar keeps the same floor: the reader hands `GlassActionBar` Forward as its floor. */
     const actions = read("../src/ui/MessageActions.tsx");

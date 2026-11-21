@@ -35,7 +35,8 @@ const QUIET: MailState = {
 };
 
 let current: MailState = QUIET;
-vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
+vi.mock("@ohmail/app-logic/mail-state", async (original) => ({
+  ...await original<typeof import("@ohmail/app-logic/mail-state")>(),
   useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
@@ -59,7 +60,7 @@ async function render(state: MailState, locale: "en" | "de" = "en"): Promise<HTM
       h(NextIntlClientProvider, {
         locale, messages: locale === "en" ? en : de, timeZone: "UTC",
         now: new Date("2026-09-17T00:00:00.000Z"),
-        children: h(SyncBar, null),
+        children: h(SyncBar, { bare: true }),
       }),
     );
   });

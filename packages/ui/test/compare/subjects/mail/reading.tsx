@@ -412,6 +412,7 @@ export const reading: KitSubject[] = [
     render: (look) => (
       <QuickLook
         open
+        portal
         onClose={shut}
         label="Attachment preview"
         name="Invoice-2291"

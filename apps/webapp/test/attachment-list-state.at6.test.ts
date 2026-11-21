@@ -300,7 +300,7 @@ describe("the hop into MessagePane, which this slice was not allowed to touch", 
     // The files are drawn by `LetterFiles`, which every letter of the column renders; the letter is held to
     // rendering it, and the component to the unflattened list.
     expect(code(read("packages/app/src/reader/Letter.tsx")), "the letter no longer renders its files")
-      .toMatch(/<LetterFiles messageId=\{message\.id\} \/>/);
+      .toMatch(/<LetterFiles messageId=\{message\.id\} selection=\{previewSelection\} parts=\{parts\} \/>/);
     const files = code(read("packages/app/src/reader/files/Files.tsx"));
     const from = files.indexOf("export function LetterFiles");
     expect(from, "Files.tsx no longer draws the letter's files — this assertion needs re-aiming").toBeGreaterThan(-1);

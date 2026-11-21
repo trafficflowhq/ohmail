@@ -39,9 +39,8 @@ function later<T>(ms: number, fn: () => T): Promise<T> {
 }
 
 function serve(url: string, init?: RequestInit): Promise<Response> {
-  const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)
-    .map(([k, v]) => [k.toLowerCase(), v]));
-  const row: Sent = { at: Date.now(), url, status: null, csrf: headers["x-csrf-token"] ?? null };
+  const headers = new Headers(init?.headers);
+  const row: Sent = { at: Date.now(), url, status: null, csrf: headers.get("x-csrf-token") };
   sent.push(row);
   if (url === "/auth/refresh") {
     const presented = jarRefresh;

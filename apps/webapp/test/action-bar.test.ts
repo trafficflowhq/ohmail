@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
 import { storeMessage } from "./_store-fixture";
 import {
-  ISO, act as shellAct, answerStoreWith, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, page, teardownShellEnv, tick,
+  ISO, act as shellAct, answerStoreWith, answerSyncWith, goTo, installShellEnv, liveAccountResponse, mailbox, mountShell, page, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 import {
   items,
@@ -94,11 +94,11 @@ async function openStoreLetter(holdBody = false) {
     const method = init?.method ?? "GET";
     if (url.endsWith(`${endpoint}/body`)) {
       calls.push("body");
-      return (await bodyAnswer).clone();
+      return liveAccountResponse((await bodyAnswer).clone());
     }
     if (url.endsWith(endpoint)) {
       if (method === "DELETE") calls.push("delete");
-      return Response.json(message);
+      return liveAccountResponse(Response.json(message));
     }
     return fetch(input, init);
   };

@@ -122,6 +122,8 @@ export interface ThemeContextValue {
    * second provider ever needs to race the attribute.
    */
   layout: LayoutName;
+  /** The host opted into the face and layout controls. */
+  layoutEnabled: boolean;
   setLayout: (layout: LayoutName | null) => void;
   /**
    * Teaching intensity, the contract's one JS-visible switch: 0 (paper, calm) / 1 (ohmarchy,
@@ -497,12 +499,13 @@ export function ThemeProvider({
       linuxDevice: linux,
       setFace,
       layout,
+      layoutEnabled: faces,
       setLayout,
       teach,
       adoptAccountFace,
       persistence,
     }),
-    [preference, resolved, setTheme, cycle, next, nextResolved, face, devicePin, accountFace, linux, setFace, layout, setLayout, teach, adoptAccountFace, persistence],
+    [preference, resolved, setTheme, cycle, next, nextResolved, face, devicePin, accountFace, linux, setFace, layout, faces, setLayout, teach, adoptAccountFace, persistence],
   );
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

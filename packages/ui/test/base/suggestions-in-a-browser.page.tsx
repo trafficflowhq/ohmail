@@ -5,6 +5,12 @@
 import { useRef, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Dialog,
+  Menu,
+  MenuItem,
+  Notice,
+  Palette,
+  Report,
   Icon,
   markTyped,
   SuggestionCredit,
@@ -14,8 +20,11 @@ import {
   type SuggestionGroup,
   type SuggestionRow,
 } from "../../src/base/index.js";
+import { ToastHost, useToast } from "../../src/primitives/Toast.js";
+import { Gloss } from "../../src/primitives/Gloss.js";
+import { DatePicker } from "../../src/primitives/DatePicker.js";
 import { EventForm } from "../../src/calendar/index.js";
-import { Composer, Recipients } from "../../src/mail/index.js";
+import { Composer, FileQuickLook, ReadSquares, Recipients } from "../../src/mail/index.js";
 
 const place = (id: string, icon: IconName, primary: string, secondary?: string): SuggestionRow => ({
   id,
@@ -178,13 +187,90 @@ function Signed() {
   );
 }
 
+function ToastTrigger() {
+  const toast = useToast();
+  return <button onClick={() => toast("Saved", { action: "Undo", onAction: () => {} })}>Show notice</button>;
+}
+
 const SCENES = {
+  file: () => (
+    <FileQuickLook
+      open
+      onClose={() => {}}
+      label="File preview"
+      name="Document"
+      facts="Text"
+      close={{ label: "Close" }}
+    >
+      <p>File content</p>
+    </FileQuickLook>
+  ),
+  menu: () => (
+    <Menu open label="Actions" onClose={() => {}}>
+      <MenuItem>Archive</MenuItem>
+    </Menu>
+  ),
+  card: () => (
+    <Menu open label="Details" kind="card" onClose={() => {}}>
+      <p>Details of this item</p>
+    </Menu>
+  ),
+  palette: () => (
+    <Palette
+      open
+      label="Commands"
+      inputLabel="Find command"
+      placeholder="Find"
+      query=""
+      onQuery={() => {}}
+      onClose={() => {}}
+      commands={[{ id: "archive", label: "Archive", icon: "place" }]}
+      onRun={() => {}}
+      empty="No commands"
+    />
+  ),
+  notice: () => <Notice place="rail" title="Attention needed" />,
+  report: () => <Report>Saved</Report>,
+  alert: () => <Dialog open alert title="Confirm action" onClose={() => {}} cancel={{ label: "Cancel" }} />,
+  "toast-outside": () => (
+    <ToastHost>
+      <div className="oh-root">
+        <ToastTrigger />
+      </div>
+    </ToastHost>
+  ),
+  toast: () => (
+    <ToastHost>
+      <ToastTrigger />
+    </ToastHost>
+  ),
   place: () => <PlaceField />,
   "place-low": () => <PlaceField low />,
   "place-german": () => <PlaceField lang="de" />,
   "place-sheet": () => <PlaceField lang="de" inline />,
   letter: () => <Letter />,
   signed: () => <Signed />,
+  gloss: () => <Gloss text="More information" caption="Details" />,
+  date: () => (
+    <DatePicker
+      locale="en"
+      today="2026-08-04"
+      anchor={document.getElementById("host")}
+      labels={{ dialog: "Pick a date", prevMonth: "Previous month", nextMonth: "Next month", today: "today" }}
+      onPick={() => {}}
+      onClose={() => {}}
+    />
+  ),
+  squares: () => (
+    <ReadSquares
+      squares={["seen"]}
+      axis="head"
+      label="Messages"
+      names={["Message"]}
+      onJump={() => {}}
+      tips={["Preview of the message"]}
+    />
+  ),
 };
 export type Scene = keyof typeof SCENES;
 

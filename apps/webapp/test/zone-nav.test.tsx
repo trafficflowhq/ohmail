@@ -436,11 +436,9 @@ describe("the zone walk: rail ← list → open message", () => {
 
   it("an open reader sheet IS the reader zone — scrolled by ↑/↓ from wherever focus was left", async () => {
     // A review finding: with the sheet up, ↑/↓ walked the hidden cursor behind the modal.
-    // A second finding: the sheet opens WITHOUT taking focus, so a zone derived from focus
-    // alone left the visible sheet unscrollable until the user first tabbed into it. The
-    // sheet's EXISTENCE therefore decides the zone: ↑/↓ scroll the sheet with focus still in
-    // the hidden shell, the list cursor stands still, and ← cannot land focus on a row or
-    // the rail behind the modal (the kept dispatch-time gate).
+    // The sheet's existence decides the zone even if focus has fallen back to the page.
+    // ↑/↓ scroll the sheet, the list cursor stands still, and ← cannot land focus on a
+    // row or the rail behind the modal.
     // The sheet: the letter the frame stands over the list where one column stands, opened by its address.
     setViewport(true);
     await render(FIVE);
@@ -449,7 +447,8 @@ describe("the zone walk: rail ← list → open message", () => {
     await openByAddress("m1");
     const sheet = scrollerOver()!;
     expect(sheet, "fixture: the letter stands over the list").not.toBeNull();
-    expect(focused(), "fixture: the keys are left on the page").toBe(document.body);
+    await act(async () => { (document.activeElement as HTMLElement | null)?.blur(); });
+    expect(focused(), "fixture: focus has returned to the page").toBe(document.body);
 
     const { READER_SCROLL_STEP } = await import("@ohmail/app-logic/keys/zone-nav");
     await key("ArrowDown");

@@ -3,7 +3,9 @@
 import { useContext, type ReactNode } from "react";
 import { useFrame } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
-import { MailRichEditor } from "../../mail/index.js";
+import { MailRichEditor } from "../../mail/write-entry.js";
+import { useNoticesVersion, writeCalendarNotice } from "@ohmail/app-logic/notices/browser-channels";
+import { isDemoOwned } from "@ohmail/app-logic/storage/storage-owner";
 import { useConsent } from "@ohmail/app-logic/consent";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { liveMailboxes } from "@ohmail/app-logic/mail-state/mail-state";
@@ -61,7 +63,28 @@ export function BrowserSettingsAbove({
 
 export function BrowserNotificationsPane() {
   const model = useContext(NotificationsContext);
-  return model && <NotificationsPane model={model} />;
+  const { host } = useFrame();
+  const door = host.device.notifications;
+  const scope = host.session.scope;
+  useNoticesVersion(0);
+  const choices = host.wires.calendar === NONE || door === NONE ? undefined : door.choices?.();
+  return (
+    model && (
+      <NotificationsPane
+        model={model}
+        calendar={
+          choices && {
+            choices,
+            set(key, value) {
+              if (scope === null || isDemoOwned(scope) || door === NONE || door.liveNoticeScope?.() !== scope)
+                return;
+              writeCalendarNotice(key, value);
+            },
+          }
+        }
+      />
+    )
+  );
 }
 
 function signatureEditor(props: SignatureEditorProps) {

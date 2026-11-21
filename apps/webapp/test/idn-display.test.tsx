@@ -13,7 +13,7 @@ import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { displayAddress, displayDomain } from "@ohmail/app-logic/text/idn";
 import { recipientRows, rowAddress, senderName, sentRowRecipient } from "../app/shell/format";
-import { settleFirstPaint } from "./_first-paint.js";
+import { settleEditor, settleFirstPaint } from "./_first-paint.js";
 
 /**
  * AN INTERNATIONALIZED DOMAIN, AS ITS OWNER WROTE IT.
@@ -353,6 +353,7 @@ async function goCompose(): Promise<void> {
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
   await settleFirstPaint();
+  await settleEditor();
   for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
 }
 
@@ -371,8 +372,8 @@ const fromChooser = (): HTMLButtonElement | null =>
     .find((b) => (b.getAttribute("aria-label") ?? "").startsWith("From ")) ?? null;
 /** The From line's value where there is nothing to choose: the line the kit marks as the From line, its label aside. */
 const fromWords = (): string | null => {
-  const line = letter()?.querySelector<HTMLElement>('[data-line="from"]');
-  return line ? [...line.children].filter((c) => c.tagName !== "B").map((c) => c.textContent ?? "").join("") : null;
+  const value = letter()?.querySelector('[data-line="from"] .oh-recipients-static');
+  return value?.textContent ?? null;
 };
 
 describe("ACCEPTANCE: the compose From selector", () => {
@@ -393,6 +394,7 @@ describe("ACCEPTANCE: the compose From selector", () => {
     await mountShell([fact({})]);
     await goCompose();
     expect(fromWords()).toBe(SHOWN);
+    expect(fromChooser()).toBeNull();
   });
 
   it("SENDS THE STORED FORM — the decode never reaches the wire", async () => {

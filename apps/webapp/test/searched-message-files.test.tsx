@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, act, answerConsentWith, answerStoreWith, answerSyncWith, installShellEnv, mailbox, mountShell,
   teardownShellEnv, tick,
+  liveAccountFetch,
 } from "./fixtures/live-walk-shell";
 import messages from "../messages/en.json";
 
@@ -92,7 +93,7 @@ beforeEach(() => {
   searchDate = "2026-07-09T08:00:00.000Z";
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const inner = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) => {
+  globalThis.fetch = vi.fn(liveAccountFetch(async (input: unknown, init?: unknown) => {
     const url = String(input);
     const list = /\/messages\/([^/?]+)\/attachments(?:$|\?)/.exec(url);
     if (list) {
@@ -125,7 +126,7 @@ beforeEach(() => {
       return json({ items, total: items.length, totalExact: true, ms: 4 });
     }
     return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-  }) as unknown as typeof globalThis.fetch;
+  }));
   (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:harness/1";
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
   const click = HTMLAnchorElement.prototype.click;

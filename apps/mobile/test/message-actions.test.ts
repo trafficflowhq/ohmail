@@ -784,7 +784,7 @@ describe("applying the rule to past mail, from the phone", () => {
       .toContain('accessibilityRole="switch"');
     expect(src).toContain("accessibilityState={{ checked: applyRetro }}");
     expect(src, "the sheet's own state must reach the action, not a literal")
-      .toContain("w.actions.screenSender(m.id, dest, scope, applyRetro)");
+      .toContain("w.actions.screenSender(m.id, dest, scope, applyRetro, undefined, ids)");
     expect(src, "the default is ON").toContain("useState(true)");
   });
 

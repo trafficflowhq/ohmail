@@ -15,7 +15,8 @@ describe("the shell wiring, pinned by source", () => {
     expect(frame).toMatch(/const demoNow = useResolvedDemoMode\(\);[\s\S]*?if \(demoNow\) return <DemoFrame[\s\S]*?<SignedInFrame/);
     expect(frame).not.toContain("away.state(");
     expect(supplies).toContain("useEffect(() => awayFeed?.start(), [awayFeed])");
-    expect(awayNotice).toMatch(/if \(started\) return;\s+started = true;\s+void wire.state\(\)/);
+    expect(awayNotice).toContain("const reading = wire.state().finally(");
+    expect(awayNotice).toMatch(/if \(started\) return;\s+started = true;\s+void initialState\(\)\.catch\(/);
   });
 
   it("support is the hosted client OR a host's own wire — never a bare `apiConfigured()`", () => {
@@ -39,7 +40,7 @@ describe("the shell wiring, pinned by source", () => {
     expect(frameParts).toContain("<FeatureNotices features={host.features} notices={inner.notices}");
     expect(frameParts).toContain("<NoticeHost store={inner.notices}");
     expect(awayNotice).toMatch(/kind: "away",\s+title,/);
-    expect(awayNotice).toMatch(/piles: new Intl.ListFormat[^\n]*\.format\(piles\)/);
+    expect(awayNotice).toMatch(/piles: new Intl.ListFormat[^\n]*\.format\(\s*piles,?\s*\)/);
   });
 
   it("`ohx-standing` names nothing any more — no element, no rule", () => {
@@ -56,7 +57,7 @@ describe("the shell wiring, pinned by source", () => {
     expect(awaySettings).toContain("const wire = host.wires.away");
     expect(awaySettings).toContain("const runsOn = host.capabilities.awayRunsOn");
     expect(awaySettings).toContain("wire.save(");
-    expect(awayNotice).toMatch(/const row = await transport.save\(next\);\s+remember\(row, \+\+serial\);/);
+    expect(awayNotice).toMatch(/const row = await transport.save\(next\);\s+pending = null;\s+remember\(row, \+\+serial\);/);
     expect(awayNotice).toContain("feed?.subscribe");
     expect(awayNotice).toContain("feed?.read");
   });

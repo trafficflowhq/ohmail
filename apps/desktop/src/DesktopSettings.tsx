@@ -6,7 +6,8 @@
  */
 
 import { useState } from "react";
-import { Button, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
+import { Button } from "@ohmail/ui/base";
+import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 
 import { engineLogout, type EngineStatus, type SignedOut } from "./bridge-fetch.js";
 import { renewCloudSession } from "./cloud-session.js";
@@ -305,173 +306,93 @@ export function DesktopSettings({
     }
   };
 
+  const reach = paired ? connectionLine(connection ?? null, pairedViaOf(status)) : null;
+  const signOutWhy = paired
+    ? DOOR_COPY.installSignOutWhyHost(host, machineWord())
+    : DOOR_COPY.installSignOutWhy(machineWord());
+  const confirmWhy = paired
+    ? DOOR_COPY.installSignOutConfirmWhyHost(machineWord(), host)
+    : DOOR_COPY.installSignOutConfirmWhy(machineWord());
+
   return (
-    <SettingsSection>
-      <SettingsRow
-        label={multipleMailboxes ? DOOR_COPY.mailboxesLabel : DOOR_COPY.mailboxLabel}
-        description={mailboxRowWhy(readOnly, paired ? host : null)}
-        value={mailboxValue}
-        valueClassName={multipleMailboxes ? "set-val-left" : undefined}
-      />
-      <SettingsRow
-        label={DOOR_COPY.installConnectedThrough}
-        description={doorDescription(status, host)}
-        value={door}
-      />
-      <SettingsRow
-        label={credential.label}
-        description={credential.description}
-        value={credential.value}
-      />
-      {/* Under the session row it is about, and only while the engine says so — with its one verb. */}
-      {sealFailed ? (
-        <SettingsBanner
-          label={DOOR_COPY.cloudSealPausedTitle(machineWord())}
-          description={DOOR_COPY.credSealFailedNote(machineWord())}
-          action={
-            status.mode === "cloud" && session === "live" ? (
-              <Button onClick={() => void retrySeal()} disabled={retrying}>{DOOR_COPY.gateTryAgain}</Button>
-            ) : null
-          }
+    <>
+      <SettingsSheet title={DOOR_COPY.aboutInstallHead} sign="desktop">
+        <SettingLine
+          label={multipleMailboxes ? DOOR_COPY.mailboxesLabel : DOOR_COPY.mailboxLabel}
+          description={mailboxRowWhy(readOnly, paired ? host : null)}
+          value={multipleMailboxes ? undefined : mailboxValue}
+        >
+          {multipleMailboxes ? <span className="set-val-left">{mailboxValue}</span> : null}
+        </SettingLine>
+        <SettingLine
+          label={DOOR_COPY.installConnectedThrough}
+          description={doorDescription(status, host)}
+          value={door}
         />
-      ) : null}
-      {/* ── IS THE OTHER COMPUTER REACHABLE — a PERMANENT row on this door ─────────────────
-          Present in every state, `Reachable` included, unlike the Mail engine row below it. The
-          engine row is about a fault and says nothing on a healthy install by design; this one
-          answers a standing question about somebody else's machine, which a person may want to
-          check at any time and cannot check any other way from here. */}
-      {paired ? (() => {
-        const line = connectionLine(connection ?? null, pairedViaOf(status));
-        return (
-          <SettingsRow
-            label={DOOR_COPY.connLabel}
-            description={line.description}
-            value={line.value}
-          />
-        );
-      })() : null}
-      {/* Only when it is NOT serving — see `engineWhy`. A row that says "Running" on every healthy
-          install is a row nobody reads, including on the day it stops saying it. */}
-      {status.state === "serving" ? null : (
-        <SettingsRow
-          label={DOOR_COPY.engineLabel}
-          description={engineWhy(status)}
-          value={engineLine(status)}
-        />
-      )}
+        {reach ? <SettingLine label={DOOR_COPY.connLabel} {...reach} /> : null}
+        {status.state !== "serving" ? (
+          <SettingLine label={DOOR_COPY.engineLabel} description={engineWhy(status)} value={engineLine(status)} />
+        ) : null}
+      </SettingsSheet>
 
-      <SettingsSubhead>{DOOR_COPY.installChangingHead}</SettingsSubhead>
-
-      {problem ? <p className="join-error">{problem}</p> : null}
-
-      {/* SIGN IN AGAIN is the HOSTED door's remedy and only its own. A paired install has no
-          session to renew — what ended was a pairing, and the way back is a new link from the
-          other computer's Devices pane, which is the row directly below. */}
-      {status.mode === "cloud" && session === "out" && !paired ? (
-        <SettingsRow
-          label={DOOR_COPY.installSignInAgain}
-          description={DOOR_COPY.installSignInAgainWhy}
-          control={<Button onClick={onSignIn}>{DOOR_COPY.signIn}</Button>}
-        />
-      ) : null}
-
-      {/* PAIR AGAIN — only when the pairing has actually ended. Offered while it stands it would
-          invite somebody to spend a link for nothing; withheld when it has ended, the pane would
-          state a problem and no remedy. */}
-      {paired && session === "out" && onPairAgain ? (
-        <SettingsRow
-          label={DOOR_COPY.installPairAgain}
-          description={DOOR_COPY.installPairAgainWhy(host!, machineWord())}
-          control={<Button onClick={onPairAgain} disabled={busy}>{DOOR_COPY.hostPair}</Button>}
-        />
-      ) : null}
-
-      {/* ── SET THIS MACHINE UP ON ITS OWN — in EVERY connection state ─────────────────────
-          Not only while the other computer is away. Leaving a host is something a person may do
-          on purpose, and a control that exists only during a failure is one nobody can plan
-          with. Its description leads with the condition ("If {host} will not come back.") so
-          that reading the pane on an ordinary day does not read as a recommendation. */}
-      {paired && onTakeOver ? (
-        <SettingsRow
-          label={DOOR_COPY.takeoverLabel(machineWord())}
-          description={DOOR_COPY.takeoverWhy(host!, machineWord())}
-          control={
-            <Button onClick={onTakeOver} disabled={busy}>{DOOR_COPY.takeoverAction}</Button>
-          }
-        />
-      ) : null}
-
-      {/* "YOUR OHMAIL ACCOUNT" WAS HERE, AND IT HAS MOVED — into the three panes it was standing
-          in for. It was one row that named a password, an authenticator, recovery codes and a plan
-          together, on the pane about this INSTALL, because Settings had no Security, Account or
-          Subscription pane at all on the hosted door. Those panes exist now
-          (`DesktopWebSection`, `DesktopSubscription`) and each carries its own door out, so keeping this
-          row would be a second door to the same place under different words — on the one pane
-          nobody looking for their password would think to open. Everything below this line is about
-          the install: which mailbox, which door, and how to change either. */}
-
-      {/* THE SWITCH SAYS "DISCARDED" ON THIS DOOR AND "FROZEN" ON THE OTHERS, because that is
-          what the code does: `enforceMirrorOwner` discards a mirror whose owner has changed, and
-          leaving a paired door for any other door changes the owner. Borrowing the hosted
-          sentence here would promise a copy that comes back, and it does not. */}
-      <SettingsRow
-        label={DOOR_COPY.installSwitch}
-        description={paired
-          ? DOOR_COPY.installSwitchWhyHost(host!, machineWord())
-          : DOOR_COPY.installSwitchWhy(machineWord())}
-        control={
-          <Button onClick={onSwitchDoor} disabled={busy}>{DOOR_COPY.installSwitchAction}</Button>
-        }
-      />
-      {/* An undone pairing the other computer did not take back: where this install is still listed. */}
-      {status.pairingLeftAt ? (
-        <SettingsNote>
-          {DOOR_COPY.pairingLeftAt(hostLabelOf(status.pairingLeftAt) ?? status.pairingLeftAt, machineWord())}
-        </SettingsNote>
-      ) : null}
-
-      {mode === "confirm" ? (
-        <SettingsRow
-          label={DOOR_COPY.installSignOutConfirm}
-          description={paired
-            ? DOOR_COPY.installSignOutConfirmWhyHost(machineWord(), host!)
-            : DOOR_COPY.installSignOutConfirmWhy(machineWord())}
-          control={
-            <span className="set-tag-acts">
-              <Button variant="primary" className="danger" onClick={() => void signOut()} disabled={busy}>
-                {busy ? DOOR_COPY.installSigningOut : DOOR_COPY.signOut}
+      <SettingsSheet title={DOOR_COPY.installChangingHead}>
+        <SettingLine {...credential} />
+        {sealFailed ? (
+          <SettingLine label={DOOR_COPY.cloudSealPausedTitle(machineWord())} description={DOOR_COPY.credSealFailedNote(machineWord())}>
+            {status.mode === "cloud" && session === "live" ? (
+              <Button kind="quiet" size="s" onPress={() => void retrySeal()} disabled={retrying}>
+                {DOOR_COPY.gateTryAgain}
               </Button>
-              <Button variant="ghost" onClick={() => setMode("rest")} disabled={busy}>
-                {DOOR_COPY.cancel}
-              </Button>
-            </span>
-          }
-        />
-      ) : (
-        <SettingsRow
-          label={DOOR_COPY.signOut}
+            ) : null}
+          </SettingLine>
+        ) : null}
+        {problem ? <SettingNote warn>{problem}</SettingNote> : null}
+        {status.mode === "cloud" && session === "out" && !paired ? (
+          <SettingLine label={DOOR_COPY.installSignInAgain} description={DOOR_COPY.installSignInAgainWhy}>
+            <Button kind="quiet" size="s" onPress={onSignIn}>{DOOR_COPY.signIn}</Button>
+          </SettingLine>
+        ) : null}
+        {paired && session === "out" && onPairAgain ? (
+          <SettingLine label={DOOR_COPY.installPairAgain} description={DOOR_COPY.installPairAgainWhy(host, machineWord())}>
+            <Button kind="quiet" size="s" onPress={onPairAgain} disabled={busy}>{DOOR_COPY.hostPair}</Button>
+          </SettingLine>
+        ) : null}
+        {paired && onTakeOver ? (
+          <SettingLine label={DOOR_COPY.takeoverLabel(machineWord())} description={DOOR_COPY.takeoverWhy(host, machineWord())}>
+            <Button kind="quiet" size="s" onPress={onTakeOver} disabled={busy}>{DOOR_COPY.takeoverAction}</Button>
+          </SettingLine>
+        ) : null}
+        <SettingLine
+          label={DOOR_COPY.installSwitch}
           description={paired
-            ? DOOR_COPY.installSignOutWhyHost(host!, machineWord())
-            : DOOR_COPY.installSignOutWhy(machineWord())}
-          control={
-            <Button onClick={() => setMode("confirm")} disabled={busy}>{DOOR_COPY.signOut}</Button>
-          }
-        />
-      )}
+            ? DOOR_COPY.installSwitchWhyHost(host, machineWord())
+            : DOOR_COPY.installSwitchWhy(machineWord())}
+        >
+          <Button kind="quiet" size="s" onPress={onSwitchDoor} disabled={busy}>{DOOR_COPY.installSwitchAction}</Button>
+        </SettingLine>
+        {status.pairingLeftAt ? (
+          <SettingNote>
+            {DOOR_COPY.pairingLeftAt(hostLabelOf(status.pairingLeftAt) ?? status.pairingLeftAt, machineWord())}
+          </SettingNote>
+        ) : null}
+        {mode === "confirm" ? (
+          <SettingLine label={DOOR_COPY.installSignOutConfirm} description={confirmWhy}>
+            <Button kind="quiet" size="s" onPress={() => setMode("rest")} disabled={busy}>{DOOR_COPY.cancel}</Button>
+            <Button size="s" onPress={() => void signOut()} disabled={busy}>
+              {busy ? DOOR_COPY.installSigningOut : DOOR_COPY.signOut}
+            </Button>
+          </SettingLine>
+        ) : (
+          <SettingLine label={DOOR_COPY.signOut} description={signOutWhy}>
+            <Button kind="quiet" size="s" onPress={() => setMode("confirm")} disabled={busy}>{DOOR_COPY.signOut}</Button>
+          </SettingLine>
+        )}
+        <SettingNote>{DOOR_COPY.installPasswordNote}</SettingNote>
+      </SettingsSheet>
 
-      <SettingsNote>{DOOR_COPY.installPasswordNote}</SettingsNote>
-      {defaultMail ? <DefaultMailRow /> : null}
-
-      {/* WHAT BELONGS IN THIS MAILBOX'S OHBOX HAS MOVED, to Settings → Screener, where the rest
-          of the screening controls are and where somebody looking for it would look first. It was
-          here because this pane was the only one on the desktop with a working transport; it is
-          not any more. `DesktopScreening.tsx` is the same editor over the same column. */}
-
-      {/* The model, last, because it is the one part of this install that is optional. Everything
-          above describes a mailbox that has to work; this describes something you may never turn
-          on, and the app is complete without it. */}
+      {defaultMail ? <SettingsSheet><DefaultMailRow /></SettingsSheet> : null}
       <DesktopAiSettings door={status.mode ?? null} {...(onAiStatus ? { onStatus: onAiStatus } : {})} />
-    </SettingsSection>
+    </>
   );
 }
 

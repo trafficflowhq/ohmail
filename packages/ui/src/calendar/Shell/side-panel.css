@@ -1,9 +1,13 @@
 /* A column beside the view, asked for and never standing: the Agenda, Invitations. It stands level with the view's sheet. */
 @layer oh {
+  :root {
+    --oh-calside-flex: 0 1 auto;
+  }
+
   .oh-calside {
     --oh-calside-ring: 0 0 0 var(--ringw) var(--ring);
     --oh-soft: var(--soft-sheet);
-    flex: var(--oh-calside-flex, 0 1 auto);
+    flex: var(--oh-calside-flex);
     position: relative;
     display: flex;
     flex-direction: column;

@@ -14,9 +14,10 @@
  * it before setting up a key gets the behaviour the moment they do.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useTranslations } from "next-intl";
-import { SettingsNote, SettingsRow, Switch } from "@ohmail/ui";
+import { Switch } from "@ohmail/ui/base";
+import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 
 import {
   ownModelAutoSuggest,
@@ -53,6 +54,7 @@ export function DesktopAutoSuggest({
 }: { reader?: boolean } = {}) {
   /* See `DesktopScreeningWords` for why the namespace has to be on `vite.config.ts`'s list. */
   const t = useTranslations("desktopScreener");
+  const suggestionNote = useId();
   // An absent route belongs to another door. A pending or refused read shows a held Off switch.
   const [value, setValue] = useState<AutoSuggestState | null | undefined>(null);
   const [pending, setPending] = useState(false);
@@ -98,28 +100,18 @@ export function DesktopAutoSuggest({
 
   return (
     <>
-      <SettingsRow
-        label={t("autoSuggestLabel")}
-        description={t(value === null ? "autoSuggestOff" : autoSuggestCopyKey(value))}
-        control={
-          <Switch
-            /* The STORED value, never the hoped-for one. This is the only record the person has of
-               whether their own model is being asked unprompted. */
-            checked={value?.on ?? false}
-            ariaLabel={t("autoSuggestLabel")}
-            disabled={value === null || pending}
-            onChange={write}
-          />
-        }
-      />
+      <SettingLine label={t("autoSuggestLabel")} describedBy={suggestionNote}>
+        <Switch on={value?.on ?? false} label={t("autoSuggestLabel")} disabled={value === null || pending} onChange={write} />
+      </SettingLine>
+      <SettingNote id={suggestionNote}>{t(value === null ? "autoSuggestOff" : autoSuggestCopyKey(value))}</SettingNote>
       {value?.provider === "opencode-go" ? (
-        <SettingsNote>{t("autoSuggestGoAllowance")}</SettingsNote>
+        <SettingNote>{t("autoSuggestGoAllowance")}</SettingNote>
       ) : null}
       {/* WHERE THE MAIL GOES, said once and only when it is actually going somewhere. The engine
           knows which provider is configured; what this row is responsible for is not letting an
           automatic path be armed without the sentence being on screen at the same moment. */}
       {value?.on && value.modelReady ? (
-        <SettingsNote>{t("autoSuggestPrivacy")}</SettingsNote>
+        <SettingNote>{t("autoSuggestPrivacy")}</SettingNote>
       ) : null}
       {failed ? <p className="join-error">{t("saveFailed")}</p> : null}
       {value !== null && act !== null ? (

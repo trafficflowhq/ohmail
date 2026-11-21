@@ -164,3 +164,28 @@ it("refuses an old answer on the server when a later send of the same draft is h
   expect((await db.select({ status: drafts.status }).from(drafts).where(eq(drafts.id, row!.id)))[0]?.status).toBe("unverified");
   expect((await db.select({ status: outboundSends.status }).from(outboundSends).where(eq(outboundSends.id, attempt!.id)))[0]?.status).toBe("unverified");
 });
+
+it("offers Mailboxes when the sending mailbox is not signed in", async () => {
+  const parent = message("parent");
+  const row: EngineDraft = {
+    ...replyDraft("letter", parent.id, "Words waiting for an answer"),
+    status: "draft",
+    inReplyToMessageId: null,
+    subject: "A letter to send",
+  };
+  const shell = await mountShell("#/drafts", [parent], [row]);
+  const ui = within(shell.el);
+  await press(await ui.findByRole("option", { name: /A letter to send/ }), "open the draft");
+  await ui.findByRole("textbox", { name: en.compose.subject });
+  Object.assign(shell.refuseSend, { on: true, code: "mailbox_not_signed_in" });
+  await press(within(ui.getByRole("toolbar", { name: "Send or discard" })).getByRole("button", { name: "Send" }), "attempt delivery");
+  const routes: string[] = [];
+  const readRoute = () => routes.push(window.location.hash);
+  window.addEventListener("hashchange", readRoute);
+  try {
+    await press(await ui.findByRole("button", { name: "Mailboxes" }), "open Mailboxes");
+    expect(routes).toContain("#/settings/mailboxes");
+  } finally {
+    window.removeEventListener("hashchange", readRoute);
+  }
+});

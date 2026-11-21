@@ -8,7 +8,11 @@ import { bridgeFetch } from "../src/bridge-fetch.js";
 import { cloudSuggestWire } from "../src/cloud-suggest.js";
 import { consentOverBridge } from "../src/local-consent.js";
 
-vi.mock("../src/bridge-fetch.js", () => ({ bridgeAvailable: () => true, bridgeFetch: vi.fn() }));
+vi.mock("../src/bridge-fetch.js", async () => ({
+  ...await vi.importActual<typeof import("../src/bridge-fetch.js")>("../src/bridge-fetch.js"),
+  bridgeAvailable: () => true,
+  bridgeFetch: vi.fn(),
+}));
 const bridge = vi.mocked(bridgeFetch);
 const sender = ["sender", "example.invalid"].join("@");
 const words = (key: string) => key;

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { within } from "@testing-library/react";
 import { readingColumn, seatedList } from "./ohbox/_finders.js";
 import {
-  ISO, act, answerStoreWith, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv,
+  ISO, act, answerStoreWith, answerSyncWith, goTo, installShellEnv, liveAccountResponse, mailbox, mountShell, teardownShellEnv,
   textOf, tick,
 } from "./fixtures/live-walk-shell";
 
@@ -229,7 +229,7 @@ describe("History", () => {
     globalThis.fetch = (input, init) => {
       if ((init?.method ?? "GET") === "GET" && /\/messages\/first-ever(?:\?|$)/.test(String(input))) {
         lookups.push(first.id);
-        return Promise.resolve(Response.json(first));
+        return Promise.resolve(liveAccountResponse(Response.json(first)));
       }
       return fetchMail(input, init);
     };

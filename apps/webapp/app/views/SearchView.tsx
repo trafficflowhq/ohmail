@@ -26,7 +26,7 @@ import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { addressHref } from "../shell/address-view";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
-import { useScopeHere } from "@ohmail/app/frame";
+import { useScopeHere } from "@ohmail/app/frame/scope";
 import "./search-keys.css";
 
 export { ARCHIVE_TIMEOUT_MS } from "@ohmail/app-logic/search";

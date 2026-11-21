@@ -137,17 +137,17 @@
     display: inline-flex;
   }
 
-  /* Its digit stands in the key's place while the keys are within the rail, and only then. */
+  /* Only keyboard focus in the rail reveals the numbered shortcuts. */
   .oh-railentry-digit {
     display: none;
   }
 
-  .oh-rail:focus-within .oh-railentry-digit {
+  .oh-rail:has(:focus-visible) .oh-railentry-digit {
     display: inline-flex;
     flex: none;
   }
 
-  :root .oh-rail:focus-within .oh-railentry[data-digit] > .oh-railentry-key {
+  :root .oh-rail:has(:focus-visible) .oh-railentry[data-digit] > .oh-railentry-key {
     display: none;
   }
 

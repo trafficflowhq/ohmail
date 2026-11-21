@@ -67,6 +67,7 @@ local-engine = [
     "dep:tauri-plugin-autostart",
     "dep:tauri-plugin-notification",
     "dep:notify-rust",
+    "dep:mac-notification-sys",
     "dep:tauri-plugin-deep-link",
     "dep:tauri-plugin-single-instance",
     "dep:zbus",
@@ -360,6 +361,7 @@ windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_Wind
 # already in this binary's graph at these versions, with these features among those wry turns on,
 # so naming them adds no third-party code to audit; MIT OR Apache-2.0, like everything else here.
 [target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = { version = "0.6.15", optional = true }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSURL", "NSURLRequest"] }
 block2 = "0.6"

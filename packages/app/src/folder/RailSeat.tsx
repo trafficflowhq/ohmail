@@ -15,6 +15,7 @@ import { useConsent } from "@ohmail/app-logic/consent";
 import { isRemovedMailbox } from "@ohmail/app-logic/mail-state/mail-state";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { syncMayRead } from "@ohmail/app-logic/session/sync-scheduler";
+import { mailboxAddressCount } from "@ohmail/app-logic/reader";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { useFrame } from "../frame/commands.js";
 import { usePressWhereOn } from "../frame/room.js";
@@ -77,7 +78,7 @@ export function FolderRailSeat() {
       tapMenus={plan.rail === "dock" || plan.pointer === "coarse"}
       scope={host.session.scope}
       folders={live.folders}
-      mailboxCount={mailboxes?.length}
+      mailboxCount={mailboxes === null ? undefined : mailboxAddressCount(mailboxes)}
       writable={
         writable
           ? {

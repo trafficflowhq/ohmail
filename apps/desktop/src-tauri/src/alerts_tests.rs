@@ -14,7 +14,7 @@ const TWO: u64 = 1_794_319_200_000;
 impl Alerts {
     fn pass(&self, live: &Live, now_ms: u64) -> (Vec<Alert>, Duration, u64) {
         let mut due = Vec::new();
-        let (sleep, turn) = self.dispatch(|| live.clone(), || now_ms, || true, |alert, _| due.push(alert.clone()));
+        let (sleep, turn) = self.dispatch(|| live.clone(), || now_ms, || true, |alert, _, _| due.push(alert.clone()));
         (due, sleep, turn)
     }
 }
@@ -306,7 +306,7 @@ fn a_due_alert_is_rechecked_after_the_platform_answers_whether_it_can_draw() {
                 _ => { *mailbox.borrow_mut() = serving("mb-2"); }
             }
             true
-        }, |alert, _| labels.push(alert.label.clone()));
+        }, |alert, _, _| labels.push(alert.label.clone()));
         assert_eq!(labels, if change == "private" { vec![Label::Busy] } else { vec![] }, "{change}");
     }
 }
@@ -322,7 +322,7 @@ fn a_delayed_platform_answer_uses_the_lateness_limit_at_the_final_handoff() {
         alerts.dispatch(|| serving("mb-1"), || clock.get(), || {
             clock.set(due + delay);
             true
-        }, |_, _| drawn += 1);
+        }, |_, _, _| drawn += 1);
         assert_eq!(drawn, draws);
     }
 }

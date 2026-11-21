@@ -1174,7 +1174,7 @@ describe("autoUnsubscribeDoor — what this build says, and what it lets you cha
     expect(screener).toContain("confirms: autoUnsubscribeConfirms(facts),");
     expect(screener).toContain("autoUnsubscribe: discloses,");
     expect(settings, "the switch must read the same rule as the disclosure").toContain("autoUnsubscribeDoor({");
-    expect(settings, "the switch must be gated by the control answer").toMatch(/return from && control \?/);
+    expect(settings, "the switch must be gated by the control answer").toMatch(/return from && control\s*\?/);
     expect(pane, "the mounted pane uses that control").toContain("const unsubscribe = useUnsubscribeSetting();");
     expect(pane).toMatch(/\bunsubscribe,\s*review:/);
   });

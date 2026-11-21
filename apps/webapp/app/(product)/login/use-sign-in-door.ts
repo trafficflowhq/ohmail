@@ -12,6 +12,8 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { checkSettingsHandoff } from "../../settings-handoff-client";
+import { settingsDestination } from "../../settings-handoff";
 import { useRouter } from "next/navigation";
 import type { SignInFactor, SignInRefusal } from "@ohmail/app/doors";
 import {
@@ -62,6 +64,7 @@ export const METHOD_OF: Readonly<Record<SignInFactor, Method>> = { passkey: "web
 
 /** What the sign-in's ceremony holds, and its acts. The login token never leaves it. */
 export interface SignInCeremony {
+  invalidHandoff: boolean;
   stage: Stage;
   email: string;
   setEmail(v: string): void;
@@ -87,8 +90,12 @@ export interface SignInCeremony {
   restart(): void;
 }
 
-export function useSignInDoor({ next = null }: { next?: Continuation | null }): SignInCeremony {
+export function useSignInDoor({ next = null, handoff = null }: {
+  next?: Continuation | null;
+  handoff?: string | null;
+}): SignInCeremony {
   const router = useRouter();
+  const [invalidHandoff, setInvalidHandoff] = useState(false);
 
   /** Set when a sign-in elsewhere moved this tab back to its request: a later answer moves nothing. */
   const leftRef = useRef(false);
@@ -96,6 +103,14 @@ export function useSignInDoor({ next = null }: { next?: Continuation | null }): 
   /** Once a session exists: the approval page's return, else the named continuation, else the app. */
   const proceed = (fallback: string, how: "push" | "replace"): void => {
     if (leftRef.current) return;
+    if (handoff !== null) {
+      void checkSettingsHandoff(handoff).then((answer) => {
+        if (answer.kind === "ready") router[how](settingsDestination(handoff, answer.pane));
+        else if (answer.kind === "invalid") setInvalidHandoff(true);
+        else restart();
+      });
+      return;
+    }
     const back = takeApprovalReturn();
     if (back !== null) router[how](back);
     else if (next !== null) leaveFor(next);
@@ -220,14 +235,23 @@ export function useSignInDoor({ next = null }: { next?: Continuation | null }): 
       if (outcome.kind === "none" || attempt >= CONFIRM_ATTEMPTS) return;
       timer = setTimeout(() => { checkOutRef.current = ask(attempt + 1); }, nextConfirmDelay(attempt, outcome.retryAfterMs));
     };
-    checkOutRef.current = ask(1);
+    if (handoff !== null) {
+      checkOutRef.current = checkSettingsHandoff(handoff, abort.signal).then((answer) => {
+        verdictRef.current = true;
+        if (cancelled) return;
+        if (answer.kind === "ready") router.replace(settingsDestination(handoff, answer.pane));
+        else if (answer.kind === "invalid") setInvalidHandoff(true);
+      });
+    } else {
+      checkOutRef.current = ask(1);
+    }
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
       abort.abort();
     };
     // `proceed` is left out: it reads `next`, a server prop, which is listed.
-  }, [configured, router, next]);
+  }, [configured, router, next, handoff]);
 
   /**
    * A fresh self-host server has nobody to sign in. Self-host builds only (compile-time —
@@ -265,7 +289,7 @@ export function useSignInDoor({ next = null }: { next?: Continuation | null }): 
       if (!cancelled && hello?.needsSetup === true) router.replace("/setup");
     })();
     return stop;
-  }, [configured, router]);
+  }, [configured, router, handoff]);
 
   /*
    * SIGNED IN IN ANOTHER TAB. A tab `/approve` sent here keeps its request id; while it does, a
@@ -274,7 +298,7 @@ export function useSignInDoor({ next = null }: { next?: Continuation | null }): 
    * stops the ladder above, because this page is a ceremony from then on.
    */
   useEffect(() => {
-    if (!configured || !approvalReturnKept()) return;
+    if (!configured || handoff !== null || !approvalReturnKept()) return;
     const stop = whenSignedInElsewhere(() => {
       const back = takeApprovalReturn();
       if (back === null) return;
@@ -284,7 +308,7 @@ export function useSignInDoor({ next = null }: { next?: Continuation | null }): 
     const previous = cancelBootstrapRef.current;
     cancelBootstrapRef.current = () => { previous?.(); stop(); };
     return stop;
-  }, [configured, router]);
+  }, [configured, router, handoff]);
 
   const run = async (fn: () => Promise<void>, tried: FactorTried): Promise<void> => {
     setBusy(true);
@@ -407,7 +431,7 @@ export function useSignInDoor({ next = null }: { next?: Continuation | null }): 
 
   return {
     stage, email, setEmail, password, setPassword, methods: challenge?.methods ?? [], method, setMethod, code, setCode,
-    busy, refusal, signedOut, pending, configured, submitPassword, submitWith, finishWithPasskey, finishWithCode,
+    busy, refusal, signedOut, pending, configured, invalidHandoff, submitPassword, submitWith, finishWithPasskey, finishWithCode,
     finishWith, restart,
   };
 }

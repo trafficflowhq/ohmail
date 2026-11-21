@@ -9,7 +9,7 @@
 import type { ReactNode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NONE, type FeatureEntry, type FrameSupplies, type HostContract, type None } from "@ohmail/app/host";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { ServerHello } from "../../app/hello";
@@ -104,44 +104,79 @@ async function inputsOf(selfHost: boolean, server = { pairing: true, remoteImage
   return (await hostOf(selfHost, server)).read;
 }
 
+const ACCOUNT = "acct-1";
+
+beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_API_BASE", "/api");
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    Response.json({}, { headers: { "X-Ohmail-Account": ACCOUNT } }),
+  ));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+});
+
 /** The web's host as the page builds it, and what the adapter reads back off it. */
 async function hostOf(selfHost: boolean, server = { pairing: true, remoteImages: false, searchPeople: false }) {
   flavor.selfHost = selfHost;
   vi.resetModules();
-  const { useWebHost } = await import("../../app/(product)/mailbox/web-supplies");
+  const { createSyncGate, registerSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
+  const { rememberOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
+  const { bindApiOwner } = await import("../../app/api-client");
+  const consent = await import("../../app/(product)/mailbox/consent-over-api");
+  const profile = await import("../../app/profile-import-wire");
+  const older = await import("../../app/shell/older-body");
+  const suggest = await import("../../app/(product)/mailbox/suggest-wire");
+  const away = await import("@ohmail/app/settings/away");
+  const factories = {
+    consent: vi.spyOn(consent, "cloudConsent"),
+    review: vi.spyOn(consent, "cloudSeedReview"),
+    profile: vi.spyOn(profile, "profileImportFor"),
+    older: vi.spyOn(older, "cloudOlderBodyFor"),
+    suggest: vi.spyOn(suggest, "suggestWireFor"),
+    away: vi.spyOn(away, "awayFeedOver"),
+  };
+  const { useCloudMailHost: useWebHost } = await import("../../app/(product)/mailbox/CloudShell");
   const mailboxFacts = async () => [];
+  rememberOwner(ACCOUNT);
+  bindApiOwner(ACCOUNT);
+  const mirror = registerSyncGate(named<HostContract["engine"]>("engine"), createSyncGate(ACCOUNT));
   const words = {
     server, invites: selfHost, subscriptionPage: !selfHost, withdrawManage: () => undefined, storageBlock: !selfHost,
     account: "acct-1", firstRun: undefined, mailboxFacts, resolve: async () => ({ kind: "none" }) as never, confirmed: () => undefined,
   };
-  const { result } = renderHook(() => useWebHost(engine, words, frame), { wrapper: Words });
-  return { host: result.current, read: { inputs: readBack(result.current), mailboxFacts } };
+  const { result } = renderHook(() => useWebHost(mirror, words, frame), { wrapper: Words });
+  return { host: result.current, read: { inputs: readBack(result.current), mailboxFacts, factories } };
 }
 
 describe("the web's host, read back as today's inputs", () => {
   it("hands every hosted wire as the shared file's own object, and the managed service's words", async () => {
-    const { inputs, mailboxFacts } = await inputsOf(false);
-    const { CLOUD_CONSENT } = await import("../../app/(product)/mailbox/consent-over-api");
-    const { HOSTED } = await import("../../app/shell/ProfileImportCard");
-    const { CLOUD_OLDER_BODY } = await import("../../app/shell/older-body");
+    const { inputs, mailboxFacts, factories } = await inputsOf(false);
     const junk = await import("../../app/(product)/mailbox/junk-wire");
     const trash = await import("../../app/shell/trash-window");
-    const suggest = await import("../../app/(product)/mailbox/suggest-wire");
     const draft = await import("../../app/(product)/mailbox/draft-reply-wire");
-    const { away } = await import("../../app/api-client");
     const { browserNotificationHost } = await import("../../app/shell/notification-settings");
     const { browserNoticePage, webNoticeEmitter } = await import("../../app/shell/notice-emitter");
     const { forgetOwner, markSignedOutPending, readOwner, rememberOwner } =
       await import("@ohmail/app-logic/storage/owner-cookie");
-    const { liveBodyOverApi, SEND_SURFACE } = await import("../../app/(product)/mailbox/web-supplies");
-    expect(inputs.consentTransport).toBe(CLOUD_CONSENT);
-    expect(inputs.profileImportTransport).toBe(HOSTED);
-    expect(inputs.olderBodyWire).toBe(CLOUD_OLDER_BODY);
+    const { liveBodyOverApi } = await import("../../app/(product)/mailbox/web-supplies");
+    const { SEND_SURFACE } = await import("../../app/(product)/mailbox/CloudShell");
+    for (const build of [factories.consent, factories.profile, factories.older, factories.suggest]) {
+      expect(build.mock.calls).toEqual([[ACCOUNT]]);
+    }
+    expect(inputs.consentTransport).toBe(factories.consent.mock.results[0]?.value);
+    expect(inputs.profileImportTransport).toBe(factories.profile.mock.results[0]?.value);
+    expect(inputs.olderBodyWire).toBe(factories.older.mock.results[0]?.value);
     expect(inputs.junkWire).toBe(junk.cloudWire);
     expect(inputs.trashWire).toBe(trash.cloudWire);
-    expect(inputs.suggestWire).toBe(suggest.CLOUD_WIRE);
+    expect(inputs.suggestWire).toBe(factories.suggest.mock.results[0]?.value);
     expect(inputs.draftReplyWire).toBe(draft.CLOUD_WIRE);
-    expect(inputs.awayTransport).toBe(away);
+    expect(factories.away).toHaveBeenCalledTimes(1);
+    expect(inputs.awayTransport).toBe(factories.away.mock.results[0]?.value.wire);
     // The browser's own notification host, each part the shared file's object; its notices the page's own emitter.
     const pageEmitter = webNoticeEmitter(browserNoticePage, () => { throw new Error("nothing is drawn here"); });
     expect(inputs.notificationHost).toEqual({
@@ -209,19 +244,19 @@ describe("the web's host, read back as today's inputs", () => {
     const sent: string[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(`${init?.method ?? "GET"} ${String(input)}`);
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      return Response.json({}, { headers: { "X-Ohmail-Account": ACCOUNT } });
     }) as typeof globalThis.fetch;
     try {
       process.env.NEXT_PUBLIC_API_BASE = "/api";
-      const { host } = await hostOf(false);
+      const { host, read: { factories } } = await hostOf(false);
       const review = host.wires.seedReview;
       expect(review, "a page with its own client offers no review").not.toBe(NONE);
       if (review === NONE) return;
       await review.read();
       await review.confirm(["lena@example.invalid"], { idempotencyKey: "press-1" });
-      expect(sent).toEqual(["GET /api/consent/seed", "POST /api/consent/seed"]);
-      const { CLOUD_SEED_REVIEW } = await import("../../app/(product)/mailbox/consent-over-api");
-      expect(review).toBe(CLOUD_SEED_REVIEW);
+      expect(sent).toEqual(["GET /api/away-responder", "GET /api/consent/seed", "POST /api/consent/seed"]);
+      expect(factories.review.mock.calls).toEqual([[ACCOUNT]]);
+      expect(review).toBe(factories.review.mock.results[0]?.value);
 
       process.env.NEXT_PUBLIC_API_BASE = "";
       expect((await hostOf(false)).host.wires.seedReview, "a page with no client offers a review nothing can run").toBe(NONE);
@@ -233,9 +268,10 @@ describe("the web's host, read back as today's inputs", () => {
   });
 
   it("holds the folders flag to the consent object's own word", async () => {
-    const { inputs } = await inputsOf(false);
-    const { CLOUD_CONSENT } = await import("../../app/(product)/mailbox/consent-over-api");
-    expect(inputs.consentTransport?.foldersStorable).toBe(CLOUD_CONSENT.foldersStorable);
+    const { inputs, factories } = await inputsOf(false);
+    expect(factories.consent.mock.calls).toEqual([[ACCOUNT]]);
+    expect(inputs.consentTransport?.foldersStorable).toBe(factories.consent.mock.results[0]?.value.foldersStorable);
+    expect(inputs.consentTransport?.foldersStorable).toBe(true);
   });
 });
 
@@ -253,7 +289,7 @@ async function pageAsking(hellos: Array<ServerHello | null>) {
   process.env.NEXT_PUBLIC_API_BASE = "/api";
   vi.resetModules();
   const { useServerWords } = await import("../../app/server-words");
-  const { useWebHost } = await import("../../app/(product)/mailbox/web-supplies");
+  const { useCloudMailHost: useWebHost } = await import("../../app/(product)/mailbox/CloudShell");
   const { WEB_IMAGES } = await import("../../app/(product)/mailbox/image-wire");
   const words = {
     invites: false, subscriptionPage: true, withdrawManage: () => undefined, storageBlock: true,

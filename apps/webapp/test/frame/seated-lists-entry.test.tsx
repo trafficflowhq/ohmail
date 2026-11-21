@@ -59,7 +59,7 @@ const PAGE = () =>
   }), { status: 200, headers: { "content-type": "application/json" } });
 
 const json = (body: unknown): Response =>
-  new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  Response.json(body, { headers: { "X-Ohmail-Account": ACCOUNT } });
 
 /** Every request the page sent with a method other than GET: where to, and its body as the server would read it. */
 let wrote: { url: string; method: string; body: string; intent: string | null }[] = [];

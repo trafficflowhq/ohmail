@@ -396,7 +396,7 @@ describe("a derived Screener row decides over the real wire vocabulary", () => {
   it("hydrating one held message makes it FULL, and touches no other row", async () => {
     const { body, engine, fetched, release } = await bodyFixture();
     await engine.hydrateBody("m1");
-    const rows = screenerSegments(engine.read()).waiting.flatMap((sender) => sender.held);
+    const rows = screenerSegments(engine.read(), NOW).waiting.flatMap((sender) => sender.held);
     expect(fetched).toEqual(["m1"]);
     expect(rows.find((letter) => letter.id === "m1")).toMatchObject({ body, bodyState: "full" });
     expect(rows.find((letter) => letter.id === "m2")).toMatchObject({ body: "snippet m2", bodyState: "snippet" });

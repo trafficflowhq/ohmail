@@ -43,7 +43,7 @@ describe("a stream card over a husk moved out of Junk", () => {
     const { host } = await card();
     expect(host.textContent).toContain(messages.body.withheldJunkLoading);
     act(() => { vi.advanceTimersByTime(JUNK_REFILL_BOUND_MS + 1); });
-    expect(host.textContent).toContain(messages.body.failed);
+    expect(host.textContent).toContain(messages.body.kept.failed);
     expect(host.textContent).not.toContain(messages.body.withheldJunkLoading);
   });
 });

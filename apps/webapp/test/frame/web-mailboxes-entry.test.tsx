@@ -8,10 +8,25 @@ import type { ReactNode } from "react";
 import { renderHook } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NONE, type FeatureEntry, type FrameSupplies, type HostContract } from "@ohmail/app/host";
-import { useWebHost, type WebWords } from "../../app/(product)/mailbox/web-supplies";
-import { MAILBOXES_NOTICES } from "../../app/shell/browser-mail";
+import { NONE, type FrameSupplies, type HostContract } from "@ohmail/app/host";
+import { useCloudMailHost as useWebHost } from "../../app/(product)/mailbox/CloudShell";
+import { type WebWords } from "../../app/(product)/mailbox/web-supplies";
 import messages from "../../messages/en.json";
+
+const { mailboxNotice, awayNotice } = vi.hoisted(() => ({
+  mailboxNotice: { kind: "organizer", title: "Mailbox update" },
+  awayNotice: { kind: "away", title: "Away responder is on" },
+}));
+
+vi.mock("../../app/shell/browser-mail", async (original) => ({
+  ...await original<typeof import("../../app/shell/browser-mail")>(),
+  MAILBOXES_NOTICES: () => [mailboxNotice],
+}));
+
+vi.mock("@ohmail/app/settings/away", async (original) => ({
+  ...await original<typeof import("@ohmail/app/settings/away")>(),
+  useAwayNotice: () => [awayNotice],
+}));
 
 const Words = ({ children }: { children: ReactNode }) => (
   <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">{children}</NextIntlClientProvider>
@@ -55,6 +70,8 @@ describe("the web's host and the Mailboxes section", () => {
     const view = renderHook((w: WebWords) => useWebHost(engine, w, frame), { initialProps: words, wrapper: Words });
     const entry = view.result.current.features.mailboxes;
     if (entry === NONE) throw new Error("the web lists the Mailboxes section");
-    expect((entry as FeatureEntry).notice).toBe(MAILBOXES_NOTICES);
+    const useNotices = entry.notice;
+    if (useNotices === undefined) throw new Error("the Mailboxes entry supplies no notices");
+    expect(renderHook(useNotices).result.current).toEqual([mailboxNotice, awayNotice]);
   });
 });

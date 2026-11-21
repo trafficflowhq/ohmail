@@ -2,7 +2,7 @@ import { refusalOf, watchAwayApplied, type AwayResponderWire } from "../away/wat
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { useEffect, useRef, useState } from "react";
 import { useLocale, useText } from "../../text/index.js";
-import { DatePicker } from "@ohmail/ui";
+import { DatePicker } from "../../calendar/DatePicker.js";
 import {
   AWAY_START,
   awayPileChoices,

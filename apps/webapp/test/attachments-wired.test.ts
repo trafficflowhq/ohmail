@@ -7,7 +7,7 @@ import { createEngine } from "../app/shell/engine-config.js";
 import { createSyncGate, transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 /* The `chrome` memo below is located by its DECLARED NAME, never by the hook it is declared
    with — the rule, and the three ways a hook spelling fails, are in the helper. */
-import { shellFrameOf, sliceOfDeclaration } from "./source-anchor.js";
+import { sliceOfDeclaration } from "./source-anchor.js";
 
 /**
  * ═══ GAP THE PAPERCLIP IS REACHABLE FROM A REAL ACCOUNT ══════════════════════════
@@ -397,12 +397,12 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     expect(save, "a tile press opens the viewer instead of saving the file")
       .not.toMatch(/\blook\b/);
     expect(main, "nothing on a tile opens the preview any more").toMatch(
-      /onPress: \(\) =>\s*lookable\s*\?\s*\(look as [^\n]*?\)\(messageId, item\.id\)/,
+      /onPress: \(\) => \(look \? look\(item\.id\) : files\.open\(messageId, item\.id\)\)/,
     );
     // The predicate is what keeps an SVG — a document that executes script — from being
     // offered a render. Dropping it makes every attachment previewable.
     expect(pane, "the strip is not told which files may be rendered").toMatch(
-      /const lookable = look !== NONE && fileLookOf\(item\.mimeType\) !== "other";/,
+      /const look = fileLookOf\(item\.mimeType\) !== "other" \? preview : null;/,
     );
   });
 
@@ -413,13 +413,12 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     // no matching item and, when the message carries nothing else, opens nothing at all. The strip
     // and the overlay must agree on which attachments exist. Source-level because the empty-list →
     // no-overlay path is exactly the "clicking does nothing" the reader saw.
-    const shell = code(read("../app/shell/AppShell.tsx"));
-    const from = shell.indexOf("<AttachmentPreview");
-    expect(from, "AppShell no longer mounts <AttachmentPreview> — re-aim this").toBeGreaterThan(-1);
-    // The `itemsOf` that feeds the overlay's `items` sits just above the mount.
-    const mountBlock = shell.slice(Math.max(0, from - 1200), from);
-    expect(mountBlock, "the overlay's item list drops inline images, so an inline png cannot open")
-      .toMatch(/itemsOf\([^)]*includeInlineParts:\s*true/);
+    const files = sliceOfDeclaration(code(read("../../../packages/app/src/reader/files/Files.tsx")), "LetterFiles");
+    expect(files, "the tile list must supply the same inline item to the preview")
+      .toMatch(/const list = files\.itemsOf\(messageId, \{ includeInlineParts: true \}\)/);
+    expect(files).toMatch(/const items = list\.items;/);
+    expect(files).toMatch(/items\.map\(\(item\) =>/);
+    expect(files).toMatch(/<LetterPreview[\s\S]*?items=\{items\}/);
   });
 
   it("`AppShell` supplies the chrome, so BOTH mounts share one list of bytes", () => {
@@ -461,20 +460,19 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     // selection MOVE, kept here, and the last pane letting the message go, reported by the seam.
     // Behaviour is held in `every-file-is-shown.test.tsx`; this is the join, source-level for
     // the reason every assertion in this group is.
-    const shell = code(shellFrameOf("previewSelection").source);
-    const from = shell.indexOf("setPreviewFor(null)");
-    expect(from, "AppShell no longer derive-closes the preview — re-aim this").toBeGreaterThan(-1);
-    const effect = shell.slice(Math.max(0, from - 1200), from + 400);
-    // The COMPARISON, not the ref's name: the ref's declaration and assignment survive a
-    // deleted comparison, and a pin that matched them stayed green through exactly that
-    // mutation (watched happen — this line was `/previewSelection/` for ten minutes).
-    expect(effect, "the previous-selection comparison is gone — a within-thread move leaves the overlay over revoked bytes")
-      .toMatch(/before !== \(selectedOhbox\?\.id \?\? null\)\) setPreviewFor\(null\)/);
-    // The second trigger: the seam names the message its last pane let go, and the shell closes
-    // a preview over it. Without it a deleted sibling or a closed reader keeps its overlay.
-    const app = code(read("../app/shell/AppShell.tsx"));
-    expect(app, "AppShell does not close a preview when the last pane lets its message go")
-      .toMatch(/onUnshown: \(id\) => setPreviewFor\(\(p\) => \(p\?\.messageId === id \? null : p\)\)/);
+    const reader = code(read("../../../packages/app/src/reader/Reader.tsx"));
+    expect(reader, "the route and selected letter identify the preview's selection")
+      .toContain('previewSelection={`${route.place}:${openId}`}');
+    const letter = code(read("../../../packages/app/src/reader/Letter.tsx"));
+    expect(letter, "the preview is mounted under the letter that owns its files")
+      .toMatch(/<LetterFiles messageId=\{message\.id\} selection=\{previewSelection\} parts=\{parts\} \/>/);
+    const files = code(read("../../../packages/app/src/reader/files/Files.tsx"));
+    expect(files, "a changed selection must stop drawing the old preview immediately")
+      .toMatch(/const activeId = picked\?\.selection === selection \? picked\?\.id : undefined;/);
+    expect(files, "a disappeared attachment cannot keep the preview open")
+      .toMatch(/activeId && typeof look === "object" && items\.some\(\(item\) => item\.id === activeId\)/);
+    expect(files, "the last pane's unmount releases its hold on the opened letter")
+      .toMatch(/useEffect\(\(\) => hold\?\.\(messageId\), \[hold, messageId\]\);/);
     const seam = code(read("../../../packages/app-logic/src/reader/attachments.ts"));
     expect(seam, "the seam no longer reports the last release")
       .toMatch(/holds\.current\.delete\(id\);[\s\S]{0,120}onUnshown\.current\?\.\(id\);/);

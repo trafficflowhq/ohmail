@@ -60,10 +60,9 @@ const message: EngineMessage = {
 
 /** The send line's text: what the reply or the letter says of its send (its role), nothing else of the sheet. */
 function lineOf(el: HTMLElement): string {
-  return [...el.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')]
-    .map((n) => (n.textContent ?? "").trim())
-    .filter((text) => text !== "")
-    .join(" ");
+  const lines = [...el.querySelectorAll<HTMLElement>('[role="status"][data-place]')];
+  expect(lines, "the send status").toHaveLength(1);
+  return (lines[0]!.textContent ?? "").trim();
 }
 
 async function render(send: SendState, messages: typeof en | typeof de, locale: string, scope: "reply" | "compose" = "reply"): Promise<string> {
@@ -98,9 +97,9 @@ describe("a failed send never relays the wire", () => {
       en, "en",
     );
     expect(text, "the protocol string was quoted at the user").not.toContain("authentication required");
-    expect(text).toContain("Sending didn't work");
+    expect(text).toContain("Sending did not work");
     expect(text, "the sentence must say the draft survives").toContain("draft is kept");
-    expect(text, "the sentence must point at the retry that exists").toContain("Try again");
+    expect(text, "the sentence must point at the retry that exists").toContain("try again");
   });
 
   it("an SMTP refusal string does not reach the user either", async () => {
@@ -109,7 +108,7 @@ describe("a failed send never relays the wire", () => {
       en, "en",
     );
     expect(text).not.toContain("relay access denied");
-    expect(text).toContain("Sending didn't work");
+    expect(text).toContain("Sending did not work");
   });
 
   it("the German catalog carries the same plain sentence — the incident was seen in German", async () => {
@@ -136,7 +135,7 @@ describe("a failed send never relays the wire", () => {
       en, "en",
     );
     expect(en1).toContain("The original could not be loaded, so it was not forwarded.");
-    expect(en1).not.toContain("Sending didn't work");
+    expect(en1).not.toContain("Sending did not work");
     const de1 = await render(
       { phase: "failed", reason: "The original could not be loaded, so it was not forwarded.", code: "forward_original_unavailable" },
       de, "de",
@@ -154,7 +153,7 @@ describe("a failed send never relays the wire", () => {
       const en1 = await render(send, en, "en");
       expect(en1).toContain(enText);
       expect(en1).toContain("draft is kept");
-      expect(en1).not.toContain("Sending didn't work");
+      expect(en1).not.toContain("Sending did not work");
       act(() => root?.unmount());
       host?.remove();
       const de1 = await render(send, de, "de");
@@ -172,8 +171,8 @@ describe("a failed send never relays the wire", () => {
       const en1 = await render(send, en, "en", scope);
       expect(en1).toContain("Your mail server couldn't be reached");
       expect(en1).toContain("kept in Drafts");
-      expect(en1).not.toContain("Try again");
-      expect(en1).not.toContain("Sending didn't work");
+      expect(en1).not.toMatch(/try again/i);
+      expect(en1).not.toContain("Sending did not work");
       act(() => root?.unmount());
       host?.remove();
       const de1 = await render(send, de, "de", scope);
@@ -190,7 +189,7 @@ describe("a failed send never relays the wire", () => {
       const en1 = await render(send, en, "en", scope);
       expect(en1).toContain("Your mail server is busy");
       expect(en1).toContain("draft is kept");
-      expect(en1).not.toContain("Sending didn't work");
+      expect(en1).not.toContain("Sending did not work");
       act(() => root?.unmount());
       host?.remove();
       const de1 = await render(send, de, "de", scope);
@@ -201,7 +200,7 @@ describe("a failed send never relays the wire", () => {
   });
 
   it("a forward's refusals and a timed-out dial say what happened, in both scopes and both languages", async () => {
-    // 2026-10-19: a forward refused `attachment_part_mismatch` showed "Sending didn't work … Try
+    // 2026-10-19: a forward refused `attachment_part_mismatch` showed "Sending did not work … Try
     // again" — the one sentence that says nothing about what failed. Each code below can reach a
     // person from the send route, and each now names its cause and the act that helps.
     const cases = [
@@ -217,7 +216,7 @@ describe("a failed send never relays the wire", () => {
         const en1 = await render(send, en, "en", scope);
         expect(en1, code).toContain(enText);
         expect(en1, code).toContain("draft is kept");
-        expect(en1, code).not.toContain("Sending didn't work");
+        expect(en1, code).not.toContain("Sending did not work");
         expect(en1, code).not.toContain("the server's own words");
         act(() => root?.unmount());
         host?.remove();
@@ -238,11 +237,11 @@ describe("a failed send never relays the wire", () => {
     expect(send).toMatchObject({ phase: "failed", code: "mailbox_not_signed_in" });
     for (const scope of ["reply", "compose"] as const) {
       expect(await render(send, en, "en", scope))
-        .toBe("Not sent — your draft is kept. This mailbox isn't signed in here — sign in again in Settings.");
+        .toBe("Not sent. This mailbox isn't signed in here. Your draft is kept, so sign in again in Mailboxes.");
       act(() => root?.unmount());
       host?.remove();
       expect(await render(send, de, "de", scope))
-        .toBe("Nicht gesendet — dein Entwurf ist gesichert. Dieses Postfach ist hier nicht angemeldet — melde es in den Einstellungen neu an.");
+        .toBe("Nicht gesendet. Dieses Postfach ist hier nicht angemeldet. Dein Entwurf ist gesichert, melde es also unter Postfächer erneut an.");
       act(() => root?.unmount());
       host?.remove();
     }
@@ -256,12 +255,14 @@ describe("a failed send never relays the wire", () => {
         const en1 = await render(send, en, "en", scope);
         expect(en1, code).toMatch(/^Not sent\. It's too (long|large) to send/);
         if (code === "draft_too_large") expect(en1, code).toMatch(/the limit is 262(\.1)? kB/i);
-        for (const lie of ["kept", "Try again", "Sending didn't work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
+        for (const lie of ["kept", "Sending did not work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
+        expect(en1, `${code} ${scope}`).not.toMatch(/try again/i);
         act(() => root?.unmount());
         host?.remove();
         const de1 = await render(send, de, "de", scope);
         expect(de1, code).toMatch(/^Nicht gesendet\. Die (Nachricht|Antwort) ist zu (lang|groß) zum Senden/);
-        for (const lie of ["gesichert", "Versuch es", "Senden hat nicht geklappt"]) expect(de1, `${code} ${scope}`).not.toContain(lie);
+        for (const lie of ["gesichert", "Senden hat nicht geklappt"]) expect(de1, `${code} ${scope}`).not.toContain(lie);
+        expect(de1, `${code} ${scope}`).not.toMatch(/versuch es/i);
         act(() => root?.unmount());
         host?.remove();
       }
@@ -274,7 +275,7 @@ describe("a failed send never relays the wire", () => {
       for (const scope of ["reply", "compose"] as const) {
         const en1 = await render(send, en, "en", scope);
         expect(en1, `${code} ${scope}`).toMatch(/^Not sent\. This (message|reply) could not be saved first/);
-        for (const lie of ["kept", "Sending didn't work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
+        for (const lie of ["kept", "Sending did not work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
         act(() => root?.unmount());
         host?.remove();
         const de1 = await render(send, de, "de", scope);

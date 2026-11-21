@@ -22,6 +22,7 @@ import { fragmentOf } from "../frame/route.js";
 import { useEventBrowse } from "./use-event-browse.js";
 import { useGridKeys } from "./use-grid-keys.js";
 import { CalendarFrameHead } from "./CalendarFrameHead.js";
+import { CalendarPanels } from "./CalendarPanels.js";
 import { useFrame } from "../frame/commands.js";
 import type { CalendarPlaceId, FrameCommands, PaneProps, Route } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
@@ -35,6 +36,8 @@ import { YearView } from "../year/index.js";
 import { AgendaView } from "../agenda/index.js";
 import { SearchView } from "../calsearch/index.js";
 import { useFaces, useSettings, useSources, useWhere, type Where } from "./where.js";
+import { useSharedCalendarSettings } from "../calsettings/settings-read.js";
+import { CalendarFirstStep, useCalendarFirstStep } from "./CalendarFirstStep.js";
 import { useNewEvent } from "./use-new-event.js";
 import { DRAFT_EVENT } from "./event-draft.js";
 import type { CalendarEventFace } from "./faces.js";
@@ -50,18 +53,34 @@ export function CalendarBody(pane: PaneProps) {
   const { host } = useFrame();
   const t = useText("calendar");
   const port = host.wires.calendar;
+  const sources = useSources(port);
+  const empty = useCalendarFirstStep();
+  const disabled = useSharedCalendarSettings()?.said?.enabledAt === null;
+  const firstStep = empty || disabled;
   const create = useNewEvent();
   useKeyBindings(
-    create && port !== NONE && pane.keysHere && pane.route.open === null && pane.route.words.panel !== "new"
+    create &&
+      !firstStep &&
+      port !== NONE &&
+      pane.keysHere &&
+      pane.route.open === null &&
+      pane.route.words.panel !== "new"
       ? [{ chord: "c", group: "navigate", label: t("create.title"), run: create }]
       : [],
     "global",
   );
   if (port === NONE) return <RefusalLine>{t("unreadable")}</RefusalLine>;
-  return <CalendarOn port={port} {...pane} />;
+  if (firstStep) return <CalendarFirstStep />;
+  return <CalendarOn port={port} sources={sources} {...pane} />;
 }
 
-function CalendarOn({ port, route, plan, keysHere }: PaneProps & { readonly port: CalendarPort }) {
+function CalendarOn({
+  port,
+  route,
+  plan,
+  keysHere,
+  sources,
+}: PaneProps & { readonly port: CalendarPort; readonly sources: ReturnType<typeof useSources> }) {
   const { commands } = useFrame();
   const t = useText("calendar");
   const zone = useTimeZone();
@@ -71,7 +90,6 @@ function CalendarOn({ port, route, plan, keysHere }: PaneProps & { readonly port
   const [todayVisit, setTodayVisit] = useState(0);
   const panelOn = route.words.panel === "agenda" && plan.device !== "phone";
   const monthRun = useMonthViewport();
-  const sources = useSources(port);
   const found = useFaces(port, sources, monthRun ?? where?.span ?? null, where?.today ?? null, zone, zones);
   /* The Agenda beside a view lists its own days, never only the view's. */
   const beside = useFaces(
@@ -297,47 +315,6 @@ function useCalendarCanvas(
     onDay: (day: PlainDate) => go({ place: "day", sub: isoOfDay(day) }),
   };
   return { actions, suppressClick, setPreview, go, closePanel, edge, input, acts, timeProps };
-}
-
-function CalendarPanels({
-  where,
-  route,
-  plan,
-  keysHere,
-  input,
-  acts,
-  edge,
-  onClose,
-  onAgendaRow,
-}: PaneProps & {
-  where: Where;
-  input: RangeInput;
-  acts: RangeActs;
-  edge: HeldEdge;
-  onClose: () => void;
-  onAgendaRow: (id: string, day: string) => void;
-}) {
-  const entry = useFrame().host.features.calendar;
-  const Invitations = entry === NONE ? NONE : entry.panels.invitations;
-  if (route.words.panel === "invitations" && Invitations !== NONE) {
-    return <Invitations route={route} plan={plan} keysHere={false} onClose={onClose} />;
-  }
-  if (route.words.panel !== "agenda" || plan.device === "phone" || where.place === "agenda") return null;
-  return (
-    <div className="cal-body-panel">
-      <AgendaView
-        input={input}
-        acts={acts}
-        edge={edge}
-        from={where.agenda.first}
-        days={where.agenda.days}
-        onMore={where.agenda.more}
-        onClose={onClose}
-        onRow={onAgendaRow}
-        keysHere={keysHere && route.open === null}
-      />
-    </div>
-  );
 }
 
 function CurrentView({

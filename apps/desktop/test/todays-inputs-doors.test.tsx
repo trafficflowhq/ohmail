@@ -26,8 +26,8 @@ import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
 import { WORDS } from "../../../packages/app/test/reader/support/mail.js";
 
 const seen: { host: HostContract | null; hosts: HostContract[] } = { host: null, hosts: [] };
-vi.mock("../../webapp/app/shell/browser-mail", async (load) => ({
-  ...(await load<object>()),
+vi.mock("../../webapp/app/shell/browser-mail", async () => ({
+  ...await vi.importActual<object>("../../webapp/app/shell/browser-mail"),
   MailFrame: ({ host }: { host: HostContract }) => {
     seen.host = host;
     seen.hosts.push(host);
@@ -147,8 +147,9 @@ describe("the desktop's host, read door by door at the contract", () => {
 
   it("on a self-hosted door: not the managed service, with the same account panes", async () => {
     const host = await draw(props(selfHosted));
-    expect(host.capabilities.service === "managed").toBe(false);
-    expect(host.features.account).not.toBe(NONE);
+    expect(host.capabilities.service).toBe("self");
+    expect(host.features.security).not.toBe(NONE);
+    expect(host.features.account, "the managed browser action belongs to the managed service").toBe(NONE);
   });
 
   it("on a paired door: the other computer's away and nothing priced", async () => {

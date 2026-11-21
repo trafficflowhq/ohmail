@@ -10,8 +10,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow } from "@ohmail/ui";
-import { setTextSize } from "../(product)/mailbox/general-preferences";
-import { DEFAULT_TEXT_SIZE, TEXT_SIZES, readTextSize, type TextSize } from "./text-size";
+import { DEFAULT_TEXT_SIZE, TEXT_SIZES, readTextSize, setTextSize, type TextSize } from "./text-size";
 
 export function TextSizeRow() {
   const t = useTranslations("settings");

@@ -10,6 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
+import { clearSignOutJar, installSessionLocks, markPendingSignOut } from "./fixtures/sign-out-jar.js";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -75,11 +76,17 @@ beforeEach(() => {
   wire = [];
   sessionStorage.clear();
   localStorage.clear();
+  installSessionLocks();
   originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const signal = init?.signal;
     if (url.endsWith("/auth/refresh/logout")) {
+      if (new Headers(init?.headers).get("X-Ohmail-Clear-Logout") === "1") {
+        wire.push("clear");
+        clearSignOutJar();
+        return noContent();
+      }
       wire.push("door");
       const answer = doorScript[Math.min(count("door"), doorScript.length) - 1]!();
       if (answer !== null) return answer;
@@ -90,7 +97,7 @@ beforeEach(() => {
       });
     }
     // The cache purge after a confirmed sign-out presents nothing: answered apart, never a renewal.
-    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") { wire.push("purge"); return new Response(null, { status: 202 }); }
+    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") { wire.push("purge"); return new Response(null, { status: 202, headers: { "Clear-Site-Data": '"cache"' } }); }
     if (url.endsWith("/auth/refresh")) {
       wire.push("refresh");
       if (!refreshable) return json({ error: { code: "refresh_missing", message: "no refresh token" } }, 401);
@@ -125,7 +132,8 @@ afterEach(async () => {
   for (const root of roots) await act(() => root.unmount());
   roots = [];
   document.body.innerHTML = "";
-  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  clearSignOutJar();
+  Reflect.deleteProperty(globalThis.navigator, "locks");
   window.history.replaceState(null, "", "/");
   globalThis.fetch = originalFetch;
   vi.useRealTimers();
@@ -218,7 +226,7 @@ async function acceptInvite(el: HTMLElement): Promise<void> {
 
 describe("/join finishes a pending sign-out instead of reading the session", () => {
   it("access lapsed: the door is asked; neither the session read nor the refresh, nothing of the account", async () => {
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("join");
     await tick(1_000);
     expect(count("door"), "the unfinished sign-out was not presented at the sign-out door").toBe(1);
@@ -231,7 +239,7 @@ describe("/join finishes a pending sign-out instead of reading the session", () 
 
   it("access still live: the previous person's account is never read, nor shown", async () => {
     accessLive = true;
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("join");
     await tick(1_000);
     expect(wire.filter((w) => ACCOUNT_READS.includes(w)), "the previous person's account was read").toEqual([]);
@@ -241,7 +249,7 @@ describe("/join finishes a pending sign-out instead of reading the session", () 
 
   it("a door that keeps failing: the ladder is bounded, the marker kept, and the refusal is said with Sign out", async () => {
     doorScript = [db503];
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("join");
     expect(troubleText(el), "a refusal was said before the ladder ended").toBeNull();
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
@@ -256,7 +264,7 @@ describe("/join finishes a pending sign-out instead of reading the session", () 
 
   it("Sign out, pressed: the ladder again; a door that answers ends it and the sentence with it", async () => {
     doorScript = [db503, db503, db503, db503, noContent];
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("join");
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
     expect(troubleText(el)).toBe(refusedSaying("busy"));
@@ -269,7 +277,7 @@ describe("/join finishes a pending sign-out instead of reading the session", () 
 
   it("Create account while the door refuses: the door is asked once more and no registration leaves", async () => {
     doorScript = [db503];
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("join");
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
     await createAccount(el);
@@ -282,7 +290,7 @@ describe("/join finishes a pending sign-out instead of reading the session", () 
 
   it("…and once the door answers, the same press finishes the sign-out, then registers", async () => {
     doorScript = [db503, db503, db503, db503, noContent];
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("join");
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
     await createAccount(el);
@@ -296,7 +304,7 @@ describe("/join finishes a pending sign-out instead of reading the session", () 
 
   it("a press while the first ask is held: it ends first, the door is asked again, and only then the registration", async () => {
     doorScript = [() => null, noContent];
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("join");
     await tick(500);
     expect(count("door")).toBe(1);
@@ -315,7 +323,7 @@ describe("/join finishes a pending sign-out instead of reading the session", () 
 describe("/verify-email finishes a pending sign-out before it confirms", () => {
   it("the door on arrival; while it refuses, the confirmation never leaves and the refusal is said", async () => {
     doorScript = [db503];
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("verify");
     expect(count("door"), "the unfinished sign-out was not presented at the sign-out door").toBe(1);
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
@@ -332,7 +340,7 @@ describe("/verify-email finishes a pending sign-out before it confirms", () => {
 
   it("…and once the door answers, the confirmation leaves after it", async () => {
     doorScript = [db503, db503, db503, db503, noContent];
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("verify");
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
     await confirmAddress(el);
@@ -347,7 +355,7 @@ describe("/verify-email finishes a pending sign-out before it confirms", () => {
 describe("/join/invite finishes a pending sign-out before the token is spent", () => {
   it("the door on arrival; while it refuses, neither the redeem nor the registration leaves, and the refusal is said", async () => {
     doorScript = [db503];
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("invite");
     expect(count("door"), "the unfinished sign-out was not presented at the sign-out door").toBe(1);
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
@@ -362,7 +370,7 @@ describe("/join/invite finishes a pending sign-out before the token is spent", (
 
   it("…and once the door answers, the same press finishes the sign-out, then redeems, then registers", async () => {
     doorScript = [db503, db503, db503, db503, noContent];
-    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    markPendingSignOut("acct_A");
     const el = await mount("invite");
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
     await acceptInvite(el);
@@ -376,7 +384,7 @@ describe("/join/invite finishes a pending sign-out before the token is spent", (
 
   it("a sign-out pressed elsewhere while the redeem is out: the door is asked before the registration, which waits", async () => {
     doorScript = [db503];
-    duringRedeem = () => { document.cookie = `tf_owner=${PENDING}; Path=/`; };
+    duringRedeem = () => { markPendingSignOut("acct_A"); };
     const el = await mount("invite");
     await tick(1_000);
     await acceptInvite(el);

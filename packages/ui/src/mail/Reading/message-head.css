@@ -425,6 +425,17 @@
   inline-size: 100%;
 }
 
+@container stream-card (inline-size < 400px) {
+  [data-stream-window][data-receipts] .oh-messagehead[data-preview] > .oh-messagehead-sender {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  [data-stream-window][data-receipts] .oh-messagehead[data-preview] > .oh-messagehead-tools {
+    grid-row: 2;
+  }
+}
+
 @container receipt-address (inline-size < 14ch) {
   [data-stream-window][data-receipts] .oh-messagehead-address > .oh-address {
     position: absolute;
@@ -458,6 +469,40 @@
   .oh-messagehead-delivery {
     grid-column: 2 / -1;
     grid-row: 4;
+  }
+}
+
+/* An enlarged News column can leave little room beside the sender. Give its sender a line of their own. */
+@container stream-card (inline-size < 360px) {
+  :root[data-touch="0"] [data-stream-window]:not([data-receipts]) .oh-messagehead {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    row-gap: var(--s1);
+  }
+
+  :root[data-touch="0"] [data-stream-window]:not([data-receipts]) .oh-messagehead-who {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    line-height: var(--oh-messagehead-lh);
+  }
+
+  :root[data-touch="0"] [data-stream-window]:not([data-receipts]) .oh-messagehead-address {
+    max-inline-size: 100%;
+  }
+
+  /* A short local part can stay whole while the domain follows the line’s normal wrapping. */
+  :root[data-touch="0"]
+    [data-stream-window]:not([data-receipts])
+    .oh-messagehead-address
+    .oh-address-local[data-short] {
+    flex: 0 0 auto;
+  }
+
+  :root[data-touch="0"] [data-stream-window]:not([data-receipts]) .oh-messagehead-tools {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }
 

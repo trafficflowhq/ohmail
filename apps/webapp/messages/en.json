@@ -16,6 +16,8 @@
     "dismiss": "Dismiss"
   },
   "gate": {
+    "settingsHandoffSignIn": "Sign in to the account open on your desktop.",
+    "settingsHandoffInvalid": "This Settings link is unavailable. Open Settings again from your desktop.",
     "lede": "This build has no server attached.",
     "body": "It runs the whole interface on demo mail, with no network at all.",
     "note": "Your own mailboxes are at ohmail.app.",
@@ -1028,6 +1030,8 @@
     "markAllSpam": "Mark all spam",
     "askAllSpam": "{count, plural, one {Mark the # waiting sender as spam?} other {Mark all # waiting senders as spam?}}",
     "askAllSpamNote": "Their held mail moves to Spam, and so does the mail they send later.",
+    "askScreenPicked": "{count, plural, one {Screen out # sender?} other {Screen out # senders?}}",
+    "askScreenPickedNote": "Their held mail and any mail they send later go to Screened out.",
     "askAllSpamYes": "Mark {count} as spam",
     "askApplySuggestions": "{count, plural, one {Apply # suggestion?} other {Apply # suggestions?}}",
     "askApplySuggestionsYes": "{count, plural, one {Apply # suggestion} other {Apply # suggestions}}",
@@ -1695,7 +1699,7 @@
     "queued": "Queued",
     "statusQueued": "Not sent yet. ohmail is still trying.",
     "statusUnverified": "We're not sure this was sent. It isn't in your Sent folder.",
-    "statusFailed": "Sending didn't work — your draft is kept. Try again.",
+    "statusFailed": "Not sent. Sending did not work, but your draft is kept, so try again.",
     "statusForwardOriginalUnavailable": "Not sent. The original could not be loaded, so it was not forwarded.",
     "statusForwardPartsUnsupported": "Not sent. Your server sends every file of a forward and can't leave out the ones you removed.",
     "statusForwardPartsChanged": "Nothing was sent. The files of the message you're forwarding changed. Open it again and forward it.",
@@ -1703,7 +1707,7 @@
     "statusForwardSourceMoved": "Not sent. The message you're forwarding has moved on your mail server — your draft is kept. Try again once your mailbox has caught up.",
     "statusTimeout": "Not sent. Your mail server didn't answer in time — your draft is kept. Try again.",
     "statusMailboxDisabled": "Not sent. That address is disconnected and cannot send.",
-    "statusUnreachable": "Not sent. Your mail server couldn't be reached. It's kept in Drafts — send it again once your mail server answers.",
+    "statusUnreachable": "Not sent. Your mail server couldn't be reached. It's kept in Drafts, so send it again once your mail server answers.",
     "statusTooLong": "Not sent. It's too long to send — the limit is {size}. Shorten it and send again.",
     "statusTooLarge": "Not sent. It's too large to send. Shorten it and send again.",
     "statusStagingRefused": "Not sent. Files this large can't be uploaded from this page — your draft is kept. Remove the largest attachments and send again.",
@@ -1714,7 +1718,7 @@
     "statusBusy": "Not sent. Your mail server is busy and wouldn't take it right now — your draft is kept. Try again in a moment.",
     "statusNotSecured": "Not sent. The connection to your mail server couldn't be secured — your draft is kept.",
     "statusLoginRefused": "Not sent. Your mail server refused the sign-in — your draft is kept.",
-    "statusNotSignedIn": "Not sent — your draft is kept. This mailbox isn't signed in here — sign in again in Settings.",
+    "statusNotSignedIn": "Not sent. This mailbox isn't signed in here. Your draft is kept, so sign in again in Mailboxes.",
     "statusDraftChanged": "Not sent. This draft was changed in another window or on another device — review it before sending.",
     "statusNotSavedFirst": "Not sent. This message could not be saved first, so nothing went out. Check it and send again.",
     "statusDraftUnsaved": "Not sent. This draft couldn't be saved, so ohmail can't tell whether the message here is the one that would go. Try again.",
@@ -2063,11 +2067,13 @@
     "about": "About ohmail",
     "help": "Help & contact",
     "webOpen": "Open in browser",
+    "webOpenServer": "Open on your server",
     "webLoading": "Asking your account…",
     "webOffline": "This install is offline, so your account cannot be reached. What is already here keeps working; this comes back with the connection.",
     "webUnavailable": "Your account did not answer, so nothing about your plan is shown here rather than a guess. Opening it in your browser will say.",
     "webSaveFailed": "That did not save. Nothing has changed.",
     "webNoBrowser": "This computer would not open a browser. The page is at ohmail.app.",
+    "webNoBrowserServer": "This computer would not open a browser. Open Settings on your server.",
     "webBillingTitle": "Plans, payment and invoices",
     "webBillingWhy": "Choosing a plan, changing your card and downloading invoices ask for a second factor this app cannot give. They open in your browser, where you are already signed in.",
     "webSecurityTitle": "Your second factor",
@@ -2153,6 +2159,7 @@
     "storageMailSub": "One mail at 90% and one when storage is full.",
     "storageMailFailed": "Couldn't save this. Try again.",
     "webAccountNote": "Deleting your account removes it from our servers. Your mail is in your own mailbox and is not touched, and the copy already on this computer stays where it is.",
+    "webAccountNoteServer": "Deleting your account removes it from your server. Your mail stays in your own mailbox, and the copy on this computer stays where it is.",
     "webDevicesTitle": "Devices signed in to your account",
     "webDevicesWhy": "Adding a device and signing one out both ask for a second factor within the last few minutes, which this app has no way to give. The list and both actions open in your browser, where you are already signed in.",
     "webDevicesNote": "This app is one of those devices. Signing it out there stops it receiving new mail; the copy already on this computer stays where it is.",
@@ -4284,6 +4291,7 @@
     "verdictQueued": "Queued for {name} — mail from {sender} goes to {place} on its next pass, and the rule is made then.",
     "verdictChanged": "Your rule »{term}« was changed in the meantime, so it stays as it is.",
     "subjectAlready": "You already had that rule. Nothing changed.",
+    "subjectAlreadyFiled": "You already had that rule. {count, plural, one {1 message moved} other {# messages moved}} to {place}.",
     "subjectRuleFailed": "That rule wasn't saved. Nothing has moved.",
     "subjectRuleQueued": "Rule saved here. We'll send it when you're back online.",
     "subjectRuled": "Mail from {sender} with »{term}« in the subject now files to {place}.",
@@ -4390,7 +4398,7 @@
     "queued": "Queued",
     "statusQueued": "Not sent yet. ohmail is still trying.",
     "statusUnverified": "We're not sure this was sent. It isn't in your Sent folder.",
-    "statusFailed": "Sending didn't work — your draft is kept. Try again.",
+    "statusFailed": "Not sent. Sending did not work, but your draft is kept, so try again.",
     "statusForwardOriginalUnavailable": "Not sent. The original could not be loaded, so it was not forwarded.",
     "statusForwardPartsUnsupported": "Not sent. Your server sends every file of a forward and can't leave out the ones you removed.",
     "statusForwardPartsChanged": "Nothing was sent. The files of the message you're forwarding changed. Open it again and forward it.",
@@ -4398,7 +4406,7 @@
     "statusForwardSourceMoved": "Not sent. The message you're forwarding has moved on your mail server — your draft is kept. Try again once your mailbox has caught up.",
     "statusTimeout": "Not sent. Your mail server didn't answer in time — your draft is kept. Try again.",
     "statusMailboxDisabled": "Not sent. That address is disconnected and cannot send.",
-    "statusUnreachable": "Not sent. Your mail server couldn't be reached. It's kept in Drafts — send it again once your mail server answers.",
+    "statusUnreachable": "Not sent. Your mail server couldn't be reached. It's kept in Drafts, so send it again once your mail server answers.",
     "statusTooLong": "Not sent. It's too long to send — the limit is {size}. Shorten it and send again.",
     "statusTooLarge": "Not sent. It's too large to send. Shorten it and send again.",
     "statusStagingRefused": "Not sent. Files this large can't be uploaded from this page — your draft is kept. Remove the largest attachments and send again.",
@@ -4408,7 +4416,7 @@
     "statusBusy": "Not sent. Your mail server is busy and wouldn't take it right now — your draft is kept. Try again in a moment.",
     "statusNotSecured": "Not sent. The connection to your mail server couldn't be secured — your draft is kept.",
     "statusLoginRefused": "Not sent. Your mail server refused the sign-in — your draft is kept.",
-    "statusNotSignedIn": "Not sent — your draft is kept. This mailbox isn't signed in here — sign in again in Settings.",
+    "statusNotSignedIn": "Not sent. This mailbox isn't signed in here. Your draft is kept, so sign in again in Mailboxes.",
     "statusDraftChanged": "Not sent. This draft changed in another window — review it before sending.",
     "statusNotSavedFirst": "Not sent. This reply could not be saved first, so nothing went out. Check it and send again.",
     "statusDraftUnsaved": "Not sent. This draft couldn't be saved, so ohmail can't tell whether the message here is the one that would go. Try again.",
@@ -4937,10 +4945,6 @@
     "suggestStoppedEarly": "Stopped after {done} of {total}. {reason}",
     "suggestEmpty": "There are no new suggestions for these senders.",
     "suggestNote": "Uses the model you set up. Senders already answered for are not asked about again.",
-    "suggestUnreadableKey": "The stored key could not be read. Enter it again in Settings, Desktop.",
-    "suggestSetupAfterRefusal": "The model is unavailable. Set one up in Settings, Desktop.",
-    "suggestStoppedEarly": "Stopped after {done} of {total}. {reason}",
-    "suggestEmpty": "There are no new suggestions for these senders.",
     "offlineHead": "What reaches your Ohbox",
     "offlineNote": "These settings live on your ohmail Cloud account, so they can’t be changed while this install is offline. Your mail keeps arriving; this comes back with the connection.",
     "offlineNoteServer": "These settings live on your ohmail server, so they can’t be changed while this install is offline. Your mail keeps arriving; this comes back with the connection."
@@ -6543,6 +6547,7 @@
     "span": "{from}–{to}"
   },
   "calsetup": {
+    "activate": "Connect a calendar",
     "leave": "Not now",
     "back": "Back",
     "continue": "Continue",
@@ -6703,6 +6708,7 @@
     "coming": "Coming up with {name}"
   },
   "calendar": {
+    "connect": "Connect a calendar",
     "actions": {
       "delete": "Delete",
       "moveTo": "Move to",
@@ -6889,7 +6895,15 @@
   },
   "settingsNotifications": {
     "about": "Notify about",
-    "blocked": "Blocked"
+    "blocked": "Blocked",
+    "calendar": "Calendar",
+    "alert": "An alert",
+    "invitation": "An invitation",
+    "change": "A change or a cancellation",
+    "answer": "An invitee answered",
+    "found": "Something found in mail",
+    "titles": "Titles",
+    "showTitles": "Show titles in notifications"
   },
   "settingsScreener": {
     "notApplied": "Not applied"
@@ -6922,7 +6936,7 @@
   "write": {
     "held": {
       "sendAgain": "Send again",
-      "itWasSent": "It was sent — dismiss"
+      "itWasSent": "It was sent"
     },
     "letter": "New message",
     "back": "Ohbox",
@@ -6943,18 +6957,19 @@
     "send": "Send",
     "discard": "Discard",
     "status": {
+      "notSentVerdict": "Not sent.",
       "previousSending": "Your last message is still being sent. You can send this one once it has gone.",
       "sending": "Sending your message.",
       "sendingLong": "Still sending.",
       "queued": "Not sent yet. ohmail is still trying.",
       "unverified": "We're not sure this was sent. It isn't in your Sent folder.",
-      "failed": "Sending didn't work — your draft is kept. Try again.",
+      "failed": "Not sent. Sending did not work, but your draft is kept, so try again.",
       "mailboxDisabled": "Not sent. That address is disconnected and cannot send.",
-      "unreachable": "Not sent. Your mail server couldn't be reached. It's kept in Drafts — send it again once your mail server answers.",
+      "unreachable": "Not sent. Your mail server couldn't be reached. It's kept in Drafts, so send it again once your mail server answers.",
       "busy": "Not sent. Your mail server is busy and wouldn't take it right now — your draft is kept. Try again in a moment.",
       "notSecured": "Not sent. The connection to your mail server couldn't be secured — your draft is kept.",
       "loginRefused": "Not sent. Your mail server refused the sign-in — your draft is kept.",
-      "notSignedIn": "Not sent — your draft is kept. This mailbox isn't signed in here — sign in again in Settings.",
+      "notSignedIn": "Not sent. This mailbox isn't signed in here. Your draft is kept, so sign in again in Mailboxes.",
       "forwardOriginalUnavailable": "Not sent. The original could not be loaded, so it was not forwarded.",
       "forwardPartsUnsupported": "Not sent. Your server sends every file of a forward and can't leave out the ones you removed.",
       "forwardPartsChanged": "Nothing was sent. The files of the message you're forwarding changed. Open it again and forward it.",

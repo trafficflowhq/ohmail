@@ -9,6 +9,8 @@ import type { NoticeKind } from "./contract.js";
 /** What a notice shows behind its last answer: that answer's word, and the rows, each a sentence whole. */
 export interface NoticeMore {
   readonly label: string;
+  /** A sentence shown only after opening these details. */
+  readonly line?: string;
   readonly rows: readonly string[];
   /** A choice available once the full list is visible. */
   readonly confirm?: NoticeAct;

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ISO, act, answerConsentWith, answerStoreWith, answerSyncWith, installShellEnv, mailbox,
+  ISO, act, answerConsentWith, answerStoreWith, answerSyncWith, installShellEnv, liveAccountResponse, mailbox,
   mountShell as mountWithBrowserProviders, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 import { getByRole, queryAllByRole, within } from "@testing-library/react";
@@ -12,6 +12,7 @@ import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
 import { EngineProvider, useEngine } from "../app/shell/engine";
 import { hostFromTodaysInputs } from "./_mail-shell";
 import messages from "../messages/en.json";
+import { rememberOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 
 /**
@@ -70,15 +71,15 @@ beforeEach(() => {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     asked.push(String(input));
     if (String(input).includes("/consent/seed")) {
-      return new Response(JSON.stringify({
+      return liveAccountResponse(new Response(JSON.stringify({
         candidates: [{ address: "lena@example.invalid", name: "Lena", messages: 3, lastWrittenAt: ISO, alreadyDecided: false }],
         excluded: [], scannedMessages: 3, truncated: false,
-      }), { status: 200, headers: { "content-type": "application/json" } });
+      }), { status: 200, headers: { "content-type": "application/json" } }));
     }
     /* The Screener pane's own read, which is no part of the consent row: answered so the pane draws. */
     if (String(input).includes("/account/screening")) {
-      return new Response(JSON.stringify({ ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Mail from people." }),
-        { status: 200, headers: { "content-type": "application/json" } });
+      return liveAccountResponse(new Response(JSON.stringify({ ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Mail from people." }),
+        { status: 200, headers: { "content-type": "application/json" } }));
     }
     return inner(input as RequestInfo, init);
   }) as typeof globalThis.fetch;
@@ -123,7 +124,10 @@ function ConsentFrame({ transport }: { transport: ConsentTransport | typeof NONE
 
 async function mountShell(transport?: ConsentTransport | typeof NONE) {
   await mountWithBrowserProviders(facts, {
-    wrap: () => <EngineProvider demo={false} resolveOwner={async () => ({ kind: "owner", accountId: ACCOUNT })}>
+    wrap: () => <EngineProvider demo={false} resolveOwner={async () => {
+      rememberOwner(ACCOUNT);
+      return { kind: "owner", accountId: ACCOUNT };
+    }}>
       <ConsentFrame transport={transport} />
     </EngineProvider>,
   });

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { clearSignedInSync, serveSignedInSync, SYNC_FIXTURE_OWNER, writeSignedInSync } from "./fixtures/signed-in-sync";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -53,7 +54,7 @@ const message = (id: string, folder: string, seq: number) => ({
   updatedAt: ISO,
   entity: {
     id,
-    accountId: "acct_live_1",
+    accountId: SYNC_FIXTURE_OWNER,
     mailboxId: "mb_1",
     threadId: null,
     messageIdHeader: null,
@@ -145,8 +146,9 @@ beforeEach(() => {
   answer = populated;
   refreshAnswer = null;
   window.location.hash = "";
+  writeSignedInSync();
   originalFetch = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown) => {
+  globalThis.fetch = vi.fn(serveSignedInSync(async (input) => {
     const url = String(input);
     /**
      * THE COLD-START READER IS ANSWERED SEPARATELY, AND WITH A 404 ON PURPOSE.
@@ -185,7 +187,7 @@ beforeEach(() => {
       );
     }
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  }));
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -230,6 +232,7 @@ afterEach(async () => {
   roots = [];
   document.body.innerHTML = "";
   globalThis.fetch = originalFetch;
+  clearSignedInSync();
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
   vi.useRealTimers();
@@ -263,7 +266,7 @@ async function shell(recover?: (how: "signIn" | "reload") => void): Promise<HTML
           children: h(ToastHost, {
             children: h(AppShell, {
               demo: false,
-              resolveOwner: async () => ({ kind: "owner", accountId: "acct_live_1" }) as const,
+              resolveOwner: async () => ({ kind: "owner", accountId: SYNC_FIXTURE_OWNER }) as const,
               ...(recover ? { recover } : {}),
             }),
           }),

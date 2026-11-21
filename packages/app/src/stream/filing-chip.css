@@ -1,0 +1,13 @@
+.st-filing-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: var(--s1) var(--s3);
+  border-radius: var(--r-pill);
+  background: var(--soft-sheet);
+  color: var(--ink2);
+  font-size: var(--t-meta);
+}
+.st-filing-control[data-chip="ai"] {
+  background: var(--sheet-new);
+}

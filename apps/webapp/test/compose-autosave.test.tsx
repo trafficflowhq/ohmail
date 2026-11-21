@@ -1285,7 +1285,7 @@ describe("the shell is the consumer, not just the harness", () => {
       .toContain("drafts: draftsPlaceOn(DraftsSeat)");
     const place = read("packages/app/src/drafts/place.ts");
     expect(place, "there is no way to reach the Drafts list").toContain('id: "drafts"');
-    expect(place).toMatch(/rail: \{[^\n]*icon: "drafts"/);
+    expect(place).toMatch(/rail: \{[^}]*icon: "drafts"/);
     expect(place).toMatch(/List: DraftsList/);
   });
 
@@ -1538,7 +1538,7 @@ describe("the shell is the consumer, not just the harness", () => {
     // 5. Explicit Discard reaches the same final delete from the editor or after the list's Undo window.
     const seat = readFileSync("packages/app/src/drafts/Seat.tsx", "utf8");
     expect(seat, "the list's explicit Discard no longer reaches the draft delete")
-      .toMatch(/discard: \(id\) =>\s*composer\.discardDraftRow\(\s*id,/);
+      .toMatch(/discard: \(id, shown\) =>\s*composer\.discardDraftRow\(\s*id,\s*shown,\s*true\)/);
     expect(
       sliceOfDeclaration(shell, "discardDraft"),
       "the editor's explicit Discard no longer shares the draft delete",
@@ -1546,7 +1546,7 @@ describe("the shell is the consumer, not just the harness", () => {
     expect(
       sliceOfDeclaration(shell, "discardDraftRow"),
       "the explicit Discard no longer writes the selected row's delete",
-    ).toContain('engine.mutate({ kind: "draft_discard", draftId })');
+    ).toContain('engine.mutate({ kind: "draft_discard", draftId, ...version },');
 
     // 6. THE ORPHANED-LANE PROMOTION. It creates a row for a reply whose parent another mail
     //    client deleted, so the compose surface's record says nothing about it — the question is

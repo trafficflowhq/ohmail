@@ -1,0 +1,13 @@
+.delivery-label.badge,
+.delivery-label.badge.place {
+  display: inline-block;
+  min-inline-size: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-meta);
+  font-weight: var(--w-mid);
+}

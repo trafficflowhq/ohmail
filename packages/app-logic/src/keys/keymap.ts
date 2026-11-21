@@ -50,6 +50,11 @@ export type CursorPlacer = (label: string) => boolean;
  */
 export const CURSOR_HINT_MS = 2400;
 
+/** The hint every list gives after the first press places its cursor. */
+export function cursorPlacementText(cursor: (key: string, values: { label: string }) => string, label: string): string {
+  return cursor("placed", { label });
+}
+
 /**
  * WHICH LAYER A PLACER SPEAKS FOR — the placer's half of {@link BindingScope}, and for the same
  * reason: `view` beats `global`, whatever the component tree says. A view that holds its own list

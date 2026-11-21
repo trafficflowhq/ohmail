@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { clearSignedInSync, serveSignedInSync, SYNC_FIXTURE_OWNER, writeSignedInSync } from "./fixtures/signed-in-sync";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -63,8 +64,9 @@ beforeEach(() => {
   refreshCalls = 0;
   syncAnswer = emptyPage;
   refreshAnswer = coded401;
+  writeSignedInSync();
   originalFetch = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown) => {
+  globalThis.fetch = vi.fn(serveSignedInSync(async (input) => {
     const url = String(input);
     if (url.includes("/auth/refresh")) {
       refreshCalls += 1;
@@ -77,7 +79,7 @@ beforeEach(() => {
     }
     if (url.includes("/sync")) return syncAnswer();
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  }));
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(Math, "random").mockReturnValue(0.999999);
 });
@@ -91,6 +93,7 @@ afterEach(async () => {
   roots = [];
   document.body.innerHTML = "";
   globalThis.fetch = originalFetch;
+  clearSignedInSync();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -122,7 +125,7 @@ async function mountShell(opts: { keepTruth?: boolean } = {}): Promise<HTMLEleme
         timeZone: "UTC",
         children: h(EngineProvider, {
           demo: false,
-          resolveOwner: async () => ({ kind: "owner", accountId: "acct_live_1" }) as const,
+          resolveOwner: async () => ({ kind: "owner", accountId: SYNC_FIXTURE_OWNER }) as const,
           children: null,
         }),
       }),
