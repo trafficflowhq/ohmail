@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { deleteAddress, deleteButton } from "./fixtures/delete-account-controls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -10,7 +11,7 @@ import en from "../messages/en.json";
  * THE HOSTS' OWN GUARD. `StepUpPrompt` ends its ceremony when it unmounts; the erase and the
  * password change also refuse a verified callback that reaches a pane no longer mounted, so a
  * regression in the prompt is not an erase. The prompt is stood in for: it hands its `onVerified`
- * to the test, which calls it after the pane is gone. StrictMode is the control: its replayed
+ * to the test, which calls it after the pane is gone. The erase page asks for its factor before sending anything. StrictMode is the control: its replayed
  * effects must not read as gone.
  */
 
@@ -36,11 +37,19 @@ vi.mock("../app/sign-out", async (original) => ({
   signOut: async () => ({ cleared: true, inventoryComplete: true, serverRefused: null, remaining: [] }),
 }));
 
+function CaptureFactor(props: { onVerified: () => void }) {
+  rig.onVerified = props.onVerified;
+  return h("div", { "data-testid": "step-up-prompt" });
+}
+
 vi.mock("../app/(product)/mailbox/StepUp", () => ({
-  StepUp: (props: { onVerified: () => void }) => {
-    rig.onVerified = props.onVerified;
-    return h("div", { "data-testid": "step-up-prompt" });
-  },
+  StepUp: CaptureFactor,
+  useWebStepUp: () => ({}),
+}));
+
+vi.mock("../../../packages/app/src/doors/step-up/StepUpDialog.js", async (original) => ({
+  ...await original<typeof import("../../../packages/app/src/doors/step-up/StepUpDialog.js")>(),
+  StepUpDialog: CaptureFactor,
 }));
 
 const EMAIL = "person@example.test";
@@ -73,9 +82,7 @@ beforeEach(() => {
       });
     }
     if (line === ERASE) {
-      return sent(ERASE) === 1
-        ? json(403, STEP_UP_REQUIRED)
-        : json(200, { erased: true, retained: "one billing row", subscription: "none" });
+      return json(200, { erased: true, retained: "one billing row", subscription: "none" });
     }
     if (line === CHANGE) return sent(CHANGE) === 1 ? json(403, STEP_UP_REQUIRED) : json(200, { revoked: 1 });
     return json(200, {});
@@ -93,9 +100,9 @@ afterEach(async () => {
 });
 
 async function mount(which: "account" | "password", strict = false): Promise<HTMLElement> {
-  const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
+  const { DeleteAccountRoute } = await import("../app/(product)/account/delete/DeleteAccountRoute.js");
   const { PasswordSection } = await import("../app/(product)/mailbox/PasswordSection.js");
-  const pane = h(which === "account" ? AccountSection : PasswordSection);
+  const pane = h(which === "account" ? DeleteAccountRoute : PasswordSection);
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -146,9 +153,9 @@ async function submit(form: Element): Promise<void> {
 /** Tries the verb; the closed window parks it behind the (stand-in) prompt. */
 async function toThePrompt(c: HTMLElement, which: "account" | "password"): Promise<void> {
   if (which === "account") {
-    await waitFor(() => c.querySelector("#acct-typed") != null, "the typed-address step");
-    await type(c.querySelector<HTMLInputElement>("#acct-typed")!, EMAIL);
-    await submit(c.querySelector("#acct-typed")!.closest("form")!);
+    await waitFor(() => deleteAddress(c) !== null, "the typed-address step");
+    await type(deleteAddress(c)!, EMAIL);
+    await act(async () => { deleteButton(c, en.deleteAccount.begin)!.click(); });
   } else {
     await waitFor(() => c.querySelector("#pwc-current") != null, "the password form");
     await type(c.querySelector<HTMLInputElement>("#pwc-current")!, "old-correct-horse-password");
@@ -170,22 +177,22 @@ async function verified(): Promise<void> {
 }
 
 const ARMS = [
-  { which: "account" as const, verb: ERASE },
-  { which: "password" as const, verb: CHANGE },
+  { which: "account" as const, verb: ERASE, beforeFactor: 0 },
+  { which: "password" as const, verb: CHANGE, beforeFactor: 1 },
 ];
 
 describe("a verified factor that reaches a pane no longer mounted sends nothing", () => {
-  for (const { which, verb } of ARMS) {
+  for (const { which, verb, beforeFactor } of ARMS) {
     it(`${which}: the pane is gone, then the factor reports verified — ${verb} is not sent`, async () => {
       const c = await mount(which);
       await toThePrompt(c, which);
-      expect(sent(verb)).toBe(1);
+      expect(sent(verb)).toBe(beforeFactor);
 
       await act(async () => root!.unmount());
       root = null;
       await verified();
 
-      expect(sent(verb), `${verb} went out for a pane that was gone`).toBe(1);
+      expect(sent(verb), `${verb} went out for a pane that was gone`).toBe(beforeFactor);
       expect(rig.wipes).toBe(0);
     });
 
@@ -193,14 +200,14 @@ describe("a verified factor that reaches a pane no longer mounted sends nothing"
       const c = await mount(which);
       await toThePrompt(c, which);
       await verified();
-      expect(sent(verb)).toBe(2);
+      expect(sent(verb)).toBe(beforeFactor + 1);
     });
 
     it(`CONTROL ${which} under StrictMode: the replayed effects do not read as gone`, async () => {
       const c = await mount(which, true);
       await toThePrompt(c, which);
       await verified();
-      expect(sent(verb), "a mounted pane refused its own verified factor").toBe(2);
+      expect(sent(verb), "a mounted pane refused its own verified factor").toBe(beforeFactor + 1);
     });
   }
 });

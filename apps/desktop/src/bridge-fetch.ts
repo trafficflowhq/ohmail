@@ -884,7 +884,7 @@ export interface SignOutPress {
   status: EngineStatus;
   /**
    * The window's reading of the hosted session (`doors.ts` `HostedSession`, spelled here because this
-   * module may import nothing that reaches the build-time platform flag): only `live` is ended.
+   * module may import nothing that reaches the build-time platform flag). An unread session may still be live.
    */
   session: "live" | "out" | "unknown";
 }
@@ -942,7 +942,7 @@ export async function engineLogout(press: SignOutPress | null = null, expectedLo
 /** A Cloud door holding a session, with no switch or pending door the shell would refuse over. */
 function endsAtServer(press: SignOutPress): boolean {
   const door = press.status;
-  return door.mode === "cloud" && press.session === "live"
+  return door.mode === "cloud" && press.session !== "out"
     && door.switchPending !== true && door.identityPending !== true;
 }
 

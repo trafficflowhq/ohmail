@@ -25,7 +25,7 @@ import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
  *   SecuritySection  `catch { /* nothing *\/ }`      → "You have no unused recovery codes."
  *                                                     "No authenticator app is set up."
  *   AboutSection     `catch { setItems([]) }`      → "No mailbox connected. Settings → Mailboxes."
- *   AccountSection   `catch { /* nothing *\/ }`      → "Deleting an account needs a live session
+ *   the account pane   `catch { /* nothing *\/ }`      → "Deleting an account needs a live session
  *                                                      on that account." (in a signed-in tab)
  *
  * Two of them are worse than a wrong sentence, and those are the reason this is one file
@@ -106,7 +106,7 @@ vi.mock("../app/api-client", async () => {
     auth: {
       /**
        * THE ONE READ THREE PANES SHARE. `SecuritySection` takes `user.twofaEnrolled` from it,
-       * `AccountSection` takes `user.accountId` and `MailboxSection` takes the address — so one
+       * `the account pane` takes `user.accountId` and `MailboxSection` takes the address — so one
        * refusal here reproduces three of the defects at once, which is why they are one file.
        */
       session: () => answer({
@@ -148,7 +148,7 @@ vi.mock("../app/api-client", async () => {
   };
 });
 
-/** `AccountSection` wipes the local mirror on the way out; nothing here reaches that path. */
+/** `the account pane` wipes the local mirror on the way out; nothing here reaches that path. */
 vi.mock("@ohmail/client-engine", async () => {
   const actual = await vi.importActual<Record<string, unknown>>("@ohmail/client-engine");
   return { ...actual, clearAllMirrors: async () => undefined };
@@ -196,7 +196,7 @@ const panes = {
   mailbox: async () => (await import("../app/(product)/mailbox/MailboxSection.js")).MailboxSection,
   security: async () => (await import("../app/(product)/mailbox/SecuritySection.js")).SecuritySection,
   about: async () => (await import("../app/(product)/mailbox/AboutSection.js")).AboutSection,
-  account: async () => (await import("../app/(product)/mailbox/AccountSection.js")).AccountSection,
+  account: async () => (await import("./fixtures/live-account-pane")).LiveAccountPane,
 };
 
 beforeEach(() => { mockFails = true; });

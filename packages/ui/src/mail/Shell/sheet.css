@@ -132,8 +132,9 @@
   }
 
   :root[data-face="paper"][data-device="desktop"] .oh-sheet[data-extend-top] .oh-sheet-scroll {
-    --oh-sheet-extended-scroll-top: calc(var(--ringw) + var(--edge));
-    padding-block-start: var(--oh-sheet-extended-scroll-top);
+    --oh-sheet-scroll-top: calc(var(--ringw) + var(--edge));
+
+    padding-block-start: var(--oh-sheet-scroll-top);
   }
 
   .oh-sheet-scroll[data-manual-anchor] {

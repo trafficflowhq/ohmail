@@ -938,7 +938,7 @@ const CACHE_PURGE_HEADER = "x-ohmail-clear";
  * included, until it had walked its whole disk cache: on a long-used profile the splash said
  * "Checking your sign-in…" for a minute, and a confirmed sign-out ran out its deadline and was named
  * unconfirmed. Asked for on its own, once a confirmed answer is in hand (`sign-out.ts`, the erase in
- * `AccountSection.tsx`, the refusals here), never for an unconfirmed one: an older API reads it as a
+ * `use-delete-account-door.ts`, the refusals here), never for an unconfirmed one: an older API reads it as a
  * renewal. It runs outside `api()` and the refresh single flight. Explicit sign-out tracks its
  * answer separately from the press and aborts the attempt when the page leaves. The door answers it
  * before reading the jar and sets no cookie.

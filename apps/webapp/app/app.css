@@ -5924,17 +5924,6 @@ input.set-tag-input {
      used to sit directly under the add-on note), 6px below. */
   margin: 22px 0 6px;
 }
-/* Sign out — text left, action right. It used to carry a bottom rule to separate it from the
-   erasure ceremony it shared a card with; it has its own card now, so the rule is gone. A rule
-   inside one panel still reads as two parts of one ceremony, which is the thing being fixed. */
-.acct-signout {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 2px 0 0;
-}
-.acct-signout > div { min-width: 0; }
 /* ── A SETTINGS ROW'S CONTROL IS FLUSH RIGHT, ALWAYS ───────────────────────────────────
    `.set-row` is a flex row and `.lab` carries no `flex:1`, so a control placed after it sits
    wherever the label's text happens to end — which means two rows in one card line their
@@ -5949,27 +5938,6 @@ input.set-tag-input {
   display: inline-flex;
   gap: 7px;
   flex: 0 0 auto;
-}
-
-/* Sign out is its own CARD, not a rule inside the delete one — see `AccountSection`. The gap
-   is what makes them two subjects rather than two parts of one ceremony. */
-.acct-session {
-  margin-bottom: 14px;
-}
-
-/* The button is the one thing on this row that must not be squeezed. It sat at the flex
-   default (`shrink:1`) next to a paragraph that wants the full width, so the label broke
-   across two lines — reported as a sign-out button that breaks a line. */
-.acct-signout-btn {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-@media (max-width: 560px) {
-  .acct-signout {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
 }
 
 .acct-cols {

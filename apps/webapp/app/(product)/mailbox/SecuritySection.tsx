@@ -9,7 +9,7 @@
  */
 
 /**
- * Injected as a ReactNode by `CloudShell`, like `AccountSection` and for the same reason: `auth`, `apiConfigured()`
+ * Provided by the web shell: `auth`, `apiConfigured()`
  * and a step-up ceremony exist neither in the Desktop mirror nor under `?demo=1`. Regeneration is destructive and
  * says so: `recoveryCodes()` replaces the whole set, so the confirm step exists for that, not ceremony. Rebuilt on
  * the parts every other pane uses (`SettingsSection`, `SettingsRow`, `Button`, the `.join-codes` grid the wizard

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The account half of the language preference — the `AccountSection` seam, one context deeper. `LocaleShell` owns the
+ * The account half of the language preference — the account pane’s seam, one context deeper. `LocaleShell` owns the
  * local half (`localStorage`, the cookie, the catalogue swap) and sits above `/login` and `/join`, so it cannot write
  * an account; this component sits inside the Cloud shell, which supplies the account and its live guard.
  */

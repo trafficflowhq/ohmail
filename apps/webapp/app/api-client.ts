@@ -3378,9 +3378,7 @@ export function forgetAccess(): void {
 
 export const account = {
   /**
-   * `DELETE /account` — Art. 17 erasure. `stepUp`-gated: `AccountSection` calls it on the press, answers a 403
-   * `step_up_required` with the step-up prompt (which re-stamps this session, never a new sign-in) and calls it once
-   * more. No body: `withRequestGuard` only demands `application/json` of a request that HAS one, and this call's
+   * `DELETE /account` — Art. 17 erasure. The delete page calls it after the factor re-stamps this session. No body: `withRequestGuard` only demands `application/json` of a request that HAS one, and this call's
    * whole payload is the session it is authenticated by.
    */
   /*

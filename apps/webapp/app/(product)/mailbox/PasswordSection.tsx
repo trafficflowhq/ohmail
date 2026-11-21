@@ -4,7 +4,7 @@
  * Change the password — `POST /auth/password`, for somebody told their password is known. The
  * server checks the current password on the sign-in lockout, asks for a second factor inside the
  * step-up window, and signs every OTHER session out; this one stays as it is. Its own component:
- * `AccountSection` is the erasure ceremony and stays out of it.
+ * The erasure ceremony lives on the delete page.
  *
  * The change is TRIED on the press, as the erase is. A closed window answers `step_up_required`
  * before anything is checked; the typed values are parked here (memory only) while

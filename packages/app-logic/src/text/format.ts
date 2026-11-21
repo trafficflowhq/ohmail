@@ -167,9 +167,9 @@ export function metaLine(...parts: Array<string | null | undefined>): string {
  * `appointmentStamp`, which {@link scheduleLabel} and the phone read too. `now` is required: the
  * band is a statement about the reader's calendar, and a weekday alone for 25 Dec read as today.
  */
-export function resurfaceLabel(when: string, now: Date): string {
+export function resurfaceLabel(when: string, now: Date, zone = activeFormatZone()): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(when)) return when;
-  return appointmentStamp(new Date(when), now, activeFormatZone(), activeFormatLocale());
+  return appointmentStamp(new Date(when), now, zone, activeFormatLocale());
 }
 
 /**

@@ -4,8 +4,10 @@
     --oh-readinghead-lh: 1.12;
     --oh-readinghead-top: calc(var(--s2) + var(--oh-hair));
     --oh-readinghead-out: calc(var(--ringw) * -1);
-    --oh-readinghead-cover: 0 calc(var(--ringw) * -1 - 2px) 0 var(--ground);
-    --oh-readinghead-stick: -1px;
+    /* The desktop Paper scrollport reaches into the frame's top inset. Cover that inset too. */
+    --oh-readinghead-cover: 0 calc(-1 * (var(--oh-sheet-scroll-top, var(--ringw)) + var(--oh-hair))) 0
+      var(--ground);
+    --oh-readinghead-stick: calc(-1 * var(--oh-hair));
     --oh-readinghead-layer: 2;
     --oh-readinghead-short: 3ch;
     --oh-readinghead-basis: 150px;
