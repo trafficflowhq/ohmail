@@ -8,7 +8,7 @@ import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { StorageChange } from "../../shell/StorageNotice";
 import type { StorageFacts } from "../../shell/storage-state";
 import { StepUpPrompt } from "./StepUpPrompt";
-import { leaveForManagePage } from "./SubscriptionSection";
+import { leaveForManagePage } from "./manage-navigation";
 
 /** The account's storage block from the access feed the shell already asks; nothing on a self-host build. */
 export function useCloudStorage(): StorageFacts | null {

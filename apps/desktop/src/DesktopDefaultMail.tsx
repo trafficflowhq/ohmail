@@ -15,7 +15,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, SettingsRow } from "@ohmail/ui";
+import { Button } from "@ohmail/ui";
+import { Button as SettingButton } from "@ohmail/ui/base";
+import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 
 import { usePersistedFlag } from "@ohmail/app-logic/storage/persisted-ui";
 import { DOOR_COPY } from "./door-copy.js";
@@ -149,20 +151,19 @@ export function DefaultMailRow() {
   const isDefault = mail.state === "default";
   return (
     <>
-      <SettingsRow
+      <SettingLine
         label={DOOR_COPY.mailtoLabel}
         description={isDefault ? DOOR_COPY.mailtoIsDefaultWhy : DOOR_COPY.mailtoWhy}
         value={stateValue(mail.state)}
-        control={
-          isDefault ? undefined : (
-            <Button onClick={() => void mail.request()} disabled={mail.busy}>
-              {mail.busy ? DOOR_COPY.mailtoAsking : DOOR_COPY.mailtoMakeDefault}
-            </Button>
-          )
-        }
-      />
-      {mail.problem ? <p className="join-error">{mail.problem}</p> : null}
-      {!mail.problem && mail.note ? <p className="set-sub">{mail.note}</p> : null}
+      >
+        {isDefault ? null : (
+          <SettingButton kind="quiet" size="s" onPress={() => void mail.request()} disabled={mail.busy}>
+            {mail.busy ? DOOR_COPY.mailtoAsking : DOOR_COPY.mailtoMakeDefault}
+          </SettingButton>
+        )}
+      </SettingLine>
+      {mail.problem ? <SettingNote warn>{mail.problem}</SettingNote> : null}
+      {!mail.problem && mail.note ? <SettingNote said>{mail.note}</SettingNote> : null}
     </>
   );
 }

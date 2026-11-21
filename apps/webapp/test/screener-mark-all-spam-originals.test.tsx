@@ -108,7 +108,7 @@ async function mount(mail: EngineMessage[]) {
   function World(): ReactElement {
     const [version, setVersion] = useState(0);
     useEffect(() => engine.subscribe(() => setVersion((v) => v + 1)), []);
-    const state = useScreenerState(engine, "acct", version, () => {}, useScreenerWords());
+    const state = useScreenerState(engine, "acct", version, () => {}, useScreenerWords(), undefined, undefined, false);
     live = state;
     return h(ScreenerAbove, { model: state, beside, children: h(Frame, { host: frame }) });
   }

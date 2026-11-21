@@ -3,10 +3,11 @@
  * offline sentence while the browser is offline and the letter waits, and the two answers for a send nobody can
  * confirm. Nothing here decides whether a letter may go: Send's state is the composition's.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useContext, useEffect, useState, type ReactNode } from "react";
 import { SendStatus, type SendStatusProps } from "@ohmail/ui/mail";
 import { SENDING_LONG_MS, type SendState } from "@ohmail/app-logic/writing/mail-send";
 import { useText } from "../../text/index.js";
+import { FrameContext } from "../../frame/commands.js";
 import { useWriteBeside, useWriting } from "../above.js";
 import { HeldSendAnswers } from "../HeldSendAnswers.js";
 import { statusWords } from "./status-words.js";
@@ -65,6 +66,8 @@ export function Status({
   onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
 }) {
   const t = useText("write");
+  const frameText = useText("frame");
+  const frame = useContext(FrameContext);
   const beside = useWriteBeside();
   useSendingLongDrawn(send);
   const where = sendLineAt(send, held, locked, beside);
@@ -74,11 +77,26 @@ export function Status({
   const place = at === "one" ? "top" : where;
   const offline = send.phase === "queued" && send.accepted !== true && !beside.online();
   const words = offline ? t("status.offline") : statusWords(t, line.key, beside);
+  const verdict = t("status.notSentVerdict");
+  const hasVerdict = words.startsWith(`${verdict} `);
   const status = (acts?: SendStatusProps["acts"]) => (
-    <SendStatus place={place} sign={line.tone === "pending" ? "clock" : undefined} acts={acts}>
-      {words}
+    <SendStatus
+      place={place}
+      verdict={hasVerdict ? verdict : undefined}
+      sign={line.tone === "pending" ? "clock" : undefined}
+      acts={acts}
+    >
+      {hasVerdict ? words.slice(verdict.length + 1) : words}
     </SendStatus>
   );
+  if (line.key === "statusNotSignedIn" && frame !== null) {
+    return status([
+      {
+        label: frameText("connection.act.mailboxes"),
+        onPress: () => frame.api.commands.go({ place: "settings", sub: "mailboxes" }),
+      },
+    ]);
+  }
   if (held === null || send.phase !== "unverified") return status();
   return (
     <HeldSendAnswers draftId={held} onResolve={onResolve} sentLabel={t("held.itWasSent")}>

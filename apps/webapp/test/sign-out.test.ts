@@ -157,6 +157,7 @@ describe("the sign-out CONTROL is wired", () => {
      (ACCESS-LOCK-REFUSED-SIGN-OUT-IS-SILENT): the pane asks it once and gates the navigation on
      its answer. The pins below read the reader for the order and the pane for the gate. */
   const reader = readFileSync(`${APP}/sign-out-trouble.ts`, "utf8");
+  const stayReason = sliceOfDeclaration(readFileSync(`${APP}/sign-out.ts`, "utf8"), "signOutStayReason");
 
   it("Settings → Account reaches signOut, and does not call auth.logout itself", () => {
     // The helper existed for weeks with zero callers — correct, tested and unreachable. That
@@ -165,7 +166,7 @@ describe("the sign-out CONTROL is wired", () => {
     // `forgetThisBrowser` rides the same import: the erasure door needs the LOCAL half without
     // the server logout (that door revokes by erasing the account), and both come from the one
     // module so the two cannot drift apart.
-    expect(account).toMatch(/import \{ forgetThisBrowser, signOut \} from "\.\.\/\.\.\/sign-out"/);
+    expect(account).toMatch(/import \{ forgetThisBrowser, signOut, signOutStayReason \} from "\.\.\/\.\.\/sign-out"/);
     expect(account).toMatch(/signOut\(owner, \{ expectedFamily \}\)/);
     expect(account).not.toMatch(/\bauth\.logout\s*\(/);
   });
@@ -223,14 +224,16 @@ describe("the sign-out CONTROL is wired", () => {
     // while this control's own copy says "Ends this session".
     const body = sliceOfDeclaration(account, "doSignOut");
     expect(reader).toMatch(/if \(outcome\.serverRefused !== null\) return \{ key: "signOutServerRefused"/);
-    expect(body).toMatch(/const said = signOutTrouble\(outcome\);/);
+    expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
+    expect(stayReason).toMatch(/const trouble = signOutTrouble\(outcome\);/);
+    expect(stayReason).toMatch(/trouble\.key === "signOutServerRefused"[\s\S]*?return null;/);
     // ── THE REFUSAL NOW LEAVES, FOR THE SIGN-IN PAGE THAT FINISHES IT ─────────────────────
     //
     // It used to stay on the pane and say so, over a mailbox the blocked client could no longer
     // use. The browser is wiped and marked `signed_out_pending`, so `/` never serves it the app or a
     // resume (`session-gate.ts`): it sends it to the sign-in page, which presents the session at the
     // sign-out door behind its form, on the confirm ladder. The pane claims nothing either way.
-    const gate = body.indexOf('if (said !== null && said.key !== "signOutServerRefused") {');
+    const gate = body.indexOf("if (stay !== null) {");
     const leave = body.indexOf("window.location.assign");
     expect(gate).toBeGreaterThan(-1);
     expect(leave, "leaving must come after the reader's gate").toBeGreaterThan(gate);
@@ -275,6 +278,8 @@ describe("the sign-out CONTROL is wired", () => {
     // say what it has — and "close your other tabs" would be a false instruction.
     const body = sliceOfDeclaration(account, "doSignOut");
     expect(reader).toMatch(/if \(!outcome\.cleared\) return \{ key: "signOutBlocked" \};/);
+    expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
+    expect(stayReason).toMatch(/return trouble\.key === "signOutUnverified" \? "unverified" : "blocked";/);
     expect(reader).toMatch(/if \(!outcome\.inventoryComplete\) return \{ key: "signOutUnverified" \};/);
     expect(body).toContain("setSignOutUnverified(true)");
     expect(account).toContain('t("signOutUnverified")');
@@ -338,7 +343,9 @@ describe("the sign-out CONTROL is wired", () => {
     // property it no longer holds. Its sibling case above pins the server half.
     expect(body).toMatch(/const outcome = await signOut\(owner, \{ expectedFamily \}\)/);
     expect(reader).toMatch(/if \(!outcome\.cleared\) return \{ key: "signOutBlocked" \};/);
-    const gate = body.indexOf('if (said !== null && said.key !== "signOutServerRefused") {');
+    expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
+    expect(stayReason).toMatch(/return trouble\.key === "signOutUnverified" \? "unverified" : "blocked";/);
+    const gate = body.indexOf("if (stay !== null) {");
     const leave = body.indexOf("window.location.assign");
     expect(gate, "the wipe verdict must be checked before leaving").toBeGreaterThan(-1);
     expect(leave, "and leaving must come after it").toBeGreaterThan(gate);

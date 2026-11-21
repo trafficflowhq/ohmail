@@ -15,6 +15,9 @@ import type { SearchBeside } from "./beside.js";
 import { fuzzyTerm, hitWho, markedSubject } from "./row-words.js";
 import { SearchSort } from "./SearchSort.js";
 
+import type { RowContact } from "../place-list/use-row-contact.js";
+import type { RowSelection } from "../place-list/use-row-selection.js";
+
 /** The owed slot's row stands for nobody. */
 const OWED_PEOPLE: readonly [] = [];
 
@@ -23,6 +26,8 @@ export function SearchResults({
   beside,
   openId,
   count,
+  selection,
+  contact,
 }: {
   model: SearchListModel;
   beside: SearchBeside;
@@ -30,6 +35,8 @@ export function SearchResults({
   openId: string | null;
   /** The count beside Results, as it is printed. */
   count?: string;
+  selection?: RowSelection;
+  contact?: RowContact;
 }) {
   const t = useText("search");
   const item = (hit: SearchHit, i: number, similar: boolean, placed: boolean): ReactNode => (
@@ -50,6 +57,8 @@ export function SearchResults({
         cursor={i === model.cursor}
         open={hit.message.id === openId}
         onOpen={model.open}
+        selection={selection}
+        contact={contact}
       />
     </div>
   );
@@ -133,16 +142,21 @@ export function SearchHitRow({
   cursor,
   open,
   onOpen,
+  selection,
+  contact,
 }: {
   hit: SearchHit;
   beside: SearchBeside;
   cursor: boolean;
   open: boolean;
   onOpen: (hit: SearchHit) => void;
+  selection?: RowSelection;
+  contact?: RowContact;
 }) {
   const t = useText("search");
   const m = hit.message;
   const who = hitWho(hit, beside.words);
+  const contactActions = contact?.rowProps(m.from, m.id);
   const cut = markedSubject(m.subject, hit);
   const fuzzy = fuzzyTerm(hit);
   const subject = (
@@ -161,6 +175,8 @@ export function SearchHitRow({
   );
   return (
     <Row
+      {...selection?.rowProps(m.id)}
+      nameAction={who.address ? contactActions?.nameAction : undefined}
       who={who.who}
       address={who.address}
       people={who.people}
@@ -172,9 +188,8 @@ export function SearchHitRow({
       cursor={cursor}
       open={open}
       onOpen={() => onOpen(hit)}
-      /* The address is the way to everything from and to that person. */
       contactHref={fragmentOf({ place: "address", sub: m.from.address, open: null, stage: null, words: {} })}
-      onContact={() => beside.go.address(m.from.address)}
+      onContact={contactActions?.addressAction ?? (() => beside.go.address(m.from.address))}
     />
   );
 }

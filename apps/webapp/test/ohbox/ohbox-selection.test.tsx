@@ -19,6 +19,8 @@ import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
    across every test source under this directory. */
 import { sliceOfDeclaration } from "../source-anchor.js";
 import { ohboxRows, openLetter, reportSays, seatedList } from "./_finders.js";
+import { admitting, mountSeat, unmountSeat } from "../_ohbox-1-seat.js";
+import { fakeMail, letter } from "../../../../packages/app/test/reader/support/fake-mail.js";
 
 /**
  * ═══ THE SELECTION'S VERBS ARE THE MESSAGE PILL ═══════════════════════════════════════════
@@ -74,7 +76,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
 let sent: EngineMutation[] = [];
 
 async function unmount(): Promise<void> {
@@ -84,9 +86,10 @@ async function unmount(): Promise<void> {
   host = null;
 }
 
-/** The demo shell, cursor on the first row — `shell-screening-bulk.test.ts`'s own harness. */
-async function mountShell(): Promise<void> {
+/** The demo shell, with the desktop cursor on the first row or the phone list showing. */
+async function mountShell(room: "desktop" | "phone" = "desktop"): Promise<void> {
   await unmount();
+  if (room === "phone") setPhone();
   const { MailShell: AppShell } = await import("../_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -103,7 +106,7 @@ async function mountShell(): Promise<void> {
     );
   });
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-  await key("j");
+  if (room === "desktop") await key("j");
 }
 
 /**
@@ -163,13 +166,8 @@ const toasts = (): string[] => {
   return said.length > 0 ? [said] : [];
 };
 
-/**
- * A PHONE VIEWPORT — `matchMedia` answering yes to the shell's width questions, which is what
- * `readColumnHidden()` reads. Called after mount, because the shell asks at click time.
- */
+/** Set the phone viewport before the frame reads its layout. */
 function setPhone(): void {
-  /* The seated place lays out its columns by the window's own width (the frame's plan reads `innerWidth`), as today's
-     view asked its width questions of `matchMedia`: a phone is both. */
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
   (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
     ({
@@ -178,9 +176,6 @@ function setPhone(): void {
       addEventListener() {}, removeEventListener() {},
       dispatchEvent() { return false; },
     }) as unknown as MediaQueryList;
-  /* The width is drawn before a case reads a row: on a phone the list stands its rows in a sheet of their own, so a
-     row found before that commit is not the row a finger meets. */
-  void act(() => { window.dispatchEvent(new Event("resize")); });
 }
 
 /** One pointer event on a row, with the fields the gesture actually reads. */
@@ -842,8 +837,7 @@ describe("a long press starts a selection on a phone", () => {
    */
   it("450ms of touch on a row picks it and mounts the pill", async () => {
     vi.useFakeTimers();
-    await mountShell();
-    setPhone();
+    await mountShell("phone");
     const row = rows()[1]!;
     await pointer(row, "pointerdown", { pointerType: "touch" });
     expect(pickedRows(), "the hold picked before its timer ran").toHaveLength(0);
@@ -860,8 +854,7 @@ describe("a long press starts a selection on a phone", () => {
     /* Drop the `pointerType` guard and this goes red: a click somebody takes their time over
        would start selecting rows on a machine that never asked for the gesture. */
     vi.useFakeTimers();
-    await mountShell();
-    setPhone();
+    await mountShell("phone");
     await pointer(rows()[1]!, "pointerdown", { pointerType: "mouse" });
     await act(async () => { vi.advanceTimersByTime(500); });
     expect(pickedRows()).toHaveLength(0);
@@ -870,8 +863,7 @@ describe("a long press starts a selection on a phone", () => {
 
   it("a finger that MOVES is scrolling, not selecting", async () => {
     vi.useFakeTimers();
-    await mountShell();
-    setPhone();
+    await mountShell("phone");
     const row = rows()[1]!;
     await pointer(row, "pointerdown", { pointerType: "touch", clientX: 10, clientY: 10 });
     // Past `DRAG_SLOP_PX` — a selection appearing mid-scroll is the worst kind of surprise.
@@ -882,8 +874,7 @@ describe("a long press starts a selection on a phone", () => {
 
   it("a press that ENDS before the timer is a tap", async () => {
     vi.useFakeTimers();
-    await mountShell();
-    setPhone();
+    await mountShell("phone");
     const row = rows()[1]!;
     await pointer(row, "pointerdown", { pointerType: "touch" });
     await act(async () => { vi.advanceTimersByTime(200); });
@@ -893,28 +884,40 @@ describe("a long press starts a selection on a phone", () => {
   });
 
   it("a row that leaves under a resting finger leaves no empty bar behind", async () => {
-    /* The hold picks the row it started on; when that row has left the list meanwhile (here the
-       cursor's Park), the pick names nothing on screen and must go at once, as any pick of a row
-       that left does. Kept only on the list's own changes, the prune missed it: "0 selected" stood. */
+    /* Simulate Park arriving from another device while the finger is still down. */
     vi.useFakeTimers();
-    await mountShell();
-    setPhone();
-    const row = rows()[0]!;
-    const id = row.dataset.id!;
-    await pointer(row, "pointerdown", { pointerType: "touch" });
-    await act(async () => { vi.advanceTimersByTime(100); });
-    await key("e");
-    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-    expect(rows().some((r) => r.dataset.id === id), "fixture: Park left the row in the list").toBe(false);
-    await act(async () => { vi.advanceTimersByTime(500); });
-    expect(pickCount(), "the hold's stale pick drew a count").toBeNull();
-    expect(pill(), "a bar stood over a selection of nothing").toBeNull();
+    const message = letter("leaving", { unread: true });
+    const mail = fakeMail([message], [], {}, admitting([message.from.address]));
+    host = mountSeat(mail.engine, { room: "phone" }).container;
+    try {
+      const row = rows()[0]!;
+      expect(row?.dataset.id).toBe(message.id);
+      await pointer(row, "pointerdown", { pointerType: "touch" });
+      await act(async () => { vi.advanceTimersByTime(100); });
+      await act(async () => {
+        mail.patch(message.id, {
+          triage: {
+            messageId: message.id,
+            state: "set_aside",
+            bubbleUpAt: null,
+            setAt: message.updatedAt,
+            updatedAt: message.updatedAt,
+          },
+        });
+      });
+      expect(rows().some((r) => r.dataset.id === message.id), "fixture: Park left the row in the list").toBe(false);
+      await act(async () => { vi.advanceTimersByTime(500); });
+      expect(pickCount(), "the hold's stale pick drew a count").toBeNull();
+      expect(pill(), "a bar stood over a selection of nothing").toBeNull();
+    } finally {
+      unmountSeat();
+      host = null;
+    }
   });
 
   it("while a selection stands, a tap TOGGLES a row instead of opening it", async () => {
     vi.useFakeTimers();
-    await mountShell();
-    setPhone();
+    await mountShell("phone");
     await hold(rows()[1]!);
     expect(pickedRows()).toHaveLength(1);
 
@@ -935,8 +938,7 @@ describe("a long press starts a selection on a phone", () => {
 
   it("the count capsule is the way OUT of the mode", async () => {
     vi.useFakeTimers();
-    await mountShell();
-    setPhone();
+    await mountShell("phone");
     await hold(rows()[1]!);
     await click(countCapsule());
     expect(pickedRows()).toHaveLength(0);

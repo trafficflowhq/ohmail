@@ -6,7 +6,7 @@ import { mailPlaces } from "@ohmail/app/mail";
 import * as room from "../../../packages/app/src/frame/room.js";
 import { json } from "./account/account-harness";
 import {
-  act, closeMailPage, inboxPage, MAILBOX, mountMailPage, prepareMailPage, tick,
+  act, closeMailPage, inboxPage, MAILBOX, mountMailPage, prepareMailPage, scopedSyncResponse, tick,
 } from "./fixtures/mounted-mail-page";
 
 const WORK = { ...MAILBOX, displayName: "Work" };
@@ -41,7 +41,7 @@ async function mountedDeliveries(withhold?: string) {
   }
   await prepareMailPage({
     "GET /api/mailboxes": () => json({ items: BOXES }),
-    "GET /api/sync": () => json({ ...inbox, changes: { ...inbox.changes, creates: [rule, ...rows] } }),
+    "GET /api/sync": () => scopedSyncResponse({ ...inbox, changes: { ...inbox.changes, creates: [rule, ...rows] } }),
   });
   const page = await mountMailPage();
   const mounted = new Map<string, Array<{ name: string; actual: string | undefined; expected: string }>>();

@@ -8,6 +8,7 @@ import {
   answerSyncWith,
   goTo,
   installShellEnv,
+  liveAccountFetch,
   mailbox,
   mountShell,
   page,
@@ -203,7 +204,7 @@ describe("a drain still walking its pages states nothing", () => {
   it("renders the pending state, not an empty one, between pages", async () => {
     let calls = 0;
     let release: (() => void) | null = null;
-    globalThis.fetch = vi.fn(async (input: unknown) => {
+    globalThis.fetch = liveAccountFetch(async (input) => {
       const u = String(input);
       if (u.includes("types=rule")) return page(0);
       if (u.includes("/sync")) {
@@ -228,16 +229,19 @@ describe("a drain still walking its pages states nothing", () => {
         );
       }
       return new Response("{}", { status: 200 });
-    }) as unknown as typeof globalThis.fetch;
+    });
 
     const el = await mountShell([mailbox({ lastSyncAt: ISO })]);
-    await tick(LOADING_GRACE_MS * 4);
+    try {
+      await tick(LOADING_GRACE_MS * 4);
 
-    expect(calls, "the premise: the walk asked for a second page").toBeGreaterThan(1);
-    expect(textOf(el), "the pane called a mailbox empty mid-walk").not.toContain(OHBOX.emptyPlain);
-    expect(textOf(el), "the header counted a mailbox mid-walk").not.toMatch(UNREAD_META);
-    expect(textOf(el), "the pane went silent mid-walk").toContain(OHBOX.loading);
-    if (release) (release as () => void)();
+      expect(calls, "the premise: the walk asked for a second page").toBeGreaterThan(1);
+      expect(textOf(el), "the pane called a mailbox empty mid-walk").not.toContain(OHBOX.emptyPlain);
+      expect(textOf(el), "the header counted a mailbox mid-walk").not.toMatch(UNREAD_META);
+      expect(textOf(el), "the pane went silent mid-walk").toContain(OHBOX.loading);
+    } finally {
+      if (release) (release as () => void)();
+    }
   });
 });
 

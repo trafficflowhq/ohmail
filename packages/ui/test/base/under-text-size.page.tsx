@@ -3,7 +3,7 @@
  * own parts with their own listeners, and a way to move the scene's state from the test.
  */
 import { useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import {
   Blank,
@@ -17,6 +17,7 @@ import {
   Sentence,
   contextTrigger,
 } from "../../src/base/index.js";
+import { portalRenderer } from "../../src/base/Overlays/portal-renderer.js";
 import { AgendaRow, EventCard } from "../../src/calendar/index.js";
 import {
   ActionPanel,
@@ -221,6 +222,7 @@ function Squares() {
     <div style={{ position: "absolute", left: 300, top: 200 }}>
       <ReadSquares
         squares={["seen", "seen", "unseen", "own", "seen", "unseen"]}
+        tips={["First message"]}
         here={here}
         axis="row"
         label="6 messages"
@@ -506,7 +508,13 @@ export type Scene = keyof typeof SCENES;
 Object.assign(window, {
   mountScene(host: Element, scene: Scene) {
     const Part = SCENES[scene];
-    flushSync(() => createRoot(host).render(<Part />));
+    flushSync(() =>
+      createRoot(host).render(
+        <portalRenderer.Provider value={createPortal}>
+          <Part />
+        </portalRenderer.Provider>,
+      ),
+    );
   },
   stepScene() {
     flushSync(() => step?.());

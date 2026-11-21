@@ -4,12 +4,13 @@ import { within } from "@testing-library/react";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import {
-  act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
+  ACCOUNT, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
   scriptRefresh, scriptSession, sessionCalls, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
 } from "./fixtures/cloud-confirm-shell";
 
 const groups = [{ ruleId: "r1", kind: "sender", match: "sender@example.invalid", destination: "INBOX", count: 3 }];
 const endpoint = "/api/screener/held-releases";
+const scoped = { headers: { "X-Ohmail-Account": ACCOUNT } };
 let host: HTMLElement;
 let posts: string[];
 
@@ -35,11 +36,11 @@ async function mount(waitForConfirmation: boolean) {
     if (path === endpoint && method === "GET") return Response.json({
       groups: released ? [] : groups, total: released ? 0 : 3,
       max: 200, fingerprint: "fixture", dismissed: false,
-    });
+    }, scoped);
     if (path === endpoint && method === "POST") {
       posts.push(path);
       released = true;
-      return Response.json({ released: groups, total: 3 });
+      return Response.json({ released: groups, total: 3 }, scoped);
     }
     return fixture(input, init);
   };

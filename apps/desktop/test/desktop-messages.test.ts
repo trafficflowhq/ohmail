@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { SHELL_MESSAGE_KEYS, SHELL_MESSAGE_NAMESPACES, WINDOW_ONLY_NAMESPACES } from "../vite.config.js";
+import desktopConfig, { SHELL_MESSAGE_KEYS, SHELL_MESSAGE_NAMESPACES, WINDOW_ONLY_NAMESPACES } from "../vite.config.js";
 
 /**
  * The desktop binary must not contain the marketing site's copy.
@@ -191,6 +191,8 @@ function namespacesRead(src: string): Set<string> {
   // The one text reader's door reads a namespace the same way (`@ohmail/app/text`).
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   for (const m of code.matchAll(/\buseText\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
+  // Settings menu facts supply this namespace to the host text reader through their label descriptors.
+  for (const m of code.matchAll(/\bexport const SETTINGS_MENU_NAMESPACE = "([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
   for (const m of src.matchAll(/\b(?:liveCopy|bodyCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
     found.add(m[1]!);
   }
@@ -273,7 +275,15 @@ const ACCOUNT_ONLY: Record<string, string> = {
 const PHONE_DOOR = "packages/app/src/phone-door/";
 const PHONE_DOOR_ONLY: Record<string, string> = {
   phoneDoor: "the phone's ways in and its form's words: drawn on the phone's door page, never in the window",
-  phoneRefusal: "what the phone's native side refused, said by its code: the phone's door page alone",
+  phoneRefusal: "what the phone's native side refused, said by its code",
+};
+const PHONE_SETTINGS_ONLY: Record<string, string> = {
+  phoneSettings: "the phone's own Settings panes",
+  phoneRefusal: PHONE_DOOR_ONLY.phoneRefusal!,
+};
+const PHONE_SERVERS_ONLY: Record<string, string> = {
+  servers: "the phone's organizer roster and connection",
+  phoneRefusal: PHONE_DOOR_ONLY.phoneRefusal!,
 };
 
 /** Each folder whose namespaces are read and not shipped, with its exceptions. */
@@ -281,6 +291,8 @@ const ONLY_IN: readonly (readonly [string, Record<string, string>])[] = [
   [DOORS, DOOR_ONLY],
   [ACCOUNT, ACCOUNT_ONLY],
   [PHONE_DOOR, PHONE_DOOR_ONLY],
+  ["packages/app/src/phone-settings/", PHONE_SETTINGS_ONLY],
+  ["packages/app/src/servers/", PHONE_SERVERS_ONLY],
 ];
 
 /**
@@ -293,9 +305,9 @@ function unexplained(reads: ReadonlyMap<string, ReadonlySet<string>>): string[] 
   for (const [file, namespaces] of reads) {
     for (const ns of namespaces) {
       if (shipped.has(ns)) continue;
-      const only = ONLY_IN.find(([, table]) => Object.hasOwn(table, ns));
-      if (only === undefined) out.add(ns);
-      else if (!file.startsWith(only[0])) out.add(`${ns} in ${file}`);
+      const owners = ONLY_IN.filter(([, table]) => Object.hasOwn(table, ns));
+      if (owners.length === 0) out.add(ns);
+      else if (!owners.some(([directory]) => file.startsWith(directory))) out.add(`${ns} in ${file}`);
     }
   }
   return [...out].sort();
@@ -340,13 +352,8 @@ function computedKeyNamespaces(raw: string): Set<string> {
  * about the import graph: a namespace is READABLE on a door only if some file reachable from that
  * door's entry point reads it.
  *
- * Deliberately a text walk over relative specifiers, not a bundler: the two entries and everything
- * they pull are this repository's own sources, the desktop config's aliases point at those same
- * files, and a resolver that followed packages would drag `node_modules` in for no gain. A
- * specifier it cannot resolve is one it does not follow, which is the SAFE direction here — it can
- * only make a graph smaller, and every case below asserts a namespace is ABSENT from the host
- * graph, so an under-resolved walk cannot manufacture a pass it would otherwise fail. The size
- * floors below are what keeps that honest.
+ * A source walk follows both relative imports and the desktop build's workspace aliases. Its size floors
+ * catch lost sources, which could otherwise leave the assertion about the host's graph passing vacuously.
  */
 const ENTRY_WINDOW = "apps/desktop/src/main.tsx";
 const ENTRY_HOST = "apps/paired-page/src/main.tsx";
@@ -354,6 +361,7 @@ const ENTRY_HOST = "apps/paired-page/src/main.tsx";
 function importGraph(entryRel: string): string[] {
   const seen = new Set<string>();
   const queue = [path.join(REPO, entryRel)];
+  const aliases = desktopConfig.resolve?.alias;
   const tryFile = (base: string): string | null => {
     const candidates = [
       base.replace(/\.js$/, ".ts"),
@@ -379,8 +387,14 @@ function importGraph(entryRel: string): string[] {
     }
     for (const m of src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
       const spec = m[1]!;
-      if (!spec.startsWith(".")) continue;
-      const next = tryFile(path.resolve(path.dirname(file), spec));
+      const alias = Array.isArray(aliases) ? aliases.find(({ find }) =>
+        typeof find === "string" ? spec === find || spec.startsWith(`${find}/`) : find.test(spec),
+      ) : undefined;
+      const candidate = spec.startsWith(".") ? path.resolve(path.dirname(file), spec) : (
+        alias ? spec.replace(alias.find, alias.replacement) : null
+      );
+      if (candidate === null || !candidate.startsWith(`${REPO}${path.sep}`)) continue;
+      const next = tryFile(candidate);
       if (next !== null) queue.push(next);
     }
   }
@@ -481,13 +495,15 @@ describe("desktop message filter", () => {
        its folder is red by `unexplained`. */
     expect(unexplained(reads)).toEqual([]);
     expect(used).toEqual(
-      [
+      [...new Set([
         ...SHELL_MESSAGE_NAMESPACES,
         ...Object.keys(SHELL_MESSAGE_KEYS),
         ...Object.keys(DOOR_ONLY),
         ...Object.keys(ACCOUNT_ONLY),
         ...Object.keys(PHONE_DOOR_ONLY),
-      ].sort(),
+        ...Object.keys(PHONE_SETTINGS_ONLY),
+        ...Object.keys(PHONE_SERVERS_ONLY),
+      ])].sort(),
     );
   });
 
@@ -597,6 +613,8 @@ describe("desktop message filter", () => {
     expect(windowFiles.length).toBeGreaterThan(100);
     expect(hostFiles.length).toBeGreaterThan(100);
     expect(hostFiles).toContain("apps/paired-page/src/HostGate.tsx");
+    const phoneNamespaces = new Set([...Object.keys(PHONE_DOOR_ONLY), ...Object.keys(PHONE_SETTINGS_ONLY), ...Object.keys(PHONE_SERVERS_ONLY)]);
+    expect([...namespacesIn([...windowFiles, ...hostFiles]).keys()].filter((ns) => phoneNamespaces.has(ns))).toEqual([]);
 
     /* EXACTLY ONE READER, and that is the design rather than an accident: `door-copy.ts` holds
        the whole namespace as one `liveCopy` table and every pane imports `DOOR_COPY` from it.

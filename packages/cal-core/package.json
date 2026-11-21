@@ -94,6 +94,12 @@
       "node": "./dist/recur/occurrence.js",
       "default": "./src/recur/occurrence.ts"
     },
+    "./stored/delete-audience": {
+      "types": "./src/stored/delete-audience.ts",
+      "ohmail-source": "./src/stored/delete-audience.ts",
+      "node": "./dist/stored/delete-audience.js",
+      "default": "./src/stored/delete-audience.ts"
+    },
     "./stored/time": {
       "types": "./src/stored/time.ts",
       "ohmail-source": "./src/stored/time.ts",

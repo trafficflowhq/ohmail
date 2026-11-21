@@ -18,7 +18,7 @@ import { DEVICE_SIGN_IN_KEY, retireDeviceSignIn } from "./(product)/mailbox/devi
 import { forgetOwner, markSignedOutPending, readOwner, readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { durableRemove, durableSet } from "@ohmail/app-logic/storage/durable";
 import { namesOwner } from "@ohmail/app-logic/storage/storage-owner";
-import { RETIRED_ID_SETS } from "@ohmail/app-logic/storage/persisted-ui";
+import { RETIRED_ID_SETS, SUBJECT_DISPLAY_PREFIX } from "@ohmail/app-logic/storage/persisted-ui";
 import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
@@ -41,6 +41,15 @@ import {
 } from "./pending-sign-out-storage";
 export { PENDING_SIGN_OUT_KEY, readPendingSignOut };
 
+
+/** Capture the current confirmed session for a sign-out that has no Settings account read. */
+export function confirmedSignOutSession(): { account: string; family: string } | null {
+  const account = readOwner();
+  const family = readSessionFamily();
+  return account !== null && family !== null && boundApiOwner() === account && boundApiFamily(account) === family
+    ? { account, family }
+    : null;
+}
 
 /**
  * The server revokes the departed family without writing cookies. The browser retires its local copy
@@ -177,6 +186,7 @@ export async function forgetThisBrowser(
   // simply never told. What it does is let a one-account wipe reach it.
   const durable = sweepFor(only ? owner! : null, [
     SEND_LOCKS_PREFIX,
+    SUBJECT_DISPLAY_PREFIX,
     // The letters' Sent copy notes on the foot line: each names a recipient and a subject.
     SENT_COPY_NOTES_PREFIX,
     SCREENER_INTENTS_PREFIX,
@@ -380,6 +390,7 @@ export function forgetUnsentWordsOf(owner: string, mayRemove: () => boolean): Lo
  * id, an old reply key), or belongs to the jar's session.
  */
 const OWNER_KEYED: readonly string[] = [
+  SUBJECT_DISPLAY_PREFIX,
   SEND_LOCKS_PREFIX, SENT_COPY_NOTES_PREFIX, SCREENER_INTENTS_PREFIX, DELETE_INTENTS_PREFIX, ROUTING_INTENTS_PREFIX,
   COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, READING_ALONG_PREFIX,
   ACCESS_VERDICT_PREFIX, OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, TOLD_DEVICES_PREFIX,
@@ -743,4 +754,20 @@ export function signOutStayReason(outcome: SignOutResult): "unverified" | "block
   if (trouble === null || trouble.key === "signOutServerRefused"
     || outcome.replaced || readOwnerMarker().kind !== "account") return null;
   return trouble.key === "signOutUnverified" ? "unverified" : "blocked";
+}
+
+/** A retired tab may offer local cleanup only while the same confirmed sign-out owns the browser. */
+export function confirmedLocalCleanup(outcome: SignOutResult, account: string, family: string | undefined) {
+  const trouble = signOutTrouble(outcome);
+  if (trouble?.key !== "signOutBlocked" && trouble?.key !== "signOutUnverified") return null;
+  const pending = readPendingSignOut();
+  if (!pending?.revoked || pending.account !== account || pending.family !== (family ?? null)) return null;
+  const holds = () => {
+    const current = readPendingSignOut();
+    return readOwnerMarker().kind === "signed-out" && readSessionFamily() === pending.family
+      && current?.revoked === true && current.press === pending.press
+      && current.account === pending.account && current.family === pending.family;
+  };
+  const reason = trouble.key === "signOutBlocked" ? "blocked" : "unverified";
+  return holds() ? { reason, holds } as const : null;
 }

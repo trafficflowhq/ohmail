@@ -6,6 +6,7 @@ import { eventRefOf, eventRefString, productOf } from "../../src/frame/product.j
 const CANONICAL = [
   "#/ohbox",
   "#/ohbox/m/a1",
+  "#/ohbox/t/a1",
   "#/reads",
   "#/reads/m/a1",
   "#/receipts",

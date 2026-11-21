@@ -27,7 +27,7 @@ import {
   readImageQualityLevel,
   writeImageQualityLevel,
 } from "../components/image-quality";
-import { useScopeHere } from "@ohmail/app/frame";
+import { useScopeHere } from "@ohmail/app/frame/scope";
 
 export function ImageQualityRow() {
   const t = useTranslations("settings");

@@ -17,7 +17,7 @@ import { cursorRow, ohboxRows, openRow, reportSays } from "./ohbox/_finders.js";
 /**
  * TWO CLAIMS THE SHELL MAKES, DRIVEN THROUGH THE SHELL.
  *
- *   · clicking a sender's circle or address IN A LIST opens their screening, and
+ *   · clicking a sender's name or address IN A LIST opens their screening, and
  *     choosing a destination puts the right thing on the wire. `sender-screening.test.ts`
  *     pins the mutation planning; this pins the part that only exists once it is wired: a
  *     capture-phase handler on the stage, one for every view, that must not be swallowed
@@ -342,6 +342,7 @@ describe("a sender's screening, from a list row", () => {
 
 
 
+  // Keep the retained case's title. Its contact-card press now comes from Bea's name.
   it("clicking the circle opens screening INSTEAD of moving the cursor", async () => {
     await withScreeningWeb("ohbox", async (shell, _, writes) => {
       const opened = within(shell).getByRole("option", { name: /Ada: A note from Ada/, selected: true });
@@ -517,6 +518,8 @@ describe("a sender's screening, from a list row", () => {
       const row = within(shell).getByRole("option", { name: /Ada: A note from Ada/ });
       expect(row.getAttribute("aria-selected")).toBe("true");
       await key("s");
+      const contact = within(document.body).getByRole("dialog", { name: "Options for Ada" });
+      await click(within(contact).getByRole("menuitem", { name: messages.screening.action }));
       expect(within(document.body).getByRole("dialog", { name: sheetName })).toBeTruthy();
     });
   });

@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { useOptionalTheme } from "@ohmail/ui";
+import { useOptionalTheme } from "@ohmail/ui/theme";
 import { useConsent } from "@ohmail/app-logic/consent";
 import { useFrame, type FrameNotice } from "@ohmail/app/frame";
 import { durableSet } from "@ohmail/app-logic/storage/durable";

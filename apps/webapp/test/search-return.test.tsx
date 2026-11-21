@@ -5,6 +5,7 @@ import messages from "../messages/en.json";
 import { storeMessage } from "./_store-fixture";
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, page, teardownShellEnv, tick,
+  liveAccountFetch,
 } from "./fixtures/live-walk-shell";
 
 /**
@@ -33,14 +34,14 @@ async function shell(): Promise<HTMLElement> {
   answerSyncWith(() => sync.clone());
   const hit = storeMessage(0, ISO, { accountId: "acct_live_1", subject: "Glaze delivery" });
   const fetch = globalThis.fetch;
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = liveAccountFetch((input, init) => {
     const url = new URL(String(input), "https://harness.invalid");
     if (url.pathname.endsWith("/search")) {
       const items = url.searchParams.get("q") === "glaze" ? [hit] : [];
       return Promise.resolve(Response.json({ items, total: items.length, totalExact: true, ms: 4 }));
     }
     return fetch(input, init);
-  };
+  });
   const host = await mountShell([mailbox({ id: "mb_1", lastSyncAt: ISO })]);
   await tick(0);
   return host;

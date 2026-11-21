@@ -1,10 +1,9 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useFaceSettings as useSharedFaceSettings, type FaceSettingsProps } from "@ohmail/app/settings/browser";
+import { useFaceSettings as useSharedFaceSettings, type FaceSettingsProps } from "@ohmail/app/settings/face";
 
 export type { FaceSettingsProps };
-export { setTextSize } from "./browser-settings";
 
 export function useFaceSettings(props: FaceSettingsProps) {
   const t = useTranslations("settings");

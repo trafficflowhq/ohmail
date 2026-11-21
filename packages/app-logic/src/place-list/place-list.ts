@@ -9,6 +9,7 @@
  * drawing's, in its words.
  */
 import { useEffect, useMemo, useRef } from "react";
+import type { ListVerbs } from "../press/list-verbs.js";
 import type { EngineMessage } from "@ohmail/wire";
 import type { PlaceLiveArgs } from "../lists/place-live.js";
 import type { MessageAction } from "../press/actions.js";
@@ -26,6 +27,7 @@ export function newestFirst(a: EngineMessage, b: EngineMessage): number {
 }
 
 export interface PlaceListInput {
+  readonly verbs?: ListVerbs;
   /** The rows, in the place's order. */
   readonly rows: readonly EngineMessage[];
   /** The letter open in the place (the route's), or none. */
@@ -45,6 +47,7 @@ export interface PlaceListInput {
 }
 
 export interface PlaceList {
+  readonly verbs?: ListVerbs;
   readonly rows: readonly EngineMessage[];
   /** The letter open in the place, where the list holds it. */
   readonly openId: string | null;
@@ -112,5 +115,13 @@ export function usePlaceList(input: PlaceListInput): PlaceList {
       step: { up, down },
     };
   }, [shown, wiring, up, down, markSeen, act]);
-  return { rows, openId: shown?.id ?? null, cursor: walk.cursor, press: walk.press, visit, walk };
+  return {
+    rows,
+    verbs: input.verbs,
+    openId: shown?.id ?? null,
+    cursor: walk.cursor,
+    press: walk.press,
+    visit,
+    walk,
+  };
 }

@@ -156,7 +156,9 @@ describe("a person first", () => {
     await type("from:ben ");
     await settle();
     expect(["relevance", "date_desc"]).toContain(pages(world.asked).at(-1)?.opts.sort);
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getAllByRole("status").map((line) => line.textContent)).toEqual([
+      expect.stringMatching(/^Searched your whole mailbox — 1 matched · [1-9]\d* ms$/),
+    ]);
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /^Sorted by/ }));
     });

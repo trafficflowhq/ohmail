@@ -478,6 +478,7 @@ interface BridgeInit {
   signal?: AbortSignal;
   /** This call's own deadline (`local-server-deadline.ts`); absent is the one minute. */
   deadlineMs?: number;
+  expectedCalendarSession?: number;
 }
 
 /**
@@ -510,6 +511,7 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
       url,
       headers: named(headerPairs(options.headers)),
       ...bodyField(options.body),
+      ...(options.expectedCalendarSession === undefined ? {} : { expectedCalendarSession: options.expectedCalendarSession }),
     }),
     {
       ...(options.signal ? { signal: options.signal } : {}),
@@ -964,6 +966,14 @@ export function createEngineAdapter(options: EngineAdapterOptions = {}): HttpAda
     scheduleFilesCheck: true,
     ...(stage ? { stageAttachments: true } : {}),
   });
+}
+
+/** The reminder view reads settings under the native session it was opened with. */
+export function readDesktopCalendarSettings(session: number) {
+  return new HttpAdapter({
+    baseUrl: "",
+    fetch: (url, init) => bridgeFetch(url, { ...init, expectedCalendarSession: session }),
+  }).calendarSettings();
 }
 
 /** How this window's engine is wired for the door it serves. */

@@ -6,6 +6,9 @@ import { letterBody } from "@ohmail/app/reader/body";
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { issue, mountStreamFrame } from "../../../packages/app/test/streams/registered-world.js";
 import { stubDom } from "./_draft-shell.js";
+import { installShellEnv, teardownShellEnv } from "./fixtures/live-walk-shell.js";
+import { click, LENA, mountThread, msg as threadMessage } from "./fixtures/thread-read-shell.js";
+import messages from "../messages/en.json";
 
 /**
  * READS AND RECEIPTS GET THE MESSAGE, NOT A PREVIEW OF IT.
@@ -71,6 +74,7 @@ function mountRegisteredReads() {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("the card being read carries the message's verbs", () => {
@@ -115,6 +119,7 @@ describe("a letter answered in place", () => {
     snippet: "Thank you, lovely issue.", body: "Thank you, lovely issue.\n\nMila",
   };
   it("the reply joins as a second panel with its square, and the row reads as yours", async () => {
+    vi.setSystemTime(new Date("2026-08-05T09:00:00Z"));
     const letters = [LETTER, TWO].map((m) => issue(m.id, m.id === "one" ? 20 : 19, {
       ...m, folder: "ohmail/News", arrivedAt: m.date ?? undefined,
     }));
@@ -179,30 +184,26 @@ describe("a sender's address is the handle on the sender, on cards as on rows", 
     const dialog = contact(letter);
     expect(dialog).toBeTruthy();
     expect(item.getAttribute("data-stream-item")).toBe("m1");
-    expect(dialog.style.left, "the popover was anchored to the text rather than to the card").toBe("120px");
+    expect(dialog.style.left, "the popover follows the sender control").toBe("180px");
   });
 
   it("still resolves both handles on a list row", async () => {
-    const letter = issue("m2", 20, { subject: "The second issue", folder: "INBOX" });
-    mountStreamFrame({
-      at: "#/ohbox",
-      letters: [letter],
-      withReply: true,
-      rows: {
-        "rule:inbox": {
-          id: "inbox", kind: "sender", match: letter.from.address, destination: "INBOX",
-          enabled: true, priority: 1, provenance: "manual",
-        },
-      },
-    });
-    const row = screen.getByRole("option", { name: /The second issue/ });
-    for (const name of [`Screening for ${letter.from.name}`, letter.from.address]) {
-      const handle = within(row).getByRole("button", { name });
-      await act(async () => { fireEvent.click(handle); });
-      const dialog = screen.getByRole("dialog");
-      expect(dialog.textContent).toContain(letter.from.name);
-      expect(handle.closest("[data-id]")?.getAttribute("data-id")).toBe("m2");
-      await act(async () => { fireEvent.keyDown(dialog, { key: "Escape" }); });
+    installShellEnv();
+    try {
+      window.location.hash = "#/ohbox";
+      await mountThread([threadMessage("m2", 0, { subject: "The second issue" })], { webContactScreening: true });
+      const row = screen.getByRole("option", { name: /The second issue/ });
+      for (const name of [messages.screening.openFor.replace("{sender}", LENA.name), LENA.address]) {
+        const handle = within(row).getByRole("button", { name });
+        await click(handle, name);
+        const dialog = screen.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", LENA.address) });
+        expect(dialog.textContent).toContain(LENA.name);
+        expect(handle.closest("[data-id]")?.getAttribute("data-id")).toBe("m2");
+        await act(async () => { fireEvent.keyDown(dialog, { key: "Escape" }); });
+        expect(screen.queryByRole("dialog")).toBeNull();
+      }
+    } finally {
+      await teardownShellEnv();
     }
   });
 });

@@ -17,8 +17,8 @@ import { PANE_IDS, type PaneId } from "../../../packages/app/src/settings/contra
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { CLOUD_URL } from "../src/doors.js";
 
-vi.mock("../src/build-id.js", async (original) => ({
-  ...await original<typeof import("../src/build-id.js")>(),
+vi.mock("../src/build-id.js", async () => ({
+  ...await vi.importActual<typeof import("../src/build-id.js")>("../src/build-id.js"),
   BUILD_VERSION: "0.30.3",
 }));
 
@@ -648,7 +648,7 @@ async function navFor(status: EngineStatus, signedIn: boolean): Promise<string[]
   });
   await settle();
   const nav = within(mountPoint).queryByRole("navigation", { name: messages.settings.navAria });
-  return nav ? within(nav).queryAllByRole("button").map((button) => (button.textContent ?? "").trim()) : [];
+  return nav ? within(nav).queryAllByRole("button").map((button) => button.getAttribute("aria-label") ?? "") : [];
 }
 
 async function openHelp(status: EngineStatus): Promise<HTMLElement> {

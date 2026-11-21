@@ -38,6 +38,7 @@ export function useCursorRowInView(
 
 export function ListColumn({
   head,
+  foot,
   plan,
   label,
   cursor = null,
@@ -49,6 +50,7 @@ export function ListColumn({
   children,
 }: {
   head: ReactNode;
+  foot?: ReactNode;
   plan: LayoutPlan;
   /** Names the column as a region, where the place has no other name for it. */
   label?: string;
@@ -134,6 +136,7 @@ export function ListColumn({
           children
         )}
       </div>
+      {foot}
     </div>
   );
 }

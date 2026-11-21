@@ -1,5 +1,4 @@
-import { createPortal } from "react-dom";
-import { useId, type KeyboardEvent, type ReactNode } from "react";
+import { useContext, useId, type KeyboardEvent, type ReactNode } from "react";
 import { RefusalLine } from "../Feedback/RefusalLine.js";
 import { Button } from "../Primitives/Button.js";
 import { EndDot } from "../Primitives/EndDot.js";
@@ -7,6 +6,7 @@ import { Sentence } from "../Primitives/Sentence.js";
 import { useSaidOnArrival } from "../said-on-arrival.js";
 import "./dialog.css";
 import { Overlay } from "./Overlay.js";
+import { portalRenderer } from "./portal-renderer.js";
 
 export interface DialogProps {
   open: boolean;
@@ -63,6 +63,7 @@ const wayOut = (box: HTMLElement) => box.querySelector<HTMLElement>(".oh-dialog-
  * and a press on the scrim close it, and the keys go back to what opened it.
  */
 export function Dialog(props: DialogProps) {
+  const renderPortal = useContext(portalRenderer);
   const {
     open,
     onClose,
@@ -158,6 +159,6 @@ export function Dialog(props: DialogProps) {
   );
   // An interrupting question must receive clicks above every column, including its opener's siblings.
   return props.alert && open && typeof document !== "undefined"
-    ? createPortal(dialog, document.body)
+    ? renderPortal(dialog, document.body)
     : dialog;
 }

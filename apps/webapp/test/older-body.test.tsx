@@ -5,12 +5,14 @@ import { createElement } from "react";
 import {
   ISO, act, answerConsentWith, answerStoreWith, answerSyncWith, installShellEnv, mailbox, mountShell,
   teardownShellEnv, textOf, tick,
+  liveAccountFetch,
 } from "./fixtures/live-walk-shell";
 import { bindApiOwner } from "../app/api-client";
 import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
 import { EngineProvider, useEngine } from "../app/shell/engine";
 import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
-import { useWebHost, webRecover, type WebWords } from "../app/(product)/mailbox/web-supplies";
+import { useCloudMailHost as useWebHost } from "../app/(product)/mailbox/CloudShell";
+import { webRecover, type WebWords } from "../app/(product)/mailbox/web-supplies";
 import en from "../messages/en.json";
 
 /**
@@ -91,7 +93,7 @@ let bodyAnswer: () => Response = () => json({ messageId: PAST_ID, text: BODY_TEX
  */
 function interposeReachPast(): void {
   const base = globalThis.fetch;
-  globalThis.fetch = (async (input: unknown, init?: unknown) => {
+  globalThis.fetch = liveAccountFetch(async (input: unknown, init?: unknown) => {
     const url = String(input);
     if (url.includes("/messages?")) {
       asked.push(url);
@@ -102,7 +104,7 @@ function interposeReachPast(): void {
       return bodyAnswer();
     }
     return (base as (i: unknown, o?: unknown) => Promise<Response>)(input, init);
-  }) as typeof globalThis.fetch;
+  });
 }
 
 const goHash = async (hash: string): Promise<void> => {

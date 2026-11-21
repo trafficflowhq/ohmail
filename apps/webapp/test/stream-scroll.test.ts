@@ -79,15 +79,14 @@ describe("one scroll owner per reading stream (the source census)", () => {
   });
 
   it("a collapsed stream card's preview box is at most the clamp, and its body is asked for a viewport ahead", () => {
-    // The fixed 348 box held 250-500px of empty card under every short letter on a phone. The
-    // ceiling lets a card settle once, when its body lands; the approach observer asking a whole
-    // viewport ahead in both directions is what keeps that landing off screen.
-    const css = read("packages/ui/src/composites/stream.css");
-    expect(css).toMatch(/\.scast\.viewer:not\(\.open\)\s+\.sc-clip\{max-height:348px\}/);
-    expect(css).toMatch(/\.scast\.pend\s+\.sc-clip\{min-height:var\(--sc-reserve,120px\)\}/);
-    expect(read("packages/app/src/stream/StreamColumn.tsx")).toContain('{ root: scroller, rootMargin: "100% 0px" }');
-    // …and the OPEN card is still released, or a long mail could not be read.
-    expect(css).toMatch(/\.scast\.viewer\.open\s+\.sc-clip\{max-height:none/);
+    const css = read("packages/ui/src/mail/Reading/message.css");
+    expect(css).toMatch(/\.oh-message-clip \{\s*--oh-message-clip-lines: 6;/);
+    expect(css).toMatch(/\.oh-message-clip\[data-shut\]\s*\{\s*max-height: calc\(var\(--oh-message-clip-lines\) \* var\(--lh-read\) \* var\(--t-read\)\);/);
+    expect(css).toMatch(/\.oh-message-clip\[data-shut\]\[data-pending\][\s\S]*?min-block-size:\s*min\(\s*var\(--stream-preview-reserve\)/);
+    expect(read("packages/app/src/stream/use-stream-column.ts")).toContain('{ root: scroller, rootMargin: "100% 0px" }');
+    expect(read("packages/ui/src/mail/Reading/Message.tsx")).toContain('data-shut={shut ? "" : undefined}');
+    const clamps = [...css.matchAll(/([^{}]+)\{[^{}]*?max-height:[^{}]+\}/g)];
+    expect(clamps.map(([, selector]) => selector!.trim())).toEqual([".oh-message-clip[data-shut]"]);
   });
 
   it("the intrinsic size of a stream card is the card's own estimate", () => {

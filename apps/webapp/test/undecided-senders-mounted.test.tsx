@@ -6,7 +6,7 @@ import { usePileNote } from "@ohmail/app-logic/lists/pile-note";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import {
-  ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh,
+  ACCOUNT, ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh,
   scriptSession, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
 } from "./fixtures/cloud-confirm-shell";
 
@@ -43,7 +43,9 @@ async function mount(place: "reads" | "receipts", reply: () => Response) {
     const method = init?.method ?? "GET";
     if (url.pathname !== "/api/screener/unscreened") return fixture(input, init);
     calls.push({ method, path: url.pathname + url.search });
-    return reply();
+    const response = reply();
+    if (response.ok) response.headers.set("X-Ohmail-Account", ACCOUNT);
+    return response;
   };
   window.location.hash = `#/${place}`;
   const frame = within(await mountCloudShell());

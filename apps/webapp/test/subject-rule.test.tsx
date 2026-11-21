@@ -294,7 +294,7 @@ describe("the plan", () => {
     expect(subjectRuleToast(plan, "confirmed")).toBe("subjectAlready");
     const filed = await pressSubject(CORPUS(), [ruleRow({ destination: "ohmail/News", subjectContains: TOKEN })]);
     expect(filed.ruleWrites()).toEqual([]);
-    expect(filed.report()).toContain("already");
+    expect(filed.report()).toContain("You already had that rule. 2 messages moved to News.");
   });
 
   it("an identical rule stored before the News rename is the same rule — nothing is written", async () => {

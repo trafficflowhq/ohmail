@@ -12,7 +12,7 @@ import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "@ohmail/app-logic/doors/wall-lift";
 import { dismissKey, noticeOf, type Notice } from "./LifecycleBanner";
-import { leaveForManagePage } from "./SubscriptionSection";
+import { leaveForManagePage } from "./manage-navigation";
 
 /**
  * Per SESSION, not for ever: a deadline a person put away this morning is worth saying again

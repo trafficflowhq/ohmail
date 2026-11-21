@@ -74,7 +74,7 @@ afterEach(async () => {
 
 async function mountView(
   mail: EngineMessage[],
-  opts: { optedIn?: boolean; subscriptionPane?: boolean; forgetOwner?: boolean; chooseSender?: boolean } = {},
+  opts: { optedIn?: boolean; subscriptionPane?: boolean; storedSuggestions?: () => Promise<Response>; chooseSender?: boolean } = {},
 ): Promise<void> {
   const Above = screener.ScreenerAbove;
   vi.spyOn(screener, "ScreenerAbove").mockImplementation((props) => {
@@ -115,6 +115,7 @@ async function mountView(
       return suggestReply(body);
     }
     if (method === "GET" && path === "/screener" && !url.searchParams.has("live")) {
+      if (opts.storedSuggestions) return opts.storedSuggestions();
       return json({ items: [], nextCursor: null, suggestable: { senders: [], maxPerRequest: 50 } });
     }
     if (method === "GET" && path.endsWith("/body")) return new Response(null, { status: 503 });
@@ -123,7 +124,6 @@ async function mountView(
   window.location.hash = "#/ohbox";
   host = await mountCloudShell();
   await tick(3000);
-  if (opts.forgetOwner) document.cookie = "tf_owner=; Path=/; Max-Age=0";
   const places = within(host).getByRole("navigation", { name: "Places" });
   const screenerButton = within(places).getByRole("button", { name: /^Screener/ });
   await act(async () => { screenerButton.click(); });
@@ -255,7 +255,9 @@ describe("the coming state — a run is buying this sender", () => {
   });
 
   it("an opted-in account with no run buying the row promises nothing", async () => {
-    await mountView(MANY, { optedIn: true, forgetOwner: true });
+    const storedSuggestions = vi.fn(() => new Promise<Response>(() => {}));
+    await mountView(MANY, { optedIn: true, storedSuggestions });
+    expect(storedSuggestions).toHaveBeenCalled();
     expect(purchases).toBe(0);
     expect(why()).toBe("pending");
     expect(text()).not.toContain("A suggestion is coming");

@@ -1,5 +1,5 @@
-import { useOptionalTheme } from "@ohmail/ui";
 import { Row } from "@ohmail/ui/mail";
+import { useOptionalTheme } from "@ohmail/ui/theme";
 import { useLocale, useTextLookup } from "../text/index.js";
 import type { PaneSummary, SettingsPane, SettingsPaneId } from "./contract.js";
 import { useNotificationSummary } from "./notifications/summary.js";

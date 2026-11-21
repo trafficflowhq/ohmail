@@ -9,7 +9,7 @@
  * font scale. The desktop's paint-blocking boot stamp uses the import-free values module.
  */
 
-import { localStorageDoor } from "@ohmail/client-engine/durable";
+import { durableSet, localStorageDoor } from "@ohmail/client-engine/durable";
 import {
   DEFAULT_TEXT_SIZE,
   TEXT_SIZE_KEY,
@@ -55,6 +55,12 @@ export function installTextSizeApplier(next: TextSizeApplier | null): void {
 export function applyTextSize(size: TextSize, root?: HTMLElement | null): void {
   if (applier) applier(size);
   else if (root) stampTextSize(root, size);
+}
+
+/** Save the device's choice, then put it on screen through the same host door. */
+export function setTextSize(size: TextSize, root?: HTMLElement | null): void {
+  durableSet(TEXT_SIZE_KEY, String(size), "ui.textSize");
+  applyTextSize(size, root);
 }
 
 /**

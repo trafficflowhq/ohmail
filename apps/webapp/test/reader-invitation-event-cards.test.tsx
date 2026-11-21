@@ -4,6 +4,7 @@ import { screen, within } from "@testing-library/react";
 import en from "../messages/en.json";
 import {
   ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  liveAccountResponse,
 } from "./fixtures/live-walk-shell";
 import {
   EMBEDDED_CALENDAR, EXCHANGE_ICAL, GOOGLE, HOSTILE_DURATION, TWO_EVENTS, type InviteShape,
@@ -50,7 +51,7 @@ beforeEach(() => {
   folder = "INBOX";
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const inner = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) => {
+  const respond = async (input: unknown, init?: unknown) => {
     const url = String(input);
     const list = /\/messages\/([^/?]+)\/attachments(?:$|\?)/.exec(url);
     if (list) {
@@ -77,7 +78,9 @@ beforeEach(() => {
       return new Response(part?.bytes ?? "", { status: 200, headers: { "content-type": "application/octet-stream" } });
     }
     return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: unknown) =>
+    liveAccountResponse(await respond(input, init)));
   (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:harness/1";
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
 });

@@ -29,7 +29,7 @@ function writeBundle(dist: string, legacy: boolean) {
         const name = names[ids.indexOf(place)];
         const card = legacy ? '<div class="scast">' : '<div data-stream-item="letter">';
         reading = '<div role="region" aria-label="' + name + ' stream">' + card + iframe + '</div></div>';
-        list = '<div role="region" aria-label="' + name + '">' + list + '</div>';
+        if (!legacy) list = '<div role="listbox" aria-label="' + name + '">' + row.replace('role="button"', 'role="option"') + iframe + '</div>';
       }
       if (place === "screener") {
         const sections = ["waiting", "screened", "spam"];

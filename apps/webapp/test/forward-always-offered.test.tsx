@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { existsSync, readFileSync } from "node:fs";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import messages from "../messages/en.json";
@@ -47,9 +47,8 @@ describe("the forward ask stands in the dock until it is answered", () => {
 
     await open();
     await press(within(askDialog()!).getByRole("button", { name: askWords.confirm }));
-    await rounds(4);
+    await waitFor(() => expect(forwardBody()).not.toBeNull());
     expect(askDialog()).toBeNull();
-    expect(forwardBody()).not.toBeNull();
     expect(writing.sent.filter((entry) => entry.kind === "mail_send")).toEqual([]);
   });
 
@@ -78,16 +77,21 @@ const DOORS: Array<[string, RegExp]> = [
   ["packages/app/src/reader/actions/use-verbs.ts", /if \(answer !== null && \(action === "reply" \|\| action === "reply_all" \|\| action === "forward"\)\)/],
   [
     "packages/app/src/reader/keys.ts",
-    /const resting = open === null \? \(\{ disabled: true[^;]*;[\s\S]*\.\.\.resting,[\s\S]*verb\("shift\+f", ts\("key\.forward"\), act\("forward"\)\)/,
+    /FORWARD_KEY = "shift\+f";[\s\S]*if \(open && open\.canAnswerKey\?\.\(open\.letter\.id\) !== false\) open\.verbs\.act\(action\);[\s\S]*\.\.\.\(open === null \? \{ disabled: true, disabledReason: "no_cursor" \} : \{\}\),[\s\S]*answer\(FORWARD_KEY, "key\.forward", "forward"\)/,
   ],
   ["apps/mobile/src/ui/MessageActions.tsx", /forwardOffered: forwardOffered\(m\)/],
 ];
 const code = (rel: string) => scan.withoutCommentsAndLiterals(source(rel));
+const producer = (rel: string): string => rel === "packages/app/src/reader/actions/ActionBar.tsx"
+  ? "packages/app/src/reader/actions/panel-verbs.ts"
+  : rel;
 
 describe("census: every Forward door reads the one helper", () => {
   it.each(DOORS)("%s gates Forward on forwardOffered and never on the flag or the mirror", (rel, gate) => {
-    const src = code(rel);
-    expect(scan.withoutComments(source(rel))).toMatch(gate);
+    const from = producer(rel);
+    const src = code(rel) + (from === rel ? "" : code(from));
+    if (from !== rel) expect(code(rel)).toMatch(/const all = panelVerbs\(/);
+    expect(scan.withoutComments(source(from))).toMatch(gate);
     // The two old gates, anywhere in the door's code: the flag and the mirror's answer.
     expect(src, `${rel} still reads no_forward`).not.toMatch(/no_forward/);
     expect(src, `${rel} still gates on the mirror`).not.toMatch(/mirrorHolds\??\.?\(/);

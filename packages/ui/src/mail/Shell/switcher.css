@@ -289,6 +289,14 @@
     outline-offset: -1px;
   }
 
+  [data-heading-overlay] {
+    --heading-switch-start: var(--flush);
+  }
+
+  :root[data-face="ohmarchy"] [data-heading-overlay] {
+    --heading-switch-start: calc(var(--flush) + var(--s2));
+  }
+
   [data-heading-overlay] > .oh-switcher-round {
     align-self: start;
     justify-self: start;

@@ -119,16 +119,21 @@ describe("the many-folders treatment", () => {
     folder(`Mandat ${String(i + 1).padStart(2, "0")}`));
 
   it("above 12 roots: type-to-filter + the first 12 + a Show-all expander; expanded scrolls bounded", async () => {
-    const { el } = await mount(many);
-    expect(within(el).queryByRole("textbox", { name: "Find a folder" })).not.toBeNull();
-    expect(rowLabels(el).length).toBe(FOLDER_FILTER_AT);
-    const expander = within(el).queryByRole("button", { name: "Show all 15" });
-    expect(expander).not.toBeNull();
-    await click(expander!);
-    expect(rowLabels(el).length).toBe(15);
-    // The full list scrolls in its OWN region — the rail itself never grows by hundreds of rows.
-    expect(el.querySelector(".oh-folderfold-scroll")).not.toBeNull();
-    expect(within(el).queryByRole("button", { name: "Show fewer" }) !== null).toBe(true);
+    mountRegisteredRail(many, NONE);
+    const expander = await screen.findByRole("button", { name: "All folders" });
+    const shelf = expander.closest<HTMLElement>(".oh-foldershelf")!;
+    expect(expander.getAttribute("aria-expanded")).toBe("false");
+    expect(within(shelf).queryByRole("tree")).toBeNull();
+    expect(within(shelf).getAllByRole("button", { name: /^Mandat \d\d$/ }).map((row) => row.textContent))
+      .toEqual(many.slice(0, 7).map((row) => row.name));
+    await click(expander);
+    const tree = within(shelf).getByRole("tree", { name: "All folders" });
+    expect(within(tree).getByRole("textbox", { name: "Find a folder" })).toBeTruthy();
+    expect(rowLabels(tree)).toEqual(many.map((row) => row.name));
+    expect(tree.querySelector(".oh-folderfold-scroll")).not.toBeNull();
+    expect(expander.getAttribute("aria-expanded")).toBe("true");
+    await click(expander);
+    expect(within(shelf).queryByRole("tree")).toBeNull();
   });
 
   it("at 12 roots or fewer the treatment stays away — no filter line, no expander", async () => {
@@ -148,10 +153,9 @@ describe("the many-folders treatment", () => {
     });
     // A path query reaches the child a leaf-only match would miss — the prototype's watched-red
     // mutation, owed here in product code.
-    const labels = rowLabels(el);
-    // The label carries the parent as a muted prefix plus the leaf — one span, two parts.
-    expect(labels).toContain("Mandat 01/Belege");
-    expect(el.querySelector(".oh-ritem-hint")?.textContent).toBe("Mandat 01/");
+    expect(rowLabels(el)).toEqual(["BelegeMandat 01"]);
+    const match = within(el).getByRole("button", { name: "Belege, Mandat 01" });
+    expect(match.querySelector(".oh-railentry-hint")?.textContent).toBe("Mandat 01");
   });
 });
 
@@ -241,7 +245,9 @@ describe("an empty folder is a question until the server has answered — the re
     // …and exactly one probe (the empty list IS the ask).
     expect(listOlder).toHaveBeenCalledTimes(1);
     // The way further back is on screen instead (the device sentence went with ARCHIVE-024).
-    expect(messagesRegion.textContent).toContain(messages.ohbox.olderAction);
+    expect(within(messagesRegion).getByRole("status", { busy: true }).textContent)
+      .toBe(messages.ohbox.olderLoading);
+    expect(within(messagesRegion).queryByRole("button", { name: messages.ohbox.olderAction })).toBeNull();
     expect(messagesRegion.textContent).not.toMatch(/on your server|this device/);
   });
 
@@ -540,7 +546,7 @@ describe("stage 2 — the … menu", () => {
     }
     expect(mail.mutations).toEqual([]);
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual([
-      "Rename", "New subfolder", "Delete…",
+      "Pin", "New subfolder", "Rename", "Delete…",
     ]);
   });
 
@@ -580,7 +586,8 @@ describe("stage 2 — the … menu", () => {
     const input = tree.getByRole<HTMLInputElement>("textbox", { name: "New name" });
     await act(() => input.focus());
     expect(input.value).toBe("Acme");
-    expect(tree.queryByRole("button", { name: "Acme" })).toBeNull();
+    expect(tree.getByRole("button", { name: "Acme" })).toBe(child);
+    expect(input.closest("form")?.previousElementSibling?.contains(child)).toBe(true);
     expect(document.activeElement).toBe(input);
     fireEvent.change(input, { target: { value: "Acme 2026" } });
     expect(mail.mutations).toEqual([]);
@@ -706,7 +713,7 @@ describe("a refused folder delete says what happened", () => {
     const { el } = await mount([failed], { writable: true });
 
     expect(rowLabels(el)).toEqual(["Proj"]);            // the folder is still there
-    const strip = within(el).queryByRole("alert");
+    const strip = within(el).getByRole("status");
     expect(strip?.textContent ?? "").toContain(messages.rail.folderErrGotMail);
     expect(messages.rail.folderErrGotMail).toContain("it was not deleted");
     // NOT the catch-all. A refusal that reads "your mail server refused this change" tells the

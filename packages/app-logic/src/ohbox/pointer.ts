@@ -68,8 +68,7 @@ export function useOhboxPointer(input: OhboxListInput, { togglePick, pickRangeTo
       const row = (e.target as HTMLElement).closest<HTMLElement>(input.rowSelector);
       const id = row?.dataset.id;
       if (!id) return;
-      /* NOT the sender circle: that tap opens the screening popover and always has. A hold that
-       started on it is a hold on the popover's control, not on the row. */
+      /* The circle selects on click. Do not also toggle it when a touch lingers. */
       if (input.avatarSelector !== null && (e.target as HTMLElement).closest(input.avatarSelector)) return;
       holdRef.current = {
         id,

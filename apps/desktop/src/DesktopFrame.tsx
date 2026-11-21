@@ -12,16 +12,21 @@ import {
   BrowserFoldersPane, BrowserNotificationsPane, BrowserRulesPane, BrowserSignaturesPane, BrowserTagsPane,
   useScreenerWindowSetting, useSuggestionSettings, useUnsubscribeSetting,
 } from "@ohmail/app/settings/browser";
-import { ScreenerPane } from "@ohmail/app/settings/screener";
-import { useFrame } from "@ohmail/app/frame";
+import { ScreenerPane, useFiledLetters } from "@ohmail/app/settings/screener";
+import { calendarNoticeFragment, fragmentOf, useFrame } from "@ohmail/app/frame";
+import { type WayOutDoor, type WayOutSection } from "@ohmail/app/account/way-out";
+import { calendar as calendarEntry, calendarNoticePlace } from "@ohmail/app/calendar";
 import { NO_PANE_PARTS } from "@ohmail/app/mail";
 import { AwaySettings, awayFeedOver, useAwayNotice } from "@ohmail/app/settings/away";
+import type { CalendarEventRecord, CalendarPort } from "@ohmail/app-logic/calendar";
+import { eventsWithWrites } from "@ohmail/client-engine/calendar-acts";
+import { readerZone } from "@ohmail/app-logic/reader";
 import { useConsent } from "@ohmail/app-logic/consent";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { liveMailboxes } from "@ohmail/app-logic/mail-state/mail-state";
 import { useWriting } from "@ohmail/app/write";
-import { createContext, useContext, useLayoutEffect, useMemo, type ReactNode } from "react";
-import { connectWireOver, mailboxRosterOver, NONE, type FeatureEntry, type HostConnectionState, type HostDevice, type Signal } from "@ohmail/app/host";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { autoFiledVia, screeningVia, connectWireOver, mailboxRosterOver, NONE, type FeatureEntry, type HostConnectionState, type HostDevice, type Signal } from "@ohmail/app/host";
 import {
   BrowserHelpContactPane, browserMailParts, browserOpenLink, MAILBOXES_NOTICES, MailFrame, useBrowserMail,
 } from "../../webapp/app/shell/browser-mail";
@@ -38,7 +43,7 @@ import { desktopFileShell } from "../../webapp/app/shell/open-attachment";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 import type { StorageFacts } from "../../webapp/app/shell/storage-state";
 import { readSearchBy } from "@ohmail/app-logic/search";
-import { bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
+import { bridgeFetch, readDesktopCalendarSettings, type EngineStatus } from "./bridge-fetch.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { useDefaultMailNotice } from "./DesktopDefaultMail.js";
 import { DesktopAbout } from "./DesktopAbout.js";
@@ -48,12 +53,12 @@ import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
 import { ownModelAutoSuggest } from "./local-auto-suggest.js";
 import { DesktopScreening, DesktopUnsubscribeSettings } from "./DesktopScreening.js";
 import { DesktopSettings } from "./DesktopSettings.js";
+import { DesktopWebSection } from "./DesktopWebSection.js";
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
 import { DesktopStorage, DesktopSubscription } from "./DesktopSubscription.js";
-import { DesktopWebSection } from "./DesktopWebSection.js";
 import { useAppLocale } from "./DesktopLocale.js";
 import { DOOR_COPY } from "./door-copy.js";
-import { accountDoorFor, awayDoorFor, flavorOf, hostDoorFor, selfHostedServerOf, type HostedSession } from "./doors.js";
+import { accountDoorFor, awayDoorFor, flavorOf, selfHostedServerOf, type HostedSession } from "./doors.js";
 import { desktopHost } from "./host-contract.js";
 import type { LinkSlot } from "./link-in.js";
 import { awayOverBridge } from "./local-away.js";
@@ -73,7 +78,7 @@ import { organizerNoticeOverBridge } from "./local-organizer-notice.js";
 import { profileImportOverBridge } from "./local-profile-import.js";
 import { checkMailboxHere } from "./local-self-check.js";
 import { desktopEmitterFor } from "./notice-emitter.js";
-import { openServerMailboxes, openWeb } from "./native.js";
+import { openServerSettings, openWeb, watchNoticeOpening, type ServerSettingsPane } from "./native.js";
 import { desktopNotificationHost, desktopNotificationPreferences } from "./notify-host.js";
 import { reuseSweepsOverBridge } from "./reuse-sweeps-wire.js";
 import type { ReuseSweepLine } from "../../webapp/app/shell/reuse-sweeps";
@@ -191,8 +196,13 @@ function DesktopAiPane() {
 }
 
 function DesktopDevicesPane() {
-  const devices = useFrame().host.features.devices;
-  return devices === NONE ? null : devices.render();
+  const { host } = useFrame();
+  return host.capabilities.pairing === "hostMode" ? <DesktopDevices /> : <BrowserDevicesPane />;
+}
+
+function BrowserDevicesPane() {
+  const { host } = useFrame();
+  return <DesktopWebSection door={useDevicesBrowserDoor()} onServer={host.capabilities.service === "self"} />;
 }
 
 function DesktopBillingPane() {
@@ -218,6 +228,7 @@ function DesktopOwnSuggest(props: Omit<LocalSuggestProps, "onConfigure" | "permi
 function DesktopScreeningPane() {
   const { host } = useFrame();
   const { screener } = host.features;
+  const filed = useFiledLetters(host.wires.autoFiled);
   const unsubscribe = useUnsubscribeSetting();
   const window = useScreenerWindowSetting();
   const suggestions = useSuggestionSettings(
@@ -228,7 +239,7 @@ function DesktopScreeningPane() {
   return screener === NONE ? null : <>
     {screener.render()}
     <ScreenerPane model={{
-      ohbox: null, filed: null, ...suggestions, ownSuggest: null, window, unsubscribe, review: null,
+      ohbox: null, filed, ...suggestions, ownSuggest: null, window, unsubscribe, review: null,
     }} />
   </>;
 }
@@ -261,19 +272,38 @@ const DESKTOP_MAIL_PARTS = {
   ...browserMailParts(DESKTOP_PANE_PARTS),
   settingsAbove: DesktopSettingsAbove,
 };
-const ACCOUNT_IN_BROWSER = { open: () => openWeb("account").then(() => true, () => false) };
-const SECURITY_IN_BROWSER = { open: () => openWeb("security").then(() => true, () => false) };
+const DesktopServerSettings = createContext<(section: ServerSettingsPane) => Promise<void>>(
+  async () => { throw new Error("No server account is confirmed"); },
+);
+
+function browserDoorFor(section: WayOutSection) {
+  const managed: WayOutDoor = { open: () => openWeb(section).then(() => true, () => false) };
+  return function useBrowserDoor(): WayOutDoor {
+    const openServer = useContext(DesktopServerSettings);
+    const selfHosted = useMemo<WayOutDoor>(() => ({
+      open: () => openServer(section).then(() => true, () => false),
+    }), [openServer]);
+    return useFrame().host.capabilities.service === "self" ? selfHosted : managed;
+  };
+}
+
+const useAccountBrowserDoor = browserDoorFor("account");
+const useSecurityBrowserDoor = browserDoorFor("security");
+const useDevicesBrowserDoor = browserDoorFor("devices");
 const HOSTED_MAIL_PARTS = {
   ...DESKTOP_MAIL_PARTS,
   paneParts: {
     ...DESKTOP_PANE_PARTS,
-    account: { useBrowserDoor: () => ACCOUNT_IN_BROWSER },
-    security: { useBrowserDoor: () => SECURITY_IN_BROWSER },
+    account: { useBrowserDoor: useAccountBrowserDoor },
+    security: { useBrowserDoor: useSecurityBrowserDoor },
   },
 };
 
 const entry = (name: FeatureEntry["name"], node: ReactNode, notice?: FeatureEntry["notice"]): FeatureEntry =>
   ({ name, render: () => node, ...(notice ? { notice } : {}) });
+
+const DESKTOP_SCREENING = screeningVia(bridgeFetch);
+const DESKTOP_AUTO_FILED = autoFiledVia(bridgeFetch);
 
 const LOCAL_SEARCH = { by: "people", mailboxTotal: readSearchMailboxTotal } as const;
 const REMOTE_SEARCH = { by: () => readSearchBy(bridgeFetch), mailboxTotal: readSearchMailboxTotal };
@@ -284,16 +314,23 @@ export function DesktopFrame(p: DesktopFrameProps) {
   const server = selfHostedServerOf(status);
   const hostedAccount = accountDoorFor(status, session) !== null;
   const hasMailboxes = status.mode === "local" || status.mode === "cloud";
+  const hasScreening = status.mode === "local" || (session === "live" && (hostedAccount || paired));
   /* What every browser host hands the frame for mail: made where the frame mounts, under the window's theme. */
   const frame = useBrowserMail(NONE, hostedAccount ? HOSTED_MAIL_PARTS : hasMailboxes ? DESKTOP_MAIL_PARTS : INSTALL_MAIL_PARTS);
   const onStatus = useStableCallback(p.onStatus);
+  const openServerPane = useCallback(
+    (pane: ServerSettingsPane) => openServerSettings(pane, status.cloudUrl, session === "live" ? p.account : null),
+    [status.cloudUrl, session, p.account],
+  );
+  const openMailboxes = useCallback(() => openServerPane("mailboxes"), [openServerPane]);
+  const openStorage = useCallback(() => openServerPane("storage"), [openServerPane]);
   const mailboxes = useMemo(() => {
     if (!hasMailboxes) return NONE;
     const out =
-      paired ? NONE : server !== null ? openServerMailboxes
+      paired ? NONE : server !== null ? openMailboxes
       : flavor === "managed" ? () => openWeb("mailboxes") : NONE;
     return mailboxRosterOver(desktopMailboxRequests, status.mode === "local", out);
-  }, [hasMailboxes, flavor, server, paired, status.mode, p.engine, p.scope]);
+  }, [hasMailboxes, flavor, server, paired, status.mode, p.engine, p.scope, openMailboxes]);
   const mailboxHost = paired ? hostLabel ?? DOOR_COPY.doorHostName : null;
   const { localDoorVersion } = status;
   const removalDoor = useMemo(() => ({ active: false, version: localDoorVersion }), [
@@ -309,9 +346,10 @@ export function DesktopFrame(p: DesktopFrameProps) {
     host: mailboxHost,
     flavor,
     server,
+    openServer: server === null ? undefined : openMailboxes,
     onShellStatus: onStatus,
     scope: p.scope,
-  }), [status.mode, mailboxHost, flavor, server, onStatus, p.scope, removalDoor]);
+  }), [status.mode, mailboxHost, flavor, server, onStatus, p.scope, removalDoor, openMailboxes]);
   /* The language's controls this window's own provider stands, as the host contract takes them: one record while
      the language and its adoption stand. */
   const controls = useAppLocale();
@@ -350,25 +388,21 @@ export function DesktopFrame(p: DesktopFrameProps) {
     [awayDoor, p.scope, p.account],
   );
   const features = useMemo(() => {
-    const hostMode = hostDoorFor(status) === "local";
     return {
-      account: entry("account", (
-        <DesktopWebSection place="account" copy={{ title: "webAccountTitle", why: "webAccountWhy", note: "webAccountNote" }} />
-      )),
+      account: entry("account", null),
       mailboxes: entry("mailboxes", null, function useMailboxNotices() {
         return [...MAILBOXES_NOTICES(), ...useAwayNotice(awayFeed)];
       }),
       ai: entry("ai", <DesktopAiAccount />),
       subscription: entry("subscription", <DesktopSubscription onNowhere={withdrawManage} />),
-      storage: entry("storage", storage ? <DesktopStorage facts={storage} linksOut={mayLinkOut} reread={rereadAccess} /> : null),
-      storageCard: entry("storageCard", storage ? <DesktopStorageNotice facts={storage} linksOut={mayLinkOut} reread={rereadAccess} /> : null),
+      storage: entry("storage", storage ? <DesktopStorage facts={storage} linksOut={mayLinkOut} reread={rereadAccess} openServer={server === null ? undefined : openStorage} /> : null),
+      storageCard: entry("storageCard", storage ? <DesktopStorageNotice facts={storage} linksOut={mayLinkOut} reread={rereadAccess} openServer={server === null ? undefined : openStorage} /> : null),
       /* The reuse sweeps the account's session read lists, acknowledged over the bridge: one notice. */
       accountStrip: entry("accountStrip", null, sweeps.length > 0 ? () => useSweepsNotice(sweeps, recheckSweeps) : undefined),
       security: entry("security", null),
       about: entry("about", <DesktopAbout status={status} />),
       desktop: entry("desktop", null),
-      devices: entry("devices", hostMode ? <DesktopDevices />
-        : <DesktopWebSection place="devices" copy={{ title: "webDevicesTitle", why: "webDevicesWhy", note: "webDevicesNote" }} />),
+      devices: entry("devices", null),
       defaultMail: entry("defaultMail", null),
       /* The one-time ask to open mail links: said in the frame's notice slot, beside the list; nothing while the first
          run stands. */
@@ -382,7 +416,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
       help: entry("help", null),
     };
     // The entries change with the door and what they draw; the callbacks above are stable.
-  }, [status, storage, mayLinkOut, p.ai, p.firstRunOpen, sweeps, withdrawManage, rereadAccess, recheckSweeps, awayFeed]);
+  }, [status, storage, mayLinkOut, server, openStorage, p.ai, p.firstRunOpen, sweeps, withdrawManage, rereadAccess, recheckSweeps, awayFeed]);
 
   const draftReply = useMemo(() => draftReplyOverBridgeFor(status), [status]);
   const { noticeDocument, noticeSession } = status;
@@ -390,6 +424,51 @@ export function DesktopFrame(p: DesktopFrameProps) {
     return desktopEmitterFor(noticeDocument === undefined || noticeSession === undefined
       ? null : { document: noticeDocument, session: noticeSession });
   }, [noticeDocument, noticeSession]);
+
+  const calendar = useMemo(() => {
+    if (!hostedAccount || p.sessionRefused || !noticeSession) return NONE;
+    const engine = p.engine;
+    const refuse = () => { throw new Error("This calendar view is read-only"); };
+    return {
+      newId: refuse,
+      press: async () => refuse(),
+      flush: async () => undefined,
+      verdict: () => null,
+      events: () => eventsWithWrites(engine.store.list<CalendarEventRecord>("calendar_event"), []),
+      settings: () => readDesktopCalendarSettings(noticeSession),
+      held: () => engine.calendarHeld(),
+      load: NONE,
+      version: () => engine.read().version(),
+      subscribe: (changed) => engine.subscribe(changed),
+    } satisfies CalendarPort;
+  }, [hostedAccount, p.sessionRefused, noticeSession, p.engine]);
+  const [noticeView, setNoticeView] = useState<{
+    fragment: string; owner: CalendarPort; document: number;
+  } | null>(null);
+  const calendarNotice = noticeView?.owner === calendar && noticeView.document === noticeDocument ? noticeView : null;
+  useLayoutEffect(() => {
+    if (calendarNotice === null) return;
+    const { address } = frame;
+    address.write(calendarNotice.fragment, "push");
+    return address.subscribe(() => {
+      if (address.read() !== calendarNotice.fragment)
+        setNoticeView((view) => view === calendarNotice ? null : view);
+    });
+  }, [calendarNotice, frame.address]);
+
+  useLayoutEffect(() => watchNoticeOpening((opening) => {
+    if (p.sessionRefused || p.liveNoticeScope?.() !== p.scope || opening.scope !== p.scope ||
+        opening.session !== noticeSession || opening.document !== noticeDocument) return;
+    if ("event" in opening) {
+      if (calendar === NONE || !p.engine.store.list<{ calendarEnabledAt?: string | null }>("settings")
+        .some(({ calendarEnabledAt }) => typeof calendarEnabledAt === "string" && calendarEnabledAt !== "")) return;
+      const fragment = calendarNoticeFragment(calendar, opening.event, readerZone());
+      if (fragment !== null) setNoticeView({ fragment, owner: calendar, document: opening.document });
+      return;
+    }
+    const open = opening.letter && p.engine.store.get("message", opening.letter) ? opening.letter : null;
+    frame.address.write(fragmentOf({ place: "ohbox", sub: null, open, words: {}, stage: null }), "push");
+  }), [p.sessionRefused, p.liveNoticeScope, p.scope, p.engine, noticeDocument, noticeSession, frame.address, calendar]);
 
   const connect = useMemo(() => p.firstRun ? connectWireOver(p.firstRun) : NONE, [p.firstRun]);
   const host = useMemo(() => desktopHost(p.engine, {
@@ -427,14 +506,18 @@ export function DesktopFrame(p: DesktopFrameProps) {
       consent: { account: consentOverBridge, standalone: consentOverBridgeStandalone },
       firstRun: p.firstRun ?? NONE,
       connect,
-      screening: NONE,
-      autoFiled: NONE,
+      screening: hasScreening ? DESKTOP_SCREENING : NONE,
+      autoFiled: hasScreening ? DESKTOP_AUTO_FILED : NONE,
       ownModelAutoSuggest,
       mailboxes,
+      calendar,
     },
     features,
     notifications: { ...desktopNotificationHost, emitter: noticeEmitter, liveNoticeScope: p.liveNoticeScope },
-    frame,
+    frame: calendarNotice === null ? frame : {
+      ...frame,
+      calendar: { ...calendarEntry, notice: { fragment: calendarNotice.fragment, place: calendarNoticePlace } },
+    },
     badge: p.onUnread,
     language,
     /* The webview's new-window request, which the shell opens in the person's own browser, on a press alone. */
@@ -450,16 +533,18 @@ export function DesktopFrame(p: DesktopFrameProps) {
     hostConnection: p.connection,
     linkIn: p.links,
   }), [p.engine, p.liveBody, status, session, p.sessionRefused, hostLabel, p.manageOffered, storage, mayLinkOut,
-    p.takesMailLinks, p.scope, p.liveNoticeScope, noticeEmitter, p.account, awayFeed, draftReply, p.firstRun, connect, mailboxes,
-    features, p.onUnread, language, p.connection, p.links,
+    p.takesMailLinks, p.scope, p.liveNoticeScope, noticeEmitter, p.account, awayFeed, draftReply, p.firstRun, connect, mailboxes, hasScreening,
+    features, p.onUnread, language, p.connection, p.links, calendar, calendarNotice,
     frame]);
 
   return (
-    <DesktopInstallContext.Provider value={install}>
+    <DesktopServerSettings.Provider value={openServerPane}>
+      <DesktopInstallContext.Provider value={install}>
       <DesktopMailboxContext.Provider value={mailboxPane}>
         <MailFrame host={host} />
       </DesktopMailboxContext.Provider>
     </DesktopInstallContext.Provider>
+    </DesktopServerSettings.Provider>
   );
 }
 

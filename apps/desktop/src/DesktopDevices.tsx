@@ -33,7 +33,8 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFormatter, useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSection, SettingsSubhead, Switch, useToast } from "@ohmail/ui";
+import { Button, SettingsRow, SettingsSubhead, Switch, useToast } from "@ohmail/ui";
+import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 
 import { isPairPin, pairLink } from "@ohmail/client-engine";
 /* THE SAME TWELVE CHARACTERS THE JOINING MACHINE SHOWS — one function, or the two ends of
@@ -808,21 +809,19 @@ export function DesktopDevices() {
   // Not asked yet — one quiet line, no guessing.
   if (host === undefined) {
     return (
-      <SettingsSection className="acct">
-        <h2 className="acct-h">{t("title")}</h2>
+      <SettingsSheet title={t("title")}>
         <p className="acct-lead">{t("checking")}</p>
-      </SettingsSection>
+      </SettingsSheet>
     );
   }
 
   // No shell (a dev server, the render check) — the honest sentence, not an error.
   if (host === null) {
     return (
-      <SettingsSection className="acct">
-        <h2 className="acct-h">{t("title")}</h2>
+      <SettingsSheet title={t("title")}>
         <p className="acct-lead">{t("lead")}</p>
         <p className="set-note-inline">{t("notAvailable")}</p>
-      </SettingsSection>
+      </SettingsSheet>
     );
   }
 
@@ -842,8 +841,7 @@ export function DesktopDevices() {
         ? guideKey(host.problem)
         : null;
     return (
-      <SettingsSection className="acct">
-        <h2 className="acct-h">{t("title")}</h2>
+      <SettingsSheet title={t("title")}>
         <p className="acct-lead">{t("lead")}</p>
         <p className="set-note-inline">{t("story")}</p>
 
@@ -970,7 +968,7 @@ export function DesktopDevices() {
             </div>
           </>
         ) : null}
-      </SettingsSection>
+      </SettingsSheet>
     );
   }
 
@@ -988,105 +986,107 @@ export function DesktopDevices() {
   const lanOnlyServing = !serving && host.lan !== null && lanUp && host.port !== null;
 
   return (
-    <SettingsSection className="acct">
-      <h2 className="acct-h">{t("title")}</h2>
+    <>
+      <SettingsSheet title={t("title")}>
 
-      {problem ? (
-        <p className="acct-warn" role="alert">
-          {problem}
-        </p>
-      ) : null}
+        {problem ? (
+          <p className="acct-warn" role="alert">
+            {problem}
+          </p>
+        ) : null}
 
-      {serving ? (
-        <p className="acct-lead">{t("serving", { origin: host.origin ?? "" })}</p>
-      ) : (
-        /* DEGRADED — armed, not serving, one guided sentence for the one thing in the way.
-           `guideKey(null)` is the unknown-problem arm: a shell ahead of this bundle degrades to
-           generic guidance, never to a raw code (the pane renders no problem name, ever). */
-        <>
-          <p className="acct-lead">{t(guideKey(host.problem))}</p>
-          <div className="acct-actions">
-            {host.problem === "no-cli" ? (
-              <Button variant="primary" onClick={() => void openTailscaleDownload()}>
-                {t("getTailscale")}
-              </Button>
-            ) : null}
-            <Button onClick={() => void refresh()} disabled={busy !== null}>
-              {t("checkAgain")}
-            </Button>
-          </div>
-        </>
-      )}
-
-      {serving || lanOnlyServing ? (
-        minted ? (
-          <div className="acct-confirm">
-            <p className="acct-lead">
-              {serving
-                ? minted.label
-                  ? t("mintedLeadFor", { name: minted.label })
-                  : t("mintedLead")
-                : t("lanMintedLead")}
-            </p>
-            {/* ── THE QR IS DRAWN IN BOTH MODES NOW, AND LAN-ONLY IS THE CASE THAT NEEDS IT.
-                The old tailnet-only argument ("a camera scan opens a phone browser, and this
-                door refuses browsers") was about the OS camera app; the ohmail app has its
-                own scanner, and the app is precisely the client this door exists for. What
-                made it necessary is the pin: a same-network link carries the door's
-                43-character key fingerprint, and nobody re-types that onto a phone. The copy
-                button hands the link to something that can paste; the QR hands it to the
-                camera — both, or the ceremony has no path ending with a paired phone. The
-                raw link is still printed nowhere. */}
-            <div className="join-qr">
-              <QrCode value={minted.link} ariaLabel={t("qrAria")} />
-            </div>
-            <div className="acct-actions">
-              <Button variant="primary" onClick={copy}>
-                {t("copyLink")}
-              </Button>
-              {/* Done also re-reads the lists: in the ordinary scan-then-Done sequence the code
-                  was just consumed and the paired device just appeared, and this dismissal is
-                  the only moment the serving view naturally refreshes. */}
-              <Button
-                onClick={() => {
-                  setMinted(null);
-                  void refreshLists();
-                }}
-              >
-                {t("mintedDone")}
-              </Button>
-            </div>
-            <p className="acct-fine">{t("mintedOnce")}</p>
-          </div>
+        {serving ? (
+          <p className="acct-lead">{t("serving", { origin: host.origin ?? "" })}</p>
         ) : (
+          /* DEGRADED — armed, not serving, one guided sentence for the one thing in the way.
+             `guideKey(null)` is the unknown-problem arm: a shell ahead of this bundle degrades to
+             generic guidance, never to a raw code (the pane renders no problem name, ever). */
           <>
-            {/* The add-a-device row — the Invites mint's shape: the (optional) name is the one
-                input, the button is the verb, Enter submits. */}
-            <div className="set-row set-tag-edit invites-mint">
-              <input
-                className="join-input set-tag-input"
-                value={labelDraft}
-                placeholder={t("addFor")}
-                aria-label={t("addFor")}
-                maxLength={100}
-                onChange={(e) => setLabelDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    if (busy === null) void mint();
-                  }
-                }}
-              />
-              <span className="set-tag-acts">
-                <Button variant="primary" onClick={() => void mint()} disabled={busy === "mint"}>
-                  {busy === "mint" ? t("working") : t("addAction")}
+            <p className="acct-lead">{t(guideKey(host.problem))}</p>
+            <div className="acct-actions">
+              {host.problem === "no-cli" ? (
+                <Button variant="primary" onClick={() => void openTailscaleDownload()}>
+                  {t("getTailscale")}
                 </Button>
-              </span>
+              ) : null}
+              <Button onClick={() => void refresh()} disabled={busy !== null}>
+                {t("checkAgain")}
+              </Button>
             </div>
-            <p className="set-note-inline">{serving ? t("addHint") : t("lanAddHint")}</p>
           </>
-        )
-      ) : null}
+        )}
+
+        {serving || lanOnlyServing ? (
+          minted ? (
+            <div className="acct-confirm">
+              <p className="acct-lead">
+                {serving
+                  ? minted.label
+                    ? t("mintedLeadFor", { name: minted.label })
+                    : t("mintedLead")
+                  : t("lanMintedLead")}
+              </p>
+              {/* ── THE QR IS DRAWN IN BOTH MODES NOW, AND LAN-ONLY IS THE CASE THAT NEEDS IT.
+                  The old tailnet-only argument ("a camera scan opens a phone browser, and this
+                  door refuses browsers") was about the OS camera app; the ohmail app has its
+                  own scanner, and the app is precisely the client this door exists for. What
+                  made it necessary is the pin: a same-network link carries the door's
+                  43-character key fingerprint, and nobody re-types that onto a phone. The copy
+                  button hands the link to something that can paste; the QR hands it to the
+                  camera — both, or the ceremony has no path ending with a paired phone. The
+                  raw link is still printed nowhere. */}
+              <div className="join-qr">
+                <QrCode value={minted.link} ariaLabel={t("qrAria")} />
+              </div>
+              <div className="acct-actions">
+                <Button variant="primary" onClick={copy}>
+                  {t("copyLink")}
+                </Button>
+                {/* Done also re-reads the lists: in the ordinary scan-then-Done sequence the code
+                    was just consumed and the paired device just appeared, and this dismissal is
+                    the only moment the serving view naturally refreshes. */}
+                <Button
+                  onClick={() => {
+                    setMinted(null);
+                    void refreshLists();
+                  }}
+                >
+                  {t("mintedDone")}
+                </Button>
+              </div>
+              <p className="acct-fine">{t("mintedOnce")}</p>
+            </div>
+          ) : (
+            <>
+              {/* The add-a-device row — the Invites mint's shape: the (optional) name is the one
+                  input, the button is the verb, Enter submits. */}
+              <div className="set-row set-tag-edit invites-mint">
+                <input
+                  className="join-input set-tag-input"
+                  value={labelDraft}
+                  placeholder={t("addFor")}
+                  aria-label={t("addFor")}
+                  maxLength={100}
+                  onChange={(e) => setLabelDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (busy === null) void mint();
+                    }
+                  }}
+                />
+                <span className="set-tag-acts">
+                  <Button variant="primary" onClick={() => void mint()} disabled={busy === "mint"}>
+                    {busy === "mint" ? t("working") : t("addAction")}
+                  </Button>
+                </span>
+              </div>
+              <p className="set-note-inline">{serving ? t("addHint") : t("lanAddHint")}</p>
+            </>
+          )
+        ) : null}
+
+      </SettingsSheet>
 
       {/* SAME-NETWORK ACCESS — rendered whenever it is chosen, independent of the tailnet half:
           a LAN-only install (the no-Tailscale path) is degraded above and serving here, and
@@ -1094,8 +1094,7 @@ export function DesktopDevices() {
           the API for apps, the awake qualifier, and the plain reason a phone browser still
           needs the Tailscale address. */}
       {host.lan !== null ? (
-        <>
-          <SettingsSubhead>{t("lanTitle")}</SettingsSubhead>
+        <SettingsSheet title={t("lanTitle")}>
           <p className="acct-lead">
             {host.lanState === "serving" && host.port !== null
               ? t("lanServing", { address: `https://${host.lan}:${host.port}`, port: host.port })
@@ -1149,59 +1148,51 @@ export function DesktopDevices() {
               </div>
             </>
           ) : null}
-        </>
+        </SettingsSheet>
       ) : null}
 
       {/* In EVERY armed state, not only serving: disarming does not revoke pairing tokens and
           the stdio routes stay mounted while armed, so a code minted before a degradation must
           keep its take-back here — or it quietly comes back to life when serving recovers. */}
       {mints.length > 0 ? (
-        <>
-          <SettingsSubhead>{t("codesTitle")}</SettingsSubhead>
+        <SettingsSheet title={t("codesTitle")} aside={mints.length}>
           {mints.map((m) => (
-            <SettingsRow
+            <SettingLine
               key={m.id}
               label={m.label || t("codeFallback")}
               description={t("codeMeta", { expires: moment(m.expiresAt) })}
-              control={
-                <span className="acct-row-act">
-                  <Button onClick={() => void revokeMint(m.id)} disabled={busy === `revoke:${m.id}`}>
-                    {busy === `revoke:${m.id}` ? t("working") : t("revoke")}
-                  </Button>
-                </span>
-              }
-            />
+            >
+              <Button onClick={() => void revokeMint(m.id)} disabled={busy === `revoke:${m.id}`}>
+                {busy === `revoke:${m.id}` ? t("working") : t("revoke")}
+              </Button>
+            </SettingLine>
           ))}
-        </>
+        </SettingsSheet>
       ) : null}
 
       {devices.length > 0 ? (
-        <>
-          <SettingsSubhead>{t("devicesTitle")}</SettingsSubhead>
+        <SettingsSheet title={t("devicesTitle")} aside={devices.length}>
           {devices.map((d) =>
             removing === d.id ? (
-              <SettingsRow
+              <SettingLine
                 key={d.id}
                 label={t("removeAsk", { name: d.label || kindWord(d.kind) })}
                 description={t("removeWhat")}
-                control={
-                  <span className="set-tag-acts">
-                    <Button
-                      variant="primary"
-                      className="danger"
-                      onClick={() => void removeDevice(d.id)}
-                      disabled={busy === `remove:${d.id}`}
-                    >
-                      {busy === `remove:${d.id}` ? t("working") : t("remove")}
-                    </Button>
-                    <Button variant="ghost" onClick={() => setRemoving(null)}>
-                      {t("cancel")}
-                    </Button>
-                  </span>
-                }
-              />
+              >
+                <Button
+                  variant="primary"
+                  className="danger"
+                  onClick={() => void removeDevice(d.id)}
+                  disabled={busy === `remove:${d.id}`}
+                >
+                  {busy === `remove:${d.id}` ? t("working") : t("remove")}
+                </Button>
+                <Button variant="ghost" onClick={() => setRemoving(null)}>
+                  {t("cancel")}
+                </Button>
+              </SettingLine>
             ) : (
-              <SettingsRow
+              <SettingLine
                 key={d.id}
                 label={d.label || kindWord(d.kind)}
                 description={t("deviceMeta", {
@@ -1209,63 +1200,60 @@ export function DesktopDevices() {
                   created: day(d.createdAt),
                   seen: day(d.lastSeenAt),
                 })}
-                control={
-                  <span className="acct-row-act">
-                    <Button onClick={() => setRemoving(d.id)}>{t("remove")}</Button>
-                  </span>
-                }
-              />
+              >
+                <Button onClick={() => setRemoving(d.id)}>{t("remove")}</Button>
+              </SettingLine>
             ),
           )}
-        </>
+        </SettingsSheet>
       ) : null}
 
-      <SettingsSubhead>{t("runningTitle")}</SettingsSubhead>
+      <SettingsSheet title={t("runningTitle")}>
+        {/* `autostart: null` is the platform declining to say — a fact, not "off". The row says so
+            instead of drawing an off-position switch over an unknown; the switch stays, because
+            flipping it WRITES a definite state either way. On an install that cannot hold a login
+            item at all there is no switch to draw — `autostartRow` answers that. */}
+        {autostartRow(
+          <Switch
+            checked={host.autostart === true}
+            ariaLabel={t("autostart")}
+            onChange={(v) => void flipAutostart(v)}
+          />,
+          host.autostart === null ? t("autostartUnknown") : t("autostartWhy"),
+        )}
 
-      {/* `autostart: null` is the platform declining to say — a fact, not "off". The row says so
-          instead of drawing an off-position switch over an unknown; the switch stays, because
-          flipping it WRITES a definite state either way. On an install that cannot hold a login
-          item at all there is no switch to draw — `autostartRow` answers that. */}
-      {autostartRow(
-        <Switch
-          checked={host.autostart === true}
-          ariaLabel={t("autostart")}
-          onChange={(v) => void flipAutostart(v)}
-        />,
-        host.autostart === null ? t("autostartUnknown") : t("autostartWhy"),
-      )}
-
-      {confirmOff ? (
-        <SettingsRow
-          label={t("offAsk")}
-          description={t("offWhat")}
-          control={
-            <span className="set-tag-acts">
-              <Button
-                variant="primary"
-                className="danger"
-                onClick={() => void disarm()}
-                disabled={busy === "disarm"}
-              >
-                {busy === "disarm" ? t("offing") : t("off")}
+        {confirmOff ? (
+          <SettingsRow
+            label={t("offAsk")}
+            description={t("offWhat")}
+            control={
+              <span className="set-tag-acts">
+                <Button
+                  variant="primary"
+                  className="danger"
+                  onClick={() => void disarm()}
+                  disabled={busy === "disarm"}
+                >
+                  {busy === "disarm" ? t("offing") : t("off")}
+                </Button>
+                <Button variant="ghost" onClick={() => setConfirmOff(false)} disabled={busy === "disarm"}>
+                  {t("cancel")}
+                </Button>
+              </span>
+            }
+          />
+        ) : (
+          <SettingsRow
+            label={t("off")}
+            description={t("offHint")}
+            control={
+              <Button onClick={() => setConfirmOff(true)} disabled={busy === "disarm"}>
+                {t("off")}
               </Button>
-              <Button variant="ghost" onClick={() => setConfirmOff(false)} disabled={busy === "disarm"}>
-                {t("cancel")}
-              </Button>
-            </span>
-          }
-        />
-      ) : (
-        <SettingsRow
-          label={t("off")}
-          description={t("offHint")}
-          control={
-            <Button onClick={() => setConfirmOff(true)} disabled={busy === "disarm"}>
-              {t("off")}
-            </Button>
-          }
-        />
-      )}
-    </SettingsSection>
+            }
+          />
+        )}
+      </SettingsSheet>
+    </>
   );
 }

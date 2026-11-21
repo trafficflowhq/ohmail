@@ -12,7 +12,6 @@ import {
   type ScreenerView,
 } from "@ohmail/app-logic/screener";
 import { stripStandingKey } from "@ohmail/app-logic/screener/no-suggestion";
-import { BulkProgress } from "@ohmail/ui";
 import { Button, Menu, MenuItem, Seg } from "@ohmail/ui/base";
 import { GroupHeading, ListLine } from "@ohmail/ui/mail";
 import { NONE } from "../../host/index.js";
@@ -20,6 +19,17 @@ import { useText, type Text } from "../../text/index.js";
 import { ListMenu } from "./ListMenu.js";
 import { useNoAdvice, useScreener, useScreenerBeside } from "../contract.js";
 import type { ScreenerSuggest } from "../ports.js";
+
+function ScreeningProgress({ label, done, total }: { label: string; done: number; total: number }) {
+  return (
+    <div className="sc-progress">
+      <span role="status">{label}</span>
+      {total > 0 ? (
+        <progress className="sc-progress-track" aria-hidden="true" value={done} max={total} />
+      ) : null}
+    </div>
+  );
+}
 
 /** The places Apply files into, as one phrase: "Ohbox, News & Receipts". */
 function pileList(dests: readonly DecisionDestination[], t: Text): string {
@@ -168,7 +178,7 @@ function Suggest({ suggest, allAnswered }: { suggest: ScreenerSuggest; allAnswer
         {c.phase === "running" ? (
           <>
             {c.progress !== null ? (
-              <BulkProgress label={t("suggest.progress", c.progress)} {...c.progress} />
+              <ScreeningProgress label={t("suggest.progress", c.progress)} {...c.progress} />
             ) : null}
             <Button kind="ink" size="s" busy disabled>
               {t("suggest.running")}
@@ -213,7 +223,8 @@ export function Tools({ view }: { view: ScreenerView }) {
   const standingLine = stripStandingKey(standing, subscriptionPane);
   if (view.segment !== "waiting") return null;
   const { applying } = model;
-  const progress = applying === null ? null : <BulkProgress label={t("applying", applying)} {...applying} />;
+  const progress =
+    applying === null ? null : <ScreeningProgress label={t("applying", applying)} {...applying} />;
   if (model.waitingCount === 0) {
     // The last decision can remove the last row before the bulk summary arrives.
     return progress === null ? null : (

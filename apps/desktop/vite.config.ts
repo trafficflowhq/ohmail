@@ -78,7 +78,7 @@ if (HOST_CLIENT && process.env.OHMAIL_LOCAL_ENGINE === "1") {
  * Two provenances, because the shell reads translations two ways:
  *  · `useTranslations("<ns>")` — thirteen call sites across shell/ and views/;
  *  · `useTranslations()` in `AppShell.tsx`, unscoped, which then addresses
- *    `about.*`, `dock.*`, `palette.*`, `rail.*` and `ribbon.*` by dotted key.
+ *    `about.*`, `dock.*`, `palette.*` and `rail.*` by dotted key.
  * Miss the second kind and the app renders raw key names at runtime, so the list
  * is DERIVED FROM THE SOURCE by `test/desktop-messages.test.ts` and compared with
  * this array — adding a `useTranslations` to a view without adding its namespace
@@ -104,10 +104,6 @@ const BASE_MESSAGE_NAMESPACES = [
   "invitations", "frommail", "calsetup", "calsettings", "calmail",
   // The new places' own words (`@ohmail/app/news`, `piles`, `tags`, `address`), read through `@ohmail/app/text`.
   "news", "later", "parked", "resurface", "tags", "address",
-  // `ohmarchy` is the Web appearance offer's line — shared-shell code the
-  // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
-  // it renders, and the census lists what the sources READ, not what they display.
-  "ohmarchy",
   // `attachments` and `mailBody` belong to the two components the reading pane is composed from —
   // the paperclip strip and the sanitized HTML body. They were listed here for two migrations
   // before either component read a catalogue: each rendered from a local `COPY` constant whose
@@ -212,7 +208,7 @@ const BASE_MESSAGE_NAMESPACES = [
   // this namespace is for, so a build without it puts `aiRefusal.insufficientCredits` where
   // that sentence belongs.
   "aiRefusal",
-  "reply", "ribbon", "screener", "screening", "search", "session", "settings", "settingsMenu",
+  "reply", "ribbon", "screener", "screening", "search", "session", "settings", "settingsMenu", "settingsNotifications",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
   // this list against what the sources READ, not against what they display.
@@ -887,9 +883,16 @@ export default defineConfig({
       // The kit's doors and its squares window, ABOVE the old kit's bare name.
       { find: "@ohmail/ui/body-parts", replacement: r("../../packages/ui/src/body-parts.ts") },
       { find: "@ohmail/ui/file-size", replacement: r("../../packages/ui/src/format/file-size.ts") },
+      { find: "@ohmail/ui/sender-sheet", replacement: r("../../packages/ui/src/sender-sheet.ts") },
+      { find: "@ohmail/ui/viewport", replacement: r("../../packages/ui/src/ui-zoom.ts") },
+      { find: "@ohmail/ui/text-field", replacement: r("../../packages/ui/src/primitives/TextField.tsx") },
+      { find: "@ohmail/ui/date-picker-view", replacement: r("../../packages/ui/src/primitives/DatePicker.tsx") },
+      { find: "@ohmail/ui/toast", replacement: r("../../packages/ui/src/primitives/toast-context.ts") },
       { find: "@ohmail/ui/base", replacement: r("../../packages/ui/src/base/index.ts") },
       { find: "@ohmail/ui/mail", replacement: r("../../packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui/squares-window", replacement: r("../../packages/ui/src/squares-window.ts") },
+      { find: "@ohmail/ui/stream-estimate", replacement: r("../../packages/ui/src/composites/stream-estimate.ts") },
+      { find: "@ohmail/ui/portal-renderer", replacement: r("../../packages/ui/src/base/Overlays/portal-renderer.ts") },
       // The kit's calendar parts: the reader's return menu picks its day with them.
       { find: "@ohmail/ui/calendar", replacement: r("../../packages/ui/src/calendar/index.ts") },
       { find: "@ohmail/ui/theme", replacement: r("../../packages/ui/src/theme/ThemeProvider.tsx") },
@@ -938,6 +941,7 @@ export default defineConfig({
       { find: "@ohmail/app/settings/signatures", replacement: r("../../packages/app/src/settings/signatures/index.ts") },
       { find: "@ohmail/app/settings/tags", replacement: r("../../packages/app/src/settings/tags/index.ts") },
       { find: "@ohmail/app/screener", replacement: r("../../packages/app/src/screener/index.ts") },
+      { find: "@ohmail/app/settings/travelled-change", replacement: r("../../packages/app/src/settings/browser/TravelledChangeLine.tsx") },
       { find: "@ohmail/app/settings", replacement: r("../../packages/app/src/settings/index.ts") },
       { find: "@ohmail/app/search", replacement: r("../../packages/app/src/search/index.ts") },
       { find: "@ohmail/app/palette", replacement: r("../../packages/app/src/palette/index.ts") },
@@ -945,6 +949,7 @@ export default defineConfig({
          when the platform jobs build this window. */
       { find: "@ohmail/app/text/fill", replacement: r("../../packages/app/src/text/fill.ts") },
       { find: "@ohmail/app/frame/boot", replacement: r("../../packages/app/src/frame/boot-stamp.ts") },
+      { find: "@ohmail/app/frame/scope", replacement: r("../../packages/app/src/frame/scope.tsx") },
       { find: "@ohmail/app/frame", replacement: r("../../packages/app/src/frame/index.ts") },
       { find: "@ohmail/app/text", replacement: r("../../packages/app/src/text/index.ts") },
       { find: /^use-intl\/core$/, replacement: r("./node_modules/use-intl/dist/esm/core.js") },
@@ -1025,6 +1030,7 @@ export default defineConfig({
       { find: "@trafficflow/core/conversation-fold", replacement: r("../../packages/core/src/conversation-fold.ts") },
       { find: "@trafficflow/core/reader-refusal", replacement: r("../../packages/core/src/reader-refusal.ts") },
       { find: "@trafficflow/core/outbound-text", replacement: r("../../packages/core/src/outbound-text.ts") },
+      { find: "@trafficflow/core/suggestion-consent", replacement: r("../../packages/core/src/suggestion-consent.ts") },
       { find: "@trafficflow/core/model-name", replacement: r("../../packages/core/src/model-name.ts") },
       { find: "@trafficflow/core/suggestion-consent", replacement: r("../../packages/core/src/suggestion-consent.ts") },
       /* The diagnostic file's one builder (Settings → About), shared with the phone. Its files

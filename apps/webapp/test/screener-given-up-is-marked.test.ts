@@ -21,6 +21,7 @@ import {
 import { givenUpRowIds } from "@ohmail/app-logic/screener/screener-given-up";
 import {
   ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick, act,
+  liveAccountFetch,
 } from "./fixtures/live-walk-shell";
 import { decideScreenerRow, screenerRow } from "./fixtures/live-screener";
 import messages from "../messages/en.json";
@@ -189,7 +190,7 @@ let w: World;
 const ALPHA = "aaa1";
 
 function installWorld(): void {
-  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+  globalThis.fetch = vi.fn(liveAccountFetch(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/sync")) return w.syncFrom(new URL(url, "http://x").searchParams.get("since") ?? "0");
     if (url.includes("/consent")) {
@@ -201,7 +202,7 @@ function installWorld(): void {
     const scn = /\/screener\/([^/?]+)$/.exec(url);
     if (scn && (init?.method ?? "GET") === "POST") return w.decide(scn[1]!);
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  }));
 }
 
 const rowText = (c: HTMLElement, id: string): string | null =>

@@ -33,7 +33,7 @@ import { build, type Plugin } from "esbuild";
  * RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (3)): every browser host mounts ONE component, `MailFrame`
  * of `shell/browser-mail.tsx`, so the build starts there, and the workspace's own packages are bundled from their
  * source (`ohmail-source`, as the hosts' bundlers read them): the new shell's parts live in `packages/`, where
- * today's lived in this app. The editor is Write's (`packages/app/src/write/editor/`), the panes Settings' place
+ * today's lived in this app. The editor is Write's (`packages/app/src/write/editor/`), the panes Settings' columns
  * and Write's letter.
  */
 const APP = resolve(__dirname, "../app");
@@ -158,6 +158,8 @@ describe("the mailbox shell's first load carries no editor", () => {
   it("neither deferred pane is in the first-load chunks either", () => {
     expect(shipped.statics.some((i) => i.endsWith("packages/app/src/write/Letter.tsx"))).toBe(false);
     expect(shipped.statics.some((i) => i.endsWith("packages/app/src/settings/place.tsx"))).toBe(false);
+    expect(shipped.statics.some((i) => i.endsWith("packages/app/src/settings/SettingsList.tsx"))).toBe(false);
+    expect(shipped.statics.some((i) => i.endsWith("packages/app/src/settings/SettingsReading.tsx"))).toBe(false);
   });
 
   it("control: a static editor import in the shell puts it back, and this guard reds", async () => {

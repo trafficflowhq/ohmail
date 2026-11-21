@@ -119,6 +119,7 @@ export const WRITE_PLACE: PlaceEntry = {
 export interface MountReader {
   readonly letters: readonly EngineMessage[];
   readonly open: string | null;
+  readonly wholeThread?: boolean;
   readonly meeting?: ListMeeting | null;
   readonly parts?: Partial<ReaderParts>;
   readonly lang?: "en" | "de";
@@ -153,7 +154,7 @@ export function mountReader(o: MountReader) {
     invitation: "none",
     ...o.parts,
   };
-  const address = fakeAddress(o.open === null ? "#/ohbox" : `#/ohbox/m/${o.open}`);
+  const address = fakeAddress(o.open === null ? "#/ohbox" : `#/ohbox/${o.wholeThread ? "t" : "m"}/${o.open}`);
   const made = fakeHost({
     engine: mail.engine,
     service: "self",

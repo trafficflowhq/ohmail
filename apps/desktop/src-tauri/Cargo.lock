@@ -2571,6 +2571,7 @@ dependencies = [
  "gtk",
  "keyring",
  "libc",
+ "mac-notification-sys",
  "minisign-verify",
  "notify-rust",
  "objc2",

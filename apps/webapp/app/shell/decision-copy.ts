@@ -13,7 +13,8 @@
  */
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
-import { DECISION_KEY, DECISION_QUIET, type DecisionBarCopy, type DecisionDestination } from "@ohmail/ui";
+import { DECISION_KEY, DECISION_QUIET, type DecisionDestination } from "@ohmail/app-logic/screener";
+import type { DecisionBarCopy } from "@ohmail/ui";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 
 export const PILE_KEY: Record<DecisionDestination, string> = {

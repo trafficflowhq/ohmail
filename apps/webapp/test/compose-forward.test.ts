@@ -199,7 +199,8 @@ describe("the shell wires the two sibling verbs — and forward is the INLINE do
     expect(fn, "openForward could not be located").not.toBeNull();
     const body = fn![1]!;
     expect(body).toContain("forwardPress(");
-    expect(body).toContain("hydrateBody(");
+    expect(body).toContain("if (!press.fetch || isProtectedMessage(m)) { resume(); return; }");
+    expect(body).toMatch(/engine\.readBodyOffMirror\(messageId\)\.then\(\(\) => \{[\s\S]*?resume\(\);/);
     expect(body).not.toContain("toast(");
     // The gate is written before the dock opens, so the first frame of the dock is the ask.
     expect(body.indexOf("setForwardGate")).toBeLessThan(body.indexOf("setReplyTo"));

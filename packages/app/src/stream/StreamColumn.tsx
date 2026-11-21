@@ -6,154 +6,24 @@
  * opens it whole, its Expand and Collapse open and shut it; on a phone's width its control is Read in full and the
  * press opens the letter in the reader. A visit starts with every item shut.
  */
-import type { EngineMessage } from "@ohmail/wire";
-import type { ConversationShown } from "@ohmail/app-logic/reader";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { useDayClock } from "@ohmail/app-logic/session/day-clock";
 import { lineStampOf, useStreamModel, type StreamModel } from "@ohmail/app-logic/streams";
-import { displayAddress } from "@ohmail/app-logic/text/idn";
-import { estimateCardHeight } from "@ohmail/ui";
 import { Button } from "@ohmail/ui/base";
-import { BlankColumn, GroupHeading, Message, MessageHead, Sheet } from "@ohmail/ui/mail";
+import { BlankColumn, GroupHeading, Sheet } from "@ohmail/ui/mail";
+import { estimateCardHeight } from "@ohmail/ui/stream-estimate";
 import { useFrame, useSelectionBar } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
-import { BodyLoadStatus } from "../reader/BodyLoadStatus.js";
-import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
+import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { ReceiptEvents } from "./ReceiptEvents.js";
-import { senderOf, stampOf, useStreamText } from "./words.js";
+import { useStreamText } from "./words.js";
 
-import { useHoldForReply, useStreamClips, useStreamViewport, type Clip } from "./use-stream-column.js";
-import { useStreamItem } from "./use-stream-item.js";
+import { useHoldForReply, useStreamClips, useStreamViewport } from "./use-stream-column.js";
 
-const noReply = (): null => null;
-
-interface StreamItemProps {
-  m: EngineMessage;
-  model: StreamModel;
-  t: Text;
-  locale: string;
-  clip: Clip;
-  now: Date;
-  text: string | null;
-  near: boolean;
-  conversation?: ConversationShown;
-}
-
-function Item({ m, model, t, locale, clip, now, text, near, conversation }: StreamItemProps) {
-  const { reader, whole, card, control, bodyState, pending, receiptEvents, inControl, press } = useStreamItem(
-    m,
-    model,
-    clip,
-    conversation,
-  );
-  const who = senderOf(m);
-  const stamp = stampOf(m.date, t, locale, now);
-  const amountInHead = model.place === "receipts" && !m.subject;
-  const headingAmount = amountInHead ? undefined : m.amount;
-  const PreviewBody =
-    reader !== NONE && (near || model.actionId === m.id) && !model.hidePrefetchedNotice(m.id)
-      ? reader.PreviewBody
-      : undefined;
-  const previewHead =
-    reader !== NONE && reader.PreviewHead ? (
-      <reader.PreviewHead message={m} hideBodyNotice={model.hidePrefetchedNotice(m.id)} />
-    ) : (
-      <MessageHead
-        sender={{ ...who, displayAddress: displayAddress(who.address) }}
-        stamp={{ when: stamp.when, full: false, title: stamp.full }}
-        amount={amountInHead ? m.amount : undefined}
-        staticMetadata
-      />
-    );
-  const hasReceiptEvents = receiptEvents !== null;
-  return (
-    <div
-      ref={card}
-      className={text === null ? "st-item st-pend" : "st-item"}
-      data-stream-item={m.id}
-      data-held={whole && model.actionId === m.id ? "" : undefined}
-      data-expanded={whole || conversation !== undefined ? "" : undefined}
-      data-unseen={m.unread ? "" : undefined}
-      tabIndex={whole ? 0 : undefined}
-      onFocus={(event) => {
-        const card = event.currentTarget;
-        if (
-          (whole || conversation !== undefined) &&
-          model.addressedId !== m.id &&
-          card.contains(event.target) &&
-          !event.target.closest(".oh-over") &&
-          !card.contains(event.relatedTarget)
-        )
-          model.open(m.id);
-      }}
-      data-open={model.openId === m.id ? "" : undefined}
-      onPointerDown={(e) => {
-        if (!inControl(e.target)) model.read.enter();
-      }}
-      onClick={(e) => {
-        if (!inControl(e.target)) press();
-      }}
-    >
-      {(whole || conversation !== undefined) && reader !== NONE && reader.OpenCard ? (
-        <reader.OpenCard
-          message={m}
-          opened={model.openId === m.id}
-          conversation={conversation}
-          scroller={model.scroller}
-          onEnter={() => model.read.enter(m.id)}
-          clip={whole ? { open: true, word: t("item.collapse"), onPress: control } : undefined}
-        />
-      ) : (
-        <Message
-          head={
-            hasReceiptEvents ? (
-              <>
-                {previewHead}
-                {headingAmount ? (
-                  <p className="oh-text oh-display oh-message-amount st-receipt-amount">{headingAmount}</p>
-                ) : null}
-                {m.subject ? <h2 className="oh-text oh-display oh-message-subject">{m.subject}</h2> : null}
-                {receiptEvents}
-              </>
-            ) : (
-              previewHead
-            )
-          }
-          subject={hasReceiptEvents ? undefined : m.subject || undefined}
-          amount={hasReceiptEvents ? undefined : headingAmount}
-          files={
-            hasReceiptEvents && m.hasAttachments ? <span className="oh-vh">{t("item.file")}</span> : undefined
-          }
-          clip={
-            clip.phone
-              ? { open: false, word: t("item.full"), goes: true, pending, onPress: control }
-              : {
-                  open: whole,
-                  word: t(whole ? "item.collapse" : "item.expand"),
-                  description: t("item.keyboardOpen"),
-                  pending,
-                  onPress: control,
-                }
-          }
-        >
-          {bodyState === "loading" || bodyState === "failed" ? (
-            <>
-              <BodyLoadStatus state={bodyState} messageId={m.id} preview />
-              <div className="oh-message-body">{m.snippet}</div>
-            </>
-          ) : PreviewBody ? (
-            <div className="oh-message-body">
-              <PreviewBody message={m}>{text ?? m.snippet ?? ""}</PreviewBody>
-            </div>
-          ) : (
-            (text ?? m.snippet ?? "")
-          )}
-        </Message>
-      )}
-    </div>
-  );
-}
+import { StreamItem } from "./StreamItem.js";
+import { StreamReplyContext } from "./StreamAbove.js";
 
 export function StreamColumn(props: { phone: boolean; keysHere: boolean }) {
   const { place } = useStreamModel();
@@ -162,6 +32,7 @@ export function StreamColumn(props: { phone: boolean; keysHere: boolean }) {
 }
 
 function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boolean }) {
+  const state = useStreamColumnModel({ phone, keysHere });
   const {
     model,
     t,
@@ -175,32 +46,21 @@ function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boole
     reader,
     reply,
     replyHost,
-    setReplyCard,
-    inline,
     panelKeys,
     actionId,
-    panelId,
-    keyboardOpened,
+    setReplyCard,
     whole,
     clip,
     viewport,
-  } = useStreamColumnModel({ phone, keysHere });
+  } = state;
   const { start, end, attach, column, width, padTopPx, padBottomPx, near } = viewport;
+  const open = useStableCallback(model.open);
+  const closeAddress = useStableCallback((id: string) => {
+    if (model.addressedId === id) commands.open(null);
+  });
   if (model.mayState && model.items.length === 0) return <BlankColumn>{blank("blank.clear")}</BlankColumn>;
   const shown = model.items.slice(start, end);
-  const panel =
-    reader !== NONE && panelId !== null && (!phone || inline) ? (
-      <reader.Actions
-        messageId={panelId}
-        deleteKeyId={model.openId ?? panelId}
-        canDeleteKey={model.canDeleteKey}
-        canAnswerKey={model.canAnswerKey}
-        keysHere={panelKeys && actionId !== null}
-        focus={keyboardOpened?.id === panelId && whole.has(panelId)}
-        showPanel={model.actionVisit || whole.has(panelId) || replyHost === panelId}
-        markUnread={model.markUnread}
-      />
-    ) : undefined;
+  const panel = streamPanel(state, phone);
   return (
     <Sheet
       kind="reading"
@@ -241,18 +101,30 @@ function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boole
               {model.lineShown && start + i === model.freshCount ? (
                 <GroupHeading count={lineStamp}>{t("waterline.label")}</GroupHeading>
               ) : null}
-              <Item
+              <StreamItem
                 m={m}
-                model={model}
+                reader={reader}
                 t={t}
                 locale={locale}
-                clip={clip}
                 now={now}
                 text={text}
-                near={near.has(m.id)}
+                place={model.place}
+                bodyState={model.bodyStateOf(m.id)}
+                phone={phone}
+                whole={!phone && (clip.linked === m.id || whole.has(m.id))}
+                addressed={model.addressedId === m.id}
+                opened={model.openId === m.id}
+                active={model.actionId === m.id}
+                preview={(near.has(m.id) || model.actionId === m.id) && model.hasPreviewMarkup(m.id)}
+                scroller={model.scroller}
+                open={open}
+                closeAddress={closeAddress}
+                enter={model.read.enter}
+                hydrateOpened={model.hydrateOpened}
+                setWhole={clip.set}
                 conversation={conversation}
               />
-              {replyHost === m.id ? reply?.sheet : null}
+              {replyHost === m.id ? reply?.sheet(panelKeys && actionId === m.id) : null}
             </div>
           );
         })}
@@ -273,6 +145,23 @@ function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boole
   );
 }
 
+function streamPanel(state: ReturnType<typeof useStreamColumnModel>, phone: boolean) {
+  const { model, reader, panelId, panelKeys, actionId, keyboardOpened, whole, inline, replyHost, showPanel } =
+    state;
+  return reader !== NONE && panelId !== null && (!phone || inline) ? (
+    <reader.Actions
+      messageId={panelId}
+      deleteKeyId={model.openId ?? panelId}
+      canDeleteKey={model.canDeleteKey}
+      canAnswerKey={model.canAnswerKey}
+      keysHere={panelKeys && actionId !== null}
+      focus={keyboardOpened?.id === panelId && whole.has(panelId)}
+      showPanel={showPanel}
+      markUnread={model.markUnread}
+    />
+  ) : undefined;
+}
+
 function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: boolean }) {
   const model = useStreamModel();
   const t = useStreamText(model.place);
@@ -285,11 +174,10 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
   const lineStamp =
     model.place === "news" && model.lineAt ? lineStampOf(model.lineAt, now, locale) || undefined : undefined;
   const reader = host.features.reader;
-  const useInlineReply = reader === NONE ? noReply : (reader.useInlineReply ?? noReply);
   const { actionId } = model;
   const inline = phone && keysHere && model.addressedId !== null;
   const panelKeys = phone ? inline : keysHere;
-  const reply = useInlineReply(panelKeys ? actionId : null, model.items);
+  const reply = useContext(StreamReplyContext);
   useHoldForReply(model, reply);
   const [replyCard, setReplyCard] = useState<HTMLDivElement | null>(null);
   const replyHost = !phone || inline ? (reply?.messageId ?? null) : null;
@@ -310,7 +198,12 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
     if (replyHost !== null && replyCard) return model.scroll.revealEnd(replyHost, replyCard);
   }, [model.scroll, replyCard, replyHost]);
   const viewport = useStreamViewport(model);
-  const { clip, keyboardOpened, restored, whole } = useStreamClips(model, phone, route.open, viewport);
+  const { clip, keyboardOpened, restored, whole, collapsedAction } = useStreamClips(
+    model,
+    phone,
+    route.open,
+    viewport,
+  );
   const { start, end } = viewport;
   const { scroll, read, toolbar } = model;
   const lastWindow = useRef({ start, end });
@@ -328,9 +221,13 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
       ? restored
       : null;
   const panelId = actionId ?? fallback;
+  const showPanel =
+    panelId !== null &&
+    collapsedAction !== panelId &&
+    (model.actionVisit || whole.has(panelId) || replyHost === panelId);
   useEffect(() => {
-    toolbar.current = panelId;
-  }, [toolbar, panelId]);
+    toolbar.current = showPanel ? panelId : null;
+  }, [toolbar, panelId, showPanel]);
 
   return {
     model,
@@ -350,6 +247,7 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
     panelKeys,
     actionId,
     panelId,
+    showPanel,
     keyboardOpened,
     whole,
     clip,

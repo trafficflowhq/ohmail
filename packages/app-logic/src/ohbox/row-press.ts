@@ -79,8 +79,8 @@ export interface PressParts {
   picked: ReadonlySet<string>;
   togglePick: (id: string) => void;
   selected: EngineMessage | null;
-  open: (m: EngineMessage) => void;
-  selectByUser: (id: string) => void;
+  open: (m: EngineMessage, wholeThread?: true) => void;
+  selectByUser: (id: string, extend?: boolean, wholeThread?: true) => void;
   enter: (m: EngineMessage) => void;
 }
 
@@ -96,16 +96,15 @@ export function ohboxPressRow({
   /** A press on a row, singleton or folded: the open target answers, row MEMBERSHIP says whether it is the open one. */
   const pressRow = (g: OhboxRowGroup): void => {
     const target = g.openTarget;
+    const wholeThread = g.members.length > 1 ? true : undefined;
     if (input.columnHidden() && picked.size > 0) {
       // The same contract as the singleton row above — and a folded row toggles all of
       // its members, which is what `togglePick` does with a row id.
       togglePick(target.id);
-    } else if (input.columnHidden()) {
-      open(target);
-    } else if (selected != null && g.members.some((m) => m.id === selected.id)) {
-      open(target);
+    } else if (input.columnHidden() || (selected != null && g.members.some((m) => m.id === selected.id))) {
+      open(target, wholeThread);
     } else {
-      selectByUser(target.id);
+      selectByUser(target.id, false, wholeThread);
       enter(target);
     }
   };

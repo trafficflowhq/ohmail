@@ -48,9 +48,8 @@ const NEW_TREE = {
 const read = (p: string) => readFileSync(at(p), "utf8");
 
 /**
- * Every list surface that renders a mail row, and therefore draws thread circles. The Ohbox is no view here any
- * more: its rows are the kit's, and their circles are everybody in the conversation, asked of the shell's
- * conversation asker (`SHELL_BINDINGS` below; drawn and named by `packages/app/test/ohbox/row-words.test.tsx`).
+ * The compatibility views still pass their participants input. The mounted lists are checked against their
+ * frame registration and the row each registration draws.
  */
 const MAIL_LISTS = [
   "ReadsView",
@@ -60,11 +59,20 @@ const MAIL_LISTS = [
   "TriageView",
 ] as const;
 
-/** What the shell hands each list for its circles: the participants index, and the Ohbox its conversation asker. */
-const SHELL_BINDINGS: ReadonlyArray<readonly [string, string]> = [
-  ...MAIL_LISTS.map((view) => [view, "threadParticipants={participantsOf}"] as const),
-  ["TodaysOhbox", "conversationOf={ohboxConversationOf}"],
-];
+const MOUNTED_LISTS = [
+  ["news", "StreamList", "stream/StreamList.tsx"],
+  ["receipts", "StreamList", "stream/StreamList.tsx"],
+  ["history", "HistoryList", "history/HistoryList.tsx", "<LetterRows"],
+  ["tags", "TagsList", "tags/TagsList.tsx", "<LetterRows"],
+  ["piles", "PilesList", "piles/PilesList.tsx"],
+  ["ohbox", "OhboxList", "ohbox/OhboxList.tsx", "<OhboxGroup"],
+] as const;
+const MOUNTED_ROWS = [
+  ["stream/StreamList.tsx", "ItemRow", "rowPeople(m, recipient ?? who)", "rowPeople={rowPeople}"],
+  ["piles/PilesList.tsx", "PileItem", "rowPeople(m, who)", "rowPeople={rowPeople}"],
+  ["place-list/LetterRows.tsx", "LetterRows", "rowPeople(m,", "useRowPeople()"],
+] as const;
+const app = (file: string) => readFileSync(repo(`packages/app/src/${file}`), "utf8");
 
 describe("thread circles are wired into every mail list", () => {
   it.each(MAIL_LISTS)("%s takes the shell's participants binding and passes it on its row", (view) => {
@@ -80,20 +88,21 @@ describe("thread circles are wired into every mail list", () => {
   });
 
   it("the shell hands its indexed binding to every one of them", () => {
-    const shell = read("shell/AppShell.tsx");
-    for (const [view, binding] of SHELL_BINDINGS) {
-      const open = shell.indexOf(`<${view}`);
-      expect(open, `${view} is not rendered by the shell`).toBeGreaterThan(-1);
-      /* The prop has to be inside THIS element, not merely somewhere in a file thousands of lines long —
-         and getting that bound wrong is how this guard would pass over a view mounted without
-         it (measured: a mis-indented terminator ran the slice on into the NEXT view's props
-         and found the string there). The opening tag ends at the first `/>` sitting at the
-         element's own indentation, so the bound is derived from the tag, never hard-coded. */
-      const indent = " ".repeat(open - shell.lastIndexOf("\n", open) - 1);
-      const close = shell.indexOf(`\n${indent}/>`, open);
-      expect(close, `${view}'s opening tag does not terminate at its own indentation`).toBeGreaterThan(open);
-      expect(shell.slice(open, close), `${view} is mounted without ${binding}`).toContain(binding);
+    for (const [place, list, file, child] of MOUNTED_LISTS) {
+      expect(app(`${place}/place.ts`), `${place} no longer mounts ${list}`).toMatch(new RegExp(`\\bList: ${list}\\b`));
+      if (child) expect(app(file)).toContain(child);
     }
+    for (const [file, declaration, people, bind] of MOUNTED_ROWS) {
+      const source = app(file);
+      expect(source).toContain("const rowPeople = useRowPeople()");
+      expect(source).toContain(bind);
+      expect(sliceOfDeclaration(source, declaration)).toContain(people);
+    }
+    expect(app("ohbox/OhboxGroup.tsx")).toContain("model.groupPeople(row)");
+    expect(app("ohbox/OhboxGroup.tsx")).toContain("people={people}");
+    expect(app("place-list/people.ts")).toContain("useOtherThreadPeople()");
+    const presented = readFileSync(repo("packages/app-logic/src/reading/presented-mirror.ts"), "utf8");
+    expect(sliceOfDeclaration(presented, "readThreadIndex")).toContain("threadParticipantsIndex(presented)");
   });
 
   /**

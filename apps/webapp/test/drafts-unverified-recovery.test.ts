@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 /*
  * THE COMPOSER'S RECOVERY, READ FROM ITS SOURCE: moved word for word out of `drafts-unverified.test.tsx`, which
@@ -166,8 +167,8 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
     );
     /* The lane's state reaches the projection as THIS message sees it (`composeStateOnScreen`: another
        message's send is not this one's to show), and the held row is still asked about over it. */
-    expect(frame, "the compose send state does not consider the row the composer is holding")
-      .toMatch(/const row = readComposeRow\(scope\);[\s\S]{0,300}const hold = holdOf\(engine, \{[^}]*draftId: row[^}]*\}, scope\);\s*const send = heldRowUnverified\(\s*composeStateOnScreen\(\s*compose\.mailSend\.stateOf\(COMPOSE_SEND_KEY\),\s*compose\.mailSend\.pressHere\(COMPOSE_SEND_KEY\),?\s*\),\s*row,\s*hold,/);
+    expect(withoutComments(frame), "the compose send state does not consider the row the composer is holding")
+      .toMatch(/const row = readComposeRow\(scope\);[\s\S]{0,300}const hold = holdOf\(engine, \{[^}]*draftId: row[^}]*\}, scope\);\s*const send = sendStateFor\(\s*heldRowUnverified\(\s*composeStateOnScreen\(\s*compose\.mailSend\.stateOf\(COMPOSE_SEND_KEY\),\s*compose\.mailSend\.pressHere\(COMPOSE_SEND_KEY\),?\s*\),\s*row,\s*hold,\s*session,\s*\),\s*compose\.plan\.mutation,/);
     /* IT DOES RELEASE, AND THAT IS NOT THE RECOVERY DOOR. The recovery door releases and then
        lets the next pause write a FRESH row (`recoverySeed` arms the delete of the stranded one).
        Here the release only drops whatever row the composer was holding for the message being

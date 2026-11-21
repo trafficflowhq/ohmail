@@ -135,6 +135,7 @@ const ALIASES: Record<string, string> = {
   "@trafficflow/core/destinations": r("packages/core/src/destinations.ts"),
   "@trafficflow/core/reply-subject": r("packages/core/src/reply-subject.ts"),
   "@trafficflow/core/sender-headers": r("packages/core/src/sender-headers.ts"),
+  "@trafficflow/core/suggestion-consent": r("packages/core/src/suggestion-consent.ts"),
   "@trafficflow/core/model-name": r("packages/core/src/model-name.ts"),
   "@trafficflow/core/ai-transports": r("packages/core/src/ai/transports/index.ts"),
   "@trafficflow/core/ai-provider-env": r("packages/core/src/ai/transports/host.ts"),

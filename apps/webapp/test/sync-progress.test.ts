@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { clearSignedInSync, serveSignedInSync, SYNC_FIXTURE_OWNER, writeSignedInSync } from "./fixtures/signed-in-sync";
 import { within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -69,7 +70,7 @@ const message = (id: string, folder: string, seq: number) => ({
   updatedAt: ISO,
   entity: {
     id,
-    accountId: "acct_live_1",
+    accountId: SYNC_FIXTURE_OWNER,
     mailboxId: "mb_1",
     threadId: null,
     messageIdHeader: null,
@@ -235,9 +236,14 @@ function stage(): void {
   polls = 0;
   shellCommits = 0;
   window.location.hash = "";
+  writeSignedInSync();
   originalFetch = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown) => {
+  globalThis.fetch = vi.fn(serveSignedInSync(async (input) => {
     const url = String(input);
+    if (url.includes("/sync/snapshot")) {
+      return new Response(null, { status: 404 });
+    }
+    if (url.includes("/sync") && url.includes("types=rule")) return empty();
     if (url.includes("/sync")) {
       polls += 1;
       return answer();
@@ -258,7 +264,7 @@ function stage(): void {
       );
     }
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  }));
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -298,6 +304,7 @@ async function unstage(): Promise<void> {
   roots = [];
   document.body.innerHTML = "";
   globalThis.fetch = originalFetch;
+  clearSignedInSync();
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
   vi.useRealTimers();
@@ -335,7 +342,7 @@ const countCommit = (): void => {
 };
 
 /** The shipped shell, live, wrapped in exactly what the Cloud entry wraps it in. */
-async function shell(opts: { probe?: boolean; strict?: boolean } = {}): Promise<HTMLElement> {
+async function shell(opts: { probe?: boolean; strict?: boolean; settings?: boolean } = {}): Promise<HTMLElement> {
   const [{ AppShell }, { ThemeProvider, ToastHost }] = modules;
 
   const container = document.createElement("div");
@@ -357,8 +364,9 @@ async function shell(opts: { probe?: boolean; strict?: boolean } = {}): Promise<
   };
   const props = {
     demo: false,
-    resolveOwner: async () => ({ kind: "owner", accountId: "acct_live_1" }) as const,
+    resolveOwner: async () => ({ kind: "owner", accountId: SYNC_FIXTURE_OWNER }) as const,
     mailboxFacts: opts.probe === false ? undefined : probe,
+    mailboxesNotices: opts.settings,
   };
 
   await act(async () => {
@@ -805,7 +813,7 @@ describe("the shell says nothing it cannot know", () => {
 
   it("…but a probe that ANSWERS zero does say so, and points somewhere", async () => {
     facts = [];
-    const c = await shell();
+    const c = await shell({ settings: true });
     await tick(0);
     expect(text(c)).toContain("No mailbox connected");
     const press = [...bar(c)!.querySelectorAll<HTMLButtonElement>("button")]
@@ -1005,7 +1013,7 @@ describe("an honest wait", () => {
 
   it("escalates past ten minutes, offers the one action, and never claims a failure", async () => {
     facts = [mailbox({ lastSyncAt: null, createdAt: ISO })];
-    const c = await shell();
+    const c = await shell({ settings: true });
     await tick(660_000);
     expect(text(c)).toContain(SLOW);
     expect(text(c)).toContain("connected 11 minutes ago");
@@ -1055,9 +1063,11 @@ describe("the mirror being read is not the mirror growing", () => {
     // one jump from 0 to the whole count, while `bootstrapping` is still true. Thirty clears
     // IMPORT_MIN_DELTA, so a reading that counts the jump as growth cannot be excused as too
     // small to matter — which is why "don't bypass min-delta" alone would not fix this.
-    answer = () => page(30);
+    answer = () => {
+      answer = empty;
+      return page(30);
+    };
     const c = await shell();
-    answer = empty;
     await tick(0);
 
     // Premise: the warm mirror really did land, and it is not being announced the moment it loads.

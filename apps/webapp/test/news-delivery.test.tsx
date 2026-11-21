@@ -4,6 +4,8 @@ import { expect, it } from "vitest";
 import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
 import { issue } from "../../../packages/app/test/streams/registered-world.js";
 import { mountCheckedStream } from "./stream-check-frame.js";
+import en from "../../../packages/app/messages/news.en.json";
+import de from "../../../packages/app/messages/news.de.json";
 
 const WORK = { id: "mb-1", address: "work@example.invalid", displayName: "Work" };
 const HOME = { id: "mb-2", address: "home@example.invalid", displayName: null };
@@ -34,7 +36,9 @@ it.each([
   const title = `${phrase} ${label}`;
   expect(row.getByTitle(title).textContent).toBe(label);
   expect(card.getByTitle(title).textContent).toBe(label);
-  expect(screen.getByRole("option", { name: /Issue 12/ }).getAttribute("aria-description")).toBe(title);
+  const hint = (locale === "de" ? de : en).news.item.keyboardOpen;
+  expect(screen.getByRole("option", { name: /Issue 12/ }).getAttribute("aria-description"))
+    .toBe(`${title}. ${hint}`);
   expect(card.queryByText("list@example.invalid")).toBeNull();
 });
 
@@ -47,5 +51,6 @@ it.each([
   const { row, card } = await show(roster ? [...roster] : null, id);
   expect(row.queryByTitle(/^Delivered to/)).toBeNull();
   expect(card.queryByTitle(/^Delivered to/)).toBeNull();
-  expect(screen.getByRole("option", { name: /Issue 12/ }).getAttribute("aria-description")).toBeNull();
+  expect(screen.getByRole("option", { name: /Issue 12/ }).getAttribute("aria-description"))
+    .toBe(en.news.item.keyboardOpen);
 });

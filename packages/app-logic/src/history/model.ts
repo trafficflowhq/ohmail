@@ -36,6 +36,7 @@ export interface HistoryMonth {
 export interface HistoryWindow {
   readonly scroller: RefObject<HTMLDivElement | null>;
   readonly window: ListWindow;
+  readonly total: number;
   readonly slots: readonly (EngineMessage | "gone" | null)[];
   readonly jump: (slot: number) => void;
 }

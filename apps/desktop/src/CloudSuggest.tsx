@@ -15,7 +15,7 @@
  * BOUGHT WITHOUT A PRESS — the automatic batch cannot be opted into here.
  */
 
-import { useToast } from "@ohmail/ui";
+import { useToast } from "@ohmail/ui/toast";
 
 import { SuggestControl } from "../../webapp/app/views/ScreenerView";
 import {

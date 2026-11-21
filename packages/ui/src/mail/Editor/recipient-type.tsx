@@ -32,6 +32,8 @@ export interface RecipientTypeProps {
   /** The way to the lines that are not shown yet, beside the place to type. */
   more?: { label: string; onPress?: () => void };
   onType?: (line: string, value: string) => void;
+  onCommit?: (line: string, value: string) => void;
+  onTypeFocus?: (line: string, focused: boolean) => void;
   /** The line's own keys, for a key the suggestions did not use. */
   onKeys: (event: KeyboardEvent<HTMLInputElement>) => void;
   /** A paste of several addresses, inserted at the selection (`RecipientsProps.onPaste`). */
@@ -45,7 +47,17 @@ const SEVERAL = /[\n\t,;]/;
  * The place to type the next person of a line. Where people are offered it is a combobox: they stand under the
  * line, the name over the address, the first one on, and Enter, Tab or a press takes the one the keys are on.
  */
-export function RecipientType({ line, locked, suggest, more, onType, onKeys, onPaste }: RecipientTypeProps) {
+export function RecipientType({
+  line,
+  locked,
+  suggest,
+  more,
+  onType,
+  onCommit,
+  onTypeFocus,
+  onKeys,
+  onPaste,
+}: RecipientTypeProps) {
   const offers = suggest && !locked ? suggest : undefined;
   const suggestions = useSuggestions<Offered>({
     id: useId(),
@@ -99,6 +111,13 @@ export function RecipientType({ line, locked, suggest, more, onType, onKeys, onP
         spellCheck={false}
         readOnly={locked}
         {...field}
+        onFocus={() => onTypeFocus?.(line.id, true)}
+        onBlur={(event) => {
+          if (offers) suggestions.field.onBlur();
+          const value = event.currentTarget.value;
+          if (!locked && value.trim()) onCommit?.(line.id, value);
+          onTypeFocus?.(line.id, false);
+        }}
         onKeyDown={keys}
         onPaste={paste}
       />

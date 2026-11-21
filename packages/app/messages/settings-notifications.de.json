@@ -1,6 +1,14 @@
 {
   "settingsNotifications": {
     "about": "Benachrichtigen bei",
-    "blocked": "Blockiert"
+    "blocked": "Blockiert",
+    "calendar": "Kalender",
+    "alert": "Eine Erinnerung",
+    "invitation": "Eine Einladung",
+    "change": "Eine Änderung oder Absage",
+    "answer": "Eine eingeladene Person hat geantwortet",
+    "found": "Etwas in einer Mail gefunden",
+    "titles": "Titel",
+    "showTitles": "Titel in Benachrichtigungen anzeigen"
   }
 }

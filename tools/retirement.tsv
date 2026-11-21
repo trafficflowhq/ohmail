@@ -873,6 +873,7 @@ apps/webapp/test/sender-address-always-visible.test.tsx	source-text	reads source
 apps/webapp/test/sender-audit.test.ts	data	reads data files (json): the message catalogue	none	removals	
 apps/webapp/test/sender-screening.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
 apps/webapp/test/sender-sheet-scope-fits.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	write	
+apps/webapp/test/sender-sheet-surface.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	write	
 apps/webapp/test/service-worker-words-bounded.test.ts	source-text	runs the service worker's own file (js) over a stand-in for the browser: the words it draws	layer 1	notices	
 apps/webapp/test/session-cookie-spellings.test.ts	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/session-expiry-single-rule.test.ts	source-text	reads source as text (ts)	layer 2	removals	

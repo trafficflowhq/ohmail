@@ -178,8 +178,8 @@ let published: { state: string; mode?: string | null }[] = [];
 /** Draft rows in the in-memory mirror that the mounted desktop frame reads. */
 let DRAFTS: Array<{ id: string; mailboxId: string; status: string }> | null = null;
 
-vi.mock("../src/local-mailbox-facts.js", async (original) => {
-  const real = await original<typeof import("../src/local-mailbox-facts.js")>();
+vi.mock("../src/local-mailbox-facts.js", async () => {
+  const real = await vi.importActual<typeof import("../src/local-mailbox-facts.js")>("../src/local-mailbox-facts.js");
   return {
     ...real,
     readMailboxFacts: async (options: Parameters<typeof real.readMailboxFacts>[0]) =>
@@ -796,18 +796,13 @@ describe("the mailbox roster opened through desktop Settings", () => {
       organizerEventSeenAt: null,
     }));
     const frame = await render("local", {}, "#/ohbox");
-    const action = buttonExactly(frame, messages.mailboxes.noticeOpenMailboxes);
-    expect(action?.closest('[role="status"]')?.textContent).toContain("1 other mailbox");
-    await act(async () => {
-      const changed = new Promise<void>((resolve) => window.addEventListener("hashchange", () => resolve(), { once: true }));
-      action!.click();
-      expect(window.location.hash).toBe("#/settings/mailboxes");
-      await changed;
-    });
-    const pane = frame.querySelector<HTMLElement>('[role="region"][aria-label="Mailboxes"]');
-    expect(pane).not.toBeNull();
-    expect(addressRows(pane!).map((row) => row.querySelector(".lab b")?.textContent))
-      .toEqual(wireRoster.map((mailbox) => mailbox.address));
+    const action = within(frame).getByRole("button", { name: messages.mailboxes.noticeCountShow });
+    expect(action.closest('[role="status"]')?.textContent).toContain("4 mailboxes are organized elsewhere now.");
+    await act(async () => action.click());
+    const roster = within(frame).getByRole("dialog");
+    expect(within(roster).getAllByRole("listitem").map((row) => row.textContent))
+      .toEqual(wireRoster.map((mailbox) => `${mailbox.address} · Fixture computer`));
+    expect(window.location.hash).toBe("#/ohbox");
     expect(pressed().filter(({ method }) => method !== "GET")).toEqual([]);
   });
 

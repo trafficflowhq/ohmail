@@ -113,7 +113,7 @@ describe("the web shell's answers on the managed service", () => {
   });
 
   it("is the account's own page: a live session under the account's scope, and a browser's device", () => {
-    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", account: "an-account", accountAddress: null, recover: has.frame.recover, today: NONE });
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", mirrorAccount: "an-account", account: "an-account", accountAddress: null, recover: has.frame.recover, today: NONE });
     expect(host.device).toEqual(BROWSER_DEVICE);
     expect(host.signals).toEqual(NO_SIGNAL);
     expect(host.engine).toBe(engine);
@@ -176,7 +176,7 @@ describe("the web shell's answers on a self-hosted server", () => {
     expect(host.features).toEqual(entries(...THE_ACCOUNT, "devices", "invites"));
     expect(host.device).toEqual(BROWSER_DEVICE);
     expect(host.signals).toEqual(NO_SIGNAL);
-    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", account: "an-account", accountAddress: null, recover: has.frame.recover, today: NONE });
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", mirrorAccount: "an-account", account: "an-account", accountAddress: null, recover: has.frame.recover, today: NONE });
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access });
   });
 

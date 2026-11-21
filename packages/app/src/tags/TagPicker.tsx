@@ -1,8 +1,7 @@
 import { useRef, useState } from "react";
 import type { TagEntity as TagDTO } from "@ohmail/wire";
 import { hueOf } from "@ohmail/app-logic/text/format";
-import { design, Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
-import { TextField } from "@ohmail/ui";
+import { design, Field, Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
 import { newTagName } from "../settings/tags/model.js";
 import { useText } from "../text/index.js";
 
@@ -21,7 +20,7 @@ export function TagPicker({
   tags: readonly TagDTO[];
   assigned: readonly string[];
   onToggle: (id: string, assigned: boolean) => void;
-  onCreate: (name: string) => void;
+  onCreate?: (name: string) => void;
   onClose: () => void;
 }) {
   const t = useText("tag");
@@ -29,7 +28,7 @@ export function TagPicker({
   const [query, setQuery] = useState("");
   const draft = newTagName(tags, query);
   const shown = tags.filter(({ name }) => name.toLowerCase().includes(query.trim().toLowerCase()));
-  const create = draft && !draft.taken ? draft.name : null;
+  const create = onCreate && draft && !draft.taken ? draft.name : null;
   const toggle = (id: string) => onToggle(id, !assigned.includes(id));
 
   return (
@@ -42,21 +41,18 @@ export function TagPicker({
       initialFocus={field}
       onClose={onClose}
     >
-      <TextField
+      <Field
         ref={field}
-        shape="line"
-        aria-label={t("pickerPlaceholder")}
+        row
+        bare
+        label={t("pickerPlaceholder")}
         placeholder={t("pickerPlaceholder")}
-        autoComplete="off"
-        spellCheck={false}
         value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter") return;
-          event.preventDefault();
+        onChange={setQuery}
+        onEnter={() => {
           const first = shown[0];
           if (first) toggle(first.id);
-          else if (create) onCreate(create);
+          else if (create) onCreate?.(create);
         }}
       />
       {shown.map((tag) => (
@@ -71,7 +67,7 @@ export function TagPicker({
         </MenuItem>
       ))}
       {create ? (
-        <MenuItem onPress={() => onCreate(create)}>{t("pickerCreate", { name: create })}</MenuItem>
+        <MenuItem onPress={() => onCreate?.(create)}>{t("pickerCreate", { name: create })}</MenuItem>
       ) : shown.length === 0 ? (
         <MenuNote>{t("pickerNone")}</MenuNote>
       ) : null}

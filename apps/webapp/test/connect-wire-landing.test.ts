@@ -135,7 +135,7 @@ describe("the return reads its landing once, and trusts nothing it finds", () =>
   ])("a forged or stale record lands in Settings: %s", async (record) => {
     sessionStorage.setItem(LANDING_KEY, record);
     await comeBack("?oauth=pending&state=S-9&code=C-9");
-    expect(window.location.hash).toBe("#/settings");
+    expect(window.location.hash).toBe("#/settings/mailboxes");
     expect(window.location.pathname).toBe("/");
     expect(new URLSearchParams(window.location.search).get("settings")).toBe("mailboxes");
   });

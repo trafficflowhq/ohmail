@@ -55,7 +55,6 @@ import {
   cloudNoticeDue, copyRemovedBy, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
 import { DoorChooser, focusFirstControl } from "./DoorChooser.js";
-import { DesktopAbout } from "./DesktopAbout.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { readMirrorFreshness } from "./DesktopMailboxes.js";
 import { MailboxSelfCheck } from "../../webapp/app/shell/MailboxSelfCheck";
@@ -66,21 +65,16 @@ import { checkMailboxHere } from "./local-self-check.js";
 import { readMailboxFacts } from "./local-mailbox-facts.js";
 /* The OS-answer reader this window has to bring itself — see the injection below. */
 import { desktopNotificationHost } from "./notify-host.js";
-import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
 import { DOOR_COPY, keyringSentence, machineWord } from "./door-copy.js";
 import { BUILD_PLATFORM } from "./platform.js";
-import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
-import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { isPreview, linksOutToBilling } from "./distribution.js";
 import { PreviewMark } from "./PreviewMark.js";
-import { DesktopStorage, DesktopSubscription, useDesktopManageOffer, useHostedSession } from "./DesktopSubscription.js";
-import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
+import { useDesktopManageOffer, useHostedSession } from "./DesktopSubscription.js";
 import { liveBodyVia } from "@ohmail/app-logic/reading/live-body";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { useDesktopFirstPaint, useDesktopUnnamedWall } from "./desktop-first-paint.js";
 import { reviveStandingDown } from "@ohmail/app-logic/session/sync-scheduler";
-import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor, imagesFromComputer,
   hostDoorFor, isDesktopHost, isManagedDoor, listedOnLabel, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
@@ -484,7 +478,8 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   /* WHERE THE APP IS, for the one-ask rule below — the SAME hash route `AppShell` gates the
      first-run stage on, so the flow being open and this prompt waiting cannot disagree. A hook,
      so it belongs up here with `onUnread` for the reason that comment gives. */
-  const routeNow = useHashRoute();
+  // The frame canonicalizes addresses, including Calendar routes the first-run reader never handles.
+  const routeNow = useHashRoute(false);
 
   /**
    * WHAT THIS INSTALL HAS FOR A MODEL — read once, here, because two surfaces need the

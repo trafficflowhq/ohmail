@@ -46,7 +46,7 @@ for (const [route, name, make] of [
     expect(stream.getByText(reader.body.withheldJunkLoading)).toBeTruthy();
     act(() => { vi.advanceTimersByTime(JUNK_REFILL_BOUND_MS + 1); });
     expect(stream.queryByText(reader.body.withheldJunkLoading)).toBeNull();
-    expect(stream.getByText(reader.body.failed)).toBeTruthy();
+    expect(stream.getByText(reader.body.kept.failed)).toBeTruthy();
     expect(asks).toEqual([]);
   });
 }

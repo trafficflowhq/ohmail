@@ -10,9 +10,10 @@
  * group (`RuleDTO.byOhmail`); a host whose pane reads a copy without the mark says less.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { SettingsRow, Switch } from "@ohmail/ui";
+import { Switch } from "@ohmail/ui/base";
+import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 
 export function AutoActRow({
   on,
@@ -33,6 +34,7 @@ export function AutoActRow({
   setAutoAct: (enabled: boolean) => Promise<boolean>;
 }) {
   const t = useTranslations("screener");
+  const description = useId();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const alive = useRef(true);
@@ -59,18 +61,10 @@ export function AutoActRow({
   const why = reader ? t("suggest.actReader") : suggestOn ? null : t("suggest.actNeedsSuggest");
   return (
     <>
-      <SettingsRow
-        label={t("suggest.actTitle")}
-        description={t(rulesMarked ? "suggest.actDescription" : "suggest.actDescriptionUnmarked")}
-        control={
-          <Switch
-            checked={on}
-            disabled={pending || reader || !suggestOn}
-            ariaLabel={t("suggest.actTitle")}
-            onChange={write}
-          />
-        }
-      />
+      <SettingLine label={t("suggest.actTitle")} describedBy={description}>
+        <Switch on={on} disabled={pending || reader || !suggestOn} label={t("suggest.actTitle")} onChange={write} />
+      </SettingLine>
+      <SettingNote id={description}>{t(rulesMarked ? "suggest.actDescription" : "suggest.actDescriptionUnmarked")}</SettingNote>
       {why ? <span className="scn-sg-note" data-act-why={reader ? "reader" : "needs-suggest"}>{why}</span> : null}
       {failed ? <span className="scn-sg-note">{t("suggest.actFailed")}</span> : null}
     </>

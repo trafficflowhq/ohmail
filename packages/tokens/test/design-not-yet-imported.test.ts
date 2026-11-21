@@ -107,8 +107,9 @@ const MAY_MEET = [...FRAME_MEETS, ...DOOR_MEETS].sort();
 const SEAM_SHEETS = [/^packages\/app\/src\/frame\/seam\.generated\.css$/, /^apps\/webapp\/app\/shell\/today-tokens\.generated\.css$/];
 
 type Files = Map<string, string>;
-const IMPORT = /(import\s+type\s[^"';]*?from\s*|\bfrom\s+|\bimport\s*\(?\s*|@import\s+(?:url\()?\s*|\brequire\(\s*)["']([^"']+)["']/g;
-const importsOf = (text: string) => [...text.matchAll(IMPORT)].map((m) => ({ specifier: m[2], typeOnly: m[1].startsWith("import type") }));
+const IMPORT = /(\b(?:import|export)\s+type\b[^"';]*?from\s*|\bfrom\s+|\bimport\s*\(?\s*|@import\s+(?:url\()?\s*|\brequire\(\s*)["']([^"']+)["']/g;
+const TYPE_ONLY = /^(?:import|export)\s+type\b/;
+const importsOf = (text: string) => [...text.matchAll(IMPORT)].map((m) => ({ specifier: m[2], typeOnly: TYPE_ONLY.test(m[1]!) }));
 
 /** The file of `files` a specifier names from `from`, or the specifier itself when it names none. */
 function target(files: Files, from: string, specifier: string): string {
@@ -157,11 +158,13 @@ function drawnBy(files: Files): Record<string, string[]> {
 }
 
 /** `[file, how]` for every import of a design subpath outside the tokens package. */
-function designImports(files: Files): [string, "type" | "value"][] {
-  const out: [string, "type" | "value"][] = [];
+function designImports(files: Files): Map<string, "type" | "value"> {
+  const out = new Map<string, "type" | "value">();
   for (const [file, text] of files) {
     if (file.startsWith("packages/tokens/") || file.endsWith(".json")) continue;
-    for (const { specifier, typeOnly } of importsOf(text)) if (DESIGN.test(specifier)) out.push([file, typeOnly ? "type" : "value"]);
+    for (const { specifier, typeOnly } of importsOf(text)) {
+      if (DESIGN.test(specifier) && (!typeOnly || !out.has(file))) out.set(file, typeOnly ? "type" : "value");
+    }
   }
   return out;
 }
@@ -191,7 +194,7 @@ describe("who imports the new design", () => {
       "packages/ui/src/planted.css": '@import "@ohmail/tokens/design/motion.css";\n',
       "apps/mobile/src/planted.ts": 'const t = await import("@ohmail/tokens/design/tokens.json");\n',
     });
-    expect(designImports(files).map(([file]) => file).filter((file) => file.includes("planted")).sort()).toEqual([
+    expect([...designImports(files).keys()].filter((file) => file.includes("planted")).sort()).toEqual([
       "apps/desktop/src/planted.ts", "apps/mobile/src/planted.ts", "apps/webapp/app/planted.tsx", "packages/ui/src/planted.css",
     ]);
   });
@@ -199,22 +202,29 @@ describe("who imports the new design", () => {
 
 describe("the old stylesheets and the new meet only where listed", () => {
   const unlisted = (files: Files) => reachBoth(files).filter((file) => !MAY_MEET.includes(file));
+  const withPlantedView = (file: string) => [...unlisted(tree), file].sort();
 
   it("in the tree as it is: the listed modules, each of them, and no other", () => expect(reachBoth(tree)).toEqual(MAY_MEET));
 
   it("a module that is not listed is found: the old ones are reached through the component package's entry", () => {
     const files = planted({ "apps/webapp/app/planted-shell.tsx": 'import "@ohmail/tokens/design.css";\nimport "./planted-view";\n', "apps/webapp/app/planted-view.tsx": 'import { Button } from "@ohmail/ui";\n' });
-    expect(unlisted(files)).toEqual(["apps/webapp/app/planted-shell.tsx"]);
+    expect(unlisted(files)).toEqual(withPlantedView("apps/webapp/app/planted-shell.tsx"));
   });
 
   it("a part of the new design inside one of today's views is found", () => {
     const files = planted({ "apps/webapp/app/shell/planted-view.tsx": 'import { Row } from "@ohmail/ui";\nimport { Button } from "@ohmail/ui/base";\n' });
-    expect(unlisted(files)).toEqual(["apps/webapp/app/shell/planted-view.tsx"]);
+    expect(unlisted(files)).toEqual(withPlantedView("apps/webapp/app/shell/planted-view.tsx"));
   });
 
   it("a type alone joins nothing", () => {
-    const files = planted({ "apps/webapp/app/planted-shell.tsx": 'import "@ohmail/tokens/design.css";\nimport type { ButtonProps } from "@ohmail/ui";\n' });
-    expect(unlisted(files)).toEqual([]);
+    const files = planted({
+      "apps/webapp/app/planted-shell.tsx": [
+        'import "@ohmail/tokens/design.css";',
+        'import type { ButtonProps } from "@ohmail/ui";',
+        'export type { ButtonProps } from "@ohmail/ui";',
+      ].join("\n"),
+    });
+    expect(reachBoth(files)).toEqual(reachBoth(tree));
   });
 
   it("a listed module that reaches the new design no longer is found, so the list falls", () => {
@@ -278,7 +288,15 @@ describe("a door on the web", () => {
   });
 
   it("a stage that stops loading the frame's seam sheet is found on every door's page", () => {
-    const files = planted({ [STAGE]: tree.get(STAGE)!.replace('import "../../frame/seam.generated.css";', "") });
+    // The shared Frame can also supply the sheet through the mounted doors' imports.
+    const frame = "packages/app/src/frame/Frame.tsx";
+    const withoutFrameSheet = tree.get(frame)!.replace('import "./seam.generated.css";', "");
+    expect(withoutFrameSheet).not.toBe(tree.get(frame));
+    expect(unseamed(planted({ [frame]: withoutFrameSheet }))).toEqual([]);
+    const files = planted({
+      [frame]: withoutFrameSheet,
+      [STAGE]: tree.get(STAGE)!.replace('import "../../frame/seam.generated.css";', ""),
+    });
     expect(tree.get(STAGE)).not.toBe(files.get(STAGE));
     expect(unseamed(files)).toEqual(stands);
   });
@@ -338,6 +356,9 @@ describe("what the new folders import", () => {
 
   it("an import of the engine is found", () => {
     const files = planted({ "packages/ui/src/motion/planted.ts": 'import { engine } from "@ohmail/client-engine";\n' });
-    expect(outside(files)).toEqual(["packages/ui/src/motion/planted.ts: @ohmail/client-engine"]);
+    expect(outside(files).sort()).toEqual([
+      ...outside(tree),
+      "packages/ui/src/motion/planted.ts: @ohmail/client-engine",
+    ].sort());
   });
 });

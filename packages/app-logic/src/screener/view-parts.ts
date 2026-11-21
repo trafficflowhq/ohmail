@@ -22,10 +22,37 @@ export const refused = (
   r: ScreenerState["role"] & { pressRefusal?: OrganizerRefusal | null; takeoverAsked?: true },
 ) => r.takeoverAsked !== true && (r.mode === "blocked" || isNothingOrganizes(r.pressRefusal));
 
-type BulkKind = "allSpam" | "applySuggestions";
+type BulkKind = "allSpam" | "applySuggestions" | "picked";
 
 const unsubscribeCount = (senders: ConfirmedSenders): number =>
   new Set([...senders.values()].flatMap((entry) => entry.unsubscribeIds)).size;
+
+/** Keep only the senders and letters still eligible under the confirmation's original scope. */
+function stillWaiting(
+  confirmed: ConfirmedSenders | undefined,
+  rowIds: ReadonlyMap<string, ReadonlySet<string>>,
+): ConfirmedSenders {
+  const remaining = new Map<string, ConfirmedBulkDecision>();
+  for (const [key, entry] of confirmed ?? []) {
+    const own = rowIds.get(key);
+    if (!own || !entry.ids.some((id) => own.has(id))) continue;
+    const visible =
+      entry.scope === "sender"
+        ? own
+        : new Set(
+            [...rowIds]
+              .filter(([from]) => domainOfAddress(from) === domainOfAddress(key))
+              .flatMap(([, ids]) => [...ids]),
+          );
+    const ids = entry.ids.filter((id) => visible.has(id));
+    remaining.set(key, {
+      ...entry,
+      ids,
+      unsubscribeIds: entry.unsubscribeIds.filter((id) => visible.has(id)),
+    });
+  }
+  return remaining;
+}
 
 /** The two bulk actions share one account-bound question and one snapshot of what can leave. */
 export function useBulkAsk(
@@ -50,26 +77,7 @@ export function useBulkAsk(
       new Set(row.held.length ? row.held.map((letter) => letter.id) : [row.id]),
     ]),
   );
-  const remaining = new Map<string, ConfirmedBulkDecision>();
-  if (current)
-    for (const [key, entry] of current.senders) {
-      const own = rowIds.get(key);
-      if (!own || !entry.ids.some((id) => own.has(id))) continue;
-      const visible =
-        entry.scope === "sender"
-          ? own
-          : new Set(
-              [...rowIds]
-                .filter(([from]) => domainOfAddress(from) === domainOfAddress(key))
-                .flatMap(([, ids]) => [...ids]),
-            );
-      const ids = entry.ids.filter((id) => visible.has(id));
-      remaining.set(key, {
-        ...entry,
-        ids,
-        unsubscribeIds: entry.unsubscribeIds.filter((id) => visible.has(id)),
-      });
-    }
+  const remaining = stillWaiting(current?.senders, rowIds);
   const reconcileDraft = () => {
     if (!draft) return;
     if (!current || !remaining.size) {
@@ -93,14 +101,19 @@ export function useBulkAsk(
       );
     else state.applyAll(scopeOf, senders);
   };
-  const begin = (kind: BulkKind) => {
+  const begin = (
+    kind: BulkKind,
+    picked?: { ids: readonly string[]; dest: Exclude<DecisionDestination, "spam"> },
+  ) => {
     if (current || refused(state.role) || state.applying != null) return;
+    const chosen = picked ? new Set(picked.ids) : null;
     const senders = new Map(
       waiting.flatMap((row) => {
+        if (chosen && !chosen.has(row.id)) return [];
         const key = senderKey(row.from.address);
-        const dest = kind === "allSpam" ? "spam" : acceptDestOf(row);
+        const dest = picked?.dest ?? (kind === "allSpam" ? "spam" : acceptDestOf(row));
         if (!dest) return [];
-        const scope = kind === "allSpam" ? "sender" : scopeOf(row);
+        const scope = kind === "applySuggestions" ? scopeOf(row) : "sender";
         const ids =
           scope === "sender"
             ? [...(rowIds.get(key) ?? [])]
@@ -121,7 +134,11 @@ export function useBulkAsk(
       }),
     );
     if (!senders.size) return;
-    if (kind === "applySuggestions" && unsubscribeCount(senders) === 0) file(kind, senders);
+    if (
+      (kind === "applySuggestions" && unsubscribeCount(senders) === 0) ||
+      (picked && picked.dest !== "screened")
+    )
+      file(kind, senders);
     else setDraft({ engine, account: state.accountScope, kind, senders });
   };
   return {
@@ -134,7 +151,9 @@ export function useBulkAsk(
           }
         : null,
     close: () => setDraft(null),
-    begin,
+    begin: (kind: Exclude<BulkKind, "picked">) => begin(kind),
+    beginPicked: (ids: readonly string[], dest: Exclude<DecisionDestination, "spam">) =>
+      begin("picked", { ids, dest }),
     answer: (yes: boolean) => {
       setDraft(null);
       if (yes && current && remaining.size) file(current.kind, remaining);

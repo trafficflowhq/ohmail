@@ -17,45 +17,34 @@ import { LetterRows, ListColumn, ListMenu } from "../place-list/index.js";
 import { useCursorWindow } from "../place-list/cursor-window.js";
 import { useText } from "../text/index.js";
 
+import { MailSelectionFoot } from "../place-list/MailSelectionFoot.js";
+import { useRowContact } from "../place-list/use-row-contact.js";
+import { useRowSelection } from "../place-list/use-row-selection.js";
+
 export function FolderList({ plan }: PaneProps) {
   const model = useFolderModel();
+  return <FolderColumn key={model.folder?.id ?? ""} plan={plan} model={model} />;
+}
+
+function FolderColumn({
+  plan,
+  model,
+}: {
+  plan: PaneProps["plan"];
+  model: ReturnType<typeof useFolderModel>;
+}) {
+  const selection = useRowSelection(model.list.rows);
+  const contact = useRowContact();
   const t = useText("folder");
-  const olderWords = useText("ohbox");
   const [asked, setAsked] = useState<{ folderId: string; id: string; at: { x: number; y: number } } | null>(
     null,
   );
+  const [batchMoveAt, setBatchMoveAt] = useState<HTMLElement | null>(null);
   const { move, older } = model;
   const folderId = model.folder?.id;
   const letter =
     asked && asked.folderId === folderId ? model.list.rows.find((m) => m.id === asked.id) : undefined;
   if (asked && (letter === undefined || move === null)) setAsked(null);
-  const leaf = model.path.at(-1) ?? "";
-  /* Where it lives: Folders, then each folder above it. Folders opens the fold of every folder once the rail has
-     one; until then it is said, not pressed. */
-  const way: Way | undefined =
-    model.folder !== null
-      ? {
-          parts: [
-            { label: t("way.all") },
-            ...model.way.map((part) =>
-              part.open ? { label: part.label, onPress: part.open } : { label: part.label },
-            ),
-          ],
-          title: [t("way.all"), ...model.path].join(" / "),
-          more: { label: "…" },
-        }
-      : undefined;
-  const head = (
-    <ListHead
-      title={model.goneName ?? leaf}
-      hot={model.fresh.some((m) => m.unread)}
-      way={way}
-      count={
-        model.count !== undefined && model.count > 0 ? t("metaCount", { count: model.count }) : undefined
-      }
-      aside={<ListMenu label={t("list.menu")} items={[]} />}
-    />
-  );
   const both = model.fresh.length > 0 && model.earlier.length > 0;
   const cursor = model.list.cursor;
   const selected = model.list.rows.findIndex((m) => m.id === cursor);
@@ -74,6 +63,8 @@ export function FolderList({ plan }: PaneProps) {
           </div>
         ) : null}
         <LetterRows
+          selection={selection}
+          contact={contact}
           label={label}
           rows={slice}
           slice={{ index: index + first, first, total: list.length }}
@@ -93,7 +84,19 @@ export function FolderList({ plan }: PaneProps) {
     );
   };
   return (
-    <ListColumn head={head} plan={plan} cursor={cursor} scrollerRef={scroller}>
+    <ListColumn
+      foot={
+        <MailSelectionFoot
+          selection={selection}
+          verbs={model.list.verbs}
+          moveToFolder={move ? setBatchMoveAt : undefined}
+        />
+      }
+      head={<FolderHead model={model} />}
+      plan={plan}
+      cursor={cursor}
+      scrollerRef={scroller}
+    >
       <div aria-hidden data-window-top="" style={{ height: window.padTop }} />
       {rows(t("group.new"), model.fresh, both ? 1 : 0)}
       {rows(t("group.earlier"), model.earlier, model.fresh.length + (both ? 2 : 0))}
@@ -101,6 +104,35 @@ export function FolderList({ plan }: PaneProps) {
       {model.goneName !== null ? <Empty label={t("gone", { name: model.goneName })} /> : null}
       {model.empty ? <Empty label={t("emptyTitle")} /> : null}
       {model.loading ? <Empty label={t("loading")} /> : null}
+      <FolderOlder older={older} />
+      {move !== null && asked !== null && letter !== undefined ? (
+        <FolderMoveAsk
+          move={move}
+          source={asked.folderId}
+          letters={[letter]}
+          at={asked.at}
+          close={() => setAsked(null)}
+        />
+      ) : null}
+      {batchMoveAt?.isConnected && move && folderId && selection.pickedRows.length > 0 ? (
+        <FolderMoveAsk
+          move={move}
+          source={folderId}
+          letters={model.list.rows.filter(({ id }) => selection.ids.includes(id))}
+          at={batchMoveAt}
+          close={() => setBatchMoveAt(null)}
+          onMoved={selection.clear}
+        />
+      ) : null}
+      {contact.card}
+    </ListColumn>
+  );
+}
+
+function FolderOlder({ older }: { older: ReturnType<typeof useFolderModel>["older"] }) {
+  const olderWords = useText("ohbox");
+  return (
+    <>
       {older?.available && !older.pending ? (
         older.error !== null ? (
           <RefusalLine way={{ label: olderWords("olderRetry"), onPress: older.loadMore }}>
@@ -125,16 +157,38 @@ export function FolderList({ plan }: PaneProps) {
           </>
         )
       ) : null}
-      {move !== null && asked !== null && letter !== undefined ? (
-        <FolderMoveAsk
-          move={move}
-          source={asked.folderId}
-          m={letter}
-          at={asked.at}
-          close={() => setAsked(null)}
-        />
-      ) : null}
-    </ListColumn>
+    </>
+  );
+}
+
+function FolderHead({ model }: { model: ReturnType<typeof useFolderModel> }) {
+  const t = useText("folder");
+  const leaf = model.path.at(-1) ?? "";
+  /* Where it lives: Folders, then each folder above it. Folders opens the fold of every folder once the rail has
+     one; until then it is said, not pressed. */
+  const way: Way | undefined =
+    model.folder !== null
+      ? {
+          parts: [
+            { label: t("way.all") },
+            ...model.way.map((part) =>
+              part.open ? { label: part.label, onPress: part.open } : { label: part.label },
+            ),
+          ],
+          title: [t("way.all"), ...model.path].join(" / "),
+          more: { label: "…" },
+        }
+      : undefined;
+  return (
+    <ListHead
+      title={model.goneName ?? leaf}
+      hot={model.fresh.some((m) => m.unread)}
+      way={way}
+      count={
+        model.count !== undefined && model.count > 0 ? t("metaCount", { count: model.count }) : undefined
+      }
+      aside={<ListMenu label={t("list.menu")} items={[]} />}
+    />
   );
 }
 
@@ -142,19 +196,25 @@ export function FolderList({ plan }: PaneProps) {
 function FolderMoveAsk({
   move,
   source,
-  m,
+  letters,
   at,
   close,
+  onMoved,
 }: {
   move: FolderMove;
   source: string;
-  m: EngineMessage;
-  at: { x: number; y: number };
+  letters: readonly EngineMessage[];
+  at: HTMLElement | { x: number; y: number };
   close: () => void;
+  onMoved?: () => void;
 }) {
   const t = useText("folder");
   const { host } = useFrame();
-  const offered = move.into(m);
+  const choices = letters.map((letter) => new Map(move.into(letter).map((to) => [to.folder.id, to])));
+  const offered = [...(choices[0]?.values() ?? [])].flatMap((to) => {
+    if (choices.some((row) => !row.has(to.folder.id))) return [];
+    return [{ ...to, disabled: choices.some((row) => row.get(to.folder.id)?.disabled === true) }];
+  });
   return (
     <MovePicker
       open
@@ -173,8 +233,9 @@ function FolderMoveAsk({
         const to = offered.find(({ folder }) => folder.id === id);
         close();
         const route = routeOf(host.device.address.read());
-        if (route.place === "folder" && route.sub === source && to !== undefined && !to.disabled)
-          move.send(source, m, to.folder);
+        if (route.place !== "folder" || route.sub !== source || to === undefined || to.disabled) return;
+        for (const letter of letters) move.send(source, letter, to.folder);
+        onMoved?.();
       }}
     />
   );

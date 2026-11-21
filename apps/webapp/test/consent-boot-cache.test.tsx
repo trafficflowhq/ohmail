@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { within } from "@testing-library/react";
 import {
   ISO, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { clearSignOutJar } from "./fixtures/sign-out-jar.js";
 import * as entry from "./fixtures/cloud-confirm-shell";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -199,16 +200,27 @@ describe("boot presents the partitioned piles from the account's cached answer",
   });
 
   it("with no remembered account the cache is not consulted at all", async () => {
-    // A cache row exists (this browser held the account before) but the `tf_owner` cookie is gone and
-    // no host named the window — a cleared cookie jar. No key ⇒ no read.
+    // A past account's cache still exists, but the browser can neither name an account nor show its mail.
     seedConsentCache(OWNER);
     holdConsent();
-
-    const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
-    await tick(0);
+    const cachedKey = bootCacheKey(CONSENT_BOOT_SCOPE, OWNER);
+    const reads = vi.spyOn(Storage.prototype, "getItem");
+    const cacheWasRead = () => reads.mock.calls.some(([key]) => key === cachedKey);
+    let confirm!: (answer: { kind: "owner"; accountId: string }) => void;
+    const reply = new Promise<{ kind: "owner"; accountId: string }>((resolve) => { confirm = resolve; });
+    const c = await mountShell([mailbox({ lastSyncAt: ISO })], { resolveOwner: () => reply });
     await goTo("screener");
+    expect(cacheWasRead()).toBe(false);
+    expect(rowIds(c)).toEqual([]);
 
-    expect(rowIds(c)).toContain("known1");
+    // Only a confirmed name makes that account's cache eligible for the boot partition.
+    await act(() => {
+      document.cookie = `tf_owner=${OWNER}; Path=/`;
+      confirm({ kind: "owner", accountId: OWNER });
+    });
+    await tick(500);
+    expect(cacheWasRead()).toBe(true);
+    expect(rowIds(c)).toEqual(["loud1"]);
   });
 
   it("a malformed cache degrades to 'no cache', never to a wrong value", async () => {
@@ -342,8 +354,14 @@ describe("boot presents the partitioned piles from the account's cached answer",
     window.localStorage.setItem(bootCacheKey("own-addresses", OWNER), JSON.stringify(["a@b.invalid"]));
     window.localStorage.setItem("ohmail.ui.rail.tagsOpen", "1");
 
+    // The sign-out may wipe only the data of the account that this jar actually names.
+    document.cookie = `tf_owner=${OWNER}; Path=/`;
     const { signOut } = await import("../app/sign-out");
-    await signOut(OWNER);
+    try {
+      await signOut(OWNER);
+    } finally {
+      clearSignOutJar();
+    }
 
     expect(window.localStorage.getItem(bootCacheKey(CONSENT_BOOT_SCOPE, OWNER))).toBeNull();
     expect(window.localStorage.getItem(bootCacheKey("own-addresses", OWNER))).toBeNull();
@@ -480,6 +498,11 @@ describe("the remembered own addresses are the mount's mirror's account's", () =
         return container;
       };
 
+      // Another account used this browser and left its own addresses. The confirmed account still sees both senders.
+      const otherKey = bootCacheKey("own-addresses", OTHER);
+      window.localStorage.setItem(otherKey, JSON.stringify([THEIRS]));
+      const storageReads = vi.spyOn(Storage.prototype, "getItem");
+      const readOther = () => storageReads.mock.calls.some(([key]) => key === otherKey);
       /* An earlier visit: the account's mail reaches its mirror, and both senders are asked about. */
       entry.scriptSession(() => entry.sessionFull());
       entry.scriptRefresh(entry.refresh204);
@@ -489,12 +512,10 @@ describe("the remembered own addresses are the mount's mirror's account's", () =
       await entry.tick(4000);
       expect(rowIds(earlier).sort(), "the walk shows nothing: the mirror never took the two letters")
         .toEqual(["from-a-stranger", "from-their-address"]);
+      expect(readOther()).toBe(false);
       await entry.act(async () => { root!.unmount(); });
       root = null;
       earlier.remove();
-
-      /* Another account used this browser since, and left its own addresses remembered here. */
-      window.localStorage.setItem(bootCacheKey("own-addresses", OTHER), JSON.stringify([THEIRS]));
 
       /* The page's word `wait`: the mirror opens for this account, the session's answer is on its way, and another
          tab's sign-in moves the marker before the answer names this account and the frame mounts. */
@@ -506,9 +527,8 @@ describe("the remembered own addresses are the mount's mirror's account's", () =
       await entry.act(async () => { answer(entry.sessionFull()); });
       await entry.tick(3000);
 
-      const asked = rowIds(container);
-      expect(asked, "the walk shows nothing: the stranger's letter is not in the queue").toContain("from-a-stranger");
-      expect(asked, "another account's remembered address was taken for this account's own").toContain("from-their-address");
+      expect(rowIds(container), "the old account's mirror rendered under the other account's marker").toEqual([]);
+      expect(readOther()).toBe(false);
     } finally {
       await entry.teardownConfirmEnv();
       delete (globalThis as { indexedDB?: unknown }).indexedDB;

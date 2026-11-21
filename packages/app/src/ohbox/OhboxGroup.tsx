@@ -17,7 +17,7 @@ import { useRowSwipe } from "../touch/index.js";
 import type { OhboxBeside } from "./beside.js";
 import { OhboxRowMenu } from "./OhboxRowMenu.js";
 import { ohboxRowSides } from "./row-sides.js";
-import { peopleOf, spokenOf, whoOf } from "./row-words.js";
+import { peopleOf, spokenOf, whoOf, type RowWho } from "./row-words.js";
 import { useSquaresRun } from "./squares-run.js";
 
 export interface OhboxGroupProps {
@@ -54,12 +54,10 @@ export function OhboxGroup({
   heading,
 }: OhboxGroupProps) {
   const t = useText("ohbox");
-  const screening = useText("screening");
   const {
     host: {
       features: { reader },
     },
-    plan,
   } = useFrame();
   const ScreenContact = reader === NONE ? undefined : reader.Screening;
   const [contact, setContact] = useState<{ person: ContactOf; openId: string | undefined } | null>(null);
@@ -89,36 +87,20 @@ export function OhboxGroup({
       ) : null}
       {drawn.length > 0 ? (
         <Rows label={name} many>
-          {drawn.map((row, k) => {
-            const letter = model.rowOpen(row) ? (model.selected ?? row.face) : row.face;
-            const canScreen = ScreenContact && model.picked.size === 0 && !beside.words.sentTo(letter);
-            return (
-              <OhboxRowItem
-                key={row.key}
-                model={model}
-                beside={beside}
-                showTaggedByline={showTaggedByline}
-                row={row}
-                index={rowBase === undefined ? undefined : rowBase + from + k}
-                place={{ at: from + k + 1, of: rows.length }}
-                onMenu={(at) => setMenu({ row, at })}
-                faceAction={
-                  canScreen
-                    ? {
-                        label: screening("openFor", { sender: beside.words.name(letter) }),
-                        onPress: (anchor) => showScreening(letter, anchor),
-                      }
-                    : undefined
-                }
-                onAddress={
-                  ScreenContact && plan.pointer !== "coarse" && model.picked.size === 0
-                    ? showScreening
-                    : undefined
-                }
-                words={t}
-              />
-            );
-          })}
+          {drawn.map((row, k) => (
+            <OhboxRowItem
+              key={row.key}
+              model={model}
+              beside={beside}
+              showTaggedByline={showTaggedByline}
+              row={row}
+              index={rowBase === undefined ? undefined : rowBase + from + k}
+              place={{ at: from + k + 1, of: rows.length }}
+              onMenu={(at) => setMenu({ row, at })}
+              onContact={ScreenContact && model.picked.size === 0 ? showScreening : undefined}
+              words={t}
+            />
+          ))}
         </Rows>
       ) : null}
       {contact &&
@@ -151,8 +133,7 @@ interface OhboxRowItemProps {
   index: number | undefined;
   place: { at: number; of: number };
   onMenu: (at: { x: number; y: number }) => void;
-  faceAction?: Parameters<typeof Row>[0]["faceAction"];
-  onAddress?: (letter: EngineMessage, anchor: HTMLElement) => void;
+  onContact?: (letter: EngineMessage, anchor: HTMLElement) => void;
   words: ReturnType<typeof useText>;
 }
 
@@ -164,23 +145,18 @@ function OhboxRowItem({
   index,
   place,
   onMenu,
-  faceAction,
-  onAddress,
+  onContact,
   words: t,
 }: OhboxRowItemProps) {
   const w = beside.words;
   const locale = useLocale();
+  const screening = useText("screening");
   const face = row.face;
   const senderCheck = useSenderCheckChip(face);
   const single = row.members.length === 1;
   const sent = single || row.unreadCount === 0 ? w.sentTo(face) : null;
   const voices = model.groupVoices(row);
   const who = whoOf(voices, w.name, w.address, sent);
-  /* A row that speaks for its recipient ("Me → Nora Lindt") leads with its recipient's circle, as the shipped row's
-     did: the account's own face never leads a row somebody else stands on. Where the recipient wrote in the
-     conversation they stand first and everybody else follows in their order, the account in its place; a row whose
-     one person is the account itself wears the recipient's circle alone. Every other row is everybody in it, its
-     voices first. */
   const all = model.groupPeople(row);
   const to = sent !== null ? face.to[0] : undefined;
   const lead =
@@ -193,8 +169,6 @@ function OhboxRowItem({
     alone === undefined ? everybody.people : [{ name: alone.name ?? alone.address, address: alone.address }];
   const subject = model.subjectOf(row);
   const unread = model.rowUnread(row);
-  /* The walked conversation draws itself as it stands, with the reader's ring and a press that jumps; every other
-     row draws its own marks. One group of squares a row, in every state. */
   const own = model.marksOf(row);
   const walked = useWalkedSquares(model, row, own);
   const marks = walked?.marks ?? own;
@@ -206,7 +180,6 @@ function OhboxRowItem({
   const tag = w.tag(row.openTarget);
   const picked = model.pickState(row.members.every((m) => model.picked.has(m.id)));
   const open = model.rowOpen(row);
-  const addressSource = voices.length === 1 && sent === null ? voices[0] : undefined;
   const swipe = useRowSwipe(row.openTarget.id, ohboxRowSides(model, row, t));
   return (
     <Row
@@ -249,9 +222,12 @@ function OhboxRowItem({
           : undefined
       }
       onOpen={() => model.pressRow(row)}
+      selection={{
+        label: t("keyPick"),
+        onPress: (extend) => (extend ? model.pickRangeTo : model.togglePick)(row.openTarget.id),
+      }}
       onMenu={onMenu}
-      faceAction={faceAction}
-      addressAction={onAddress && addressSource ? (anchor) => onAddress(addressSource, anchor) : undefined}
+      {...rowContact(who, onContact, (sender) => screening("openFor", { sender }))}
       swipe={swipe}
       listing={{
         name: `${who.names}: ${subject}`,
@@ -274,6 +250,20 @@ function OhboxRowItem({
       }}
     />
   );
+}
+
+function rowContact(who: RowWho, open: OhboxRowItemProps["onContact"], label: (name: string) => string) {
+  if (!open) return {};
+  const addressSource = who.byline.length === 1 ? who.byline[0]?.letter : undefined;
+  return {
+    nameActions: who.byline.map(({ letter, name, text }) => ({
+      id: letter.id,
+      text,
+      label: label(name),
+      onPress: (anchor: HTMLElement) => open(letter, anchor),
+    })),
+    addressAction: addressSource ? (anchor: HTMLElement) => open(addressSource, anchor) : undefined,
+  };
 }
 
 function useSenderCheckChip(face: EngineMessage) {

@@ -228,6 +228,7 @@ export function writeCallOf(o: {
   /** Now, in epoch milliseconds: a series' days are held against the clock times its zone skips from today on. */
   readonly now: number;
   readonly proven?: ProvenRepeats;
+  readonly cancellationAttempted?: boolean;
   /**
    * The second half of a press on a day and the days after it: where it comes from, and that series
    * as the store holds it (`null`: gone from the store). Its new series is made from that series'
@@ -282,10 +283,15 @@ export function writeCallOf(o: {
   const deleteAudience = act.kind === "calendar_event_delete" && o.base === o.event.versionTag
     ? confirmedDeleteAudience(o.place, o.event, stored !== null, act.scope, act.audience, o.zones)
     : null;
-  if (act.kind === "calendar_event_delete" && deleteAudience === null) {
+  const checkCancellation = act.kind === "calendar_event_delete" && o.cancellationAttempted === true
+    && o.place?.startsWith("caldav:") === true && o.base !== o.event.versionTag;
+  if (act.kind === "calendar_event_delete" && deleteAudience === null && !checkCancellation) {
     return { kind: "refuse", reason: "version_stale" };
   }
-  const target: WriteTarget = { ...whole, occurrence: day, ...(personal && { personalSeries: true }) };
+  const target: WriteTarget = {
+    ...whole, occurrence: day, ...(personal && { personalSeries: true }),
+    ...(checkCancellation && { caldavReadOnly: true, text: null }),
+  };
   // A day and the days after it: the series ends before that day. Changed, those days are the second part of the press, a new series.
   // The series as it stands after its end is a shape the place was proven to keep too: an end is a rule of its own.
   // The series' end is made on the copy the press was made on: where the store holds another now, the writer reads the member and

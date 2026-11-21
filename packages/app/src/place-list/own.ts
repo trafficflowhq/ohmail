@@ -6,6 +6,7 @@
  * the same record.
  */
 import { useCallback, useMemo } from "react";
+import { cursorPlacementText } from "@ohmail/app-logic/keys";
 import type { ListAnswer, PlaceListLiveOwn } from "@ohmail/app-logic/place-list";
 import { placeLabelOver, wordsOver } from "@ohmail/app-logic/reader";
 import type { EngineMessage } from "@ohmail/wire";
@@ -64,7 +65,7 @@ export function usePlaceListOwn(): PlaceListOwn {
       next: ohbox("keyNext"),
       prev: ohbox("keyPrev"),
       open: ohbox("keyOpen"),
-      placed: (label: string) => cursor("placed", { label }),
+      placed: (label: string) => cursorPlacementText(cursor, label),
     }),
     [ohbox, cursor],
   );

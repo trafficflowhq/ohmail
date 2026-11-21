@@ -32,7 +32,7 @@ describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
     expect(within(shell).queryByText(notice)).toBeNull();
     await clickUnsubscribe(unsubscribeActions(shell).getByRole("button", { name: "Screen out" }));
     expect(unsubscribeQuestion()).not.toBeNull();
-    expect(unsubscribeQuestion()!.textContent).toContain("this makes a rule");
+    expect(unsubscribeQuestion()!.textContent).toContain("Later mail from them follows this rule.");
     await tick(COMMIT_MS + 1);
     expect(writes).toEqual([]);
   });

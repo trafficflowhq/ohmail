@@ -2,6 +2,8 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { OhmailEngine, TrashRowWire } from "@ohmail/client-engine";
+import type { ReactNode } from "react";
+import { KeymapContext, useKeymapStore } from "@ohmail/app-logic/keys";
 import { EngineContext, type EngineBinding } from "@ohmail/app-logic/engine";
 import type { DeleteTarget } from "@ohmail/app-logic/press/delete-undo";
 import {
@@ -24,6 +26,7 @@ const row = (id: string, restoreTo: string): TrashRowWire =>
 function engineWith(rows: TrashRowWire[]): EngineBinding {
   const engine = {
     trashAvailable: () => true,
+    onMessagesRemoved: () => () => {},
     listTrash: async () => ({ state: "ready", items: rows, nextCursor: null }),
   } as unknown as OhmailEngine;
   return {
@@ -92,6 +95,10 @@ function Trash(props: {
   );
 }
 
+function Registry({ children }: { children: ReactNode }) {
+  return <KeymapContext.Provider value={useKeymapStore()}>{children}</KeymapContext.Provider>;
+}
+
 function mount(o: {
   rows: TrashRowWire[];
   wire?: TrashLiveWire | "none";
@@ -102,19 +109,21 @@ function mount(o: {
   const marked: Array<{ ids: readonly string[]; unread: boolean }> = [];
   const went: Array<string | null> = [];
   const view = draw(
-    <EngineContext.Provider value={engineWith(o.rows)}>
-      <Trash
-        restore={(t) => {
-          restored.push(t);
-          return true;
-        }}
-        marked={marked}
-        wire={o.wire ?? "none"}
-        open={o.open ?? null}
-        went={(id) => went.push(id)}
-        keys={o.keys ?? true}
-      />
-    </EngineContext.Provider>,
+    <Registry>
+      <EngineContext.Provider value={engineWith(o.rows)}>
+        <Trash
+          restore={(t) => {
+            restored.push(t);
+            return true;
+          }}
+          marked={marked}
+          wire={o.wire ?? "none"}
+          open={o.open ?? null}
+          went={(id) => went.push(id)}
+          keys={o.keys ?? true}
+        />
+      </EngineContext.Provider>
+    </Registry>,
   );
   return { view, restored, marked, went };
 }
@@ -185,11 +194,11 @@ describe("Trash's keys are the two its panel names", () => {
   it("u presses the read slot and ⇧⌫ Restore, for the letter that stands open", async () => {
     const m = mount({ rows: [row("t1", "INBOX"), row("t2", "Clients")], open: "t2" });
     await flush();
-    fireEvent.keyDown(window, { key: "u" });
+    fireEvent.keyDown(document.body, { key: "u" });
     await flush();
     expect(m.marked).toEqual([{ ids: ["t2"], unread: true }]);
     expect(within(screen.getByRole("toolbar")).getByRole("button", { name: /Mark read/ })).toBeTruthy();
-    fireEvent.keyDown(window, { key: "Backspace", shiftKey: true });
+    fireEvent.keyDown(document.body, { key: "Backspace", shiftKey: true });
     expect(m.restored).toEqual([{ id: "t2", mailboxId: "mb" }]);
   });
 
@@ -202,19 +211,19 @@ describe("Trash's keys are the two its panel names", () => {
     fireEvent.keyDown(field, { key: "Backspace", shiftKey: true });
     field.remove();
     for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
-      fireEvent.keyDown(window, { key: "u", ...mod });
-      fireEvent.keyDown(window, { key: "Backspace", shiftKey: true, ...mod });
+      fireEvent.keyDown(document.body, { key: "u", ...mod });
+      fireEvent.keyDown(document.body, { key: "Backspace", shiftKey: true, ...mod });
     }
-    fireEvent.keyDown(window, { key: "Backspace" });
-    fireEvent.keyDown(window, { key: "Backspace", shiftKey: true, repeat: true });
+    fireEvent.keyDown(document.body, { key: "Backspace" });
+    fireEvent.keyDown(document.body, { key: "Backspace", shiftKey: true, repeat: true });
     await flush();
     expect(m.marked).toEqual([]);
     expect(m.restored).toEqual([]);
     cleanup();
     const away = mount({ rows: [row("t1", "INBOX")], open: "t1", keys: false });
     await flush();
-    fireEvent.keyDown(window, { key: "u" });
-    fireEvent.keyDown(window, { key: "Backspace", shiftKey: true });
+    fireEvent.keyDown(document.body, { key: "u" });
+    fireEvent.keyDown(document.body, { key: "Backspace", shiftKey: true });
     await flush();
     expect(away.marked).toEqual([]);
     expect(away.restored).toEqual([]);
@@ -227,14 +236,14 @@ describe("Trash's keys are the two its panel names", () => {
       const over = document.createElement("div");
       over.setAttribute("role", role);
       document.body.append(over);
-      fireEvent.keyDown(window, { key: "u" });
-      fireEvent.keyDown(window, { key: "Backspace", shiftKey: true });
+      fireEvent.keyDown(document.body, { key: "u" });
+      fireEvent.keyDown(document.body, { key: "Backspace", shiftKey: true });
       over.remove();
     }
     await flush();
     expect(m.marked).toEqual([]);
     expect(m.restored).toEqual([]);
-    fireEvent.keyDown(window, { key: "u" });
+    fireEvent.keyDown(document.body, { key: "u" });
     await flush();
     expect(m.marked).toEqual([{ ids: ["t1"], unread: true }]);
   });
@@ -242,8 +251,8 @@ describe("Trash's keys are the two its panel names", () => {
   it("with no deleted letter open neither key does anything", async () => {
     const m = mount({ rows: [row("t1", "INBOX")] });
     await flush();
-    fireEvent.keyDown(window, { key: "u" });
-    fireEvent.keyDown(window, { key: "Backspace", shiftKey: true });
+    fireEvent.keyDown(document.body, { key: "u" });
+    fireEvent.keyDown(document.body, { key: "Backspace", shiftKey: true });
     await flush();
     expect(m.marked).toEqual([]);
     expect(m.restored).toEqual([]);

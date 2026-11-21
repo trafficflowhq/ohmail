@@ -36,8 +36,8 @@ import { cssRect, cssViewport } from "../geometry/index.js";
 import { afterPaint } from "./visit.js";
 
 /** A never-measured card's OUTER height — `contain-intrinsic-size`'s 200px box guess plus the
- *  mounted card's 16px bottom margin, matching what the measured cache stores. */
-export const STREAM_CARD_ESTIMATE_PX = 216;
+ *  mounted card's default 12px bottom margin, matching what the measured cache stores. */
+export const STREAM_CARD_ESTIMATE_PX = 212;
 
 /** The opening window where no height is known at all (a server render). */
 export const STREAM_MOUNT_FALLBACK = 8;

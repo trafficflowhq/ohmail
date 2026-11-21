@@ -127,7 +127,7 @@ const at = (head: Element, part: "notice" | "menu" | "stamp"): number =>
         : el.querySelector("time") !== null);
 /** The "details" press under the recipients. */
 const detailsOf = (id: string): HTMLButtonElement | null =>
-  within(headOf(id)!).queryByRole("button", { name: "details" }) as HTMLButtonElement | null;
+  within(headOf(id)!).queryByRole("button", { name: READER_EN.message.detailsAriaDate }) as HTMLButtonElement | null;
 
 /* ── 1. the census ────────────────────────────────────────────────────────────────────────── */
 
@@ -137,6 +137,7 @@ const VIEWER = "reader/body/LetterBody.tsx";
 /** Every product surface that draws a letter through the viewer (the letter part a shell hands). */
 const HOSTS = [
   "reader/Letter.tsx",
+  "reader/entry.tsx",
   "screener/held/HeldLetter.tsx",
 ].sort();
 
@@ -180,8 +181,8 @@ describe("the census: every host that mounts the viewer passes onNotice", () => 
     // The Screener's held letter's half stands in `block-notice-screener.test.tsx`, waiting for its mount.
     for (const rel of HOSTS.filter((h) => h.startsWith("reader/"))) {
       const src = readFileSync(join(APP, rel), "utf8");
-      // The reading column hands it to its head (`notice={notice}`); the kit draws it (`BlockedImages`).
-      expect(/BlockedImages|notice=\{notice\}/.test(src), `${rel} takes the report and renders nothing with it`).toBe(true);
+      // The reading column hands it to its head (`notice={notice}`), or limits it to HTML previews. The kit draws it (`BlockedImages`).
+      expect(/BlockedImages|notice=\{(?:html \? )?notice(?: : null)?\}/.test(src), `${rel} takes the report and renders nothing with it`).toBe(true);
     }
   });
 });

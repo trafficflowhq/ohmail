@@ -1,6 +1,14 @@
 {
   "settingsNotifications": {
     "about": "Notify about",
-    "blocked": "Blocked"
+    "blocked": "Blocked",
+    "calendar": "Calendar",
+    "alert": "An alert",
+    "invitation": "An invitation",
+    "change": "A change or a cancellation",
+    "answer": "An invitee answered",
+    "found": "Something found in mail",
+    "titles": "Titles",
+    "showTitles": "Show titles in notifications"
   }
 }

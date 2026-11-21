@@ -65,8 +65,8 @@ const h = React.createElement;
 type SaveReport = { saved: number } | { refused: [SaveRefusal, number] };
 let saveReports: SaveReport[];
 
-vi.mock("@ohmail/app-logic/reader/attachments", async (load) => {
-  const actual = await load<typeof import("@ohmail/app-logic/reader/attachments")>();
+vi.mock("@ohmail/app-logic/reader/attachments", async () => {
+  const actual = await vi.importActual<typeof import("@ohmail/app-logic/reader/attachments")>("@ohmail/app-logic/reader/attachments");
   const useMessageAttachments: typeof actual.useMessageAttachments = (engine, messageId, opts) =>
     actual.useMessageAttachments(engine, messageId, {
       ...opts,

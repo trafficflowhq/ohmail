@@ -551,7 +551,7 @@ describe("the reader's read slot is the conversation's on the shell and on the p
     ]);
     const s = await surfaces(engine);
     await s.render();
-    expect(s.columnFace(), "the column's face").toBe(messages.ohbox.actionMarkRead);
+    expect(s.columnFace(), "the column's face").toBe("Mark 1 unread message as read");
     expect(s.sheetSet(), "the sheet's set").toEqual(["a1"]);
     expect(s.phoneSet(), "the phone's set, whose face is Mark as read").toEqual(["a1"]);
     expect(s.columnBold() && s.phoneBold(), "the premise: the row is bold on both").toBe(true);
@@ -574,7 +574,7 @@ describe("the reader's read slot is the conversation's on the shell and on the p
     await s.render();
     expect(s.sheetSet()).toEqual(["b1"]);
     expect(s.phoneSet()).toEqual(["b1"]);
-    expect(s.columnFace()).toBe(messages.ohbox.actionMarkRead);
+    expect(s.columnFace()).toBe("Mark 1 unread message as read");
     await (engine as unknown as { mutate(m: unknown): Promise<unknown> }).mutate({ kind: "mark_seen", messageIds: ["b1"], unread: false });
     await s.render();
     expect(s.columnFace(), "only the pinned sibling is unread: the column says Mark unread").toBe(messages.ohbox.actionMarkUnread);

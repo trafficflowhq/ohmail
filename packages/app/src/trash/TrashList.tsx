@@ -11,22 +11,46 @@ import { ListColumn } from "../place-list/index.js";
 import { useCursorWindow } from "../place-list/cursor-window.js";
 import { useText, type Text } from "../text/index.js";
 
+import { SelectionFoot } from "../place-list/SelectionFoot.js";
+import { useRowContact, type RowContact } from "../place-list/use-row-contact.js";
+import { useRowSelection } from "../place-list/use-row-selection.js";
+
 export function TrashList({ plan }: PaneProps) {
   const model = useTrashModel();
   const t = useText("trash");
   const { page } = model;
+  const selection = useRowSelection(page.items);
+  const contact = useRowContact();
+  const restore = () => {
+    const ids = new Set(selection.ids);
+    if (model.restoreMany?.(page.items.filter(({ id }) => ids.has(id)))) selection.clear();
+  };
+  const foot = (
+    <SelectionFoot
+      selection={selection}
+      verbs={[
+        {
+          id: "restore",
+          label: t("restore"),
+          icon: "history",
+          onPress: restore,
+        },
+      ]}
+    />
+  );
   const selected = page.items.findIndex((row) => row.id === model.cursor);
   const { scroller, window } = useCursorWindow(page.items.length, selected, model.cursor);
   const head = <ListHead title={t("title")} />;
   return (
-    <ListColumn head={head} plan={plan} cursor={model.cursor} scrollerRef={scroller}>
+    <ListColumn foot={foot} head={head} plan={plan} cursor={model.cursor} scrollerRef={scroller}>
       {!page.available ? <Empty label={t("unavailable")} /> : null}
       {page.items.length > 0 ? (
-        <Rows label={t("title")}>
+        <Rows label={t("title")} many>
           <div aria-hidden data-window-top="" style={{ height: window.padTop }} />
           {page.items.slice(window.start, window.end).map((r, offset) => {
             const index = window.start + offset;
             const open = model.cursor === r.id;
+            const pick = selection.rowProps(r.id);
             const who = r.from.name ?? r.from.address;
             const deleted = r.trashedAt ? t("deletedAt", { when: model.stamp(r.trashedAt) }) : undefined;
             const to = model.placeOf(r.restoreTo || "INBOX");
@@ -36,6 +60,8 @@ export function TrashList({ plan }: PaneProps) {
             return (
               <Row
                 key={r.id}
+                {...pick}
+                {...contact.rowProps(r.from, r.id)}
                 who={who}
                 address={r.from.address}
                 people={[{ name: who, address: r.from.address }]}
@@ -48,7 +74,7 @@ export function TrashList({ plan }: PaneProps) {
                 listing={{
                   name: `${who}: ${r.subject}`,
                   spoken: [deleted, to].filter(Boolean).join(", "),
-                  selected: open,
+                  selected: selection.ids.length ? pick.picked === true : open,
                   stop: open,
                   place: { at: index + 1, of: page.items.length },
                 }}
@@ -85,13 +111,14 @@ export function TrashList({ plan }: PaneProps) {
       {page.available && !page.loading && page.error === null ? (
         <ListLine fine>{t(model.live.shown ? "footLive" : "foot")}</ListLine>
       ) : null}
-      {model.live.shown ? <LiveSection model={model} t={t} /> : null}
+      {model.live.shown ? <LiveSection model={model} t={t} contact={contact} /> : null}
+      {contact.card}
     </ListColumn>
   );
 }
 
 /** The mail server's own Trash: rows with no verb, or the one sentence its state is. */
-function LiveSection({ model, t }: { model: TrashModel; t: Text }) {
+function LiveSection({ model, t, contact }: { model: TrashModel; t: Text; contact: RowContact }) {
   const { live } = model;
   const said: Record<Exclude<typeof live.state.state, "rows">, string> = {
     loading: t("liveLoading"),
@@ -117,6 +144,7 @@ function LiveSection({ model, t }: { model: TrashModel; t: Text }) {
             return (
               <Row
                 key={key}
+                {...contact.rowProps(i.from, key)}
                 who={who}
                 address={i.from.address}
                 people={[{ name: who, address: i.from.address }]}

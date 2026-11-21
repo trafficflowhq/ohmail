@@ -12,7 +12,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { formatFileSize } from "@ohmail/ui";
+import { formatFileSize } from "@ohmail/ui/file-size";
 import { SENDING_LONG_MS, type SendState, type ShowSend } from "@ohmail/app-logic/writing/mail-send";
 import { sendLine, sendLineValuesOver, type SendTone } from "@ohmail/app-logic/writing/send-line";
 import { activeFormatLocale } from "./locale";

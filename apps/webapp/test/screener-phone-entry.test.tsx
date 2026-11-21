@@ -96,15 +96,18 @@ it("a touch on the sender address opens the full held letter", async () => {
   const printed = row.querySelector(".oh-row-address");
   expect(printed?.textContent).toBe(address);
   await tap(printed!);
-  expectFullLetter(shell);
+  expect(shell.getByRole("listbox", { name: "Screener" })).toBeTruthy();
+  expect(within(document.body).getByRole("dialog", { name: `Options for ${name}` }).textContent).toContain(address);
 });
 
 it("a touch on the sender avatar opens the same full held letter", async () => {
   const { shell, row } = await mount();
-  const avatar = row.querySelector(".oh-row-face .oh-avatar");
-  expect(avatar).not.toBeNull();
-  await tap(avatar!);
-  expectFullLetter(shell);
+  const avatar = within(row).getByRole("button", { name: "Select the message" });
+  await tap(avatar);
+  expect(shell.getByRole("listbox", { name: "Screener" })).toBeTruthy();
+  expect(row.getAttribute("aria-selected")).toBe("true");
+  expect(shell.getByRole("button", { name: /^1 selected/ })).toBeTruthy();
+  expect(within(document.body).queryByRole("dialog", { name: `Options for ${name}` })).toBeNull();
 });
 
 it("pressing the sender in the full held letter opens that sender's screening card", async () => {
@@ -122,9 +125,13 @@ it("wide, clicking an address selects its row and s opens that sender's screenin
   const printed = row.querySelector(".oh-row-address");
   expect(printed?.textContent).toBe(address);
   await tap(printed!);
+  const contact = within(document.body).getByRole("dialog", { name: `Options for ${name}` });
+  expect(contact.textContent).toContain(address);
+  expect(row.getAttribute("aria-selected")).toBe("false");
+  await act(() => { fireEvent.keyDown(contact, { key: "Escape" }); });
+  await tap(within(row).getByText(subject));
   expect(row.getAttribute("aria-selected")).toBe("true");
   expect(shell.getByRole("listbox", { name: "Screener" })).toBeTruthy();
-  expect(shell.queryByRole("dialog", { name: cardName })).toBeNull();
   await act(() => { fireEvent.keyDown(row, { key: "s" }); });
   const card = within(document.body).getByRole("dialog", { name: cardName });
   expect(card.textContent).toContain(address);

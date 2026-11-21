@@ -55,7 +55,7 @@ export const act = (React as unknown as {
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 export const ISO = "2026-08-04T09:00:00.000Z";
-const LIVE_ACCOUNT = "acct_live_1";
+export const LIVE_ACCOUNT = "acct_live_1";
 
 /** The fixture server names the account that owns its mail and settings replies. */
 export function liveAccountResponse(response: Response): Response {
@@ -63,6 +63,13 @@ export function liveAccountResponse(response: Response): Response {
     response.headers.set("X-Ohmail-Account", LIVE_ACCOUNT);
   }
   return response;
+}
+
+/** Keep the same account identity when a walk supplies its own endpoint replies. */
+export function liveAccountFetch(
+  serve: (input: RequestInfo | URL, init?: RequestInit) => Response | Promise<Response>,
+): typeof fetch {
+  return async (input, init) => liveAccountResponse(await serve(input, init));
 }
 
 /** A mailbox row as the probe answers it. Defaults to "connected, never synced". */
@@ -378,6 +385,7 @@ export async function mountShell(
     notificationHost?: NotificationHost;
     /** The doors of Settings' Account section, as the web's entry hands its own. Absent: no section, and no Settings. */
     accountDoors?: MailShellProps["accountDoors"];
+    mailboxesNotices?: MailShellProps["mailboxesNotices"];
     general?: MailShellProps["general"];
     webContactScreening?: boolean;
     contactScreening?: MailShellProps["contactScreening"];
@@ -409,6 +417,7 @@ export async function mountShell(
     ...(opts.profileImportTransport ? { profileImportTransport: opts.profileImportTransport } : {}),
     ...(opts.notificationHost ? { notificationHost: opts.notificationHost } : {}),
     ...(opts.accountDoors ? { accountDoors: opts.accountDoors } : {}),
+    ...(opts.mailboxesNotices ? { mailboxesNotices: opts.mailboxesNotices } : {}),
     ...(opts.general ? { general: opts.general } : {}),
     ...(opts.webContactScreening ? { webContactScreening: true, scope: "acct_live_1" } : {}),
     ...(opts.contactScreening ? { contactScreening: opts.contactScreening } : {}),

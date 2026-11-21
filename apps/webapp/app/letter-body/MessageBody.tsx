@@ -7,7 +7,7 @@
  * It leaves with the last of today's views.
  */
 import { MessageBody as LetterBody, type MessageBodyProps } from "@ohmail/letter-body";
-import { useScopeHere } from "@ohmail/app/frame";
+import { useScopeHere } from "@ohmail/app/frame/scope";
 
 export { MAIL_BODY_COPY as COPY } from "@ohmail/letter-body";
 

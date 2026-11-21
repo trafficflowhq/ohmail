@@ -1,7 +1,7 @@
 /** What stands above Receipts' columns: the stream's model over Receipts' pile. */
 import type { ReactNode } from "react";
 import type { StreamInput } from "@ohmail/app-logic/streams";
-import { StreamAbove } from "../stream/index.js";
+import { StreamAbove } from "../stream/StreamAbove.js";
 
 export function ReceiptsAbove({
   input,

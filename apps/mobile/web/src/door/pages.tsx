@@ -8,7 +8,7 @@
  */
 import { useState, type ReactNode } from "react";
 import type { SaidRefusal } from "@ohmail/app-logic/phone/said";
-import { NONE, type None } from "@ohmail/app/host";
+import { NONE, type None } from "@ohmail/app/host/contract";
 import { ConnectForm } from "@ohmail/app/mailboxes/connect";
 import {
   PhoneDoorPage,

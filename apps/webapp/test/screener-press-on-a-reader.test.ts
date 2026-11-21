@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
+import { ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick, liveAccountResponse } from "./fixtures/live-walk-shell";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import en from "../messages/en.json";
 
@@ -37,7 +37,7 @@ function world(folder: string): void {
     },
   }];
   posts = [];
-  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+  const respond = async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.includes("/sync")) {
@@ -59,7 +59,9 @@ function world(folder: string): void {
       return NOBODY_409();
     }
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+    liveAccountResponse(await respond(input, init)));
 }
 
 /** Open the mounted row, then try the same decision from the panel or its keyboard shortcut. */

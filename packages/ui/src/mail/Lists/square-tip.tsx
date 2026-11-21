@@ -1,10 +1,19 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { placeGloss } from "../../primitives/Gloss.js";
+import {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
+import { between, EDGE } from "../../base/Overlays/menu-place.js";
+import { portalRenderer } from "../../base/Overlays/portal-renderer.js";
 import { cssRect, cssViewport } from "../../base/ui-zoom.js";
 
 const HOLD_MS = 380;
 const STAY_MS = 1100;
+const GAP = 6;
 
 export function useSquareTip() {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -23,7 +32,7 @@ export function useSquareTip() {
     leave: () => {
       if (!held.current) setAnchor(null);
     },
-    focus: (element: HTMLElement) => {
+    showForFocus: (element: HTMLElement) => {
       if (!held.current && element.matches(":focus-visible")) setAnchor(element);
     },
     down: (event: PointerEvent<HTMLElement>) => {
@@ -55,20 +64,21 @@ export function useSquareTip() {
 }
 
 export function SquareTip({ anchor, children }: { anchor: HTMLElement; children: ReactNode }) {
+  const renderPortal = useContext(portalRenderer);
   const chip = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     const element = chip.current;
     const win = anchor.ownerDocument.defaultView;
     if (!element || !win) return;
     const place = () => {
-      const { top, left } = placeGloss(
-        cssRect(anchor),
-        {
-          width: element.offsetWidth,
-          height: element.offsetHeight,
-        },
-        cssViewport(win),
-      );
+      const rect = cssRect(anchor);
+      const viewport = cssViewport(win);
+      const rightEdge = viewport.width - element.offsetWidth - EDGE;
+      const bottomEdge = viewport.height - element.offsetHeight - EDGE;
+      const below = rect.bottom + GAP;
+      const above = rect.top - GAP - element.offsetHeight;
+      const top = between(EDGE, bottomEdge, below > bottomEdge && above >= EDGE ? above : below);
+      const left = between(EDGE, rightEdge, rect.left - EDGE);
       element.style.top = `${top}px`;
       element.style.left = `${left}px`;
     };
@@ -80,10 +90,10 @@ export function SquareTip({ anchor, children }: { anchor: HTMLElement; children:
       win.removeEventListener("resize", place);
     };
   }, [anchor, children]);
-  return createPortal(
-    <span className="gloss-pop oh-square-tip" ref={chip} role="tooltip" aria-hidden="true">
+  return renderPortal(
+    <span className="oh-square-tip" ref={chip} role="tooltip" aria-hidden="true">
       {children}
     </span>,
-    anchor.ownerDocument.body,
+    anchor.closest(".oh-root") ?? anchor.ownerDocument.body,
   );
 }

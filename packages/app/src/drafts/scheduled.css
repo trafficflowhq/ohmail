@@ -2,5 +2,6 @@
   /* A scheduled send's capsule stands on the list's paper. */
   .dr-scheduled {
     --oh-row-own-background: var(--soft-sheet);
+    --oh-row-subject-whitespace: normal;
   }
 }

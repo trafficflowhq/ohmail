@@ -55,3 +55,45 @@ it.each([
   },
   30_000,
 );
+
+it("shows the failed send with the studio's verdict and way back", async () => {
+  const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+    );
+    await page.goto(`${ORIGIN}/?state=draft&device=phone&send=failed`);
+    await page.locator('html[data-ready="1"]').waitFor();
+    const verdict = page.getByText("Not sent.", { exact: true });
+    expect(await verdict.count()).toBe(1);
+    expect(await verdict.isVisible()).toBe(true);
+    expect(await verdict.evaluate((el) => el.tagName)).toBe("B");
+    expect(
+      await page
+        .getByRole("status")
+        .filter({ hasText: "Not sent. Sending did not work, but your draft is kept, so try again." })
+        .count(),
+    ).toBe(1);
+  } finally {
+    await page.close();
+  }
+}, 30_000);
+
+it("explains an unreachable mail server with the studio's retry wording", async () => {
+  const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+    );
+    await page.goto(`${ORIGIN}/?state=draft&device=phone&send=unreachable`);
+    await page.locator('html[data-ready="1"]').waitFor();
+    expect(
+      await page
+        .getByRole("status")
+        .filter({ hasText: "It's kept in Drafts, so send it again once your mail server answers." })
+        .count(),
+    ).toBe(1);
+  } finally {
+    await page.close();
+  }
+}, 30_000);

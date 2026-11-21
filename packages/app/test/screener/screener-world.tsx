@@ -3,13 +3,14 @@
  * alone in the real frame over the fake host.
  */
 import { render, type RenderResult } from "@testing-library/react";
-import type { ReactNode } from "react";
+import type { ContextType, ReactNode } from "react";
 import type { ScreenerState } from "@ohmail/app-logic/screener";
 import type { FrameStages } from "../../src/frame/contract.js";
 import { Frame } from "../../src/frame/Frame.js";
 import { NONE } from "../../src/host/index.js";
 import { ScreenerAbove, screenerPlace, type ScreenerBeside } from "../../src/screener/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
+import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, fakeWindow, type FakeAddress } from "../support/fake-window.js";
@@ -182,6 +183,7 @@ export function mountPlace(
     room?: "desktop" | "phone";
     lang?: "en" | "de";
     engine?: OhmailEngine;
+    presented?: ContextType<typeof PresentedMirrorContext>;
     /** The stages the host hands (the first run's, for a press that opens it). */
     stages?: Partial<FrameStages>;
   } = {},
@@ -199,7 +201,9 @@ export function mountPlace(
   const tree = (m: ScreenerState) =>
     inWords(
       <ScreenerAbove model={m} beside={opts.beside ?? BESIDE}>
-        <Frame host={host} />
+        <PresentedMirrorContext.Provider value={opts.presented ?? null}>
+          <Frame host={host} />
+        </PresentedMirrorContext.Provider>
       </ScreenerAbove>,
       opts.lang,
     );

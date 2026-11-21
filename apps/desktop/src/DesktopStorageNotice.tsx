@@ -12,14 +12,15 @@ import { StorageNotice } from "../../webapp/app/shell/StorageNotice";
 import type { StorageCard, StorageFacts } from "../../webapp/app/shell/storage-state";
 import { useDesktopStorageChange, writeStorageChoice } from "./DesktopSubscription.js";
 
-export function DesktopStorageNotice({ facts, linksOut, reread }: {
+export function DesktopStorageNotice({ facts, linksOut, reread, openServer }: {
   facts: StorageFacts | null;
   /** May this build point at a purchase? */
   linksOut: boolean;
   /** Ask the account again once a dismissal is written. */
   reread: () => void;
+  openServer?: () => Promise<void>;
 }): ReactElement | null {
-  const change = useDesktopStorageChange();
+  const change = useDesktopStorageChange(openServer);
   const [hidden, setHidden] = useState<StorageCard | null>(null);
   const card = facts?.card ?? null;
   useEffect(() => { if (card !== hidden) setHidden(null); }, [card, hidden]);

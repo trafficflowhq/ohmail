@@ -181,9 +181,9 @@ describe("the body says WHAT IT IS, not only what it is called", () => {
      * Read from the sources rather than listed here: a new surface that mounts the editor is
      * covered the day it lands, which a hand-kept list is not.
      */
-    /* Re-pointed by path (the older tests' sorting, section D (3)): the call sites are Write's, which mounts its
-       editor as `<Editor ... label={...}>` in the letter and in the reply; the words are Write's catalogue. */
-    const roots = ["packages/app/src/write/Letter.tsx", "packages/app/src/write/Reply.tsx"];
+    const letter = "packages/app/src/write/Letter.tsx";
+    expect(readFileSync(resolve(__dirname, "..", "..", "..", letter), "utf8")).toMatch(/<LetterText\b/);
+    const roots = ["packages/app/src/write/text/LetterText.tsx", "packages/app/src/write/Reply.tsx"];
     const sites: string[] = [];
     for (const rel of roots) {
       const src = readFileSync(resolve(__dirname, "..", "..", "..", rel), "utf8");
@@ -195,18 +195,22 @@ describe("the body says WHAT IT IS, not only what it is called", () => {
         sites.push(`${rel}: ${label![1].trim()}`);
       }
     }
-    expect(sites.length, "no call site was found at all — the census read nothing").toBeGreaterThanOrEqual(roots.length);
+    expect(sites).toEqual([
+      `${roots[0]}: t("text")`,
+      `${roots[1]}: forward ? t("reply.forwardText") : t("reply.text")`,
+    ]);
 
     /* The two the composer surfaces use, in both catalogues, non-empty and not each other: the
        compose body and the inline reply are different bodies and a reader hearing the same name
        for both cannot tell which one the caret is in. */
     const read = (lang: string) =>
       (JSON.parse(readFileSync(resolve(__dirname, "..", "..", "..", "packages", "app", "messages", `write.${lang}.json`), "utf8")) as
-        { write: { text?: string; reply: { text?: string } } }).write;
+        { write: { text?: string; reply: { text?: string; forwardText?: string } } }).write;
     for (const cat of [read("en"), read("de")]) {
       expect(cat.text?.trim()).toBeTruthy();
       expect(cat.reply.text?.trim()).toBeTruthy();
-      expect(cat.text).not.toBe(cat.reply.text);
+      expect(cat.reply.forwardText?.trim()).toBeTruthy();
+      expect(new Set([cat.text, cat.reply.text, cat.reply.forwardText]).size).toBe(3);
     }
   });
 });

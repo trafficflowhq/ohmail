@@ -4,7 +4,7 @@ import { SettingActs, SettingNote } from "@ohmail/ui/mail";
 import { authHintPreset, authHintWantsLinks } from "@ohmail/app-logic/mailboxes/connect/providers";
 import { helpFacts } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
 import { useRefusalAtThePress } from "@ohmail/app-logic/press/refusal-at-the-press";
-import { NONE } from "../../host/index.js";
+import { NONE } from "../../host/contract.js";
 import type { Drawn } from "./drawn.js";
 import { ProviderHelp } from "./ProviderNote.js";
 import { sentenceOf } from "./sentence.js";

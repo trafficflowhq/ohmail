@@ -10,7 +10,7 @@ import { createTranslator } from "next-intl";
 import { MemoryMirrorStore, noticeChoicesOf, noticeKindsOf, type Notice, type SyncChange } from "@ohmail/client-engine";
 import { NoticeCaller, noticeReadsOf, toldDevicesIn } from "@ohmail/app-logic/notices/use-notices";
 import {
-  browserNoticePage, noticeWordingOf, webNoticeEmitter, type NoticePage,
+  browserNoticePage, noticeWordingOf, subscribeBrowserNoticeOpening, webNoticeEmitter, type NoticePage,
 } from "../app/shell/notice-emitter";
 import EN from "../messages/en.json";
 import DE from "../messages/de.json";
@@ -530,7 +530,7 @@ describe("the page's emitter", () => {
     const ground = existsSync("packages/app/src") ? "packages/app/src" : "../../packages/app/src";
     const notices = readFileSync(resolve(ground, "mail/ground/MailSystemNotices.ts"), "utf8");
     expect(notices).toContain('const devicesShown = route.place === "settings" && route.sub === "devices" && route.stage === null;');
-    expect(notices).toContain('atDevices: () => devicesShown && typeof document !== "undefined" && document.hasFocus(),');
+    expect(notices).toContain('atDevices: () => devicesShown && frame?.current?.ownerDocument.hasFocus() === true,');
     expect(notices.split("atDevices:").length - 1, "one place says it").toBe(1);
   });
 
@@ -592,4 +592,53 @@ describe("the shell's notices, through the one caller", () => {
     expect(r.tags).toEqual(["ohmail-pairing"]);
     expect(r.shown).toEqual([{ title: "Device paired", body: "A new device can now read your mail." }]);
   });
+});
+
+it("resolves a calendar tap once on its drawing page and rejects a foreign worker or retired display", async () => {
+  await browserNoticePage.closeAll();
+  const controller = {};
+  const listening = vi.fn();
+  const showNotification = vi.fn(async (_title, _options: NotificationOptions) => undefined);
+  vi.stubGlobal("navigator", { serviceWorker: {
+    controller,
+    getRegistration: async () => ({ showNotification, getNotifications: async () => [] }),
+    addEventListener: listening,
+    removeEventListener: vi.fn(),
+  } });
+  const stop = subscribeBrowserNoticeOpening();
+  try {
+    let owns = true;
+    const open = vi.fn(() => owns);
+    const emitter = webNoticeEmitter(browserNoticePage, () => wordingIn("en"), () => open);
+    const appointment = {
+      kind: "cal_invitation", eventId: "appointment", label: { as: "event" },
+      at: { hour: 9, minute: 0, day: "today" }, allDay: false,
+    } as const;
+    const send = (source: unknown) => {
+      const posted = vi.fn();
+      const handle = showNotification.mock.calls.at(-1)?.[1].data.open;
+      listening.mock.calls[0]![1]({
+        source, data: { type: "ohmail:notice-open", open: handle }, ports: [{ postMessage: posted }],
+      });
+      return posted;
+    };
+
+    expect(await emitter.post(appointment)).toBe(true);
+    const payload = showNotification.mock.calls[0]![1].data;
+    expect(Object.keys(payload).sort()).toEqual(["open", "stamp"]);
+    expect(send({})).not.toHaveBeenCalled();
+    expect(send(controller)).toHaveBeenCalledWith(true);
+    expect(send(controller)).toHaveBeenCalledWith(false);
+    expect(open).toHaveBeenCalledOnce();
+
+    expect(await emitter.post(appointment)).toBe(true);
+    owns = false;
+    expect(send(controller)).toHaveBeenCalledWith(false);
+    expect(await emitter.post(appointment)).toBe(true);
+    await browserNoticePage.closeAll();
+    expect(send(controller)).toHaveBeenCalledWith(false);
+    expect(open).toHaveBeenCalledTimes(2);
+  } finally {
+    stop();
+  }
 });

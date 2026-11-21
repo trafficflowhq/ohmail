@@ -5,7 +5,7 @@
  * is the one the root element was drawn in, never a global.
  */
 import { createContext, useContext, useLayoutEffect, type ReactNode, type RefObject } from "react";
-import { design } from "@ohmail/tokens/design";
+import { design } from "@ohmail/ui/base";
 import { useGlass } from "./glass.js";
 import { ROOT_ATTRIBUTES, type RootAttribute } from "./root-attributes.js";
 

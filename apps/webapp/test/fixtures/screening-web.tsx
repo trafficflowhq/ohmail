@@ -46,8 +46,13 @@ export function installScreeningWeb(fragment: string, answer: Answer, folders = 
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : undefined;
     const { pathname, searchParams } = new URL(request?.url ?? String(input), window.location.href);
-    const supplied = answer(pathname, searchParams, init?.method ?? request?.method ?? "GET", init);
-    if (supplied !== undefined) return supplied;
+    const supplied = await answer(pathname, searchParams, init?.method ?? request?.method ?? "GET", init);
+    if (supplied !== undefined) {
+      if (supplied.ok && !supplied.headers.has("X-Ohmail-Account")) {
+        supplied.headers.set("X-Ohmail-Account", ACCOUNT);
+      }
+      return supplied;
+    }
     switch (pathname) {
       case "/api/auth/session":
         sessions += 1;

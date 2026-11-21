@@ -155,6 +155,7 @@
   --ctl-ring: #8A8176;
   --scrim: rgba(18,16,14,.38);
   --float: 0 18px 48px -12px rgba(18,16,14,.28), 0 2px 6px rgba(18,16,14,.08);
+  --overlay-shadow: 0 18px 48px -12px rgba(18,16,14,.28), 0 2px 6px rgba(18,16,14,.08);
   --lift: 0 6px 20px -8px rgba(18,16,14,.22), 0 1px 3px rgba(18,16,14,.08);
   --flush: calc(var(--s2) + var(--s1) + var(--s2));
   --slot-soft: color-mix(in oklch,var(--ink) 8%,transparent);
@@ -193,6 +194,7 @@
   --ctl-ring: #7D756B;
   --scrim: rgba(0,0,0,.56);
   --float: 0 18px 48px -12px rgba(0,0,0,.7), 0 0 0 1px rgba(246,241,233,.08);
+  --overlay-shadow: 0 18px 48px -12px rgba(0,0,0,.7), 0 0 0 1px rgba(246,241,233,.08);
   --lift: 0 8px 24px -8px rgba(0,0,0,.7), 0 0 0 1px rgba(246,241,233,.08);
   --av-bg: 0.38 0.06;
   --av-fg: 0.91 0.065;
@@ -230,6 +232,7 @@
   --ctl-ring: #7D756B;
   --scrim: rgba(0,0,0,.56);
   --float: 0 18px 48px -12px rgba(0,0,0,.7), 0 0 0 1px rgba(246,241,233,.08);
+  --overlay-shadow: 0 18px 48px -12px rgba(0,0,0,.7), 0 0 0 1px rgba(246,241,233,.08);
   --lift: 0 8px 24px -8px rgba(0,0,0,.7), 0 0 0 1px rgba(246,241,233,.08);
   --av-bg: 0.38 0.06;
   --av-fg: 0.91 0.065;
@@ -363,6 +366,7 @@
   --sq-ringw: 1px;
   --scrim: rgba(255,252,240,.5);
   --float: 0 0 0 2px var(--hot);
+  --overlay-shadow: 0 0 0 2px var(--hot);
   --lift: 0 0 0 2px #B7B5AC;
   --ring-up: #B7B5AC;
   color-scheme: light;
@@ -399,6 +403,7 @@
   --ctl-ring: #6b7090;
   --scrim: rgba(26,27,38,.5);
   --float: 0 0 0 2px var(--hot);
+  --overlay-shadow: 0 0 0 2px var(--hot);
   --lift: 0 0 0 2px #414868;
   --ring-up: #414868;
   --av-bg: 0.31 0.035;
@@ -438,6 +443,7 @@
   --ctl-ring: #6b7090;
   --scrim: rgba(26,27,38,.5);
   --float: 0 0 0 2px var(--hot);
+  --overlay-shadow: 0 0 0 2px var(--hot);
   --lift: 0 0 0 2px #414868;
   --ring-up: #414868;
   --av-bg: 0.31 0.035;

@@ -40,6 +40,8 @@ const AT_REST = {
   screeningBaselineAt: null,
   autoSuggest: false,
   suggestionConsentKnown: false,
+  suggestionGrant: 0,
+  relaySuggestionGrant: null,
   autoSuggestAt: null,
   autoAct: false,
   autoActAt: null,

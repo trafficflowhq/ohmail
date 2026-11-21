@@ -54,6 +54,7 @@ const H = (r: Request, d: ApiDeps): Promise<Response> =>
   app.handle(r, { ...d, session: null, idempotency: null });
 
 const key = (r: Route): string => `${r.method} ${r.pattern}`;
+const CONDITIONAL_DISCARD = "DELETE /drafts/:id/conditional";
 const of = (cost: CostClass): string[] =>
   apiRoutes.filter((r) => r.cost === cost).map(key).sort();
 
@@ -985,7 +986,11 @@ describe("the route table declares what every handler causes", () => {
     // it makes, so it joins the gated remainder and no exempt list moves.
     // 267 -> 268: `POST /pair/handoff` (mail 0209), a phone app's handoff of its sign-in to its sibling. `ceremony`,
     // so it joins `CEREMONY` and this total together and the gated remainder is unchanged.
-    expect(apiRoutes).toHaveLength(268);
+    const conditionalDiscard = apiRoutes.filter((r) => key(r) === CONDITIONAL_DISCARD);
+    expect(conditionalDiscard.map((r) => ({
+      cost: r.cost, public: r.options?.public === true, anonymous: r.options?.anonymous === true,
+    }))).toEqual([{ cost: "work", public: false, anonymous: false }]);
+    expect(apiRoutes.filter((r) => key(r) !== CONDITIONAL_DISCARD)).toHaveLength(268);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1229,7 +1234,10 @@ describe("the route table declares what every handler causes", () => {
     // 266 -> 267 with an invitation's answer by mail, a `connection`: the remainder grows by one.
     // 267 -> 268 with a phone app's handoff, a `ceremony`: the total and `CEREMONY` grow by one each, the remainder
     // does not move.
-    expect(gated.length).toBe(268 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    expect(gated.filter((r) => key(r) === CONDITIONAL_DISCARD).map(key)).toEqual([CONDITIONAL_DISCARD]);
+    expect(gated.filter((r) => key(r) !== CONDITIONAL_DISCARD)).toHaveLength(
+      268 - UNAUTHENTICATED.length - CEREMONY.length - READ.length,
+    );
 
     expect(gated.length).toBeGreaterThan(50);
   });

@@ -8,8 +8,8 @@ import { Overlay } from "./Overlay.js";
 export interface KeyHelpRow {
   /** What the key does. */
   label: string;
-  /** Why this shortcut is unavailable here. */
-  resting?: string;
+  /** Whether all spellings of this shortcut are unavailable here. */
+  disabled?: boolean;
   /** Its spellings; each is the keys of one chord, as they are printed. */
   keys: readonly (readonly string[])[];
   /** For an inert row, the reason its shortcuts do nothing here. */
@@ -81,7 +81,7 @@ export function KeyHelp({
                   <p
                     key={row.label}
                     className="oh-text oh-keyhelp-row"
-                    aria-disabled={row.disabledReason ? true : undefined}
+                    aria-disabled={row.disabled || row.disabledReason ? true : undefined}
                     aria-description={row.disabledReason}
                     title={row.disabledReason}
                   >

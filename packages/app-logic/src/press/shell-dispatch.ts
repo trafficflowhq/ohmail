@@ -487,6 +487,7 @@ export function useShellDispatch({
     };
     toast(sentence, {
       action: t("ohbox.undo"), duration: UNDO_MS, undo: true, onAction: fire,
+      ...(held && typeof offer !== "function" && offer.length > 0 ? { undoDuringFade: true } : {}),
       ...(claim ? { claim } : {}), ...(owner ? { signal: owner.signal } : {}),
     });
   });

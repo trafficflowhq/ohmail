@@ -2,7 +2,7 @@
 import { getByRole, queryByRole } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell,
+  ISO, act, answerConsentWith, answerSyncWith, installShellEnv, liveAccountResponse, mailbox, mountShell,
   teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 
@@ -83,7 +83,7 @@ beforeEach(() => {
   fetched = [];
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const inner = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) => {
+  const respond = async (input: unknown, init?: unknown): Promise<Response> => {
     const url = String(input);
     const list = /\/messages\/([^/?]+)\/attachments(?:$|\?)/.exec(url);
     if (list) {
@@ -102,7 +102,9 @@ beforeEach(() => {
       return new Response(new Blob(["x"]), { status: 200, headers: { "content-type": "application/octet-stream" } });
     }
     return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) =>
+    liveAccountResponse(await respond(input, init))) as unknown as typeof globalThis.fetch;
   (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:harness/1";
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
 });

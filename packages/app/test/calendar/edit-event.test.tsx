@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { CalendarEventRecord, CalendarPort } from "@ohmail/app-logic/calendar";
+import { dayLong, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
 import calendarDe from "../../messages/calendar.de.json" with { type: "json" };
 import calmail from "../../messages/calmail.en.json" with { type: "json" };
 import { calendar } from "../../src/calendar/entry.js";
@@ -125,6 +125,25 @@ it("submits only the fields changed in a personal event when its card closes", a
   ]);
   expect(screen.queryByRole("dialog", { name: "Edit event" })).toBeNull();
 });
+
+it("the event date opens the current calendar picker and accepts a day with the keyboard", async () => {
+  open(meeting());
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const edit = within(screen.getByRole("dialog", { name: "Edit event" }));
+  const date = edit.getByRole("button", { name: "Event date" });
+  fireEvent.click(date);
+  const grid = within(screen.getByRole("dialog", { name: "Event date" })).getByRole("grid");
+  expect(grid.closest(".calendar-date-picker")).not.toBeNull();
+  const current = grid.querySelector<HTMLButtonElement>('[data-day="2026-11-16"]')!;
+  const next = grid.querySelector<HTMLButtonElement>('[data-day="2026-11-17"]')!;
+  expect(document.activeElement).toBe(current);
+  fireEvent.keyDown(current, { key: "ArrowRight" });
+  expect(document.activeElement).toBe(next);
+  fireEvent.keyDown(next, { key: "Enter" });
+  expect(screen.queryByRole("dialog", { name: "Event date" })).toBeNull();
+  expect(date.textContent).toBe(dayLong("2026-11-17", "en", "2026"));
+});
+
 it("withdraws the editor and its unsent words when the calendar becomes busy-only", async () => {
   const { world } = open(meeting());
   const press = vi.fn(async () => ({ key: "change" }));

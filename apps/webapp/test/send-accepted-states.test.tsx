@@ -197,10 +197,10 @@ describe("the button's word and its state attribute come from one derivation", (
     // The compose form is the only scope that can reach `scheduled`; the guard says so rather
     // than asserting a key the reply catalogue deliberately does not carry.
     // OVER WRITE: the verbs' words are read where Write names them: the new letter's verbs (`verbs/Verbs.tsx`) and the
-    // reply's (`Reply.tsx`), each a key of Write's own namespace (`t`) or the reply's (`tr`).
+    // reply's (`reply-gate.ts`), each a key of Write's own namespace (`t`) or the reply's (`tr`).
     const source = (p: string): string => readFileSync(resolve(process.cwd(), p), "utf8");
     const letterKeys = [...source("packages/app/src/write/verbs/Verbs.tsx").matchAll(/\bt\("([^"]+)"\)/g)].map((m) => ["write", m[1]!] as const);
-    const replyKeys = [...source("packages/app/src/write/Reply.tsx").matchAll(/const \w+Word = (t|tr)\("([^"]+)"\)/g)]
+    const replyKeys = [...source("packages/app/src/write/reply-gate.ts").matchAll(/const \w+Word = (t|tr)\("([^"]+)"\)/g)]
       .map((m) => [m[1] === "t" ? "write" : "reply", m[2]!] as const);
     expect(letterKeys.length, "the census read no word of the letter's verbs").toBeGreaterThanOrEqual(3);
     expect(replyKeys.length, "the census read no word of the reply's verbs").toBeGreaterThanOrEqual(3);

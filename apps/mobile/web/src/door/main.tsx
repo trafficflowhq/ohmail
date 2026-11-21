@@ -7,8 +7,10 @@
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { DoorStage, type DoorDevice } from "@ohmail/app/doors/stage";
-import { NONE } from "@ohmail/app/host";
+import { NONE } from "@ohmail/app/host/contract";
 import { browserWindowFacts } from "@ohmail/app/host/browser";
 import { fillOver, TextProvider } from "@ohmail/app/text";
 import { systemAppearance } from "../frame-supplies";
@@ -54,7 +56,11 @@ async function start(bridge: DoorBridge, element: HTMLElement): Promise<void> {
   const config = await bridge.request("config", {});
   const door = doorHandle(bridge, config);
   let held: DoorDevice | null = null;
-  createRoot(element).render(<Door door={door} made={() => (held ??= device(window))} />);
+  createRoot(element).render(
+    <portalRenderer.Provider value={createPortal}>
+      <Door door={door} made={() => (held ??= device(window))} />
+    </portalRenderer.Provider>,
+  );
 }
 
 const epoch = new URLSearchParams(location.search).get("epoch") ?? "";

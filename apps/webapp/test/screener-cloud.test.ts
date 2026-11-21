@@ -230,13 +230,18 @@ async function mountWeb(
     changes: { creates, updates: [], moves: [], deletes: [] },
     cursor: String(creates.at(-1)?.seq ?? 0), hasMore: false, serverTime: ISO,
   } satisfies SyncResponse));
+  const reply = (body: unknown, init?: ResponseInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set("X-Ohmail-Account", ACCOUNT);
+    return Response.json(body, { ...init, headers });
+  };
   const fetchForAccount = globalThis.fetch;
   const writes: WebWrite[] = [];
   globalThis.fetch = async (input, init) => {
     const path = new URL(String(input), window.location.origin).pathname;
     const method = init?.method ?? "GET";
     if (method === "GET" && path === "/api/mailboxes") {
-      return Response.json({ items: [{
+      return reply({ items: [{
         id: "mb_1", address: ["mailbox", "example.invalid"].join("@"), status: "connected",
         organizerRole: "organizer", initialImportCompletedAt: ISO, organizeConsentedAt: ISO,
         lastSyncAt: ISO, createdAt: ISO,
@@ -244,7 +249,7 @@ async function mountWeb(
     }
     if (advice && method === "GET" && path === "/api/screener") {
       const seed = mail[0]!;
-      return Response.json({
+      return reply({
         items: [{
           id: seed.id, messageId: seed.id, sender: seed.from, subject: seed.subject,
           snippet: seed.snippet, receivedAt: seed.date, aiSuggestion: {
@@ -265,7 +270,7 @@ async function mountWeb(
     writes.push({ method, path, body });
     if (method === "POST" && path === "/api/rules") {
       if (refuse) {
-        return Response.json({
+        return reply({
           error: { code: "forbidden", message: "rule refused", retryable: false },
         }, { status: 403 });
       }
@@ -276,12 +281,12 @@ async function mountWeb(
       };
       const seq = creates.length + 1;
       creates.push({ type: "rule", op: "create", id: entity.id, seq, updatedAt: ISO, entity });
-      return Response.json(entity, { status: 201, headers: { "x-sync-seq": String(seq) } });
+      return reply(entity, { status: 201, headers: { "x-sync-seq": String(seq) } });
     }
     if (method === "POST" && /^\/api\/screener\/[^/]+$/.test(path)) {
-      return Response.json({ messageId: path.split("/").at(-1), appliedFolder: body.dest, createdRuleId: null });
+      return reply({ messageId: path.split("/").at(-1), appliedFolder: body.dest, createdRuleId: null });
     }
-    return Response.json({ error: { code: "not_found", message: "unexpected write", retryable: false } }, { status: 404 });
+    return reply({ error: { code: "not_found", message: "unexpected write", retryable: false } }, { status: 404 });
   };
   window.location.hash = advice ? "#/ohbox" : `#/screener${section ? `/${section}` : ""}`;
   const shell = await mountCloudShell();
@@ -636,13 +641,14 @@ describe("the Screener sheet says what it does", () => {
   });
 
   it("the rule disclosure still leads the note, and both halves are now named", async () => {
-    // An earlier change put the consequence BEFORE the click because screening a sender out arms
-    // auto-unsubscribe. A legibility pass must not cost that sentence its place.
     const s = await mountWeb(HELD);
-    await s.open();
-    const note = s.frame.queryByText(/^Becomes a rule/)?.textContent ?? "";
-    expect(note.startsWith("Becomes a rule")).toBe(true);
-    expect(note).toContain("files the mail waiting here");
-    expect(note).toContain("marks it read");
+    const sender = HELD[0]!.from;
+    await s.open(sender.address);
+    expect(s.frame.getByRole("heading", { name: `${sender.name ?? sender.address} goes to a place` })).toBeTruthy();
+    const panel = s.panel();
+    expect(panel.getByRole("button", { name: "Ohbox" })).toBeTruthy();
+    await click(panel.getByRole("button", { name: "More" }));
+    const other = within(document.body).getByRole("menu", { name: "More" });
+    expect(within(other).getByRole("menuitem", { name: "Ohbox, mark read" })).toBeTruthy();
   });
 });

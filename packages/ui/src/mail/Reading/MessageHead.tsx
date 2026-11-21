@@ -1,6 +1,7 @@
 import { Fragment, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { AddressText, Avatar, Button } from "../../base/index.js";
+import { Avatar, Button } from "../../base/index.js";
 import { Icon } from "../../icons/Icon.js";
+import { AddressText } from "../AddressText.js";
 import "./message-head.css";
 
 /** Somebody the head names, optionally with a contact action. */

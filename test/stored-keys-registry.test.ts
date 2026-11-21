@@ -99,6 +99,7 @@ const NOT_STORED: Readonly<Record<string, string>> = {
   "ohmail:wake": "a message type between the service worker and its page",
   "ohmail:durability-lost": "a window event's name",
   "ohmail:session-refresh": "a lock's name: tabs take turns under it and nothing is stored",
+  "ohmail.same-tab-sign-out": "a DOM event's name, dispatched and listened for in the same tab",
   "ohmail-notify-state": "a lock's name: the page and its worker take turns under it and nothing is stored",
   "ohmail.engine.": "a lock's name per window of a device copy: nothing is stored",
   "ohmail.host.rotate": "a lock's name on the paired page: nothing is stored",

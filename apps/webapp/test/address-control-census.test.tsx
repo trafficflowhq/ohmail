@@ -2,7 +2,7 @@
 import { screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import messages from "../messages/en.json";
-import { act, goTo, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
+import { act, goTo, installShellEnv, liveAccountResponse, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 import { LENA, click, mountThread, msg, settle } from "./fixtures/thread-read-shell.js";
 
 const SUBJECT = "Invoice for the reading lamp";
@@ -46,9 +46,7 @@ async function mountSearch(items: ReturnType<typeof msg>["entity"][]): Promise<v
   const hostFetch = globalThis.fetch;
   globalThis.fetch = (input, init) =>
     /\/search\?/.test(String(input))
-      ? Promise.resolve(new Response(JSON.stringify({ items, total: items.length, totalExact: true, ms: 4 }), {
-        headers: { "content-type": "application/json" },
-      }))
+      ? Promise.resolve(liveAccountResponse(Response.json({ items, total: items.length, totalExact: true, ms: 4 })))
       : hostFetch(input, init);
   await goTo("search");
   const box = screen.getByRole<HTMLInputElement>("textbox", { name: messages.search.aria });

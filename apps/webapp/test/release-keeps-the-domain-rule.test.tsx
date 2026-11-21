@@ -100,7 +100,7 @@ async function mount(
   for (const item of rules) note("creates", "rule", item.id, item);
   const json = (body: unknown, status = 200, seq?: number) => new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json", ...(seq === undefined ? {} : { "x-sync-seq": String(seq) }) },
+    headers: { "content-type": "application/json", "X-Ohmail-Account": ACCOUNT, ...(seq === undefined ? {} : { "x-sync-seq": String(seq) }) },
   });
   scriptSync(() => json({ changes, cursor: String(sequence), hasMore: false, serverTime: ISO } satisfies SyncResponse));
 
@@ -134,7 +134,7 @@ async function mount(
     }
     if (ruleId && method === "DELETE") {
       standing.delete(ruleId);
-      return new Response(null, { status: 204, headers: { "x-sync-seq": String(note("deletes", "rule", ruleId, null)) } });
+      return new Response(null, { status: 204, headers: { "X-Ohmail-Account": ACCOUNT, "x-sync-seq": String(note("deletes", "rule", ruleId, null)) } });
     }
     const moveId = /^\/api\/messages\/([^/]+)\/move$/.exec(path)?.[1];
     if (moveId && method === "POST") {
@@ -145,12 +145,13 @@ async function mount(
     const decideId = /^\/api\/screener\/([^/]+)$/.exec(path)?.[1];
     if (decideId && method === "POST") {
       const sender = mail.get(decideId)!.from.address;
-      const scope = body.scope === "domain" ? "domain" : "sender";
+      const scope = body.scope === "domain" || body.scope === "confirmed_domain" ? "domain" : "sender";
       const promoted = rule("r-promoted", scope, scope === "domain" ? DOMAIN : sender, body.dest);
       standing.set(promoted.id, promoted);
       note("creates", "rule", promoted.id, promoted);
       for (const item of mail.values()) {
         if (item.folder !== "ohmail/Screener" || item.from.address !== sender) continue;
+        if (Array.isArray(body.confirmedIds) && !body.confirmedIds.includes(item.id)) continue;
         const moved = { ...item, folder: body.dest };
         mail.set(item.id, moved);
         note("moves", "message", item.id, moved);
@@ -351,7 +352,7 @@ describe("Not spam → Ohbox on a sender marked spam this session (the pinned re
     await commit();
     expect(s.writes.filter(({ path }) => path.startsWith("/api/screener"))).toEqual([{
       method: "POST", path: "/api/screener/h1",
-      body: { decision: "no", dest: SPAM, scope, applyRetro: false },
+      body: { decision: "no", dest: SPAM, scope: `confirmed_${scope}`, confirmedIds: ["h1"], applyRetro: false },
     }]);
     await s.segment(s.copy.segSpam);
     await s.open("h1");

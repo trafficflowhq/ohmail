@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { createTranslator } from "next-intl";
 import { readFileSync } from "node:fs";
 import type { StayVerdict } from "@ohmail/client-engine";
 import type { EngineMutation, Folder } from "@ohmail/wire";
 import { verdictSentence } from "@ohmail/app-logic/press/press-verdict";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import { confirmSyncOwner, createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 import { forgetOwner, rememberOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import en from "../messages/en.json";
@@ -100,20 +101,38 @@ describe("the shell's verdict sentence names the one staying place", () => {
   it("a bulk decision reports its own summary without a separate per-sender success", async () => {
     stubDom();
     const date = new Date().toISOString();
+    const first = message("inbox-a", { from, date });
+    const owner = first.accountId;
+    rememberOwner(owner);
     const shell = await mountShell("#/screener", [
-      message("inbox-a", { from, date }),
+      first,
       message("inbox-b", { from: { name: "Second sender", address: "another@second.example" }, date }),
-    ], []);
+    ], [], {
+      prepareEngine(engine) {
+        registerSyncGate(engine, createSyncGate(owner));
+        confirmSyncOwner(engine, owner);
+      },
+    });
     await screen.findByRole("option", { name: /Fixture sender/ });
     await screen.findByRole("option", { name: /Second sender/ });
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Mark all spam" }));
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Mark 2 as spam" }));
-    await waitFor(() => report(shell.el)?.includes("2 moved to Spam") === true, "the bulk summary");
-    fireEvent.click(screen.getByRole("button", { name: /^Screened out/ }));
-    await waitFor(() => shell.sent.filter((write) => write.kind === "rule_create").length === 2, "both presented sender decisions on the wire");
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(report(shell.el) ?? "").not.toMatch(/future mail from/i);
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Mark 2 as spam" }));
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(report(shell.el)).toContain("2 moved to Spam");
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /^Screened out/ }));
+        await vi.advanceTimersByTimeAsync(COMMIT_MS);
+      });
+      expect(shell.sent.filter((write) => write.kind === "rule_create")).toHaveLength(2);
+      expect(report(shell.el) ?? "").not.toMatch(/future mail from/i);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a promoted domain decision names the organizer still holding part of the result", async () => {

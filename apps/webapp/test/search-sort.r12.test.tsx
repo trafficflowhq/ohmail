@@ -178,7 +178,7 @@ describe("the search header offers an order", () => {
     const engine = await engineWith({
       searchServer: async (_q: string, opts: ServerSearchOpts) => {
         asked.push(opts);
-        return { items: [], total: 0 };
+        return { items: ROWS, total: ROWS.length, totalExact: true, nextCursor: null };
       },
     } as unknown as Partial<EngineAdapter>);
 
@@ -258,7 +258,7 @@ describe("the search header offers an order", () => {
     const engine = await engineWith({
       searchServer: async (_q: string, opts: ServerSearchOpts) => {
         asked.push(opts);
-        return { items: [], total: 0 };
+        return { items: ROWS, total: ROWS.length, totalExact: true, nextCursor: null };
       },
     } as unknown as Partial<EngineAdapter>);
 

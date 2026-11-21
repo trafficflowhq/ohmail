@@ -13,6 +13,10 @@ import { LetterRows, ListColumn, ListMenu } from "../place-list/index.js";
 import { useText, type Text } from "../text/index.js";
 import { TagDelete, TagRename } from "./TagAsks.js";
 
+import { MailSelectionFoot } from "../place-list/MailSelectionFoot.js";
+import { useRowContact, type RowContact } from "../place-list/use-row-contact.js";
+import { useRowSelection, type RowSelection } from "../place-list/use-row-selection.js";
+
 export function TagsList({ plan }: PaneProps) {
   const model = useTagsModel();
   return <TagsColumn key={model.tag?.id ?? ""} plan={plan} model={model} />;
@@ -21,6 +25,8 @@ export function TagsList({ plan }: PaneProps) {
 function TagsColumn({ plan, model }: { plan: PaneProps["plan"]; model: TagsModel }) {
   const scroller = useRef<HTMLDivElement>(null);
   const { rows, cursor } = model.list;
+  const selection = useRowSelection(rows);
+  const contact = useRowContact();
   const win = useListWindow({
     scrollerRef: scroller,
     count: model.tag === null ? 0 : rows.length,
@@ -71,12 +77,17 @@ function TagsColumn({ plan, model }: { plan: PaneProps["plan"]; model: TagsModel
   return (
     <ListColumn
       head={head}
+      foot={<MailSelectionFoot selection={selection} verbs={model.list.verbs} />}
       plan={plan}
       cursor={model.list.cursor}
       scrollerRef={scroller}
       manualScrollAnchor={tag !== null && win.end - win.start < rows.length}
     >
-      {tag !== null ? <OneTag model={model} t={t} win={win} /> : <EveryTag model={model} t={t} />}
+      {tag !== null ? (
+        <OneTag model={model} t={t} win={win} selection={selection} contact={contact} />
+      ) : (
+        <EveryTag model={model} t={t} selection={selection} contact={contact} />
+      )}
       {model.loading ? <Empty label={t("loading")} /> : null}
       {model.empty ? <Empty label={tag === null ? t("empty.none") : t("empty.tag")} /> : null}
       {tag !== null && asked === "rename" ? (
@@ -85,18 +96,29 @@ function TagsColumn({ plan, model }: { plan: PaneProps["plan"]; model: TagsModel
       {tag !== null && asked === "delete" ? (
         <TagDelete tag={tag} model={model} close={() => setAsked(null)} />
       ) : null}
+      {contact.card}
     </ListColumn>
   );
 }
 
-function OneTag({ model, t, win }: { model: TagsModel; t: Text; win: ReturnType<typeof useListWindow> }) {
+type TagRowsProps = { model: TagsModel; t: Text; selection: RowSelection; contact: RowContact };
+function OneTag({
+  model,
+  t,
+  win,
+  selection,
+  contact,
+}: TagRowsProps & { win: ReturnType<typeof useListWindow> }) {
   if (model.list.rows.length === 0) return null;
   return (
     <LetterRows
+      selection={selection}
+      contact={contact}
       label={model.tag?.name ?? t("title")}
       rows={model.list.rows}
       windowed={{
         start: win.start,
+        total: model.list.rows.length,
         top: win.padTop,
         bottom: win.padBottom,
         rowHeight: win.rowHeight,
@@ -112,7 +134,7 @@ function OneTag({ model, t, win }: { model: TagsModel; t: Text; win: ReturnType<
   );
 }
 
-function EveryTag({ model, t }: { model: TagsModel; t: Text }) {
+function EveryTag({ model, t, selection, contact }: TagRowsProps) {
   return (
     <>
       {model.groups.map((g) => (
@@ -126,6 +148,8 @@ function EveryTag({ model, t }: { model: TagsModel; t: Text }) {
           </GroupHeading>
           {!g.shut && g.rows.length > 0 ? (
             <LetterRows
+              selection={selection}
+              contact={contact}
               label={g.tag.name}
               rows={g.rows}
               cursor={model.list.cursor}

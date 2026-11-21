@@ -1,6 +1,6 @@
 /**
  * THE STREAM'S KEYS while its pane has the keyboard: `j` or ↓ opens the next item and `k` or ↑ the previous one, from
- * the one open or else the one under the reading line. A key is no hand on the stream: the step drives it, and only
+ * the open item, the reading line, or the list cursor before the reading line is measured. A key drives the step, and only
  * the rest reads what it comes to. Never in a field, never with a modifier.
  */
 import { useEffect, useRef } from "react";
@@ -17,7 +17,7 @@ const STEPS: ReadonlyMap<string, 1 | -1> = new Map([
 
 /** The item a step goes to: the next or the previous one of the stream, from the open one or the current one. */
 export function stepOf(model: StreamModel, by: 1 | -1): string | null {
-  const from = model.openId ?? model.current;
+  const from = model.openId ?? model.current ?? model.standingId;
   const at = from === null ? -1 : model.items.findIndex((m) => m.id === from);
   if (at < 0) return by === 1 ? (model.items[0]?.id ?? null) : null;
   return model.items[at + by]?.id ?? null;

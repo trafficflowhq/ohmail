@@ -13,6 +13,7 @@
  */
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NONE } from "@ohmail/app/host";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
@@ -20,6 +21,7 @@ import { catchConsole, en, json, serve, session, settle, type Server } from "./a
 import { engineOver, setup, storeWith, teardown } from "./_view-shell";
 import { MailShell } from "./_mail-shell";
 import { WEB_PANE_PARTS } from "../app/(product)/mailbox/pane-parts";
+import { AccountCleanupContext, AccountCleanupGate, type AccountCleanup } from "../app/(product)/mailbox/AccountCleanupGate";
 
 /** The web's own doors of the Account section, as its entry hands them. */
 const WEB_ACCOUNT = (() => {
@@ -30,6 +32,7 @@ const WEB_ACCOUNT = (() => {
 
 const SESSION = "GET /api/auth/session";
 const LOGOUT = "POST /auth/refresh/logout";
+const ACCOUNT = session().user.accountId;
 const ADDRESS = "mila@lichtgrat.example";
 /** The copy of the mail this browser holds for the signed-in account, by the name the engine gives it. */
 const MIRROR = "ohmail-mirror:account-under-test";
@@ -93,8 +96,23 @@ function databasesOnDisk(): void {
   } as unknown as IDBFactory;
 }
 
-beforeEach(() => {
+function installSessionFamily() {
+  document.cookie = "tf_family=fixture-family; Path=/";
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (_name: string, optionsOrRun: unknown, run?: () => Promise<unknown>) =>
+        (run ?? (optionsOrRun as () => Promise<unknown>))(),
+    },
+  });
+}
+
+beforeEach(async () => {
   setup();
+  document.cookie = `tf_owner=${ACCOUNT}; Path=/`;
+  installSessionFamily();
+  const { bindApiOwner } = await import("../app/api-client");
+  bindApiOwner(ACCOUNT);
   held = false;
   deleted = [];
   localStorage.setItem(`ohmail.mirror.${MIRROR}`, "1");
@@ -105,6 +123,19 @@ beforeEach(() => {
     [SESSION]: () => json(session()),
     [LOGOUT]: () => new Response(null, { status: 204 }),
   });
+  const wire = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    if (headers.get("x-ohmail-clear-logout") === "1") {
+      document.cookie = "tf_owner=; Path=/; Max-Age=0";
+      document.cookie = "tf_family=; Path=/; Max-Age=0";
+      return new Response(null, { status: 204 });
+    }
+    if (headers.get("x-ohmail-clear") === "cache") {
+      return new Response(null, { status: 202, headers: { "Clear-Site-Data": '"cache"' } });
+    }
+    return wire(input, init);
+  };
   Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
 afterEach(async () => {
@@ -114,6 +145,10 @@ afterEach(async () => {
   written.restore();
   Reflect.deleteProperty(globalThis, "indexedDB");
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  Reflect.deleteProperty(navigator, "locks");
+  const { bindApiOwner } = await import("../app/api-client");
+  bindApiOwner(null);
   vi.restoreAllMocks();
   await teardown();
 });
@@ -122,11 +157,19 @@ afterEach(async () => {
 async function mount(at = "#/ohbox"): Promise<void> {
   window.history.replaceState(null, "", `/${at}`);
   const engine = engineOver(await storeWith([]));
+  function Shell() {
+    const [cleanup, showCleanup] = useState<AccountCleanup | null>(null);
+    return cleanup ? <AccountCleanupGate cleanup={cleanup} /> : (
+      <AccountCleanupContext.Provider value={showCleanup}>
+        <MailShell demo={false} engine={engine} scope={ACCOUNT} accountDoors={WEB_ACCOUNT} />
+      </AccountCleanupContext.Provider>
+    );
+  }
   render(
     <NextIntlClientProvider locale="en" messages={en} timeZone="UTC">
       <ThemeProvider>
         <ToastHost>
-          <MailShell demo={false} engine={engine} accountDoors={WEB_ACCOUNT} />
+          <Shell />
         </ToastHost>
       </ThemeProvider>
     </NextIntlClientProvider>,
@@ -181,6 +224,13 @@ describe("the way out, on the new shell", () => {
     expect(said(en.accountOwn.stillHere)).toBe(true);
     expect(said(en.account.signOutBlocked)).toBe(true);
     expect(screen.getByRole("button", { name: en.account.signOut })).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: "Places" })).toBeNull();
+
+    held = false;
+    await press(en.account.signOut);
+    expect(deleted).toContain(MIRROR);
+    expect(server.on(LOGOUT), "a retry of local cleanup revoked the session a second time").toHaveLength(1);
+    expect(tab.loads).toEqual(["/"]);
   });
 
   it("a browser that will not say what it holds stays, and says that and not the blocked sentence", async () => {
@@ -190,6 +240,7 @@ describe("the way out, on the new shell", () => {
     expect(said(en.accountOwn.notConfirmed)).toBe(true);
     expect(said(en.account.signOutUnverified)).toBe(true);
     expect(said(en.account.signOutBlocked)).toBe(false);
+    expect(screen.queryByRole("navigation", { name: "Places" })).toBeNull();
   });
 
   it("a server that refused still leaves: this browser is wiped and marked, and the sign-in page finishes it", async () => {

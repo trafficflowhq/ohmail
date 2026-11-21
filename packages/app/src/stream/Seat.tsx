@@ -12,7 +12,6 @@ import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
-  StreamModelContext,
   useStreamLive,
   useStreamMove,
   type StreamLiveOwn,
@@ -20,8 +19,11 @@ import {
 } from "@ohmail/app-logic/streams";
 import { wordsOver } from "@ohmail/app-logic/reader";
 import { ListMoveContext } from "@ohmail/app-logic/reading";
+import { usePlaceVerbs } from "@ohmail/app-logic/place-list";
+import { usePlaceListOwn } from "../place-list/own.js";
 import { usePlaceLiveArgs } from "../frame/place-live.js";
 import { useText, useTimeZone } from "../text/index.js";
+import { StreamState } from "./StreamAbove.js";
 import { useStreamText } from "./words.js";
 
 /** Who is told when the tab goes away, and the way to be told. */
@@ -71,10 +73,11 @@ export function StreamSeat({
   const session = useText("session");
   const words = useMemo(() => wordsOver({ ohbox, screening, session }), [ohbox, screening, session]);
   const move = useStreamMove(args, model.items, model.toolbar, words);
+  const { verbs } = usePlaceVerbs(args, usePlaceListOwn(), model.items);
   useLeavesOnHide(leaves, model.scroller);
   return (
     <ListMoveContext.Provider value={move}>
-      <StreamModelContext.Provider value={model}>{children}</StreamModelContext.Provider>
+      <StreamState model={{ ...model, verbs }}>{children}</StreamState>
     </ListMoveContext.Provider>
   );
 }

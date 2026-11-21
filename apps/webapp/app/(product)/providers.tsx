@@ -1,7 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { ThemeProvider, ToastHost, themeInitScript } from "@ohmail/ui";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { columnsBootScript } from "@ohmail/app-logic/lists/column-store";
 // One door per host, at module scope; its face mirror names the account it was written for.
 import { THEME_DOOR } from "../shell/face-mirror";
@@ -35,7 +37,9 @@ export function Providers({ children, nonce, deferLinuxFace }: AppearanceProps &
       <script nonce={nonce} dangerouslySetInnerHTML={{ __html: textSizeBootScript() }} />
       {/* The face controls live on the product door. The landing and admin leave faces disabled. */}
       <ThemeProvider storageKey="ohmail.theme" faces deferLinuxFace={deferLinuxFace} storage={THEME_DOOR}>
-        <ToastHost>{children}</ToastHost>
+        <portalRenderer.Provider value={createPortal}>
+          <ToastHost>{children}</ToastHost>
+        </portalRenderer.Provider>
       </ThemeProvider>
     </>
   );

@@ -28,7 +28,13 @@ type BrowserParts = { readonly useBrowserDoor: () => WayOutDoor };
 export type SecurityPaneParts = SecurityFormParts | BrowserParts;
 
 function InBrowser({ parts }: { readonly parts: BrowserParts }): ReactNode {
-  return <WayOutPane model={useWayOut(parts.useBrowserDoor(), "security")} />;
+  const { host } = useFrame();
+  return (
+    <WayOutPane
+      model={useWayOut(parts.useBrowserDoor(), "security")}
+      onServer={host.capabilities.service === "self"}
+    />
+  );
 }
 
 /** The Security section over one host's parts. Call it once per mount: a registration made again is a pane mounted again. */

@@ -43,7 +43,7 @@ describe("the action panel follows the open reading", () => {
     });
 
     it(`${place}: closing the addressed card clears the reading and its actions`, async () => {
-      const { address, base, panels, toggle } = mounted(place);
+      const { address, base, card, panels, toggle } = mounted(place);
       await toggle(20, "Expand");
       await toggle(19, "Expand");
       expect(address.read()).toBe(`${base}/m/b`);
@@ -51,8 +51,13 @@ describe("the action panel follows the open reading", () => {
       expect(address.read()).toBe(`${base}/m/b`);
       expect(panels()).toHaveLength(1);
       await toggle(19, "Collapse");
-      expect.soft(address.read()).toBe(base);
+      // The studio folds the paper and hides its actions while keeping the selected letter.
+      expect(address.read()).toBe(`${base}/m/b`);
+      expect(card(19).hasAttribute("data-expanded")).toBe(false);
       expect(panels()).toHaveLength(0);
+      await toggle(19, "Expand");
+      expect(address.read()).toBe(`${base}/m/b`);
+      expect(panels()).toHaveLength(1);
     });
   }
 });

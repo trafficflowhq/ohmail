@@ -36,3 +36,25 @@ it("puts the filing suggestion between News rows without counting it as a letter
   expect(list.getByText("Rule saved")).toBeTruthy();
   expect(mail.mutations).toEqual([]);
 });
+
+it("shows the correction beside the same News row without writing mail", () => {
+  const { mail } = mountStreamFrame({
+    at: "#/reads",
+    letters: [issue("first", 14), issue("second", 13)],
+    rows: {
+      "view_meta:reads_ai_chip": {
+        afterId: "first",
+        label: "File the next issue in News",
+        approvedLabel: "Rule saved",
+        correctedLabel: "Goes to Ohbox",
+      },
+    },
+  });
+  const list = within(screen.getByRole("region", { name: "News" }));
+  fireEvent.click(list.getByRole("button", { name: "Correct" }));
+  const corrected = list.getByText("Goes to Ohbox");
+  const first = list.getByRole("option", { name: /Issue 14/ });
+  expect(first.compareDocumentPosition(corrected) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(list.queryByRole("button", { name: "Correct" })).toBeNull();
+  expect(mail.mutations).toEqual([]);
+});

@@ -46,13 +46,15 @@ export function devicesOf(reader: EntityReader): NoticeDevices | null {
  */
 export function noticeSampleOf(
   reader: EntityReader, devices: NoticeDevices | null = null, calendar: CalendarSample | null = null,
-): NoticeSample {
+): NoticeSample & { readonly unreadIds: ReadonlySet<string> } {
   const sends = new Map<string, SendStanding>();
   for (const draft of reader.list<EngineDraft>("draft")) {
     if (draft.status !== "sent") sends.set(draft.id, standingOf(draft));
   }
+  const unreadIds = new Set(ohboxUnreadIds(resurfacedThreads(reader), ohboxView(reader)));
   return {
-    ohboxUnread: ohboxUnreadIds(resurfacedThreads(reader), ohboxView(reader)).length,
+    ohboxUnread: unreadIds.size,
+    unreadIds,
     screenerWaiting: screenerSegments(reader).waitingTotal,
     sends,
     devices,

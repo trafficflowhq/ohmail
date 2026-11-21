@@ -67,6 +67,8 @@ export interface CalendarWritePayload {
   readonly act: CalendarEventAct;
   readonly after: string | null;
   readonly part: { readonly of: string; readonly n: 1 | 2; readonly from?: CalendarWriteContinuation } | null;
+  /** A cancellation may already have landed before its explicit retry reset the attempt counter. */
+  readonly cancellationAttempted?: true;
 }
 
 type Obj = Record<string, unknown>;
@@ -467,9 +469,10 @@ function continuationOf(v: unknown): CalendarWriteContinuation | null {
 
 /** A row's payload as this version reads it, or `null` for one it does not know: an applied row's, another version's, a damaged one. */
 export function parseWritePayload(v: unknown): CalendarWritePayload | null {
-  if (!isObject(v) || !closed(v, ["v", "act", "after", "part"]) || v.v !== CALENDAR_WRITE_PAYLOAD_VERSION) return null;
+  if (!isObject(v) || !closed(v, ["v", "act", "after", "part"], ["cancellationAttempted"]) || v.v !== CALENDAR_WRITE_PAYLOAD_VERSION) return null;
   const act = parseCalendarAct(v.act);
   if (act === null) return null;
+  if (Object.hasOwn(v, "cancellationAttempted") && (v.cancellationAttempted !== true || act.kind !== "calendar_event_delete")) return null;
   if (v.after !== null && !isWriteUuid(v.after)) return null;
   let part: CalendarWritePayload["part"] = null;
   if (v.part !== null) {
@@ -481,5 +484,5 @@ export function parseWritePayload(v: unknown): CalendarWritePayload | null {
       part = { of: v.part.of, n: v.part.n, from };
     }
   }
-  return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after: v.after, part };
+  return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after: v.after, part, ...(v.cancellationAttempted === true && { cancellationAttempted: true }) };
 }

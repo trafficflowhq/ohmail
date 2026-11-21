@@ -19,13 +19,14 @@ const SITES: Record<string, ReadonlyArray<"refusal-only" | "says-done" | "via-pr
   "../../packages/app-logic/src/screener/screener-state.ts": [
     "via-pressVerdict", "via-pressVerdict",
     "refusal-only",     // the rule press's refusal capture
+    "refusal-only",     // releaseHeld tallies refusals and records outstanding organizing installs
     "refusal-only",     // allowScreened — said at the press, refused after
     "refusal-only",     // not spam — said at the press, refused after
   ],
   "../../packages/app-logic/src/writing/shell-compose.ts": [
     "says-done",        // schedule cancel
-    "says-done",        // resolve
-    "says-done",        // resolve before a send again
+    "says-done",        // edit a scheduled draft after the cancel settles
+    "says-done",        // resolve a held draft, including when reopening it
     "via-pressVerdict", // discard
   ],
 };

@@ -1,5 +1,11 @@
 /* A list's row: the circle in the gutter, two lines beside it; three on touch and in ohmarchy. */
 @layer oh {
+  :root {
+    /* An enclosing list can supply a different paper for the row's own button. */
+    --oh-row-own-background: initial;
+    --oh-row-subject-whitespace: initial;
+  }
+
   .oh-rows {
     padding: 0 var(--s2) var(--s1);
   }
@@ -116,11 +122,15 @@
     border-radius: var(--av-r);
   }
 
-  .oh-row-face[data-pair] > .oh-avatar:first-child {
+  .oh-row-face-art {
+    display: block;
+  }
+
+  .oh-row-face-art[data-pair] > .oh-avatar:first-child {
     padding: var(--oh-row-pair-in);
   }
 
-  .oh-row-face[data-pair] > .oh-avatar:nth-child(2),
+  .oh-row-face-art[data-pair] > .oh-avatar:nth-child(2),
   .oh-row-more {
     position: absolute;
     top: var(--oh-row-peek-at);
@@ -166,7 +176,7 @@
     display: grid;
   }
 
-  .oh-row[data-picked] .oh-row-face > .oh-avatar,
+  .oh-row[data-picked] .oh-row-face-art > .oh-avatar,
   .oh-row[data-picked] .oh-row-more {
     visibility: hidden;
   }
@@ -277,6 +287,14 @@
     white-space: nowrap;
   }
 
+  .oh-row-contact-name {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    white-space: inherit;
+  }
+
   .oh-row-contact {
     color: inherit;
     text-decoration: none;
@@ -286,13 +304,13 @@
     color: var(--oh-row-second);
   }
 
-  :root[data-touch="0"] .oh-row-address[data-press]:hover {
+  :root[data-touch="0"] :is(.oh-row-address[data-press], .oh-row-contact-name):hover {
     color: var(--ink);
     text-decoration: underline;
     text-underline-offset: var(--oh-row-under-off);
   }
 
-  :root[data-touch="0"] .oh-row[data-open] .oh-row-address[data-press]:hover {
+  :root[data-touch="0"] .oh-row[data-open] :is(.oh-row-address[data-press], .oh-row-contact-name):hover {
     color: var(--on-row-open);
   }
 
@@ -506,6 +524,7 @@
 
   .oh-row-subject {
     font-weight: var(--w-text);
+    white-space: var(--oh-row-subject-whitespace, inherit);
   }
 
   :root[data-touch="0"] .oh-row-subject {
@@ -908,7 +927,7 @@
   }
 
   /* The open row in oh: its circles stand on the sheet's white, the dot in the row's own tone. */
-  :root[data-face="paper"] .oh-row[data-open] .oh-row-face > .oh-avatar:not([data-sign]) {
+  :root[data-face="paper"] .oh-row[data-open] .oh-row-face-art > .oh-avatar:not([data-sign]) {
     --oh-avatar-bg: var(--av-open-bg);
     --oh-avatar-fg: var(--av-open-fg);
   }
@@ -918,12 +937,12 @@
     color: var(--av-open-fg);
   }
 
-  .oh-row[data-open] .oh-row-face > .oh-avatar[data-sign] {
+  .oh-row[data-open] .oh-row-face-art > .oh-avatar[data-sign] {
     --oh-avatar-bg: var(--sheet);
     --oh-avatar-fg: var(--ink);
   }
 
-  .oh-row[data-open] .oh-row-face > .oh-avatar > .oh-dot {
+  .oh-row[data-open] .oh-row-face-art > .oh-avatar > .oh-dot {
     background: var(--row-open-dot);
   }
 }
@@ -981,7 +1000,7 @@
 :root[data-face="paper"]
   [data-cursor-tint]:has(> .oh-listhead)
   .oh-row[aria-selected="true"]:not([data-open])
-  .oh-row-face
+  .oh-row-face-art
   > .oh-avatar {
   --oh-avatar-bg: var(--av-open-bg);
   --oh-avatar-fg: var(--av-open-fg);

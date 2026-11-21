@@ -78,6 +78,8 @@ export interface Route {
   readonly sub: string | null;
   /** The letter open in it. */
   readonly open: string | null;
+  /** The address names a conversation by a member, without choosing that member for reading. */
+  readonly wholeThread?: true;
   readonly stage: { readonly id: AnyStageId; readonly words: Readonly<Record<string, string>> } | null;
   readonly words: Readonly<Record<string, string>>;
 }
@@ -93,6 +95,7 @@ export interface LayoutPlan {
   readonly rail: "words" | "icons" | "dock";
   readonly columns: 1 | 2;
   readonly handles: boolean;
+  readonly ribbon?: "push" | "split";
 }
 export interface PaneProps {
   readonly route: Route;
@@ -239,7 +242,7 @@ export interface GoHow {
 /** The few named commands between features. Nothing else crosses a feature's border. */
 export interface FrameCommands {
   go(to: RouteTarget, how?: GoHow): void;
-  open(letter: string | null, how?: "replace"): void;
+  open(letter: string | null, how?: "replace", wholeThread?: true): void;
   closeAddress(): void;
   closeSearch(): void;
   write(draft?: LinkedDraft): void;
@@ -324,6 +327,8 @@ export interface CalendarPanelProps extends PaneProps {
 }
 /** The calendar's registration: the root export is one of these. Each slot is the entry or `none`. */
 export interface CalendarEntry {
+  /** A host without the Calendar product may open one validated notification destination. */
+  readonly notice?: { readonly fragment: string; readonly place: PlaceEntry };
   readonly places: Readonly<Record<CalendarPlaceId, PlaceEntry | None>>;
   readonly stage: StageEntry | None;
   readonly panels: Readonly<Record<CalendarPanelId, ComponentType<CalendarPanelProps> | None>>;
@@ -334,6 +339,8 @@ export interface CalendarEntry {
   readonly useWants: () => boolean;
   /** Whether to show the product switch once the host can offer Calendar. */
   readonly useSwitchOffered?: () => boolean;
+  /** A destination that supersedes the remembered view while the calendar needs setup. */
+  readonly useSwitchHome?: () => CalendarPlaceId | undefined;
 }
 
 /* Declaration merging keeps the calendar's two members in this block of their own. */
@@ -343,7 +350,7 @@ export interface FrameCommands {
    * a mail place it goes to the calendar's place with the event's day. It does nothing where the switch is absent.
    */
   event(ref: EventRef | null): void;
-  switchProduct(to: Product): void;
+  switchProduct(to: Product, calendarHome?: CalendarPlaceId): void;
   closeCalendarSettings(): void;
 }
 export interface FrameApi {

@@ -1,7 +1,12 @@
 /** @vitest-environment jsdom */
+import { waitFor, within } from "@testing-library/react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { AheadSet } from "@ohmail/client-engine";
+import { CALENDAR_NOTICES_KEY } from "@ohmail/app-logic/notices/browser-channels";
+import { letter } from "../../../packages/app/test/reader/support/fake-mail.js";
+import { calendarOf, connection, event } from "../../../packages/app-logic/test/calendar/invitations/fixtures.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { DesktopGate, LIFECYCLE_POLL_MS } from "../src/DesktopGate.js";
 import { DesktopLocale } from "../src/DesktopLocale.js";
@@ -36,8 +41,16 @@ interface RegisteredDoor {
   status?: EngineStatus;
   candidate?: () => Promise<Record<string, unknown>>;
   defaultMail?: "not-default";
+  calendarSnapshot?: unknown;
+  alerts?: AheadSet[];
+  openings?: Array<(value: unknown) => void>;
+  calendarRequests?: Array<number | undefined>;
 }
 interface RequestBody {
+  set?: AheadSet;
+  event?: string;
+  handler?: number;
+  expectedCalendarSession?: number;
   method?: string;
   url?: string;
   body?: number[];
@@ -45,7 +58,7 @@ interface RequestBody {
 const host = globalThis as unknown as {
   __TAURI_INTERNALS__?: {
     invoke: (command: string, request?: RequestBody) => Promise<unknown>;
-    transformCallback: () => number;
+    transformCallback: (callback: (value: unknown) => void) => number;
   };
 };
 let root: Root | null;
@@ -78,24 +91,38 @@ async function answer(door: RegisteredDoor, method: string, url: string): Promis
     }] });
   }
   if (url.startsWith("/sync/snapshot")) {
-    return encode(200, { asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 500 } });
+    return encode(200, door.calendarSnapshot ?? { asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 500 } });
   }
   if (url.startsWith("/sync")) {
     return encode(200, { changes: EMPTY_CHANGES, cursor: "MA", hasMore: false, serverTime: CONNECTED });
   }
+  if (url === "/calendar/settings" && door.calendarSnapshot) return encode(200, {
+    enabledAt: CONNECTED, secondZone: null, weekNumbers: false, dayFromMinute: null,
+    dayToMinute: null, newEventsCalendarId: null,
+  });
   if (url.startsWith("/consent")) return encode(200, { seedConfirmedAt: CONNECTED });
   return encode(404, { error: { code: "not_found" } });
 }
 
 async function mountRegisteredWindow(door: RegisteredDoor = {}): Promise<void> {
+  const callbacks: Array<(value: unknown) => void> = [];
   host.__TAURI_INTERNALS__ = {
-    transformCallback: () => 1,
+    transformCallback: (callback) => callbacks.push(callback),
     invoke: async (command, request) => {
       if (command === "engine_status") return door.status ?? STANDALONE;
       if (command === "default_mail_status") return { state: door.defaultMail ?? "unknown" };
+      if (command === "plugin:event|listen" && request?.event === "notice:open" && request.handler) {
+        door.openings?.push(callbacks[request.handler - 1]!);
+        return request.handler;
+      }
+      if (command === "alerts_set" && request?.set) {
+        door.alerts?.push(request.set);
+        return request.set.alerts.map(({ id }) => id);
+      }
       if (command !== "engine_request") return null;
       const method = (request?.method ?? "GET").toUpperCase();
       const url = request?.url ?? "";
+      if (url.startsWith("/calendar/")) door.calendarRequests?.push(request?.expectedCalendarSession);
       const raw = request?.body?.length ? new TextDecoder().decode(Uint8Array.from(request.body)) : "";
       asked.push({ method, url, body: raw ? JSON.parse(raw) : null });
       return answer(door, method, url);
@@ -205,3 +232,102 @@ it("the native profile offer takes the stage before the default-mail ask", async
   expect(hostEl.textContent).toContain(DOOR_COPY.mailtoAskTitle);
 });
 
+
+it("schedules a mirrored calendar reminder from the native mail frame and withdraws it when notices are turned off", async () => {
+  const now = new Date("2026-11-16T06:00:00Z");
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(now);
+  localStorage.setItem(CALENDAR_NOTICES_KEY, JSON.stringify({ cal_alert: true, showTitles: false }));
+  const calendar = calendarOf();
+  const reminder = event("appointment", "20261116", {
+    alarms: [{ method: "notice", minutesBefore: 10 }],
+    startsAt: "2026-11-16T08:00:00Z",
+    endsAt: "2026-11-16T08:30:00Z",
+  });
+  const change = (type: string, id: string, entity: unknown) => ({
+    type, id, entity, op: "create", seq: 1, updatedAt: CONNECTED,
+  });
+  const alerts: AheadSet[] = [];
+  const calendarRequests: Array<number | undefined> = [];
+  const openings: Array<(value: unknown) => void> = [];
+  await mountRegisteredWindow({
+    status: { ...STANDALONE, mode: "cloud", flavor: "selfhost", accountId: MB.id, noticeDocument: 1, noticeSession: 2 },
+    calendarSnapshot: {
+      asOfSeq: 1,
+      changes: [
+        change("settings", MB.id, { accountId: MB.id, calendarEnabledAt: CONNECTED, updatedAt: CONNECTED }),
+        change("calendar_connection", connection().id, connection()),
+        change("calendar", calendar.id, calendar),
+        change("calendar_event", reminder.id, reminder),
+      ],
+      nextCursor: null,
+      window: { days: 90, minRows: 500 },
+      calendarWindow: { daysBack: 366, daysAhead: 731, maxRows: 10_000 },
+    },
+    alerts,
+    openings,
+    calendarRequests,
+  });
+  expect(alerts.filter(({ alerts: entries }) => entries.length > 0)).toEqual([
+    {
+      scope: MB.id,
+      alerts: [expect.objectContaining({
+        eventId: reminder.id, atMs: Date.parse("2026-11-16T07:50:00Z"), label: { as: "event" },
+      })],
+    },
+  ]);
+  expect(within(hostEl).queryByRole("button", { name: /^(calendar|ohcal)$/i })).toBeNull();
+  await act(async () => { window.location.hash = "#/cal/week/2026-11-16/e/appointment"; });
+  await waitFor(() => expect(window.location.hash).toBe("#/ohbox"));
+  expect(within(hostEl).queryByRole("heading", { name: "appointment" })).toBeNull();
+  await act(async () => { window.location.hash = "#/settings/notifications"; });
+  const master = await within(hostEl).findByRole("switch", { name: "Notify me on this device" });
+  const reminderSwitch = within(hostEl).getByRole("switch", { name: "An alert" });
+  const titles = within(hostEl).getByRole("switch", { name: "Show titles in notifications" });
+  expect(reminderSwitch.getAttribute("aria-checked")).toBe("true");
+  expect(titles.getAttribute("aria-checked")).toBe("false");
+  await click(reminderSwitch);
+  expect(alerts.at(-1)).toEqual({ scope: MB.id, alerts: [] });
+  expect(JSON.parse(localStorage.getItem(CALENDAR_NOTICES_KEY)!)).toEqual({ cal_alert: false, showTitles: false });
+  await click(reminderSwitch);
+  expect(alerts.at(-1)?.alerts).toHaveLength(1);
+  expect(master.getAttribute("aria-checked")).toBe("true");
+  await click(master);
+  expect(alerts.at(-1)).toEqual({ scope: MB.id, alerts: [] });
+  const opening = { scope: MB.id, document: 1, session: 2, event: reminder.id };
+  await act(async () => openings[0]!({ payload: { ...opening, session: 1 } }));
+  expect(window.location.hash).toBe("#/settings/notifications");
+  await act(async () => openings[0]!({ payload: opening }));
+  expect(window.location.hash).toBe("#/cal/week/2026-11-16/e/appointment");
+  expect(await within(hostEl).findByRole("heading", { name: "appointment" })).toBeTruthy();
+  expect(within(hostEl).queryByRole("button", { name: /^(new event|edit event|edit)$/i })).toBeNull();
+  expect(within(hostEl).queryByRole("button", { name: /^(calendar|ohcal)$/i })).toBeNull();
+  expect(calendarRequests).not.toHaveLength(0);
+  expect(calendarRequests.every((session) => session === 2)).toBe(true);
+  await click(within(hostEl).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(window.location.hash).toBe("#/ohbox"));
+  await act(async () => { window.location.hash = "#/cal/week/2026-11-16/e/appointment"; });
+  await waitFor(() => expect(window.location.hash).toBe("#/ohbox"));
+});
+
+it("opens a native mail notification only in the matching mounted session", async () => {
+  const message = letter("arrived", { mailboxId: MB.id });
+  const openings: Array<(value: unknown) => void> = [];
+  await mountRegisteredWindow({
+    status: { ...STANDALONE, noticeDocument: 1, noticeSession: 2 },
+    calendarSnapshot: {
+      asOfSeq: 1,
+      changes: [{ type: "message", id: message.id, entity: message, op: "create", seq: 1, updatedAt: CONNECTED }],
+      nextCursor: null,
+      window: { days: 90, minRows: 500 },
+    },
+    openings,
+  });
+  expect(openings).toHaveLength(1);
+  const target = { scope: MB.id, document: 1, session: 2, letter: message.id };
+  await act(async () => { window.location.hash = "#/settings/notifications"; });
+  await act(async () => openings[0]!({ payload: { ...target, session: 1 } }));
+  expect(window.location.hash).toBe("#/settings/notifications");
+  await act(async () => openings[0]!({ payload: target }));
+  expect(window.location.hash).toBe("#/ohbox/m/arrived");
+});

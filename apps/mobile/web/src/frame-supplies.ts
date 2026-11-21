@@ -6,7 +6,8 @@
  * a place task mounts one in its app's file the frame stands with nothing in it.
  */
 import { PLACE_IDS, STAGE_IDS, type FramePlaces, type FrameStages } from "@ohmail/app/frame/contract";
-import { NONE, type Appearance, type FrameSupplies, type HostAddress, type Signal } from "@ohmail/app/host";
+import type { Appearance, FrameSupplies, HostAddress, Signal } from "@ohmail/app/host";
+import { NONE } from "@ohmail/app/host/contract";
 import { browserWindowFacts, fragmentAddress } from "@ohmail/app/host/browser";
 
 /** What an app mounts: its places and stages. One file per app answers it (`./mounted`, the page's build picks it). */

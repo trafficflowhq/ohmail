@@ -99,7 +99,7 @@ afterEach(() => {
 const menu = (messages: typeof en | typeof de) =>
   within(screen.getByRole("navigation", { name: messages.settings.navAria }));
 const names = (messages: typeof en | typeof de) =>
-  menu(messages).getAllByRole("button").map((button) => button.textContent?.trim());
+  menu(messages).getAllByRole("button").map((button) => button.getAttribute("aria-label"));
 
 function addressedMailto(link: HTMLElement): { target: string; subject: string | null; body: string | null } {
   const href = link.getAttribute("href");

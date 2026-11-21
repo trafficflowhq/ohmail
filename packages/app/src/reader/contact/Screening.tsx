@@ -30,13 +30,13 @@ import { useFrame, useReport } from "../../frame/index.js";
 import { useOwnAddresses, usePressWhereOn } from "../../frame/room.js";
 import { NONE } from "../../host/index.js";
 import { useText, useTextLookup } from "../../text/index.js";
-import { useParts } from "../parts.js";
+import { PartsContext } from "../parts.js";
 import { ContactDetails, type ContactOf } from "./Contact.js";
 
 type Extras = Pick<ComponentProps<typeof ContactCard>, "scope" | "now" | "goes" | "rules" | "switches">;
 
 export function Contact({ person, onClose }: { person: ContactOf | null; onClose: () => void }) {
-  const clipboard = useParts().copy ?? NONE;
+  const clipboard = useContext(PartsContext)?.copy ?? NONE;
   const { host } = useFrame();
   const reader = host.features.reader;
   const Screening = reader === NONE ? undefined : reader.Screening;

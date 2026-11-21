@@ -4,6 +4,8 @@
  */
 import "../base/index.js";
 
+export { AddressText, type AddressTextProps } from "./AddressText.js";
+
 export { ColumnHandle } from "./Shell/ColumnHandle.js";
 export type { ColumnHandleProps } from "./Shell/ColumnHandle.js";
 export { Dock } from "./Shell/Dock.js";
@@ -83,7 +85,7 @@ export { TextNotKept } from "./Reading/TextNotKept.js";
 export type { TextNotKeptProps } from "./Reading/TextNotKept.js";
 export { ContactCard } from "./Reading/ContactCard.js";
 export type { ContactCardProps } from "./Reading/ContactCard.js";
-export { FileQuickLook, QuickLook } from "./Reading/QuickLook.js";
+export { QuickLook } from "./Reading/QuickLook.js";
 export type { QuickLookProps } from "./Reading/QuickLook.js";
 export { MovePicker } from "./Lists/MovePicker.js";
 export type { MovePickerProps } from "./Lists/MovePicker.js";

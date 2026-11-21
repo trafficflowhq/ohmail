@@ -862,10 +862,15 @@ export async function retryCalendarWrite(ctx: ServiceContext, writeId: string): 
     // attempt, the provider answered it and nothing of it landed: counted as one, the retry would take an end someone else made
     // since for its own, and make their days a second time (the third recheck's fourth finding). Its followers were never claimed
     // (a write is claimed only once the one it waits for is done), and go again from their first.
-    const act = parseWritePayload(row.payload)?.act;
+    const payload = parseWritePayload(row.payload);
+    const act = payload?.act;
+    const mayHaveLanded = row.attempts > 0 && (row.attempts > 1 || (row.refusal !== null && MAY_HAVE_LANDED.has(row.refusal)));
     const claimedEnd = row.attempts > 0 && act !== undefined && "scope" in act && act.scope.kind === "following"
-      && (row.attempts > 1 || (row.refusal !== null && MAY_HAVE_LANDED.has(row.refusal)));
-    await t.update(calWrites).set({ ...again, attempts: claimedEnd ? 1 : 0 }).where(and(eq(calWrites.id, row.id), eq(calWrites.accountId, ctx.accountId)));
+      && mayHaveLanded;
+    const cancellation = mayHaveLanded && payload?.act.kind === "calendar_event_delete"
+      ? { payload: { ...payload, cancellationAttempted: true } } : {};
+    await t.update(calWrites).set({ ...again, ...cancellation, attempts: claimedEnd ? 1 : 0 })
+      .where(and(eq(calWrites.id, row.id), eq(calWrites.accountId, ctx.accountId)));
     // Each event whose mark changes is told: the write's own, and its followers' (the second half of a press is the new series').
     const touched = new Set(row.eventId === null ? [] : [row.eventId]);
     if (followers.length > 0) {

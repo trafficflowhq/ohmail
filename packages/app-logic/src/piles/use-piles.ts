@@ -1,5 +1,7 @@
 "use client";
 
+import type { ListVerbs } from "../press/list-verbs.js";
+
 /**
  * THE MODEL OF THE THREE PILES (Answer Later, Parked, Resurface): one body for the three places, the pile the route
  * names, the counts the switch says, the rows, the letter open in the reader's column with its visit, the cursor's row
@@ -61,6 +63,7 @@ export interface PilesInput {
 }
 
 export interface PilesModel {
+  readonly verbs?: ListVerbs;
   readonly pile: PileId;
   readonly mayState: boolean;
   readonly counts: Readonly<Record<PileId, number>>;

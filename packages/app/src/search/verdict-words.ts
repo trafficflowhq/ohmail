@@ -16,7 +16,7 @@ export interface SaidLine {
 }
 
 export interface Said {
-  /** The device count and time beside Results while the verdict carries no count. */
+  /** The count beside Results, as it is printed. */
   readonly count?: string;
   readonly lines: readonly SaidLine[];
 }
@@ -30,7 +30,7 @@ function scopeSentence(v: Matched, t: Text): string {
   return t(`${scope}${suffix}`, { total: v.count.n });
 }
 
-function verdictLines(model: SearchListModel, t: Text): SaidLine[] {
+function verdictLines(model: SearchListModel, t: Text, locale: string): SaidLine[] {
   const v = model.verdict;
   const reading: SaidLine[] = model.indexing ? [{ say: t("saidReading"), busy: true }] : [];
   switch (v.kind) {
@@ -47,6 +47,12 @@ function verdictLines(model: SearchListModel, t: Text): SaidLine[] {
       /* The one sentence that may name this device: a failure's (History's and Search's copy census admits it). */
       return [{ say: t(v.refused ? "scopeFailed" : "scopeUnanswered"), warn: true, again: true }];
     case "matched": {
+      if (v.scope === "whole" && !v.near) {
+        const total = v.count.n.toLocaleString(locale);
+        if (v.count.kind === "exact" && v.count.n > 0) return reading;
+        if (v.count.kind === "about") return [...reading, { say: t("saidAbout", { total }) }];
+        if (v.count.kind === "atLeast") return [...reading, { say: t("saidAtLeast", { total }) }];
+      }
       const mirror = v.scope === "mirror";
       return [
         {
@@ -64,15 +70,17 @@ function verdictLines(model: SearchListModel, t: Text): SaidLine[] {
 }
 
 export function saidOf(model: SearchListModel, t: Text, locale: string): Said {
-  const lines = verdictLines(model, t);
+  const lines = verdictLines(model, t, locale);
   if (model.storeIndexing !== null)
     lines.push({ say: t("indexing", { percent: model.storeIndexing }), busy: true });
   if (model.syncing) lines.push({ say: t("syncing") });
   if (model.bounded !== null)
     lines.push({ say: t("bounded", { count: model.bounded.toLocaleString(locale) }) });
-  const count =
-    model.verdict.kind === "matched"
-      ? undefined
-      : t("resultsHead", { count: model.found }) + t("resultsMeta", { ms: model.tookMs });
-  return { count, lines };
+  const v = model.verdict;
+  if (v.kind === "matched") {
+    const total = v.count.n.toLocaleString(locale);
+    const count = v.count.kind === "atLeast" ? t("saidCountAtLeast", { total }) : total;
+    return { count, lines };
+  }
+  return { count: t("resultsHead", { count: model.found }) + t("resultsMeta", { ms: model.tookMs }), lines };
 }

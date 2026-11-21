@@ -223,6 +223,8 @@ export type EventChange = Partial<EventDraft>;
 
 /** The stored object a write is made on, as a reading handed it out. */
 export interface WriteTarget {
+  /** A cancellation may be checked against the provider after an unanswered attempt. Never send it again on this version. */
+  readonly caldavReadOnly?: true;
   /** These scopes were chosen for a series with no guests. */
   readonly personalSeries?: true;
   /** The confirmed audience of a single-event change or cancellation. */

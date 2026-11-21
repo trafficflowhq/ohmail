@@ -10,7 +10,8 @@
  * The phone's engine opens with the credentials, so there is no test apart from the open; a mailbox this phone
  * organizes is edited on the scoped page; and no lookup and no provider's sign-in runs from a page with no session.
  */
-import { NONE, type ConnectWire } from "@ohmail/app/host";
+import type { ConnectWire } from "@ohmail/app/host";
+import { NONE } from "@ohmail/app/host/contract";
 import { NO_DETAILS } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import { reveal } from "@ohmail/app-logic/mailboxes/connect/secret";
 import { mailboxIdOfAnswer } from "@ohmail/app-logic/mailboxes/connect/mailbox-id";

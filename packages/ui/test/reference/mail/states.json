@@ -1,10 +1,12 @@
 {
   "with": {
+    "AddressText": "MessageHead",
     "Rows": "Row",
     "ReadSquares": "Row",
     "Files": "FileTile",
     "FolderFold": "FolderShelf",
     "Attach": "Composer",
+    "ComposerMarks": "Composer",
     "DraftTabs": "Composer",
     "ReadingLine": "ReadingHead",
     "SettingLine": "SettingsSheet",

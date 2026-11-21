@@ -32,7 +32,7 @@ export interface TrashInput {
   /** Restores the server has taken: each leaves the list. */
   readonly restored: readonly string[];
   /** The seam's restore: one held window for the row, by its id. False: refused at the press. */
-  readonly restore: (target: DeleteTarget) => boolean;
+  readonly restore: (target: DeleteTarget | readonly DeleteTarget[]) => boolean;
   /** The shell's `markSeen`: the read slot writes a deleted letter's read state through it. */
   readonly markSeen: ReaderMarkSeen;
   /** The host's live wire, or `none`: the section is withheld. */
@@ -66,6 +66,7 @@ export interface TrashModel {
   readonly open: (id: string | null) => void;
   /** Restore the row: where it goes is the server's record. */
   readonly restore: (row: TrashRowWire) => void;
+  readonly restoreMany?: (rows: readonly TrashRowWire[]) => boolean;
   /** Whether the row reads as unread: its own state, or the read slot's last press on it this visit. */
   readonly unreadOf: (row: TrashRowWire) => boolean;
   /** The read slot: the row turns unread when it reads as read, and read when it reads as unread. */
@@ -133,20 +134,32 @@ export function useTrashList(input: TrashInput): TrashModel {
   useEffect(() => {
     for (const id of [...pressed.current]) if (!held.has(id)) pressed.current.delete(id);
   }, [held]);
-  const restore = useStableCallback((row: TrashRowWire) => {
-    if (pressed.current.has(row.id) || held.has(row.id)) return;
-    pressed.current.add(row.id);
-    const acted = seamRestore({ id: row.id, mailboxId: row.mailboxId });
+  const restoreMany = useStableCallback((rows: readonly TrashRowWire[]) => {
+    const targets = rows.filter(({ id }) => !pressed.current.has(id) && !held.has(id));
+    if (targets.length === 0) return false;
+    for (const { id } of targets) pressed.current.add(id);
+    const messages = targets.map(({ id, mailboxId }) => ({ id, mailboxId }));
+    const acted = seamRestore(messages.length === 1 ? messages[0]! : messages);
     if (!acted) {
-      pressed.current.delete(row.id);
-      return;
+      for (const { id } of targets) pressed.current.delete(id);
+      return false;
     }
-    if (openId === row.id) {
-      const at = order.indexOf(row.id);
-      setCursorWhenClosed(order[at + 1] ?? order[at - 1] ?? null);
+    if (openId !== null && targets.some(({ id }) => id === openId)) {
+      const restoring = new Set(targets.map(({ id }) => id));
+      const at = order.indexOf(openId);
+      const next = order.slice(at + 1).find((id) => !restoring.has(id));
+      const previous = order
+        .slice(0, at)
+        .reverse()
+        .find((id) => !restoring.has(id));
+      setCursorWhenClosed(next ?? previous ?? null);
       open(null);
     }
+    return true;
   });
+  const restore = (row: TrashRowWire) => {
+    restoreMany([row]);
+  };
   /* The page is no mirror: the slot's press is what the row reads as for the visit. */
   const [flipped, setFlipped] = useState<ReadonlyMap<string, boolean>>(new Map());
   const unreadOf = useStableCallback((row: TrashRowWire) => flipped.get(row.id) ?? row.unread);
@@ -169,6 +182,7 @@ export function useTrashList(input: TrashInput): TrashModel {
     openId,
     open,
     restore,
+    restoreMany,
     unreadOf,
     flipRead,
     stamp: input.stamp,

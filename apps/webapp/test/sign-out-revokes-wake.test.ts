@@ -84,6 +84,18 @@ function installSubscribedBrowser(unsubscribed: { value: boolean }, beforeRead?:
   });
 }
 
+function installSharedLocks() {
+  const queues = new Map<string, Promise<unknown>>();
+  const request = vi.fn((name: string, operation: () => Promise<unknown>) => {
+    const pending = (queues.get(name) ?? Promise.resolve()).then(operation, operation);
+    queues.set(name, pending);
+    return pending;
+  });
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+  return request;
+}
+
+const SUBSCRIPTION_ID_KEY = "ohmail.notifications.subscriptionId";
 const deleted: string[] = [];
 /** What each DELETE was handed beside the id: the sign-out press's pass, or nothing. */
 const passes: unknown[] = [];
@@ -314,6 +326,97 @@ describe("revokeWakeRegistration", () => {
     expect(cachePuts).toEqual([]);
   });
 
+  it("leaves the next account's wake subscription alone when an earlier turn-off is still looking it up", async () => {
+    const { applyWakeIntent, browserNotificationHost } =
+      await import("../app/shell/notification-settings");
+    document.cookie = "tf_owner=account_A; Path=/";
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const unsubscribed = { value: false };
+    installSubscribedBrowser(unsubscribed, () => { reading.resolve(); return release.promise; });
+
+    const turningOff = applyWakeIntent(browserNotificationHost, false, "Mail");
+    await reading.promise;
+    document.cookie = "tf_owner=account_B; Path=/";
+    window.localStorage.setItem(SUBSCRIPTION_ID_KEY, "row-current");
+    release.resolve();
+
+    await expect(turningOff).resolves.toBeNull();
+    expect(unsubscribed.value).toBe(false);
+    expect(deleted).toEqual([]);
+    expect(window.localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBe("row-current");
+  });
+
+  it("orders another tab's registration after an earlier turn-off waiting on the browser", async () => {
+    const offTab = await import("../app/shell/notification-settings");
+    vi.resetModules();
+    const onTab = await import("../app/shell/notification-settings");
+    const requests = installSharedLocks();
+    document.cookie = "tf_owner=account_A; Path=/";
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const removed: string[] = [];
+    const subscription = (label: string) => ({
+      endpoint: `https://push.example/${label}`,
+      getKey: (name: string) => new Uint8Array(name === "auth" ? 16 : 65).fill(7).buffer,
+      unsubscribe: async () => { removed.push(label); return true; },
+    });
+    let lookups = 0;
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { register: async () => ({ pushManager: { getSubscription: async () => {
+        if (++lookups !== 1) return subscription("replacement");
+        reading.resolve();
+        await release.promise;
+        return subscription("old");
+      } } }) },
+    });
+    localStorage.setItem(SUBSCRIPTION_ID_KEY, "old-row");
+
+    const turningOff = offTab.applyWakeIntent(offTab.browserNotificationHost, false, "Mail");
+    await reading.promise;
+    const turningOn = onTab.applyWakeIntent(onTab.browserNotificationHost, true, "Mail");
+    // Either a shared order was reserved, or the second tab already tried the browser.
+    await vi.waitFor(() => {
+      expect(lookups > 1 || requests.mock.calls.filter(([name]) => name !== "ohmail-notify-state").length === 2)
+        .toBe(true);
+    });
+    const beforeRelease = { lookups, sent: subscribe.mock.calls.length };
+    release.resolve();
+
+    await expect(turningOff).resolves.toBe("unsubscribed");
+    await expect(turningOn).resolves.toBe("subscribed");
+    expect(beforeRelease).toEqual({ lookups: 1, sent: 0 });
+    expect(removed).toEqual(["old"]);
+    expect(deleted).toEqual(["old-row"]);
+    expect(localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBe("unused");
+    expect(JSON.parse(cachePuts.at(-1)!.body).enabled).toBe(true);
+  });
+
+  it("disarms immediately and stays off when another tab's earlier registration finishes late", async () => {
+    const onTab = await import("../app/shell/notification-settings");
+    vi.resetModules();
+    const offTab = await import("../app/shell/notification-settings");
+    installSharedLocks();
+    document.cookie = "tf_owner=account_A; Path=/";
+    installSubscribedBrowser({ value: false });
+    const sent = Promise.withResolvers<void>();
+    const receipt = Promise.withResolvers<{ id: string }>();
+    subscribe.mockImplementationOnce(() => { sent.resolve(); return receipt.promise; });
+    await onTab.writeNotifyStateUnchecked(true, "ohmail", "Mail");
+
+    const turningOn = onTab.applyWakeIntent(onTab.browserNotificationHost, true, "Mail");
+    await sent.promise;
+    const turningOff = offTab.applyWakeIntent(offTab.browserNotificationHost, false, "Mail");
+    await vi.waitFor(() => expect(JSON.parse(cachePuts.at(-1)!.body).enabled).toBe(false));
+    receipt.resolve({ id: "new-row" });
+
+    await Promise.all([turningOn, turningOff]);
+    expect(deleted).toEqual(["new-row"]);
+    expect(localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBeNull();
+    expect(JSON.parse(cachePuts.at(-1)!.body).enabled).toBe(false);
+  });
+
   it("reports a browser without a shared lock as unavailable for closed-window wakes", async () => {
     const { applyWakeIntent, browserNotificationHost } = await import("../app/shell/notification-settings");
     installSubscribedBrowser({ value: false });
@@ -375,14 +478,7 @@ describe("revokeWakeRegistration", () => {
     const openTab = await import("../app/shell/notification-settings");
     installSubscribedBrowser({ value: false });
     document.cookie = "tf_owner=account_A; Path=/";
-    let cacheQueue: Promise<unknown> = Promise.resolve();
-    const request = vi.fn((name: string, write: () => Promise<void>) => {
-      expect(name).toBe("ohmail-notify-state");
-      const pending = cacheQueue.then(write);
-      cacheQueue = pending;
-      return pending;
-    });
-    Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+    const request = installSharedLocks();
     let entered!: () => void;
     const writing = new Promise<void>((resolve) => { entered = resolve; });
     let finish!: () => void;
@@ -395,7 +491,7 @@ describe("revokeWakeRegistration", () => {
     const otherTab = await import("../app/shell/notification-settings");
     markSignedOutPending();
     const signingOut = otherTab.revokeWakeRegistration({ signingOutOf: "account_A" });
-    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(request.mock.calls.filter(([name]) => name === "ohmail-notify-state")).toHaveLength(2));
     expect(cachePuts).toEqual([]);
     finish();
     await Promise.all([waking, signingOut]);

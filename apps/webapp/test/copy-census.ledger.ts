@@ -127,6 +127,9 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "apps/webapp/app/shell/ThreadMarks.tsx": [
     { text: ":focus-visible", why: "a CSS selector — `Element.matches` asks whether a square's focus came from the keyboard" },
   ],
+  "packages/ui/src/mail/Lists/square-tip.tsx": [
+    { text: ":focus-visible", why: "a CSS selector — `Element.matches` asks whether a square's focus came from the keyboard" },
+  ],
   "apps/webapp/app/components/ComposeAttach.tsx": [
     { text: "read failed", why: "the reason on a rejected FileReader, logged and re-thrown — never rendered" },
   ],

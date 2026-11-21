@@ -18,8 +18,7 @@ import { HostGate, PAIRED_PANE_PARTS } from "../../paired-page/src/HostGate.js";
  * real IndexedDB is measured with `fake-indexeddb`, beside the engine's own tests. The shell is the mail frame now
  * (`MailFrame` of the web's `browser-mail`, which every browser host mounts): the host the gate hands it is captured,
  * and what the old shell's props carried is read off it (its engine, the notice of the account's strip). The way out
- * is the Account section's door the gate hands Settings (`PAIRED_PANE_PARTS.account.useDoor`): the gate's own pane
- * (`HostAccountPane`, still handed as `features.account`) is drawn by nothing; the section's question before the
+ * is the Account section's door the gate hands Settings (`PAIRED_PANE_PARTS.account.useDoor`). The question before
  * sign-out is the section's own case (`packages/app/test/mail/settings.test.tsx`, "on a browser signed in to
  * somebody's computer it is the sign-out alone, which asks first").
  */
@@ -51,8 +50,8 @@ let discards: Array<{ except?: string | null } | undefined> = [];
 /** A part a case stands where the frame stands, under what the gate stands around it; none by default. */
 let probe: (() => null) | null = null;
 
-vi.mock("../../webapp/app/shell/browser-mail", async (load) => ({
-  ...(await load<object>()),
+vi.mock("../../webapp/app/shell/browser-mail", async () => ({
+  ...await vi.importActual<object>("../../webapp/app/shell/browser-mail"),
   MailFrame: (props: { host: HostContract }) => { host = props.host; return probe === null ? null : h(probe); },
 }));
 /* As the old shell's stand-in did: nothing below the gate drives the engine; the cases drive it themselves. */

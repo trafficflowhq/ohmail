@@ -16,4 +16,5 @@ export {
 } from "./ScreenerSettings.js";
 export { useFaceSettings, type FaceSettingsProps } from "./face-settings.js";
 export { TravelledChangeLine } from "./TravelledChangeLine.js";
-export { BrowserAwaySettings, BrowserGeneralSettings, setTextSize } from "./adapters.js";
+export { BrowserAwaySettings, BrowserGeneralSettings } from "./adapters.js";
+export { setTextSize } from "@ohmail/app-logic/text/text-size";

@@ -3446,7 +3446,7 @@ describe("the UI bundle's build config", () => {
     expect(read("src/local-suggest.tsx")).toMatch(/runSuggest/);
     expect(read("src/local-suggest-run.ts")).toMatch(/\/screener\/suggest/);
     expect(mount).toMatch(/ownSuggest\?\.\(\{ senders: model\.unsuggestedSenders, absorb \}\)/);
-    expect(tools).toMatch(/ownSuggest \?\? \(suggest !== NONE/);
+    expect(tools).toMatch(/ownSuggest \?\?\s*\(suggest !== NONE/);
     expect(frame, "the window never hands its own suggestion control to the Screener").toMatch(/\bLocalSuggest\b/);
   });
 

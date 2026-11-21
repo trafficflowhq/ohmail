@@ -608,6 +608,9 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         transport: adapter,
         ...(calendarSetup ? { calendarSetupTransport: () => ({
           calendarWays: gatedPress(calendarSetup.calendarWays, "reading calendar connection options"),
+          ...(calendarSetup.calendarConnections ? {
+            calendarConnections: gatedPress(calendarSetup.calendarConnections, "reading calendar connections"),
+          } : {}),
           connectCalendar: gatedPress(calendarSetup.connectCalendar, "connecting a calendar"),
           removeCalendarConnection: gatedPress(calendarSetup.removeCalendarConnection, "removing a calendar connection"),
           checkCalendarConnection: gatedPress(calendarSetup.checkCalendarConnection, "checking a calendar connection"),

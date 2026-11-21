@@ -33,7 +33,7 @@ const TWO: MailboxLabelFact[] = [
 ];
 const ONE: MailboxLabelFact[] = [TWO[0]!];
 
-const message = (mailboxId: string, to = [{ name: null, address: "w@x.invalid" }]): EngineMessage =>
+const message = (mailboxId: string, to: EngineMessage["to"] = [{ name: null, address: "w@x.invalid" }]): EngineMessage =>
   issue("m1", 12, {
     mailboxId,
     subject: "The weekly note", from: { name: "Ida Vogt", address: "ida@x.invalid" },
@@ -145,9 +145,9 @@ describe("an account with nothing to disambiguate is told nothing", () => {
 
 describe("the label is its own node, not a relaxed recipients block", () => {
   it("one recipient, two mailboxes: the label renders and the recipients block does NOT", async () => {
-    // The card's recipients block is withheld below two recipients (`reads-recipients.test.tsx`).
+    // The card's recipients block is withheld for one external recipient (`reads-recipients.test.tsx`).
     // An implementation that dropped that gate to fit the mailbox in reddens here.
-    await mountReads(message("mb-work"), TWO);
+    await mountReads(message("mb-work", [{ name: "Newsletter", address: ["list", "newsletter.invalid"].join("@") }]), TWO);
     expect(cardBadges()).toContain("Work");
     expect(
       card().querySelector(".oh-messagehead-to"),

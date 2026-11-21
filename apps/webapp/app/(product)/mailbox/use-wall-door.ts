@@ -16,7 +16,7 @@ import { signOutTrouble, type SignOutTrouble } from "../../sign-out-trouble";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { saveBlob } from "../../shell/attachments";
 import { ApiError, account, type AccessRefusedFacts, type AccountLifecycle } from "../../api-client";
-import { leaveForManagePage } from "./SubscriptionSection";
+import { leaveForManagePage } from "./manage-navigation";
 import { useWallLift } from "@ohmail/app-logic/doors/wall-lift";
 import { neverStarted, opensTheWall } from "../../access-verdict";
 

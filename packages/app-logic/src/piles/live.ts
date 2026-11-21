@@ -24,7 +24,7 @@ import { useListWalkKeys } from "../place-list/walk.js";
 import { usePresented } from "../reading/presented-mirror.js";
 import { useDayClock } from "../session/day-clock.js";
 import { stampOver } from "../text/format.js";
-import { PILE_IDS, usePiles, type PileId, type PilesModel } from "./use-piles.js";
+import { PILE_IDS, usePiles, type PileId } from "./use-piles.js";
 
 /** The piles list nothing past the mirror: every row resolves through the presented mirror itself. */
 const NO_SURFACE: readonly EngineMessage[] = [];
@@ -69,7 +69,7 @@ function messagesFrom(presented: EntityReader): (id: string) => EngineMessage | 
   return (id) => presented.get<EngineMessage>("message", id) ?? null;
 }
 
-export function usePilesLive(args: PlaceLiveArgs, own: PilesLiveOwn): PilesModel {
+export function usePilesLive(args: PlaceLiveArgs, own: PilesLiveOwn) {
   const presented = usePresented(); // throws where no ground stands above
   const derived = useDerivedVersion();
   const { route } = args;
@@ -96,5 +96,5 @@ export function usePilesLive(args: PlaceLiveArgs, own: PilesLiveOwn): PilesModel
     arrival: "first",
   });
   useListWalkKeys(model.walk, own);
-  return model;
+  return { ...model, verbs: list.verbs };
 }

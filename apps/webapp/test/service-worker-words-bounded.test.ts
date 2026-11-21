@@ -10,25 +10,29 @@ import { describe, expect, it, vi } from "vitest";
 
 const WORKER = readFileSync(fileURLToPath(new URL("../public/sw.js", import.meta.url)), "utf8");
 
-type Handler = (event: { data?: unknown; waitUntil(p: Promise<unknown>): void }) => void;
+type Handler = (event: { data?: unknown; notification?: unknown; waitUntil(p: Promise<unknown>): void }) => void;
 
 type WorkerLock = { request(name: string, options: LockOptions, draw: () => Promise<boolean>): Promise<boolean> };
 const unlocked: WorkerLock = { request: async (_name, _options, draw) => draw() };
 
 /** The worker over a stub `self`: no visible window, and `entry` as the page last stored it. */
-function workerWith(entry: () => unknown, locks: WorkerLock | null = unlocked, visible = () => false) {
+function workerWith(
+  entry: () => unknown, locks: WorkerLock | null = unlocked, visible = () => false,
+  clickClients?: unknown[],
+) {
   const handlers = new Map<string, Handler[]>();
   const shown: { title: string; options: Record<string, unknown> }[] = [];
   const nudges: unknown[] = [];
+  const openWindow = vi.fn(async () => undefined);
   const self = {
     addEventListener: (type: string, h: Handler) => { handlers.set(type, [...(handlers.get(type) ?? []), h]); },
     navigator: { locks },
     clients: {
-      matchAll: async () => visible()
+      matchAll: async () => clickClients ?? (visible()
         ? [{ visibilityState: "visible", postMessage: (note: unknown) => { nudges.push(note); } }]
-        : [],
+        : []),
       claim: async () => undefined,
-      openWindow: async () => undefined,
+      openWindow,
     },
     registration: {
       scope: "https://mail.example/",
@@ -37,13 +41,13 @@ function workerWith(entry: () => unknown, locks: WorkerLock | null = unlocked, v
     skipWaiting: async () => undefined,
   };
   const caches = { open: async () => ({ match: async () => new Response(JSON.stringify(entry())) }) };
-  runInNewContext(WORKER, { self, caches, AbortController, setTimeout, clearTimeout });
+  runInNewContext(WORKER, { self, caches, AbortController, MessageChannel, URL, setTimeout, clearTimeout });
   const fire = async (type: string, data?: unknown): Promise<void> => {
     const waits: Promise<unknown>[] = [];
-    for (const h of handlers.get(type) ?? []) h({ data, waitUntil: (p) => { waits.push(p); } });
+    for (const h of handlers.get(type) ?? []) h({ data, notification: type === "notificationclick" ? data : undefined, waitUntil: (p) => { waits.push(p); } });
     await Promise.all(waits);
   };
-  return { fire, shown, nudges };
+  return { fire, shown, nudges, openWindow };
 }
 
 const words = (n: number): string => "w".repeat(n);
@@ -131,4 +135,88 @@ describe("the worker draws two strings of at most 120 characters each, or nothin
       vi.useRealTimers();
     }
   });
+});
+
+it("focuses the tab that accepts a tapped calendar notice's opaque handle", async () => {
+  const focusFirst = vi.fn();
+  const focusOwner = vi.fn();
+  const handle = "6e0a4c1e-0000-4000-8000-000000000001";
+  const received: unknown[] = [];
+  const first = {
+    url: "https://mail.example/mailbox",
+    focus: focusFirst,
+    postMessage: (_message: unknown, [port]: MessagePort[]) => port.postMessage(false),
+  };
+  const owner = {
+    url: first.url,
+    focus: focusOwner,
+    postMessage: (message: unknown, [port]: MessagePort[]) => {
+      received.push(message);
+      port.postMessage(true);
+    },
+  };
+  const worker = workerWith(() => null, unlocked, () => false, [first, owner]);
+  await worker.fire("notificationclick", {
+    tag: "ohmail-cal-alert", data: { stamp: 42, open: handle, event: "untrusted" }, close: vi.fn(),
+  });
+  expect(received).toEqual([{ type: "ohmail:notice-open", open: handle }]);
+  expect(focusOwner).toHaveBeenCalledOnce();
+  expect(focusFirst).not.toHaveBeenCalled();
+});
+
+it("takes a closed-window mail wake to the Ohbox without using payload data as a route", async () => {
+  const focus = vi.fn();
+  const navigate = vi.fn(async (_url: string) => ({ focus }));
+  const worker = workerWith(() => null, unlocked, () => false, [{
+    url: "https://mail.example/mailbox#/settings",
+    focus, navigate,
+  }]);
+  await worker.fire("notificationclick", {
+    tag: "ohmail-new-mail", data: { href: "https://elsewhere.example/", messageId: "untrusted" }, close: vi.fn(),
+  });
+  expect(navigate).toHaveBeenCalledWith("https://mail.example/mailbox#/ohbox");
+  expect(focus).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["ohmail-new-mail", "missing"],
+  ["ohmail-new-mail", "negative"],
+  ["ohmail-new-mail", "silent"],
+  ["ohmail-cal-alert", "missing"],
+  ["ohmail-cal-alert", "negative"],
+  ["ohmail-cal-alert", "silent"],
+])("ends the targeted %s tap after a %s acknowledgement", async (tag, acknowledgement) => {
+  const focus = vi.fn();
+  const navigate = vi.fn(async () => ({ focus }));
+  const clients = acknowledgement === "missing" ? [] : [{
+    url: "https://mail.example/mailbox#/settings",
+    focus,
+    navigate,
+    postMessage: (_message: unknown, [port]: MessagePort[]) => {
+      if (acknowledgement === "negative") port.postMessage(false);
+      port.close();
+    },
+  }];
+  const worker = workerWith(() => null, unlocked, () => false, clients);
+  await worker.fire("notificationclick", {
+    tag, data: { open: "6e0a4c1e-0000-4000-8000-000000000001" }, close: vi.fn(),
+  });
+  expect(navigate).not.toHaveBeenCalled();
+  expect(worker.openWindow).not.toHaveBeenCalled();
+  expect(focus).not.toHaveBeenCalled();
+});
+
+it("still focuses the first window for an unrelated notice kind", async () => {
+  const focus = vi.fn();
+  const navigate = vi.fn();
+  const postMessage = vi.fn();
+  const worker = workerWith(() => null, unlocked, () => false, [{
+    url: "https://mail.example/mailbox#/settings", focus, navigate, postMessage,
+  }]);
+  await worker.fire("notificationclick", {
+    tag: "ohmail-pairing", data: { open: "6e0a4c1e-0000-4000-8000-000000000001" }, close: vi.fn(),
+  });
+  expect(focus).toHaveBeenCalledOnce();
+  expect(navigate).not.toHaveBeenCalled();
+  expect(postMessage).not.toHaveBeenCalled();
 });

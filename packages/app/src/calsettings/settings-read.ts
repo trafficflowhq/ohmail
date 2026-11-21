@@ -131,6 +131,6 @@ export function useCalendarSwitchOffered(): boolean {
   return said?.enabledAt !== null || said.unconfigured === true;
 }
 
-export function useCalendarEnabled(): boolean {
-  return useContext(SettingsContext)?.said?.enabledAt !== null;
+export function useSharedCalendarSettings(): SettingsRead | null {
+  return useContext(SettingsContext);
 }

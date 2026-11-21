@@ -1591,6 +1591,10 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
     origin: { bounded: "the events the same page's select found, never more than the ids it was asked for" },
     count: 1,
   },
+  "calendar/feed.ts :: candidates": {
+    origin: { bounded: "editable recurring event rows among the account's selected ids: MAX_LIMIT for sync and snapshot pages, or one write and its followers under CALENDAR_WRITE_LIMITS.openPerAccount" },
+    count: 1,
+  },
   // The export's addresses: the mailboxes the account's own calendar connections ride.
   "calendar/export.ts :: mailboxIds": {
     origin: { bounded: "one per calendar connection of the account, each a sign-in the person made by hand" },
@@ -1796,7 +1800,6 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   "held-release-service.ts :: [\"create\", \"update\"]": { origin: "constant", count: 1 },
   "resurfaced-fold.ts :: threads": { origin: { bounded: "the distinct thread ids of ONE `new_for_you` page (a `clampLimit`ed page) or of Power Through's one current row" }, count: 1 },
   "folders.ts :: ids as string[]": { origin: { bounded: "one `/sync` change page's folder ids — the sole caller filters them out of a `slice(0, limit)`ed change-log page, the same provenance the materialize prefetches carry" }, count: 1 },
-  "junk-window.ts :: targets": { origin: { bounded: "one junk window page, bounded by the window's own read caps" }, count: 1 },
   "junk-window.ts :: wanted": { origin: { bounded: "the message-ids of one junk page, so bounded by that page" }, count: 1 },
   // The standing-command attribution's three keys, all of them derived from ONE junk page: the
   // mailboxes it spans (the account's connected mailboxes with a junk folder), and the distinct
@@ -1986,11 +1989,6 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
     origin: { caller: "THREAD_MERGE_MAX_IDS and a uuid shape test, before the transaction opens" },
     count: 1,
   },
-  // ONE again, and the drop is the fix for the drain's timeout: the two reads that each carried
-  // this predicate — `sweepScreenedOut`'s per-account candidates and `drainScreenedOut`'s
-  // account census — now join ONE page-fenced subquery that holds it, so there is a single place
-  // the closed `Destination` constant reaches SQL. Nothing a caller supplies reaches it.
-  "unsubscribe-service.ts :: REJECT_DESTINATIONS as string[]": { origin: "constant", count: 1 },
   // The 0.22 rename: the News pile is asked for under BOTH spellings, because a rule stored
   // before it still points at the legacy folder. Two module constants, so the predicate is
   // two elements wide whatever the account holds.
@@ -2008,6 +2006,13 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
     count: 1,
   },
 };
+
+const RETIRED_IN_SINKS = [
+  // The confirmed sweep records each mailbox under its own lock.
+  "junk-window.ts :: targets",
+  // Stored rules can no longer send an unsubscribe request from the background drain.
+  "unsubscribe-service.ts :: REJECT_DESTINATIONS as string[]",
+] as const;
 
 describe("SECTION 3 — every SQL `IN` predicate says where its array came from", () => {
   /**
@@ -2081,6 +2086,7 @@ describe("SECTION 3 — every SQL `IN` predicate says where its array came from"
     const declared = new Set(Object.keys(IN_SINKS));
     const undeclared = [...found.keys()].filter((k) => !declared.has(k)).sort();
     const stale = [...declared].filter((k) => !found.has(k)).sort();
+    expect(RETIRED_IN_SINKS.filter((k) => found.has(k) || declared.has(k)), "retired SQL predicates").toEqual([]);
     expect(undeclared, "SQL `IN` predicate(s) whose array origin is not declared").toEqual([]);
     expect(stale, "declared origin(s) for an `inArray` that no longer exists").toEqual([]);
 

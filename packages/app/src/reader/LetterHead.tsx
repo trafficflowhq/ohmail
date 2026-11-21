@@ -1,5 +1,4 @@
 import type { EngineMessage } from "@ohmail/wire";
-import { Badge } from "@ohmail/ui";
 import { useId, useState, type ReactNode } from "react";
 import { BlockedImages, type MessageHeadProps } from "@ohmail/ui/mail";
 import {
@@ -14,10 +13,13 @@ import { senderCheckFact, senderCheckSentence } from "@ohmail/app-logic/screener
 import { forwardedToNames, recipientRows } from "@ohmail/app-logic/text/format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useMailboxName, useMailboxWord, useOwnAddresses } from "../frame/room.js";
+import { DeliveryLabel } from "../place-list/DeliveryLabel.js";
 import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
 import { LetterMenu } from "./actions/LetterMenu.js";
 import type { ContactOf } from "./contact/Contact.js";
 import type { LetterNotice } from "./ports.js";
+
+const CARD_RECIPIENT_CHIPS = 2;
 
 const nameOf = (p: { name: string | null; address: string }): string => p.name?.trim() || p.address;
 
@@ -89,12 +91,9 @@ export function useLetterHeadPresentation(props: LetterHeadProps) {
     senderCheck: identity ? senderCheckSentence(screener, identity) : undefined,
     amount: streamCard || (preview && (place !== "receipts" || message.subject)) ? undefined : message.amount,
     delivery: delivery ? (
-      <Badge
-        variant={place === "reads" ? "place" : undefined}
-        title={tm("deliveredToTitle", { label: delivery })}
-      >
+      <DeliveryLabel place={place === "reads"} title={tm("deliveredToTitle", { label: delivery })}>
         {tm("deliveredTo", { label: delivery })}
-      </Badge>
+      </DeliveryLabel>
     ) : undefined,
     deliveryOpen: streamCard === "open",
     note: notice ? (
@@ -114,7 +113,7 @@ export function useLetterHeadPresentation(props: LetterHeadProps) {
     details: {
       label: tm("details"),
       name: details ? tm("detailsHideAria") : detailName,
-      max: preview ? 2 : 3,
+      max: preview ? CARD_RECIPIENT_CHIPS : 3,
       more: (group, shown) => {
         const count = group.people.length - shown.length;
         return {

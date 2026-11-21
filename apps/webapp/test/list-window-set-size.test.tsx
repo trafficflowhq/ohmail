@@ -151,7 +151,8 @@ describe("a windowed list announces its true size and every row's true position"
     });
     const first = await within(host).findByRole("listbox", { name: "New" });
     const m = { host, scroller: first.closest<HTMLElement>(".pl-scroll")! };
-    expectHeard(await walk(m.host, m.scroller, N), { Projects: N }, (_, k) => indexOfKey(k) + 1);
+    expectHeard(await walk(m.host, m.scroller, N + 2), { New: 60, Earlier: N - 60 },
+      (label, k) => (label === "New" ? indexOfKey(k) + 1 : indexOfKey(k) - 59));
   });
 
   it("a Trash of 600", async () => {

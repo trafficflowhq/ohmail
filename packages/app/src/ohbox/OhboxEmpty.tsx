@@ -3,16 +3,18 @@
  * the mail went instead. Nothing is said about mail before the Ohbox may say it; while it is still owed, the shell's
  * rows as shape stand where the rows will be.
  */
+import { useContext } from "react";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import { Empty } from "@ohmail/ui/base";
 import { useText } from "../text/index.js";
-import type { OhboxBeside } from "./beside.js";
+import { OhboxShapeContext, type OhboxBeside } from "./beside.js";
 
 export function OhboxEmpty({ model, beside }: { model: OhboxListModel; beside: OhboxBeside }) {
   const t = useText("ohbox");
   const places = useText("place");
   const owed = model.surface !== "empty";
+  const shape = useContext(OhboxShapeContext);
   const speak = useLoadingGrace(owed);
   if (beside.mail.mailboxes === 0) {
     const { mailboxesHref: href, mailboxes } = beside.go;
@@ -27,7 +29,7 @@ export function OhboxEmpty({ model, beside }: { model: OhboxListModel; beside: O
         ) : (
           <div className="ob-wait" role="status" aria-busy="true" />
         )}
-        {beside.shape}
+        {beside.shape ?? shape}
       </>
     );
   }

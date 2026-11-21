@@ -55,9 +55,7 @@ const refreshes = (): Sent[] => sent.filter((s) => s.url === "/auth/refresh");
 const syncs = (): Sent[] => sent.filter((s) => s.url.startsWith("/api/sync?"));
 
 function lowered(init?: RequestInit): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries((init?.headers ?? {}) as Record<string, string>)) out[k.toLowerCase()] = v;
-  return out;
+  return Object.fromEntries(new Headers(init?.headers).entries());
 }
 
 function serve(url: string, init?: RequestInit): Response {

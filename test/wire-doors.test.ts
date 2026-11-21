@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { STAFF_DOOR_KEY } from "@trafficflow/db/cloud";
 import { BINDER_SQL, flightsOf, type PgWireFlight, type PgWireStatement } from "@trafficflow/db/testing";
 import { OWED, doorOf, namedBy, refusedOf, statementShape, unmetOf } from "./support/wire-doors.js";
+import { RETIRED_UNSUBSCRIBE_WALK } from "./support/wire-owed-statements.js";
 
 /**
  * THE DOORS' LISTS, held against statements written by hand. The two wire tests read every
@@ -133,6 +134,24 @@ describe("refusedOf holds a statement against its door's list", () => {
     expect(row.statements).toEqual([statementShape(rotation)]);
     expect(refusals("api", flightOf(["", ""], rotation))).toEqual([]);
     expect(refusals("api", flightOf(["", ""], `delete from "mailbox_credentials" where "mailbox_id" = $1`))).toEqual(["nothing write mailbox_credentials"]);
+  });
+
+  it("refuses the retired unsubscribe walk on every table it read without an account", () => {
+    const sentText = RETIRED_UNSUBSCRIBE_WALK
+      .replace(/\(\$…\)/g, "($1, $2)").replace(/#/g, "7");
+    const met = new Set<string>();
+    expect(refusals("api", flightOf(["", ""], sentText), met)).toEqual([
+      "nothing read account_settings",
+      "nothing read folder_state",
+      "nothing read learning_signals",
+      "nothing read mailboxes",
+      "nothing read message_bodies",
+      "nothing read messages",
+      "nothing read rules",
+      "nothing read unsubscribe_examined",
+      "nothing read unsubscribe_records",
+    ]);
+    expect([...met]).toEqual([]);
   });
 });
 

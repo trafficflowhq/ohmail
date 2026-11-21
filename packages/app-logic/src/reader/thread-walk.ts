@@ -24,11 +24,12 @@ export interface ThreadWalkInput {
   readonly onEnter: () => void;
   readonly names?: ThreadDomNames;
   /**
-   * Open the conversation AT the opened letter, as today's reader opens it: its top {@link OPEN_GAP_PX} under what
-   * stays over the column's top, kept there while bodies land above it, without entering the visit. Let go for good
-   * at the person's first gesture, a hand scroll, a square's press, or after {@link ANCHOR_CEILING_MS}.
+   * Hold the chosen message while bodies land, without entering the visit. Let go at the person's first gesture,
+   * a hand scroll, a square's press, or after {@link ANCHOR_CEILING_MS}.
    */
   readonly anchor?: boolean;
+  /** Open the conversation at its first unread message, or at the top when all are read. */
+  readonly wholeThread?: boolean;
   /**
    * The open's anchor stands down for good while this answers true: the person's own reply has joined the
    * conversation (`sent-reveal`'s `claims`), which the reveal brings into view; the open must not pull it away.
@@ -38,12 +39,13 @@ export interface ThreadWalkInput {
 
 /** A ceiling, not a schedule: a conversation still growing after this has something else wrong with it. */
 export const ANCHOR_CEILING_MS = 6000;
-/** How far under the column's top (under its head, where one stays there) an open puts the opened letter's top. */
+/** How far under the column's top (under its head, where one stays there) an open puts the message's top. */
 export const OPEN_GAP_PX = 14;
 /** Far from the conversation's last letter: this far above its landing, or half the view where that is more. */
 export const END_FAR_PX = 240;
 /** What may be a person's intent, heard first (capture) on the column's own window. */
 const HANDOVER = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
+const OPEN_TAIL = "--oh-sheet-open-tail";
 
 export interface ThreadWalk {
   /** The index of the letter the reader is on, or -1 before the column is measured. */
@@ -62,6 +64,7 @@ export function useThreadWalk({
   onEnter,
   names = THREAD_DOM,
   anchor = false,
+  wholeThread = false,
   standsDown,
 }: ThreadWalkInput): ThreadWalk {
   const ids = messages.map((m) => m.id);
@@ -70,18 +73,19 @@ export function useThreadWalk({
   list.current = ids;
   const walk = useRef<Walk | null>(null);
   const view = useRef(0);
-  const pin = useRef<string | null>(openedId);
+  const pin = useRef<string | null>(wholeThread ? null : openedId);
   const [here, setHere] = useState<string | null>(null);
   const [endFar, setEndFar] = useState(false);
-  const latest = useRef({ onEnter, names, standsDown });
-  latest.current = { onEnter, names, standsDown };
+  const startId = wholeThread ? (messages.find((m) => m.unread)?.id ?? ids[0] ?? null) : null;
+  const latest = useRef({ onEnter, names, standsDown, startId });
+  latest.current = { onEnter, names, standsDown, startId };
   /* The open's anchor, live from the open until it is let go. */
   const anchored = useRef(anchor);
 
-  /* A conversation opened, or opened on another letter, holds that letter. */
+  /* The first layout chooses the pin only for a whole thread. */
   useEffect(() => {
-    pin.current = openedId;
-  }, [openedId]);
+    pin.current = wholeThread ? null : openedId;
+  }, [wholeThread, openedId]);
 
   const look = useCallback((): void => {
     const w = walk.current;
@@ -102,31 +106,38 @@ export function useThreadWalk({
       at.set(p.dataset.convId ?? "", cssRect(p).top - top0 + scroller.scrollTop);
     const v = viewOf(scroller, latest.current.names);
     view.current = Math.max(0, v.bottom - v.top);
-    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    let max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    if (anchored.current && latest.current.standsDown?.() === true) anchored.current = false;
+    const anchoring = anchored.current && list.current.length > 1 && view.current > 0;
+    if (anchoring && wholeThread && pin.current === null) pin.current = latest.current.startId;
+    const pinned = pin.current === null ? -1 : list.current.indexOf(pin.current);
+    const top = at.get(pin.current ?? "");
+    if (anchoring && pinned >= 0 && top !== undefined && Number.isFinite(top)) {
+      const clearance = coverOf(scroller, latest.current.names) + OPEN_GAP_PX;
+      const offset = wholeThread && pinned === 0 ? 0 : Math.max(0, top - clearance);
+      if (wholeThread && offset > max) {
+        const lastTop = at.get(list.current.at(-1)!) ?? top;
+        max = extendOpenRoom(scroller, top0, Math.max(offset, lastTop - clearance));
+      }
+      scrollProgrammatically(scroller, Math.min(max, offset));
+    }
     walk.current = threadWalk({
       tops: list.current.map((id) => at.get(id) ?? Number.NaN),
       max,
       view: view.current,
-      opened: pin.current === null ? -1 : list.current.indexOf(pin.current),
+      opened: pinned,
     });
-    const opened = pin.current === null ? -1 : list.current.indexOf(pin.current);
-    const top = at.get(pin.current ?? "") ?? Number.NaN;
-    if (anchored.current && latest.current.standsDown?.() === true) anchored.current = false;
-    const anchoring = anchored.current && opened >= 0 && list.current.length > 1 && view.current > 0;
-    if (anchoring && Number.isFinite(top)) {
-      const under = top - coverOf(scroller, latest.current.names) - OPEN_GAP_PX;
-      scrollProgrammatically(scroller, Math.min(max, Math.max(0, under)));
-    }
     look();
-  }, [scroller, look]);
+  }, [scroller, look, wholeThread]);
 
   const land = useCallback(
     (i: number): boolean => {
       measure();
-      const w = walk.current;
       const id = list.current[i];
-      if (!scroller || !w || id === undefined || view.current <= 0) return false;
+      if (!scroller || id === undefined || view.current <= 0) return false;
       anchored.current = false;
+      const w = walk.current;
+      if (!w) return false;
       scrollProgrammatically(scroller, w.scrollFor(i));
       pin.current = id;
       look();
@@ -206,6 +217,17 @@ function useLayoutWatch(
       win.removeEventListener("resize", soon);
     };
   }, [scroller, key, measure, look, landOwed, onHand]);
+}
+
+/** A short remainder needs space below the letters for the opening to align and still leave a way to the last one. */
+function extendOpenRoom(scroller: HTMLElement, top: number, end: number): number {
+  const run = scroller.lastElementChild;
+  if (run) {
+    const runEnd = cssRect(run).bottom - top + scroller.scrollTop;
+    const foot = Math.max(0, Math.ceil(end + scroller.clientHeight - runEnd));
+    scroller.style.setProperty(OPEN_TAIL, `${foot}px`);
+  }
+  return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
 }
 
 /** How much of the scroller's top its head covers while it stays there; nothing where it scrolls away with the rest. */

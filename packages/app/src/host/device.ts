@@ -94,10 +94,11 @@ export interface WindowFacts {
   readonly posture: Posture;
   readonly reducedMotion: boolean;
 }
-/** The look a shell stands under: the face and the scheme it already chose. */
+/** The look a shell stands under and the optional mail layout preference. */
 export interface Appearance {
   readonly face: "paper" | "ohmarchy";
   readonly scheme: "light" | "dark";
+  readonly layout?: "classic" | "zero";
 }
 /** The address bar, owned by the shell. The frame reads and writes the fragment through it, never `location`. */
 export interface HostAddress {

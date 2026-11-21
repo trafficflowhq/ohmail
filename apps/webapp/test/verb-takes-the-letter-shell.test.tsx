@@ -916,8 +916,8 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     const list = within(host).getByRole("listbox", { name: en.ohbox.resurfacedGroup });
     const row = within(list).getByRole("option", { name: subject });
     await click(row);
-    const avatar = within(row).getByRole("button", { name: en.screening.openFor.replace("{sender}", KAI.name) });
-    await click(avatar);
+    const senderName = within(row).getByRole("button", { name: en.screening.openFor.replace("{sender}", KAI.name) });
+    await click(senderName);
     return within(screen.getByRole("dialog", { name: en.screening.aria.replace("{sender}", KAI.address) }));
   };
 

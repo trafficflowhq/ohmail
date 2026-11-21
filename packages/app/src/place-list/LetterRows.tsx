@@ -5,13 +5,19 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import type { ReactNode } from "react";
+import type { RowSelection } from "./use-row-selection.js";
+import type { RowContact } from "./use-row-contact.js";
 import { Row, Rows } from "@ohmail/ui/mail";
+import { useRowPeople } from "./people.js";
 
 export interface LetterRowsProps {
   readonly label: string;
+  readonly selection?: RowSelection;
+  readonly contact?: RowContact;
   readonly rows: readonly EngineMessage[];
   readonly windowed?: {
     readonly start: number;
+    readonly total: number;
     readonly top: number;
     readonly bottom: number;
     readonly rowHeight: number;
@@ -42,6 +48,8 @@ export interface LetterRowsProps {
 
 export function LetterRows({
   label,
+  selection,
+  contact,
   rows,
   windowed,
   cursor,
@@ -56,11 +64,15 @@ export function LetterRows({
   spoken,
   onMenu,
 }: LetterRowsProps) {
+  const rowPeople = useRowPeople();
   return (
-    <Rows label={label}>
+    <Rows label={label} many={selection !== undefined}>
       {windowed ? <div data-window-top="" aria-hidden style={{ height: windowed.top }} /> : null}
       {(windowed?.slots ?? rows).map((m, offset) => {
         const index = windowed ? windowed.start + offset : slice && slice.index + offset;
+        const place = windowed
+          ? { at: windowed.start + offset + 1, of: windowed.total }
+          : slice && { at: slice.first + offset + 1, of: slice.total };
         if (m === "gone") return <div key={`gone-${index}`} aria-hidden />;
         if (m === null)
           return (
@@ -73,13 +85,16 @@ export function LetterRows({
           );
         const name = who(m);
         const open = m.id === cursor;
+        const pick = selection?.rowProps(m.id);
         return (
           <Row
             key={m.id}
+            {...pick}
+            {...contact?.rowProps(m.from, m.id)}
             who={name}
             address={m.from.address}
             fitAddress={fitAddress}
-            people={[{ name: m.from.name ?? m.from.address, address: m.from.address }]}
+            {...rowPeople(m, { name: m.from.name ?? m.from.address, address: m.from.address })}
             subject={m.subject}
             preview={m.snippet ?? undefined}
             when={m.date === null ? undefined : stamp(m.date)}
@@ -93,9 +108,9 @@ export function LetterRows({
             listing={{
               name: `${name}: ${m.subject}`,
               spoken: spoken(m),
-              selected: open,
+              selected: selection?.ids.length ? pick?.picked === true : open,
               stop: open,
-              place: slice && { at: slice.first + offset + 1, of: slice.total },
+              place,
             }}
             mark={{ id: m.id, unseen: m.unread, index }}
           />

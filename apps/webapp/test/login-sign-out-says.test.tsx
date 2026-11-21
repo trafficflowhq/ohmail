@@ -9,6 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
+import { clearSignOutJar, installSessionLocks, markPendingSignOut } from "./fixtures/sign-out-jar.js";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -24,6 +25,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 const A = messages.account as Record<string, string>;
 const R = messages.resume as Record<string, string>;
 const PENDING = "signed_out_pending";
+const REFUSED_WITH_UNVERIFIED_WIPE = A.signOutServerRefusedUnverified!.replace("{reason}", "busy");
 /** The registry's anchor: this origin was seen holding no mirror before the registry named them all. */
 const ANCHOR = "ohmail.mirror.__since";
 const MIRROR = "ohmail-mirror:acct_1";
@@ -67,16 +69,22 @@ beforeEach(() => {
   localStorage.clear();
   localStorage.setItem(`ohmail.mirror.${MIRROR}`, "1");
   mirrorOnDisk();
-  document.cookie = `tf_owner=${PENDING}; Path=/`;
+  markPendingSignOut("acct_1");
+  installSessionLocks();
   originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/auth/refresh/logout")) {
+      if (new Headers(init?.headers).get("X-Ohmail-Clear-Logout") === "1") {
+        wire.push("clear");
+        clearSignOutJar();
+        return noContent();
+      }
       wire.push("door");
       return doorScript[Math.min(count("door"), doorScript.length) - 1]!();
     }
     // The cache purge after a confirmed sign-out presents nothing: answered apart, never a renewal.
-    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") { wire.push("purge"); return new Response(null, { status: 202 }); }
+    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") { wire.push("purge"); return new Response(null, { status: 202, headers: { "Clear-Site-Data": '"cache"' } }); }
     if (url.endsWith("/auth/refresh")) { wire.push("refresh"); return json({ error: { code: "refresh_revoked" } }, 401); }
     if (url.includes("/auth/session")) { wire.push("session"); return json({}, 401); }
     if (url.includes("/auth/login")) {
@@ -93,7 +101,8 @@ afterEach(async () => {
   for (const root of roots) await act(() => root.unmount());
   roots = [];
   document.body.innerHTML = "";
-  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  clearSignOutJar();
+  Reflect.deleteProperty(globalThis.navigator, "locks");
   Reflect.deleteProperty(globalThis, "indexedDB");
   globalThis.fetch = originalFetch;
   vi.useRealTimers();
@@ -167,7 +176,8 @@ describe("a wipe that does not land ends the ladder, and is said", () => {
     expect(count("door"), "a blocked wipe stopped the server half's retries").toBe(CONFIRM_ATTEMPTS);
     await tick(60_000);
     expect(count("door"), "the ladder kept asking after it ended").toBe(CONFIRM_ATTEMPTS);
-    expect(alerts(el), "a blocked wipe ended in silence").toEqual([A.signOutBlocked]);
+    expect(alerts(el), "a blocked wipe ended in silence").toEqual([REFUSED_WITH_UNVERIFIED_WIPE]);
+    expect(count("clear")).toBe(0);
     expect(document.cookie).toContain(PENDING);
   });
 
@@ -189,7 +199,9 @@ describe("a wipe that does not land ends the ladder, and is said", () => {
     held = false;
     await act(async () => { signOutButton(el)!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await tick(1_000);
-    expect(count("door"), "Sign out did not ask again").toBe(2);
+    expect(count("door"), "the revocation was already confirmed").toBe(1);
+    expect(count("clear"), "Sign out did not ask to finish clearing").toBe(1);
+    expect(document.cookie).not.toContain(PENDING);
     expect(alerts(el), "the sentence outlived the sign-out it was about").toEqual([]);
   });
 
@@ -198,12 +210,13 @@ describe("a wipe that does not land ends the ladder, and is said", () => {
     doorScript = [db503];
     const el = await mountLogin();
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
-    expect(alerts(el)).toEqual([A.signOutBlocked]);
+    expect(alerts(el)).toEqual([REFUSED_WITH_UNVERIFIED_WIPE]);
     await submit(el);
     await tick(1_000);
     expect(count("door"), "the submit did not ask the sign-out first").toBe(CONFIRM_ATTEMPTS + 1);
     expect(count("login"), "a sign-in went out over an unfinished sign-out").toBe(0);
-    expect(alerts(el)).toEqual([A.signOutBlocked]);
+    expect(alerts(el)).toEqual([REFUSED_WITH_UNVERIFIED_WIPE]);
+    expect(count("clear")).toBe(0);
     expect(document.cookie).toContain(PENDING);
   });
 });

@@ -62,6 +62,7 @@ export interface CalendarConnectTransport {
 
 /** The connection and settings capabilities a host can hand to the calendar. */
 export type CalendarSetupTransport = Omit<CalendarConnectTransport, "calendarConnections"> & {
+  calendarConnections?: CalendarConnectTransport["calendarConnections"];
   saveCalendarSettings?(body: CalendarSettingsBody): Promise<CalendarSettingsWire>;
 };
 

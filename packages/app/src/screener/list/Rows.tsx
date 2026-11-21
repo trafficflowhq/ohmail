@@ -60,6 +60,9 @@ function rowFacts(sender: ScreenerSenderDTO, t: Text, model: ReturnType<typeof u
   return { labels, flag, spoken: spoken || undefined };
 }
 
+import type { RowContact } from "../../place-list/use-row-contact.js";
+import type { RowSelection } from "../../place-list/use-row-selection.js";
+
 export function SenderRow({
   sender,
   open,
@@ -74,6 +77,8 @@ export function SenderRow({
   decided = false,
   onOpen,
   onMenu,
+  selection,
+  contact,
 }: {
   sender: ScreenerSenderDTO;
   open: boolean;
@@ -87,6 +92,8 @@ export function SenderRow({
   leaving?: "rail" | "fade";
   decided?: boolean;
   onOpen: () => void;
+  selection?: RowSelection;
+  contact?: RowContact;
   onMenu?: (at: { x: number; y: number }) => void;
 }) {
   /* `held` is oldest first: the row speaks for the newest letter, the one its time is. */
@@ -100,8 +107,11 @@ export function SenderRow({
   const who = name || sender.from.address;
   const subject = newest?.subject ?? "";
   const unread = !decided && sender.held.some((h) => h.unread === true);
+  const pick = selection?.rowProps(sender.id);
   return (
     <Row
+      {...pick}
+      {...contact?.rowProps(sender.from, newest?.id ?? sender.id)}
       who={who}
       address={name ? sender.from.address : undefined}
       keepAddressDomain
@@ -127,7 +137,7 @@ export function SenderRow({
       listing={{
         name: subject ? `${who}: ${subject}` : who,
         spoken: [ohbox(unread ? "row.unread" : "row.read"), spoken, deliveredTo].filter(Boolean).join(" · "),
-        selected: open,
+        selected: selection?.ids.length ? pick?.picked === true : open,
         place: slot,
         stop,
       }}
@@ -228,10 +238,14 @@ export function Rows({
   view,
   label,
   scroller,
+  selection,
+  contact,
 }: {
   view: ScreenerView;
   label?: string;
   scroller?: RefObject<HTMLDivElement | null>;
+  selection?: RowSelection;
+  contact?: RowContact;
 }) {
   const t = useText("screener");
   const model = useScreener();
@@ -278,6 +292,8 @@ export function Rows({
       <SenderRow
         key={id}
         sender={sender}
+        selection={selection}
+        contact={contact}
         open={view.openId === id}
         stop={view.openId === null ? id === viewRowId(view.rows[0]!) : view.openId === id}
         {...(waiting

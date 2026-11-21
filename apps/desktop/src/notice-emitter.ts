@@ -26,7 +26,7 @@ export interface NoticeShell {
   /** This window is the one being looked at. */
   focused(): boolean;
   /** Hand the shell one notice to word and show. A refusal rejects. */
-  post(notice: MailNotice): Promise<void>;
+  post(notice: MailNotice, letter?: string): Promise<void>;
   /** Hand the shell the account's alerts, whole: they replace the ones before, and an empty set takes all back. */
   alerts(set: AheadSet): Promise<unknown>;
 }
@@ -99,14 +99,14 @@ export function desktopNoticeEmitter(shell: NoticeShell): HostNoticeEmitter {
         /* A set that could not be handed over takes nothing down. */
       }
     },
-    post(notice: Notice): NoticeTaken {
+    post(notice: Notice, current?: () => boolean, letter?: string): NoticeTaken {
       try {
         if (!CARRIES.includes(notice.kind)) return false;
-        if (shell.focused()) return false;
+        if (shell.focused() || current?.() === false) return false;
         const handed = crossing(notice);
         if (handed === null) return false;
         /* A refusal: notifications are off for ohmail, or this platform has none. Not a reason to fail. */
-        return shell.post(handed).then(() => true, () => false);
+        return shell.post(handed, notice.kind === "ohbox" && notice.count === 1 ? letter : undefined).then(() => true, () => false);
       } catch {
         /* A notice that could not be handed over takes nothing down. */
         return false;
@@ -129,7 +129,9 @@ export function desktopNoticeEmitter(shell: NoticeShell): HostNoticeEmitter {
 export function desktopEmitterFor(writer: NoticeWriter | null): HostNoticeEmitter {
   return desktopNoticeEmitter({
     focused: () => typeof document !== "undefined" && document.hasFocus(),
-    post: (notice) => postOsNotice(notice),
+    post: (notice, letter) => postOsNotice(
+      notice, notice.kind === "ohbox" && writer !== null ? { ...writer, letter } : undefined,
+    ),
     alerts: (set) => setOsAlerts(set, writer),
   });
 }

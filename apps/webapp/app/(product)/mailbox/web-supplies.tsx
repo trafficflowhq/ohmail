@@ -7,11 +7,11 @@
  */
 import { readSessionFamily } from "../../signed-out-signal";
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
-import { useTranslations } from "next-intl";
-import { NONE, type FeatureEntry, type FrameSupplies, type GapLettersWire, type OrganizerNoticeWire, type HostContract, type HostDevice } from "@ohmail/app/host";
+import { useTimeZone, useTranslations } from "next-intl";
+import { NONE, type FrameSupplies, type GapLettersWire, type OrganizerNoticeWire, type HostContract, type HostDevice } from "@ohmail/app/host";
 import { calendar } from "@ohmail/app/calendar";
 import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
-import { calendarPortOf } from "@ohmail/app-logic/calendar";
+import { calendarPortOf, type CalendarPort } from "@ohmail/app-logic/calendar";
 import type { FrameNotice } from "@ohmail/app/frame";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
@@ -25,10 +25,8 @@ import { SELF_HOST_BUILD } from "../../hello";
 import { signOut, subscribeTabRetirement } from "../../sign-out";
 import { dayStamp } from "../../shell/format";
 import { cloudWire as junkWire } from "./junk-wire";
-import { MailboxFilings, type MailboxFilingsApi } from "../../shell/MailboxFilings";
-import { MailboxSelfCheck } from "../../shell/MailboxSelfCheck";
 import { useOhmarchyNotice } from "./appearance-notice";
-import { browserNoticePage, noticeWordingOf, webNoticeEmitter } from "../../shell/notice-emitter";
+import { browserNoticePage, noticeWordingOf, subscribeBrowserNoticeOpening, webNoticeEmitter } from "../../shell/notice-emitter";
 import { browserNotificationHost, type NotificationHost } from "../../shell/notification-settings";
 import { browserOpenLink, MAILBOXES_NOTICES } from "../../shell/browser-mail";
 import { useAppLocale } from "../../shell/LocaleContext";
@@ -37,8 +35,6 @@ import { profileImportFor } from "../../profile-import-wire";
 import { suggestWireFor } from "./suggest-wire";
 import { cloudWire as trashWire } from "../../shell/trash-window";
 import { CLOUD_WIRE as DRAFT_REPLY_WIRE } from "./draft-reply-wire";
-import { AccountSection } from "./AccountSection";
-import { CloudStorageNotice } from "./CloudStorageNotice";
 import { CLOUD_CONSENT, cloudConsent, cloudSeedReview } from "./consent-over-api";
 import { WEB_IMAGES } from "./image-wire";
 import { awayFeedOver, useAwayNotice } from "@ohmail/app/settings/away";
@@ -46,17 +42,11 @@ import { webConnectWire } from "./connect-wire";
 import { webDeviceSignIn } from "./device-sign-in";
 import { webMailboxesWire } from "./mailboxes-wire";
 import { webHost, type WebSupplies } from "./host";
+import { openCalendarNotice, openMailNotice } from "./web-notice-open";
 import { useLifecycleNotice } from "./lifecycle-notice";
-import { MailboxSection } from "./MailboxSection";
-import { PasswordSection } from "./PasswordSection";
 import { useReuseSweepFeed } from "./reuse-sweep-feed";
 import { useRecheckWhileShown, useSweepsAnswer, useSweepsFrameNotice } from "../../shell/ReuseSweepNotice";
 import type { ReuseSweepLine } from "../../shell/reuse-sweeps";
-import { sendSurfaceFor } from "./send-surface";
-import { SubscriptionSection } from "./SubscriptionSection";
-
-/** The staged ceiling where this page can PUT the files, else none (`send-surface.ts`). Compiled. */
-export const SEND_SURFACE = sendSurfaceFor(SELF_HOST_BUILD, process.env.NEXT_PUBLIC_STAGING_ORIGIN);
 
 /** Load it now on the Cloud API: the letter's text for this view, from `GET /messages/:id/live-body`. */
 export const liveBodyOverApi: LiveBodyWire = async (messageId) => {
@@ -70,11 +60,6 @@ export const liveBodyOverApi: LiveBodyWire = async (messageId) => {
 /** Acknowledging the organizer notice and answering a gap offer: one route each, on this door's client. */
 export const organizerNoticeOverApi: OrganizerNoticeWire = (id) => mailboxApi.dismissOrganizerNotice(id);
 export const gapLettersOverApi: GapLettersWire = (id, answer) => mailboxApi.answerGapLetters(id, answer);
-
-/** Settings → Mailboxes' waiting filings, on the Cloud API. Module scope: one identity per load. */
-const filingsApi: MailboxFilingsApi = {
-  read: mailboxApi.filings, retry: mailboxApi.retryFilings, leave: mailboxApi.leaveFilings,
-};
 
 /** The two ways back the web has: the sign-in page, or a full load of the app, which asks the session again. */
 export const webRecover = (how: "signIn" | "reload"): void => window.location.assign(how === "signIn" ? "/login" : "/mailbox");
@@ -100,9 +85,6 @@ const CONNECT_WIRE = webConnectWire({ owner: boundApiOwner, returned: "page", de
 const MAILBOXES_WIRE = webMailboxesWire();
 
 const drawsNothing = (): ReactNode => null;
-const entryOf = (name: FeatureEntry["name"], node: ReactNode, notice?: FeatureEntry["notice"]): FeatureEntry =>
-  ({ name, render: () => node, ...(notice ? { notice } : {}) });
-
 /** No sweeps listed: one array, so the answer's filter reads the same input between renders. */
 const NO_SWEEPS: readonly ReuseSweepLine[] = [];
 
@@ -165,8 +147,16 @@ export interface WebWords {
  * THE WEB'S HOST, built once per engine and per answer. Every part is memoized on its parts, so a render of the entry
  * with nothing changed hands the frame the same record (`web-host-is-stable.test.tsx`).
  */
-export function useWebHost(engine: HostContract["engine"], words: WebWords, frame: FrameSupplies): HostContract {
-  const { server, invites, subscriptionPage, withdrawManage, storageBlock, account: confirmed, firstRun } = words;
+export type WebFeatureCards = Pick<WebSupplies["features"], "account" | "mailboxes" | "subscription" | "storageCard">;
+
+export function useWebHost(
+  engine: HostContract["engine"],
+  words: WebWords,
+  frame: FrameSupplies,
+  cards: WebFeatureCards,
+  sendSurface: number | undefined,
+): HostContract {
+  const { server, invites, subscriptionPage, storageBlock, account: confirmed, firstRun } = words;
   /* WHOSE KEYS TODAY'S VIEWS KEEP: the account the engine's mirror is named for, read off the engine itself, never a
      second read of the session's marker (which another tab may have moved since the engine was opened). */
   const scope = useMemo(() => mirrorOwnerOf(engine), [engine]);
@@ -209,14 +199,15 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
   );
   useEffect(() => awayFeed?.start(), [awayFeed]);
   const features = useMemo((): WebSupplies["features"] => ({
-    account: entryOf("account", <><PasswordSection /><AccountSection /></>),
-    mailboxes: entryOf("mailboxes", <><MailboxSection subscriptionPane={subscriptionPage} /><MailboxFilings api={filingsApi} /><MailboxSelfCheck check={mailboxApi.selfCheck} /></>, function useMailboxNotices() {
-      return [...MAILBOXES_NOTICES(), ...useAwayNotice(awayFeed)];
-    }),
+    ...cards,
+    mailboxes: {
+      ...cards.mailboxes,
+      notice: function useMailboxNotices() {
+        return [...MAILBOXES_NOTICES(), ...useAwayNotice(awayFeed)];
+      },
+    },
     ai: { name: "ai", render: drawsNothing },
-    subscription: entryOf("subscription", <SubscriptionSection onNowhere={withdrawManage} />),
     storage: { name: "storage", render: drawsNothing },
-    storageCard: entryOf("storageCard", <CloudStorageNotice />),
     accountStrip: { name: "accountStrip", render: drawsNothing, notice: useAccountNotices },
     invites: { name: "invites", render: drawsNothing },
     security: { name: "security", render: drawsNothing },
@@ -224,7 +215,7 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
     devices: { name: "devices", render: drawsNothing },
     screener: { name: "screener", render: drawsNothing },
     help: { name: "help", render: drawsNothing },
-  }), [subscriptionPage, withdrawManage, awayFeed]);
+  }), [cards, awayFeed]);
   const calendarPort = useMemo(() => {
     if (server.calendar !== true || scope === null || scope !== confirmed) return NONE;
     const transport = engine.calendarTransport();
@@ -262,7 +253,7 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
       stop();
     };
   }, [calendarPort, engine]);
-  const notifications = useWebNotifications();
+  const notifications = useWebNotifications(frame.address, engine, calendarPort, scope === confirmed ? confirmed : null);
   const profileImport = useMemo(
     () => apiConfigured() && scope !== null && scope === confirmed ? profileImportFor(scope) : NONE,
     [scope, confirmed],
@@ -308,14 +299,14 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
     invites,
     subscriptionPage,
     storageBlock,
-    sendSurface: SEND_SURFACE,
+    sendSurface,
     foldersStorable: CLOUD_CONSENT.foldersStorable,
     scope,
     isolatedScope: isolatedScopeOf(engine),
     account: confirmed,
     accountAddress: words.accountAddress,
     build: { version: process.env.NEXT_PUBLIC_APP_VERSION ?? null, commit: process.env.NEXT_PUBLIC_BUILD ?? null },
-  }, supplies), [engine, server.pairing, server.remoteImages, server.searchPeople, server.calendar, invites, subscriptionPage, storageBlock, scope, confirmed, words.accountAddress, supplies]);
+  }, supplies), [engine, server.pairing, server.remoteImages, server.searchPeople, server.calendar, invites, subscriptionPage, storageBlock, scope, confirmed, words.accountAddress, supplies, sendSurface]);
 }
 
 /**
@@ -323,13 +314,31 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
  * takes back what was drawn whenever the emitter it is handed changes, so the emitter keeps one
  * identity and reads the person's words at the moment it draws.
  */
-function useWebNotifications(): NotificationHost {
+function useWebNotifications(
+  address: FrameSupplies["address"], engine: HostContract["engine"], calendarPort: CalendarPort | typeof NONE, owner: string | null,
+): NotificationHost {
   const t = useTranslations("frame.systemNotice");
   const say = useRef(t);
   say.current = t;
+  const zone = useTimeZone() ?? "UTC";
+  const mounted = useRef({ address, engine, calendarPort, owner, zone });
+  mounted.current = { address, engine, calendarPort, owner, zone };
+  useEffect(subscribeBrowserNoticeOpening, []);
   return useMemo(() => ({
     ...browserNotificationHost,
     liveNoticeScope: readOwner,
-    emitter: webNoticeEmitter(browserNoticePage, () => noticeWordingOf((key, values) => say.current(key, values))),
+    emitter: webNoticeEmitter(browserNoticePage, () => noticeWordingOf((key, values) => say.current(key, values)), (notice, letter) => {
+      if (notice.kind !== "ohbox" && (!("eventId" in notice) || mounted.current.calendarPort === NONE)) return;
+      const before = mounted.current;
+      const owns = captureFaceOwner(before.owner);
+      return () => {
+        if (!owns() || !sessionMayAsk() || mounted.current.engine !== before.engine) return false;
+        if (notice.kind === "ohbox") {
+          return openMailNotice(before.address, letter, (id) => before.engine.store.get("message", id) !== undefined);
+        }
+        if (before.calendarPort === NONE || mounted.current.calendarPort !== before.calendarPort) return false;
+        return openCalendarNotice(before.address, before.calendarPort, notice.eventId, mounted.current.zone);
+      };
+    }),
   }), []);
 }

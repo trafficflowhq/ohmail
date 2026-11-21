@@ -15,7 +15,9 @@
  * these would answer one press twice.
  */
 import { useEnabledBinding, useKeyBindings, useKeyPress, type KeyBinding } from "@ohmail/app-logic/keys";
-import { useFrame, usePaletteOffers } from "../../frame/index.js";
+import { useOptionalTheme } from "@ohmail/ui/theme";
+import { useFrame, usePaletteOffers, useSignal } from "../../frame/index.js";
+import { canCycleMailLayout } from "../../frame/layout-plan.js";
 import { productOf } from "../../frame/product.js";
 import { NONE } from "../../host/index.js";
 import { useText } from "../../text/index.js";
@@ -25,6 +27,17 @@ export function MailKeys(): null {
   const { host, commands, route } = useFrame();
   const t = useText("shortcuts");
   const palette = useText("palette");
+  const theme = useOptionalTheme();
+  const facts = useSignal(host.device.window);
+  const hasLayout = theme?.layoutEnabled === true && productOf(route.place) === "mail";
+  const canCycle = hasLayout && canCycleMailLayout(facts);
+  const cycleLayout = {
+    id: "mail.layout",
+    label: palette("cycleLayout"),
+    icon: "move",
+    chord: "w",
+    run: () => theme?.setLayout(theme.layout === "zero" ? "classic" : "zero"),
+  } as const;
   const { search, write } = host.features.places;
   const compose = {
     id: "mail.compose",
@@ -52,13 +65,24 @@ export function MailKeys(): null {
   } as const;
   usePaletteOffers(
     "mail",
-    route.stage !== null ? [] : [...(write === NONE ? [] : [compose]), resurface, move],
+    route.stage !== null
+      ? []
+      : [...(write === NONE ? [] : [compose]), resurface, move, ...(canCycle ? [cycleLayout] : [])],
     productOf(route.place) === "mail",
   );
   const writing = useWriting();
   const replyTo = writing.replyTo;
   const sendAndDone = replyTo === null ? null : writing.sendReplyAndDone(replyTo);
   const keys: KeyBinding[] = [];
+  if (hasLayout)
+    keys.push({
+      chord: cycleLayout.chord,
+      group: "app",
+      label: t("layout"),
+      disabled: !canCycle,
+      disabledReason: canCycle ? undefined : "layout_same",
+      run: cycleLayout.run,
+    });
   if (search !== NONE)
     keys.push({
       chord: "/",

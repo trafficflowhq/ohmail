@@ -4,6 +4,7 @@
  * through it yet; the old shell is still handed its inputs one by one (`HostGate.tsx`), and this
  * is the same decisions, said once, in the record the next shell takes.
  */
+import { createElement } from "react";
 import { PairedScreenerSettings } from "@ohmail/app/settings/browser";
 import { NO_PANE_PARTS, type MailPaneParts } from "@ohmail/app/mail";
 import {
@@ -40,7 +41,8 @@ export interface PairedSupplies {
   readonly wires: Transports<
     "gapLetters" | "profileImport" | "consent" | "olderBody" | "junk" | "trash" | "draftReply"
   > &
-    MayBeNone<"autoFiled">;
+    MayBeNone<"autoFiled"> &
+    Partial<MayBeNone<"screening">>;
   /** Account, as sign-out alone; the strip that says a change will not be kept; the Screener's section. */
   readonly features: Entries<"account" | "accountStrip" | "screener">;
   readonly notifications: DeviceNotifications;
@@ -78,12 +80,13 @@ export function pairedAccountDoor(signOut: () => Promise<void>) {
 export function pairedPaneParts(
   useDoor: () => ReturnType<typeof pairedAccountDoor>,
   general: MailPaneParts["general"],
+  screener: MailPaneParts["screener"] = () => createElement(PairedScreenerSettings),
 ) {
   return {
     ...NO_PANE_PARTS,
     account: { useDoor, password: NONE },
     general,
-    screener: PairedScreenerSettings,
+    screener,
   } as const;
 }
 
@@ -105,13 +108,13 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
     reads: { mailboxes: has.mailboxes, copyAge: NONE, access: NONE },
     wires: {
       ...has.wires,
+      screening: has.wires.screening ?? NONE,
       organizerNotice: NONE,
       liveBody: NONE,
       away: NONE,
       images: NONE,
       suggest: NONE,
       firstRun: NONE,
-      screening: NONE,
       seedReview: NONE,
       folderSummary: NONE,
       ownModelAutoSuggest: NONE,

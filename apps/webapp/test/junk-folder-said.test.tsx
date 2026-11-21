@@ -160,7 +160,7 @@ describe("the scope line and the junk sentence are two sentences, whatever the v
     ["the whole mailbox answered", async () => noMatches, messages.search.nothingMatched],
     ["the whole mailbox answered, its index still filling",
       async () => ({ ...noMatches, indexed: { done: 0, total: 40 } }),
-      "Older mail is still being indexed, 0% done."],
+      messages.search.indexing.replace("{percent}", "0")],
     ["the mirror answered for an unreachable account",
       async () => ({ ...noMatches, answeredFrom: "mirror" }),
       "Search covers the mail on this computer while ohmail Cloud is unreachable — nothing matched"],

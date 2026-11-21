@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DatePicker } from "@ohmail/ui";
+import { DatePicker } from "./DatePicker.js";
 import { Menu, MenuItem } from "@ohmail/ui/base";
 import { EventForm, type EventFormRow } from "@ohmail/ui/calendar";
 import { dayLong, hueOf, type CalendarRecord } from "@ohmail/app-logic/calendar";

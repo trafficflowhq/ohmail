@@ -460,16 +460,13 @@ describe.skipIf(!PG_UP)("the storage mails bind each account they read to its ow
   });
 });
 
-describe.skipIf(!PG_UP)("the unsubscribe drain binds each account whose letters it walks to its own (real Postgres)", () => {
+describe.skipIf(!PG_UP)("confirmed unsubscribe binds each request to its own account (real Postgres)", () => {
   let pool: ReturnType<typeof makePooledDb>;
   const A = randomUUID();
   const B = randomUUID();
   const mailboxOf = new Map<string, string>();
   const letters: string[] = [];
-  /**
-   * The drain walks every account's letters screened out since a day and three hours before it runs:
-   * from this instant, this file's letters alone.
-   */
+  /** The fixed clock for this file's screened-out letters and confirmed requests. */
   const NOW = new Date("2031-03-03T12:00:00.000Z");
   /** The position the mailboxes' provider signs `Authentication-Results` from. */
   const PROVIDER: ReadonlySet<string> = new Set(["mx.google.com"]);
@@ -506,7 +503,7 @@ describe.skipIf(!PG_UP)("the unsubscribe drain binds each account whose letters 
         accountId, provider: "imap", address: `drain-${accountId.slice(0, 8)}@binding.test`,
       }).returning();
       mailboxOf.set(accountId, mb!.id);
-      // A person screened the sender's domain out: what the drain acts under.
+      // The confirmed request still requires the person's screening decision.
       await pool.insert(rules).values({
         accountId, kind: "domain", match: "sender.example", destination: "ohmail/Screened", provenance: "promoted",
         personDecidedAt: NOW,
@@ -537,29 +534,36 @@ describe.skipIf(!PG_UP)("the unsubscribe drain binds each account whose letters 
     await closePooledDbs();
   });
 
-  it("letters of A, B and A in its window: the drain acts for A, then B, each letter on its own account", async () => {
+  it("letters of A, B and A: each confirmation uses its own account on the same connection", async () => {
     const firstOfA = await screenedOut(A, 30);
     const ofB = await screenedOut(B, 20);
     const secondOfA = await screenedOut(A, 10);
     const posted: string[] = [];
     const post: OneClickPost = { async post(url: string) { posted.push(url); return { status: 200 }; } };
-    const drain = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => PROVIDER });
+    const service = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => PROVIDER });
+    const context = (accountId: string) => ({
+      db: dbFor(pool, accountId), accountId, userId: null, now: () => NOW, requestId: "binding",
+    });
 
     wire.start();
-    const run = await drain.drainScreenedOut(bindDb(pool, { account: null }), { now: () => NOW, requestId: "binding" });
+    const first = await service.onScreenOut(context(A), [firstOfA]);
+    const second = await service.onScreenOut(context(B), [ofB]);
+    const third = await service.onScreenOut(context(A), [secondOfA]);
     const flights = flightsOf(wire.read());
 
     // Each letter's list was asked to let its mailbox go.
-    expect(run.accounts).toBe(2);
-    expect(run.sweep.posted).toBe(3);
+    expect([first.posted, second.posted, third.posted]).toEqual([1, 1, 1]);
     expect(posted).toHaveLength(3);
     expect(flights.filter((f) => f.door === "plain")).toEqual([]);
-    // The walk reads the letters and names no account; A's two are acted on under A, then B's one under B.
-    expect(accountsInTurn(flights)).toEqual([A, B]);
+    expect(accountsInTurn(flights)).toEqual([A, B, A]);
     for (const [letter, own] of [[firstOfA, A], [ofB, B], [secondOfA, A]] as const) {
       const naming = flights.filter((f) => f.account !== null && carries(f, letter));
       expect(naming.length).toBeGreaterThan(0);
       expect(naming.map((f) => f.account)).toEqual(naming.map(() => own));
     }
+    expect(await service.onScreenOut(context(A), [ofB])).toEqual({
+      considered: 1, posted: 0, skipped: 1, failed: 0, remaining: 0,
+    });
+    expect(posted).toHaveLength(3);
   });
 });

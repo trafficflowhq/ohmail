@@ -437,9 +437,12 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
     it("cancels one day by one more excluded day in the series' own component, and takes that day's own component out where it had one", async () => {
       const b = await bench({ "weekly.ics": WEEKLY });
       const [series] = await b.rows("weekly.ics");
-      await b.press("not-dec-7", { kind: "calendar_event_delete", ...on(series!), scope: { kind: "occurrence", at: DEC_7 } });
-      await b.press("not-nov-30", { kind: "calendar_event_delete", ...on(series!), scope: { kind: "occurrence", at: NOV_30 } });
       const from = b.dav.seen.length;
+      await b.press("not-dec-7", { kind: "calendar_event_delete", ...on(series!), scope: { kind: "occurrence", at: DEC_7 } });
+      expect((await b.turn()).kind).toBe("synced");
+      expect(await b.writes()).toEqual([["not-dec-7", "applied", null]]);
+      const [updated] = await b.rows("weekly.ics");
+      await b.press("not-nov-30", { kind: "calendar_event_delete", ...on(updated!), scope: { kind: "occurrence", at: NOV_30 } });
       expect((await b.turn()).kind).toBe("synced");
       expect(await b.writes()).toEqual([["not-dec-7", "applied", null], ["not-nov-30", "applied", null]]);
       const sent = b.written(from);

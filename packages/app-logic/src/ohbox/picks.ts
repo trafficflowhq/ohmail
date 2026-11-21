@@ -26,7 +26,10 @@ export interface PickSet {
   pickRangeTo: (id: string) => void;
 }
 
-export function usePickSet(navRows: OhboxRowGroup[], rowIndexOf: (id: string | null) => number): PickSet {
+export function usePickSet(
+  navRows: readonly { readonly members: readonly { readonly id: string }[] }[],
+  rowIndexOf: (id: string | null) => number,
+): PickSet {
   /* ── multi-select: VIEW-LOCAL, deliberately ──────────────────────────────
      It is a selection, not a document: it means nothing after you leave the
      Ohbox, and persisting it would resurrect a stale set on the next visit.

@@ -5,6 +5,7 @@ import messages from "../messages/en.json";
 import { storeMessage } from "./_store-fixture";
 import {
   ISO, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, page, teardownShellEnv, tick,
+  liveAccountFetch,
 } from "./fixtures/live-walk-shell";
 
 beforeEach(installShellEnv);
@@ -16,14 +17,14 @@ describe("the separator is never printed without a value on both sides", () => {
     const sync = page(1);
     answerSyncWith(() => sync.clone());
     const fetch = globalThis.fetch;
-    globalThis.fetch = (input, init) => {
+    globalThis.fetch = liveAccountFetch((input, init) => {
       const url = new URL(String(input), "https://harness.invalid");
       if (url.pathname.endsWith("/search")) {
         const items = url.searchParams.get("q") === "kingfisher" ? [hit] : [];
         return Promise.resolve(Response.json({ items, total: items.length, totalExact: true, ms: 4 }));
       }
       return fetch(input, init);
-    };
+    });
     const host = await mountShell([mailbox({ id: "mb_1", lastSyncAt: ISO })]);
     await goTo("search");
     const box = within(host).getByRole("textbox", { name: messages.search.aria });

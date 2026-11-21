@@ -1,5 +1,7 @@
 "use client";
 
+import type { ListVerbs } from "../press/list-verbs.js";
+
 import type { EngineMessage, MessageBody, WaterlineMeta } from "@ohmail/wire";
 import { type RefObject } from "react";
 import { type EntityReader } from "@ohmail/client-engine";
@@ -41,8 +43,8 @@ export interface StreamInput {
   /** A lookahead request fills the cache without updating the folded preview. */
   readonly prefetch?: (ids: readonly string[]) => void;
   /** Recheck pending preview requests when the presented mirror changes. */
+  readonly hasPreviewMarkup?: (id: string) => boolean;
   readonly prefetchSource?: EntityReader;
-  readonly hidePrefetchedNotice?: (id: string) => boolean;
   readonly revealPrefetch?: (id: string) => void;
   /**
    * The tab going away is a leave too: the shell's page-hide, as a subscription (the web's and the desktop's
@@ -61,6 +63,7 @@ export interface StreamInput {
 }
 
 export interface StreamModel {
+  readonly verbs?: ListVerbs;
   /** The chosen hit whose card opens after its landing. A direct address previews the card. */
   readonly entered?: PlaceLiveArgs["entered"];
   readonly place: StreamPlace;
@@ -111,8 +114,7 @@ export interface StreamModel {
   markAllRead(): void;
   hydrateOpened(id: string, ask?: boolean): void;
   readonly prefetch?: StreamInput["prefetch"];
-  readonly prefetchSource?: EntityReader;
-  hidePrefetchedNotice(id: string): boolean;
+  hasPreviewMarkup(id: string): boolean;
   textOf(id: string): string | null;
   bodyStateOf(id: string): MessageBody["state"] | undefined;
 }

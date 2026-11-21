@@ -14,7 +14,7 @@ import {
 const rules = messages.rules;
 const settings = messages.settings;
 const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...(status < 300 ? { "X-Ohmail-Account": ACCOUNT } : {}) } });
 
 function installRulesShell(): void {
   installConfirmEnv();
@@ -141,7 +141,7 @@ async function mountedRules({
       };
       seq += 1;
       return new Response(JSON.stringify(current), {
-        status: 200, headers: { "content-type": "application/json", "x-sync-seq": String(seq) },
+        status: 200, headers: { "content-type": "application/json", "X-Ohmail-Account": ACCOUNT, "x-sync-seq": String(seq) },
       });
     }
     return fixture(input, init);

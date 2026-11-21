@@ -88,7 +88,7 @@ describe("DELETE /account", () => {
     // `tf_owner` for the same reason and a sharper one: it is the account id the web client
     // opens a local mail mirror from BEFORE it asks who is signed in. Left behind after an
     // erasure it would name a database, and an account, that no longer exist.
-    expect(Object.keys(cookies).sort()).toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+    expect(Object.keys(cookies).sort()).toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
     for (const raw of res.headers.getSetCookie()) expect(raw).toMatch(/Max-Age=0/);
 
     // The token is not merely expired-looking: nothing resolves it any more.

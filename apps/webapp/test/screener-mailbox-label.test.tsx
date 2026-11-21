@@ -82,7 +82,7 @@ function row(id: string): HTMLElement {
 
 function badges(): string[] {
   return [row("m1"), row("m2")].flatMap((option) =>
-    within(option).queryAllByText(/^(?:Work|home@fixture\.example)$/).map((badge) => badge.textContent ?? ""));
+    within(option).queryAllByText(/^(?:Work|home)$/).map((badge) => badge.textContent ?? ""));
 }
 
 describe("the Screener list names the mailbox a stranger wrote to", () => {
@@ -90,15 +90,14 @@ describe("the Screener list names the mailbox a stranger wrote to", () => {
     await mount(TWO);
     const drawn = badges();
     expect(drawn).toHaveLength(2);
-    // The mailbox's label where it has one, the bare address where it has none — the fallback the
-    // "me" chip already keeps, and the reason the fixture gives only one of them a display name.
-    expect(new Set(drawn)).toEqual(new Set(["Work", HOME.address]));
+    // The row uses the mailbox's label, or its short name when the mailbox has no label.
+    expect(new Set(drawn)).toEqual(new Set(["Work", "home"]));
   });
 
   it("the badge carries the whole sentence, from the namespace that owns it", async () => {
     await mount(TWO);
     expect(within(row("m1")).getByTitle("Delivered to Work").textContent).toBe("Work");
-    expect(within(row("m2")).getByTitle(`Delivered to ${HOME.address}`).textContent).toBe(HOME.address);
+    expect(within(row("m2")).getByTitle("Delivered to home").textContent).toBe("home");
   });
 
   /**

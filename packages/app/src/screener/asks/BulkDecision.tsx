@@ -7,17 +7,24 @@ export function BulkDecision({ view }: { view: ScreenerView }) {
   const t = useText("screener");
   const ask = view.ask && view.ask.kind !== "unsub" ? view.ask : null;
   const applying = ask?.kind === "applySuggestions";
+  const screened = ask?.kind === "picked";
   const count = ask?.senders.length ?? 0;
   const requests = ask?.unsubscribeCount ?? 0;
   return (
     <Dialog
       open={ask !== null}
       onClose={() => view.answerBulk(false)}
-      title={t(applying ? "askApplySuggestions" : "askAllSpam", { count })}
-      line={requests > 0 ? t("bulkUnsubscribeConfirm", { count: requests }) : t("askAllSpamNote")}
+      title={t(screened ? "askScreenPicked" : applying ? "askApplySuggestions" : "askAllSpam", { count })}
+      line={
+        requests > 0
+          ? t("bulkUnsubscribeConfirm", { count: requests })
+          : t(screened ? "askScreenPickedNote" : "askAllSpamNote")
+      }
       keysOn="cancel"
       confirm={{
-        label: t(applying ? "askApplySuggestionsYes" : "askAllSpamYes", { count }),
+        label: t(screened ? "pileScreenOut" : applying ? "askApplySuggestionsYes" : "askAllSpamYes", {
+          count,
+        }),
         onPress: () => view.answerBulk(true),
       }}
       cancel={{ label: t("cancel") }}

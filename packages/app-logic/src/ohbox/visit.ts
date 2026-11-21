@@ -58,8 +58,8 @@ export function useEnter(
 
 /** The cursor moved by the person, and the open. */
 export interface Visit {
-  selectByUser: (id: string, extend?: boolean) => void;
-  open: (m: EngineMessage) => void;
+  selectByUser: (id: string, extend?: boolean, wholeThread?: true) => void;
+  open: (m: EngineMessage, wholeThread?: true) => void;
   engage: (m: EngineMessage) => void;
 }
 
@@ -98,14 +98,14 @@ export function useVisit(
   const pickedRef = useRef(picked);
   pickedRef.current = picked;
   const selectByUser = useCallback(
-    (id: string, extend = false) => {
+    (id: string, extend = false, wholeThread?: true) => {
       if (heldRead.current !== id) {
         if ((extend || pickedRef.current.size > 0) && heldRead.current !== null) {
           visit.current.clear();
           keptForPick.current = heldRead.current;
         } else leaveRead();
       }
-      onSelect(id);
+      onSelect(id, wholeThread);
     },
     [onSelect, leaveRead, heldRead, visit, keptForPick],
   );
@@ -125,10 +125,10 @@ export function useVisit(
    * statement on its own. It enters the conversation; the rule reads what is on screen.
    */
   const open = useCallback(
-    (m: EngineMessage) => {
-      onSelect(m.id);
+    (m: EngineMessage, wholeThread?: true) => {
+      onSelect(m.id, wholeThread);
       enter(m);
-      onEnterReader(m.id);
+      onEnterReader(m.id, wholeThread);
     },
     [onSelect, onEnterReader, enter],
   );

@@ -24,7 +24,7 @@ it.each([390, 1100])("at %ipx keeps the newest letter below the stationary sende
       if (!box) throw new Error("Expected the control to be visible");
       return box;
     };
-    if (width < 700) await first.click();
+    await first.click();
     const reading = page.getByRole("region", { name: "Sender 0", exact: true });
     const head = reading.getByRole("heading", { name: /Sender 0 goes to/ });
     const letter = page.getByRole("heading", { name: "Newest letter 0", exact: true });
@@ -68,6 +68,10 @@ it.each([390, 1100])("at %ipx keeps the newest letter below the stationary sende
       const listPort = await rect(page.getByRole("listbox", { name: "Screener", exact: true }).locator("xpath=ancestor::*[@class='sc-scroll']"));
       expect(row.y).toBeGreaterThanOrEqual(listHead.y + listHead.height - 0.5);
       expect(row.y).toBeGreaterThanOrEqual(listPort.y - 0.5);
+      await expect.poll(async () => {
+        const [subject, column] = await Promise.all([rect(letter), rect(reading)]);
+        return subject.y + subject.height - (column.y + column.height);
+      }).toBeLessThanOrEqual(0.5);
       await expectClear();
     }
   } finally {

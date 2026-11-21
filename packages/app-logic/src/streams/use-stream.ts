@@ -263,8 +263,7 @@ export function useStream(input: StreamInput): StreamModel {
     markAllRead,
     hydrateOpened,
     prefetch,
-    prefetchSource,
-    hidePrefetchedNotice: (id) => input.hidePrefetchedNotice?.(id) ?? false,
+    hasPreviewMarkup: (id) => input.hasPreviewMarkup?.(id) ?? false,
     textOf,
     bodyStateOf,
   };

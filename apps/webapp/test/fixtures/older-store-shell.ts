@@ -10,7 +10,7 @@ import { expect, vi } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import messages from "../../messages/en.json";
 import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
-import { act, installShellEnv, ISO, mailbox, mountShell, tick } from "./live-walk-shell";
+import { liveAccountResponse, act, installShellEnv, ISO, mailbox, mountShell, tick } from "./live-walk-shell";
 
 export type Row = { id: string; date: string | null; unread?: boolean; folder?: string; from?: string };
 export interface Write { method: string; url: string; body: unknown }
@@ -56,7 +56,7 @@ export const store = {
 };
 
 const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  liveAccountResponse(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 const newestFirst = (a: Row, b: Row): number =>
   (b.date ?? "").localeCompare(a.date ?? "") || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 

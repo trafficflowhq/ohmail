@@ -13,7 +13,10 @@ beforeEach(() => {
   localStorage.clear();
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
 });
-afterEach(unmountAll);
+afterEach(async () => {
+  await unmountAll();
+  vi.restoreAllMocks();
+});
 
 async function openReply() {
   const letters = Array.from({ length: 10 }, (_, i) => message(`r${i}`, {
@@ -42,18 +45,22 @@ async function openReply() {
     scroller.scrollTop = offset;
     fireEvent.scroll(scroller);
   };
+  const spacer = (edge: "head" | "tail") =>
+    Number.parseFloat(scroller.querySelector<HTMLElement>(`[data-stream-${edge}]`)?.style.height ?? "0") || 0;
   Object.defineProperties(scroller, {
     clientHeight: { get: () => VIEW },
-    scrollHeight: { get: () => cards().reduce((sum, el) => sum + size(el), 0) },
+    scrollHeight: { get: () => cards().reduce((sum, el) => sum + size(el), spacer("head") + spacer("tail")) },
   });
   scroller.getBoundingClientRect = () => box(0, VIEW);
   scroller.scrollTo = ((o: ScrollToOptions) => land(o.top ?? 0)) as typeof scroller.scrollTo;
-  for (const [i, el] of cards().entries()) {
-    el.getBoundingClientRect = () => box(
-      cards().slice(0, i).reduce((sum, above) => sum + size(above), 0) - scroller.scrollTop,
-      size(el),
-    );
-  }
+  const nativeRect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.matches("[data-stream-item]") && scroller.contains(this)) {
+      const before = cards().slice(0, cards().indexOf(this));
+      return box(before.reduce((sum, above) => sum + size(above), spacer("head")) - scroller.scrollTop, size(this));
+    }
+    return nativeRect.call(this);
+  });
   await act(async () => { land(186); });
   await press(inNews.getByRole("button", { name: "Reply" }), "Reply");
   await waitFor(() => editor() !== null, "the reply editor");

@@ -213,12 +213,10 @@ describe("POST /messages/:id/unsubscribe", () => {
 });
 
 /**
- * THE AUTOMATIC ARM WANTS A SENDER THE MAILBOX'S PROVIDER CONFIRMED. At a host with no known
- * authserv-id every verdict is `unavailable`, so nothing tells a forged `From` from the list's own:
- * the drain asks nobody and claims nothing, and the person's own press on the same letter still
- * posts. The control is a Gmail-held mailbox whose provider confirmed the sender.
+ * A stored screening rule leaves the unsubscribe for the person to confirm, whether or not the
+ * mailbox's provider has confirmed the sender.
  */
-describe("the automatic arm and a sender nobody confirmed", () => {
+describe("screening rules leave unsubscribe to the person", () => {
   const SECRET = "s".repeat(32);
   const drain = (): Request => new Request("http://api.test/internal/unsubscribe/drain", {
     method: "GET", headers: { authorization: `Bearer ${SECRET}` },
@@ -228,7 +226,7 @@ describe("the automatic arm and a sender nobody confirmed", () => {
     "authentication-results": ["mx.google.com; spf=pass; dkim=pass header.d=sender.example; dmarc=pass"],
   };
 
-  /** A screened-out letter whose sender a PERSON screened out, the automatic arm's only licence. */
+  /** A letter the person screened out, with the rule and its recorded decision. */
   async function screenedOutByAPerson(
     db: Awaited<ReturnType<typeof makeDeps>>["db"], deps: ApiDeps, headers: Record<string, unknown>,
   ) {
@@ -255,11 +253,11 @@ describe("the automatic arm and a sender nobody confirmed", () => {
 
     const drained = await H(drain(), { ...deps, alerts: { secret: SECRET, cronSecret: SECRET, sinks: [] } });
     expect(drained.status).toBe(200);
-    expect(await drained.json()).toMatchObject({ claimed: 1, delivered: 0, skipped: 1, failed: 0 });
+    expect(await drained.json()).toMatchObject({ accounts: 0, claimed: 0, delivered: 0, skipped: 0, failed: 0, remaining: 0 });
     expect(post.calls).toEqual([]);
     expect(await recordsOf(db, id)).toHaveLength(0);
 
-    // The refusal by name, from the arm the drain runs (a private body: the pass never throws).
+    // Provider identity is still required by the automatic arm itself.
     const arm = deps.services!.unsubscribe as unknown as {
       run(c: ServiceContext, messageId: string, mode: "automatic"): Promise<unknown>;
     };
@@ -275,13 +273,20 @@ describe("the automatic arm and a sender nobody confirmed", () => {
     expect(post.calls).toEqual(["https://sender.example/u?t=abc"]);
   });
 
-  it("CONTROL: a Gmail-held mailbox whose provider confirmed the sender is unsubscribed by the drain", async () => {
+  it("a confirmed sender is unsubscribed only after the person's press", async () => {
     const post = spyPost();
     const { db, deps } = await makeDeps(undefined, {}, { oneClickPost: post, trustedAuthservIds: new Set(["mx.google.com"]) });
-    const { id } = await screenedOutByAPerson(db, deps, CONFIRMED);
+    const { s, id } = await screenedOutByAPerson(db, deps, CONFIRMED);
 
     const drained = await H(drain(), { ...deps, alerts: { secret: SECRET, cronSecret: SECRET, sinks: [] } });
-    expect(await drained.json()).toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+    expect(drained.status).toBe(200);
+    expect(await drained.json()).toMatchObject({ accounts: 0, claimed: 0, delivered: 0, skipped: 0, failed: 0, remaining: 0 });
+    expect(post.calls).toEqual([]);
+    expect(await recordsOf(db, id)).toEqual([]);
+
+    const pressed = await H(req("POST", `/messages/${id}/unsubscribe`, { bearer: s.token }), deps);
+    expect(pressed.status).toBe(200);
+    expect(await pressed.json()).toMatchObject({ posted: true, status: 200, refusal: null });
     expect(post.calls).toEqual(["https://sender.example/u?t=abc"]);
     const records = await recordsOf(db, id);
     expect(records.map((r) => r.state)).toEqual(["sent"]);

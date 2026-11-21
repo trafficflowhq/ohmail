@@ -2,7 +2,7 @@ import { cloneElement, type ReactElement } from "react";
 import type { EngineMessage, UnsubscribeHeaderState } from "@ohmail/wire";
 import type { SyncChange } from "@ohmail/client-engine";
 import {
-  ISO, answerConsentWith, answerSyncWith, goTo, mailbox, mountShell, tick,
+  ISO, LIVE_ACCOUNT, answerConsentWith, answerSyncWith, goTo, mailbox, mountShell, tick,
 } from "./live-walk-shell";
 import { selectScreenerRow } from "./live-screener";
 
@@ -48,7 +48,10 @@ export async function openScreenerSender({
     ];
   });
   const json = (body: unknown, status = 200): Response =>
-    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json", "X-Ohmail-Account": LIVE_ACCOUNT },
+    });
   answerSyncWith(() => json({
     changes: { creates, updates: [], moves: [], deletes: [] },
     cursor: String(creates.at(-1)?.seq), hasMore: false, serverTime: ISO,

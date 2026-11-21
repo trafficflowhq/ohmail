@@ -19,6 +19,7 @@ const SELECTION_VERBS = "packages/app-logic/src/press/selection-verbs.ts";
 const READER_VERBS = "packages/app/src/reader/actions/use-verbs.ts";
 const CHOOSER = "packages/app/src/reader/actions/ResurfaceMenu.tsx";
 const PANEL = "packages/app/src/reader/actions/ActionBar.tsx";
+const MENUS = "packages/app/src/reader/actions/ActionMenus.tsx";
 const CONSENT_MOUNT = "packages/app/src/mail/ground/ConsentMount.tsx";
 const OHBOX_VERBS = "packages/app-logic/src/ohbox/live-verbs.ts";
 
@@ -49,7 +50,9 @@ describe("TRI-F11 — `b` matches the picker and is reversible", () => {
     // ground's consent mount, read by the panel and given to the chooser; the Ohbox's verbs read the same row.
     expect(read(CONSENT_MOUNT)).toMatch(/useRoomResurface\(\{ stored: row\.resurfaceTime,/);
     expect(read(OHBOX_VERBS)).toMatch(/const consent = useConsent\(\);/);
-    expect(read(PANEL)).toMatch(/stored=\{hour\.stored\}/);
+    expect(read(PANEL)).toMatch(/const hour = useResurfaceTime\(\)/);
+    expect(read(PANEL)).toMatch(/<ActionMenus\b[\s\S]*?hour=\{hour\}/);
+    expect(read(MENUS)).toMatch(/<ResurfaceMenu\b[\s\S]*?stored=\{hour\.stored\}/);
     const chooser = read(CHOOSER);
     expect(chooser).toMatch(/resurfaceClock\(stored\)/);
     expect(chooser).toMatch(/resurfaceHorizonsIn\(now, at, zone\)/);

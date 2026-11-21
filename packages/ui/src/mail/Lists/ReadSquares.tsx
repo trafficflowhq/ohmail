@@ -159,6 +159,7 @@ export function ReadSquares(props: ReadSquaresProps) {
             className={walks ? "oh-control oh-readsquares-slot" : "oh-readsquares-slot"}
             role={walks ? "button" : undefined}
             aria-label={walks ? names![index] : undefined}
+            aria-current={walks && index === here ? "true" : undefined}
             tabIndex={walks ? (index === at ? 0 : -1) : undefined}
             data-hold-tip={props.tips ? "" : undefined}
             onContextMenu={props.tips ? (event) => event.preventDefault() : undefined}
@@ -167,7 +168,7 @@ export function ReadSquares(props: ReadSquaresProps) {
             onPointerDown={props.tips ? tip.down : undefined}
             onPointerUp={props.tips ? tip.up : undefined}
             onPointerCancel={props.tips ? tip.cancel : undefined}
-            onFocus={props.tips ? (event) => tip.focus(event.currentTarget) : undefined}
+            onFocus={props.tips ? (event) => tip.showForFocus(event.currentTarget) : undefined}
             onBlur={props.tips ? tip.leave : undefined}
             data-kind={kind}
             data-square={index}

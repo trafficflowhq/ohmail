@@ -16,6 +16,9 @@ import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { clearSignedInSync, serveSignedInSync, writeSignedInSync } from "./fixtures/signed-in-sync";
+
+vi.hoisted(() => { process.env.NEXT_PUBLIC_API_BASE = "/api"; });
 
 /**
  * A `402 subscription_required` IS A FACT ABOUT THE ACCOUNT, NOT A FAILED DRAIN. The loop
@@ -220,21 +223,22 @@ describe("one staleness decision for the loop and the wall", () => {
   let stopSink: () => void = () => {};
 
   beforeEach(async () => {
-    process.env.NEXT_PUBLIC_API_BASE = "/api";
+    writeSignedInSync();
     const api = await import("../app/api-client");
     api.forgetAccess();
     walls = 0;
     stopSink = api.onAccessRefused(() => { walls += 1; });
-    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
+    vi.stubGlobal("fetch", vi.fn(serveSignedInSync(async (input) => {
       const url = String(input);
       if (url.endsWith("/account/access")) return jsonRes({ metered: true, access: "open", canAddMailbox: true, mailboxes: 5 }, 200);
       return jsonRes(REFUSAL, 402);
-    }));
+    })));
     // The lift: the wall's fresh read answered open.
     await api.account.access({ fresh: true });
   });
   afterEach(async () => {
     stopSink();
+    clearSignedInSync();
     vi.unstubAllGlobals();
     (await import("../app/api-client")).forgetAccess();
   });

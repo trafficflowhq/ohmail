@@ -17,9 +17,10 @@
  * two places to say so.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
+import { Switch } from "@ohmail/ui/base";
+import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { OhboxWords } from "./OhboxWords";
 import { AutoFiledReview } from "./AutoFiledReview";
 import { TravelledChangeNote, useTravelledChange } from "./travelled-change";
@@ -27,6 +28,8 @@ import { screeningSettings, type ScreeningPreferenceWire } from "../api-client";
 
 export function ScreeningSection() {
   const t = useTranslations("settings");
+  const postureNote = useId();
+  const impersonationNote = useId();
   const [pref, setPref] = useState<ScreeningPreferenceWire | null>(null);
   const [pending, setPending] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -78,36 +81,32 @@ export function ScreeningSection() {
   };
 
   return (
-    <>
-      <SettingsSubhead>{t("screening.title")}</SettingsSubhead>
+    <SettingsSheet title={t("screening.title")}>
+      <SettingLine label={t("screening.postureTitle")} describedBy={postureNote}>
+        <Switch
+          on={relevanceOn}
+          disabled={pending}
+          label={t("screening.postureTitle")}
+          onChange={(next) => apply({ ohboxPolicy: next ? "people_only" : "people_and_replied" })}
+        />
+      </SettingLine>
+      <SettingNote id={postureNote}>{t(relevanceOn ? "screening.postureOn" : "screening.postureOff")}</SettingNote>
 
-      <SettingsRow
-        label={t("screening.postureTitle")}
-        description={relevanceOn ? t("screening.postureOn") : t("screening.postureOff")}
-        control={
-          <Switch
-            checked={relevanceOn}
-            disabled={pending}
-            ariaLabel={t("screening.postureTitle")}
-            onChange={(next) => apply({ ohboxPolicy: next ? "people_only" : "people_and_replied" })}
-          />
-        }
-      />
-
-      {/* FILING A HELD IMPERSONATION TO SPAM — absent from an older server, which files none. */}
+      {/* An older server does not offer impersonation filing. */}
       {pref.impersonationFiling !== undefined ? (
-        <SettingsRow
-          label={t("screening.impersonationTitle")}
-          description={pref.impersonationFiling ? t("screening.impersonationOn") : t("screening.impersonationOff")}
-          control={
+        <>
+          <SettingLine label={t("screening.impersonationTitle")} describedBy={impersonationNote}>
             <Switch
-              checked={pref.impersonationFiling}
+              on={pref.impersonationFiling}
               disabled={pending}
-              ariaLabel={t("screening.impersonationTitle")}
+              label={t("screening.impersonationTitle")}
               onChange={(next) => apply({ impersonationFiling: next })}
             />
-          }
-        />
+          </SettingLine>
+          <SettingNote id={impersonationNote}>
+            {t(pref.impersonationFiling ? "screening.impersonationOn" : "screening.impersonationOff")}
+          </SettingNote>
+        </>
       ) : null}
 
       {/* What was filed out of the Screener automatically, still in place, with Put back. */}
@@ -129,6 +128,6 @@ export function ScreeningSection() {
           return heard(landed, true) ? { bar: landed.ohboxBar, travelled: true } : landed.ohboxBar;
         }}
       />
-    </>
+    </SettingsSheet>
   );
 }

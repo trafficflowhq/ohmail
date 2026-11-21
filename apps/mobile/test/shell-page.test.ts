@@ -155,7 +155,8 @@ describe("the phone shell's answers, per setting", () => {
         engine,
         session: {
           resolve: NONE, confirmed: NONE, state: w.session.state, scope: "p0123456789abcdef0123456789abcdef",
-          account: w.session.account, signOut: w.session.signOut, recover: has.frame.recover,
+          account: w.session.account, mirrorAccount: null, accountAddress: null, signOut: w.session.signOut,
+          recover: has.frame.recover, today: NONE,
         },
         reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
         wires: NO_WIRE,

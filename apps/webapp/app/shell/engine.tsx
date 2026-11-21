@@ -175,9 +175,10 @@ export function EngineProvider({
    * The page's word for the first frame (`page.tsx`): `wait` when the edge did not ask the API whose session this is,
    * or when no word arrived. A remembered mirror then opens but is not DRAWN until the check names that account, or
    * until the check has had the edge's own budget ({@link SESSION_TIMEOUT_MS}) and said nothing — the edge's fault
-   * path, which also draws this device's copy with its sync gate closed. Absent: the warm open draws at once.
+   * path, which also draws this device's copy with its sync gate closed. A Settings handoff requires
+   * confirmation before opening any mirror. Absent: the warm open draws at once.
    */
-  drawMail?: "now" | "wait";
+  drawMail?: "now" | "wait" | "confirmed";
   children: ReactNode;
 }) {
   // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
@@ -260,7 +261,7 @@ export function EngineProvider({
    * to ASK cannot open a mailbox on a cookie alone; the confirmation is what makes the optimism
    * safe, which also keeps the desktop client (no resolver, no cookie) on its old path.
    */
-  if (browserPass && binding.status === "resolving" && !desired && !provided && resolveOwner) {
+  if (browserPass && drawMail !== "confirmed" && binding.status === "resolving" && !desired && !provided && resolveOwner) {
     const remembered = readOwner();
     if (remembered !== null && !accountCleanupOwed(remembered)) {
       setBinding({ status: "warm", owner: remembered, engine: createEngine(false, undefined, remembered, readIsolatedScope(remembered, readSessionFamily())) });

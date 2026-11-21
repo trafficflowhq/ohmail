@@ -329,6 +329,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     was: EventTime,
     change: EventChange | null,
     wantedSeries?: string,
+    requireExclusion = false,
   ): Promise<WriteAnswer> {
     const now = await readMember(s, collection, member);
     if (failedRead(now)) return now;
@@ -337,7 +338,9 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     if (wantedSeries && !samePersonalDates(wantedSeries, now.text)) return refused("version_stale");
     if (change === null && dayOfAnotherCopy(now.text, was, deps.zones)) return refused("version_stale");
     const done =
-      change === null ? dayAbsent(now.text, was, deps.zones) : dayHolds(now.text, was, change, deps.zones);
+      change === null
+        ? dayAbsent(now.text, was, deps.zones, requireExclusion)
+        : dayHolds(now.text, was, change, deps.zones);
     return done ? answered(itemsOf(member, now)) : refused("version_stale");
   }
 
@@ -454,6 +457,11 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       const place = placeOf(cal, target.id);
       if (place === null) return refused("address_not_allowed");
       const was = target.occurrence;
+      if (target.caldavReadOnly) {
+        return was === null
+          ? afterStale(s, place.collection, place.member, null)
+          : afterStaleDay(s, place.collection, place.member, was, null, undefined, true);
+      }
       if (was !== null) {
         // One day cancelled: an excluded day in the series' own component, and the day's own component out. The member stays.
         const stood = await standing(s, place.collection, place.member, target);
@@ -538,12 +546,13 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       if (place === null) return refused("address_not_allowed");
       const was = target.occurrence;
       if (was === null) return refused("field_unwritable");
+      const readOnly = req.late === true || target.caldavReadOnly === true;
       // The copy the write was made on, as the store holds it; where the store holds another, the member as it is now: done
       // where it ends exactly where this write ends it and that end may be this write's own (an earlier attempt of it landed, and
       // no other write may have made it), else made on another copy. An end too old to send (`late`) is only looked at, at the
       // member itself: found so on another version than the copy it was made on, it is done; nothing of it goes late.
       let stood: { readonly tag: string; readonly text: string };
-      if (req.late !== true && target.text !== null && sendableTag(target.version))
+      if (!readOnly && target.text !== null && sendableTag(target.version))
         stood = { tag: target.version, text: target.text };
       else {
         const now = await readMember(s, place.collection, place.member);
@@ -552,11 +561,11 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         if (
           req.mayBeDone &&
           (!target.personalSeries || personalSeriesOf(now.text)) &&
-          (req.late !== true || now.tag !== target.version) &&
+          (!readOnly || now.tag !== target.version) &&
           seriesEndsBefore(now.text, was, deps.zones)
         )
           return answered(itemsOf(place.member, now));
-        if (req.late === true) return refused("version_stale");
+        if (readOnly) return refused("version_stale");
         if (now.tag === null || !sendableTag(now.tag)) return refused("version_unknown");
         if (now.tag !== target.version) return refused("version_stale");
         stood = { tag: now.tag, text: now.text };

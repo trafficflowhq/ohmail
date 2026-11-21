@@ -62,6 +62,7 @@ export interface DesktopSupplies {
     | "suggest" | "draftReply"
   > & MayBeNone<"connect" | "firstRun" | "screening" | "autoFiled" | "ownModelAutoSuggest" | "mailboxes"> & {
     readonly folderSummary?: Transports["folderSummary"];
+    readonly calendar?: HostContract["wires"]["calendar"];
     readonly consent: { readonly account: Transports["consent"]; readonly standalone: Transports["consent"] };
   };
   /** The desktop's own feature, Mailboxes, and the ways out to the browser. Never Invites. The reader, what stands above, the overs and the calendar are no entries. */
@@ -87,6 +88,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
   const cloud = status.mode === "cloud";
   const paired = isDesktopHost(status);
   const account = accountDoorFor(status, session) !== null;
+  const calendar = account && !facts.sessionRefused ? has.wires.calendar ?? NONE : NONE;
   const away = awayDoorFor(status, session);
   const consent = consentDoorFor(status, session);
   const suggest = suggestDoorFor(status, session);
@@ -137,8 +139,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       ownModelAutoSuggest: suggest === "local" ? has.wires.ownModelAutoSuggest : NONE,
       connect: firstRun ? has.wires.connect : NONE,
       mailboxes: has.wires.mailboxes,
-      // A desktop signed in to a server answers its calendar at the seating; one on its own has none.
-      calendar: NONE,
+      calendar,
     },
     capabilities: {
       service: isManagedDoor(status) ? "managed" : local || paired ? "ownComputer" : "self",
@@ -164,7 +165,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
     },
     features: {
       ...has.features,
-      account: account ? has.features.account : NONE,
+      account: account && isManagedDoor(status) ? has.features.account : NONE,
       security: account ? has.features.security : NONE,
       ai: account ? has.features.ai : NONE,
       accountStrip: account ? has.features.accountStrip : NONE,

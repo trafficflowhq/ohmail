@@ -35,7 +35,7 @@ import {
   type NoticeAhead,
   type NoticeTaken,
 } from "@ohmail/client-engine";
-import { mayDeliver } from "./notice-delivery.js";
+import { mayDeliver, singleArrival } from "./notice-delivery.js";
 import type { HostNoticeEmitter, NoticeReads, NoticesMount } from "./notice-reads.js";
 import type { ToldDevices } from "./told-devices.js";
 
@@ -63,7 +63,7 @@ export {
  */
 export class NoticeCaller {
   private scope: string | null = null;
-  private before: NoticeSample | null = null;
+  private before: ReturnType<typeof noticeSampleOf> | null = null;
   /** What was last kept for this scope, for a device whose storage keeps nothing: the app's life then. */
   private told: ToldDevices | null = null;
   /** The alerts this caller rings itself, where its surface cannot set them. */
@@ -100,8 +100,9 @@ export class NoticeCaller {
     const after = noticeSampleOf(reader, seen, changes?.sample ?? null);
     // Mail is compared with the sample before; the first sample with itself, so nothing of it is
     // an event. The devices are compared with what this device has told, at the first sample too.
+    const previous = this.before ?? after;
     const before: NoticeSample = {
-      ...(this.before ?? after),
+      ...previous,
       devices:
         seen === null || told === null ? null : { made: told.made, revoked: told.revoked, live: seen.live },
     };
@@ -115,7 +116,11 @@ export class NoticeCaller {
       changes?.look,
     );
     for (const notice of answer) {
-      const taken = this.emitter.post(notice, this.deliveryGuard(notice, scope, before));
+      const letter =
+        notice.kind === "ohbox" && notice.count === 1
+          ? singleArrival(previous.unreadIds, after.unreadIds)
+          : undefined;
+      const taken = this.emitter.post(notice, this.deliveryGuard(notice, scope, before), letter);
       if (notice.kind !== "pairing" || seen === null) continue;
       this.keepOnceTaken(
         scope,

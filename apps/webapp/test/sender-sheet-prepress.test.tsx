@@ -88,7 +88,12 @@ describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
     await press(shell, copy.pileSpam);
     expect(within(document.body).queryByRole("dialog")).toBeNull();
     await tick(COMMIT_MS + 1);
-    expect(decisions).toEqual(sentTo("ohmail/Quarantine"));
+    expect(decisions).toEqual([{
+      id: rowId,
+      body: {
+        decision: "no", dest: "ohmail/Quarantine", scope: "confirmed_sender", applyRetro: false, confirmedIds: [rowId],
+      },
+    }]);
     expect(screenerRow(shell, rowId)?.textContent).toContain("Not saved");
   });
 

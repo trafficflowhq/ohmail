@@ -115,12 +115,13 @@ function mailboxOf(query: string): string | null {
   return named === "" ? null : named;
 }
 
-/** The open letter's tail, `…/m/<id>`, cut off the path. */
-function cutTail(path: string): { path: string; open: string | null } {
+/** A message tail names the chosen letter; a thread tail names any member of the conversation. */
+function cutTail(path: string): { path: string; open: string | null; wholeThread?: true } {
   const parts = path.split("/");
   const id = parts[parts.length - 1];
-  if (parts.length >= 3 && parts[parts.length - 2] === "m" && id)
-    return { path: parts.slice(0, -2).join("/"), open: id };
+  const kind = parts[parts.length - 2];
+  if (parts.length >= 3 && (kind === "m" || kind === "t") && id)
+    return { path: parts.slice(0, -2).join("/"), open: id, ...(kind === "t" ? { wholeThread: true } : {}) };
   return { path, open: null };
 }
 
@@ -159,9 +160,11 @@ export function routeOf(fragment: string): Route {
   if (calendar !== null) return calendar;
   const at = whole.indexOf("?");
   const query = at === -1 ? "" : whole.slice(at + 1);
-  const { path, open } = cutTail(at === -1 ? whole : whole.slice(0, at));
+  const { path, ...selection } = cutTail(at === -1 ? whole : whole.slice(0, at));
   const found = placeOf(path, query);
-  return open !== null && found.stage === null && LISTS_LETTERS.has(found.place) ? { ...found, open } : found;
+  return selection.open !== null && found.stage === null && LISTS_LETTERS.has(found.place)
+    ? { ...found, ...selection }
+    : found;
 }
 
 const named = (mailbox: string | undefined) =>
@@ -174,7 +177,8 @@ export function fragmentOf(to: Route): string {
     const how = to.stage.words.how;
     return `#/first-run${how === "again" || how === "add" ? `/${how}` : ""}${named(to.stage.words.mailbox)}`;
   }
-  const tail = to.open !== null && LISTS_LETTERS.has(to.place) ? `/m/${to.open}` : "";
+  const tail =
+    to.open !== null && LISTS_LETTERS.has(to.place) ? `/${to.wholeThread ? "t" : "m"}/${to.open}` : "";
   const head = ADDRESS[to.place];
   switch (to.place) {
     case "tags":

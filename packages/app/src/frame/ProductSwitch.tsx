@@ -3,19 +3,31 @@ import { Switcher, type SwitcherProps } from "@ohmail/ui/mail";
 import { NONE, type None } from "../host/index.js";
 import { useText } from "../text/index.js";
 import { useFrame } from "./commands.js";
-import type { PlaceEntry } from "./contract.js";
+import type { PlaceEntry, Product } from "./contract.js";
 import { SWITCH_CHORDS } from "./product.js";
 
 const always = () => true;
+const noHome = () => undefined;
+
+function useSwitchProduct() {
+  const { host, commands } = useFrame();
+  const calendar = host.features.calendar;
+  const useHome = calendar === NONE ? noHome : (calendar.useSwitchHome ?? noHome);
+  const home = useHome();
+  return (to: Product) => commands.switchProduct(to, home);
+}
 
 function useSwitchOffered() {
-  const calendar = useFrame().host.features.calendar;
+  const { host, product } = useFrame();
+  const calendar = host.features.calendar;
   const offered = calendar === NONE ? always : (calendar.useSwitchOffered ?? always);
-  return offered();
+  const available = offered();
+  return product === "cal" || available;
 }
 
 export function ProductSwitch({ kind, onRail }: { kind: "pair" | "round"; onRail?: boolean }) {
-  const { host, product, previousProduct, commands } = useFrame();
+  const { host, product, previousProduct } = useFrame();
+  const switchProduct = useSwitchProduct();
   const t = useText("frame");
   const offered = useSwitchOffered();
   const calendar = host.features.calendar;
@@ -28,7 +40,7 @@ export function ProductSwitch({ kind, onRail }: { kind: "pair" | "round"; onRail
     onRail,
     mail: { word: "ohmail", label: t("products.mail"), keyHint: SWITCH_CHORDS.mail },
     cal: { word: "ohcal", label: t("products.cal"), keyHint: SWITCH_CHORDS.cal },
-    onSwitch: commands.switchProduct,
+    onSwitch: switchProduct,
   };
   if (kind === "pair") return <Switcher {...props} />;
   return product === "mail" ? (
@@ -71,7 +83,7 @@ function RoundToMail(props: SwitcherProps) {
 }
 
 export function ProductKeys() {
-  const { commands } = useFrame();
+  const switchProduct = useSwitchProduct();
   const offered = useSwitchOffered();
   const t = useText("frame");
   useKeyBindings(
@@ -81,13 +93,13 @@ export function ProductKeys() {
             chord: SWITCH_CHORDS.mail,
             group: "navigate",
             label: t("products.mail"),
-            run: () => commands.switchProduct("mail"),
+            run: () => switchProduct("mail"),
           },
           {
             chord: SWITCH_CHORDS.cal,
             group: "navigate",
             label: t("products.cal"),
-            run: () => commands.switchProduct("cal"),
+            run: () => switchProduct("cal"),
           },
         ]
       : [],

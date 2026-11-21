@@ -10,7 +10,9 @@
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { localStorageDoor } from "@ohmail/client-engine/durable";
 
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
@@ -234,21 +236,23 @@ const paint = (bootFailure: unknown): void =>
           storage={THEME_DOOR}
           systemScheme={omarchySchemeSource}
         >
-          <ToastHost>
-            <RendererReloaded reloaded={RENDERER_RELOADED} />
-            <UpdateClosing />
-            {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
-                own render, and the throw this exists for comes from `DesktopGate` building the
-                client engine. `GateBoundary.tsx` has the released build that went white for want
-                of it. */}
-            <GateBoundary>
-              {bootFailure !== null ? (
-                <BootFailure error={bootFailure} />
-              ) : (
-                <DesktopGate />
-              )}
-            </GateBoundary>
-          </ToastHost>
+          <portalRenderer.Provider value={createPortal}>
+            <ToastHost>
+              <RendererReloaded reloaded={RENDERER_RELOADED} />
+              <UpdateClosing />
+              {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
+                  own render, and the throw this exists for comes from `DesktopGate` building the
+                  client engine. `GateBoundary.tsx` has the released build that went white for want
+                  of it. */}
+              <GateBoundary>
+                {bootFailure !== null ? (
+                  <BootFailure error={bootFailure} />
+                ) : (
+                  <DesktopGate />
+                )}
+              </GateBoundary>
+            </ToastHost>
+          </portalRenderer.Provider>
         </ThemeProvider>
       </DesktopLocale>
     </StrictMode>,

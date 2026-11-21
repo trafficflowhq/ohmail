@@ -7,6 +7,7 @@
  * It reads the ground through the live hook's readers and never mounts a piece of it. The field and the scroller are
  * the screen's own: the seat makes their refs and the screen stands them (`model.boxRef`, `model.scrollerRef`).
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -18,6 +19,8 @@ import {
 import { displayTime, PLACE_LABEL, placeLabel } from "@ohmail/app-logic/text/format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useFrame, useSearchQuery } from "../frame/commands.js";
+import { usePlaceVerbs } from "@ohmail/app-logic/place-list";
+import { usePlaceListOwn } from "../place-list/own.js";
 import { usePlaceLiveArgs } from "../frame/place-live.js";
 import { NONE } from "../host/index.js";
 import { useScreener } from "../screener/contract.js";
@@ -91,10 +94,22 @@ export function SearchSeat({ children }: { readonly children: ReactNode }): Reac
   const { plan, commands, route } = useFrame();
   useSwitchEnded(route, true);
   const t = useText("search");
-  const live = useSearchLive(usePlaceLiveArgs(), useOwn());
+  const args = usePlaceLiveArgs();
+  const live = useSearchLive(args, useOwn());
   const { model, archiveHit, now, placeOf, junk, junkReadable, people } = live;
+  const { length, slotAt } = model;
+  const surface = useMemo(() => {
+    const rows: EngineMessage[] = [];
+    for (let i = 0; i < length; i++) {
+      const slot = slotAt(i);
+      if (slot.kind === "hit") rows.push(slot.hit.message);
+    }
+    return rows;
+  }, [length, slotAt]);
+  const { verbs } = usePlaceVerbs(args, usePlaceListOwn(), surface);
   const beside: SearchBeside = useMemo(
     () => ({
+      selection: { rows: surface, verbs },
       words: {
         name: (m) => m.from.name || null,
         address: (m) => displayAddress(m.from.address),
@@ -114,7 +129,7 @@ export function SearchSeat({ children }: { readonly children: ReactNode }): Reac
       events: NONE,
       go: { address: (address) => commands.go({ place: "address", sub: address }) },
     }),
-    [now, placeOf, t, junk, junkReadable, plan.pointer, people, commands],
+    [now, placeOf, t, junk, junkReadable, plan.pointer, people, commands, surface, verbs],
   );
   return (
     <SearchAbove model={model} archiveHit={archiveHit} beside={beside} blank={blankOf(model, t)}>

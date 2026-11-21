@@ -320,9 +320,13 @@ export interface KeyRead {
  * Each row names the identifier the file reads through and the namespace its caller binds,
  * and `glue` names where that choice is made, which `handedReaderNamespaces` reads back.
  */
+type MountedReader =
+  | "junk" | "composer" | "press" | "ohbox" | "cursorKeys" | "cursorHint" | "ohboxWords"
+  | "contact" | "verdict" | "stream" | "trash";
+
 export interface HandedReaders {
   /** Identifier in the file → the namespace of the reader it holds ("" is the catalogue root). */
-  readers: Record<string, string>;
+  readers: Record<string, string | readonly string[]>;
   /**
    * Where the namespaces are chosen: every reader bound in that file, or every reader handed at each call of that
    * hook. The mounted suggestion record is resolved through its consumer.
@@ -331,7 +335,8 @@ export interface HandedReaders {
     | { file: string }
     | { call: string }
     | { calls: readonly string[] }
-    | { mountedSuggestions: true };
+    | { mountedSuggestions: true }
+    | { mounted: MountedReader };
 }
 
 const SCREENER_WORDS = "packages/app/src/screener/words.ts";
@@ -344,7 +349,7 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
   },
   "packages/app-logic/src/screener/junk-window.ts": {
     readers: { t: "screener" },
-    glue: { call: "useJunkWindow" },
+    glue: { mounted: "junk" },
   },
   "packages/app-logic/src/screener/screener-suggest.ts": {
     readers: { t: "screener", tAi: "aiRefusal" },
@@ -353,16 +358,16 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
   /* The send machine's words are made from the composer's own reader (`useSendText`), chosen where the composer is called. */
   "packages/app-logic/src/writing/mail-send.ts": {
     readers: { t: "" },
-    glue: { call: "useShellCompose" },
+    glue: { mounted: "composer" },
   },
   /* The drafted reply's hook is handed the composer's own reader: the one chosen at each call of the composer. */
   "packages/app-logic/src/writing/draft-reply.ts": {
     readers: { t: "" },
-    glue: { call: "useShellCompose" },
+    glue: { mounted: "composer" },
   },
   "packages/app-logic/src/writing/shell-compose.ts": {
     readers: { t: "" },
-    glue: { call: "useShellCompose" },
+    glue: { mounted: "composer" },
   },
   /* The rows' words: the badges' hook is handed the `message` reader, the sent label's hook the `ohbox` one. */
   "packages/app-logic/src/text/row-copy.ts": {
@@ -375,15 +380,43 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
   },
   "packages/app-logic/src/press/shell-dispatch.ts": {
     readers: { t: "" },
-    glue: { call: "useShellDispatch" },
+    glue: { mounted: "press" },
   },
   "packages/app-logic/src/ohbox/keys.ts": {
     readers: { t: "ohbox" },
-    glue: { call: "useOhboxList" },
+    glue: { mounted: "ohbox" },
   },
   "packages/app-logic/src/ohbox/walk.ts": {
     readers: { t: "ohbox" },
-    glue: { call: "useOhboxList" },
+    glue: { mounted: "ohbox" },
+  },
+  "packages/app-logic/src/ohbox/cursor-verbs.ts": {
+    readers: { t: "shortcuts" },
+    glue: { mounted: "cursorKeys" },
+  },
+  "packages/app-logic/src/ohbox/live.ts": {
+    readers: { "own.cursor": "cursor" },
+    glue: { mounted: "cursorHint" },
+  },
+  "packages/app-logic/src/ohbox/live-verbs.ts": {
+    readers: { words: "" },
+    glue: { mounted: "ohboxWords" },
+  },
+  "packages/app-logic/src/press/contact-screening.ts": {
+    readers: { t: "" },
+    glue: { mounted: "contact" },
+  },
+  "packages/app-logic/src/press/press-verdict.ts": {
+    readers: { t: "screening" },
+    glue: { mounted: "verdict" },
+  },
+  "packages/app-logic/src/streams/live.ts": {
+    readers: { t: ["news", "receipts"] },
+    glue: { mounted: "stream" },
+  },
+  "packages/app-logic/src/trash/live.ts": {
+    readers: { t: "shortcuts" },
+    glue: { mounted: "trash" },
   },
   "packages/app-logic/src/search/facets.ts": {
     readers: { t: "search" },
@@ -522,6 +555,93 @@ export function mountedScreenerReaderBindings(repo: string) {
   };
 }
 
+/** Verify the reader's path through the mounted shell, including each forwarding record. */
+function mountedNamespaces(repo: string, mounted: MountedReader): Set<string | null> {
+  const printer = ts.createPrinter({ removeComments: true });
+  const compact = (source: string) => source.replace(/\s+/g, "");
+  const source = (file: string, ...links: string[]) => {
+    const code = compact(printer.printFile(parse(path.join(repo, file))));
+    for (const link of links) {
+      if (!code.includes(compact(link))) throw new Error(`${file}: missing reader link ${link}`);
+    }
+  };
+  const logic = "packages/app-logic/src";
+  const app = "packages/app/src";
+  if (mounted === "junk") {
+    source(`${logic}/screener/live.ts`, "useJunkHere(press, junkWire, text.screener, at,",
+      "useJunkWindow(on && at.third, press.undoToast, wire, t, on && at.screener, keep)");
+    return new Set([mountedScreenerReaderBindings(repo).state.t ?? null]);
+  }
+  if (mounted === "composer") {
+    source(`${app}/mail/ground/WritingMount.tsx`, "const inputs = useWritingInputs();",
+      "useShellCompose(inputs.composer)");
+    source(`${app}/mail/ground/writing-inputs.ts`, "const t = useCatalogue();",
+      "const composer: ShellComposeInput = { engine, reader, t,",
+      "return { composer, engine, scope, replyTo, facts, lists, t };",
+      "return useMemo(() => catalogueOver(textOf), [textOf]);",
+      "const textOf = useTextLookup();",
+      "textOf(key.slice(0, dot))(key.slice(dot + 1), values as never)");
+    source(`${logic}/writing/shell-compose.ts`, "useDraftReply({ onDraft, wire: draftReplyWire, t })",
+      "useMailSend(engine, scope, toast, useSendText(t, words.scheduleLabel),");
+    return new Set([""]);
+  }
+  if (mounted === "press") {
+    source(`${app}/frame/room.tsx`,
+      "useShellDispatch({ engine, reader, toast: report, t, placeLabel, demo, refreshFacts, scope })",
+      "const t = useMemo(() => pressWords({ ohbox, screener, trash, screening, session, shortcuts })",
+      ...["ohbox", "screener", "trash", "screening", "session", "shortcuts"].map(
+        (ns) => `const ${ns} = useText("${ns}");`,
+      ));
+    source(`${logic}/reader/press-words.ts`, "return wordsOver(texts);",
+      "const text = dot > 0 ? texts[key.slice(0, dot)] : undefined;",
+      "return text ? text(key.slice(dot + 1), values)");
+    return new Set([""]);
+  }
+  if (mounted === "cursorKeys" || mounted === "cursorHint") {
+    source(`${app}/ohbox/Seat.tsx`, "const own = useOwn(", "useOhboxLive(args, own)",
+      mounted === "cursorKeys" ? 'shortcuts: useText("shortcuts")' : 'cursor: useText("cursor")');
+    source(`${logic}/ohbox/live.ts`, mounted === "cursorKeys" ? "cursorRowKeys({ t: own.shortcuts," : 'own.cursor("placed",');
+    return new Set([mounted === "cursorKeys" ? "shortcuts" : "cursor"]);
+  }
+  if (mounted === "ohboxWords") {
+    source(`${app}/ohbox/Seat.tsx`, 'const markAll = useText("markAll");',
+      "wordsOver({ ohbox: t, screening, session, tag, markAll })", "return { t, words,",
+      "const own = useOwn(", "useOhboxLive(args, own)");
+    source(`${logic}/ohbox/live.ts`, "useOhboxVerbs({", "words: own.words");
+    source(`${logic}/ohbox/live-verbs.ts`, "const { args, mirror, words } = input;");
+    return new Set([""]);
+  }
+  if (mounted === "contact") {
+    source(`${app}/reader/contact/Screening.tsx`, "const lookup = useTextLookup();",
+      "screenContact({ ...input, dest,", "toast: report, t: (key, values) =>",
+      "return lookup(key.slice(0, dot))(key.slice(dot + 1), values);");
+    return new Set([""]);
+  }
+  if (mounted === "verdict") {
+    source(`${logic}/screener/screener-state.ts`, "verdictSentence(ts, verdict, sender, piles[d.dest])");
+    return new Set([mountedScreenerReaderBindings(repo).state.ts ?? null]);
+  }
+  if (mounted === "stream") {
+    source(`${app}/stream/Seat.tsx`, "const t = useStreamText(place);",
+      "const own: StreamLiveOwn = useMemo(() => ({ t, zone, onPageHide: subscribe })",
+      "useStreamLive(place, args, own)");
+    source(`${app}/stream/words.ts`, 'const news = useText("news");',
+      'const receipts = useText("receipts");', 'return place === "news" ? news : receipts;');
+    return new Set(["news", "receipts"]);
+  }
+  if (mounted === "trash") {
+    source(`${app}/trash/Seat.tsx`, 'shortcuts: useText("shortcuts")', "useTrashLive(args, useOwn())");
+    source(`${logic}/trash/live.ts`, "useKeyBindings(noEraseKeys(own.shortcuts));");
+    return new Set(["shortcuts"]);
+  }
+  source(`${app}/ohbox/Seat.tsx`, 'const t = useText("ohbox");',
+    "return { t, words, shortcuts:", "const own = useOwn(", "useOhboxLive(args, own)");
+  source(`${logic}/ohbox/live.ts`, "const model = useOhboxList({", "t: own.t,");
+  source(`${logic}/ohbox/ohbox-list.ts`, "const t = input.t;",
+    "walkSteps({ order, at, t, selectByUser, setLandedOn:", "ohboxKeys({ ...pickSet, ...pickVerbs, ...marks, ...steps, t,");
+  return new Set(["ohbox"]);
+}
+
 /**
  * The namespaces a row's glue chooses: for `{ file }` every reader bound in that file, for
  * `{ call }` (and each of `{ calls }`) every reader handed at a call of that hook, as an argument (`useZoneNav(
@@ -529,6 +649,7 @@ export function mountedScreenerReaderBindings(repo: string) {
  * `t` is resolved to the nearest binding as the scan does). A variable namespace answers null.
  */
 export function handedReaderNamespaces(repo: string, roots: string[], glue: HandedReaders["glue"]): Set<string | null> {
+  if ("mounted" in glue) return mountedNamespaces(repo, glue.mounted);
   if ("mountedSuggestions" in glue) return new Set(Object.values(mountedScreenerReaderBindings(repo).suggestions));
   const out = new Set<string | null>();
   const files = "file" in glue ? [path.join(repo, glue.file)] : sourceFiles(repo, roots);
@@ -583,6 +704,20 @@ export function handedReaderNamespaces(repo: string, roots: string[], glue: Hand
   return out;
 }
 
+/** A verb bridge forwards its reader to the shared actions without reading any key itself. */
+export function checkForwardedReader(repo: string): void {
+  const file = "packages/app-logic/src/place-list/verbs.ts";
+  const scope = parse(path.join(repo, file));
+  const words = findOne(scope, "forwarded own.words",
+    (n): n is ts.PropertyAccessExpression => ts.isPropertyAccessExpression(n) && n.getText() === "own.words");
+  const property = words.parent;
+  if (!ts.isPropertyAssignment(property) || property.name.getText() !== "t" ||
+      !ts.isObjectLiteralExpression(property.parent) || !ts.isCallExpression(property.parent.parent) ||
+      property.parent.parent.expression.getText() !== "useListVerbs") {
+    throw new Error(`${file}: own.words must be handed directly to useListVerbs`);
+  }
+}
+
 /**
  * Every file in the roots that takes a `Translator` (the type a handed reader carries), binds
  * no reader of its own and calls anything with a string first (`x("…")`, `x.rich("…")`, and a
@@ -612,7 +747,15 @@ export function filesHandedAReader(repo: string, roots: string[]): string[] {
         ts.isCallExpression(n) && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])
         && (ts.isIdentifier(n.expression)
           || ts.isPropertyAccessExpression(n.expression) && !stringMethod(n.expression.name.text))
-      ) readShaped = true;
+      ) {
+        // This exact call reads tag entities from the engine; its argument is a record type.
+        const tagEntities = path.relative(repo, file) === "packages/app-logic/src/place-list/verbs.ts"
+          && n.expression.getText(sf) === "engine.read().list"
+          && n.typeArguments?.length === 1
+          && n.typeArguments[0]?.getText(sf) === "TagDTO"
+          && n.arguments.length === 1 && n.arguments[0]?.getText(sf) === '"tag"';
+        if (!tagEntities) readShaped = true;
+      }
       if (!binds) ts.forEachChild(n, visit);
     };
     visit(sf);
@@ -694,8 +837,9 @@ export function scanKeyReads(repo: string, roots: string[]): KeyRead[] {
 
       /** Innermost first. Each frame maps a translator identifier to its namespace prefix. The
           outermost holds the readers a caller hands this file ({@link HANDED_READERS}). */
-      const scopes: Map<string, string | null>[] = [new Map(Object.entries(HANDED_READERS[rel]?.readers ?? {}))];
-      const lookup = (name: string): string | null | undefined => {
+      type Prefix = string | readonly string[] | null;
+      const scopes: Map<string, Prefix>[] = [new Map(Object.entries(HANDED_READERS[rel]?.readers ?? {}))];
+      const lookup = (name: string): Prefix | undefined => {
         for (let i = scopes.length - 1; i >= 0; i--) {
           if (scopes[i]!.has(name)) return scopes[i]!.get(name);
         }
@@ -742,34 +886,18 @@ export function scanKeyReads(repo: string, roots: string[]): KeyRead[] {
          * `rich`, `markup` and `raw` are the three members of the translator that take a key.
          * Anything else called off `t` is not a key read, and matching the member by name rather
          * than accepting every property call is what keeps this from collecting `t.length`. */
-        const RICH_MEMBERS = new Set(["rich", "markup", "raw"]);
-        if (
-          ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)
-          && ts.isIdentifier(n.expression.expression)
-          && RICH_MEMBERS.has(n.expression.name.text)
-          && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])
-        ) {
-          const prefix = lookup(n.expression.expression.text);
+        const richMembers = new Set(["rich", "markup", "raw"]);
+        if (ts.isCallExpression(n) && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])) {
+          const reader = ts.isPropertyAccessExpression(n.expression) && richMembers.has(n.expression.name.text)
+            ? n.expression.expression.getText()
+            : n.expression.getText();
+          const prefix = lookup(reader);
+          const key = n.arguments[0].text;
           if (prefix !== undefined && prefix !== null) {
-            const key = (n.arguments[0] as ts.StringLiteral).text;
-            reads.push({
+            for (const ns of typeof prefix === "string" ? [prefix] : prefix) reads.push({
               file: rel,
               line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
-              dotted: prefix ? `${prefix}.${key}` : key,
-            });
-          }
-        }
-        if (
-          ts.isCallExpression(n) && ts.isIdentifier(n.expression)
-          && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])
-        ) {
-          const prefix = lookup(n.expression.text);
-          if (prefix !== undefined && prefix !== null) {
-            const key = (n.arguments[0] as ts.StringLiteral).text;
-            reads.push({
-              file: rel,
-              line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
-              dotted: prefix ? `${prefix}.${key}` : key,
+              dotted: ns ? `${ns}.${key}` : key,
             });
           }
         }

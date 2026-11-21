@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { within } from "@testing-library/react";
 import {
+  ACCOUNT,
   act,
   installConfirmEnv,
   ISO,
@@ -23,7 +24,7 @@ const settings = messages.settings;
 const microsoft = "/api/mailboxes/oauth/microsoft";
 const refusal = "Connecting a Microsoft mailbox is not available on this deployment yet.";
 const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "X-Ohmail-Account": ACCOUNT } });
 
 function install(): void {
   installConfirmEnv();
@@ -73,11 +74,9 @@ async function mountedMailboxes(
     return fixture(input, init);
   };
 
-  window.location.hash = "#/settings";
+  window.location.hash = "#/settings/mailboxes";
   const frame = await mountCloudShell();
   await tick(3000);
-  const nav = within(frame).getByRole("navigation", { name: settings.navAria });
-  await click(within(nav).getByRole("button", { name: settings.mailboxes }));
   expect(window.location.hash).toBe("#/settings/mailboxes");
   const pane = within(within(frame).getByRole("region", { name: settings.mailboxes }));
   return {
@@ -124,7 +123,7 @@ describe("the Outlook door is gated on the deployment's capability, not shown th
   it("hides an oauth row's Reconnect when the door is shut — and offers no Edit in its place", async () => {
     const view = await mountedMailboxes(() => json({ available: false, device: false }), [oauth]);
     await view.open(oauth);
-    expect(view.reads).toEqual(availabilityRead);
+    expect(view.reads).toEqual([...availabilityRead, ...availabilityRead]);
     expect(view.pane.queryByRole("button", { name: copy.oauthReconnect })).toBeNull();
     expect(view.pane.queryByRole("button", { name: copy.edit })).toBeNull();
     expect(view.writes).toEqual([]);
@@ -138,11 +137,11 @@ describe("an OAUTH row offers a reconnect, and NOT the password form", () => {
       allow = resolve;
     });
     const other = { ...oauth, id: "mb-other", address: ["other", "example.invalid"].join("@") };
-    const { pane, reads, writes, open } = await mountedMailboxes(() => held, [other, oauth]);
+    const { pane, reads, writes, open } = await mountedMailboxes(() => held.then((response) => response.clone()), [other, oauth]);
     const origin = window.location.href;
-    expect(reads).toEqual([]);
-    await open(oauth);
     expect(reads).toEqual(availabilityRead);
+    await open(oauth);
+    expect(reads).toEqual([...availabilityRead, ...availabilityRead]);
     expect(pane.queryByRole("button", { name: copy.oauthReconnect })).toBeNull();
     await act(async () => {
       allow(available());

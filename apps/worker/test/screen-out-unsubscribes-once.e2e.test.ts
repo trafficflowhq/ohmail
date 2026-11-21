@@ -48,12 +48,12 @@ function eml(o: { from: string; subject: string; messageId: string; date?: Date;
   ].join("\r\n");
 }
 
-describe("a screen-out asks each list once, for the sender's mail now and later (real GreenMail)", () => {
+describe("only an explicitly confirmed press asks a list (real GreenMail)", () => {
   beforeAll(async () => { await runMigrations(DB_URL); });
   const closers: Array<() => Promise<void>> = [];
   afterEach(async () => { for (const c of closers.splice(0)) await c(); });
 
-  it("the list is asked at the press; the person's past and later one-click mail by the passes; nobody twice", async () => {
+  it("filing finds past and later mail, and each list is asked once when the person confirms it", async () => {
     // THE RIG'S RECEIVING SIDE.
     const received: Array<{ method: string; url: string; body: string }> = [];
     const rig: Server = createServer((req, res) => {
@@ -102,29 +102,40 @@ describe("a screen-out asks each list once, for the sender's mail now and later 
     const drain = () => unsubscribe.sweepScreenedOut(ctx, { since: new Date(Date.now() - WINDOW_MS), limit: 50 });
 
     // The list, at the press: exactly the RFC 8058 body, once.
-    await screener.decide(ctx, list.id, { decision: "no", dest: "ohmail/Screened", scope: "sender" });
+    await screener.decide(ctx, list.id, {
+      decision: "no", dest: "ohmail/Screened", scope: "confirmed_sender",
+      confirmedIds: [list.id], unsubscribeIds: [list.id], applyRetro: false,
+    });
     expect(received).toEqual([{ method: "POST", url: "/leave?t=rig-token", body: ONE_CLICK_BODY }]);
 
     // The person: their held letter offers none, so the press itself asks nothing…
     await screener.decide(ctx, plain.id, { decision: "no", dest: "ohmail/Screened", scope: "sender" });
     expect(paths()).toEqual(["/leave?t=rig-token"]);
-    // …but the past-mail pass moves the older letter, and the drain asks for it.
+    // The past-mail pass moves the older letter. Only the confirmed Reader press asks its list.
     await ruleRetroPass(h.db as unknown as Tx, { accountId: h.accountId, trustedAuthservIdsFor: async () => GMAIL }, new Date());
     expect(await desired(plainOld.id), "the past-mail pass moved the older letter").toBe("ohmail/Screened");
-    await drain();
+    expect((await drain()).posted).toBe(0);
+    expect(paths()).toEqual(["/leave?t=rig-token"]);
+    expect((await unsubscribe.unsubscribe(ctx, plainOld.id)).posted).toBe(true);
     expect(paths()).toEqual(["/leave?t=rig-token", "/leave?t=old"]);
 
-    // A letter arriving after the press offers one-click: the rule files it, and the drain asks again.
+    // A later letter offers one-click. Its stored rule files it without asking the list.
     await c.append("INBOX", eml({ from: "person@plain.rig.test", subject: "Later", messageId: "plain2@rig", oneClick: { list: "later.plain.rig.test", token: "later" } }));
     await runSyncCycle(deps);
-    expect(await desired((await one("plain2@rig")).id), "the rule filed the later letter").toBe("ohmail/Screened");
-    await drain();
+    const laterId = (await one("plain2@rig")).id;
+    expect(await desired(laterId), "the rule filed the later letter").toBe("ohmail/Screened");
+    expect((await drain()).posted).toBe(0);
+    expect(paths()).toEqual(["/leave?t=rig-token", "/leave?t=old"]);
+    expect((await unsubscribe.unsubscribe(ctx, laterId)).posted).toBe(true);
     expect(paths()).toEqual(["/leave?t=rig-token", "/leave?t=old", "/leave?t=later"]);
     expect(received.every((r) => r.method === "POST" && r.body === ONE_CLICK_BODY)).toBe(true);
 
-    // And nobody twice: another drain over the same window asks nobody.
+    // Another tick and repeated Reader presses cannot send duplicates.
     const again = await drain();
     expect(again.posted).toBe(0);
+    for (const id of [list.id, plainOld.id, laterId]) {
+      expect(await unsubscribe.unsubscribe(ctx, id)).toMatchObject({ posted: false, refusal: "already_recorded" });
+    }
     expect(received).toHaveLength(3);
   }, 90_000);
 });
