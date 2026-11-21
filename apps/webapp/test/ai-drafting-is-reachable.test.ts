@@ -51,8 +51,9 @@ describe("the premise that drafting is disabled, checked in the four places it w
        and the verb is handed wherever a drafter stands (`use-verbs.ts`). */
     const bar = read("packages/app/src/reader/actions/ActionBar.tsx");
     const verbs = read("packages/app/src/reader/actions/use-verbs.ts");
+    const menu = read("packages/app/src/reader/actions/ActionMenus.tsx");
     expect(
-      /<DraftReplyItem draft=\{verbs\.draft\}/.test(bar) && /t\("verb\.draftReply"\)/.test(bar)
+      /<DraftReplyItem draft=\{verbs\.draft\} close=\{close\} words=\{words\} \/>/.test(menu) && /{words\.draftReply}/.test(menu) && /t\("verb\.draftReply"\)/.test(bar)
         && /draft:\s*drafter !== null && message !== null \? \(\) => drafter\(message\.id\)/.test(verbs),
       "the ⋯ menu no longer offers Draft reply",
     ).toBe(true);

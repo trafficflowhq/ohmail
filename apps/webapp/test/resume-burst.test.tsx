@@ -69,7 +69,7 @@ const CLOSED = {
   manageUrl: "https://plane.ohmail.app/manage?token=t", exportPath: "/account/export",
 };
 const jsonOf = (b: unknown, status = 200): Response =>
-  new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+  Response.json(b, { status, headers: { "X-Ohmail-Account": shell.ACCOUNT } });
 const refused402 = (): Response => jsonOf({
   error: { code: "subscription_required", message: "not active", details: { reason: "payment_required", lifecycle: CLOSED.lifecycle } },
 }, 402);

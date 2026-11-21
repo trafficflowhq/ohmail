@@ -5,10 +5,13 @@
  */
 import type { PaneProps } from "../frame/contract.js";
 import { useReplyVerbs, useWriting } from "./above.js";
-import { Letter as LetterView } from "./Letter.js";
+import { lazyView } from "../frame/lazy-view.js";
 import { ReplySheet } from "./Reply.js";
 import { WritePartsContext } from "./parts.js";
 import type { WriteEntry, WriteParts } from "./ports.js";
+
+export const loadLetter = () => import("./Letter.js").then(({ Letter }) => ({ default: Letter }));
+const LetterView = lazyView(loadLetter);
 
 export function writeEntry(parts: WriteParts): WriteEntry {
   function Letter(pane: PaneProps) {

@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 import de from "../messages/de.json";
 import { fireEvent, within } from "@testing-library/react";
-import { afterEach, beforeAll, expect, it } from "vitest";
-import type { EngineMessage, Folder, RuleEntity } from "@ohmail/wire";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { IndexedDbMirrorStore } from "@ohmail/client-engine";
+import type { EngineMessage, Folder, MessageBodyRecord, RuleEntity } from "@ohmail/wire";
 import messages from "../messages/en.json";
 import {
   ACCOUNT, ISO, act, installScreeningWeb, mountScreeningWeb, syncScreeningWeb,
@@ -108,6 +109,23 @@ async function mountSender({
     return undefined;
   });
 
+  if (oneClickId) {
+    // A previously read body names the one-click posture of this held message.
+    vi.useRealTimers();
+    const mirror = new IndexedDbMirrorStore({ owner: ACCOUNT });
+    try {
+      await mirror.load();
+      const body: MessageBodyRecord = {
+        messageId: oneClickId, state: "ready", text: "A newsletter with one-click unsubscribe.",
+        html: null, unsubscribe: "one_click",
+      };
+      await mirror.putLocal("message_body", oneClickId, body);
+    } finally {
+      mirror.close();
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(ISO));
+    }
+  }
   const shell = await mountScreeningWeb(locale);
   await tick(4000);
   expect(sessionCalls()).toBeGreaterThan(0);
@@ -306,7 +324,9 @@ it("marks the rule’s destination even if it has no letters there yet", async (
 it("retargets the domain when the person confirms everyone at the sender's domain", async () => {
   const domain = { ...standingSubject, id: "standing-domain", kind: "domain" as const, match: DOMAIN, subjectContains: null, priority: 30 };
   const { sheet, writes } = await mountSender({
-    rules: [domain], ruleAnswer: async () => ruleResponse(true), moveAnswer: () => Response.json({}),
+    rules: [domain], ruleAnswer: async () => Response.json({
+      ...domain, destination: "ohmail/Receipts", retro: { requestedAt: ISO, doneAt: null },
+    }), moveAnswer: () => Response.json({}),
   });
   await click(within(sheet).getByRole("option", { name: /Receipts/ }));
   await click(within(within(sheet).getByRole("radiogroup", { name: messages.screening.resolveChoiceAria })).getByRole("radio", { name: /Everyone at/ }));

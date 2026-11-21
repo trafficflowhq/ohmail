@@ -19,7 +19,7 @@ const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 const PW = "pw-correct-horse";
 const DECLARED = { [ERASED_ANSWER_HEADER]: "account_erased" };
-const FIVE = ["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
+const CLEARED = ["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
 
 /** A real browser session: register, enrol TOTP, sign in — the jar the web client holds. */
 async function browser(deps: ApiDeps, db: Db, clock: TestClock, email: string) {
@@ -101,7 +101,7 @@ describe("the 410 names the erased account", () => {
     const refresh = await H(req("POST", "/auth/refresh", { cookie: b2.refreshOnly, headers: { ...b2.csrf, ...DECLARED } }), deps);
     expect(`${refresh.status} ${await codeOf(refresh)} ${refresh.headers.get(ACCOUNT_HEADER)}`)
       .toBe(`410 account_erased ${b2.accountId}`);
-    expect(cleared(refresh), "a refused refresh clears the jar, erased or not").toEqual(FIVE);
+    expect(cleared(refresh), "a refused refresh clears the jar, erased or not").toEqual(CLEARED);
     for (const c of refresh.headers.getSetCookie()) expect(c, "the host-only cookie widened").not.toMatch(/domain=/i);
   });
 });
@@ -111,7 +111,7 @@ describe("what does not change", () => {
     const { deps, b2 } = await erasedElsewhere();
     const refresh = await H(req("POST", "/auth/refresh", { cookie: b2.refreshOnly, headers: b2.csrf }), deps);
     expect(`${refresh.status} ${await codeOf(refresh)} ${refresh.headers.get(ACCOUNT_HEADER)}`).toBe("401 refresh_revoked null");
-    expect(cleared(refresh)).toEqual(FIVE);
+    expect(cleared(refresh)).toEqual(CLEARED);
   });
 
   it("a LIVE account: a declared cookie refresh mints, declared reads name the account as always", async () => {

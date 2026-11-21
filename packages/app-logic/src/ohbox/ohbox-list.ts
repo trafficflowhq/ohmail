@@ -139,6 +139,7 @@ export function useOhboxList(input: OhboxListInput): OhboxListModel {
     setPickPanel,
     clearPicked,
     togglePick,
+    pickRangeTo,
     open,
     enter,
     selectByUser,

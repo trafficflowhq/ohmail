@@ -333,8 +333,12 @@ describe("the sentence while the index is still filling", () => {
     await render(engine, "kingfisher");
 
     expect(hits()).toEqual([]);
-    expect(text()).toContain(messages.search.scopeIndexing);
-    expect(text().match(/Still reading your recent mail/g)).toHaveLength(2);
+    const shown = within(host);
+    expect(shown.getAllByText(
+      (_, node) => node?.textContent === messages.search.stillReading,
+      { selector: ".oh-empty-label" },
+    )).toHaveLength(1);
+    expect(shown.getAllByText(messages.search.saidReading, { exact: true })).toHaveLength(1);
     expect(within(host).queryByText(/^Nothing matched\.?$/)).toBeNull();
   });
 

@@ -79,11 +79,10 @@ export interface ReaderEntry {
   }>;
   /** The writing surface under the selected letter where a place draws its own cards. */
   readonly useInlineReply?: (
-    keyLetter: string | null,
     items: readonly EngineMessage[],
   ) => {
     readonly messageId: string | null;
-    readonly sheet: ReactNode;
+    readonly sheet: (keysHere: boolean) => ReactNode;
     readonly conversations: ReadonlyMap<string, ConversationShown>;
   } | null;
 }

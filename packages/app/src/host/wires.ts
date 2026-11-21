@@ -13,6 +13,7 @@
  */
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { CalendarPort } from "@ohmail/app-logic/calendar/port";
+import type { DraftFromTextBody } from "@ohmail/wire";
 import type {
   Answered, CodeCeremony, Connected, ConnectInput, ConnectPatch, ConnectProbed, ConnectPurposeKind, MailboxId,
   Secret, SignInProvider, SignInReturn, SignInWays,
@@ -132,13 +133,7 @@ export interface SuggestWire {
   aiAvailable?: () => Promise<boolean | null>;
 }
 
-/** `POST /drafts/from-text`: the person's words, and the letter they answer or the mailbox they are written in. */
-export interface DraftFromTextBody {
-  text: string;
-  inReplyToMessageId?: string;
-  mailboxId?: string;
-  subject?: string;
-}
+export type { DraftFromTextBody } from "@ohmail/wire";
 
 /** A reply drafted by a model. The shell's `DraftReplyWire`. */
 export interface DraftReplyWire {

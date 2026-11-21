@@ -10,10 +10,8 @@
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
+import { changeScreeningResponse, readScreeningResponse } from "@ohmail/app/host";
 import type { TravelledChangeWire } from "../../webapp/app/shell/travelled-change.js";
-
-/** Where the engine serves it. Root-relative, like every path in this window. */
-const SCREENING_PATH = "/account/screening";
 
 /**
  * `404` MEANS "NOT ON THIS DOOR", and it is a state rather than a fault.
@@ -81,7 +79,7 @@ async function readPreference(res: Response): Promise<ScreeningPreference> {
 
 /** This mailbox's screening preference, or which of the two absences applies. */
 export async function readScreening(): Promise<ScreeningRead> {
-  const res = await bridgeFetch(SCREENING_PATH);
+  const res = await readScreeningResponse(bridgeFetch);
   if (res.status === NOT_SERVED_HERE) return { state: "not-served" };
   if (res.status === OFFLINE) return { state: "offline" };
   return { state: "ready", pref: await readPreference(res) };
@@ -98,13 +96,7 @@ export async function readScreening(): Promise<ScreeningRead> {
 export async function saveScreening(
   patch: Partial<Pick<ScreeningPreference, "ohboxPolicy" | "ohboxBar" | "impersonationFiling">>,
 ): Promise<ScreeningPreference> {
-  return readPreference(
-    await bridgeFetch(SCREENING_PATH, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(patch),
-    }),
-  );
+  return readPreference(await changeScreeningResponse(bridgeFetch, patch));
 }
 
 /** The bar, and nothing else. `null` reverts it to the product default. */

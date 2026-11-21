@@ -5,6 +5,7 @@ import { RESUME_COOKIE, RESUME_ROUTE, resolveSurface } from "../app/session-gate
 import { isRecoverable, mayRefreshFor, REFRESH_ENDPOINT, RENEWAL_DEADLINE_MS, resumeSession } from "../app/session-refresh.js";
 import { OWN_PATHS, REFRESH_PATH } from "../next.config.mjs";
 import type { ErasedVerdict } from "@ohmail/app-logic/session/account-erased";
+import { sliceOfDeclaration } from "./source-anchor";
 
 /**
  * THE LOCKOUT, AND THE THREE THINGS THAT CAUSED IT.
@@ -230,7 +231,10 @@ describe("the gate tells a lapsed session from a stranger", () => {
     // may reach it, which the behavioural case below measures as well.
     expect(options.match(/signal[^,\n]*/g) ?? [], "the refresh request grew a clamp — a cold start becomes a sign-out")
       .toEqual(["signal: request.signal"]);
-    expect([...src.matchAll(/inFlightRequest\??\.abort\(\)/g)].length, "something but a mint aborts the refresh")
+    const retire = sliceOfDeclaration(src, "retireSessionRenewal");
+    expect(retire).toMatch(/stopRenewal\(\);\s*inFlightRequest\?\.abort\(\);/);
+    const duringRenewal = src.replace(retire, "");
+    expect([...duringRenewal.matchAll(/inFlightRequest\??\.abort\(\)/g)].length, "something but a mint aborts the refresh")
       .toBe(1);
     expect([...src.matchAll(/\brequest\.abort\(\)/g)].length, "something but the deadline aborts the refresh")
       .toBe(1);
@@ -510,24 +514,21 @@ describe("the refresh client", () => {
     // or as the storage-owner refusal when another account signed in while the renewal waited for the lock (whose
     // question is asked inside it). A request a renewal overtook takes the new jar (`sessionMints`, or another
     // tab's past the jar it left on: `staleJar`), never a second one.
-    expect(src).toMatch(
-      /const resumed = sessionMints\(\) !== mintsAtSend\n\s*\? "resumed" : await resumeSession\(\{ mayProceed: \(\) => whose\(\) === "holds", staleJar: jarAtSend \}\);\n\s*if \(resumed === "unavailable"\) throw sessionUncheckedError\(\);\n\s*if \(resumed !== "resumed"\) throw whose\(\) === "mismatch" \? ownerRefusal\("mismatch"\) : err;/,
-    );
-    /* The retry calls `attempt`, which does NOT recurse into the refresh wrapper — and the
-       property is "the catch never calls `api` again", not the exact spelling of the return.
-       This pattern has now been broken twice by ordinary edits: once when the line stopped being
-       `return attempt<T>(path, opts);` and was awaited into a variable so the storage-owner check could
-       run on the answer, and once when `attempt` grew a third argument for the account header. A
-       guard that fails on its subject gaining a parameter is pinning the spelling, so it is
-       written open-ended — what must not exist is the RECURSIVE call, and that is asserted
-       directly below. */
-    expect(src).toMatch(/attempt<T>\(path, opts/);
-    // The CATCH only — the declaration above it names `api<T>(path` by definition.
-    const after = src.slice(src.indexOf("export async function api<T>"));
-    const recovery = after.slice(after.indexOf("} catch (err) {"), after.indexOf("\nfunction ownerMismatch"));
-    expect(recovery, "the catch never calls `api` again — that is the loop this pins out")
-      .not.toMatch(/\bapi<T>\(/);
-    expect(recovery, "the retry no longer goes through `attempt`").toMatch(/attempt<T>\(path, opts/);
+    const start = src.indexOf("export async function api<T>");
+    const end = src.indexOf("const RENEWAL_UNAVAILABLE", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const body = src.slice(start, end);
+    expect(body).toMatch(/const retryOwner = \(\): OwnerVerdict => whose\(opts\.ceremony/);
+    expect(body).toMatch(/const resumed = sessionMints\(\) !== mintsAtSend\s*\? "resumed" : await resumeSession\(\{/);
+    expect(body).toMatch(/mayProceed: \(\) => retryOwner\(\) === "holds", staleJar: jarAtSend,/);
+    expect(body).toMatch(/if \(resumed === "unavailable"\) throw sessionUncheckedError\(\);/);
+    expect(body).toMatch(/if \(resumed !== "resumed"\) throw retryOwner\(\) === "mismatch" \? ownerRefusal\("mismatch"\) : err;/);
+    const recovery = body.slice(body.indexOf("const retryOwner"));
+    expect(recovery).toMatch(/mustHold\(\);[\s\S]*?const retried = await hearing<T>\(path, opts, seenAgain\);/);
+    expect(recovery).toMatch(/checkAnswerOwner\(path, seenAgain\.account, ceremony\);/);
+    expect(recovery.match(/hearing<T>\(/g)).toHaveLength(1);
+    expect(recovery, "the catch never calls api again").not.toMatch(/\bapi<T>\(/);
   });
 });
 

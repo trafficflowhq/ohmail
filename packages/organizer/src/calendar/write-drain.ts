@@ -427,6 +427,7 @@ async function carryOut(
   const call = writeCallOf({
     place: claim.place, act: claim.payload.act, event: claim.event, base: claim.write.baseVersionTag, organizer: claim.organizer, owners: claim.owners, to: claim.to,
     zones: deps.zones, now: deps.clock.now(), proven: deps.proven,
+    cancellationAttempted: claim.write.attempts > 1 || claim.payload.cancellationAttempted === true,
     ...(part?.from === undefined || claim.source === undefined ? {} : { continuation: { from: part.from, source: claim.source } }),
   });
   if (call.kind === "refuse") return refused(call.reason);

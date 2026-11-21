@@ -125,7 +125,7 @@ export function useOrganizerNotices(input: OrganizerNoticesInput): PaneNotice[] 
     if (rows.length === 0) return [];
     const why = rows.map((row) => refused.get(changeKey(row))).find((reason) => reason !== undefined);
     const acts: PaneNoticeAct[] = [];
-    if (open !== NONE && rows.length === 1) {
+    if (open !== NONE && (kind === "stopped" || rows.length === 1)) {
       acts.push({ label: { key: "noticeOpenMailboxes" }, press: open });
     }
     const dismissAct: PaneNoticeAct = { label: { key: "noticeDismiss" }, press: () => dismiss(rows) };

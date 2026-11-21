@@ -22,7 +22,7 @@ import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import type { SuggestBatchControl } from "@ohmail/app-logic/screener/screener-suggest";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
-import { answerConsentWith, goTo, installShellEnv, mailbox, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
+import { answerConsentWith, goTo, installShellEnv, LIVE_ACCOUNT, liveAccountResponse, mailbox, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
 import { screenerReport, screenerRowIds, selectScreenerRow } from "./fixtures/live-screener";
 
 /**
@@ -78,14 +78,14 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
   })) as never;
 
 const NOW = new Date("2026-08-02T12:00:00.000Z");
-const ACCOUNT = "acct";
+const ACCOUNT = LIVE_ACCOUNT;
 let seq = 0;
 
 /** A held message from `from`, dated so the queue order is decided by the test, not by luck. */
 function msg(id: string, from: string, hour: number, folder: Folder = "ohmail/Screener"): EngineMessage {
   return {
     id,
-    accountId: "acct",
+    accountId: ACCOUNT,
     mailboxId: "mb",
     threadId: null,
     messageIdHeader: null,
@@ -143,19 +143,19 @@ function installFetch(other?: typeof fetch): void {
       return other(input, init);
     }
     const raw = typeof init?.body === "string" ? (JSON.parse(init.body) as Recorded["body"]) : null;
-    const headers = (init?.headers ?? {}) as Record<string, string>;
+    const headers = new Headers(init?.headers);
     calls.push({
       method: init?.method ?? "GET",
       path,
       body: raw,
-      idempotencyKey: headers["Idempotency-Key"] ?? null,
+      idempotencyKey: headers.get("Idempotency-Key"),
     });
     if (path.startsWith("/screener/suggest")) {
       suggestCalls++;
-      return suggestReply(raw as { senders: string[]; dryRun?: boolean; maxCredits?: number }, suggestCalls);
+      return liveAccountResponse(suggestReply(raw as { senders: string[]; dryRun?: boolean; maxCredits?: number }, suggestCalls));
     }
-    if (path.startsWith("/screener")) return listReply();
-    return json({});
+    if (path.startsWith("/screener")) return liveAccountResponse(listReply());
+    return liveAccountResponse(json({}));
   }) as typeof fetch;
 }
 
@@ -230,7 +230,8 @@ async function mountView(
   const { MailFrame, useBrowserMail } = await import("../app/shell/browser-mail.js");
   const { THEME_DOOR } = await import("../app/shell/face-mirror.js");
   const { EngineProvider, useEngine } = await import("../app/shell/engine.js");
-  const { useWebHost, webRecover } = await import("../app/(product)/mailbox/web-supplies.js");
+  const { useCloudMailHost: useWebHost } = await import("../app/(product)/mailbox/CloudShell.js");
+  const { webRecover } = await import("../app/(product)/mailbox/web-supplies.js");
   const { WEB_MAIL_PARTS } = await import("../app/(product)/mailbox/mail-parts.js");
   setStorageOwner(ACCOUNT);
   document.cookie = `tf_owner=${ACCOUNT}; Path=/`;

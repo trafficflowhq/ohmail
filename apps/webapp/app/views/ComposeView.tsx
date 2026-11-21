@@ -43,7 +43,7 @@ import type { ComposeFields, ComposePlan } from "@ohmail/app-logic/writing/compo
 import { draftNoteKey, worthSaving, type ComposeElsewhere } from "@ohmail/app-logic/writing/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "@ohmail/app-logic/writing/compose-from";
 import { SignatureBlock } from "../shell/SignatureBlock";
-import { SupportDiagnostics } from "@ohmail/app/write";
+import { SupportDiagnostics } from "@ohmail/app/write/diagnostics";
 import { TextFromIntl } from "../shell/LocaleContext";
 import { SIG_FOLLOWING } from "@ohmail/app-logic/writing/signature";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
@@ -993,7 +993,11 @@ export function ComposeView({
               <SupportDiagnostics
                 block={fields.diag}
                 value={{ text: fields.body, html: fields.html }}
-                disabled={inFlight}
+                action={({ word, remove, press }) => (
+                  <Button variant="ghost" icon={remove ? "x" : undefined} disabled={inFlight} onClick={press}>
+                    {word}
+                  </Button>
+                )}
                 onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
               />
             </TextFromIntl>

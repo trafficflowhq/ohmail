@@ -74,8 +74,11 @@ async function arrange(view: "receipts" | "reads", more = 0, { port = 860, at = 
     const open = (card: HTMLElement) =>
       card.querySelector('button[aria-expanded="true"][aria-controls]') !== null;
     const height = (card: HTMLElement) => (open(card) ? 400 : 180) + (heads.get(id(card)) ?? 0);
-    const topOf = (index: number) => cards().slice(0, index).reduce((top, card) => top + height(card) + 20, 100);
-    const max = () => Math.max(0, topOf(cards().length) + 48 - port);
+    const spacer = (edge: "head" | "tail") =>
+      Number.parseFloat(scroller.querySelector<HTMLElement>(`[data-stream-${edge}]`)?.style.height ?? "0") || 0;
+    const topOf = (index: number) =>
+      cards().slice(0, index).reduce((top, card) => top + height(card) + 20, 100 + spacer("head"));
+    const max = () => Math.max(0, topOf(cards().length) + spacer("tail") + 48 - port);
     let scrollTop = 0;
     Object.defineProperties(scroller, {
       clientHeight: { configurable: true, value: port },
@@ -86,10 +89,7 @@ async function arrange(view: "receipts" | "reads", more = 0, { port = 860, at = 
         set: (top: number) => { scrollTop = Math.min(max(), Math.max(0, top)); },
       },
     });
-    scroller.getBoundingClientRect = () => rect(0, port);
-    for (const card of cards()) {
-      card.getBoundingClientRect = () => rect(topOf(cards().indexOf(card)) - scrollTop, height(card));
-    }
+    const boxOf = (card: HTMLElement) => rect(topOf(cards().indexOf(card)) - scrollTop, height(card));
     const scroll = (top: number) => {
       scroller.scrollTop = top;
       fireEvent.scroll(scroller);
@@ -109,7 +109,7 @@ async function arrange(view: "receipts" | "reads", more = 0, { port = 860, at = 
     };
     const top = (letter: string) => cards().find((card) => id(card) === letter)!.getBoundingClientRect().top;
     const order = () => cards().map(id);
-    return { scroller, state, scroll, measureIn, top, order, cards };
+    return { scroller, state, scroll, measureIn, top, order, cards, boxOf };
   }
 
   const layouts = new WeakMap<HTMLElement, ReturnType<typeof layOut>>();
@@ -125,9 +125,10 @@ async function arrange(view: "receipts" | "reads", more = 0, { port = 860, at = 
   const nativeRect = HTMLElement.prototype.getBoundingClientRect;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     const scroller = this.closest<HTMLElement>("[data-reading-scroll]");
-    if (scroller && !layouts.has(scroller)) {
-      layout(scroller);
-      return this.getBoundingClientRect();
+    if (scroller) {
+      const stream = layout(scroller);
+      if (this === scroller) return rect(0, port);
+      if (this.matches("[data-stream-item]")) return stream.boxOf(this);
     }
     return nativeRect.call(this);
   });
@@ -149,7 +150,10 @@ async function arrange(view: "receipts" | "reads", more = 0, { port = 860, at = 
     });
     expect(window.location.hash).toBe(`#/${view}/m/${target}`);
     const stream = streamOf();
-    expect(stream.order()).toEqual(letters.map((letter) => letter.id).slice(0, stream.order().length));
+    const first = Math.max(0, at - 8);
+    const end = first === 0 ? stream.order().length : at + 9;
+    expect(stream.order()).toEqual(letters.slice(first, end).map((letter) => letter.id));
+    expect(stream.order()).toContain(target);
     whenLaidOut = undefined;
     return stream;
   };

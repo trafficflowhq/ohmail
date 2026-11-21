@@ -1,11 +1,9 @@
-/* @postpush: alone — this file asserts the unsubscribe drain's OWN sweep totals, and that drain's
- * window is deployment-wide. One post-push run ran it beside 96 co-tenants on one lane database: they
- * seeded the window, the anti-vacuity guard refused by name, and each of the three passed when run
- * alone on a fresh one. The post-push driver reads this marker and runs the file by itself. */
+/* @postpush: alone — this file observes the deployment-wide legacy cursor before and after the acts it drives.
+ * The post-push driver runs it by itself so any write to that row belongs to these cases. */
 import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { learningSignals,
   accounts, mailboxes, messages, messageBodies, folderState, rules,
   unsubscribeDrainState, unsubscribeExamined, unsubscribeRecords,
@@ -15,22 +13,13 @@ import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  makeUnsubscribeService, UNSUB_DRAIN_SCAN_PAGE, UNSUB_DRAIN_WINDOW_MS,
-  type DrainBudget, type HostResolver, type OneClickPost,
+  dbFor, makeUnsubscribeService, UNSUB_DRAIN_SCAN_PAGE,
+  type HostResolver, type OneClickPost,
 } from "@trafficflow/services";
 
 /**
- * THE DRAIN'S TWO MEMORIES ON REAL POSTGRES — the three claims PGlite cannot make.
- *
- * The CHECK that keeps the cursor pair whole, the foreign key that makes the mark die with its
- * record, and the WINDOW: the walk's page is `UNSUB_DRAIN_SCAN_PAGE` rows, so a walk that crosses more than one
- * page needs more rows than that, and seeding those in PGlite is a different test about a
- * different machine. Everything about the drain's DECISIONS is measured in the PGlite twin;
- * what is here is what only a server can answer.
- *
- * `cursor_at` is a `timestamptz` bound through postgres@3, which is the other reason: PGlite and
- * postgres@3 disagree about parameter serialisation, and a cursor that round-trips on one store
- * and not the other is a pass that silently restarts at the head in production.
+ * PostgreSQL still enforces the legacy cursor pair and the foreign key linking a mark and its record.
+ * Confirmed requests can settle their own records and do not use the old deployment-wide cursor.
  */
 const PG_UP = await realPgAvailable();
 
@@ -52,24 +41,6 @@ function spy(): OneClickPost & { calls: string[] } {
 const svcWith = (post: OneClickPost) =>
   makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
-/**
- * A budget whose POSTING allowance pays for exactly `asks` chunk reads and is then spent, with the
- * closing reserve left behind it — the shape a real budget has when a walk is cut mid-window.
- *
- * COUNTED, not timed: a wall-clock budget small enough to cut a full page is a race with the
- * machine. The work walk reads `postingLeftMs()` at the top of every chunk, so `asks = 1` pays for
- * the first and refuses the second; `leftMs()` stays positive throughout, which is exactly what
- * the posting boundary is for — the pass can still pay for its own closing write.
- */
-function budgetFor(asks: number): DrainBudget {
-  let asked = 0;
-  return {
-    leftMs: () => 60_000,
-    postingLeftMs: () => (asked++ < asks ? 60_000 : 0),
-    elapsedMs: () => 0,
-  };
-}
-
 const NOW = new Date("2026-07-28T12:00:00Z");
 /** Inside the drain's window, oldest first, one second apart. */
 const at = (i: number): Date => new Date(NOW.getTime() - 3_600_000 + i * 1000);
@@ -82,12 +53,7 @@ const ONE_CLICK = {
 
 interface World { accountId: string; mailboxId: string }
 
-/**
- * THE DRAIN IS DEPLOYMENT-WIDE, so a case's world is only its own while the window holds nothing
- * else. Every world this file makes is torn down in `afterEach`, and `beforeEach` REFUSES a window
- * somebody else left rows in rather than reading them as this case's — the first version of this
- * file had neither, and the second case read the first's rows as its own page.
- */
+/** The fixture tears down only the accounts and data it created. */
 const made: World[] = [];
 
 async function newWorld(): Promise<World> {
@@ -110,15 +76,6 @@ async function newWorld(): Promise<World> {
   return w;
 }
 
-/** How many rows the drain's window holds for ANYBODY, which is what the pass would walk. */
-async function inWindow(): Promise<number> {
-  const since = new Date(NOW.getTime() - UNSUB_DRAIN_WINDOW_MS);
-  const [row] = await db.select({ n: sql<number>`count(*)::int` })
-    .from(folderState)
-    .where(and(inArray(folderState.desiredFolder, ["ohmail/Screened"]), gte(folderState.updatedAt, since)));
-  return row?.n ?? 0;
-}
-
 async function tearDown(): Promise<void> {
   for (const w of made.splice(0)) {
     const own = db.select({ id: messages.id }).from(messages).where(eq(messages.mailboxId, w.mailboxId));
@@ -131,7 +88,6 @@ async function tearDown(): Promise<void> {
     await db.delete(rules).where(eq(rules.accountId, w.accountId));
     await db.delete(accounts).where(eq(accounts.id, w.accountId));
   }
-  await db.delete(unsubscribeDrainState).where(eq(unsubscribeDrainState.pass, UNSUB_DRAIN_PASS));
 }
 
 /** N screened-out rows at consecutive positions; only those given headers are eligible. */
@@ -176,46 +132,41 @@ describe.skipIf(!PG_UP)("the drain's cursor and its mark, on real Postgres", () 
     db = owned.db;
   }, 180_000);
   afterAll(async () => { await tearDown(); await owned?.close(); });
-  beforeEach(async () => {
-    await tearDown();
-    const held = await inWindow();
-    // A case that read somebody else's rows as its own is a case measuring nothing — it refuses,
-    // and it names the count so a reader can tell a co-tenant in this run from residue a previous
-    // one left. Residue on a lane database is cleared by `scripts/lane-db.sh --drop` and a
-    // re-create; a co-tenant is a scheduling fact and the run is repeated without it.
-    expect(held, "the drain's window holds rows this case did not seed — it would walk them").toBe(0);
-  }, 120_000);
+  beforeEach(async () => { await tearDown(); });
   afterEach(async () => { await tearDown(); });
 
   it("refuses half a cursor — the pair is whole or it is absent", async () => {
     const tx = db as never;
-    // Both absent: the position every store starts from.
-    await writeDrainCursor(tx, "ck-probe", null, NOW);
-    expect(await readDrainCursor(tx, "ck-probe")).toBeNull();
-    // Both present: a position, and it survives the timestamptz round trip exactly.
-    const id = randomUUID();
-    await writeDrainCursor(tx, "ck-probe", { at: at(7), messageId: id }, NOW);
-    const back = await readDrainCursor(tx, "ck-probe");
-    expect(back!.messageId).toBe(id);
-    expect(back!.at.getTime()).toBe(at(7).getTime());
-    // One of the two: refused by the database, not by the program.
-    await expect(db.execute(sql`
-      update "unsubscribe_drain_state" set "cursor_message_id" = null where "pass" = ${"ck-probe"}
-    `)).rejects.toThrow(/unsubscribe_drain_state_cursor_pair/);
-    await db.delete(unsubscribeDrainState).where(eq(unsubscribeDrainState.pass, "ck-probe"));
+    const probe = `ck-probe-${randomUUID()}`;
+    try {
+      // Both absent: the position every store starts from.
+      await writeDrainCursor(tx, probe, null, NOW);
+      expect(await readDrainCursor(tx, probe)).toBeNull();
+      // Both present: a position, and it survives the timestamptz round trip exactly.
+      const id = randomUUID();
+      await writeDrainCursor(tx, probe, { at: at(7), messageId: id }, NOW);
+      expect(await readDrainCursor(tx, probe)).toEqual({ messageId: id, at: at(7) });
+      // One of the two: refused by the database, not by the program.
+      await expect(db.execute(sql`
+        update "unsubscribe_drain_state" set "cursor_message_id" = null where "pass" = ${probe}
+      `)).rejects.toThrow(/unsubscribe_drain_state_cursor_pair/);
+    } finally {
+      await db.delete(unsubscribeDrainState).where(eq(unsubscribeDrainState.pass, probe));
+    }
   });
 
   it("a mark cannot outlive the record it was judged against", async () => {
     const w = await newWorld();
     const [id] = await seedWindow(w, 1, () => ONE_CLICK);
     const post = spy();
-    await svcWith(post).drainScreenedOut(db as never, { now: () => NOW, requestId: "fk" });
+    const ctx = { db: dbFor(db as never, w.accountId), accountId: w.accountId, userId: null, now: () => NOW, requestId: "fk" };
+    expect(await svcWith(post).onScreenOut(ctx, [id!])).toMatchObject({ posted: 1 });
     expect(post.calls).toHaveLength(1);
     const [record] = await db.select().from(unsubscribeRecords)
       .where(eq(unsubscribeRecords.accountId, w.accountId));
     const marks = await db.select().from(unsubscribeExamined)
       .where(eq(unsubscribeExamined.accountId, w.accountId));
-    expect(marks.map((m) => m.messageId)).toEqual([id]);
+    expect(marks.map((m) => [m.messageId, m.recordId])).toEqual([[id, record!.id]]);
 
     // THE REASON BOTH ERASURE SWEEPS DELETE THE CHILD FIRST. Without that line this is what the
     // sweep meets — a refusal, not a silent orphan.
@@ -234,84 +185,66 @@ describe.skipIf(!PG_UP)("the drain's cursor and its mark, on real Postgres", () 
     await db.update(messages).set({ authVerdict: "pass" }).where(eq(messages.id, id!));
     const post = spy();
     const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => new Set<string>() });
-    await svc.drainScreenedOut(db as never, { now: () => NOW, requestId: "signed" });
+    const ctx = { db: dbFor(db as never, w.accountId), accountId: w.accountId, userId: null, now: () => NOW, requestId: "signed" };
+    expect(await svc.onScreenOut(ctx, [id!])).toMatchObject({ considered: 1, posted: 1, skipped: 0 });
     expect(post.calls).toEqual(["https://sender.example/u?t=signed"]);
     const [row] = await db.select({ v: messages.authVerdict }).from(messages).where(eq(messages.id, id!));
     expect(row!.v).toBe("pass");
   });
 
-  it("a walk cut mid-window says where it stopped, and the next run goes on from there", async () => {
-    // ONE PAGE AND ONE ROW, at the shipped page size — the smallest window a walk cannot cross in
-    // a single chunk, which is the only shape in which "where it stopped" means anything.
+  it("a full retired window cannot hide a later confirmation or move the stored cursor", async () => {
+    const before = await stateRow();
     const w = await newWorld();
-    const n = UNSUB_DRAIN_SCAN_PAGE + 1;
-    const ids = await seedWindow(w, n, (i) => (i === n - 1 ? ONE_CLICK : null));
+    const count = UNSUB_DRAIN_SCAN_PAGE + 1;
+    const ids = await seedWindow(w, count, (i) => i === count - 1 ? ONE_CLICK : null);
+    const target = ids.at(-1)!;
     const post = spy();
     const svc = svcWith(post);
 
-    // The walk's FIRST chunk, and nothing after it.
-    const cut = await svc.drainScreenedOut(db as never, {
-      now: () => NOW, requestId: "cut", accounts: 1, perAccount: 1, budget: budgetFor(1),
+    const noReads = new Proxy(db, { get() { throw new Error("a scheduled poll touched the database"); } });
+    const tick = () => svc.drainScreenedOut(noReads as never, {
+      now: () => NOW, requestId: "poll", accounts: 1, perAccount: 1,
     });
-    expect(cut.sweep.posted, "the eligible row is behind the cut").toBe(0);
-    // AND THE TWO WALKS HAVE DIFFERENT ALLOWANCES, which is the posting boundary made visible: the
-    // WORK walk stopped at the cut and posted nothing, while the COUNTING walk kept the whole
-    // budget — it is closing work — reached the end of the window and answers the truth about it.
-    expect(cut.remaining, "the counting walk reached the end of the window").toBe(1);
+    const empty = { accounts: 0, sweep: { considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0 }, remaining: 0, elapsedMs: 0 };
+    expect(await tick()).toEqual(empty);
+    expect(post.calls).toEqual([]);
+    expect(await stateRow()).toEqual(before);
 
-    const stopped = await stateRow();
-    expect(stopped!.cursorMessageId, "the walk stopped mid-window and said so")
-      .toBe(ids[UNSUB_DRAIN_SCAN_PAGE - 1]);
-    expect((stopped!.cursorAt as Date).getTime()).toBe(at(UNSUB_DRAIN_SCAN_PAGE - 1).getTime());
+    const ctx = { db: dbFor(db as never, w.accountId), accountId: w.accountId, userId: null, now: () => NOW, requestId: "confirmed" };
+    expect(await svc.onScreenOut(ctx, [target])).toEqual({ considered: 1, posted: 1, skipped: 0, failed: 0, remaining: 0 });
+    expect(post.calls).toEqual([ONE_CLICK["list-unsubscribe"][0]!.slice(1, -1)]);
+    const records = await db.select({ messageId: unsubscribeRecords.messageId, state: unsubscribeRecords.state })
+      .from(unsubscribeRecords).where(eq(unsubscribeRecords.accountId, w.accountId));
+    expect(records).toEqual([{ messageId: target, state: "sent" }]);
 
-    // …and the next run starts AFTER it: the one eligible row is the one past the page, and the run that
-    // reaches it is this one. Before the cursor, every run re-read the page ahead of it first.
-    const on = await svc.drainScreenedOut(db as never, {
-      now: () => NOW, requestId: "on", accounts: 1, perAccount: 1,
-    });
-    expect(on.sweep.posted).toBe(1);
+    expect(await tick()).toEqual(empty);
     expect(post.calls).toHaveLength(1);
-    const took = await stateRow();
-    expect(took!.cursorMessageId, "it stopped on the row it took").toBe(ids[n - 1]);
-
-    // A lap that reaches the end of the window hands the next one the head.
-    await svc.drainScreenedOut(db as never, {
-      now: () => NOW, requestId: "lap", accounts: 1, perAccount: 1,
-    });
-    expect((await stateRow())!.cursorMessageId).toBeNull();
+    expect(await stateRow()).toEqual(before);
   }, 180_000);
 
-  it("a run that dies BETWEEN chunks writes no cursor — the closing act never ran", async () => {
-    /**
-     * THE HALF THE SMALLER STORE CANNOT SEE. With one page there is no "between chunks", so a
-     * cursor written per page and a cursor written once at the end are the same program. Here the
-     * walk crosses two, the SECOND read is failed, and the two differ: the closing write never
-     * runs, so a cursor that had been written per page would be holding the first page's last row
-     * for a pass that posted for nothing.
-     */
+  it("a failed second delivery leaves the first settled and writes no cursor", async () => {
+    const before = await stateRow();
     const w = await newWorld();
-    const n = UNSUB_DRAIN_SCAN_PAGE + 1;
-    await seedWindow(w, n, () => null);
-    const svc = svcWith(spy());
-
-    let walkReads = 0;
-    const realSelect = db.select.bind(db) as (...a: never[]) => unknown;
-    const failing = new Proxy(db, {
-      get(target, prop, receiver) {
-        if (prop !== "select") return Reflect.get(target, prop, receiver);
-        return (...args: never[]) => {
-          const fields = args[0] as Record<string, unknown> | undefined;
-          if (fields !== undefined && "eligible" in fields && (walkReads += 1) === 2) {
-            return { from: () => { throw new Error("the second chunk died"); } };
-          }
-          return realSelect(...args);
-        };
+    const [first, second] = await seedWindow(w, 2, (i) => ({ ...ONE_CLICK, "list-id": [`<list-${i}.sender.example>`] }));
+    let attempted = 0;
+    const svc = svcWith({
+      async post() {
+        attempted += 1;
+        if (attempted === 2) throw new Error("the second delivery died");
+        return { status: 200 };
       },
-    }) as typeof db;
-
-    await expect(svc.drainScreenedOut(failing as never, {
-      now: () => NOW, requestId: "die", accounts: 1, perAccount: 1,
-    })).rejects.toThrow("the second chunk died");
-    expect(await stateRow(), "a pass that died mid-walk wrote nothing").toBeUndefined();
+    });
+    const ctx = { db: dbFor(db as never, w.accountId), accountId: w.accountId, userId: null, now: () => NOW, requestId: "confirmed" };
+    expect(await svc.onScreenOut(ctx, [first!, second!])).toEqual({ considered: 2, posted: 1, skipped: 0, failed: 1, remaining: 0 });
+    const records = await db.select({ messageId: unsubscribeRecords.messageId, state: unsubscribeRecords.state })
+      .from(unsubscribeRecords).where(eq(unsubscribeRecords.accountId, w.accountId));
+    expect(records.sort((a, b) => a.state.localeCompare(b.state))).toEqual([
+      { messageId: second, state: "failed" },
+      { messageId: first, state: "sent" },
+    ]);
+    const tick = await svc.drainScreenedOut(db as never, { now: () => NOW, requestId: "poll" });
+    expect(tick.sweep.posted).toBe(0);
+    expect(attempted).toBe(2);
+    expect(await stateRow()).toEqual(before);
   }, 180_000);
 });

@@ -24,8 +24,16 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { BrowserGeneralSettings } from "@ohmail/app/settings/browser";
-import { NONE, type FeatureEntry, type HostContract, type HostLanguage } from "@ohmail/app/host";
+import { useFrame } from "@ohmail/app/frame";
+import { BrowserGeneralSettings, PairedScreenerSettings } from "@ohmail/app/settings/browser";
+import {
+  autoFiledVia,
+  screeningVia,
+  NONE,
+  type FeatureEntry,
+  type HostContract,
+  type HostLanguage,
+} from "@ohmail/app/host";
 import {
   browserMailParts,
   browserOpenLink,
@@ -34,7 +42,10 @@ import {
 } from "../../webapp/app/shell/browser-mail";
 import { EngineProvider } from "../../webapp/app/shell/engine";
 import { browserNotificationHost } from "../../webapp/app/shell/notification-settings";
-import { ScreeningSection } from "../../webapp/app/shell/ScreeningSection";
+import {
+  useFiledLetters,
+  useOhboxPreference,
+} from "../../webapp/app/(product)/mailbox/use-screening-preferences";
 import { dropLocalStorageKeys } from "@ohmail/app-logic/session/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "@ohmail/app-logic/writing/compose";
 import {
@@ -50,7 +61,6 @@ import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import { scopeMayMount, setStorageOwner } from "@ohmail/app-logic/storage";
 import { BearerManager, type SignOutOutcome } from "./bearer.js";
-import { HostAccountPane } from "./HostAccountPane.js";
 import { usePairedEngine, useReplacePairedEngine } from "./paired-engine.js";
 import { languageOf, pairedAccountDoor, pairedHost, pairedPaneParts } from "./host.js";
 import { discardHostOutbox } from "./outbox-store.js";
@@ -131,7 +141,14 @@ function PairedGeneralPane() {
   return <BrowserGeneralSettings locale={useContext(PairedLocaleContext)} textRoot={pairedTextRoot} />;
 }
 
-export const PAIRED_PANE_PARTS = pairedPaneParts(usePairedAccountDoor, PairedGeneralPane);
+function PairedScreenerPane() {
+  const { host } = useFrame();
+  const ohbox = useOhboxPreference(host.wires.screening);
+  const filed = useFiledLetters(host.wires.autoFiled);
+  return <PairedScreenerSettings ohbox={ohbox} filed={filed} />;
+}
+
+export const PAIRED_PANE_PARTS = pairedPaneParts(usePairedAccountDoor, PairedGeneralPane, PairedScreenerPane);
 
 /** What only this page hands the mail: a browser host's reader, no part of a stage, and that one door. */
 const PAIRED_MAIL_PARTS = browserMailParts(PAIRED_PANE_PARTS);
@@ -164,22 +181,25 @@ export function HostGate({ bearer, language }: { bearer: BearerManager; language
   const gapLetters = useMemo(() => gapLettersOverBearer(bearer), [bearer]);
   /* The draft reply's two calls, memoised: the shared control reads the wire as a dependency. */
   const draftReply = useMemo(() => draftReplyOverBearer(bearer), [bearer]);
-  /* The Account pane, memoised: the shell's settings read it as a dependency. */
-  const accountPane = useMemo(() => <HostAccountPane onSignOut={signOut} />, [signOut]);
+  const screeningWires = useMemo(() => {
+    if (scope === null) return { screening: NONE, autoFiled: NONE } as const;
+    const request = (path: string, init?: RequestInit) => bearer.fetch(path, init, scope);
+    return { screening: screeningVia(request), autoFiled: autoFiledVia(request) };
+  }, [bearer, scope]);
   /* THIS BROWSER WILL NOT KEEP A CHANGE MADE WHILE THE HOST IS AWAY: said once for the pairing, in the notice slot. */
   const unkeptHere = unkept !== null && unkept.scope === scope && !unkept.dismissed;
   const dismissUnkept = useCallback(() => setUnkept((u) => (u ? { ...u, dismissed: true } : u)), []);
   const features = useMemo(
     () => ({
-      account: { name: "account", render: () => accountPane } satisfies FeatureEntry,
+      account: { name: "account", render: () => null } satisfies FeatureEntry,
       accountStrip: {
         name: "accountStrip",
         render: () => null,
         notice: unkeptHere ? () => [useUnkeptNotice(dismissUnkept)] : undefined,
       } satisfies FeatureEntry,
-      screener: { name: "screener", render: () => <ScreeningSection /> } satisfies FeatureEntry,
+      screener: { name: "screener", render: () => null } satisfies FeatureEntry,
     }),
-    [accountPane, unkeptHere, dismissUnkept],
+    [unkeptHere, dismissUnkept],
   );
 
   /**
@@ -217,7 +237,7 @@ export function HostGate({ bearer, language }: { bearer: BearerManager; language
   const has: PairedHas = {
     signOut,
     mailboxes: mailboxFacts,
-    wires: { gapLetters, profileImport, consent, olderBody, junk, trash, draftReply, autoFiled: NONE },
+    wires: { gapLetters, profileImport, consent, olderBody, junk, trash, draftReply, ...screeningWires },
     features,
   };
   return (

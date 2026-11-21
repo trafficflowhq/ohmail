@@ -164,6 +164,22 @@ describe("the Ohbox's own seat, over the mail ground", () => {
     expect(cursorRow()).toBe("b");
   });
 
+  it("opens a grouped row as a whole thread on desktop and phone", () => {
+    const letters = THREE.map((m) => ({ ...m, threadId: "conversation", subject: "Glaze order" }));
+    for (const room of ["desktop", "phone"] as const) {
+      const { address } = seat({ letters, room });
+      expect(rows()).toHaveLength(1);
+      fireEvent.click(rows()[0]!);
+      expect(address.read()).toBe("#/ohbox/t/c");
+      expect(
+        within(screen.getByRole("region", { name: "Open message" })).getByRole("group", {
+          name: "3 messages, 3 unread",
+        }),
+      ).toBeTruthy();
+      cleanup();
+    }
+  });
+
   it("one column: j and k move the cursor row in a list that stays drawn, name no letter and read nothing; Enter stands the letter over the list", async () => {
     const { mail, address } = seat({ room: "phone" });
     press("j");

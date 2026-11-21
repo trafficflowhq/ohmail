@@ -92,11 +92,8 @@ export function ActionBar({
   const { mirror } = useMirror();
   const tags = verbs.tag === null ? [] : (mirror?.list<TagEntity>("tag") ?? []);
   const cardKeys = card?.keysHere === true && reply === null;
-  const hints = usePanelHints(
-    verbs.readSlot,
-    card === undefined || (cardKeys && showPanel),
-    card?.canAnswerKey?.(card.letter.id) !== false,
-  );
+  const hintsActive = card === undefined ? keys != null : cardKeys && showPanel;
+  const hints = usePanelHints(verbs.readSlot, hintsActive, card?.canAnswerKey?.(card.letter.id) !== false);
   const all = panelVerbs(
     t,
     words,
@@ -116,7 +113,11 @@ export function ActionBar({
   /* A key opens a menu as its button does: out of the verb's own button, else out of More where it stands behind it. */
   const byKey = (which: PanelMenu): void => {
     if (which === "screening") {
-      onScreenKey?.();
+      const opener = stop.current?.querySelector<HTMLButtonElement>(
+        'button[data-id="screening"]:not([hidden])',
+      );
+      if (opener) opener.click();
+      else onScreenKey?.();
       return;
     }
     pressed.current = menuAnchor(stop.current, which);

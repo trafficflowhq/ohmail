@@ -324,6 +324,11 @@ struct Schedule {
 impl Alerts {
     pub fn document(&self) -> u64 { self.inner.lock().expect("alerts").document }
 
+    pub fn with_document<T>(&self, document: u64, submit: impl FnOnce() -> T) -> Option<T> {
+        let inner = self.inner.lock().expect("alerts");
+        (inner.document == document).then(submit)
+    }
+
     /// A previous document can still have IPC requests in transit. Retire them and its
     /// standing events, keeping recent deliveries so a reload does not repeat an occurrence.
     pub fn start_document(&self) {
@@ -396,7 +401,7 @@ impl Alerts {
     /// Ask the platform outside the lock. While it answers, the person may change the schedule,
     /// the event's privacy or the mailbox. Only the current set can then reach the drawing call.
     pub fn dispatch(
-        &self, live: impl Fn() -> Live, now: impl Fn() -> u64, permitted: impl FnOnce() -> bool, mut draw: impl FnMut(&Alert, &Live),
+        &self, live: impl Fn() -> Live, now: impl Fn() -> u64, permitted: impl FnOnce() -> bool, mut draw: impl FnMut(&Alert, &Live, u64),
     ) -> (Duration, u64) {
         let due_now = self.inner.lock().expect("alerts").book.next_at().is_some_and(|at| at <= now());
         let expected = live();
@@ -411,7 +416,7 @@ impl Alerts {
                 let due = inner.book.due(Some(mailbox), now_ms);
                 for alert in &due {
                     if permission == Some(true) && live() == current && may_ring(alert, inner.book.held.as_ref(), Some(mailbox), now()) {
-                        draw(alert, &current);
+                        draw(alert, &current, inner.document);
                     }
                 }
             }

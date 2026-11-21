@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The fixture first: it pins the API base before any shell module reads it.
 import {
-  act, answerSyncWith, goTo, installShellEnv, ISO, mailbox, mountShell, page, teardownShellEnv, textOf, tick,
+  act, answerSyncWith, goTo, installShellEnv, ISO, liveAccountResponse, mailbox, mountShell, page, teardownShellEnv, textOf, tick,
 } from "./fixtures/live-walk-shell";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { IMPORT_END_IDLE_MS } from "@ohmail/app-logic/mail-state/mail-state";
@@ -44,7 +44,7 @@ describe("the sync line and search agree about the first import", () => {
     stamped = false;
     const inner = globalThis.fetch;
     globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) =>
-      (String(input).includes("/search?") ? searchAnswer() : inner(input as RequestInfo, init))) as unknown as typeof globalThis.fetch;
+      (String(input).includes("/search?") ? liveAccountResponse(searchAnswer()) : inner(input as RequestInfo, init))) as unknown as typeof globalThis.fetch;
   });
   afterEach(teardownShellEnv);
 

@@ -111,9 +111,10 @@ describe("every door renders the shared mail stamp", () => {
   });
 
   it("the open letter renders its date and time from the shared stamp formatters", () => {
-    const header = stripComments(read("packages/app/src/reader/Letter.tsx"));
-    expect(header).toMatch(/const stamp = headStamp\(stampOf\(message\)/);
-    expect(header).toMatch(/when: full \? stamp\.full : narrow \? stamp\.short : stamp\.when/);
+    const header = stripComments(read("packages/app/src/reader/LetterHead.tsx"));
+    const letter = stripComments(read("packages/app/src/reader/Letter.tsx"));
+    expect(header).toMatch(/const stamp = headStamp\(letterStampInstant\(message\)/);
+    expect(letter).toMatch(/when: full \? stamp\.full : props\.narrow \? stamp\.short : stamp\.when/);
     // Parts distinct from the real calendar expose a second formatter even if its dates normally agree.
     const date = "2001-02-03T12:00:00.000Z";
     const now = new Date("2002-02-04T12:00:00.000Z");
@@ -197,19 +198,11 @@ const PINNED: Record<string, { calls: number; why: string }> = {
     why: "`agoStamp`'s absolute tooltip (when a MAILBOX last synced) and `dayStamp` (the day a "
       + "standing fact became true, deliberately with no clock on it). Neither is a message's date.",
   },
-  "apps/webapp/app/shell/AppShell.tsx": {
-    calls: 1,
-    why: "`holderSince` — the day an install became a mailbox's organizer. An account date.",
-  },
-  "apps/webapp/app/(product)/mailbox/AboutSection.tsx": {
-    calls: 1,
-    why: "A build/version date in the About pane. An account-and-app date, not mail.",
-  },
   "packages/app-logic/src/mailboxes/pane/stamps.ts": {
     calls: 2,
-    why: "The new Mailboxes pane's twin of `format.ts`'s `agoStamp` tooltip and `dayStamp`, over the locale and zone "
+    why: "The Mailboxes pane's `agoStamp` tooltip and `dayStamp`, over the locale and zone "
       + "the shell hands in: when a MAILBOX last synced, and the day a standing fact became true. Neither is a "
-      + "message's date; the twin in `format.ts` leaves with the old pane.",
+      + "message's date.",
   },
   "packages/ui/src/primitives/DatePicker.tsx": {
     calls: 3,
@@ -228,6 +221,14 @@ const PINNED: Record<string, { calls: number; why: string }> = {
   },
 
   /* THE NEW SHELL's OWN TREE (`packages/app/src`), read since the switch mounts it on every host. */
+  "packages/app/src/calendar/EventActionQuestion.tsx": {
+    calls: 3,
+    why: "The Calendar confirmation sheet formats recurrence weekdays and the date of the change. These are event dates.",
+  },
+  "packages/app/src/stream/StreamList.tsx": {
+    calls: 1,
+    why: "The stream menu formats the unread count using the reader's digit grouping. No date is formatted here.",
+  },
   "packages/app/src/frame/connection.ts": {
     calls: 1,
     why: "`dayIn`: the calendar day of an instant as a comparable `en-CA` key, to tell whether the copy last synced "
@@ -250,8 +251,7 @@ const PINNED: Record<string, { calls: number; why: string }> = {
   },
   "packages/app/src/settings/about/AboutPane.tsx": {
     calls: 1,
-    why: "`absolute`: when a MAILBOX last synced, said in the About pane's line of the mailboxes in the viewer's own "
-      + "locale and zone (a relative stamp would go stale unpainted). An account's date, never a letter's.",
+    why: "The build date shown in About uses the viewer's local date and time. It is an app version date.",
   },
 
   /* `toLocaleString` ON A NUMBER. It cannot be told from the date form without types, and it is
@@ -264,13 +264,12 @@ const PINNED: Record<string, { calls: number; why: string }> = {
       + "(\"April 2019\") and the day a trial's storage floor ends — storage sentences, never a mail stamp.",
   },
   "packages/app/src/ohbox/OhboxHead.tsx": {
-    calls: 1,
-    why: "The doorbell's count of senders waiting at the Screener, in the reader's digit grouping. A number, never a date.",
+    calls: 2,
+    why: "The mark-all-read menu and the Screener doorbell show counts in the reader's digit grouping.",
   },
   "packages/app/src/search/verdict-words.ts": {
-    calls: 3,
-    why: "Search's verdict sentences: how many letters were found, held and searched, each count in the reader's "
-      + "digit grouping. Numbers, never a date.",
+    calls: 1,
+    why: "The search limit is a count shown in the reader's digit grouping.",
   },
 };
 

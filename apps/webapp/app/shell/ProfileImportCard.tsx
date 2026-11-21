@@ -2,7 +2,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
-import { Button, SettingsActions, SettingsSection, SettingsSubhead, SettingsVerdict } from "@ohmail/ui";
+import { Button } from "@ohmail/ui/base";
+import { SettingActs, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import {
   askableMailboxes, asDeclined, countOf, detailsOf, PROFILE_IMPORT_STATUS_BEAT_MS, useSavedProfileActions,
@@ -135,9 +136,9 @@ export function SavedProfileSection({
   return (
     <>
       {unkept.map((row) => (
-        <SettingsSection key={`unkept-${row.mailboxId}`}>
-          <p className="set-note-inline" role="status">{t("copyUnkept", { address: displayAddress(row.address) })}</p>
-        </SettingsSection>
+        <SettingsSheet key={`unkept-${row.mailboxId}`}>
+          <SettingNote said>{t("copyUnkept", { address: displayAddress(row.address) })}</SettingNote>
+        </SettingsSheet>
       ))}
       {rows.map((row) => {
         const phase = phaseOf(row);
@@ -154,48 +155,49 @@ export function SavedProfileSection({
         ].filter((line) => line.length > 0).join(" ");
         const plain = detailsOf(t, locale, counts, false);
         return (
-          <SettingsSection key={row.mailboxId}>
-            <SettingsSubhead>{t("savedTitle", { address: displayAddress(row.address) })}</SettingsSubhead>
-            {details ? <p className="set-note-inline">{t("holds", { details })}</p> : null}
+          <SettingsSheet key={row.mailboxId} title={t("savedTitle", { address: displayAddress(row.address) })}>
+            {details ? <SettingNote>{t("holds", { details })}</SettingNote> : null}
             {when !== null ? (
-              <p className="set-note-inline">
+              <SettingNote>
                 {producer.kind === "cloud" ? t("savedByCloud", { when })
                   : producer.kind === "local" ? t("savedByLocal", { when })
                     : t("savedBy", { when })}
-              </p>
+              </SettingNote>
             ) : null}
-            <p className="set-note-inline">{t("savedBody")}</p>
+            <SettingNote>{t("savedBody")}</SettingNote>
             {phase.kind === "imported" ? (
-              <SettingsVerdict state="ok" headline={t("doneTitle")} {...(done ? { detail: done } : {})} />
+              <div role="status" aria-live="polite">
+                <SettingNote>{[{ strong: t("doneTitle") }]}</SettingNote>
+                {done ? <SettingNote>{done}</SettingNote> : null}
+              </div>
             ) : phase.kind === "replaced" ? (
-              <SettingsVerdict state="ok" headline={t("replacedTitle")} />
+              <SettingNote said>{[{ strong: t("replacedTitle") }]}</SettingNote>
             ) : (
               <>
                 {phase.kind === "failed" ? (
-                  <SettingsVerdict
-                    state="bad"
-                    headline={t("errorTitle")}
-                    detail={phase.message ?? t("errorGeneric")}
-                    {...(phase.message === null ? { hint: t("errorRetry") } : {})}
-                  />
+                  <div role="status" aria-live="polite">
+                    <SettingNote>{[{ strong: t("errorTitle") }]}</SettingNote>
+                    <SettingNote>{phase.message ?? t("errorGeneric")}</SettingNote>
+                    {phase.message === null ? <SettingNote>{t("errorRetry")}</SettingNote> : null}
+                  </div>
                 ) : null}
                 {phase.kind === "importing" ? (
                   <SavedProfilePending row={row} reason={phase.reason} readStatus={readStatus} />
                 ) : null}
-                <p className="set-note-inline">
+                <SettingNote>
                   {plain ? t("replaceNote", { details: plain }) : t("replaceNoteBare")}
-                </p>
-                <SettingsActions>
-                  <Button onClick={() => press(row, "import")} disabled={busy}>
+                </SettingNote>
+                <SettingActs>
+                  <Button kind="ink" onPress={() => press(row, "import")} disabled={busy}>
                     {phase.kind === "importing" || (phase.kind === "busy" && phase.verb === "import") ? t("importing") : t("import")}
                   </Button>
-                  <Button variant="ghost" onClick={() => press(row, "replace")} disabled={busy}>
+                  <Button kind="quiet" onPress={() => press(row, "replace")} disabled={busy}>
                     {phase.kind === "busy" && phase.verb === "replace" ? t("replacing") : t("replace")}
                   </Button>
-                </SettingsActions>
+                </SettingActs>
               </>
             )}
-          </SettingsSection>
+          </SettingsSheet>
         );
       })}
     </>

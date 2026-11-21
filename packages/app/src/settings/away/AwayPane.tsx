@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from "react";
-import { Gloss } from "@ohmail/ui";
+import { Gloss } from "@ohmail/ui/body-parts";
 import { Button, Menu, MenuItem, Seg, Slot } from "@ohmail/ui/base";
 import { SettingArea, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText, type Text } from "../../text/index.js";
@@ -13,6 +13,7 @@ import {
   type AwayThrottle,
 } from "./model.js";
 import { AWAY_NAMESPACE } from "./namespace.js";
+import "./away-piles-hint.css";
 
 const AUDIENCES: readonly AwayAudience[] = ["screened_in", "everyone"];
 const THROTTLES: readonly AwayThrottle[] = ["always", "per_message", "per_day", "per_week"];
@@ -100,7 +101,7 @@ export function AwayPane({ model, rules }: { readonly model: AwayModel; readonly
         label={t("pilesLabel")}
         narrow="under"
         describedBy={pilesNoteId}
-        info={<Gloss text={t("never")} placement="chip" />}
+        info={<Gloss text={t("never")} placement="chip" className="away-piles-hint" />}
       >
         {model.piles.map((choice) => (
           <Button

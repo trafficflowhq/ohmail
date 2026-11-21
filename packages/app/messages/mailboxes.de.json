@@ -71,7 +71,7 @@
     "device_state_invalid": "Diese Microsoft-Anmeldung läuft nicht mehr. Beginne erneut, um einen neuen Code zu erhalten.",
     "device_start_unavailable": "Microsoft konnte keinen Anmeldecode bereitstellen. Versuch es gleich nochmal.",
     "device_poll_retry": "Die Microsoft-Anmeldung konnte nicht geprüft werden. Diese Seite versucht es erneut.",
-    "device_not_allowed": "Mit diesem Konto kannst du diese Microsoft-Anmeldung nicht abschließen. Beginne hier erneut.",
+    "device_not_allowed": "Mit diesem Account kannst du diese Microsoft-Anmeldung nicht abschließen. Beginne hier erneut.",
     "device_no_refresh_token": "Microsoft hat den Zugriff nicht gewährt, den ohmail zum Synchronisieren dieses Postfachs braucht. Bitte die Serveradministration, die Konfiguration zu prüfen.",
     "device_no_address": "Microsoft hat nicht angegeben, welches Postfach verbunden werden soll. Versuch, dich erneut anzumelden.",
     "oauthFinishing": "Die Microsoft-Verbindung wird abgeschlossen …",

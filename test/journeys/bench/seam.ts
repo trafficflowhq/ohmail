@@ -42,7 +42,7 @@ export interface Found { named?: string; args?: Record<string, string | number> 
 /** What a control says of itself to a screen reader. */
 export interface Spoken {
   description: string; pressed: string | null; selected: string | null; current: string | null;
-  expanded: string | null; disabled: boolean;
+  expanded: string | null; checked: string | null; disabled: boolean;
 }
 
 /** One request the API answered: the route's own pattern, never the address that reached it. */
@@ -73,6 +73,13 @@ export interface Person {
   here(place: PlaceId, ms?: number): Promise<void>;
   /** Go to the install's front door, as a person who types its name does. */
   front(): Promise<void>;
+  reload(): Promise<void>;
+  /** Wait for the language the window declares to its screen reader. */
+  hearsLanguage(lang: Language): Promise<void>;
+  /** Wait for a particular tag's own route. */
+  inTag(): Promise<void>;
+  /** Make any attempt to request browser notification permission fail. */
+  refuseNotificationPrompt(): Promise<void>;
   /** Open a link someone handed this person (an invite's), as they open it; the answer's status where the window shows it. */
   follow(link: string): Promise<{ status: number | null }>;
   act(act: ActId, id: ControlId, found?: Found & { value?: string }): Promise<void>;

@@ -46,7 +46,7 @@ export const NO_DOORS: CalendarSetupPort = {
 export function AccountsPane({ sheet }: PaneBodyProps) {
   const t = useText("calsettings");
   const check = useCalendarCheck();
-  const { commands, host } = useFrame();
+  const { commands, host, route } = useFrame();
   const report = useReport();
   const when = useWhen();
   const mirror = useCalendarMirror();
@@ -79,9 +79,13 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
     ? calendarToggle(t("accounts.useCalendar"), enabled, savingEnabled, (on) => {
         if (savingEnabled) return;
         setSavingEnabled(true);
+        const address = host.device.address.read();
         void save({ enabled: on }).then((done) => {
           setSavingEnabled(false);
           if (!done) report(t("notSaved"));
+          else if (!on && route.place === "calsettings" && host.device.address.read() === address) {
+            commands.go({ place: "settings", sub: "calaccounts" }, { replace: true });
+          }
         });
       })
     : null;

@@ -52,7 +52,15 @@ async function faultsOf(row: Row, lang: "de" | "en"): Promise<string[]> {
         if (!own || !el.checkVisibility()) continue;
         const cs = getComputedStyle(el);
         const clips = cs.textOverflow === "ellipsis" || cs.overflowX === "hidden" || cs.overflowX === "clip";
-        const wide = el.scrollWidth > el.clientWidth + 1 && cs.display !== "inline";
+        // The touch target can extend past the button as a pseudo-element. Measure the rendered words.
+        const content = document.createRange();
+        content.selectNodeContents(el);
+        const box = el.getBoundingClientRect();
+        const left = box.left + el.clientLeft;
+        const right = left + el.clientWidth;
+        const wide =
+          cs.display !== "inline" &&
+          [...content.getClientRects()].some((rect) => rect.left < left - 1 || rect.right > right + 1);
         if (wide) faults.push(`${clips ? "cut" : "overflows"}: "${el.textContent!.trim().slice(0, 60)}"`);
         if (/\b(reader|message|body|place|shared)\.[a-zA-Z]+\b/.test(el.textContent!))
           faults.push(`key shown: "${el.textContent!.trim().slice(0, 60)}"`);

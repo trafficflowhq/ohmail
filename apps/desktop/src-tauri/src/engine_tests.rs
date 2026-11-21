@@ -4087,33 +4087,30 @@ fn sign_up_and_setup_are_fixed_pages() {
     }
 }
 
-/// THE SELF-HOSTED DOOR'S MAILBOXES PAGE IS ITS OWN SERVER'S, AND NO OTHER DOOR HAS ONE.
-///
-/// A desktop signed in to a server the person runs was sent to ohmail.app, where it has no account.
-/// The key opens `<its origin>/mailbox?settings=mailboxes#/settings`, composed from the door this
-/// shell configured; the managed, paired and local doors and no door at all are refusals.
+/// The configured server supplies the reference. Its answer must name the account shown by the window.
 #[test]
 fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
     let self_hosted = |url: &str| Config::Cloud(crate::config::CloudDoor {
         cloud_url: url.to_string(),
-        address: Some("someone@example.org".to_string()),
+        address: None,
         flavor: None,
         host_pin: None,
         identity_pending: false,
     });
-    assert_eq!(
-        server_link_for(Some(&self_hosted("https://mail.example.org/api"))).unwrap(),
-        "https://mail.example.org/mailbox?settings=mailboxes#/settings",
-    );
-    assert_eq!(
-        server_link_for(Some(&self_hosted("http://localhost:28611/api"))).unwrap(),
-        "http://localhost:28611/mailbox?settings=mailboxes#/settings",
-        "a loopback server with its port",
-    );
-    assert!(server_link_for(Some(&self_hosted("https://api.ohmail.app"))).is_err(), "the managed service");
-    assert!(server_link_for(Some(&paired_door(Some(FIXTURE_PIN)))).is_err(), "a paired computer");
+    let server = "https://server.example.invalid/api";
+    let door = self_hosted(server);
+    let origin = server_settings_origin(Some(&door), server).unwrap();
+    assert_eq!(origin, "https://server.example.invalid");
+    assert!(server_settings_origin(Some(&door), "https://other.example.invalid/api").is_none());
+    assert!(server_settings_origin(Some(&paired_door(Some(FIXTURE_PIN))), server).is_none());
+    assert!(server_settings_origin(None, server).is_none());
+
+    let loopback = "http://localhost:28611/api";
+    assert_eq!(server_settings_origin(Some(&self_hosted(loopback)), loopback).as_deref(), Some("http://localhost:28611"));
+    let managed = "https://api.ohmail.app";
+    assert!(server_settings_origin(Some(&self_hosted(managed)), managed).is_none());
     let local = Config::Local(crate::config::LocalDoor {
-        imap_host: "imap.example.org".to_string(),
+        imap_host: "imap.example.invalid".to_string(),
         imap_user: "someone".to_string(),
         imap_port: 993,
         imap_secure: true,
@@ -4121,26 +4118,35 @@ fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
         address: None,
         pending: false,
     });
-    assert!(server_link_for(Some(&local)).is_err(), "the local door");
-    assert!(server_link_for(None).is_err(), "no door");
-    // The key is not a row of the ohmail.app table, so the table's own resolver refuses it.
-    assert!(link_for(SERVER_MAILBOXES_KEY).is_none());
-
-    /* THE KEY TAKES NO VALUE: what `open_link` runs for it. A value
-       offered beside it is refused even on the self-hosted door, and blank is no value. */
-    let door = self_hosted("https://mail.example.org/api");
-    assert_eq!(
-        server_open_target(None, None, Some(&door)).unwrap(),
-        "https://mail.example.org/mailbox?settings=mailboxes#/settings",
-    );
-    assert!(server_open_target(Some("  "), Some(""), Some(&door)).is_ok(), "blank is no value");
+    assert!(server_settings_origin(Some(&local), server).is_none());
+    assert!(link_for("server-mailboxes").is_none());
     const GOOD: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
-    assert!(server_open_target(Some(GOOD), None, Some(&door)).is_err(), "a challenge rode along");
-    assert!(
-        server_open_target(None, Some("00000000-0000-0000-0000-000000000000"), Some(&door)).is_err(),
-        "a request rode along",
+    assert!(server_settings_request("mailboxes", Some(GOOD), None).is_err());
+    assert!(server_settings_request("mailboxes", None, Some("request")).is_err());
+    let request = server_settings_request("mailboxes", Some("  "), Some("")).unwrap();
+    assert_eq!(request.method, "GET");
+    assert_eq!(request.url, "/auth/session?settingsPane=mailboxes");
+
+    for name in ["account", "security", "devices", "storage", "mailboxes"] {
+        assert_eq!(server_settings_pane(&format!("server-{name}")), Some(name));
+    }
+    assert_eq!(server_settings_pane("server-other"), None);
+
+    let reference = "a".repeat(96);
+    let answer = |account: &str, reference: &str| EngineResponse {
+        status: 200,
+        status_text: String::new(),
+        headers: Vec::new(),
+        body: serde_json::json!({ "account": account, "reference": reference }).to_string().into_bytes(),
+    };
+    assert_eq!(
+        server_settings_target(&origin, "first", answer("first", &reference)).unwrap(),
+        format!("{origin}/login?settingsHandoff={reference}"),
     );
-    assert!(server_open_target(None, None, None).is_err(), "no door");
+    assert!(server_settings_target(&origin, "first", answer("second", &reference)).is_err());
+    assert!(server_settings_target(&origin, "first", answer("first", "/other")).is_err());
+    let unavailable = EngineResponse { status: 404, ..answer("first", &reference) };
+    assert!(server_settings_target(&origin, "first", unavailable).is_err());
 }
 
 /// THE ONE PLACE A VALUE FROM THE WINDOW REACHES AN ADDRESS, AND THE GATE ON IT.
@@ -4528,6 +4534,45 @@ fn the_alerts_grant_is_one_command_and_brings_no_plugin_file_shell_or_network_pe
 }
 
 #[test]
+fn mail_notices_require_current_document_and_sign_in_before_os_submission() {
+    let root = signed_in_root("mail-notice-session", "https://cloud.test");
+    let shell = Shell::rooted_for_tests(&root);
+    let engine = shell.engine();
+    let frame = |bytes: &[u8]| { accept_header(bytes, &engine.inner).expect("engine frame"); };
+    frame(br#"{"v":1,"t":"ready","baseUrl":"http://sidecar","accountId":"account","userId":"user","mailboxId":"mb-1","sessionToken":"test"}"#);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
+    let crate::alerts::Live::Mailbox(_, retired) = shell.live_mailbox() else { panic!("expected a sign-in"); };
+    let alerts = crate::alerts::Alerts::default();
+    let retired_document = alerts.document();
+    alerts.start_document();
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":false}"#);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
+    let crate::alerts::Live::Mailbox(_, session) = shell.live_mailbox() else { panic!("expected a replacement sign-in"); };
+    let document = alerts.document();
+
+    let mut submissions = 0;
+    for refused in [
+        None,
+        Some(serde_json::json!({"document": document})),
+        Some(serde_json::json!({"session": session})),
+        Some(serde_json::json!({"document": retired_document, "session": session})),
+        Some(serde_json::json!({"document": document, "session": retired})),
+    ] {
+        let result = submit_mail_notice(&shell, &alerts, refused.as_ref(), |_, _| submissions += 1);
+        assert!(matches!(result, Err(crate::alerts::Refused::Superseded)));
+    }
+    assert_eq!(submissions, 0);
+    let current = serde_json::json!({"document": document, "session": session});
+    submit_mail_notice(&shell, &alerts, Some(&current), |_, current_document| {
+        assert_eq!(current_document, document);
+        assert!(shell.engine.try_lock().is_err());
+        assert!(engine.inner.shared.try_lock().is_err());
+        submissions += 1;
+    }).expect("current submission");
+    assert_eq!(submissions, 1);
+}
+
+#[test]
 fn calendar_alerts_follow_the_serving_engines_hosted_sign_in() {
     use crate::alerts::Live;
     let root = signed_in_root("calendar-session", "https://cloud.test");
@@ -4538,6 +4583,8 @@ fn calendar_alerts_follow_the_serving_engines_hosted_sign_in() {
     assert_eq!(shell.live_mailbox(), Live::Unknown);
     frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
     let first = shell.live_mailbox();
+    let Live::Mailbox(_, first_session) = first else { panic!("expected the first sign-in"); };
+    assert!(shell.calendar_engine(first_session).is_some_and(|serving| Arc::ptr_eq(&serving, &engine)));
     shell.with_live_mailbox(|current| {
         assert_eq!(current, first);
         assert!(shell.engine.try_lock().is_err(), "the serving engine could be replaced during handoff");
@@ -4554,11 +4601,12 @@ fn calendar_alerts_follow_the_serving_engines_hosted_sign_in() {
     assert_eq!(shell.live_mailbox(), Live::Nobody);
     frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
     assert_ne!(shell.live_mailbox(), first, "the new sign-in must not inherit an earlier schedule");
+    assert!(shell.calendar_engine(first_session).is_none(), "a retired calendar request must never reach the new session");
     let mut shown = 0;
-    alerts.dispatch(|| shell.live_mailbox(), || 600000, || true, |_, _| shown += 1);
+    alerts.dispatch(|| shell.live_mailbox(), || 600000, || true, |_, _, _| shown += 1);
     assert_eq!(shown, 0);
     alerts.receive(&set, || shell.live_mailbox(), 600000).expect("current session");
-    alerts.dispatch(|| shell.live_mailbox(), || 600000, || true, |_, _| shown += 1);
+    alerts.dispatch(|| shell.live_mailbox(), || 600000, || true, |_, _, _| shown += 1);
     assert_eq!(shown, 1);
     engine.inner.set_state(EngineState::Stopped);
     assert_eq!(shell.live_mailbox(), Live::Unknown);

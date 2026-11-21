@@ -24,7 +24,7 @@ export type FileNotArrivedProps =
       /** The list of files itself did not load. */
       state: "list";
       line: string;
-      way: { label: string; busy?: boolean; onPress?: () => void };
+      way?: { label: string; busy?: boolean; onPress?: () => void };
     };
 
 /** A file that did not arrive: the tile stays, and its second line says its state. */

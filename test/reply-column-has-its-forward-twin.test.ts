@@ -53,6 +53,9 @@ const REPLY_ONLY: ReadonlyArray<readonly [string, string, string]> = [
   ["packages/services/src/drafting-service.ts", "inReplyToMessageId: letter.id", "an AI reply"],
   // A draft from the person's own words may answer a letter; it forwards none.
   ["packages/wire/src/requests.ts", "inReplyToMessageId?: string;", "an AI reply"],
+  ["packages/app-logic/src/writing/draft-reply.ts", "textWire({ text, inReplyToMessageId: id }", "the from-text request answers the letter the person opened"],
+  ["packages/app-logic/src/writing/shell-compose.ts", "drafts.find((d) => d.inReplyToMessageId === messageId", "an unconfirmed reply belongs to its reply dock"],
+  ["packages/app-logic/src/writing/shell-compose.ts", "const parent = draft.inReplyToMessageId", "a draft opened from the list uses the inline reply editor only when its reply parent is here"],
   // The demo world's one reply draft.
   ["packages/testing/src/adapters/fixtures-adapter.ts", 'inReplyToMessageId: "giulia"', "demo data"],
 ];

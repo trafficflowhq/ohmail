@@ -3,8 +3,8 @@ import { fragmentOf, routeOf } from "@ohmail/app/frame/route";
 import { canonicalHash, parseHash, type Route as OldRoute } from "../../app/shell/routing";
 
 /**
- * Two parsers read one fragment until the last old view goes: the frame's and the old shell's. They must
- * name the same place and write the same address for every fragment a person or a link can bring.
+ * The mounted frame accepts the released app's links and writes their canonical addresses.
+ * Drafts also holds a selected send in its own reading column, which has an address now.
  */
 const HEADS = [
   "", "#", "#/", "#/ohbox", "#/reads", "#/receipts", "#/history", "#/search", "#/compose", "#/drafts", "#/trash",
@@ -16,6 +16,10 @@ const HEADS = [
 ];
 const TAILS = ["", "/m/a1", "/m/", "?mailbox=mb-1", "?mailbox=%20", "/m/a1?mailbox=mb-1", "?x=1"];
 const CORPUS = HEADS.flatMap((head) => TAILS.map((tail) => head + tail));
+const DRAFT_LINKS = new Map([
+  ["#/drafts/m/a1", "a1"],
+  ["#/drafts/m/a1?mailbox=mb-1", "a1"],
+]);
 
 /** The old route's fields, written in the frame's words. */
 function said(old: OldRoute) {
@@ -38,12 +42,19 @@ describe("the frame's route and the old shell's agree", () => {
   it("on the place, its word, the open letter and the first run, for every fragment of the corpus", () => {
     for (const fragment of CORPUS) {
       const route = routeOf(fragment);
+      const expected = said(parseHash(fragment));
+      const draft = DRAFT_LINKS.get(fragment);
+      if (draft !== undefined) expected.open = draft;
       expect({ place: route.place, sub: route.sub, open: route.open, firstRun: route.stage?.id === "firstRun" }, fragment)
-        .toEqual(said(parseHash(fragment)));
+        .toEqual(expected);
     }
   });
 
   it("on the address each writes back", () => {
-    for (const fragment of CORPUS) expect(fragmentOf(routeOf(fragment)), fragment).toBe(canonicalHash(parseHash(fragment)));
+    for (const fragment of CORPUS) {
+      const draft = DRAFT_LINKS.get(fragment);
+      const expected = draft === undefined ? canonicalHash(parseHash(fragment)) : `#/drafts/m/${draft}`;
+      expect(fragmentOf(routeOf(fragment)), fragment).toBe(expected);
+    }
   });
 });

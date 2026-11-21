@@ -44,7 +44,7 @@ export interface ScreenerViewInput {
 /** What is asked of the person now, over the list. */
 export type ScreenerAsk =
   | {
-      readonly kind: "allSpam" | "applySuggestions";
+      readonly kind: "allSpam" | "applySuggestions" | "picked";
       readonly senders: readonly ScreenerSenderDTO[];
       readonly unsubscribeCount: number;
     }
@@ -107,6 +107,7 @@ export interface ScreenerView {
   /** Mark all spam asks first: nothing leaves, and no unsubscribe is asked, before the yes. */
   readonly askAllSpam: () => void;
   readonly askApplySuggestions: () => void;
+  readonly decidePicked?: (ids: readonly string[], dest: Exclude<DecisionDestination, "spam">) => void;
   readonly answerBulk: (yes: boolean) => void;
   readonly answerAllSpam: (yes: boolean) => void;
   /** The unsubscribe question's answer: the yes makes the decision it held, the no makes none. */
@@ -350,6 +351,7 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
     ask: unsub ?? ask.question,
     askAllSpam: () => ask.begin("allSpam"),
     askApplySuggestions: () => ask.begin("applySuggestions"),
+    decidePicked: refused(state.role) ? undefined : ask.beginPicked,
     answerBulk: ask.answer,
     answerAllSpam: ask.answer,
     answerUnsub,

@@ -12,8 +12,10 @@ import { isCalendarFragment } from "@ohmail/app/frame";
 import { MailFrame, useBrowserMail } from "../../shell/browser-mail";
 import { EngineProvider, useEngine, useResolvedDemoMode, useResolvedDemoModeFrom } from "../../shell/engine";
 import { DemoFrame, DemoShell } from "../demo/DemoShell";
+import { sendSurfaceFor } from "./send-surface";
+import { useWebFeatureCards } from "./web-feature-cards";
 import { WEB_MAIL_PARTS } from "./mail-parts";
-import { SEND_SURFACE, useWebHost, webRecover, type WebWords } from "./web-supplies";
+import { useWebHost, webRecover, type WebWords } from "./web-supplies";
 import { discardLegacyDeviceSignIn } from "./device-sign-in";
 import {
   apiConfigured, apiOwnerBinding, apiOwnerHolds, bindApiOwner, boundApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
@@ -36,6 +38,7 @@ import { beginOAuthReturn, noJoinLanding, oauthLandsInJoin, subscribeOAuthOutcom
 import { useCloudFirstRun } from "./useCloudFirstRun";
 import { useFirstPaintGate } from "./useFirstPaintGate";
 import { useSignedOutElsewhere } from "./useSignedOutElsewhere";
+import { AccountCleanupContext, AccountCleanupGate, type AccountCleanup } from "./AccountCleanupGate";
 
 /**
  * The Microsoft consent return, at module scope — before the router, before
@@ -60,6 +63,9 @@ pendApiOwner(readOwner());
 beginOAuthReturn();
 
 /** What the demo says of itself when `?demo=1` boots through this page: this build's service and send ceiling. */
+/** The staged attachment ceiling supported by this deployment. */
+export const SEND_SURFACE = sendSurfaceFor(SELF_HOST_BUILD, process.env.NEXT_PUBLIC_STAGING_ORIGIN);
+
 const DEMO_SAYS = {
   service: SELF_HOST_BUILD ? "self" : "managed",
   sendCeiling: SEND_SURFACE === undefined ? "strict" : SEND_SURFACE === null ? "mailbox" : SEND_SURFACE,
@@ -89,13 +95,14 @@ function localeOwnerHolds(owner: string): boolean {
  * an answer: `session-outcome.ts` classifies into three, `EngineProvider` retries the middle one, and
  * only an ANSWERED refusal reaches the signed-out screen (`AUTH-FLICKER-DIAGNOSIS.md`).
  */
-export function CloudShell({ demo, drawMail }: {
+export function CloudShell({ demo, drawMail, settingsAccount }: {
   demo: boolean;
   /**
    * The page's word for the first frame: `page.tsx`, the one mount, always passes it (`now` only after the edge's probe
    * named a full session). Absent is the warm open as before, for the harnesses that mount this shell directly.
    */
   drawMail?: "now" | "wait";
+  settingsAccount?: string;
 }) {
   /**
    * WHAT THE EFFECTS BELOW ASK, as opposed to what the shell RENDERS.
@@ -113,9 +120,10 @@ export function CloudShell({ demo, drawMail }: {
   /** A Microsoft sign-in started in `/join` finishes here behind the gate, then goes back there. */
   const joinWait = useSyncExternalStore(subscribeOAuthOutcome, oauthLandsInJoin, noJoinLanding);
   /** Another tab of this browser signed out: the shell goes in the same task and the tab leaves. */
-  const { gone: signedOutHere, confirmed: listenFor } = useSignedOutElsewhere(resolvedDemo, resolveOwnerOutcome);
+  const { gone: signedOutHere, accountChanged, confirmed: listenFor } = useSignedOutElsewhere(resolvedDemo, resolveOwnerOutcome);
   /** This tab's session was revoked from another device: the mail goes, no scrim, and the copy with it. */
   const revokedHere = useRevokedHere(resolvedDemo, tabAccount);
+  const [accountCleanup, showAccountCleanup] = useState<AccountCleanup | null>(null);
   /** The server-confirmed account, for the Help & contact pane's diagnostics block. */
   const [account, setAccount] = useState<{ id: string; address: string | null } | null>(null);
   const onConfirmed = useCallback((accountId: string, address?: string, familyId?: string) => {
@@ -230,7 +238,13 @@ export function CloudShell({ demo, drawMail }: {
    * `useCallback`: an imported function already has a stable identity, which is all
    * `EngineProvider`'s effect needs.
    */
-  const resolveOwner = resolveMailOwner;
+  const resolveOwner = useCallback(async () => {
+    const outcome = await resolveMailOwner();
+    if (settingsAccount && outcome.kind === "owner" && outcome.accountId !== settingsAccount) {
+      return { kind: "none" } as const;
+    }
+    return outcome;
+  }, [settingsAccount]);
 
   /**
    * A named shell is never a public surface. The account boundary's one nullable state meant both "no
@@ -262,6 +276,8 @@ export function CloudShell({ demo, drawMail }: {
   }, []);
 
   // After every hook: the tab is leaving, and nothing of the mailbox may paint again.
+  if (accountChanged) return <AccountChangedGate />;
+  if (signedOutHere && accountCleanup) return <AccountCleanupGate cleanup={accountCleanup} />;
   if (signedOutHere || revokedHere) return <div className="gate" aria-busy="true" />;
   if (joinWait) return <WaitGate />;
 
@@ -295,8 +311,15 @@ export function CloudShell({ demo, drawMail }: {
     account: account?.id ?? null, accountAddress: account?.address ?? null, firstRun, mailboxFacts, resolve: resolveOwner, confirmed: onConfirmed,
   };
   return (
-    <EngineProvider demo={demo} resolveOwner={resolveOwner} onConfirmed={onConfirmed} drawMail={drawMail}>
-      <WebFrame words={words} />
+    <EngineProvider
+      demo={demo}
+      resolveOwner={resolveOwner}
+      onConfirmed={onConfirmed}
+      drawMail={settingsAccount ? "confirmed" : drawMail}
+    >
+      <AccountCleanupContext.Provider value={showAccountCleanup}>
+        <WebFrame words={words} />
+      </AccountCleanupContext.Provider>
     </EngineProvider>
   );
 }
@@ -322,7 +345,7 @@ function SignedInFrame({ words }: { words: WebWords }) {
   /* What every browser host hands the frame for mail: the places, the stages and the ground, over this page's own
      parts, the look of the theme it stands under and its two ways back. */
   const frame = useBrowserMail(webRecover, WEB_MAIL_PARTS);
-  const host = useWebHost(engine, words, frame);
+  const host = useCloudMailHost(engine, words, frame);
   const { account } = host.session;
   const scope = mirrorOwnerOf(engine);
   useEffect(() => {
@@ -338,6 +361,11 @@ function SignedInFrame({ words }: { words: WebWords }) {
 }
 
 const noSubscription = () => () => {};
+
+function AccountChangedGate() {
+  const t = useTranslations("frame.connection.signedOut");
+  return <div className="gate" role="status">{t("title")}</div>;
+}
 
 /**
  * The server's frame and the client's first. A page whose script never runs (a chunk a changing
@@ -366,4 +394,13 @@ function WaitGate() {
       </div>
     </main>
   );
+}
+
+export function useCloudMailHost(
+  engine: Parameters<typeof useWebHost>[0],
+  words: WebWords,
+  frame: Parameters<typeof useWebHost>[2],
+) {
+  const cards = useWebFeatureCards(words.subscriptionPage, words.withdrawManage);
+  return useWebHost(engine, words, frame, cards, SEND_SURFACE);
 }

@@ -16,6 +16,7 @@ import {
   goTo,
   installShellEnv,
   ISO,
+  liveAccountResponse,
   mailbox,
   mountShell,
   page,
@@ -111,14 +112,14 @@ async function withRoster(
       writes.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
       if (path === `/api/screener/${heldId}` && method === "POST") {
         if (opts.applied)
-          return Response.json({ messageId: heldId, appliedFolder: "INBOX", createdRuleId: "filed-rule" });
-        return new Response(
+          return liveAccountResponse(Response.json({ messageId: heldId, appliedFolder: "INBOX", createdRuleId: "filed-rule" }));
+        return liveAccountResponse(new Response(
           JSON.stringify({ pending: true, requestId: "held-by-organizer", holder: { name: holder } }),
           {
             status: 202,
             headers: { "content-type": "application/json" },
           },
-        );
+        ));
       }
     }
     return read(input, init);
@@ -252,10 +253,12 @@ describe("screenerMode — what the Screener may do on this install", () => {
           body: { decision: "yes", dest: "INBOX", scope: "sender", applyRetro: false },
         },
       ]);
-      expect(within(shell).getByText(copy.pendingHeading)).toBeTruthy();
-      expect(screenerRow(shell, heldId)).toBeUndefined();
-      const queued = within(shell).getByRole("listbox", { name: copy.pendingHeading });
+      const list = within(shell).getByRole("listbox", { name: copy.title });
+      expect(within(list).getByText(copy.pendingHeading)).toBeTruthy();
+      const queued = within(list).getByRole("group", { name: copy.pendingHeading });
       expect(within(queued).getByRole("option").getAttribute("data-id")).toBe(heldId);
+      expect(within(list).getAllByRole("option").filter((row) => row.getAttribute("data-id") === heldId))
+        .toEqual([within(queued).getByRole("option")]);
       journalUntouched();
     });
   });

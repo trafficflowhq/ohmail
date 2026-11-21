@@ -20,15 +20,18 @@ export function ReportHost({ slot }: { slot: Pick<ReportSlotApi, "state" | "gone
       </Report>
     );
   }
+  const undo =
+    standing.kind === "undo" &&
+    !standing.dismissed &&
+    standing.press &&
+    (!standing.leaving || standing.undoDuringFade)
+      ? standing.press
+      : undefined;
   return (
     <Report
       key={standing.id}
       {...common}
-      undo={
-        standing.kind === "undo" && !standing.leaving && !standing.dismissed && standing.press
-          ? standing.press
-          : undefined
-      }
+      undo={undo && standing.leaving ? { ...undo, keyHint: undefined } : undo}
     >
       {standing.message}
     </Report>

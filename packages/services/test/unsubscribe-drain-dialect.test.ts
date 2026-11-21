@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { folderState, mailboxes, messageBodies, bindDb } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  makeUnsubscribeService, type HostResolver, type OneClickPost,
+  dbFor, makeUnsubscribeService, type HostResolver, type OneClickPost,
 } from "../src/index.js";
 import { personScreenedOut, seedMessage } from "./helpers.js";
 
@@ -46,7 +46,7 @@ function spy(): OneClickPost & { calls: string[] } {
 }
 
 async function seedScreenedOut(headers: Record<string, string[]>): Promise<{
-  db: Db; post: ReturnType<typeof spy>;
+  db: Db; post: ReturnType<typeof spy>; accountId: string; messageId: string;
 }> {
   const db = await makeTestDb();
   const accountId = randomUUID();
@@ -60,7 +60,7 @@ async function seedScreenedOut(headers: Record<string, string[]>): Promise<{
   await db.update(folderState)
     .set({ updatedAt: new Date(NOW.getTime() - 60_000) })
     .where(eq(folderState.messageId, messageId));
-  return { db, post: spy() };
+  return { db, post: spy(), accountId, messageId };
 }
 
 const drain = (db: Db, post: OneClickPost) =>
@@ -68,13 +68,19 @@ const drain = (db: Db, post: OneClickPost) =>
     .drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "d1" });
 
 describe("the unsubscribe drain reads its candidates the same way on both stores", () => {
-  it("runs to its end and posts the one message that publishes a route", async () => {
-    const { db, post } = await seedScreenedOut(ONE_CLICK);
-    const run = await drain(db, post);
-    expect(run.sweep.considered, "the candidate is looked at").toBe(1);
-    expect(run.sweep.posted, "and left").toBe(1);
+  it("a confirmed press posts the one message that publishes a route", async () => {
+    const { db, post, accountId, messageId } = await seedScreenedOut(ONE_CLICK);
+    const tick = await drain(db, post);
+    expect(tick.sweep.considered).toBe(0);
+    expect(tick.remaining).toBe(0);
+    expect(post.calls).toEqual([]);
+    const service = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
+    const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "press" };
+    const run = await service.onScreenOut(ctx, [messageId]);
+    expect(run.considered, "the confirmed message is looked at").toBe(1);
+    expect(run.posted, "and left").toBe(1);
     expect(post.calls, "one request, to the route the headers published").toHaveLength(1);
-    expect(run.remaining, "the walk reached the end of the window, so zero is a fact").toBe(0);
+    expect(run.remaining).toBe(0);
   });
 
   it("does not take a message whose headers publish no one-click post", async () => {

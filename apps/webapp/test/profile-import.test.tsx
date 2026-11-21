@@ -892,6 +892,7 @@ interface SavedRecoveryWalk {
 
 async function withSavedRecovery(walk: (fixture: SavedRecoveryWalk) => Promise<void>) {
   const { bindApiOwner } = await import("../app/api-client");
+  const { readOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
   const { resetStorageOwnerForTest } = await import("@ohmail/app-logic/storage/storage-owner");
   installConfirmEnv();
   try {
@@ -925,27 +926,33 @@ async function withSavedRecovery(walk: (fixture: SavedRecoveryWalk) => Promise<v
     };
     globalThis.fetch = async (input, init) => {
       const path = new URL(String(input), window.location.origin).pathname;
+      const account = readOwner();
+      const forAccount = (response: Response): Response => {
+        if (account !== null) response.headers.set("X-Ohmail-Account", account);
+        return response;
+      };
       if (path === "/api/mailboxes") {
-        return json({ items: [{ ...MB, status: "connected", organizerRole: "organizer",
+        return forAccount(json({ items: [{ ...MB, status: "connected", organizerRole: "organizer",
           createdAt: SHELL_TIME, lastSyncAt: SHELL_TIME,
-          initialImportCompletedAt: SHELL_TIME, organizeConsentedAt: SHELL_TIME }] });
+          initialImportCompletedAt: SHELL_TIME, organizeConsentedAt: SHELL_TIME }] }));
       }
       if (path === profile + "/replace" && init?.method === "POST") {
         requests.push({ verb: "replace", body: JSON.parse(String(init.body)) });
-        return replaceReply ?? json({ replaced: true });
+        return forAccount(replaceReply ? await replaceReply : json({ replaced: true }));
       }
       if (path === profile + "/status") {
         statusReads.push(new Headers(init?.headers).get("x-ohmail-profile-fingerprint"));
-        return statusReply ?? json({ state: "importing", fingerprint: FINGERPRINT });
+        return forAccount(statusReply ? await statusReply : json({ state: "importing", fingerprint: FINGERPRINT }));
       }
       if (path === profile) {
         if (init?.method === "POST") {
           requests.push({ verb: "import", body: JSON.parse(String(init.body)) });
-          return importPending ? json({ state: "importing", fingerprint: FINGERPRINT, reason: "slow" }, 202) : json(applied);
+          return forAccount(importPending
+            ? json({ state: "importing", fingerprint: FINGERPRINT, reason: "slow" }, 202) : json(applied));
         }
         candidateReads += 1;
         // Replace schedules an organizer write. The mailbox can keep returning this copy until it lands.
-        return json({ ...candidate, state: "declined" });
+        return forAccount(json({ ...candidate, state: "declined" }));
       }
       return inner(input, init);
     };
@@ -1099,6 +1106,7 @@ describe("the shell wiring, pinned by source", () => {
       scriptSession(() => sessionFull(other));
       const current = await mountCloudShell();
       await tick(3000);
+      await visit("settings/mailboxes");
       const offer = () => [...current.querySelectorAll("button")]
         .find((button) => button.textContent?.trim() === messages.profileImport.import);
       expect(offer()?.disabled).toBe(false);

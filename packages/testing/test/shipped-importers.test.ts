@@ -8,7 +8,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * WHO IMPORTS THE SAMPLE WORLD. `@ohmail/testing` is the invented mailbox and the adapter that
  * serves it: test support. Source that reaches a person (an app's `app/` or `src/`, a package's
  * `src/`) does not import it, with one standing exception: the web's demo, which runs the real
- * shell over the sample adapter. Its two importers are named below; anything else is refused,
+ * shell over the sample adapter. Its import is named below; anything else is refused,
  * and so is a manifest that declares the package for an app that has no demo.
  *
  * The desktop builds compile the same shell and alias the package to a stub that refuses
@@ -21,7 +21,6 @@ const SKIP = new Set(["node_modules", "dist", ".next", ".expo", "coverage", "src
 /** The importers that stand, each with what it takes and why. */
 const DEMO_ARM: Record<string, string> = {
   "apps/webapp/app/shell/engine-config.ts": "FixturesAdapter and DEMO_NOW: the demo engine and its fixed clock",
-  "apps/webapp/app/(product)/demo/DemoSettings.tsx": "NotificationSettingsFixture: the type of the demo settings snapshot",
 };
 /** The one manifest that may declare it: the app that carries the demo. */
 const DECLARED_BY = ["apps/webapp"];
@@ -84,6 +83,20 @@ describe("the sample world's importers", () => {
     expect(files.length, "the walk read almost nothing").toBeGreaterThan(800);
     const importers = files.filter((f) => importsTesting(readFileSync(f, "utf8"))).map((f) => relative(REPO, f).split("\\").join("/")).sort();
     expect(importers).toEqual(Object.keys(DEMO_ARM).sort());
+
+    // The mounted demo reads the sample adapter's notification snapshot through the engine's mirror.
+    const source = (file: string) => withoutComments(readFileSync(join(REPO, file), "utf8"));
+    const engineConfig = source("apps/webapp/app/shell/engine-config.ts");
+    expect(engineConfig).toContain(
+      'if (demo) return new OhmailEngine({ adapter: new FixturesAdapter(), storePolicy: { mode: "full" } });',
+    );
+    expect(engineConfig).toContain("export const DEMO_DAY: Date = DEMO_NOW;");
+    expect(source("packages/testing/src/adapters/fixtures-adapter.ts")).toContain(
+      'this.emit("view_meta", "notifications", fx.notificationSettings)',
+    );
+    expect(source("apps/webapp/app/(product)/demo/DemoSettings.tsx")).toContain(
+      'mirror?.get<DemoNotificationSettings>("view_meta", "notifications")',
+    );
   });
 
   it("controls: an app's manifest declares it in any field, a package's in any field but devDependencies", () => {

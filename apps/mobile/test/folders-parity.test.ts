@@ -280,7 +280,10 @@ describe("the verb surfaces are reachable, honest, and dispatch where the webapp
     expect(validation).toContain("const issue = folderNameError(path)");
     expect(validation).toContain("folders.some((folder) => folder.mailboxId === mailboxId && folder.name === path)");
     const commit = rail.slice(rail.indexOf("const commitName"), rail.indexOf("const askDelete"));
-    expect(commit).toMatch(/const problem = folderCommandProblem\(folders, edit\.mailbox, path\);\s*if \(problem !== null\) \{\s*setNameProblem\(rail\(problem\)\);\s*return;\s*\}[\s\S]*kind: "folder_rename"[\s\S]*kind: "folder_create"/);
+    expect(commit).toMatch(/const problem = folderCommandProblem\(folders, edit\.mailbox, path\);\s*if \(problem !== null\) \{\s*setNameProblem\(rail\(problem\)\);\s*return;\s*\}[\s\S]*folderCommands\.rename\(edit\.folder\.id, path\)[\s\S]*folderCommands\.create\(edit\.mailbox, path\)/);
+    const commands = read("../../../packages/app-logic/src/folder/commands.ts");
+    expect(commands).toMatch(/create:[\s\S]*?kind: "folder_create"/);
+    expect(commands).toMatch(/rename:[\s\S]*?kind: "folder_rename"/);
   });
   it("a pending row keeps the mailbox's name on every join and wears the commanded leaf", () => {
     expect(group).toMatch(/pending && f\.op!\.kind === "rename" && f\.op!\.to \? folderLeafOf\(f\.op!\.to\) : leaf/);

@@ -23,6 +23,7 @@ export type { ConnectionInput, ConnectionKind } from "./connection.js";
 export { layoutPlan } from "./layout-plan.js";
 export { usePlaceLiveArgs } from "./place-live.js";
 export { attributesOf, ROOT_ATTRIBUTES } from "./root-attributes.js";
+export { calendarNoticeFragment } from "./notice-route.js";
 export { ADDRESS, fragmentOf, routeOf } from "./route.js";
 export { Scoped, useScopeHere } from "./scope.js";
 export { useRailDrag, useRailDropState } from "./rail-drag.js";
@@ -51,3 +52,5 @@ export {
   productOf,
 } from "./product.js";
 export { CALENDAR_ADDRESS, isCalendarFragment, isRealDay } from "./route.js";
+
+export { ChunkLoadContext, lazyView, LoadFailed, ViewLoadFailed } from "./lazy-view.js";

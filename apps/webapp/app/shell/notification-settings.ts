@@ -28,7 +28,13 @@ export {
   readChannels, storedNoticeChoices, subscriptionWanted, useNoticesVersion, writeChannels,
 } from "@ohmail/app-logic/notices/browser-channels";
 
-type PushSyncOptions = { forceAnnounce?: boolean; signingOutOf?: string; expectedFamily?: string; mayRegister?: () => boolean };
+type PushSyncOptions = {
+  forceAnnounce?: boolean;
+  signingOutOf?: string;
+  expectedFamily?: string;
+  mayRegister?: () => boolean;
+  mayWithdraw?: () => boolean;
+};
 
 /**
  * What the platform says, normalized to the gate's four states. A host that
@@ -181,13 +187,15 @@ export const browserNotificationHost: NotificationHost = {
 export const NOTIFY_CACHE = "ohmail-notify-v1";
 export const NOTIFY_STATE_URL = "/__ohmail_notify_state";
 const NOTIFY_STATE_LOCK = "ohmail-notify-state";
+const SUBSCRIPTION_LOCK = "ohmail-wake-subscription";
+let cacheEdits = Promise.resolve();
 
 function notifyStateLocks(): LockManager | undefined {
   return typeof navigator === "undefined" ? undefined : navigator.locks;
 }
 
 function editNotifyCache(edit: (cache: Cache) => Promise<void>, strict = false): Promise<void> {
-  return serialize(async () => {
+  const pending = cacheEdits.then(async () => {
     try {
       if (typeof caches === "undefined") return;
       const write = async () => edit(await caches.open(NOTIFY_CACHE));
@@ -198,6 +206,8 @@ function editNotifyCache(edit: (cache: Cache) => Promise<void>, strict = false):
       if (strict) throw err;
     }
   });
+  cacheEdits = pending.catch(() => undefined);
+  return pending;
 }
 
 function putNotifyState(cache: Cache, enabled: boolean, title: string, body: string): Promise<void> {
@@ -229,12 +239,6 @@ async function putCurrentNotifyState(
 export function writeNotifyStateUnchecked(
   enabled: boolean, title: string, body: string,
 ): Promise<void> {
-  /* THROUGH THE SAME QUEUE AS THE SUBSCRIPTION, and that is the point rather than tidiness.
-     These were two independent fire-and-forget writes, so a fast OFF/ON pair could land in
-     either order: a stale `enabled: false` arriving after a later `enabled: true` leaves the
-     worker refusing to draw for a browser that is subscribed and expecting notices, with nothing
-     on screen to explain it. One queue makes call order the order they are applied in — and puts
-     them in order relative to the subscription changes they accompany. */
   return editNotifyCache((cache) => putNotifyState(cache, enabled, title, body));
 }
 
@@ -412,28 +416,25 @@ async function syncWebPushNow(
   }
 
   if (!wanted) {
+    if (opts?.mayWithdraw?.() === false) return "row_remains";
     const id = readId();
+    const endpoint = readEndpoint();
     // The sign-out press's pass for its own row (`revokeWakeRegistration`), on these two DELETEs only.
     const pass = opts?.signingOutOf === undefined ? undefined : {
       signingOutOf: opts.signingOutOf, ...(opts.expectedFamily === undefined ? {} : { expectedFamily: opts.expectedFamily }),
     };
-    if (existing === null) {
-      /* NO LOCAL SUBSCRIPTION, BUT PERHAPS A ROW. A browser that cleared its site data, or a
-         previous attempt that unsubscribed and then failed to delete, leaves an id with nothing
-         under it. The row is what causes wakes, so it is still worth removing. */
-      if (id === null) return "unchanged";
-      try { await api.unsubscribe(id, pass); writeId(null); return "unsubscribed"; }
-      catch { return "row_remains"; }
-    }
-    /* LOCAL FIRST — unsubscribing here is what actually stops this browser being woken — but the
-       server delete is attempted EVEN IF that throws. Returning early on a local failure used to
-       leave both halves live: the browser still had its endpoint and the row still pointed at it. */
+    if (existing === null && id === null) return "unchanged";
+    // Remove the local subscription first. Still try the server row if the browser
+    // has lost the subscription or cannot remove it.
     let localGone = true;
-    try { await existing.unsubscribe(); } catch { localGone = false; }
+    if (existing !== null) {
+      try { await existing.unsubscribe(); } catch { localGone = false; }
+    }
     if (id === null) return localGone ? "unsubscribed" : "row_remains";
+    if (opts?.mayWithdraw?.() === false) return "row_remains";
     try {
       await api.unsubscribe(id, pass);
-      writeId(null);
+      if (opts?.mayWithdraw?.() !== false && readId() === id && readEndpoint() === endpoint) writeId(null);
       return localGone ? "unsubscribed" : "row_remains";
     } catch {
       /* THE ID SURVIVES A FAILED DELETE, and that is the whole point. Erasing it here made the
@@ -558,7 +559,7 @@ export async function revokeWakeRegistration(opts?: { signingOutOf?: string; exp
   latestWakeIntent += 1;
   /*
    * Bounded, and the bound is load-bearing (review — it inverted "the wipe runs REGARDLESS"). Every
-   * call joins the module-global {@link serialize} queue, whose ops are `fetch`es with no timeout;
+   * physical withdrawal joins the local subscription queue, whose operations can wait on the network;
    * the settings pane fires two on mount and the sign-out control lives inside it — on a captive
    * portal whose vapid-key GET stalls, `signOut` blocked for ever: no server logout, no local wipe,
    * the mailbox left in IndexedDB on a machine somebody was done with. The revoke gets a budget;
@@ -582,9 +583,8 @@ export async function revokeWakeRegistration(opts?: { signingOutOf?: string; exp
  * enough not to read as a hang. A bound on a BEST-EFFORT step, not a
  * request deadline: what it protects is the acts around it — the sign-out's
  * logout and wipe ({@link revokeWakeRegistration}), the shell's boot
- * ({@link reconcileWakeRegistration}). One constant because it is one
- * hazard: every call on both paths goes through the same module-global
- * {@link serialize} chain, so a single stalled `fetch` is the shared risk.
+ * ({@link reconcileWakeRegistration}). A stalled platform or network request can delay physical
+ * subscription changes. Writing the cache does not wait for the subscription queue.
  */
 const WAKE_BUDGET_MS = 4_000;
 // The Cache API is shared by sessions at this origin. Revoke an older intent before any queued work.
@@ -692,13 +692,25 @@ export async function applyWakeIntent(
 ): Promise<PushSyncOutcome | null> {
   const intent = ++latestWakeIntent;
   const owner = readOwnerMarker();
-  const isCurrent = (): boolean => intent === latestWakeIntent && wakeOwnerHolds(owner);
+  const holdsOwner = (): boolean => wakeOwnerHolds(owner);
+  const isCurrent = (): boolean => intent === latestWakeIntent && holdsOwner();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<PushSyncOutcome>((resolve) => {
     timer = setTimeout(() => resolve("not_registered"), WAKE_BUDGET_MS);
   });
   try {
-    return await Promise.race([applyWakeIntentNow(host, wanted, body, isCurrent), budget]);
+    // Reserve the turn before an OFF waits on the cache. Disarming itself can
+    // run while another tab waits on the browser or the server.
+    const disarming = wanted ? null : editNotifyCache((cache) =>
+      putCurrentNotifyState(cache, false, "ohmail", body, holdsOwner));
+    const operation = () => disarming === null
+      ? registerWake(host, body, isCurrent)
+      : withdrawWake(host, body, holdsOwner, disarming);
+    const locks = notifyStateLocks();
+    const result = locks ? locks.request(SUBSCRIPTION_LOCK, operation) : operation();
+    return await Promise.race([result, budget]);
+  } catch {
+    return wanted ? "not_registered" : "row_remains";
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -711,31 +723,27 @@ export async function reconcileWakeRegistration(body: string): Promise<PushSyncO
   );
 }
 
-/**
- * The act itself. Never throws; see {@link applyWakeIntent} for the bound.
- *
- * THE TWO DIRECTIONS ARE ORDERED DIFFERENTLY, and that asymmetry is the whole of the privacy
- * argument. OFF is written first and unconditionally — it needs neither the network nor a
- * subscription, and a worker told not to draw cannot leak. ON is written LAST, and only once this
- * browser holds a row the server acknowledged, because the residue a failed sign-out delete
- * leaves behind belongs to the PREVIOUS user and is still being dialled. See the body.
- */
-async function applyWakeIntentNow(
-  host: NotificationHost, wanted: boolean, body: string, isCurrent: () => boolean,
+async function withdrawWake(
+  host: NotificationHost, body: string, holdsOwner: () => boolean, disarming: Promise<void>,
 ): Promise<PushSyncOutcome | null> {
-
-  /* OFF IS WRITTEN FIRST AND UNCONDITIONALLY. It needs neither the network nor a subscription,
-     and it is the safe direction: a worker told not to draw cannot leak whatever the sender still
-     has. This half is unchanged. */
-  if (!wanted) {
-    try { await disarmNotifyState("ohmail", body); } catch { /* no Cache API, or refused */ }
-    try {
-      return (await host.syncSubscription?.(false)) ?? null;
-    } catch {
-      return "row_remains";
+  await disarming;
+  // A preceding ON in another tab could finish after the immediate disarm.
+  await editNotifyCache(async (cache) => {
+    if (!holdsOwner()) return;
+    const held = await cache.match(NOTIFY_STATE_URL);
+    if (held && (await held.json()).enabled === true) {
+      await putCurrentNotifyState(cache, false, "ohmail", body, holdsOwner);
     }
-  }
+  });
+  if (!holdsOwner()) return null;
+  const outcome = await host.syncSubscription?.(false, { mayWithdraw: holdsOwner });
+  return holdsOwner() ? outcome ?? null : null;
+}
 
+/** Arm the worker only after the server acknowledges this browser's current session. */
+async function registerWake(
+  host: NotificationHost, body: string, isCurrent: () => boolean,
+): Promise<PushSyncOutcome | null> {
   /*
    * ON is written last, and only for a row this boot established. Writing `enabled: true` first
    * ("inert without a subscription") is false on a shared browser: A signs out, the delete fails

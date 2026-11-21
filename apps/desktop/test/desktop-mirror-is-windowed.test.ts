@@ -151,7 +151,9 @@ describe("the desktop renderer's mirror is bounded by its window", () => {
     const src = readFileSync(resolve(HERE, "../../paired-page/src/host-engine.ts"), "utf8");
     const at = src.indexOf("new OhmailEngine(");
     expect(at, "the gate builds an engine").toBeGreaterThan(-1);
-    expect(src.slice(at, at + 600)).toContain("storePolicy: DESKTOP_WINDOW");
+    const end = src.indexOf("\n  });", at);
+    expect(end, "the engine options have an end").toBeGreaterThan(at);
+    expect(src.slice(at, end)).toContain("storePolicy: DESKTOP_WINDOW");
   });
 
   /**

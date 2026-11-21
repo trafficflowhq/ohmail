@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { TravelledChangeLine } from "@ohmail/app/settings/browser";
+import { TravelledChangeLine } from "@ohmail/app/settings/travelled-change";
 import { noteOf, type TravelledChangeWire, type TravelledNote } from "@ohmail/app-logic/consent/travelled-change";
 export { noteOf, standingNote, type TravelledChangeWire, type TravelledNote } from "@ohmail/app-logic/consent/travelled-change";
 

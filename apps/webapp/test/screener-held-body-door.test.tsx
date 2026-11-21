@@ -124,9 +124,10 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
 });
 afterEach(async () => {
+  // Restore the primer's frame stubs while the fake clock still owns the original callbacks.
+  vi.unstubAllGlobals();
   await teardownShellEnv();
   host = null;
-  vi.unstubAllGlobals();
 });
 
 describe("a held body that was read is drawn, with nothing else moving", () => {
@@ -138,7 +139,7 @@ describe("a held body that was read is drawn, with nothing else moving", () => {
     const [a, b] = articles();
     expect(bodyText(a!)).toContain("the whole of h1");
     expect(bodyText(b!)).toContain("the whole of h2");
-    expect(noteOf(a!) + noteOf(b!)).not.toContain("Couldn't load");
+    expect(noteOf(a!) + noteOf(b!)).not.toContain(messages.screener.place.bodyFailed);
   });
 });
 
@@ -156,7 +157,7 @@ describe("Retry is a new attempt, and the preview shows that attempt", () => {
     await mount(engine);
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     const [only] = articles();
-    expect(noteOf(only!), "premise: the first read failed").toContain("Couldn't load");
+    expect(noteOf(only!), "premise: the first read failed").toBe(messages.screener.place.bodyFailed + messages.screener.retry);
     await act(async () => { retry(only!).click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     expect(asked, "Retry made no new attempt").toEqual(["h1", "h1"]);
@@ -176,7 +177,7 @@ describe("Retry is a new attempt, and the preview shows that attempt", () => {
     await act(async () => { retry(articles()[0]!).click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     expect(asked).toEqual(["h1", "h1"]);
-    expect(noteOf(articles()[0]!)).toContain("Couldn't load");
+    expect(noteOf(articles()[0]!)).toBe(messages.screener.place.bodyFailed + messages.screener.retry);
     expect(within(articles()[0]!).queryByRole("button", { name: messages.screener.retry }), "the second failure lost its control").not.toBeNull();
   });
 });
@@ -296,7 +297,7 @@ describe("a sender's held letters open on the newest three", () => {
     expect(subjects()).toEqual(ids(10, 12).map((id) => `Subject ${id}`));
     expect(wire.batches.flat().sort(), "bodies asked for letters nobody can see").toEqual(ids(10, 12));
     expect([...wire.lists].sort(), "attachment lists read for letters nobody can see").toEqual(ids(10, 12));
-    expect(region().textContent, "the caption stopped counting the whole bag").toMatch(/12 messages/);
+    expect(within(region()).getByText("12 letters", { exact: true })).toBeTruthy();
   });
 
   it("reaching the top of the column mounts three older letters and asks for their bodies, until all twelve are on screen", async () => {
@@ -465,7 +466,9 @@ describe("a sender's held letters open on the newest three", () => {
       drawn.push(piece());
       const p = primed();
       expect(p, `piece ${i + 1} was never drawn`).not.toBeNull();
-      expect([p!.hasAttribute("inert"), p!.getAttribute("aria-hidden"), p!.hasAttribute("data-pile")]).toEqual([true, "true", true]);
+      expect([p!.hasAttribute("inert"), p!.getAttribute("aria-hidden")]).toEqual([true, "true"]);
+      expect(within(p!).queryAllByRole("option")).toEqual([]);
+      expect(within(p!).queryAllByRole("article")).toEqual([]);
       expect(p!.querySelector(".mb")?.childElementCount ?? 0, "a primed letter drew its body").toBe(0);
       await paint();
       expect(primed(), `piece ${i + 1} outlived its frame`).toBeNull();
@@ -549,13 +552,18 @@ describe("a sender's held letters open on the newest three", () => {
   it("on a phone, closing and reopening the sheet leaves the column where the browser puts it", async () => {
     const phone = await onPhone(600);
     await phone.tap();
-    const [first] = subjects(); // the reopened sheet starts on the same first letter
+    expect(subjects()[0]).toBe("Subject m10");
     await phone.scrollTo(700);
+    // The lookahead prepends three letters before the sheet is closed.
+    expect(subjects()[0]).toBe("Subject m07");
     await phone.back();
     expect(phoneSender(), "premise: the sheet closed").toBeNull();
     await phone.tap();
+    // Another three cards joined during reopening. Holding the old first card moves the pixel offset by their height.
+    expect(subjects()[0]).toBe("Subject m04");
+    expect(readingColumn().scrollTop).toBe(3 * 600);
     const atTop = articles().find((a) => a.getBoundingClientRect().top === 0);
-    expect(atTop?.querySelector("h2")?.textContent, "the letters reappearing were taken for growth above the reader").toBe(first);
+    expect(atTop?.querySelector("h2")?.textContent, "the letters reappearing were taken for growth above the reader").toBe("Subject m07");
   });
 });
 

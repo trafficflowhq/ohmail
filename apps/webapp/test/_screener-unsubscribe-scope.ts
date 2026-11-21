@@ -4,7 +4,7 @@ import { vi } from "vitest";
 import { message } from "./_draft-shell.js";
 import { selectScreenerRow } from "./fixtures/live-screener.js";
 import {
-  ISO, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  ISO, liveAccountFetch, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
 
 const brand = "PostFinance";
@@ -44,7 +44,7 @@ export async function mountUnsubscribe(addresses: readonly string[], checked?: {
   }));
   const writes: unknown[] = [];
   const fetchShell = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = liveAccountFetch(async (input, init) => {
     const path = new URL(String(input), window.location.origin).pathname;
     if (path === "/api/screener" && checked && (!init?.method || init.method === "GET")) {
       return Response.json({
@@ -62,7 +62,7 @@ export async function mountUnsubscribe(addresses: readonly string[], checked?: {
       return Response.json({ messageId: path.split("/").at(-1), appliedFolder: "ohmail/Screened" });
     }
     return fetchShell(input, init);
-  };
+  });
   const shell = await mountShell([mailbox({ id: "mb_1", lastSyncAt: ISO, providerConfirms: true })], {
     suggestWire: "none", junkWire: "none",
   });

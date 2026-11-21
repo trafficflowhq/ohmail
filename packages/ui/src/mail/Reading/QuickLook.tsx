@@ -1,5 +1,5 @@
-import type { KeyboardEvent, ReactNode, SyntheticEvent } from "react";
-import { createPortal } from "react-dom";
+import { useContext, type KeyboardEvent, type ReactNode, type SyntheticEvent } from "react";
+import { portalRenderer } from "../../base/Overlays/portal-renderer.js";
 import { Button, KeyHint, Overlay } from "../../base/index.js";
 import type { IconName } from "../../icons/Icon.js";
 import "./quick-look.css";
@@ -12,6 +12,8 @@ interface Way {
 export interface QuickLookProps {
   open: boolean;
   onClose: () => void;
+  /** Stand over the whole window and keep paste and drop away from the composer. */
+  portal?: boolean;
   /** Its name, said to a screen reader. */
   label: string;
   /** The file's name, and its facts in one line: kind, size, page, which of how many. */
@@ -41,6 +43,7 @@ const round = (side: "prev" | "next", way: Way, icon: IconName) => (
 
 /** Looking at a file, over the whole view. One Quick Look everywhere a file stands. */
 export function QuickLook(props: QuickLookProps) {
+  const renderPortal = useContext(portalRenderer);
   const { open, onClose, label, kind, prev, next, pages, hints, children } = props;
   const keys = (event: KeyboardEvent<HTMLDivElement>): boolean => {
     const run =
@@ -66,7 +69,7 @@ export function QuickLook(props: QuickLookProps) {
     run();
     return true;
   };
-  return (
+  const look = (
     <Overlay
       open={open}
       onClose={onClose}
@@ -99,6 +102,17 @@ export function QuickLook(props: QuickLookProps) {
         </footer>
       ) : null}
     </Overlay>
+  );
+  if (!props.portal || !open || typeof document === "undefined") return look;
+  const keepHere = (event: SyntheticEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  return renderPortal(
+    <div onPaste={keepHere} onDragOver={keepHere} onDrop={keepHere}>
+      {look}
+    </div>,
+    document.body,
   );
 }
 
@@ -156,19 +170,5 @@ function quickLookHead({ name, facts, pages, all, download, close, onClose }: Qu
         <Button kind="quiet" size="s" icon="x" label={close.label} onPress={onClose} />
       </div>
     </header>
-  );
-}
-
-/** File previews stand over the entire window and take paste and drop away from the composer. */
-export function FileQuickLook(props: QuickLookProps) {
-  const keepHere = (event: SyntheticEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-  };
-  return createPortal(
-    <div onPaste={keepHere} onDragOver={keepHere} onDrop={keepHere}>
-      <QuickLook {...props} />
-    </div>,
-    document.body,
   );
 }

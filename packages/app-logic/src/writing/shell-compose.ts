@@ -1450,8 +1450,7 @@ export function useShellCompose({
     }
     if (row === undefined) return false;
     // `openDraft` takes the composer for a row whose parent is not here.
-    const inReader = row.inReplyToMessageId != null && reader.get<EngineMessage>("message", row.inReplyToMessageId) != null;
-    if (!inReader && blocked()) return false;
+    if (replyParentOf(row) === null && blocked()) return false;
     openDraft(row);
     return true;
   });
@@ -2353,10 +2352,11 @@ export function useShellCompose({
   const heldReplyRow = useStableCallback((messageId: string): string | null =>
     drafts.find((d) => d.inReplyToMessageId === messageId && d.status !== "draft"
       && (!engine.confirmedReplyDraft?.(d) || sendRecordNames(messageId, d.id, null, scope)))?.id ?? null);
-  const draftRepliesHere = useStableCallback(
-    (d: EngineDraft): boolean =>
-      d.inReplyToMessageId != null && reader.get<EngineMessage>("message", d.inReplyToMessageId) != null,
-  );
+  const replyParentOf = useStableCallback((draft: EngineDraft): EngineMessage | null => {
+    const parent = draft.inReplyToMessageId;
+    return parent ? reader.get<EngineMessage>("message", parent) ?? null : null;
+  });
+  const draftRepliesHere = useStableCallback((draft: EngineDraft) => replyParentOf(draft) !== null);
   /**
    * A DRAFT IS NEVER OPENED WITH A BODY THIS CLIENT DOES NOT HAVE: A bounded sync page can carry a draft row without
    * its text (`EngineDraft.body` is `null` then), and the resume freshen applies page 1 over the mirror on every
@@ -2389,9 +2389,7 @@ export function useShellCompose({
     (d: EngineDraft, body: string, pressed?: ComposeAttachment[], stillCurrent?: () => boolean) => {
       const openedBy = draftFrame.current;
       if (openedBy?.engine !== engine || openedBy.scope !== scope) return;
-      const parent = d.inReplyToMessageId
-        ? reader.get<EngineMessage>("message", d.inReplyToMessageId)
-        : null;
+      const parent = replyParentOf(d);
       /**
        * THE HOLD IS ASKED FIRST, AND THE REPLY ARM IS WHY: This used to be computed BELOW the reply arm, which meant
        * a held REPLY never reached it: a draft whose parent message is in the mirror was seeded straight into the
@@ -2659,7 +2657,9 @@ export function useShellCompose({
   });
   const cancelSchedule = useStableCallback(
     (draftId: string) => {
-      void engine.mutate({ kind: "draft_schedule_cancel", draftId }).then(cancelOutcomeToast);
+      void engine.mutate({ kind: "draft_schedule_cancel", draftId }).then((res) => {
+        if (res.status !== "superseded") cancelOutcomeToast(res);
+      });
     },
   );
   const editScheduled = useStableCallback(
@@ -2766,14 +2766,16 @@ export function useShellCompose({
     for (const lane of [row?.inReplyToMessageId, row?.forwardOfMessageId ? inlineForwardKey(row.forwardOfMessageId) : null]) {
       if (lane && (readReplyMeta(lane, scope).row?.id === draftId || (create !== null && replyAutosave.owns(lane, create)))) remember(lane);
     }
-    return (withdrawn = false) => {
-      if (epoch !== null && autosave.epochNow() === epoch) {
-        if (withdrawn) void autosave.discard();
-        else releaseBindingRef.current();
-        setCompose(EMPTY_COMPOSE);
-        clearComposeDraft(scope);
-        setComposeCloseRefusal(null);
-      }
+    const clearCompose = (withdrawn = false) => {
+      if (epoch === null || autosave.epochNow() !== epoch) return;
+      if (withdrawn) void autosave.discard();
+      else releaseBindingRef.current();
+      setCompose(EMPTY_COMPOSE);
+      clearComposeDraft(scope);
+      setComposeCloseRefusal(null);
+    };
+    const clearAll = (withdrawn = false) => {
+      clearCompose(withdrawn);
       for (const [lane, binding] of lanes) {
         if (replyAutosave.bindingOf(lane) !== binding) continue;
         replySeedDrafts.current.delete(lane);
@@ -2783,6 +2785,7 @@ export function useShellCompose({
         setReplyTo((cur) => (cur !== null && (replyModeRef.current === "forward" ? inlineForwardKey(cur) : cur) === lane ? null : cur));
       }
     };
+    return { clearAll, clearCompose };
   });
   const discardHandle = useStableCallback((listed: string, original?: EngineDraft) => {
     const row = engine.read().get<EngineDraft>("draft", listed) ?? original;
@@ -2832,7 +2835,7 @@ export function useShellCompose({
       if (initial.kind === "refuse") return { kind: "blocked", why: initial.why };
       if (waitingForDiscard(listed).length) return { kind: "blocked", why: "still-sending" };
 
-      clearCreateEditors = discardEditorsOf(listed, readComposeRow(scope), listedRow, handle.key);
+      clearCreateEditors = discardEditorsOf(listed, readComposeRow(scope), listedRow, handle.key).clearAll;
       const answer = await engine.withdrawQueued?.(handle.key);
       if (answer === "withdrawn") {
         if (!shown || draftFrame.current === discardingBy) clearCreateEditors(true);
@@ -2863,15 +2866,20 @@ export function useShellCompose({
     if (waitingForDiscard(draftId).length) return { kind: "blocked", why: "still-sending" };
     const heldRow = readComposeRow(scope);
     const session = heldRow === draftId ? composeSessionId(scope) : null;
-    const clearEditors = discardEditorsOf(draftId, heldRow, row);
-    if (!shown) clearEditors();
+    const { clearAll, clearCompose } = discardEditorsOf(draftId, heldRow, row);
+    const composeAtPress = composeRef.current;
+    const releaseRefusedCompose = () => {
+      // A send still owns this draft. Close the copy the user discarded if it has not since changed.
+      if (shown && draftFrame.current === discardingBy && composeRef.current === composeAtPress) clearCompose();
+    };
+    if (!shown) clearAll();
     ownDraftDiscard(draftId, true);
     let queued = false;
     try {
       const release = captureDraftSendRelease(draftId, session);
       const confirmed = () => {
         if (!shown || draftFrame.current === discardingBy) {
-          if (shown) clearEditors();
+          if (shown) clearAll();
           clearCreateEditors?.();
         }
         release();
@@ -2882,6 +2890,7 @@ export function useShellCompose({
           if (!queued || !shown) return;
           ownDraftDiscard(draftId, false);
           if (result.status === "confirmed") confirmed();
+          if (result.error?.code === "send_recorded") releaseRefusedCompose();
           if (draftFrame.current !== discardingBy) return;
           if (result.error?.code === "draft_changed") {
             void engine.syncOnce().catch(() => undefined);
@@ -2893,6 +2902,7 @@ export function useShellCompose({
       });
       queued = res.status === "queued";
       if (res.status === "rolled_back" && res.error?.code === "send_recorded") {
+        releaseRefusedCompose();
         return { kind: "blocked", why: "still-sending" };
       }
       if (res.error?.code === "draft_changed") {

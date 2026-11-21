@@ -6,6 +6,9 @@
   min-height: 0;
   min-width: 0;
 }
+.cal-first-step {
+  justify-content: center;
+}
 .cal-body-views {
   display: flex;
   flex: 1;

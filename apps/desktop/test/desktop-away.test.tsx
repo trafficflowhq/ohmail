@@ -13,8 +13,8 @@ import { DesktopLocale } from "../src/DesktopLocale.js";
 import { linkSlot } from "../src/link-in.js";
 import { AWAY_PATH } from "../src/local-away.js";
 
-vi.mock("../src/local-mailbox-facts", async (load) => ({
-  ...await load<typeof import("../src/local-mailbox-facts")>(),
+vi.mock("../src/local-mailbox-facts", async () => ({
+  ...await vi.importActual<typeof import("../src/local-mailbox-facts")>("../src/local-mailbox-facts"),
   readMailboxFacts: async () => ROSTER,
 }));
 

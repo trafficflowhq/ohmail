@@ -22,16 +22,15 @@
 import { createElement as h, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   CANNOT, FEATURE_NAMES, NONE,
-  type Appearance, type FeatureEntry, type FeatureName, type AwayWire as AwayTransport, type FrameSupplies, type GapLettersWire, type HostContract, type HostDevice,
+  type FeatureEntry, type FeatureName, type AwayWire as AwayTransport, type FrameSupplies, type GapLettersWire, type HostContract, type HostDevice,
   type HostSession, type JunkWire, type LinkedDraft, type OrganizerNoticeWire, type SuggestWire, type TrashWire,
   type LinkIn, type None, type ReaderEntry, type Signal,
 } from "@ohmail/app/host";
-import { NO_PANE_PARTS, useMailSupplies, type MailHostParts, type MailPaneParts } from "@ohmail/app/mail";
+import { NO_PANE_PARTS, useMailSupplies, useThemeLook, type MailHostParts, type MailPaneParts } from "@ohmail/app/mail";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import type { OlderBodyWire } from "@ohmail/client-engine";
-import { useOptionalTheme } from "@ohmail/ui";
 import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
 import { apiConfigured } from "../app/api-client";
 import { CLOUD_CONSENT, CLOUD_SEED_REVIEW } from "../app/(product)/mailbox/consent-over-api";
@@ -231,8 +230,8 @@ export function hostFromTodaysInputs(
     features: {
       ...features, places: props.places === undefined ? frame.places : { ...frame.places, ...props.places },
       stages: frame.stages, overs: frame.overs,
-      reader: props.reader ?? frame.reader, above: frame.above,
-    } as HostContract["features"],
+      reader: props.reader ?? frame.reader, above: frame.above, calendar: NONE,
+    },
     device: {
       build: {
         surface: desktopOffer?.surface ?? support?.surface ?? "web",
@@ -310,10 +309,7 @@ const ACCOUNT_FEATURE = { name: "account", render: () => null } as const;
 function MailFrame(props: MailShellProps) {
   const engine = useEngine();
   /* The look the test's theme stands under, as an entry reads it; a mount with no theme stands in paper, light. */
-  const theme = useOptionalTheme();
-  const face = theme?.face ?? "paper";
-  const scheme = theme?.resolved ?? "light";
-  const look: Appearance = useMemo(() => ({ face, scheme }), [face, scheme]);
+  const look = useThemeLook();
   /* The host's own parts, one record read at the mount as an entry's is: the web's reader, and what a host alone
      hands the first run: the test's own second-factor prompt where its first-run door names one (as the old door
      handed it), and nothing else. */

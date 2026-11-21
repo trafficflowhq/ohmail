@@ -93,8 +93,8 @@ export interface OhboxListInput {
   now: Date;
   selectedId: string | null;
   lastActed?: React.MutableRefObject<ActedMarker | null>;
-  onSelect: (id: string | null) => void;
-  onEnterReader: (messageId: string) => void;
+  onSelect: (id: string | null, wholeThread?: true) => void;
+  onEnterReader: (messageId: string, wholeThread?: true) => void;
   enterId?: string | null;
   onEntered?: () => void;
   onMarkSeen: (ids: string[], unread: boolean, via?: "glance") => void | Promise<boolean>;
@@ -197,6 +197,7 @@ export interface OhboxListModel {
   setPickPanel: (next: PickPanel | null) => void;
   clearPicked: () => void;
   togglePick: (id: string) => void;
+  pickRangeTo: (id: string) => void;
   pickState: (on: boolean) => boolean | undefined;
   runBulk: (action: BulkAction) => void;
   markPicked: () => void;

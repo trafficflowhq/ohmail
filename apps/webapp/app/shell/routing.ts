@@ -424,7 +424,7 @@ function navigate(next: string): void {
   for (const cb of [...routeListeners]) cb();
 }
 
-export function useHashRoute(): Route {
+export function useHashRoute(canonicalize = true): Route {
   const subscribe = useCallback((cb: () => void) => {
     /* A pane holding an unsaved change sees a Back press or a link BEFORE the route does. */
     const onChange = (e: Event): void => { if (!heldOnHashChange(e)) cb(); };
@@ -449,9 +449,10 @@ export function useHashRoute(): Route {
    * rendered route is already the fallback the rewrite spells out.
    */
   useEffect(() => {
+    if (!canonicalize) return;
     const next = normalizedHash(hash);
     if (next != null) window.history.replaceState(window.history.state, "", next);
-  }, [hash]);
+  }, [canonicalize, hash]);
   return useMemo(() => parseHash(hash), [hash]);
 }
 

@@ -85,6 +85,8 @@ function writes(): string[] {
     const method = (init?.method ?? r?.method ?? "GET").toUpperCase();
     if (method === "GET") return [];
     const url = new URL(String(r?.url ?? input), "https://h.invalid");
+    // The account refresh is separate from the complete set of mutations made by Move.
+    if (url.pathname === "/auth/refresh") return [];
     return [`${method} ${url.pathname} ${typeof init?.body === "string" ? init.body : ""}`];
   });
 }

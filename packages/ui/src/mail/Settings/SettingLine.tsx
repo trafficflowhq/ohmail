@@ -1,6 +1,7 @@
 import { useId, type MouseEvent, type ReactNode } from "react";
 import { Switch, Tag } from "../../base/index.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
+import { SettingNote } from "./SettingNote.js";
 import "./setting-line.css";
 
 export interface SettingLineProps {
@@ -14,6 +15,8 @@ export interface SettingLineProps {
   tag?: string;
   /** The (i) after a word that needs saying once. */
   info?: ReactNode;
+  /** Explanatory copy that sits beneath the line. */
+  description?: string;
   /** The id of a note that describes this setting. */
   describedBy?: string;
   /** The setting's value as text, at the right. */
@@ -53,6 +56,7 @@ export function SettingLine(props: SettingLineProps) {
     lead,
     tag,
     info,
+    description,
     describedBy,
     value,
     figure,
@@ -65,6 +69,8 @@ export function SettingLine(props: SettingLineProps) {
     children,
   } = props;
   const labelId = useId();
+  const descriptionId = description ? `${labelId}-description` : undefined;
+  const notes = [describedBy, descriptionId].filter(Boolean).join(" ") || undefined;
   const labelPress = activateLabel && !toggle ? onPress : undefined;
   const pressable = Boolean(toggle || onPress);
   const press = pressable
@@ -76,12 +82,12 @@ export function SettingLine(props: SettingLineProps) {
         else onPress?.();
       }
     : undefined;
-  return (
+  const row = (
     <div
       className="oh-settingline"
       role="group"
       aria-labelledby={labelId}
-      aria-describedby={describedBy}
+      aria-describedby={notes}
       data-press={pressable ? "" : undefined}
       data-switch={toggle ? "" : undefined}
       data-off={off ? "" : undefined}
@@ -117,5 +123,13 @@ export function SettingLine(props: SettingLineProps) {
         {toggle ? <Switch label={label} on={toggle.on} onChange={toggle.onChange} disabled={off} /> : null}
       </span>
     </div>
+  );
+  return description ? (
+    <>
+      {row}
+      <SettingNote id={descriptionId}>{description}</SettingNote>
+    </>
+  ) : (
+    row
   );
 }

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -149,6 +150,7 @@ async function tab(): Promise<void> {
   const to = stops.find((s) => s !== from && (from.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
   await act(async () => { to?.focus(); });
 }
+const shellUndo = () => within(host!).queryByRole<HTMLButtonElement>("button", { name: "Undo" });
 const onBody = (): boolean => document.activeElement === null || document.activeElement === document.body;
 
 /** A row's delete through the keyboard, then Tab to the capsule's Undo. */
@@ -160,7 +162,7 @@ async function deleteAndReachUndo(): Promise<HTMLElement> {
   /* A row of the Ohbox's list: an option of its listbox, standing for its letters. */
   expect((document.activeElement as HTMLElement | null)?.matches(":is(.row, [role=option])[data-id]"), "not on a row").toBe(true);
   await key("Backspace");
-  const undo = (): HTMLElement | null => host!.querySelector<HTMLElement>(".toast-held .toast-act");
+  const undo = shellUndo;
   expect(undo(), "no Undo capsule after Backspace").not.toBeNull();
   for (let i = 0; i < 80 && document.activeElement !== undo(); i += 1) await tab();
   expect(document.activeElement, "Tab never reached the Undo").toBe(undo());
@@ -173,14 +175,14 @@ describe("focus never falls to the page around the capsule (R22-06)", () => {
     await key("Enter");
     await act(async () => { undo.click(); });
     await settle();
-    expect(host!.querySelector(".toast-held .toast-act"), "the capsule stayed").toBeNull();
+    expect(shellUndo(), "the capsule stayed").toBeNull();
     expect(onBody(), "focus fell to the page body").toBe(false);
   });
 
   it("a focused Undo whose window ends: focus lands on the list", async () => {
     await deleteAndReachUndo();
     await tick(30_000);
-    expect(host!.querySelector(".toast-held .toast-act"), "the capsule outlived its window").toBeNull();
+    expect(shellUndo(), "the capsule outlived its window").toBeNull();
     expect(onBody(), "focus fell to the page body").toBe(false);
   });
 });

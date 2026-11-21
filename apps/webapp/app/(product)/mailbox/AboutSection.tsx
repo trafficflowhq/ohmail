@@ -6,6 +6,9 @@ import { accountHeaderCapability, apiConfigured, mailboxes as mailboxApi, messag
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { TextFromIntl } from "../../shell/LocaleContext";
 
+const VERSION = process.env.NEXT_PUBLIC_APP_VERSION;
+const BUILD = process.env.NEXT_PUBLIC_BUILD ?? "dev";
+
 const PUBLISHER = {
   lines: ["TrafficFlow GmbH", "Staubstrasse 1, 8038 Zürich, Switzerland", "UID CHE\u2011364.165.705 · Commercial Register, Canton of Zurich"],
   address: "support@ohmail.app",
@@ -35,8 +38,8 @@ export function AboutSection({ owner }: { owner?: string | null } = {}) {
 
   const model: AboutModel = {
     mailboxes: failure === null ? aboutMailboxesOf(items) : { kind: "failed", said: failure },
-    version: process.env.NEXT_PUBLIC_APP_VERSION ?? null,
-    build: process.env.NEXT_PUBLIC_BUILD ?? "dev",
+    version: VERSION ?? null,
+    build: BUILD,
     namesAccount,
     publisher: PUBLISHER,
     policies: aboutPoliciesOf({ service: SELF_HOST_BUILD ? "self" : "managed" }),

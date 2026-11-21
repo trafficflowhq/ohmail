@@ -368,11 +368,21 @@ export function seriesGoesOnFrom(text: string, was: EventTime, platform: ZoneSou
 }
 
 /** Is one day of the stored object's series cancelled already (no day of the series stands at `was`)? */
-export function dayAbsent(text: string, was: EventTime, platform: ZoneSource): boolean {
+export function dayAbsent(
+  text: string,
+  was: EventTime,
+  platform: ZoneSource,
+  requireExclusion = false,
+): boolean {
   const stored = storedOf(text);
   if (!stored.ok) return false;
   const found = dayOf(stored, was, platform);
-  return found !== null && found.day === null;
+  if (found === null || found.day !== null) return false;
+  if (!requireExclusion) return true;
+  const at = momentOrUtc(was, found.zones);
+  return excludedDaysOf(stored.cal.events, stored.master, found.zones).some(
+    (day) => momentOrUtc(day, found.zones) === at,
+  );
 }
 
 /**

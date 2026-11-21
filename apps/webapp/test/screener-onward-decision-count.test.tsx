@@ -56,24 +56,26 @@ async function open(refused: boolean) {
     },
     cursor: "2", hasMore: false, serverTime: ISO,
   } satisfies SyncResponse));
+  const reply = (body: unknown, status = 200) =>
+    Response.json(body, { status, headers: { "X-Ohmail-Account": ACCOUNT } });
   const fixture = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input), window.location.origin);
     const method = init?.method ?? "GET";
-    if (method === "GET" && url.pathname === "/api/mailboxes") return Response.json({
+    if (method === "GET" && url.pathname === "/api/mailboxes") return reply({
       items: [{ id: mailboxId, address: "mailbox@example.invalid", status: "connected", organizerRole: "organizer",
         initialImportCompletedAt: ISO, organizeConsentedAt: ISO, lastSyncAt: ISO, createdAt: ISO }],
     });
     if (method === "GET" && url.pathname === "/api/screener") {
-      if (!url.searchParams.has("live")) return Response.json({ items: [], nextCursor: null });
+      if (!url.searchParams.has("live")) return reply({ items: [], nextCursor: null });
       if (url.searchParams.get("cursor") === "n") {
-        return Response.json({
+        return reply({
           items: [{ messageId: "far", sender: { address: far, name: "Far" }, receivedAt: "2026-01-01T08:00:00.000Z",
             subject: "An old note", snippet: "old", mailboxId }],
           nextCursor: null, pendingDecisions: [],
         });
       }
-      return Response.json({
+      return reply({
         items: mail.map((m) => ({
           messageId: m.id, sender: m.from, receivedAt: ISO, subject: m.subject, snippet: m.snippet, mailboxId,
         })),
@@ -85,10 +87,10 @@ async function open(refused: boolean) {
       return new Promise<Response>((resolve) => {
         answer = () => {
           if (refused) {
-            resolve(Response.json({ error: { code: "conflict", message: "not decided" } }, { status: 409 }));
+            resolve(reply({ error: { code: "conflict", message: "not decided" } }, 409));
           } else {
             settled = true;
-            resolve(Response.json({ messageId: "far", appliedFolder: "INBOX", createdRuleId: null }));
+            resolve(reply({ messageId: "far", appliedFolder: "INBOX", createdRuleId: null }));
           }
         };
       });

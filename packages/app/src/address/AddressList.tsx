@@ -83,14 +83,15 @@ function ArchiveScope({ model, t }: { model: AddressModel; t: Text }) {
     const offline = archive.errorClass.split(" ").includes("offline_read_only");
     return (
       <ListLine act={offline ? undefined : { label: t("archive.retry"), onPress: archive.retry }}>
-        {`${recent} · ${t(offline ? "archive.offline" : "archive.unanswered")}`}
+        <span>{recent}</span> · <span>{t(offline ? "archive.offline" : "archive.unanswered")}</span>
       </ListLine>
     );
   }
   if (archive.state !== "ready")
     return (
       <ListLine busy={archive.state === "searching"}>
-        {`${recent} · ${t(archive.state === "searching" ? "archive.searching" : "archive.unavailable")}`}
+        <span>{recent}</span> ·{" "}
+        <span>{t(archive.state === "searching" ? "archive.searching" : "archive.unavailable")}</span>
       </ListLine>
     );
   const senderOnly = view.coverage === "senders-only";

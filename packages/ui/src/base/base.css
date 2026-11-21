@@ -164,3 +164,52 @@
     }
   }
 }
+
+/* Older controls mounted in the current kit use its surface and type tokens. */
+:root .oh-root .oh-datepicker,
+:root .oh-root .oh-gloss-pop {
+  background: var(--sheet);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--float);
+  font-family: var(--f-text);
+  font-size: var(--t-ui);
+  font-weight: var(--w-text);
+}
+
+:root .oh-root .oh-gloss-pop {
+  z-index: var(--oh-layer-top);
+}
+
+:root:has(.oh-root) .oh-toast {
+  background: var(--solid);
+  box-shadow: var(--lift);
+  color: var(--on-solid);
+  font-family: var(--f-text);
+  font-size: var(--t-ui);
+  font-weight: var(--w-bold);
+}
+
+:root:has(.oh-root) .oh-toast .oh-toast-act {
+  color: var(--on-solid);
+  font-size: var(--t-ui);
+  font-weight: var(--w-bold);
+}
+
+:root .oh-root .oh-datepicker-month {
+  font-size: var(--t-ui);
+  font-weight: var(--w-bold);
+}
+
+:root .oh-root .oh-datepicker-weekday {
+  font-size: var(--t-meta);
+  font-weight: var(--w-bold);
+}
+
+:root .oh-root .oh-datepicker-day {
+  font-size: var(--t-ui);
+  font-weight: var(--w-mid);
+}
+
+:root[data-face="ohmarchy"] .oh-toast {
+  box-shadow: none;
+}

@@ -214,7 +214,7 @@ describe("the rich editor", () => {
     });
     window.removeEventListener("keydown", look);
     expect(screen.getByRole("textbox", { name: W.link.field })).toBeTruthy();
-    expect(mark(W.marks.link).getAttribute("aria-pressed")).toBe("true");
+    expect(mark(W.marks.link).getAttribute("aria-expanded")).toBe("true");
     expect(key!.defaultPrevented).toBe(true);
   });
 

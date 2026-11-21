@@ -98,7 +98,7 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.textSize", store: "localStorage", owner: "web",
-    at: ["packages/app-logic/src/text/text-size.ts"],
+    at: ["packages/app-logic/src/text/text-size-values.ts"],
     holds: "the chosen text size of this screen",
     words: false, erased: "never", mark: "kept",
   },
@@ -113,6 +113,12 @@ export const STORED_KEYS = [
     at: ["apps/webapp/app/shell/locale.ts"],
     holds: "the chosen language, for a page rendered before any script runs",
     words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "ohmail.ui.reader.subject:", family: true, store: "localStorage", owner: "web",
+    at: ["packages/app-logic/src/storage/persisted-ui.ts"],
+    holds: "whether each letter shows its own subject in this account's conversation reader",
+    words: false, erased: "sign-out", mark: "kept",
   },
   {
     key: "ohmail.ui.columns", store: "localStorage", owner: "web",
@@ -367,6 +373,30 @@ export const STORED_KEYS = [
     words: false, erased: "account-erase", mark: "kept",
   },
   {
+    key: "ohmail.session-changed", store: "channel", owner: "web",
+    at: ["apps/webapp/app/signed-out-signal.ts"],
+    holds: "the notification that another tab changed the browser session",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "ohmail.session-changed", store: "localStorage", owner: "web",
+    at: ["apps/webapp/app/signed-out-signal.ts"],
+    holds: "the same cross-tab notification, written and removed in one call as a fallback",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "ohmail.session.pendingSignOut", store: "localStorage", owner: "web",
+    at: ["apps/webapp/app/pending-sign-out-storage.ts"],
+    holds: "an unfinished sign-out operation so it can resume after reload",
+    words: false, erased: "sign-out", mark: "kept",
+  },
+  {
+    key: "ohmail.session.scopeCleanup.", family: true, store: "localStorage", owner: "web",
+    at: ["packages/app-logic/src/storage/storage-owner.ts"],
+    holds: "sign-out cleanup still owed for an account, isolated scope or retired local storage",
+    words: false, erased: "sign-out", mark: "kept",
+  },
+  {
     key: "ohmail.session.mintedAt", store: "localStorage", owner: "web",
     at: ["apps/webapp/app/session-refresh.ts"],
     holds: "when this browser's jar last received a session",
@@ -548,8 +578,14 @@ export const STORED_KEYS = [
   },
   {
     key: "tf_session", store: "cookie", owner: "server",
-    at: ["packages/api/src/cookies.ts", "packages/api/src/middleware.ts", "packages/api/src/routes/shared-cloud.ts", "apps/webapp/app/session-gate.ts", "apps/sidecar/src/cloud-signin.ts"],
+    at: ["packages/api/src/cookies.ts", "packages/api/src/middleware.ts", "packages/api/src/routes/shared-cloud.ts", "packages/api/src/routes/session-lifecycle.ts", "apps/webapp/app/session-gate.ts", "apps/sidecar/src/cloud-signin.ts"],
     holds: "the session's access token; host-only, HttpOnly; also read as `__Host-tf_session`",
+    words: false, erased: "sign-out", mark: "kept",
+  },
+  {
+    key: "tf_family", store: "cookie", owner: "server",
+    at: ["packages/api/src/cookies.ts", "packages/api/src/routes/session-lifecycle.ts", "apps/webapp/app/signed-out-signal.ts"],
+    holds: "the host-only session family marker readable by the browser for matching session changes",
     words: false, erased: "sign-out", mark: "kept",
   },
   {

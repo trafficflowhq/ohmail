@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { newFaceEdits, type ApplyFaceAllDevices, type FaceEdits } from "../../mail/index.js";
+import { newFaceEdits, type ApplyFaceAllDevices, type FaceEdits } from "../../mail/ground/boot-face.js";
 import type { GeneralModel } from "../general/index.js";
-import { useTheme, useToast, type FaceName } from "@ohmail/ui";
+import { useTheme, type FaceName } from "@ohmail/ui/theme";
+import { useToast } from "@ohmail/ui/toast";
 
 export interface FaceSettingsProps {
   accountWrite: { apply: ApplyFaceAllDevices; captureOwner: () => () => boolean } | null;

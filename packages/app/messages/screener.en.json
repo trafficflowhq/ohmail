@@ -616,6 +616,7 @@
     "verdictQueued": "Queued for {name} — mail from {sender} goes to {place} on its next pass, and the rule is made then.",
     "verdictChanged": "Your rule »{term}« was changed in the meantime, so it stays as it is.",
     "subjectAlready": "You already had that rule. Nothing changed.",
+    "subjectAlreadyFiled": "You already had that rule. {count, plural, one {1 message moved} other {# messages moved}} to {place}.",
     "subjectRuleFailed": "That rule wasn't saved. Nothing has moved.",
     "subjectRuleQueued": "Rule saved here. We'll send it when you're back online.",
     "subjectRuled": "Mail from {sender} with »{term}« in the subject now files to {place}.",

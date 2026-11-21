@@ -39,6 +39,10 @@ import { SearchVerdictLine } from "./SearchVerdictLine.js";
 import { saidOf } from "./verdict-words.js";
 import "./search.css";
 
+import { MailSelectionFoot } from "../place-list/MailSelectionFoot.js";
+import { useRowContact } from "../place-list/use-row-contact.js";
+import { useRowSelection } from "../place-list/use-row-selection.js";
+
 /** A place as an operator spells it: its name in lower case, its spaces dropped. */
 const spelled = (name: string): string => name.toLowerCase().split(" ").join("");
 
@@ -94,20 +98,7 @@ function useNamed(person: SearchPerson | null, book: SearchBeside["people"]): st
   );
 }
 
-export function SearchList({ route, plan }: PaneProps) {
-  const model = useSearchModel();
-  const beside = useSearchBeside();
-  const t = useText("search");
-  const locale = useLocale();
-  const { scrollerRef } = model;
-  const root = useRef<HTMLDivElement>(null);
-  useFocusFollows(root, { enter: false });
-  const people = model.searchBy === "people";
-  const onScroll = (event: UIEvent<HTMLDivElement>) => {
-    const el = event.currentTarget;
-    if (el.scrollTop + el.clientHeight < el.scrollHeight - PAGE_AHEAD_PX) return;
-    model.nearEnd();
-  };
+function fieldActions(model: SearchListModel, beside: SearchBeside, people: boolean) {
   /* Only the operator a space has just finished acts (one token, read back from the end): an operator inside the words,
      a second one pasted with it among them, stays words. */
   const typed = (q: string) => {
@@ -146,6 +137,26 @@ export function SearchList({ route, plan }: PaneProps) {
     if (side !== null && first !== undefined) pickPerson(first, side);
     else model.submit();
   };
+  return { typed, pickPerson, enter, typing };
+}
+
+export function SearchList({ route, plan }: PaneProps) {
+  const model = useSearchModel();
+  const beside = useSearchBeside();
+  const selection = useRowSelection(beside.selection?.rows ?? [], model.text);
+  const contact = useRowContact();
+  const t = useText("search");
+  const locale = useLocale();
+  const { scrollerRef } = model;
+  const root = useRef<HTMLDivElement>(null);
+  useFocusFollows(root, { enter: false });
+  const people = model.searchBy === "people";
+  const onScroll = (event: UIEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    if (el.scrollTop + el.clientHeight < el.scrollHeight - PAGE_AHEAD_PX) return;
+    model.nearEnd();
+  };
+  const { typed, pickPerson, enter, typing } = fieldActions(model, beside, people);
   const named = useNamed(model.person, beside.people);
   const said = saidOf(model, t, locale);
   const asked = model.text !== "" || model.narrowed;
@@ -179,7 +190,14 @@ export function SearchList({ route, plan }: PaneProps) {
     <>
       {meant}
       <SearchVerdictLine model={model} lines={said.lines} />
-      <SearchResults model={model} beside={beside} openId={route.open} count={said.count} />
+      <SearchResults
+        model={model}
+        beside={beside}
+        openId={route.open}
+        count={said.count}
+        selection={beside.selection ? selection : undefined}
+        contact={beside.selection ? contact : undefined}
+      />
     </>
   );
   return (
@@ -210,6 +228,8 @@ export function SearchList({ route, plan }: PaneProps) {
       >
         {plan.device === "phone" ? <Sheet kind="plain">{body}</Sheet> : body}
       </div>
+      <MailSelectionFoot selection={selection} verbs={beside.selection?.verbs} />
+      {contact.card}
     </div>
   );
 }

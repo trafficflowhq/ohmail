@@ -1,13 +1,11 @@
 "use client";
 
-import { durableSet } from "@ohmail/app-logic/storage/durable";
 import { awayPiles, awayRules } from "@ohmail/app-logic/press/away-settings";
 import { isAppLocale, type AppLocale } from "@ohmail/app-logic/text/locale";
 import {
-  applyTextSize,
   isTextSize,
   readTextSize,
-  TEXT_SIZE_KEY,
+  setTextSize,
   TEXT_SIZES,
   type TextSize,
 } from "@ohmail/app-logic/text/text-size";
@@ -20,11 +18,6 @@ interface LocaleControls {
   setLocale: (next: AppLocale) => Promise<void>;
   scope: "account" | "install";
   busy: boolean;
-}
-
-export function setTextSize(size: TextSize, root?: HTMLElement | null): void {
-  durableSet(TEXT_SIZE_KEY, String(size), "ui.textSize");
-  applyTextSize(size, root);
 }
 
 export function BrowserGeneralSettings({

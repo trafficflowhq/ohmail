@@ -11,7 +11,7 @@
  * A notice is closed words and numbers: the title and the body are the catalogue's sentences over
  * a count or a closed word, composed by `noticeFields`, and a tag that is its kind's own closed word.
  * A numeric display stamp lets the page withdraw a previous submission even in browsers that hide
- * its timestamp. A tap reaches the worker's handler and brings this window forward.
+ * its timestamp. A calendar notice can carry an opaque handle for the opening act in this page.
  */
 import {
   leadWords, noticeFields,
@@ -29,7 +29,9 @@ export interface NoticePage {
    * Draw one notice through the worker's registration, over any listed with the same tag, and say
    * whether the browser took it: no registration, or a browser that refused, is `false`. Never throws.
    */
-  show(title: string, body: string, tag: string, current?: () => boolean): NoticeTaken | void;
+  show(
+    title: string, body: string, tag: string, current?: () => boolean, open?: () => boolean,
+  ): NoticeTaken | void;
   /** Close every notice of this origin still listed; settles once they are closed. Never rejects. */
   closeAll(strict?: boolean): Promise<void>;
 }
@@ -152,12 +154,16 @@ const TAGS: Partial<Readonly<Record<NoticeKind, string>>> = {
  * The page's emitter over `page`, in the words `wording` gives at the moment a notice is drawn (the
  * person's language may change while the tab lives).
  */
-export function webNoticeEmitter(page: NoticePage, wording: () => NoticeWording): HostNoticeEmitter {
+export function webNoticeEmitter(
+  page: NoticePage,
+  wording: () => NoticeWording,
+  opening?: (notice: Notice, letter?: string) => (() => boolean) | undefined,
+): HostNoticeEmitter {
   return {
     carries: CARRIES,
     acts: [],
     ahead: "none",
-    post(notice: Notice, current?: () => boolean): NoticeTaken {
+    post(notice: Notice, current?: () => boolean, letter?: string): NoticeTaken {
       try {
         if (!CARRIES.includes(notice.kind)) return false;
         if (page.focused()) return false;
@@ -166,7 +172,11 @@ export function webNoticeEmitter(page: NoticePage, wording: () => NoticeWording)
         if (tag === undefined) return false;
         const { title, body } = noticeFields(notice, wording());
         if (title === "") return false;
-        return page.show(title, body, tag, () => !page.focused() && (notice.kind !== "ohbox" || page.visible()) && (current?.() ?? true)) ?? false;
+        return page.show(
+          title, body, tag,
+          () => !page.focused() && (notice.kind !== "ohbox" || page.visible()) && (current?.() ?? true),
+          opening?.(notice, letter),
+        ) ?? false;
       } catch {
         /* A notice that could not be drawn takes nothing down. */
         return false;
@@ -199,6 +209,7 @@ interface BrowserSubmission {
   accepted: boolean;
   displaced: boolean;
   restore?: () => Promise<boolean>;
+  opening?: { handle: string; run: () => boolean };
 }
 
 function newGeneration(cutoff: number): NoticeGeneration {
@@ -219,7 +230,7 @@ function track(counts: Map<string, number>, tag: string, delta: number): void {
 function markerOf(notice: Notification): number | null {
   // WebKit and Firefox return the submitted data even where no display timestamp is readable.
   // Only our content-free numeric marker can identify one submission of a shared closed tag.
-  const marker = notice.data;
+  const marker = typeof notice.data?.open === "string" ? notice.data.stamp : notice.data;
   return typeof marker === "number" && Number.isSafeInteger(marker) && marker > 0 ? marker : null;
 }
 
@@ -299,19 +310,21 @@ async function withdrawLate(
 }
 
 async function showBrowser(
-  title: string, body: string, tag: string, current?: () => boolean, replacing?: number,
+  title: string, body: string, tag: string, current?: () => boolean, open?: () => boolean, replacing?: number,
 ): Promise<boolean> {
   const seat = generation;
   try {
     const reg = await registration();
     if (reg === undefined || seat !== generation || current?.() === false) return false;
     if (replacing !== undefined && seat.latest.get(tag)?.stamp !== replacing) return false;
-    const dated = tag.startsWith("ohmail-cal-") || sweeping !== null || pending.has(tag);
+    const dated = open !== undefined || tag.startsWith("ohmail-cal-") || sweeping !== null || pending.has(tag);
     const stamp = Math.max(Date.now(), lastDisplayTime + 1, seat.cutoff + 1);
     lastDisplayTime = stamp;
     const item: BrowserSubmission = { stamp, dated, accepted: false, displaced: false };
+    if (open && typeof crypto.randomUUID === "function") item.opening = { handle: crypto.randomUUID(), run: open };
     seat.latest.set(tag, item);
-    const options = dated ? { body, tag, timestamp: stamp, data: stamp } : { body, tag };
+    const data = item.opening ? { stamp, open: item.opening.handle } : stamp;
+    const options = dated ? { body, tag, timestamp: stamp, data } : { body, tag };
     track(pending, tag, 1);
     try {
       await reg.showNotification(title, options);
@@ -325,14 +338,14 @@ async function showBrowser(
           return false;
         }
         const isListed = listed.some(notice => pageStampOf(notice) === stamp);
-        if (item.displaced && !isListed) return await showBrowser(title, body, tag, current, stamp);
+        if (item.displaced && !isListed) return await showBrowser(title, body, tag, current, open, stamp);
         if (isListed) retireHeld(seat, tag, listed);
       }
       item.accepted = true;
       seat.accepted.add(tag);
       if ((pending.get(tag) ?? 0) > 1) {
         // Only an overlapping earlier operation can require the accepted display again.
-        item.restore = () => showBrowser(title, body, tag, current, stamp);
+        item.restore = () => showBrowser(title, body, tag, current, open, stamp);
       }
       return true;
     } finally {
@@ -344,6 +357,24 @@ async function showBrowser(
       }
     }
   } catch { return false; }
+}
+
+/** Listen in the mounted product page. The host's opening act rechecks its session. */
+export function subscribeBrowserNoticeOpening(): () => void {
+  const worker = navigator.serviceWorker;
+  if (!worker?.addEventListener) return () => undefined;
+  const onMessage = (event: MessageEvent) => {
+    if (!worker.controller || event.source !== worker.controller || event.data?.type !== "ohmail:notice-open") return;
+    const port = event.ports[0];
+    if (!port) return;
+    const shown = [...generation.latest.values()].find(({ opening }) => opening && opening.handle === event.data.open);
+    const opening = shown?.opening;
+    if (shown && opening) delete shown.opening;
+    try { port.postMessage(opening?.run() === true); }
+    catch { port.postMessage(false); }
+  };
+  worker.addEventListener("message", onMessage);
+  return () => worker.removeEventListener("message", onMessage);
 }
 
 export const browserNoticePage: NoticePage = {

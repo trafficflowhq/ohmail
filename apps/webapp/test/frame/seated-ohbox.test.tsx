@@ -999,7 +999,9 @@ describe("the composer, closed, gives the keyboard back to the list it left", ()
     const origin = order()[1]!;
     await act(async () => { row(origin).focus(); });
     await composeAndBack(3, async () => {
-      const discard = screen.getByRole("button", { name: "Discard" });
+      const letter = screen.getByRole("region", { name: en.write.letter });
+      const foot = within(letter).getByRole("toolbar", { name: en.write.verbs });
+      const discard = within(foot).getByRole("button", { name: en.write.discard });
       await act(async () => { discard.focus(); });
       expect(document.activeElement).toBe(discard);
     });

@@ -1,16 +1,10 @@
 @layer oh {
   .history-head {
-    --heading-switch-start: var(--flush);
-
     display: grid;
     flex: none;
   }
 
   .history-head > * {
     grid-area: 1 / 1;
-  }
-
-  :root[data-face="ohmarchy"] .history-head {
-    --heading-switch-start: calc(var(--flush) + var(--s2));
   }
 }

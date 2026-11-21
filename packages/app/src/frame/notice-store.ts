@@ -67,7 +67,7 @@ export function createNoticeStore(): NoticeStore {
     if (!notice?.more) return null;
     const next = {
       title: notice.title,
-      line: notice.line,
+      line: notice.more.line ?? notice.line,
       rows: notice.more.rows,
       confirmLabel: notice.more.confirm?.label,
     };

@@ -48,7 +48,7 @@ import {
 } from "@ohmail/client-engine";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
-import { Avatar, Icon, InfoNote, Kbd } from "@ohmail/ui";
+import { Avatar, Icon, InfoNote, Kbd } from "@ohmail/ui/sender-sheet";
 import { usePileNames } from "../../shell/decision-copy";
 import { avatarHue, initialsOf, placeLabel } from "../../shell/format";
 import { displayAddress, displayAddressee, displayDomain } from "@ohmail/app-logic/text/idn";
@@ -433,6 +433,8 @@ export function SenderMenu({
   if (own) {
     // A letter claiming our address that its provider failed is not our mail: the check is said.
     return (
+      <>
+      <div className="senderm-veil" aria-hidden="true" />
       <div ref={rootRef} id={id} className={full ? "senderm sm-full" : "senderm"} role="dialog"
         aria-modal="true" aria-label={t("aria", { sender: who })} style={style}>
         <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
@@ -447,10 +449,13 @@ export function SenderMenu({
           <a className="sm-detail" href={addressHref(sender.address)} onClick={onClose}>{t("addressOpen")}</a>
         </div>
       </div>
+      </>
     );
   }
 
   return (
+    <>
+    <div className="senderm-veil" aria-hidden="true" />
     <div
       ref={rootRef}
       id={id}
@@ -773,6 +778,7 @@ export function SenderMenu({
         {subject.waiting && listClaims ? <> {t("footListClaim", { brand: sender.listClaims!.brand })}</> : null}
       </div>}
     </div>
+    </>
   );
 }
 

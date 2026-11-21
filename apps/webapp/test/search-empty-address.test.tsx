@@ -132,7 +132,8 @@ describe("the empty state's address door", () => {
     await settleArchive();
 
     // The empty state itself is up — only the door is withheld.
-    expect(host.textContent).toContain("Nothing matched");
+    const result = within(host).getByText(/^nothing matched · [1-9]\d* ms$/);
+    expect(result.parentElement?.textContent).toBe(`Searched your whole mailbox — ${result.textContent}`);
     expect(door()).toBeNull();
   });
 

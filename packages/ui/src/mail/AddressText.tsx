@@ -13,11 +13,16 @@ export interface AddressTextProps {
  */
 export function AddressText({ address }: AddressTextProps) {
   const at = address.lastIndexOf("@");
+  const local = at > 0 ? address.slice(0, at) : null;
   const domain = at > 0 ? address.slice(at) : address;
   const parts = domain.split(/(-.)/).filter((part) => part !== "");
   return (
     <span className="oh-address">
-      {at > 0 ? <span className="oh-address-local">{address.slice(0, at)}</span> : null}
+      {local !== null ? (
+        <span className="oh-address-local" data-short={Array.from(local).length <= 4 ? "" : undefined}>
+          {local}
+        </span>
+      ) : null}
       <span className="oh-address-domain">
         {parts.map((part, i) =>
           /^-.$/.test(part) ? (

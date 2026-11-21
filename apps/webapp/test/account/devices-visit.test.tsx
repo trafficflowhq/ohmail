@@ -11,7 +11,8 @@ import { useDevicesDoor } from "../../app/(product)/mailbox/devices-door";
 import { ALLOWED_API_ORIGINS } from "../../app/api-origin";
 import { Frame } from "@ohmail/app/frame";
 import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
-import { fakeHost, NO_ENGINE } from "../../../../packages/app/test/support/fake-host.js";
+import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
+import { fakeMail } from "../../../../packages/app/test/reader/support/mail.js";
 import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
 
 /**
@@ -121,6 +122,7 @@ function scripted(): Server {
 beforeEach(() => {
   // The lane reads the clock: only the clock is stood in for, so a pause can pass at once.
   vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(CODE.createdAt));
   verify = null;
   clipboard = watchClipboard();
   server = scripted();
@@ -149,8 +151,9 @@ interface Side {
 async function walk(pane: ReactNode, side: Side): Promise<string[]> {
   const { unmount } = render(<Words>{pane}</Words>);
   await settle();
+  const label = await screen.findByRole("textbox", { name: en.devices.addFor });
   await act(async () => {
-    fireEvent.change(screen.getByRole("textbox", { name: en.devices.addFor }), { target: { value: "Ben" } });
+    fireEvent.change(label, { target: { value: "Ben" } });
   });
   await press(en.devices.addAction);
   await act(async () => side.factorVerified());
@@ -188,7 +191,7 @@ async function mountedWalk(lane: "warm" | "cold") {
     devices: { useDoor: useDevicesDoor, factor, qr },
   });
   const { host } = fakeHost({
-    engine: NO_ENGINE, service: "managed", scope: "devices-visit",
+    engine: fakeMail([]).engine, service: "managed", scope: "devices-visit",
     address: fakeAddress("#/settings/devices"), places: { settings },
     features: { devices: { name: "devices", render: () => null } },
   });

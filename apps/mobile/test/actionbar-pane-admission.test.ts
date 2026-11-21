@@ -76,14 +76,14 @@ beforeAll(async () => {
   webFit = ((await import(fit)) as { fitPanel: (wrap: unknown) => string[] }).fitPanel;
 });
 
-/* ── the web's floor: the new reader's action panel (`packages/app/src/reader/actions/ActionBar.tsx`)
+/* ── the web's floor: the new reader's action panel (`packages/app/src/reader/actions/panel-verbs.ts`)
       hands the kit each verb's rank, and the kit's fold (`fitPanel`) folds only a rank above 0.
       Forward's rank is read off the panel's verb list; the kit's own fold is then run over a row
       with no room, Forward and one foldable verb in it, as fake nodes carrying the data the
       panel's buttons carry. ───────────────────────────────────────────────────────────────── */
 let webFit: (wrap: unknown) => string[];
 function webForwardFolds(): boolean {
-  const panel = read("../../packages/app/src/reader/actions/ActionBar.tsx");
+  const panel = read("../../packages/app/src/reader/actions/panel-verbs.ts");
   const hit = panel.match(/id: "forward",[^}]*?rank: (\d+),/);
   expect(hit, "the web panel stands no Forward").not.toBeNull();
   const node = (id: string, rank: string) => ({ hidden: false, dataset: { id, rank, signed: "" } as Record<string, string> });

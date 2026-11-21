@@ -15,7 +15,7 @@ import {
 } from "@ohmail/client-engine";
 import { eventsWithWrites, type DeviceAct, type EventWithWrites } from "@ohmail/client-engine/calendar-acts";
 import type { CalendarEventAct, CalendarEventRecord, CalendarSuggestionRecord } from "@ohmail/wire";
-import { calendarLookOf, calendarSampleOf } from "../../src/calendar/alerts/index.js";
+import { calendarLookOf, calendarReadsOf, calendarSampleOf } from "../../src/calendar/alerts/index.js";
 import { OWN, UPDATED, ZURICH, calendarOf, event, invitation, suggestion } from "./invitations/fixtures.js";
 
 const zones = intlZones();
@@ -94,6 +94,29 @@ const kinds = (said: Notice[][]) =>
   said.map((one) => one.map((n) => (n.kind === "cal_change" ? `${n.kind}:${n.change}` : n.kind)));
 
 describe("what the sample holds of the calendar", () => {
+  it("keeps sentence findings out of calendar notifications", () => {
+    const reads = calendarReadsOf({
+      liveScope: () => "calendar-account",
+      ownAddresses: () => [OWN],
+      suggestions: () => [
+        suggestion("exact", "data"),
+        suggestion("rules", "sentence"),
+        suggestion("model", "sentence_model"),
+      ],
+      events: () => [],
+      calendars: () => [calendarOf()],
+      zone: () => ZURICH,
+      zones,
+      showTitles: () => true,
+      acts: [],
+    });
+
+    const after = reads.changes(null, NOW);
+    expect(after?.sample.found).toEqual(new Set(["exact"]));
+    expect(after?.look.found("rules")).toBeNull();
+    expect(after?.look.found("model")).toBeNull();
+  });
+
   it("ids and instants for invitations, events the person is in, their own events' answers and what letters propose", () => {
     const records = [
       invitation("waits", "20261118"),

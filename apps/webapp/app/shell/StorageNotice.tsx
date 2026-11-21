@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { useOptionalToast } from "@ohmail/ui";
+import { useOptionalToast } from "@ohmail/ui/toast";
 import { STORAGE_PANE_HREF } from "./EmptiedLetter";
 import {
   formatStorageBytes, formatStoragePrice, storageDayName, storageFitExtraBytes, storageFitIsChange, storageMonthName,

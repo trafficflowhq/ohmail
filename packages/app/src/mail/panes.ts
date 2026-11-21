@@ -36,7 +36,15 @@ import { PANE_IDS } from "../settings/contract.js";
 import type { PaneId, SettingsBeside, SettingsPane, SettingsPanes } from "../settings/contract.js";
 import { paneOf } from "../settings/facts.js";
 import { menuOf } from "../settings/menu.js";
-import { settingsPlace, type SettingsAbove } from "../settings/place.js";
+import { lazyView } from "../frame/lazy-view.js";
+import { settingsPlaceWith, type SettingsAbove } from "../settings/place-with.js";
+
+const SettingsList = lazyView(() =>
+  import("../settings/place.js").then(({ SettingsList }) => ({ default: SettingsList })),
+);
+const SettingsReading = lazyView(() =>
+  import("../settings/SettingsReading.js").then(({ SettingsReading }) => ({ default: SettingsReading })),
+);
 
 /** What a host alone can hand the mail's panes, by pane: `none` where it has nothing of that section to hand. */
 export interface MailPaneParts {
@@ -154,7 +162,10 @@ export function mailSettings(parts: MailPaneParts, Above?: SettingsAbove): Place
     return useConsent().foldersStorable ? panes : withoutFolders;
   }
   const sections = parts.folders === NONE ? panes : useAccountPanes;
-  const place: PlaceEntry = { ...settingsPlace(sections, useSettingsBeside, Above), rail: RAIL };
+  const place: PlaceEntry = {
+    ...settingsPlaceWith(sections, useSettingsBeside, Above, SettingsList, SettingsReading),
+    rail: RAIL,
+  };
   MADE.set(place, panes);
   return place;
 }

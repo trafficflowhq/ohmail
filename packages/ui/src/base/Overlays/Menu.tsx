@@ -1,4 +1,12 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { Button } from "../Primitives/Button.js";
 import "./menu.css";
 import { EDGE, placeMenu, type MenuFit, type Point } from "./menu-place.js";
@@ -54,8 +62,28 @@ export interface MenuProps {
 }
 
 const ITEM = '[role^="menuitem"]:not(:disabled)';
+const visible = (el: HTMLElement) => getComputedStyle(el).display !== "none";
+const menuItems = (el: HTMLElement) => [...el.querySelectorAll<HTMLElement>(ITEM)];
 const firstStop = (el: HTMLElement) =>
-  el.querySelector<HTMLElement>(ITEM) ?? el.querySelector<HTMLElement>("button:not(:disabled)");
+  menuItems(el).find(visible) ?? [...el.querySelectorAll<HTMLElement>("button:not(:disabled)")].find(visible);
+
+function repairMenuFocus(box: HTMLElement, held: HTMLElement, onClose: () => void): void {
+  const { activeElement, body, documentElement } = box.ownerDocument;
+  if (activeElement && activeElement !== held && activeElement !== body && activeElement !== documentElement)
+    return;
+  const items = menuItems(box);
+  const at = items.indexOf(held);
+  if (at >= 0 && visible(held)) return;
+  const next = items.slice(at + 1).find(visible) ?? items.slice(0, Math.max(0, at)).reverse().find(visible);
+  if (next) next.focus({ preventScroll: true });
+  else onClose();
+}
+
+function claimKey(e: KeyboardEvent<HTMLDivElement>): void {
+  e.preventDefault();
+  e.stopPropagation();
+  e.nativeEvent.stopImmediatePropagation();
+}
 
 /**
  * A short list that comes out of the thing you pressed. The arrows, Home and End move; Enter runs;
@@ -82,6 +110,7 @@ export function Menu(props: MenuProps) {
   } = props;
   const box = useRef<HTMLDivElement | null>(null);
   const closeBar = useRef<HTMLDivElement | null>(null);
+  const lastItem = useRef<HTMLElement | null>(null);
   const [full, setFull] = useState(false);
   const dialog = kind === "card" || kind === "ask";
   const from = anchor && !("x" in anchor) ? anchor : null;
@@ -94,30 +123,48 @@ export function Menu(props: MenuProps) {
   );
   useOverlayEscape(open, box, onClose);
   useMenuPosition(props, box, closeBar, setFull);
+  // CSS can hide the focused item and the browser can blur it before the next render.
+  useLayoutEffect(() => {
+    if (!open) lastItem.current = null;
+    else if (!dialog && box.current && lastItem.current)
+      repairMenuFocus(box.current, lastItem.current, onClose);
+  });
   if (!open) return null;
 
   const keys = (e: KeyboardEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
-    /* A letter typed over an open menu is the menu's, never what lies underneath. A field in it still takes it. */
-    e.stopPropagation();
+    if (dialog || onKey) e.stopPropagation();
     if (onKey?.(e)) return;
     if (e.key === "Escape") {
-      e.preventDefault();
+      claimKey(e);
       closeTopmost();
     } else if (e.key === "Tab") {
       if (dialog) cycleTab(e, el);
-      else {
-        e.preventDefault();
-        onClose();
-      }
+      else onClose();
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
-      const items = [...el.querySelectorAll<HTMLElement>(ITEM)];
-      const at = items.indexOf(document.activeElement as HTMLElement);
+      const items = menuItems(el).filter(visible);
+      const at = items.indexOf(el.ownerDocument.activeElement as HTMLElement);
       const move = e.key === "ArrowDown" ? 1 : -1;
       const to =
         e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (at + move + items.length) % items.length;
-      items[to]?.focus();
-      e.preventDefault();
+      items[to]?.focus({ preventScroll: true });
+      claimKey(e);
+    } else if (e.key.length === 1 && e.key !== " " && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // Keep typing local without blocking the default action of an input inside the menu.
+      e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation();
+    }
+  };
+
+  const rememberItem = (e: FocusEvent<HTMLDivElement>) => {
+    const item = (e.target as HTMLElement).closest<HTMLElement>(ITEM);
+    lastItem.current = item && e.currentTarget.contains(item) ? item : null;
+  };
+
+  const releaseItem = (e: FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget;
+    if (next && next !== e.currentTarget.ownerDocument.body && !e.currentTarget.contains(next)) {
+      lastItem.current = null;
     }
   };
 
@@ -136,6 +183,8 @@ export function Menu(props: MenuProps) {
         data-wide={wide ? "" : undefined}
         data-anchored={anchored ? "" : undefined}
         data-sheet={anchor ? undefined : ""}
+        onFocusCapture={rememberItem}
+        onBlurCapture={releaseItem}
         onKeyDown={keys}
       >
         {full && closeWhenFull ? (

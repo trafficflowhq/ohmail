@@ -1,14 +1,17 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { useMemo } from "react";
+import { createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
 import { fakeHost, NO_ENGINE } from "../../../../packages/app/test/support/fake-host.js";
 import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
-import { away, bindApiOwner, pendApiOwner } from "../../app/api-client";
+import { bindApiOwner, pendApiOwner } from "../../app/api-client";
 import * as renewal from "../../app/session-refresh";
 import { WEB_PANE_PARTS } from "../../app/(product)/mailbox/pane-parts";
+import { useCloudMailHost } from "../../app/(product)/mailbox/CloudShell";
 import { MailFrame } from "../../app/shell/browser-mail";
 import words from "../../messages/en.json";
 
@@ -22,17 +25,35 @@ const awayRow = {
 };
 const settings = mailSettings({ ...NO_PANE_PARTS, ai: WEB_PANE_PARTS.ai, away: WEB_PANE_PARTS.away });
 
-function view(scope: string, pane: "ai" | "away", account: string | null = scope) {
-  const { host } = fakeHost({
-    scope, account, engine: NO_ENGINE, service: "self",
+function SettingsFrame({ scope, pane, account }: { scope: string; pane: "ai" | "away"; account: string | null }) {
+  const engine = useMemo(() => registerSyncGate(Object.create(NO_ENGINE), createSyncGate(scope)), [scope]);
+  const { host } = useMemo(() => fakeHost({
+    scope, account, engine, service: "self",
     address: fakeAddress(`#/settings/${pane}`), places: { settings },
-    features: { ai: { name: "ai", render: () => null } }, wires: { away },
+    features: { ai: { name: "ai", render: () => null } },
+  }), [scope, engine, pane, account]);
+  const web = useCloudMailHost(engine, {
+    server: { pairing: false, remoteImages: false, searchPeople: false },
+    account, firstRun: undefined, invites: false, subscriptionPage: false, storageBlock: false,
+    withdrawManage: () => {}, confirmed: () => {}, resolve: async () => ({ kind: "none" }) as never,
+    mailboxFacts: async () => [],
+  }, {
+    places: host.features.places, stages: host.features.stages, overs: host.features.overs,
+    reader: host.features.reader, above: host.features.above, calendar: host.features.calendar,
+    recover: host.session.recover, window: host.device.window, address: host.device.address,
+    appearance: host.device.appearance,
   });
+  return <MailFrame host={{
+    ...host,
+    wires: { ...host.wires, away: web.wires.away },
+    capabilities: { ...host.capabilities, awayRunsOn: "service" },
+  }} />;
+}
+
+function view(scope: string, pane: "ai" | "away", account: string | null = scope) {
   return (
     <NextIntlClientProvider messages={words} locale="en" timeZone="UTC">
-      <ThemeProvider><ToastHost><MailFrame host={{
-        ...host, capabilities: { ...host.capabilities, awayRunsOn: "service" },
-      }} /></ToastHost></ThemeProvider>
+      <ThemeProvider><ToastHost><SettingsFrame scope={scope} pane={pane} account={account} /></ToastHost></ThemeProvider>
     </NextIntlClientProvider>
   );
 }

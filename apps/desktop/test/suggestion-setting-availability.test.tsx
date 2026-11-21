@@ -17,7 +17,10 @@ import { DesktopAutoSuggest } from "../src/DesktopAutoSuggest.js";
 import { bridgeFetch } from "../src/bridge-fetch.js";
 import type { ConsentRow } from "@ohmail/app-logic/consent";
 
-vi.mock("../src/bridge-fetch.js", () => ({ bridgeFetch: vi.fn() }));
+vi.mock("../src/bridge-fetch.js", async () => ({
+  ...await vi.importActual<typeof import("../src/bridge-fetch.js")>("../src/bridge-fetch.js"),
+  bridgeFetch: vi.fn(),
+}));
 
 const bridge = vi.mocked(bridgeFetch);
 const setting = () => screen.getByRole<HTMLButtonElement>("switch", {

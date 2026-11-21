@@ -217,6 +217,7 @@ export default defineConfig({
       // The browser shells' device answers, ABOVE the contract's door (the prefix-match reason above).
       { find: "@ohmail/app/host/browser", replacement: r("./packages/app/src/host/browser/index.ts") },
       // The host contract's types and its two small values.
+      { find: "@ohmail/app/host/contract", replacement: r("./packages/app/src/host/contract.ts") },
       { find: "@ohmail/app/host", replacement: r("./packages/app/src/host/index.ts") },
       { find: "@ohmail/app/keys/sheet", replacement: r("./packages/app/src/keys/sheet/index.ts") },
       { find: "@ohmail/app/calendar", replacement: r("./packages/app/src/calendar/index.ts") },
@@ -229,14 +230,23 @@ export default defineConfig({
       { find: "@ohmail/app/palette", replacement: r("./packages/app/src/palette/index.ts") },
       { find: "@ohmail/app/text/fill", replacement: r("./packages/app/src/text/fill.ts") },
       { find: "@ohmail/app/frame/boot", replacement: r("./packages/app/src/frame/boot-stamp.ts") },
+      { find: "@ohmail/app/settings/travelled-change", replacement: r("./packages/app/src/settings/browser/TravelledChangeLine.tsx") },
+      { find: "@ohmail/app/frame/scope", replacement: r("./packages/app/src/frame/scope.tsx") },
       { find: "@ohmail/app/text", replacement: r("./packages/app/src/text/index.ts") },
       // What the letter's body takes of the kit, without its base sheets, ABOVE the bare name too.
       { find: "@ohmail/ui/body-parts", replacement: r("./packages/ui/src/body-parts.ts") },
       // The body page bound as a leaf, ABOVE the bare name (the prefix-match reason above): the phone links it.
       { find: "@ohmail/ui/file-size", replacement: r("./packages/ui/src/format/file-size.ts") },
+      { find: "@ohmail/ui/sender-sheet", replacement: r("./packages/ui/src/sender-sheet.ts") },
+      { find: "@ohmail/ui/viewport", replacement: r("./packages/ui/src/ui-zoom.ts") },
+      { find: "@ohmail/ui/text-field", replacement: r("./packages/ui/src/primitives/TextField.tsx") },
+      { find: "@ohmail/ui/date-picker-view", replacement: r("./packages/ui/src/primitives/DatePicker.tsx") },
+      { find: "@ohmail/ui/toast", replacement: r("./packages/ui/src/primitives/toast-context.ts") },
       { find: "@ohmail/ui/long-text", replacement: r("./packages/ui/src/format/long-text.ts") },
       // The squares' window as a leaf, for the same reason: the phone's MarkSquare links it.
       { find: "@ohmail/ui/squares-window", replacement: r("./packages/ui/src/squares-window.ts") },
+      { find: "@ohmail/ui/stream-estimate", replacement: r("./packages/ui/src/composites/stream-estimate.ts") },
+      { find: "@ohmail/ui/portal-renderer", replacement: r("./packages/ui/src/base/Overlays/portal-renderer.ts") },
       // The next design's components, three entries, above the bare name for the same reason.
       // The theme provider and its readers as a leaf, for the same reason: a door's device reads the theme and nothing else of today's kit.
       { find: "@ohmail/ui/theme", replacement: r("./packages/ui/src/theme/ThemeProvider.tsx") },

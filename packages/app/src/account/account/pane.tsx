@@ -80,7 +80,13 @@ function SignOutOnly({ parts }: { readonly parts: SessionParts }): ReactNode {
 }
 
 function InBrowser({ parts }: { readonly parts: BrowserParts }): ReactNode {
-  return <WayOutPane model={useWayOut(parts.useBrowserDoor(), "account")} />;
+  const { host } = useFrame();
+  return (
+    <WayOutPane
+      model={useWayOut(parts.useBrowserDoor(), "account")}
+      onServer={host.capabilities.service === "self"}
+    />
+  );
 }
 
 /** The Account section over one host's doors. Call it once per mount: a registration made again is a pane mounted again. */

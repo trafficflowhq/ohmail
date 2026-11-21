@@ -456,3 +456,41 @@ describe("the walk over a laid-out thread", () => {
     }
   }, 60_000);
 });
+
+describe("conversation previews", () => {
+  it.each(["desktop", "phone"] as const)("shows an opaque card in the kit face on %s", async (device) => {
+    const { page } = await open(`n=4&device=${device}`, device === "phone" ? 390 : 1440, device === "phone" ? 844 : 900);
+    try {
+      const square = squaresOf(page).getByRole("button").first();
+      if (device === "phone") await square.dispatchEvent("pointerdown", { pointerType: "touch", bubbles: true });
+      else await square.hover();
+      const preview = page.getByRole("tooltip", { includeHidden: true });
+      await preview.waitFor({ state: "visible" });
+      const seen = await preview.evaluate((el) => {
+        const style = getComputedStyle(el);
+        const root = getComputedStyle(document.querySelector(".oh-root")!);
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d")!;
+        ctx.fillStyle = style.backgroundColor;
+        ctx.fillRect(0, 0, 1, 1);
+        const probe = document.createElement("span");
+        probe.style.boxShadow = "var(--float)";
+        document.querySelector(".oh-root")!.append(probe);
+        const expectedShadow = getComputedStyle(probe).boxShadow;
+        probe.remove();
+        return {
+          shadow: style.boxShadow,
+          expectedShadow,
+          alpha: ctx.getImageData(0, 0, 1, 1).data[3],
+          font: style.fontFamily,
+          kitFont: root.fontFamily,
+        };
+      });
+      expect(seen.shadow).toBe(seen.expectedShadow);
+      expect(seen.alpha).toBe(255);
+      expect(seen.font).toBe(seen.kitFont);
+    } finally {
+      await page.close();
+    }
+  });
+});

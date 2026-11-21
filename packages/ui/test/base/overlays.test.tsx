@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Button,
@@ -18,6 +19,7 @@ import {
   placeMenu,
   type PaletteCommand,
 } from "../../src/base/index.js";
+import { portalRenderer } from "../../src/base/Overlays/portal-renderer.js";
 
 afterEach(cleanup);
 
@@ -297,7 +299,15 @@ describe("contextTrigger", () => {
   });
 });
 
-function Asked({ kind, onConfirm = () => {} }: { kind?: "delete"; onConfirm?: () => void }) {
+function Asked({
+  alert,
+  kind,
+  onConfirm = () => {},
+}: {
+  alert?: boolean;
+  kind?: "delete";
+  onConfirm?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -306,6 +316,7 @@ function Asked({ kind, onConfirm = () => {} }: { kind?: "delete"; onConfirm?: ()
       </Button>
       <Dialog
         open={open}
+        alert={alert}
         onClose={() => setOpen(false)}
         title="Move to Trash"
         line="Your mail server keeps it there."
@@ -323,6 +334,22 @@ const ask = () => {
 };
 
 describe("Dialog", () => {
+  it("the host seats an alert outside its opener and Escape restores the opener’s focus", () => {
+    const { container } = render(
+      <portalRenderer.Provider value={createPortal}>
+        <Asked alert />
+      </portalRenderer.Provider>,
+    );
+    ask();
+    const alert = screen.getByRole("alertdialog", { name: "Move to Trash" });
+    expect(container.contains(alert)).toBe(false);
+    expect(alert.closest(".oh-over")?.parentElement).toBe(document.body);
+    expect(document.activeElement).toBe(within(alert).getByRole("button", { name: "Move to Trash" }));
+    fireEvent.keyDown(alert, { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Delete" }));
+  });
+
   it("is a modal dialog named by its sentence, with the keys on its first button", () => {
     render(<Asked />);
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -899,6 +926,32 @@ describe("KeyHelp", () => {
     fireEvent.keyDown(help, { key: "j" });
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.keyDown(help, { key: "?" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("an interrupting dialog across updates", () => {
+  it("keeps the chosen control focused and closes on Escape", () => {
+    const onClose = vi.fn();
+    const draw = (line: string) => (
+      <div className="oh-root">
+        <Dialog
+          open
+          alert
+          title="Confirm"
+          line={line}
+          onClose={onClose}
+          confirm={{ label: "Confirm", onPress: () => {} }}
+          cancel={{ label: "Cancel" }}
+        />
+      </div>
+    );
+    const { rerender } = render(draw("First"));
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    cancel.focus();
+    rerender(draw("Updated"));
+    expect(document.activeElement).toBe(cancel);
+    fireEvent.keyDown(cancel, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

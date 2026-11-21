@@ -62,7 +62,8 @@ function placesOf(settings: PlaceEntry | None): FramePlaces {
   return Object.fromEntries(PLACE_IDS.map((id) => [id, seated[id] ?? NONE])) as FramePlaces;
 }
 
-const sameLook = (a: Appearance, b: Appearance): boolean => a.face === b.face && a.scheme === b.scheme;
+const sameLook = (a: Appearance, b: Appearance): boolean =>
+  a.face === b.face && a.scheme === b.scheme && a.layout === b.layout;
 
 const MAIL_OVERS: FrameOvers = { palette: paletteOver, keys: keySheetOver };
 
@@ -72,7 +73,6 @@ export function useMailSupplies(
   recover: HostSession["recover"],
   own: MailHostParts,
 ): FrameSupplies {
-  const { face, scheme } = look;
   const [made] = useState(() => {
     const { pathname, search, hash } = browser.location;
     // Desktop releases already in use send the pane in the query.
@@ -96,10 +96,10 @@ export function useMailSupplies(
           : own.reader,
       address: fragmentAddress(browser),
       window: browserWindowFacts(browser),
-      appearance: createFeed<Appearance>({ face, scheme }, sameLook),
+      appearance: createFeed<Appearance>(look, sameLook),
     };
   });
-  useLayoutEffect(() => made.appearance.set({ face, scheme }), [made, face, scheme]);
+  useLayoutEffect(() => made.appearance.set(look), [made, look]);
   /* The calendar's entry is `none` until the switch of products is mounted: its line is that mount's. */
   return useMemo(() => ({ ...made, overs: MAIL_OVERS, calendar: NONE, recover }), [made, recover]);
 }

@@ -5,12 +5,18 @@
  */
 import { useEffect, useState } from "react";
 import { FileNotArrived, FileTile, Files as KitFiles } from "@ohmail/ui/mail";
-import { faultOf, fileLookOf, thumbnailOf } from "@ohmail/app-logic/reader";
+import {
+  faultOf,
+  fileLookOf,
+  isAuthListFailure,
+  listRetryIsOffered,
+  thumbnailOf,
+} from "@ohmail/app-logic/reader";
 import { useFrame } from "../../frame/commands.js";
 import { NONE } from "../../host/index.js";
 import { useLocale, useText } from "../../text/index.js";
 import { FilePreview, type PdfLook } from "../look/FilePreview.js";
-import type { ReaderFile, ReaderFiles, ReaderParts } from "../ports.js";
+import type { ReaderFile, ReaderFileList, ReaderFiles, ReaderParts } from "../ports.js";
 
 const KIND: Record<ReturnType<typeof fileLookOf>, string> = {
   image: "IMG",
@@ -94,6 +100,26 @@ function Tile({
   );
 }
 
+function listFailureKey(code: string | null): string {
+  if (isAuthListFailure(code)) return "listSignedOut";
+  if (code === "timeout") return "listTimeout";
+  if (code === "network") return "listOffline";
+  return "listFailed";
+}
+
+function ListNotice({ list }: { list: Extract<ReaderFileList, { state: "failed" | "loading" }> }) {
+  const t = useText("attachments");
+  if (list.state === "loading") {
+    return list.retrying ? (
+      <FileNotArrived state="list" line={t("listRetrying")} way={{ label: t("listRetry"), busy: true }} />
+    ) : null;
+  }
+  const way = listRetryIsOffered(list.code, list.retryable)
+    ? { label: t("listRetry"), onPress: list.onRetry }
+    : undefined;
+  return <FileNotArrived state="list" line={t(listFailureKey(list.code))} way={way} />;
+}
+
 export function LetterFiles({
   messageId,
   selection,
@@ -116,15 +142,7 @@ export function LetterFiles({
   useEffect(() => hold?.(messageId), [hold, messageId]);
   if (files === NONE) return null;
   const list = files.itemsOf(messageId, { includeInlineParts: true });
-  if (list.state === "failed") {
-    return (
-      <FileNotArrived
-        state="list"
-        line={t("listFailed")}
-        way={{ label: t("listRetry"), onPress: list.onRetry }}
-      />
-    );
-  }
+  if (list.state === "failed" || list.state === "loading") return <ListNotice list={list} />;
   if (list.state !== "ready") return null;
   /* The door already leaves out an invitation's calendar body that a listed calendar file carries (Google's pair); one
      it lists is the event's one copy (Exchange, Outlook), a file the person can save. */

@@ -24,7 +24,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
-const chunks = vi.hoisted(() => ({ settingsFails: 0, settingsLoads: 0, settingsThrows: false, editorFails: 0, editorLoads: 0, editorGone: "" }));
+const chunks = vi.hoisted(() => ({ settingsFails: 0, settingsLoads: 0, settingsThrows: false, editorFails: 0, editorLoads: 0, editorGone: "", letterLoads: 0 }));
 
 const settingsChunk = vi.hoisted(() => async () => {
   chunks.settingsLoads += 1;
@@ -34,11 +34,15 @@ const settingsChunk = vi.hoisted(() => async () => {
   }
   const { createElement } = await import("react");
   return {
-    SettingsView: () => {
+    SettingsList: () => {
       if (chunks.settingsThrows) throw new Error("a render throw, not a load");
       return createElement("section", { className: "view view-settings-stub" }, "Settings stub");
     },
   };
+});
+const letterChunk = vi.hoisted(() => async (importOriginal: () => Promise<unknown>) => {
+  chunks.letterLoads += 1;
+  return importOriginal();
 });
 const editorChunk = vi.hoisted(() => async (importOriginal: () => Promise<unknown>) => {
   chunks.editorLoads += 1;
@@ -49,16 +53,18 @@ const editorChunk = vi.hoisted(() => async (importOriginal: () => Promise<unknow
   }
   return importOriginal();
 });
-vi.mock("../app/views/SettingsView", settingsChunk);
-vi.mock("../app/shell/RichEditor", editorChunk);
+vi.mock("../../../packages/app/src/settings/place.js", settingsChunk);
+vi.mock("../../../packages/app/src/write/editor/index.js", editorChunk);
+vi.mock("../../../packages/app/src/write/Letter.js", letterChunk);
 
 /* A door lives as long as its module, which is the page session: a case that needs a fresh one
    starts a fresh module graph, and the mocks are registered again because a reset keeps the
    mocked module a previous case loaded. */
 function freshModules(): void {
   vi.resetModules();
-  vi.doMock("../app/views/SettingsView", settingsChunk);
-  vi.doMock("../app/shell/RichEditor", editorChunk);
+  vi.doMock("../../../packages/app/src/settings/place.js", settingsChunk);
+  vi.doMock("../../../packages/app/src/write/editor/index.js", editorChunk);
+  vi.doMock("../../../packages/app/src/write/Letter.js", letterChunk);
 }
 
 const LOAD_FAILED = messages.viewError.loadFailed;
@@ -80,6 +86,7 @@ beforeEach(() => {
   (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   el.scrollTo = () => {};
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
@@ -88,13 +95,13 @@ beforeEach(() => {
     takeRecords(): [] { return []; }
   };
   vi.spyOn(console, "error").mockImplementation(() => {});
-  Object.assign(chunks, { settingsFails: 0, settingsLoads: 0, settingsThrows: false, editorFails: 0, editorLoads: 0, editorGone: "" });
+  Object.assign(chunks, { settingsFails: 0, settingsLoads: 0, settingsThrows: false, editorFails: 0, editorLoads: 0, editorGone: "", letterLoads: 0 });
 });
 
 afterEach(async () => {
   // Off the Ohbox first: its drag hook's cleanup reads `document.body`, which a document root's
   // unmount has already taken away.
-  if (document.querySelector(".view-ohbox")) await goTo("drafts");
+  if (document.querySelector(".ob-list")) await goTo("drafts");
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
   if (!document.documentElement) {
@@ -118,12 +125,14 @@ async function waitFor(cond: () => boolean, what: string): Promise<void> {
 }
 
 async function goTo(view: "settings" | "ohbox" | "drafts"): Promise<void> {
-  const { go } = await import("../app/shell/routing");
-  await act(async () => { go(view); window.dispatchEvent(new HashChangeEvent("hashchange")); });
+  await act(async () => {
+    window.location.hash = "#/" + view;
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
 }
 
 const alertText = (): string => Array.from(document.querySelectorAll("[role=alert]")).map((n) => n.textContent ?? "").join(" | ");
-const crashCard = (): boolean => Array.from(document.querySelectorAll(".view-fail h1")).some((n) => n.textContent === CRASH_TITLE);
+const crashCard = (): boolean => document.querySelector(`section[aria-label="${CRASH_TITLE}"] [role="alert"]`) !== null;
 const settingsShown = (): boolean => document.querySelector(".view-settings-stub") != null;
 /** The Try again beside the sentence — by its words, since the shell carries alerts of its own. */
 const tryAgain = (): HTMLButtonElement | undefined => Array.from(document.querySelectorAll("[role=alert]"))
@@ -133,7 +142,7 @@ const tryAgain = (): HTMLButtonElement | undefined => Array.from(document.queryS
 
 /** The shipped shell, rendered the way the App Router renders it: React's root IS `document`. */
 async function shellOnDocument(): Promise<void> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { DemoShell } = await import("../app/(product)/demo/DemoShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const root = createRoot(document as unknown as Element);
   roots.push(root);
@@ -147,13 +156,13 @@ async function shellOnDocument(): Promise<void> {
           now: new Date("2026-08-02T09:00:00.000Z"),
           children: h(ThemeProvider, {
             storageKey: null,
-            children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+            children: h(ToastHost, { children: h(DemoShell, { serverDemo: true, says: { service: "managed", sendCeiling: "strict" } }) }),
           }),
         }))),
     );
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
-  await waitFor(() => document.querySelector(".view-ohbox") != null, "the shell did not open on the Ohbox");
+  await waitFor(() => document.querySelector(".ob-list") != null, "the shell did not open on the Ohbox");
 }
 
 // The whole shell boots per case: vitest's 5 s default is shorter than one boot on a loaded host.
@@ -162,11 +171,13 @@ describe("Settings, whose chunk failed once", { timeout: 30_000 }, () => {
 
   it("the next open of Settings asks for the chunk again and shows Settings", async () => {
     await shellOnDocument();
+    expect(chunks.editorLoads, "the writing editor is still waiting on a network import").toBe(1);
+    expect(chunks.letterLoads, "the writing view is still waiting on a network import").toBe(1);
     chunks.settingsFails = 1;
     await goTo("settings");
     await waitFor(() => chunks.settingsLoads >= 1 && (alertText() !== "" || crashCard()), "the failed open painted nothing");
     await goTo("ohbox");
-    await waitFor(() => document.querySelector(".view-ohbox") != null, "could not leave Settings");
+    await waitFor(() => document.querySelector(".ob-list") != null, "could not leave Settings");
     await goTo("settings");
     await waitFor(() => settingsShown() || crashCard() || alertText() !== "", "the second open painted nothing");
     expect(chunks.settingsLoads, "the second open never asked for the chunk: the first failure was kept").toBe(2);
@@ -217,7 +228,9 @@ describe("the editor's door, whose chunk failed once", () => {
   beforeEach(freshModules);
 
   async function mountEditor(): Promise<HTMLElement> {
-    const { RichEditor } = await import("../app/shell/RichEditorLazy");
+    const { MailRichEditor } = await import("@ohmail/app/mail");
+    const { TextFromIntl } = await import("../app/shell/LocaleContext");
+    const { BrowserChunkLoads } = await import("../app/shell/browser-mail");
     const { EMPTY_RICH } = await import("@ohmail/app-logic/writing/rich-text");
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -226,7 +239,10 @@ describe("the editor's door, whose chunk failed once", () => {
     await act(async () => {
       root.render(h(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "UTC",
-        children: h(RichEditor, { value: EMPTY_RICH, onChange: () => {}, ariaLabel: "Message", className: "compose-editor" }),
+        children: h(TextFromIntl, { children: h(BrowserChunkLoads, { children: h(MailRichEditor, {
+          value: EMPTY_RICH, onChange: () => {}, label: "Message", placeholder: "Write a message",
+          editable: true, focusAtMount: false, onHandle: () => {},
+        }) }) }),
       }));
     });
     return host;
@@ -235,12 +251,12 @@ describe("the editor's door, whose chunk failed once", () => {
   it("says so inside the editor's frame, and Try again loads the editor", async () => {
     chunks.editorFails = 1;
     const host = await mountEditor();
-    await waitFor(() => (host.textContent ?? "").includes(LOAD_FAILED) || host.querySelector(".rte-surface") != null,
+    await waitFor(() => (host.textContent ?? "").includes(LOAD_FAILED) || host.querySelector('[role="textbox"][aria-label="Message"]') != null,
       "the failed editor painted nothing");
-    expect(host.querySelector(".compose-editor"), "the sentence left the editor's frame").not.toBeNull();
+    expect(host.querySelector('[role="group"][aria-label="Message"]'), "the sentence left the editor's frame").not.toBeNull();
     expect(host.querySelector("[role=alert]")?.textContent).toContain(LOAD_FAILED);
     await act(async () => { host.querySelector<HTMLButtonElement>("[role=alert] button")!.click(); });
-    await waitFor(() => host.querySelector(".rte-surface") != null, "Try again did not load the editor");
+    await waitFor(() => host.querySelector('[role="textbox"][aria-label="Message"]') != null, "Try again did not load the editor");
     expect(chunks.editorLoads).toBe(2);
   });
 
@@ -249,7 +265,7 @@ describe("the editor's door, whose chunk failed once", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(null, { status: 404 }));
     const host = await mountEditor();
     await waitFor(() => host.querySelector("[role=alert]") != null, "the failed editor painted nothing");
-    expect(host.querySelector(".compose-editor [role=alert]")?.textContent).toContain((messages.viewError as Record<string, string>).updated);
+    expect(host.querySelector('[role="group"][aria-label="Message"] [role=alert]')?.textContent).toContain((messages.viewError as Record<string, string>).updated);
     expect(host.querySelector("[role=alert] button")?.textContent).toBe(messages.viewError.action);
   });
 });
@@ -406,7 +422,9 @@ describe("a chunk the server no longer has, after an update", () => {
  * first, so prose naming the function is not a call; the positive controls plant each spelling.
  */
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "../app");
-const HELPER = "shell/lazy-view.tsx";
+const CORE = resolve(APP, "../../../packages/app/src");
+const HELPER = "packages/app/src/frame/lazy-view.tsx";
+const REPO = resolve(APP, "../../..");
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -420,7 +438,7 @@ const lazyCalls = (src: string): number => (withoutCommentsAndLiterals(src).matc
 const helperCalls = (src: string): number => (withoutCommentsAndLiterals(src).match(/(?<![\w$])lazyView\s*[<(]/g) ?? []).length;
 
 describe("every lazy view goes through the one helper", () => {
-  const files = sources(APP);
+  const files = [...sources(APP), ...sources(CORE)];
 
   it("CONTROL: the scan counts a call in each spelling and nothing in prose", () => {
     expect(lazyCalls("const A = lazy(() => import" + "('./a'));")).toBe(1);
@@ -433,15 +451,17 @@ describe("every lazy view goes through the one helper", () => {
   it("no file under app/ calls lazy() but the helper, which calls it once", () => {
     expect(files.length, "the walk found no sources — the census would pass for nothing").toBeGreaterThan(100);
     const offenders = files
-      .filter((f) => relative(APP, f) !== HELPER && lazyCalls(readFileSync(f, "utf8")) > 0)
-      .map((f) => relative(APP, f));
+      .filter((f) => relative(REPO, f) !== HELPER && lazyCalls(readFileSync(f, "utf8")) > 0)
+      .map((f) => relative(REPO, f));
     expect(offenders, "a lazy() outside the helper keeps a failed chunk for the life of the page").toEqual([]);
-    expect(lazyCalls(readFileSync(join(APP, HELPER), "utf8"))).toBe(1);
+    expect(lazyCalls(readFileSync(join(REPO, HELPER), "utf8"))).toBe(1);
   });
 
   it("the three split views are the helper's: Compose, Settings and the editor", () => {
-    const at = Object.fromEntries(files.map((f) => [relative(APP, f), helperCalls(readFileSync(f, "utf8"))]));
-    expect(at["shell/AppShell.tsx"], "Compose and Settings").toBe(2);
-    expect(at["shell/RichEditorLazy.tsx"], "the editor").toBe(1);
+    const at = Object.fromEntries(files.map((f) => [relative(REPO, f), helperCalls(readFileSync(f, "utf8"))]));
+    expect(at["packages/app/src/write/entry.tsx"], "Compose").toBe(1);
+    expect(at["packages/app/src/mail/panes.ts"], "both Settings columns").toBe(2);
+    expect(at["packages/app/src/mail/write-entry.ts"], "the editor").toBe(1);
+    expect(at["apps/webapp/app/shell/RichEditorLazy.tsx"], "the remaining editor callers").toBe(1);
   });
 });

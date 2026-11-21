@@ -8,6 +8,7 @@ export {
   chordMatches,
   chordPrefix,
   CURSOR_HINT_MS,
+  cursorPlacementText,
   enterActivatesTarget,
   groupedBindings,
   isTypingTarget,

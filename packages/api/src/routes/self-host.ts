@@ -27,6 +27,7 @@ import { mailboxDeviceOAuthRoutes } from "./mailbox-oauth-device.js";
 import { attachmentStagingRoutes } from "./attachment-staging.js";
 // `DELETE /account` — erasure as a route, because on a multi-user server "delete the data
 // directory" is not an answer any one user can be given.
+import { withSettingsHandoff } from "./settings-handoff.js";
 import { accountRoutes } from "./account.js";
 // `GET/PATCH /account/ai` — the account-level AI off switch. Meaningful here: the operator
 // supplies the model key, and each user still decides whether their own mail reaches it.
@@ -54,7 +55,7 @@ import { pairRoutes } from "./pair.js";
  */
 export const selfHostRoutes: Route[] = [
   ...localRoutes,
-  ...authRoutes,
+  ...authRoutes.map(withSettingsHandoff),
   ...mailboxOAuthRoutes,
   /*
    * The device-code door, mounted ONLY here. Both routes are `cost: "work"` — they end in a stored

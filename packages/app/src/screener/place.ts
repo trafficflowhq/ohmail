@@ -19,7 +19,7 @@ function useWaitingCount() {
   if (!model.queueSettled) return null;
   const waiting = model.waitingCount;
   return waiting > 0
-    ? { count: String(waiting), hot: true, title: t("railWaiting", { count: waiting }) }
+    ? { count: String(waiting), hot: true, title: t("metaWaiting", { count: waiting }) }
     : null;
 }
 

@@ -1,6 +1,6 @@
 import { useKeyboardStays } from "./column-keyboard.js";
 import type { EngineMessage } from "@ohmail/wire";
-import { useEffect, useId, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
   markSeenOver,
   useColumnVisit,
@@ -40,6 +40,7 @@ export function useConversationColumn(
   openId: string,
   keysHere: boolean,
   keyboard: MutableRefObject<boolean>,
+  phone: boolean,
 ) {
   const { commands, host } = useFrame();
   const press = usePress();
@@ -53,6 +54,7 @@ export function useConversationColumn(
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   const [columnRoot, columnEl] = useKeyboardStays(setRoot, keyboard);
   const scroller = useMemo(() => ({ current: scrollerOf(root) }), [root]);
+  const under = useContentUnderHead(scroller.current, phone);
   useThreadRead({ scroller, wiring: column.wiring ?? undefined, active: opened !== null, names: READER_DOM });
   useOwnOpen(opened !== null, column);
   useTakeEntered(
@@ -73,6 +75,7 @@ export function useConversationColumn(
     onEnter: column.enter,
     names: READER_DOM,
     anchor: true,
+    wholeThread: route.wholeThread,
     standsDown: sentJoined,
   });
   const verbs = useVerbs(opened, visit, column.owner === "column" ? column.wiring : null);
@@ -132,7 +135,21 @@ export function useConversationColumn(
     people,
     columnRoot,
     scroller,
+    under,
   };
+}
+
+/** The sticky head fades into the letter once content starts passing under it. */
+function useContentUnderHead(scroller: HTMLElement | null, phone: boolean): boolean {
+  const [under, setUnder] = useState(false);
+  useLayoutEffect(() => {
+    if (!scroller || phone) return;
+    const update = () => setUnder(scroller.scrollTop > 2);
+    update();
+    scroller.addEventListener("scroll", update, { passive: true });
+    return () => scroller.removeEventListener("scroll", update);
+  }, [scroller, phone]);
+  return !phone && under;
 }
 
 /**

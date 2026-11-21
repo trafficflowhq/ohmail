@@ -19,7 +19,7 @@ import { useConsent } from "@ohmail/app-logic/consent";
 import { useDemoMode } from "@ohmail/app-logic/engine";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { useOptionalTheme, type FaceName, type ThemeContextValue } from "@ohmail/ui/theme";
-import { useFrame } from "../../frame/index.js";
+import { useFrame } from "../../frame/commands.js";
 import { useText } from "../../text/index.js";
 
 /** The account write — the consent row's `setThemeFace`, or null where no wire can store one. */

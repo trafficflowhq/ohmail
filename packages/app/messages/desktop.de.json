@@ -221,10 +221,6 @@
     "suggestStoppedEarly": "Nach {done} von {total} gestoppt. {reason}",
     "suggestEmpty": "Für diese Absender gibt es keine neuen Vorschläge.",
     "suggestNote": "Nutzt das Modell, das du eingerichtet hast. Absender, für die es schon eine Antwort gibt, werden nicht noch einmal gefragt.",
-    "suggestUnreadableKey": "Der gespeicherte Schlüssel konnte nicht gelesen werden. Gib ihn in den Einstellungen unter Desktop erneut ein.",
-    "suggestSetupAfterRefusal": "Das Modell ist nicht verfügbar. Richte in den Einstellungen unter Desktop ein Modell ein.",
-    "suggestStoppedEarly": "Nach {done} von {total} gestoppt. {reason}",
-    "suggestEmpty": "Für diese Absender gibt es keine neuen Vorschläge.",
     "offlineHead": "Was in deine Ohbox kommt",
     "offlineNote": "Diese Einstellungen liegen in deinem ohmail-Cloud-Account und lassen sich nicht ändern, solange diese Installation offline ist. Deine Mails kommen weiter an; das hier kommt mit der Verbindung zurück.",
     "offlineNoteServer": "Diese Einstellungen liegen auf deinem ohmail-Server und lassen sich nicht ändern, solange diese Installation offline ist. Deine Mails kommen weiter an; das hier kommt mit der Verbindung zurück."

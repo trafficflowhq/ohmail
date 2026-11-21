@@ -172,6 +172,9 @@ function binOf(
     searchIndexRevision: () => 0,
     warmSearchIndex: async () => undefined,
     serverSearchAvailable: () => false,
+    serverAddressSearchAvailable: () => false,
+    drainsCompleted: () => 0,
+    messagesWith: () => ({ items: [], counts: { from: 0, to: 0, any: 0 }, indexing: false }),
     trashAvailable: () => available,
     listTrash: async (request: Bin["pageRequests"][number] = {}) => {
       pageRequests.push(request);
@@ -1636,8 +1639,13 @@ describe("Trash keeps every letter until it is restored", () => {
           await step(`button ${name} over ${over}`);
           /* A press that opened a menu: each of its rows is pressed in turn. */
           for (const item of screen.queryAllByRole("menuitem")) {
+            const from = bin.address.read();
             fireEvent.click(item);
             await step(`menu row ${named(item)} over ${over}`);
+            if (!bin.address.read().startsWith("#/trash")) {
+              act(() => bin.address.visit(from));
+              await settled();
+            }
           }
         }
       };

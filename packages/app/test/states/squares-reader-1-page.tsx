@@ -4,7 +4,9 @@
  * column), as the host hands them. The share reader-1's page for the squares' cases in a real browser
  * (`apps/webapp/test/squares-in-a-browser.test.ts`): the reader's states page holds no conversation longer than four
  * letters. The address carries `n=` (the letters, oldest first, an hour apart, each from a sender of its own, every
- * third unread), `open=` (the index of the letter the link opens; the newest by default), `device=`,
+ * third unread), `open=` (the index of the first unread letter for cases that exercise a particular landing;
+ * without it the link selects the newest), `firstUnread=` for an independent first unread index,
+ * `whole=1` for the conversation without a chosen message, `device=`,
  * `face=ohmarchy`, `scheme=dark` and `motion=full` (the window as a person who did not ask for less motion has it).
  * Nothing leaves the page: the engine is the fake one.
  */
@@ -34,6 +36,7 @@ const room = ROOMS[device] ?? ROOMS.desktop;
 const size = { width: window.innerWidth || room.width, height: window.innerHeight || room.height };
 const n = Math.max(2, Math.min(200, Number(q.get("n") ?? 40) || 40));
 const openAt = Math.max(0, Math.min(n - 1, Number(q.get("open") ?? n - 1)));
+const firstUnread = Number(q.get("firstUnread") ?? (q.has("open") ? openAt : 0));
 
 /* The conversation: `n` letters a day apart, oldest first, every third unread; each a few lines long. */
 const LINES = "A line of the letter that runs on for a while. ".repeat(6).trim();
@@ -46,7 +49,11 @@ const letters: EngineMessage[] = Array.from({ length: n }, (_, i) => {
     at: day.toISOString().slice(0, 16),
     text: LINES,
   } as Parameters<typeof engineLetter>[1]);
-  return { ...m, threadId: "T", unread: i % 3 === 0 && i !== openAt } as EngineMessage;
+  return {
+    ...m,
+    threadId: "T",
+    unread: i === firstUnread || (i > firstUnread && i % 3 === 0),
+  } as EngineMessage;
 });
 const mail = fakeMail(letters, [], {});
 (window as unknown as { addEarlier: () => void }).addEarlier = () => {
@@ -137,7 +144,7 @@ const { host } = fakeHost({
   places: { ohbox: place },
   reader,
   window: fakeWindow({ ...room, ...size, posture: "flat", reducedMotion: q.get("motion") !== "full" }),
-  address: fakeAddress(`#/ohbox/m/w${openAt}`),
+  address: fakeAddress(`#/ohbox/${q.has("whole") ? "t" : "m"}/w${openAt}`),
   appearance: fakeAppearance(look),
 });
 

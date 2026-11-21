@@ -4,6 +4,7 @@
  * the list stands, what it covers, and where the caret is. The web door's Text size is a zoom on the root: the
  * cases that place a list run at the default size and under it.
  */
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +41,9 @@ beforeAll(async () => {
     await entryCss("base"),
     await entryCss("mail"),
     await entryCss("calendar"),
+    await readFile(new URL("../../src/primitives/date-picker.css", import.meta.url), "utf8"),
+    await readFile(new URL("../../src/primitives/gloss.css", import.meta.url), "utf8"),
+    await readFile(new URL("../../src/primitives/toast.css", import.meta.url), "utf8"),
   ].join("\n");
   browser = await launch(chromium);
 }, 120_000);
@@ -52,6 +56,8 @@ interface How {
   phone?: boolean;
   face?: "paper" | "ohmarchy";
   lang?: string;
+  scheme?: "light" | "dark";
+  unstamped?: boolean;
   window?: [number, number];
 }
 
@@ -59,8 +65,8 @@ interface How {
 async function mount(scene: Scene, how: How = {}): Promise<Page> {
   const device = DEVICES[how.phone ? "phone" : "desktop"];
   const root = {
-    "data-face": how.face ?? "paper",
-    "data-scheme": "light",
+    ...(how.unstamped ? {} : { "data-face": how.face ?? "paper" }),
+    "data-scheme": how.scheme ?? "light",
     ...device.root,
     "data-icons": "1",
     "data-rm": "1",
@@ -81,6 +87,7 @@ async function mount(scene: Scene, how: How = {}): Promise<Page> {
   /* A control that is not there is said at once, by its name, not by the case's own time running out. */
   page.setDefaultTimeout(5000);
   await page.evaluate(() => Promise.all([...document.fonts].map((face) => face.load())));
+  if (scene === "toast-outside") await page.locator("#host").evaluate((el) => el.removeAttribute("class"));
   await page.addScriptTag({ content: script });
   await page.evaluate(
     (s) =>
@@ -397,6 +404,497 @@ describe("the signature of a letter being written", () => {
       await page.keyboard.press("Enter");
       await page.keyboard.type("Lichtgrat");
       expect(await page.locator("#kept").textContent()).toBe("Mila Brunner, on the road\nLichtgrat");
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("a conversation square preview", () => {
+  it.each(["paper", "ohmarchy"] as const)("has a surface and the kit's text face in %s", async (face) => {
+    for (const scheme of ["light", "dark"] as const) {
+      for (const phone of [false, true]) {
+        const page = await mount("squares", { face, scheme, phone });
+        try {
+          await page.getByRole("button", { name: "Message" }).hover();
+          const preview = page.getByText("Preview of the message");
+          const seen = await preview.evaluate((el) => {
+            const style = getComputedStyle(el);
+            const root = getComputedStyle(document.querySelector(".oh-root")!);
+            const probe = document.createElement("span");
+            probe.style.background = "var(--sheet)";
+            document.body.append(probe);
+            const surface = getComputedStyle(probe).backgroundColor;
+            probe.remove();
+            return {
+              background: style.backgroundColor,
+              surface,
+              font: style.fontFamily,
+              kitFont: root.fontFamily,
+            };
+          });
+          expect(seen.background).toBe(seen.surface);
+          expect(seen.font).toBe(seen.kitFont);
+        } finally {
+          await page.close();
+        }
+      }
+    }
+  });
+});
+
+describe("a date picker", () => {
+  it("has a surface and the kit's text face", async () => {
+    const page = await mount("date");
+    try {
+      const card = page.getByRole("dialog", { name: "Pick a date" });
+      const seen = await card.evaluate((el) => {
+        const style = getComputedStyle(el);
+        const root = getComputedStyle(document.querySelector(".oh-root")!);
+        const probe = document.createElement("span");
+        probe.style.background = "var(--sheet)";
+        document.body.append(probe);
+        const surface = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return {
+          background: style.backgroundColor,
+          surface,
+          font: style.fontFamily,
+          kitFont: root.fontFamily,
+        };
+      });
+      expect(seen.background).toBe(seen.surface);
+      expect(seen.font).toBe(seen.kitFont);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("an information card", () => {
+  it("has a surface and the kit's text face", async () => {
+    const page = await mount("gloss");
+    try {
+      await page.getByRole("button", { name: "Details" }).hover();
+      const card = page.getByRole("tooltip");
+      const seen = await card.evaluate((el) => {
+        const style = getComputedStyle(el);
+        const root = getComputedStyle(document.querySelector(".oh-root")!);
+        const probe = document.createElement("span");
+        probe.style.background = "var(--sheet)";
+        document.body.append(probe);
+        const surface = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return {
+          background: style.backgroundColor,
+          surface,
+          font: style.fontFamily,
+          kitFont: root.fontFamily,
+        };
+      });
+      expect(seen.background).toBe(seen.surface);
+      expect(seen.font).toBe(seen.kitFont);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("a toast", () => {
+  it("has a surface and the kit's text face", async () => {
+    const page = await mount("toast");
+    try {
+      await page.getByRole("button", { name: "Show notice" }).click();
+      const card = page.getByText("Saved").locator("xpath=..");
+      const seen = await card.evaluate((el) => {
+        const style = getComputedStyle(el);
+        const root = getComputedStyle(document.querySelector(".oh-root")!);
+        const probe = document.createElement("span");
+        probe.style.background = "var(--solid)";
+        document.body.append(probe);
+        const surface = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return {
+          background: style.backgroundColor,
+          surface,
+          font: style.fontFamily,
+          kitFont: root.fontFamily,
+        };
+      });
+      expect(seen.background).toBe(seen.surface);
+      expect(seen.font).toBe(seen.kitFont);
+      const action = await page.getByRole("button", { name: "Undo" }).evaluate((el) => {
+        const style = getComputedStyle(el);
+        const probe = document.createElement("span");
+        probe.style.color = "var(--on-solid)";
+        document.body.append(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return { color: style.color, expected: color };
+      });
+      expect(action.color).toBe(action.expected);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("an interrupting dialog", () => {
+  it("has a surface and the kit's text face outside the app root", async () => {
+    const page = await mount("alert");
+    try {
+      const card = page.getByRole("alertdialog", { name: "Confirm action" });
+      const seen = await card.evaluate((el) => {
+        const style = getComputedStyle(el);
+        const root = getComputedStyle(document.querySelector(".oh-root")!);
+        const probe = document.createElement("span");
+        probe.style.background = "var(--sheet)";
+        document.body.append(probe);
+        const surface = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return {
+          background: style.backgroundColor,
+          surface,
+          font: style.fontFamily,
+          kitFont: root.fontFamily,
+        };
+      });
+      expect(seen.background).toBe(seen.surface);
+      expect(seen.font).toBe(seen.kitFont);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("floating kit surfaces", () => {
+  it.each([
+    ["menu", "menu", "Actions"],
+    ["card", "dialog", "Details"],
+    ["palette", "dialog", "Commands"],
+    ["notice", "status", ""],
+    ["report", "status", ""],
+  ] as const)("draws %s with an opaque surface and the kit's face", async (scene, role, name) => {
+    for (const face of ["paper", "ohmarchy"] as const) {
+      for (const scheme of ["light", "dark"] as const) {
+        for (const phone of [false, true]) {
+          const page = await mount(scene, { face, scheme, phone });
+          try {
+            const card = name ? page.getByRole(role, { name }) : page.getByRole(role);
+            const seen = await card.evaluate((el) => {
+              const style = getComputedStyle(el);
+              const root = getComputedStyle(document.querySelector(".oh-root")!);
+              const canvas = document.createElement("canvas");
+              const ctx = canvas.getContext("2d")!;
+              ctx.fillStyle = style.backgroundColor;
+              ctx.fillRect(0, 0, 1, 1);
+              return {
+                alpha: ctx.getImageData(0, 0, 1, 1).data[3],
+                font: style.fontFamily,
+                kitFont: root.fontFamily,
+              };
+            });
+            expect(seen.alpha).toBe(255);
+            expect(seen.font).toBe(seen.kitFont);
+          } finally {
+            await page.close();
+          }
+        }
+      }
+    }
+  });
+});
+
+describe("floating parts in each appearance", () => {
+  it.each(["date", "gloss", "toast", "alert"] as const)(
+    "draws %s on a surface in the kit's face",
+    async (scene) => {
+      for (const face of ["paper", "ohmarchy"] as const) {
+        for (const scheme of ["light", "dark"] as const) {
+          for (const phone of [false, true]) {
+            const page = await mount(scene, { face, scheme, phone });
+            try {
+              if (scene === "gloss") await page.getByRole("button", { name: "Details" }).hover();
+              if (scene === "toast") await page.getByRole("button", { name: "Show notice" }).click();
+              const card =
+                scene === "date"
+                  ? page.getByRole("dialog", { name: "Pick a date" })
+                  : scene === "gloss"
+                    ? page.getByRole("tooltip")
+                    : scene === "toast"
+                      ? page.getByText("Saved").locator("xpath=..")
+                      : page.getByRole("alertdialog", { name: "Confirm action" });
+              const seen = await card.evaluate((el) => {
+                const style = getComputedStyle(el);
+                const root = getComputedStyle(document.querySelector(".oh-root")!);
+                const canvas = document.createElement("canvas");
+                const ctx = canvas.getContext("2d")!;
+                ctx.fillStyle = style.backgroundColor;
+                ctx.fillRect(0, 0, 1, 1);
+                const probe = document.createElement("span");
+                probe.style.cssText =
+                  "background:var(--solid);color:var(--on-solid);font-size:var(--t-ui);font-weight:var(--w-bold);box-shadow:var(--lift)";
+                document.body.append(probe);
+                const expected = getComputedStyle(probe);
+                const report = {
+                  background: expected.backgroundColor,
+                  color: expected.color,
+                  size: expected.fontSize,
+                  weight: expected.fontWeight,
+                  shadow: expected.boxShadow,
+                };
+                probe.remove();
+                return {
+                  alpha: ctx.getImageData(0, 0, 1, 1).data[3],
+                  font: style.fontFamily,
+                  kitFont: root.fontFamily,
+                  background: style.backgroundColor,
+                  color: style.color,
+                  size: style.fontSize,
+                  weight: style.fontWeight,
+                  shadow: style.boxShadow,
+                  report,
+                };
+              });
+              expect(seen.alpha).toBe(255);
+              expect(seen.font).toBe(seen.kitFont);
+              if (scene === "toast") {
+                expect(seen.background).toBe(seen.report.background);
+                expect(seen.color).toBe(seen.report.color);
+                expect(seen.size).toBe(seen.report.size);
+                expect(seen.weight).toBe(seen.report.weight);
+                expect(seen.shadow).toBe(face === "ohmarchy" ? "none" : seen.report.shadow);
+              }
+            } finally {
+              await page.close();
+            }
+          }
+        }
+      }
+    },
+  );
+});
+
+describe("a held conversation square", () => {
+  it("shows its preview on an opaque surface", async () => {
+    const page = await mount("squares", { phone: true });
+    try {
+      const square = page.getByRole("button", { name: "Message" });
+      await square.dispatchEvent("pointerdown", { pointerType: "touch", bubbles: true });
+      const preview = page.getByText("Preview of the message");
+      await preview.waitFor({ state: "visible" });
+      const background = await preview.evaluate((el) => getComputedStyle(el).backgroundColor);
+      expect(background).not.toBe("rgba(0, 0, 0, 0)");
+      await square.dispatchEvent("pointerup", { pointerType: "touch", bubbles: true });
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("a floating suggestion list", () => {
+  it.each(["paper", "ohmarchy"] as const)("uses an opaque surface and the kit face in %s", async (face) => {
+    for (const scheme of ["light", "dark"] as const) {
+      const page = await mount("place", { face, scheme });
+      try {
+        const input = page.getByRole("combobox", { name: "Place" });
+        await input.click();
+        await typeFor(page, "tec");
+        const seen = await card(page).evaluate((el) => {
+          const style = getComputedStyle(el);
+          const root = getComputedStyle(document.querySelector(".oh-root")!);
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d")!;
+          ctx.fillStyle = style.backgroundColor;
+          ctx.fillRect(0, 0, 1, 1);
+          return {
+            alpha: ctx.getImageData(0, 0, 1, 1).data[3],
+            font: style.fontFamily,
+            kitFont: root.fontFamily,
+          };
+        });
+        expect(seen.alpha).toBe(255);
+        expect(seen.font).toBe(seen.kitFont);
+      } finally {
+        await page.close();
+      }
+    }
+  });
+});
+
+describe("the date picker's calendar type", () => {
+  it.each(["paper", "ohmarchy"] as const)("uses the kit calendar type in %s", async (face) => {
+    for (const scheme of ["light", "dark"] as const) {
+      for (const phone of [false, true]) {
+        const page = await mount("date", { face, scheme, phone });
+        try {
+          const measure = async (locator: ReturnType<Page["getByText"]>) =>
+            locator.evaluate((el) => {
+              const style = getComputedStyle(el);
+              const probe = document.createElement("span");
+              probe.style.cssText = "font-size:var(--t-ui);font-weight:var(--w-bold)";
+              document.body.append(probe);
+              const expected = getComputedStyle(probe);
+              const ui = { size: expected.fontSize, bold: expected.fontWeight };
+              probe.style.cssText = "font-size:var(--t-meta);font-weight:var(--w-mid)";
+              const meta = { size: expected.fontSize, mid: expected.fontWeight };
+              probe.remove();
+              return { size: style.fontSize, weight: style.fontWeight, ui, meta };
+            });
+          const month = await measure(page.getByText("August 2026", { exact: true }));
+          expect(month.size).toBe(month.ui.size);
+          expect(month.weight).toBe(month.ui.bold);
+          const day = await measure(page.getByRole("gridcell").first());
+          expect(day.size).toBe(day.ui.size);
+          expect(day.weight).toBe(day.meta.mid);
+          const weekday = await measure(page.getByRole("columnheader").first());
+          expect(weekday.size).toBe(weekday.meta.size);
+          expect(weekday.weight).toBe(weekday.ui.bold);
+        } finally {
+          await page.close();
+        }
+      }
+    }
+  });
+});
+
+describe("floating surfaces with the paper face unstamped", () => {
+  it.each(["date", "gloss", "toast"] as const)("draws %s in the kit's surface and face", async (scene) => {
+    const page = await mount(scene === "toast" ? "toast-outside" : scene, { unstamped: true });
+    try {
+      if (scene === "gloss") await page.getByRole("button", { name: "Details" }).hover();
+      if (scene === "toast") await page.getByRole("button", { name: "Show notice" }).click();
+      const card =
+        scene === "date"
+          ? page.getByRole("dialog", { name: "Pick a date" })
+          : scene === "gloss"
+            ? page.getByRole("tooltip")
+            : page.getByText("Saved").locator("xpath=..");
+      const seen = await card.evaluate((el, part) => {
+        const style = getComputedStyle(el);
+        const root = getComputedStyle(document.querySelector(".oh-root")!);
+        const probe = document.createElement("span");
+        probe.style.background = part === "toast" ? "var(--solid)" : "var(--sheet)";
+        document.body.append(probe);
+        const surface = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return {
+          background: style.backgroundColor,
+          surface,
+          font: style.fontFamily,
+          kitFont: root.fontFamily,
+        };
+      }, scene);
+      expect(seen.background).toBe(seen.surface);
+      expect(seen.font).toBe(seen.kitFont);
+      if (scene === "date") {
+        const month = await page.getByText("August 2026", { exact: true }).evaluate((el) => {
+          const style = getComputedStyle(el);
+          const probe = document.createElement("span");
+          probe.style.cssText = "font-size:var(--t-ui);font-weight:var(--w-bold)";
+          document.body.append(probe);
+          const expected = getComputedStyle(probe);
+          const result = {
+            size: style.fontSize,
+            weight: style.fontWeight,
+            expectedSize: expected.fontSize,
+            expectedWeight: expected.fontWeight,
+          };
+          probe.remove();
+          return result;
+        });
+        expect(month.size).toBe(month.expectedSize);
+        expect(month.weight).toBe(month.expectedWeight);
+      }
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("an interrupting dialog's elevation", () => {
+  it("uses the floating shadow of the app root", async () => {
+    const page = await mount("alert");
+    try {
+      await page.addStyleTag({
+        content: ":root{--float:var(--sheet);--overlay-shadow:var(--lift)} .oh-root{--float:var(--sheet)}",
+      });
+      const card = page.getByRole("alertdialog", { name: "Confirm action" });
+      const seen = await card.evaluate((el) => {
+        const probe = document.createElement("span");
+        probe.style.boxShadow = "var(--overlay-shadow)";
+        document.querySelector(".oh-root")!.append(probe);
+        const expected = getComputedStyle(probe).boxShadow;
+        probe.remove();
+        return { shadow: getComputedStyle(el).boxShadow, expected };
+      });
+      expect(seen.shadow).toBe(seen.expected);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("a file preview's elevation", () => {
+  it("uses the floating shadow of the app root", async () => {
+    const page = await mount("file");
+    try {
+      await page.addStyleTag({
+        content: ":root{--float:var(--sheet);--overlay-shadow:var(--lift)} .oh-root{--float:var(--sheet)}",
+      });
+      const card = page.getByRole("dialog", { name: "File preview" });
+      const seen = await card.evaluate((el) => {
+        const probe = document.createElement("span");
+        probe.style.boxShadow = "var(--overlay-shadow)";
+        document.querySelector(".oh-root")!.append(probe);
+        const expected = getComputedStyle(probe).boxShadow;
+        probe.remove();
+        return { shadow: getComputedStyle(el).boxShadow, expected };
+      });
+      expect(seen.shadow).toBe(seen.expected);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("floating control stacking", () => {
+  it.each([
+    ["date", "71"],
+    ["toast", "72"],
+  ] as const)("keeps the prior layer for %s", async (scene, expected) => {
+    const page = await mount(scene);
+    try {
+      await page.addStyleTag({ content: ":root{--z-pal:71;--z-toast:72}" });
+      if (scene === "toast") await page.getByRole("button", { name: "Show notice" }).click();
+      const card =
+        scene === "date"
+          ? page.getByRole("dialog", { name: "Pick a date" })
+          : page.getByText("Saved").locator("xpath=..");
+      expect(await card.evaluate((el) => getComputedStyle(el).zIndex)).toBe(expected);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("floating card body type", () => {
+  it.each(["date", "gloss"] as const)("uses the UI text size for %s", async (scene) => {
+    const page = await mount(scene);
+    try {
+      if (scene === "gloss") await page.getByRole("button", { name: "Details" }).hover();
+      const card =
+        scene === "date" ? page.getByRole("dialog", { name: "Pick a date" }) : page.getByRole("tooltip");
+      const seen = await card.evaluate((el) => {
+        const style = getComputedStyle(el);
+        const probe = document.createElement("span");
+        probe.style.fontSize = "var(--t-ui)";
+        el.append(probe);
+        const expected = getComputedStyle(probe).fontSize;
+        probe.remove();
+        return { size: style.fontSize, expected };
+      });
+      expect(seen.size).toBe(seen.expected);
     } finally {
       await page.close();
     }

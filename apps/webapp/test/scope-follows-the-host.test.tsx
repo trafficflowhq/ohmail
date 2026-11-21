@@ -1,18 +1,19 @@
 /** @vitest-environment jsdom */
 /**
- * WHOSE KEYS TODAY'S VIEWS KEEP, ON THE WEB'S REAL ENTRY (`CloudShell`): the scope its host hands, whatever the
- * session's marker says while the views stand. A person's words are kept under the account whose mail they were written
- * over, and under no other key.
+ * WHOSE KEYS THE MOUNTED VIEWS KEEP, ON THE WEB'S REAL ENTRY (`CloudShell`): a person's words are kept under the
+ * account whose mail they were written over. A conflicting account marker retires the original frame. Resuming the
+ * original person's work requires a fresh session confirmation.
  */
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import messages from "../messages/en.json";
 import { DEMO_STORAGE_OWNER, namesOwner, resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
 import {
-  ACCOUNT, ISO, act, installConfirmEnv, rememberOwner, scriptSession, sessionFull, teardownConfirmEnv, tick,
+  ACCOUNT, ISO, act, installConfirmEnv, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  sessionCalls, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
 } from "./fixtures/cloud-confirm-shell";
 
 /* THE PLACE OF ANOTHER BODY IS THE SEATED OHBOX, as every host hands it: leaving the composer for it takes today's
@@ -53,8 +54,11 @@ async function mountEntry(demo: boolean, drawMail: "now" | "wait" = "now"): Prom
   });
 }
 
+beforeAll(warmCloudShell, 90_000);
+
 beforeEach(() => {
   installConfirmEnv();
+  scriptRefresh(refresh204);
   resetStorageOwnerForTest();
   window.localStorage.clear();
 });
@@ -74,10 +78,26 @@ const visit = async (hash: string): Promise<void> => {
   await tick(1500);
 };
 
+async function reopenFirstAccount(hash: string): Promise<void> {
+  await act(async () => { root!.unmount(); });
+  root = null;
+  // The real page leaves by a full load. Here the JS module survives the new document.
+  const { bindApiOwner } = await import("../app/api-client");
+  bindApiOwner(null);
+  rememberOwner();
+  const confirm = vi.fn(() => sessionFull());
+  scriptSession(confirm);
+  window.location.hash = hash;
+  await mountEntry(false, "wait");
+  await tick(2000);
+  expect(confirm, "the returning tab must freshly confirm the original account").toHaveBeenCalled();
+}
+
 describe("today's views mounted again under the same frame", () => {
   it("keep the host's scope after the session's marker moved: words before and after a visit elsewhere stand under the frame's account", async () => {
     const FIRST = "First words of A";
     const AFTER = "Words after the way back";
+    const LAST_KEYSTROKE = "Words in flight as the account changed";
     scriptSession(() => sessionFull());
     rememberOwner();
     window.location.hash = "#/compose";
@@ -85,15 +105,27 @@ describe("today's views mounted again under the same frame", () => {
     await tick(2000);
     expect(subject(), "the composer under the account").not.toBeNull();
     await write(FIRST);
-    /* Another tab signs in as B: the jar's marker names B while A's frame stands. */
-    document.cookie = `tf_owner=${OTHER}; Path=/`;
-    await visit("#/ohbox");
-    expect(subject(), "today's composer still stands where the seated Ohbox is drawn").toBeNull();
+    const started = holding(FIRST);
+    expect(started).not.toEqual([]);
+    // The tab misses the change signal. An input event arrives before its next browser poll.
+    await act(async () => {
+      rememberOwner(OTHER);
+      fireEvent.change(subject()!, { target: { value: LAST_KEYSTROKE } });
+    });
+    await tick(1500);
+    expect(subject(), "the departing account still accepted input").toBeNull();
+    expect(seatedList(), "the departing account still drew mail").toBeNull();
+    expect(holding(LAST_KEYSTROKE), "the retirement save lost the original account's last edit").not.toEqual([]);
+    expect(holding(LAST_KEYSTROKE).every((k) => namesOwner(k, ACCOUNT, true))).toBe(true);
+
+    await reopenFirstAccount("#/ohbox");
+    expect(subject(), "the composer still stands where the seated Ohbox is drawn").toBeNull();
     expect(seatedList(), "the seated Ohbox's list").not.toBeNull();
     await visit("#/compose");
     expect(subject(), "the composer mounted again").not.toBeNull();
     await write(AFTER);
-    const keys = [...holding(FIRST), ...holding(AFTER)];
+    expect(holding(AFTER), "the returning composer did not save the new words").not.toEqual([]);
+    const keys = [...started, ...holding(FIRST), ...holding(LAST_KEYSTROKE), ...holding(AFTER)];
     expect({
       kept: keys.length > 0,
       underTheFrame: keys.every((k) => namesOwner(k, ACCOUNT, true)),
@@ -144,7 +176,7 @@ describe("the demo opened over a live session, in place", () => {
 
 describe("the session's marker moves between the session's question and the frame's mount", () => {
   /* The page's word `wait`: the frame is drawn only once the check names the account. Another tab's sign-in moves the
-     marker to B while this tab's check, already on its way, answers A. */
+     marker to B while this tab's check, already on its way, answers A. The new page can write after a fresh A answer. */
   const ANSWERED_A = "Words written over the confirmed account's mail";
   async function drawnAfterTheMove(remembered: boolean): Promise<string[]> {
     let answer: (r: Response) => void = () => undefined;
@@ -153,9 +185,15 @@ describe("the session's marker moves between the session's question and the fram
     window.location.hash = "#/compose";
     await mountEntry(false, "wait");
     await tick(500);
-    document.cookie = `tf_owner=${OTHER}; Path=/`;
+    expect(sessionCalls()).toBe(1);
+    expect(subject()).toBeNull();
+    rememberOwner(OTHER);
     await act(async () => { answer(sessionFull()); });
     await tick(2000);
+    expect(subject(), "a stale confirmation opened a composer over the replacement account").toBeNull();
+    expect(seatedList(), "a stale confirmation showed the departing account's mail").toBeNull();
+    expect(holding(ANSWERED_A)).toEqual([]);
+    await reopenFirstAccount("#/compose");
     expect(subject(), "the composer once the check named the account").not.toBeNull();
     await write(ANSWERED_A);
     return holding(ANSWERED_A);

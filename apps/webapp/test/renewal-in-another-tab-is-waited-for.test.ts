@@ -51,8 +51,7 @@ function setJar(g: number): void {
 }
 
 function serve(url: string, init?: RequestInit): Promise<Response> {
-  const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)
-    .map(([k, v]) => [k.toLowerCase(), v]));
+  const headers = new Headers(init?.headers);
   const carried = access;
   const row: Sent = { at: Date.now(), url, status: null };
   sent.push(row);
@@ -65,9 +64,10 @@ function serve(url: string, init?: RequestInit): Promise<Response> {
   return later(arriveMs, () => {
     let res: Response;
     if (carried !== serverAccess) res = json(401, { error: { code: "unauthorized", message: "authentication required" } });
-    else if ((init?.method ?? "GET") !== "GET" && headers["x-csrf-token"] !== csrfOf(carried)) {
+    else if ((init?.method ?? "GET") !== "GET" && headers.get("x-csrf-token") !== csrfOf(carried)) {
       res = json(403, { error: { code: "csrf_failed", message: "csrf validation failed" } });
     } else res = json(200, {});
+    if (res.ok) res.headers.set("X-Ohmail-Account", "acct_A");
     row.status = res.status;
     return res;
   });

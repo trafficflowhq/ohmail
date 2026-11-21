@@ -6,9 +6,10 @@
 import type { ReactNode } from "react";
 import { renderHook } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NONE, type FrameSupplies, type HostContract } from "@ohmail/app/host";
-import { useWebHost, type WebWords } from "../../app/(product)/mailbox/web-supplies";
+import { useCloudMailHost as useWebHost } from "../../app/(product)/mailbox/CloudShell";
+import { type WebWords } from "../../app/(product)/mailbox/web-supplies";
 import messages from "../../messages/en.json";
 
 /** The words' provider the page's every entry stands under (`LocaleShell`), as the frame's tests mount it. */
@@ -28,6 +29,8 @@ const words: WebWords = {
   resolve: async () => ({ kind: "none" }) as never, confirmed: () => undefined,
 };
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("the web's host", () => {
   it("is the same record on a render with nothing changed, and a new one when an answer moves", () => {
     const view = renderHook((w: WebWords) => useWebHost(engine, w, frame), { initialProps: words, wrapper: Words });
@@ -40,8 +43,10 @@ describe("the web's host", () => {
   });
 
   it("answers the connect form's key with its own wire, one wire for the page's life", () => {
+    const fetched = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
     const view = renderHook((w: WebWords) => useWebHost(engine, w, frame), { initialProps: words, wrapper: Words });
-    const wire = view.result.current.wires.connect;
+    const { connect: wire, mailboxes } = view.result.current.wires;
+    expect(mailboxes).not.toBe(NONE);
     if (wire === NONE) throw new Error("the web connects mailboxes");
     expect(Object.keys(wire).sort()).toEqual(["connect", "discover", "edit", "localServerWait", "probe", "signIn"]);
     expect(wire.localServerWait).toBe(false);
@@ -50,6 +55,7 @@ describe("the web's host", () => {
     view.rerender({ ...words, account: "acct-2" });
     expect(view.result.current.wires.connect).toBe(wire);
     // Nothing is read or taken by standing the wire: a return is read only when a form asks.
-    expect(view.result.current.wires.mailboxes).toBe(NONE);
+    expect(view.result.current.wires.mailboxes).toBe(mailboxes);
+    expect(fetched).not.toHaveBeenCalled();
   });
 });

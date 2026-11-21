@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, within } from "@testing-library/react";
 import {
   ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  liveAccountFetch,
 } from "./fixtures/live-walk-shell";
 
 /**
@@ -43,7 +44,7 @@ beforeEach(() => {
   fetched = [];
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const inner = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) => {
+  globalThis.fetch = vi.fn(liveAccountFetch(async (input: unknown, init?: unknown) => {
     const url = String(input);
     if (/\/messages\/[^/?]+\/attachments(?:$|\?)/.test(url)) {
       return json({ items: [{
@@ -65,7 +66,7 @@ beforeEach(() => {
       return json({ items, total: items.length, totalExact: true, ms: 4 });
     }
     return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-  }) as unknown as typeof globalThis.fetch;
+  }));
   (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:harness/1";
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
 });
@@ -176,7 +177,7 @@ describe("a stream letter opened from Search turns read", () => {
     reads = [];
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     const inner = globalThis.fetch;
-    globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+    globalThis.fetch = vi.fn(liveAccountFetch(async (input: unknown, init?: RequestInit) => {
       const url = String(input);
       const one = /\/messages\/([^/?]+)$/.exec(url);
       if ((init?.method ?? "GET").toUpperCase() === "PATCH" && one) {
@@ -206,7 +207,7 @@ describe("a stream letter opened from Search turns read", () => {
         return json({ items, total: items.length, totalExact: true, ms: 4 });
       }
       return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-    }) as unknown as typeof globalThis.fetch;
+    }));
     for (const k of ["clientHeight", "scrollHeight", "scrollTop"]) saved[k] = Object.getOwnPropertyDescriptor(Element.prototype, k);
     savedRect = Element.prototype.getBoundingClientRect;
     Object.defineProperty(Element.prototype, "clientHeight", { configurable: true, get(this: Element) { return isStream(this) ? 600 : 0; } });

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Icon } from "../icons.js";
 import { cssRect, cssViewport } from "../ui-zoom.js";
-import "./date-picker.css";
 
 /**
  * Date picker: a month grid in the product's own tokens, anchored to the
@@ -281,7 +280,7 @@ export function DatePicker({
   return (
     <div
       ref={rootRef}
-      className={className ? `dp ${className}` : "dp"}
+      className={className ? `dp oh-datepicker ${className}` : "dp oh-datepicker"}
       role="dialog"
       aria-label={labels.dialog}
       data-side={pos?.side}
@@ -292,7 +291,7 @@ export function DatePicker({
         <button type="button" className="dp-nav dp-nav-prev" aria-label={labels.prevMonth} disabled={!prevAllowed} onClick={() => showMonth(-1)}>
           <Icon name="chev" size={12} />
         </button>
-        <div className="dp-month" aria-live="polite">{monthName.format(ms({ y: view.y, m: view.m, d: 1 }))}</div>
+        <div className="dp-month oh-datepicker-month" aria-live="polite">{monthName.format(ms({ y: view.y, m: view.m, d: 1 }))}</div>
         <button type="button" className="dp-nav dp-nav-next" aria-label={labels.nextMonth} onClick={() => showMonth(1)}>
           <Icon name="chev" size={12} />
         </button>
@@ -300,7 +299,7 @@ export function DatePicker({
       <div className="dp-grid" role="grid" aria-label={monthName.format(ms({ y: view.y, m: view.m, d: 1 }))}>
         <div className="dp-row" role="row">
           {weekdays.map((w, i) => (
-            <div key={i} className="dp-wd" role="columnheader">{w}</div>
+            <div key={i} className="dp-wd oh-datepicker-weekday" role="columnheader">{w}</div>
           ))}
         </div>
         {[0, 1, 2, 3, 4, 5].map((r) => (
@@ -319,7 +318,7 @@ export function DatePicker({
                   key={key}
                   type="button"
                   role="gridcell"
-                  className="dp-day num"
+                  className="dp-day num oh-datepicker-day"
                   data-day={key}
                   data-today={isToday ? "" : undefined}
                   data-outside={d.outside ? "" : undefined}

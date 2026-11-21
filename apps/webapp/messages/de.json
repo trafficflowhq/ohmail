@@ -16,6 +16,8 @@
     "dismiss": "Ausblenden"
   },
   "gate": {
+    "settingsHandoffSignIn": "Melde dich mit dem Konto an, das du auf deinem Desktop geöffnet hast.",
+    "settingsHandoffInvalid": "Dieser Link zu den Einstellungen ist nicht verfügbar. Öffne die Einstellungen erneut auf deinem Desktop.",
     "lede": "An diesen Build ist kein Server angeschlossen.",
     "body": "Er zeigt die ganze Oberfläche mit Demo-Mails, ganz ohne Netzwerk.",
     "note": "Deine eigenen Postfächer findest du auf ohmail.app.",
@@ -1028,6 +1030,8 @@
     "markAllSpam": "Alles als Spam markieren",
     "askAllSpam": "{count, plural, one {Den # wartenden Absender als Spam markieren?} other {Alle # wartenden Absender als Spam markieren?}}",
     "askAllSpamNote": "Ihre zurückgehaltenen Mails kommen in Spam, ebenso alles, was sie später senden.",
+    "askScreenPicked": "{count, plural, one {# Absender aussortieren?} other {# Absender aussortieren?}}",
+    "askScreenPickedNote": "Ihre zurückgehaltenen und zukünftigen Mails werden aussortiert.",
     "askAllSpamYes": "{count} als Spam markieren",
     "askApplySuggestions": "{count, plural, one {# Vorschlag übernehmen?} other {# Vorschläge übernehmen?}}",
     "askApplySuggestionsYes": "{count, plural, one {# Vorschlag übernehmen} other {# Vorschläge übernehmen}}",
@@ -1695,7 +1699,7 @@
     "queued": "Wartet",
     "statusQueued": "Noch nicht gesendet. ohmail versucht es weiter.",
     "statusUnverified": "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. In deinem Gesendet-Ordner ist sie nicht.",
-    "statusFailed": "Senden hat nicht geklappt — dein Entwurf ist gesichert. Versuch es nochmal.",
+    "statusFailed": "Nicht gesendet. Senden hat nicht geklappt, aber dein Entwurf ist gesichert. Versuch es nochmal.",
     "statusForwardOriginalUnavailable": "Nicht gesendet. Das Original konnte nicht geladen werden, darum wurde es nicht weitergeleitet.",
     "statusForwardPartsUnsupported": "Nicht gesendet. Dein Server sendet jede Datei einer Weiterleitung mit und kann die entfernten nicht weglassen.",
     "statusForwardPartsChanged": "Nichts wurde gesendet. Die Dateien der weitergeleiteten Nachricht haben sich geändert. Öffne sie noch einmal und leite sie weiter.",
@@ -1714,7 +1718,7 @@
     "statusBusy": "Nicht gesendet. Dein Mailserver ist gerade ausgelastet und nimmt nichts an — dein Entwurf ist gesichert. Versuch es gleich nochmal.",
     "statusNotSecured": "Nicht gesendet. Die Verbindung zu deinem Mailserver konnte nicht verschlüsselt werden — dein Entwurf ist gesichert.",
     "statusLoginRefused": "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt — dein Entwurf ist gesichert.",
-    "statusNotSignedIn": "Nicht gesendet — dein Entwurf ist gesichert. Dieses Postfach ist hier nicht angemeldet — melde es in den Einstellungen neu an.",
+    "statusNotSignedIn": "Nicht gesendet. Dieses Postfach ist hier nicht angemeldet. Dein Entwurf ist gesichert, melde es also unter Postfächer erneut an.",
     "statusDraftChanged": "Nicht gesendet. Dieser Entwurf wurde in einem anderen Fenster oder auf einem anderen Gerät geändert — sieh ihn dir an, bevor du sendest.",
     "statusNotSavedFirst": "Nicht gesendet. Diese Nachricht konnte vorher nicht gespeichert werden, deshalb ging nichts raus. Prüfe sie und sende erneut.",
     "statusDraftUnsaved": "Nicht gesendet. Dieser Entwurf konnte nicht gespeichert werden — ohmail kann daher nicht sagen, ob die Nachricht hier die ist, die gesendet würde. Versuch es noch einmal.",
@@ -2063,11 +2067,13 @@
     "about": "Über ohmail",
     "help": "Hilfe & Kontakt",
     "webOpen": "Im Browser öffnen",
+    "webOpenServer": "Auf deinem Server öffnen",
     "webLoading": "Dein Account wird gefragt…",
     "webOffline": "Diese Installation ist offline, dein Account ist also nicht erreichbar. Was schon hier ist, funktioniert weiter; das hier kommt mit der Verbindung zurück.",
     "webUnavailable": "Dein Account hat nicht geantwortet, deshalb steht hier nichts über deinen Tarif statt einer Vermutung. Im Browser geöffnet siehst du es.",
     "webSaveFailed": "Das wurde nicht gespeichert. Es hat sich nichts geändert.",
     "webNoBrowser": "Dieser Computer wollte keinen Browser öffnen. Die Seite ist unter ohmail.app.",
+    "webNoBrowserServer": "Dieser Computer konnte keinen Browser öffnen. Öffne die Einstellungen auf deinem Server.",
     "webBillingTitle": "Tarife, Zahlung und Rechnungen",
     "webBillingWhy": "Einen Tarif wählen, die Karte ändern und Rechnungen herunterladen verlangen einen zweiten Faktor, den diese App nicht geben kann. Das öffnet sich in deinem Browser, wo du schon angemeldet bist.",
     "webSecurityTitle": "Dein zweiter Faktor",
@@ -2153,6 +2159,7 @@
     "storageMailSub": "Eine Mail bei 90 % und eine, wenn der Speicher voll ist.",
     "storageMailFailed": "Das ließ sich nicht speichern. Versuch es noch einmal.",
     "webAccountNote": "Beim Löschen verschwindet dein Account von unseren Servern. Deine Mails liegen in deinem eigenen Postfach und werden nicht angerührt, und die Kopie auf diesem Computer bleibt, wo sie ist.",
+    "webAccountNoteServer": "Wenn du dein Konto löschst, wird es von deinem Server entfernt. Deine E-Mails bleiben in deinem Postfach, und die Kopie auf diesem Computer bleibt erhalten.",
     "webDevicesTitle": "Geräte, die bei deinem Account angemeldet sind",
     "webDevicesWhy": "Ein Gerät hinzufügen und eines abmelden verlangen beide einen zweiten Faktor aus den letzten Minuten, den diese App nicht geben kann. Die Liste und beide Aktionen öffnen sich in deinem Browser, wo du schon angemeldet bist.",
     "webDevicesNote": "Diese App ist eines dieser Geräte. Wenn du sie dort abmeldest, empfängt sie keine neue Mail mehr; die Kopie auf diesem Computer bleibt, wo sie ist.",
@@ -3245,7 +3252,7 @@
     "device_state_invalid": "Diese Microsoft-Anmeldung läuft nicht mehr. Beginne erneut, um einen neuen Code zu erhalten.",
     "device_start_unavailable": "Microsoft konnte keinen Anmeldecode bereitstellen. Versuch es gleich nochmal.",
     "device_poll_retry": "Die Microsoft-Anmeldung konnte nicht geprüft werden. Diese Seite versucht es erneut.",
-    "device_not_allowed": "Mit diesem Konto kannst du diese Microsoft-Anmeldung nicht abschließen. Beginne hier erneut.",
+    "device_not_allowed": "Mit diesem Account kannst du diese Microsoft-Anmeldung nicht abschließen. Beginne hier erneut.",
     "device_no_refresh_token": "Microsoft hat den Zugriff nicht gewährt, den ohmail zum Synchronisieren dieses Postfachs braucht. Bitte die Serveradministration, die Konfiguration zu prüfen.",
     "device_no_address": "Microsoft hat nicht angegeben, welches Postfach verbunden werden soll. Versuch, dich erneut anzumelden.",
     "oauthFinishing": "Die Microsoft-Verbindung wird abgeschlossen …",
@@ -4284,10 +4291,11 @@
     "verdictQueued": "Für {name} vorgemerkt. Beim nächsten Durchgang: Mails von {sender} → {place}, und die Regel wird angelegt.",
     "verdictChanged": "Deine Regel »{term}« wurde inzwischen geändert und bleibt deshalb, wie sie ist.",
     "subjectAlready": "Diese Regel gab es bereits. Es hat sich nichts geändert.",
+    "subjectAlreadyFiled": "Diese Regel gab es bereits. {place} — {count, plural, one {1 Nachricht verschoben} other {# Nachrichten verschoben}}.",
     "subjectRuleFailed": "Die Regel wurde nicht gespeichert. Es wurde nichts verschoben.",
     "subjectRuleQueued": "Die Regel wurde hier gespeichert. Sobald du wieder online bist, wird sie gesendet.",
-    "subjectRuled": "Mails von {sender} mit »{term}« im Betreff werden jetzt nach {place} sortiert.",
-    "subjectRuledBody": "Mails von {sender} mit »{term}« im Text werden jetzt nach {place} sortiert.",
+    "subjectRuled": "Mails von {sender} mit »{term}« im Betreff werden jetzt einsortiert. Ziel: {place}.",
+    "subjectRuledBody": "Mails von {sender} mit »{term}« im Text werden jetzt einsortiert. Ziel: {place}.",
     "subjectRuleOrganizer": "Für den Organizer vorgemerkt — die Regel für »{term}« wird beim nächsten Durchgang angelegt, verschoben wurde noch nichts.",
     "subjectRuleFailing": "Die Regel für »{term}« wurde nicht angelegt: Der Server hat mit einem Fehler geantwortet. ohmail versucht es erneut, verschoben wurde noch nichts.",
     "subjectRuleUnsent": "Die Regel für »{term}« hat ohmail noch nicht erreicht, verschoben wurde noch nichts.",
@@ -4390,7 +4398,7 @@
     "queued": "Wartet",
     "statusQueued": "Noch nicht gesendet. ohmail versucht es weiter.",
     "statusUnverified": "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. In deinem Gesendet-Ordner ist sie nicht.",
-    "statusFailed": "Senden hat nicht geklappt — dein Entwurf ist gesichert. Versuch es nochmal.",
+    "statusFailed": "Nicht gesendet. Senden hat nicht geklappt, aber dein Entwurf ist gesichert. Versuch es nochmal.",
     "statusForwardOriginalUnavailable": "Nicht gesendet. Das Original konnte nicht geladen werden, darum wurde es nicht weitergeleitet.",
     "statusForwardPartsUnsupported": "Nicht gesendet. Dein Server sendet jede Datei einer Weiterleitung mit und kann die entfernten nicht weglassen.",
     "statusForwardPartsChanged": "Nichts wurde gesendet. Die Dateien der weitergeleiteten Nachricht haben sich geändert. Öffne sie noch einmal und leite sie weiter.",
@@ -4408,7 +4416,7 @@
     "statusBusy": "Nicht gesendet. Dein Mailserver ist gerade ausgelastet und nimmt nichts an — dein Entwurf ist gesichert. Versuch es gleich nochmal.",
     "statusNotSecured": "Nicht gesendet. Die Verbindung zu deinem Mailserver konnte nicht verschlüsselt werden — dein Entwurf ist gesichert.",
     "statusLoginRefused": "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt — dein Entwurf ist gesichert.",
-    "statusNotSignedIn": "Nicht gesendet — dein Entwurf ist gesichert. Dieses Postfach ist hier nicht angemeldet — melde es in den Einstellungen neu an.",
+    "statusNotSignedIn": "Nicht gesendet. Dieses Postfach ist hier nicht angemeldet. Dein Entwurf ist gesichert, melde es also unter Postfächer erneut an.",
     "statusDraftChanged": "Nicht gesendet. Dieser Entwurf wurde in einem anderen Fenster geändert — sieh ihn dir an, bevor du sendest.",
     "statusNotSavedFirst": "Nicht gesendet. Diese Antwort konnte vorher nicht gespeichert werden, deshalb ging nichts raus. Prüfe sie und sende erneut.",
     "statusDraftUnsaved": "Nicht gesendet. Dieser Entwurf konnte nicht gespeichert werden — ohmail kann daher nicht sagen, ob die Nachricht hier die ist, die gesendet würde. Versuch es noch einmal.",
@@ -4937,10 +4945,6 @@
     "suggestStoppedEarly": "Nach {done} von {total} gestoppt. {reason}",
     "suggestEmpty": "Für diese Absender gibt es keine neuen Vorschläge.",
     "suggestNote": "Nutzt das Modell, das du eingerichtet hast. Absender, für die es schon eine Antwort gibt, werden nicht noch einmal gefragt.",
-    "suggestUnreadableKey": "Der gespeicherte Schlüssel konnte nicht gelesen werden. Gib ihn in den Einstellungen unter Desktop erneut ein.",
-    "suggestSetupAfterRefusal": "Das Modell ist nicht verfügbar. Richte in den Einstellungen unter Desktop ein Modell ein.",
-    "suggestStoppedEarly": "Nach {done} von {total} gestoppt. {reason}",
-    "suggestEmpty": "Für diese Absender gibt es keine neuen Vorschläge.",
     "offlineHead": "Was in deine Ohbox kommt",
     "offlineNote": "Diese Einstellungen liegen in deinem ohmail-Cloud-Account und lassen sich nicht ändern, solange diese Installation offline ist. Deine Mails kommen weiter an; das hier kommt mit der Verbindung zurück.",
     "offlineNoteServer": "Diese Einstellungen liegen auf deinem ohmail-Server und lassen sich nicht ändern, solange diese Installation offline ist. Deine Mails kommen weiter an; das hier kommt mit der Verbindung zurück."
@@ -6543,6 +6547,7 @@
     "span": "{from}–{to}"
   },
   "calsetup": {
+    "activate": "Einen Kalender verbinden",
     "leave": "Nicht jetzt",
     "back": "Zurück",
     "continue": "Weiter",
@@ -6659,7 +6664,7 @@
       "rename": "Hier umbenennen",
       "nameHere": "Name hier",
       "save": "Sichern",
-      "title": "Kalenderkonten"
+      "title": "Kalenderzugänge"
     },
     "view": {
       "newEvents": "Neue Termine kommen in",
@@ -6703,6 +6708,7 @@
     "coming": "Demnächst mit {name}"
   },
   "calendar": {
+    "connect": "Einen Kalender verbinden",
     "actions": {
       "delete": "Löschen",
       "moveTo": "Verschieben nach",
@@ -6889,7 +6895,15 @@
   },
   "settingsNotifications": {
     "about": "Benachrichtigen bei",
-    "blocked": "Blockiert"
+    "blocked": "Blockiert",
+    "calendar": "Kalender",
+    "alert": "Eine Erinnerung",
+    "invitation": "Eine Einladung",
+    "change": "Eine Änderung oder Absage",
+    "answer": "Eine eingeladene Person hat geantwortet",
+    "found": "Etwas in einer Mail gefunden",
+    "titles": "Titel",
+    "showTitles": "Titel in Benachrichtigungen anzeigen"
   },
   "settingsScreener": {
     "notApplied": "Nicht übernommen"
@@ -6922,7 +6936,7 @@
   "write": {
     "held": {
       "sendAgain": "Noch einmal senden",
-      "itWasSent": "Sie wurde gesendet — ausblenden"
+      "itWasSent": "Es wurde gesendet"
     },
     "letter": "Neue Nachricht",
     "back": "Ohbox",
@@ -6943,18 +6957,19 @@
     "send": "Senden",
     "discard": "Verwerfen",
     "status": {
+      "notSentVerdict": "Nicht gesendet.",
       "previousSending": "Deine letzte Nachricht wird noch gesendet. Diese kannst du senden, sobald sie raus ist.",
       "sending": "Deine Nachricht wird gesendet.",
       "sendingLong": "Sendet noch.",
       "queued": "Noch nicht gesendet. ohmail versucht es weiter.",
       "unverified": "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. In deinem Gesendet-Ordner ist sie nicht.",
-      "failed": "Senden hat nicht geklappt — dein Entwurf ist gesichert. Versuch es nochmal.",
+      "failed": "Nicht gesendet. Senden hat nicht geklappt, aber dein Entwurf ist gesichert. Versuch es nochmal.",
       "mailboxDisabled": "Nicht gesendet. Diese Adresse ist getrennt und kann nicht senden.",
       "unreachable": "Nicht gesendet. Dein Mailserver war nicht erreichbar. Die Nachricht liegt in den Entwürfen — sende sie nochmal, sobald dein Mailserver antwortet.",
       "busy": "Nicht gesendet. Dein Mailserver ist gerade ausgelastet und nimmt nichts an — dein Entwurf ist gesichert. Versuch es gleich nochmal.",
       "notSecured": "Nicht gesendet. Die Verbindung zu deinem Mailserver konnte nicht verschlüsselt werden — dein Entwurf ist gesichert.",
       "loginRefused": "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt — dein Entwurf ist gesichert.",
-      "notSignedIn": "Nicht gesendet — dein Entwurf ist gesichert. Dieses Postfach ist hier nicht angemeldet — melde es in den Einstellungen neu an.",
+      "notSignedIn": "Nicht gesendet. Dieses Postfach ist hier nicht angemeldet. Dein Entwurf ist gesichert, melde es also unter Postfächer erneut an.",
       "forwardOriginalUnavailable": "Nicht gesendet. Das Original konnte nicht geladen werden, darum wurde es nicht weitergeleitet.",
       "forwardPartsUnsupported": "Nicht gesendet. Dein Server sendet jede Datei einer Weiterleitung mit und kann die entfernten nicht weglassen.",
       "forwardPartsChanged": "Nichts wurde gesendet. Die Dateien der weitergeleiteten Nachricht haben sich geändert. Öffne sie noch einmal und leite sie weiter.",

@@ -42,20 +42,13 @@ const NEEDLE = "void engine.mutate(";
  * a success sentence over a verdict it discarded, which is the property the seam defends.
  */
 const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
-  ["app-logic/screener/screener-state.ts", 5,
-   "the Screener's own state machine: two of these read the result and refuse the row "
-   + "(`refuse`, `refuseRelease`); the `mark_seen` fan-out over already-filed mail is documented "
-   + "unwatched on purpose — the decision has landed and only a seen flag can be lost; and the "
-   + "card's INBOX letters, moved by id only once its decide stands, whose sentence is the decide's "
-   + "own: a refused or skipped move leaves its letter and is not the decision's status"],
+  ["app-logic/screener/screener-state.ts", 4,
+   "three watched decisions and the seen-only follow-up for mail already filed"],
   ["app-logic/writing/mail-send.ts", 1,
    "a settled reply's one after-effect — clearing the answered message's Answer Later. Nothing is "
    + "claimed about it: the sentence the person reads is the send's own"],
-  ["app-logic/writing/shell-compose.ts", 6,
-   "the six draft verbs, five of which read `res.status` and speak from it — the five moved out of "
-   + "`AppShell.tsx` with the compose and draft verbs (ARCH-022), and `sendAgain`, whose answer is "
-   + "the message opening with Send live on `confirmed` and a named toast on anything else; it "
-   + "raises no success sentence a discarded verdict could stand over"],
+  ["app-logic/writing/shell-compose.ts", 3,
+   "the discarded reply seed and two watched scheduled-send cancellations"],
   ["shell/folder-verbs.ts", 1,
    "the folder-op notice's dismissal: it raises no sentence at all, and its three siblings in the "
    + "same object already speak only on `rolled_back`"],
@@ -67,10 +60,35 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
 ];
 
 /**
- * THE TOTAL, PINNED APART FROM THE ROWS. A shell module split hands a count from one row to
- * another, and both rows move together while the sum quietly grows — which is a new bare dispatch
- * arriving under cover of a refactor. The remaining fifteen calls belong to surviving files.
+ * Each former bare dispatch is still accounted for. These four moved to producers that read their result.
+ * The total stays pinned apart from the counts of calls still using the old shape.
  */
+const REPORTED = [
+  {
+    file: "screener/screener-state.ts", declaration: "dispatchDecision",
+    steps: [
+      /dispatchScreeningChange\(plan, \[\.\.\.cardMoves, \.\.\.seedMoves\], async \(m\) =>/,
+      /const r = await engine\.mutate\(over \? outrankCoveringDomains\(over, m\) : m\)/,
+      /if \(r\.status === "rolled_back"/,
+    ],
+  },
+  {
+    file: "writing/shell-compose.ts", declaration: "resolveHeldSend",
+    steps: [/if \(shown\) void answerHeldDraft\(shown, outcome\)/],
+  },
+  {
+    file: "writing/shell-compose.ts", declaration: "sendAgain",
+    steps: [/void answerHeldDraft\(d, "not_arrived", true\)/],
+  },
+  {
+    file: "writing/shell-compose.ts", declaration: "discardDraftRow",
+    steps: [
+      /const res = await engine\.mutate\(\{ kind: "draft_discard", draftId, \.\.\.version \}/,
+      /res\.status === "rolled_back" && res\.error\?\.code === "send_recorded"/,
+      /return pressVerdict\(res\)/,
+    ],
+  },
+] as const;
 const REMAINDER_TOTAL = 15;
 
 function tsFiles(dir: string): string[] {
@@ -166,9 +184,18 @@ describe("the shell's dispatch seam", () => {
       .map(([rel, n]) => `${rel}: pinned ${n}, found ${counted.get(rel) ?? 0}`);
     expect(moved, "the count moved: a dispatch taken through the seam lowers its pin in the same "
       + "commit, and a new one is refused above").toEqual([]);
-    expect(REMAINDER.reduce((n, [, count]) => n + count, 0),
-      "the pinned rows no longer sum to the census's own total — a split moved a count and some "
-      + "of it went missing, or a row was raised without another falling").toBe(REMAINDER_TOTAL);
+    const read = (file: string, declaration: string) =>
+      scan.withoutComments(sliceOfDeclaration(readFileSync(join(LOGIC, file), "utf8"), declaration));
+    for (const row of REPORTED) {
+      const code = read(row.file, row.declaration);
+      for (const step of row.steps) expect(code, row.declaration).toMatch(step);
+    }
+    const answer = read("writing/shell-compose.ts", "answerHeldDraft");
+    expect(answer).toMatch(/const res = await engine\.mutate\(\{ kind: "draft_resolve", draftId, outcome,/);
+    expect(answer).toMatch(/if \(res\.status !== "confirmed"\)/);
+    expect(answer).toMatch(/if \(stillCurrent\(\)\) openDraft/);
+    expect(REMAINDER.reduce<number>((n, [, count]) => n + count, REPORTED.length),
+      "every original dispatch still has a pinned source or a watched outcome").toBe(REMAINDER_TOTAL);
   });
 
   /** A second caller would install a second Undo window and replay the same durable intents. */

@@ -205,8 +205,9 @@ describe("auth — session, logout, refresh", () => {
     clock.advance(30_000);
     const first = setCookieMap(await loginWithTotp(deps, clock, "gil@x.example", secret));
     const read = (access: string): Promise<Response> => H(req("GET", "/auth/session", { cookie: `tf_session=${access}` }), deps);
-    // Nothing to tell: the answer keeps its old shape.
-    expect(Object.keys(await (await read(first.tf_session!)).json()).sort()).toEqual(["scope", "user"]);
+    const before = await (await read(first.tf_session!)).json();
+    expect(Object.keys(before).sort()).toEqual(["familyId", "scope", "user"]);
+    expect(before.familyId).toEqual(first.tf_family);
 
     const r2 = setCookieMap(await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${first.tf_refresh}` }), deps)).tf_refresh!;
     clock.advance(1_000);

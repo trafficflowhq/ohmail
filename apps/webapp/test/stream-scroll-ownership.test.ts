@@ -19,8 +19,8 @@ const sheets = [
   "packages/letter-body/src/message-body.css",
 ];
 const parts = [
-  column,
-  sheet,
+  "packages/app/src/stream/StreamItem.tsx",
+  "packages/app/src/reader/Letter.tsx",
   "packages/ui/src/mail/Reading/Message.tsx",
   "packages/ui/src/mail/Reading/MessageHead.tsx",
   "packages/letter-body/src/MessageBody.tsx",
@@ -53,7 +53,7 @@ function cardScrollers(css: string, classes: ReadonlySet<string>): string[] {
     if (!scrollsVertically) return [];
     return selector.split(",").filter((part) => {
       const last = [...part.matchAll(/\.([A-Za-z][\w-]*)/g)].at(-1)?.[1];
-      return last !== undefined && last !== scroller && classes.has(last);
+      return last !== undefined && classes.has(last);
     }).map((part) => part.trim());
   });
 }
@@ -78,9 +78,11 @@ describe("one scroll owner per reading stream (the source census)", () => {
   });
 
   it("the derived class set is the card's own, and it is not empty", () => {
+    expect(read(sheet)).toContain(`className="${scroller}"`);
+    expect(read(column)).toContain("<StreamItem");
     const classes = streamClasses();
     expect(classes.size).toBeGreaterThan(10);
-    for (const required of ["oh-message-clip", "oh-message-body", "oh-messagehead", scroller]) {
+    for (const required of ["oh-message-clip", "oh-message-body", "oh-messagehead", "oh-message"]) {
       expect(classes.has(required), required).toBe(true);
     }
   });

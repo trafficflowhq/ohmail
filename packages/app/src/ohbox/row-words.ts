@@ -19,6 +19,7 @@ export interface RowWho {
   address: string | undefined;
   /** Every voice whole, for the row's name a screen reader hears. */
   names: string;
+  byline: readonly { letter: EngineMessage; name: string; text: string }[];
 }
 
 /**
@@ -31,15 +32,18 @@ export function whoOf(
   address: (m: EngineMessage) => string | undefined,
   sentTo: { label: string } | null,
 ): RowWho {
-  if (sentTo !== null) return { who: sentTo.label, address: undefined, names: sentTo.label };
-  if (voices.length > 1) {
-    const whole = voices.map(name);
-    return { who: whole.map(firstNameOf).join(", "), address: undefined, names: whole.join(", ") };
-  }
-  const one = voices[0];
-  if (!one) return { who: "", address: undefined, names: "" };
-  const whole = name(one);
-  return { who: whole, address: address(one), names: whole };
+  if (sentTo !== null) return { who: sentTo.label, address: undefined, names: sentTo.label, byline: [] };
+  const byline = voices.map((letter) => {
+    const whole = name(letter);
+    return { letter, name: whole, text: voices.length > 1 ? firstNameOf(whole) : whole };
+  });
+  const one = voices.length === 1 ? voices[0] : undefined;
+  return {
+    who: byline.map(({ text }) => text).join(", "),
+    address: one ? address(one) : undefined,
+    names: byline.map(({ name }) => name).join(", "),
+    byline,
+  };
 }
 
 /**

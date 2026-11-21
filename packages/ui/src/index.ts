@@ -13,6 +13,7 @@ import "@ohmail/tokens/tokens.css";
 import "@ohmail/tokens/faces.css";
 import "@ohmail/tokens/ohmarchy.css";
 import "./base.css";
+import "./primitives/date-picker.css";
 
 /* theme */
 export {

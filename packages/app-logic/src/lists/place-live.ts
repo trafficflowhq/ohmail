@@ -66,7 +66,7 @@ export interface PlaceLiveCommands {
    */
   readonly go: (to: PlaceLiveTarget, how?: { readonly entered?: true }) => void;
   /** Opens a letter of this place beside or over its list; `null` closes the open one. */
-  readonly open: (letter: string | null, how?: "replace") => void;
+  readonly open: (letter: string | null, how?: "replace", wholeThread?: true) => void;
   /** To a new letter. */
   readonly write: () => void;
 }

@@ -1,6 +1,6 @@
 import { refusalOf, watchAwayApplied, type AwayResponderWire } from "./watch-applied.js";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { DatePicker } from "@ohmail/ui";
+import { DatePicker } from "../../calendar/DatePicker.js";
 import {
   AWAY_ANSWERABLE_PILES,
   AWAY_PILE_VIEW,
@@ -137,7 +137,7 @@ function useAwayControls(
     if (wire === NONE) return;
     let current = true;
     alive.current = true;
-    void (wire.initialState?.() ?? wire.state()).then(
+    void wire.state().then(
       (loaded) => {
         if (current) step({ kind: "loaded", row: rowOf(loaded), refused: refusalOf(loaded) });
       },

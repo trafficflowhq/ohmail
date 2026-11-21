@@ -115,7 +115,7 @@ export function useVerbs(
   /* The seam is taken only where an own verb may run: a list's visit runs every verb on the list's path. */
   const press = usePressWhereOn();
   const listMove = useContext(ListMoveContext);
-  const { commands, route } = useFrame();
+  const { commands, host, route } = useFrame();
   const answer = useAnswer();
   const drafter = useDrafter();
   /* The account's resurface hour, as the shell handed it to the room: what the quick return books at. */
@@ -178,6 +178,8 @@ export function useVerbs(
     if (action === "resurface")
       action = `resurface:${resurfaceHorizonsIn(new Date(), hour.stored, readerZone()).tomorrow.iso}`;
     if (!isOwnVerb(action) || press === null) return;
+    if (action === "delete" && host.engine.verbRead().get<EngineMessage>("message", message.id) == null)
+      return;
     if (action === "unread" && !message.unread && own !== null) {
       // The column's own Mark unread: the visit keeps it unread and holds it for the rest of the visit.
       own.onMarkUnread(message.id);

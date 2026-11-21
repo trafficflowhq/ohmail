@@ -191,7 +191,7 @@ describe("a Reads card with several recipients names them in its header", () => 
     expect(b, "the card's header carries no recipients block").toBeTruthy();
     // Inside the head, under the subject — not appended after the body or the pill.
     expect(b!.closest(".oh-messagehead"), "the block is not in the card's head").toBeTruthy();
-    expect(b!.querySelector("[data-recipient-field] > span")!.textContent?.trim()).toBe("To");
+    expect(b!.querySelector("[data-recipient-field] > span")!.textContent?.trim()).toBe("to");
   });
 
   it("names the first two and folds the rest into a count — not a name dropped in silence", () => {
@@ -204,7 +204,7 @@ describe("a Reads card with several recipients names them in its header", () => 
     await mountReads(message(three, [...three].reverse()));
     const rows = [...host!.querySelectorAll<HTMLElement>("[data-recipient-field]")];
     expect(rows.map((r) => recipientButtons(r).length)).toEqual([2, 2]);
-    expect(rows[1]!.querySelector("span")!.textContent?.trim()).toBe("Cc");
+    expect(rows[1]!.querySelector("span")!.textContent?.trim()).toBe("cc");
     expect(within(rows[1]!).getByRole("button", { name: /and 1 other/ })!.textContent).toContain("and 1 other");
   });
 
@@ -221,7 +221,7 @@ describe("a Reads card with several recipients names them in its header", () => 
   it("the German face carries its own count, not the English one", async () => {
     await mountReads(message(three), "de");
     expect(fold()!.textContent).toContain("und 1 weitere");
-    expect(block()!.querySelector("[data-recipient-field] > span")!.textContent?.trim()).toBe("An");
+    expect(block()!.querySelector("[data-recipient-field] > span")!.textContent?.trim()).toBe("an");
   });
 });
 
@@ -275,9 +275,9 @@ describe("the block is mounted, never re-spelled", () => {
   });
 
   it("the card's cap is stated once, as a named constant", () => {
-    const stream = code(readFileSync(repoFile("packages/app/src/reader/Letter.tsx"), "utf8"));
+    const stream = code(readFileSync(repoFile("packages/app/src/reader/LetterHead.tsx"), "utf8"));
     expect(stream).toMatch(/const CARD_RECIPIENT_CHIPS = \d+;/);
-    expect(stream).toContain("max: CARD_RECIPIENT_CHIPS");
+    expect(stream).toContain("max: preview ? CARD_RECIPIENT_CHIPS : 3");
   });
 });
 
@@ -520,16 +520,16 @@ describe("the disclosure names only what it will actually reveal", () => {
 
   it("folded, and neither optional field: it claims the recipients alone", async () => {
     await mountReads(without(message(three), { date: true, folder: true }));
-    expect(ariaOf()).toBe("To Anna Roth, Bo Lind and 1 other. Show every recipient");
+    expect(ariaOf()).toBe("to Anna Roth, Bo Lind and 1 other. Show every recipient");
     expect(fold()!.textContent).toContain("and 1 other");
   });
 
   it("folded with a date only, and with a folder only", async () => {
     await mountReads(without(message(three), { folder: true }));
-    expect(ariaOf()).toBe("To Anna Roth, Bo Lind and 1 other. Show every recipient and the exact date");
+    expect(ariaOf()).toBe("to Anna Roth, Bo Lind and 1 other. Show every recipient and the exact date");
     await unmountAll();
     await mountReads(without(message(three), { date: true }));
-    expect(ariaOf()).toBe("To Anna Roth, Bo Lind and 1 other. Show every recipient and where this message sits");
+    expect(ariaOf()).toBe("to Anna Roth, Bo Lind and 1 other. Show every recipient and where this message sits");
   });
 
   it("nothing behind the press at all: there is no press", async () => {
@@ -589,15 +589,15 @@ describe("the count keeps focus, always folds back, and says what it counts", ()
     const [toCount, ccCount] = within(host!).queryAllByRole("button")
       .filter((button) => button.getAttribute("data-details"));
     expect(toCount!.getAttribute("aria-label")).toBe(
-      "To you, Anna Roth, Bo Lind and 4 others. Show every recipient, the exact date and where this message sits");
+      "to you, Anna Roth, Bo Lind and 4 others. Show every recipient, the exact date and where this message sits");
     expect(ccCount!.getAttribute("aria-label")).toBe(
-      "Cc Anna Roth, Bo Lind, Cy Cole and 3 others. Show every recipient, the exact date and where this message sits");
+      "cc Anna Roth, Bo Lind, Cy Cole and 3 others. Show every recipient, the exact date and where this message sits");
   });
 
   it("the German count says it in German", async () => {
     await mountRecipientLetter(without(message(six), { folder: true }), { locale: "de" });
     host = screen.getByRole("region", { name: de.news.stream.label });
     expect(fold()!.getAttribute("aria-label")).toBe(
-      "An Anna Roth, Bo Lind, Cy Cole und 3 weitere. Alle Empfänger und das genaue Datum anzeigen");
+      "an Anna Roth, Bo Lind, Cy Cole und 3 weitere. Alle Empfänger und das genaue Datum anzeigen");
   });
 });

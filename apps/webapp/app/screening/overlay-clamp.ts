@@ -25,7 +25,7 @@
  * without them degrades to "cap below the point", which still keeps everything reachable.
  */
 import { useLayoutEffect, useState, type CSSProperties, type RefObject } from "react";
-import { cssViewport } from "@ohmail/ui";
+import { cssViewport } from "@ohmail/ui/viewport";
 
 /** Distance from the anchor's edge, matching `placePicker`'s original `+ 8`. */
 export const OVERLAY_GAP = 8;

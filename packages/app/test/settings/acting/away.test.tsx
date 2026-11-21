@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AWAY_START,
@@ -159,6 +159,26 @@ describe("the Away pane", () => {
     expect(seen(away("off"))).toBe(true);
     expect(seen(away("unsavedStillOff"))).toBe(true);
     expect(seen(said("en", "settings", "notSaved"))).toBe(true);
+  });
+
+  it("opens and closes the current reply-pile explanation without moving focus", () => {
+    const edit = vi.fn();
+    drawn(<AwayPane model={model({ edit })} rules={RULES} />);
+    const trigger = screen.getByRole("button", { name: away("never") });
+    const hint = trigger.closest(".away-piles-hint");
+    expect(hint).not.toBeNull();
+    const explanation = Array.from(hint!.children).find((node) => node.tagName === "SPAN");
+    expect(explanation?.textContent).toBe(away("never"));
+    expect(explanation?.hasAttribute("hidden")).toBe(true);
+
+    act(() => trigger.focus());
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(explanation?.hasAttribute("hidden")).toBe(false);
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(explanation?.hasAttribute("hidden")).toBe(true);
+    expect(document.activeElement).toBe(trigger);
+    expect(edit).not.toHaveBeenCalled();
   });
 
   it("asks before a held leave drops the edit", () => {

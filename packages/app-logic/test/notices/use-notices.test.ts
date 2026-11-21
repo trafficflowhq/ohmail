@@ -170,6 +170,22 @@ function callerOf(
 }
 
 describe("the one caller", () => {
+  it("offers an opening target only for a single new unread letter", async () => {
+    const copy = await copyWith("earlier");
+    const { emitter } = recording();
+    const post = vi.spyOn(emitter, "post");
+    const caller = callerOf(emitter);
+    caller.settle("acct", copy, Date.parse(AT));
+    await copy.applyChanges([letter("arrived")]);
+    caller.settle("acct", copy, Date.parse(AT));
+    await copy.applyChanges([letter("in-batch-a"), letter("in-batch-b")]);
+    caller.settle("acct", copy, Date.parse(AT));
+    expect(post.mock.calls.map(([notice, , target]) => [notice, target])).toEqual([
+      [{ kind: "ohbox", count: 1 }, "arrived"],
+      [{ kind: "ohbox", count: 2 }, undefined],
+    ]);
+  });
+
   it("draws nothing for the copy it first sees, then hands the emitter what arrived", async () => {
     const r = recording();
     const caller = callerOf(r.emitter);

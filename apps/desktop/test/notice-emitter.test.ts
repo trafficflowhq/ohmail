@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { aheadAlert, aheadSet, noticeKindsOf, type AheadSet, type MailNotice, type Notice } from "@ohmail/client-engine";
 import { setOsAlerts } from "../src/native.js";
-import { desktopNoticeEmitter, type NoticeShell } from "../src/notice-emitter";
+import { desktopEmitterFor, desktopNoticeEmitter, type NoticeShell } from "../src/notice-emitter";
 
 function shell(state: { focused?: boolean; refuse?: boolean } = {}) {
   const handed: MailNotice[] = [];
@@ -34,6 +34,17 @@ const setOf = (scope: string): AheadSet =>
 
 describe("the window's emitter", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it("hands a single letter's opening separately from the native notice words", async () => {
+    const invoke = vi.fn(async (_name: string, _payload?: unknown) => undefined);
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke, transformCallback: () => 1 });
+    const writer = { document: 2, session: 3 };
+    await expect(desktopEmitterFor(writer).post({ kind: "ohbox", count: 1 }, () => true, "arrived")).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith("notify", {
+      notice: { kind: "ohbox", count: 1 },
+      opening: { ...writer, letter: "arrived" },
+    });
+  });
 
   it("sends each calendar replacement immediately with the frame's captured writer and increasing order", async () => {
     const invoke = vi.fn(async (_name: string, _payload?: unknown, _options?: unknown) => []);

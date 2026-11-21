@@ -8,27 +8,11 @@
 import { act, render, type RenderResult } from "@testing-library/react";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
-import type { LayoutPlan, PaneProps, Route } from "../../../packages/app/src/frame/contract.js";
+import type { PaneProps } from "../../../packages/app/src/frame/contract.js";
 import type { OhboxBeside } from "../../../packages/app/src/ohbox/beside.js";
 import { OhboxAbove } from "../../../packages/app/src/ohbox/OhboxAbove.js";
 import { OhboxList } from "../../../packages/app/src/ohbox/OhboxList.js";
-import { TextProvider, type Messages } from "../../../packages/app/src/text/index.js";
-import ohboxEn from "../../../packages/app/messages/ohbox.en.json" with { type: "json" };
-import sharedEn from "../../../packages/app/messages/shared.en.json" with { type: "json" };
-
-const WORDS = { ...ohboxEn, ...sharedEn } as Messages;
-
-const DESKTOP: LayoutPlan = {
-  size: "expanded",
-  short: false,
-  pointer: "fine",
-  device: "desktop",
-  pose: null,
-  rail: "words",
-  columns: 2,
-  handles: true,
-};
-const ROUTE: Route = { place: "ohbox", sub: null, open: null, stage: null, words: {} };
+import { OhboxListFrame } from "./_ohbox-1-list.js";
 
 /** What the list says beside it: names and stamps as a shell words them, and nothing pressed. */
 const BESIDE: OhboxBeside = {
@@ -48,9 +32,8 @@ const BESIDE: OhboxBeside = {
   go: { screener: () => {}, history: () => {}, mailboxes: () => {}, organize: () => {} },
 };
 
-function Ohbox({ input }: { input: OhboxListInput }) {
+function Ohbox({ input, pane }: { input: OhboxListInput; pane: PaneProps }) {
   const model = useOhboxList(input);
-  const pane: PaneProps = { route: ROUTE, plan: DESKTOP, keysHere: true };
   return (
     <OhboxAbove model={model} beside={BESIDE}>
       <OhboxList {...pane} />
@@ -100,9 +83,7 @@ export function ohboxListRedrawable(over: Partial<OhboxListInput>): {
   redraw: (next: Partial<OhboxListInput>) => Promise<void>;
 } {
   const tree = (input: OhboxListInput) => (
-    <TextProvider locale="en" messages={WORDS} timeZone="UTC">
-      <Ohbox input={input} />
-    </TextProvider>
+    <OhboxListFrame list={(pane) => <Ohbox input={input} pane={pane} />} />
   );
   const view = render(tree(inputOf(over)));
   return {

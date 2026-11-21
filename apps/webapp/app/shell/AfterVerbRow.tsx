@@ -18,7 +18,7 @@ import {
   readAfterVerb,
   writeAfterVerb,
 } from "@ohmail/app-logic/press/after-verb";
-import { useScopeHere } from "@ohmail/app/frame";
+import { useScopeHere } from "@ohmail/app/frame/scope";
 
 export function AfterVerbRow() {
   const t = useTranslations("settings");

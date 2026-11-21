@@ -145,7 +145,13 @@ describe("the counts while the door's copy is behind", () => {
     const el = await render(shell(viewState({ copyBehind: true, screenedOut: 0, spam: 0 }), { segment: "screened", owed: false, storeImportOpen: true }));
     await act(async () => { vi.advanceTimersByTime(LOADING_GRACE_MS + 50); });
     expect(text(el)).not.toContain(NOBODY_SCREENED);
-    expect(text(el)).toContain(en.screener.emptyImporting);
+    const shown = within(el);
+    const importing = shown.getByText(
+      (_, node) => node?.textContent === en.screener.emptyImportingTitle,
+      { selector: ".oh-empty-label" },
+    );
+    const explanation = shown.getByText(en.screener.emptyImportingLine, { exact: true });
+    expect(importing.compareDocumentPosition(explanation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 

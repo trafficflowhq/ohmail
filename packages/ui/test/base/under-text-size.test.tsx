@@ -168,6 +168,31 @@ describe.each(ZOOMS)("at a text size of %s", (zoom) => {
     }
   }, 60_000);
 
+  it("the read squares' tooltip opens on a floating sheet beside its square", async () => {
+    const page = await mount("squares", zoom);
+    try {
+      const square = page.locator('[data-square="0"]');
+      await square.hover();
+      const tip = page.locator(".oh-square-tip");
+      expect(await tip.textContent()).toBe("First message");
+      expect(await tip.evaluate((element) => element.parentElement === document.body)).toBe(true);
+      const card = await tip.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { background: style.backgroundColor, shadow: style.boxShadow };
+      });
+      expect(card.background).toBe("rgb(255, 255, 255)");
+      expect(card.shadow).not.toBe("none");
+      const anchor = (await square.boundingBox())!;
+      const box = (await tip.boundingBox())!;
+      near(box.y, anchor.y + anchor.height + 6 * zoom);
+      near(box.x, anchor.x - 8 * zoom);
+      await page.mouse.move(0, 0);
+      expect(await tip.count()).toBe(0);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
   it.each([
     /* one column from 600 wide (the open Duo held upright is 669 by 951): the sheet keeps a phone's 460 in the middle */
     [600, 951, true],

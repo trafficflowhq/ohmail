@@ -5,6 +5,8 @@
  */
 import { useState } from "react";
 import { formatRecipientLine } from "@ohmail/app-logic/writing/compose-from";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
+import { addressLabels } from "@ohmail/app-logic/writing/recipient-lines";
 import { parseRecipients } from "@ohmail/app-logic/writing/compose";
 import {
   Recipients,
@@ -47,16 +49,32 @@ function linesOf(
   return shown.map((row) => {
     const { chips, tail } = beside.lines.split(rows[row]);
     const bad = new Set(refusedOf(row));
+    const people = chips.map(nameOf);
+    const addresses = people.map((who, at) => {
+      const address = who.address ?? who.name;
+      return bad.has(chips[at]!) ? address : displayAddress(address);
+    });
+    const labels = addressLabels(addresses);
     return {
       id: row,
       label: label[row],
       typed: tail,
-      people: chips.map((entry, at): RecipientPerson => {
-        const who = nameOf(entry);
+      people: people.map((who, at): RecipientPerson => {
+        const entry = chips[at]!;
+        const address = addresses[at]!;
+        const label = labels[at]!;
+        const named = who.address !== undefined && who.name !== who.address;
         return {
           id: personId(row, at, entry),
           name: who.name,
           ...(who.address !== undefined ? { address: who.address } : {}),
+          display: bad.has(entry)
+            ? undefined
+            : {
+                name: named ? who.name : label,
+                address: named ? label : undefined,
+                accessible: named ? `${who.name} ${address}` : address,
+              },
           refused: bad.has(entry) || undefined,
           remove: t("remove", { name: who.name }),
         };
@@ -139,9 +157,11 @@ export function People({
   const t = useText("write");
   const beside = useWriteBeside();
   const [opened, setOpened] = useState(false);
+  const [focused, setFocused] = useState<string | null>(null);
   const shown: readonly RecipientRow[] =
     allOpen === true || opened || rows.cc.trim() !== "" || rows.bcc.trim() !== "" ? ROWS : ["to"];
-  const refusedOf = (row: RecipientRow): string[] => beside.lines.refused(rows[row], true, [...invalid[row]]);
+  const refusedOf = (row: RecipientRow): string[] =>
+    beside.lines.refused(rows[row], focused === row, [...invalid[row]]);
   const refused = ROWS.flatMap(refusedOf);
   const lines = linesOf(shown, rows, refusedOf, beside, t);
   const write = (row: RecipientRow, chips: readonly string[], tail: string): void =>
@@ -162,6 +182,7 @@ export function People({
           ? undefined
           : { label: t("subject"), placeholder: t("subjectPlaceholder"), ...subject }
       }
+      onTypeFocus={(line, hasFocus) => setFocused(hasFocus ? line : null)}
       onType={(line, value) => {
         const row = line as RecipientRow;
         write(row, beside.lines.split(rows[row]).chips, value);

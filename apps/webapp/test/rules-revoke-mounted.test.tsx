@@ -6,14 +6,14 @@ import type { RuleEntity, SyncResponse } from "@ohmail/wire";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import messages from "../messages/en.json";
 import {
-  installConfirmEnv, ISO, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  ACCOUNT, installConfirmEnv, ISO, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
   scriptSync, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
 } from "./fixtures/cloud-confirm-shell";
 
 const R = messages.rules;
 const settings = messages.settings;
 const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...(status < 300 ? { "X-Ohmail-Account": ACCOUNT } : {}) } });
 
 function rule(id: string, destination: RuleEntity["destination"] = "INBOX"): RuleEntity {
   return {
@@ -108,7 +108,7 @@ async function mountedRules({
       await confirmLater;
       const seq = removed.get(item.id) ?? items.length + removed.size + 1;
       removed.set(item.id, seq);
-      return new Response(null, { status: 204, headers: { "x-sync-seq": String(seq) } });
+      return new Response(null, { status: 204, headers: { "X-Ohmail-Account": ACCOUNT, "x-sync-seq": String(seq) } });
     }
     return fixture(input, init);
   };
@@ -275,8 +275,13 @@ describe("bulk revoke acts over the FILTERED set, through the per-rule path", ()
     const dialog = within(screen.getByRole("dialog", { name: "Revoke 2 rules" }));
     const confirm = dialog.getByRole("button", { name: "Revoke 2 rules" });
 
-    rememberOwner("acct_other_rules");
-    await click(confirm);
+    // Hold the competing owner at confirmation. Restore this account before the next
+    // browser poll so the same pane can display the outcome of the refused press.
+    await act(async () => {
+      rememberOwner("acct_other_rules");
+      confirm.click();
+    });
+    rememberOwner();
     await tick(1500);
     expect(mutations).toEqual([]);
     expect(reports()).toContain(R.bulkToastUnsent);
@@ -284,6 +289,10 @@ describe("bulk revoke acts over the FILTERED set, through the per-rule path", ()
     expect(pane.getAllByRole("listitem").map((row) => row.textContent)).toEqual(expect.arrayContaining([
       expect.stringContaining("r1"), expect.stringContaining("r2"),
     ]));
+    rememberOwner("acct_other_rules");
+    await tick(1500);
+    expect(screen.queryByRole("region", { name: settings.rules })).toBeNull();
+    expect(mutations).toEqual([]);
   });
 });
 

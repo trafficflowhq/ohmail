@@ -20,6 +20,8 @@ const SAYS: Readonly<
 
 export interface WayOutPaneProps {
   readonly model: WayOutModel;
+  readonly openLabel?: string;
+  readonly onServer?: boolean;
 }
 
 /**
@@ -27,9 +29,10 @@ export interface WayOutPaneProps {
  * and the reason, said before the press. When this computer started no browser the sheet says so and where the page
  * is, and the verb stays.
  */
-export function WayOutPane({ model }: WayOutPaneProps) {
+export function WayOutPane({ model, openLabel, onServer }: WayOutPaneProps) {
   const t = useText("settings");
   const says = SAYS[model.section];
+  const note = onServer && model.section === "account" ? "webAccountNoteServer" : says.note;
   return (
     <SettingsSheet
       title={t(says.title)}
@@ -37,13 +40,15 @@ export function WayOutPane({ model }: WayOutPaneProps) {
       hot={model.noBrowser}
       aside={
         <Button kind="two" size="s" icon="go" onPress={model.open}>
-          {t("webOpen")}
+          {openLabel ?? t(onServer ? "webOpenServer" : "webOpen")}
         </Button>
       }
     >
-      {model.noBrowser ? <SettingNote warn>{t("webNoBrowser")}</SettingNote> : null}
+      {model.noBrowser ? (
+        <SettingNote warn>{t(onServer ? "webNoBrowserServer" : "webNoBrowser")}</SettingNote>
+      ) : null}
       <SettingNote>{t(says.why)}</SettingNote>
-      {says.note === null ? null : <SettingNote>{t(says.note)}</SettingNote>}
+      {note === null ? null : <SettingNote>{t(note)}</SettingNote>}
     </SettingsSheet>
   );
 }

@@ -44,7 +44,7 @@ export function Reader({ route, plan, keysHere }: PaneProps) {
   const from = tp.has(route.place) ? tp(route.place) : "";
   return (
     <Conversation
-      key={route.open}
+      key={route.wholeThread ? `thread:${route.open}` : route.open}
       route={route}
       openId={route.open}
       phone={plan.device === "phone"}
@@ -110,22 +110,22 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     people,
     columnRoot,
     scroller,
-  } = useConversationColumn(route, openId, keysHere, keyboard);
+    under,
+  } = useConversationColumn(route, openId, keysHere, keyboard, phone);
   const back: ReadingBack = phone
     ? { word: from || undefined, label: from || t("back"), onPress: () => commands.open(null) }
     : undefined;
   /* Only a letter the engine tombstoned is said to be gone; one not here yet is a sheet with nothing said. */
   if (opened === null && state === "gone") return <GoneLetter back={back} />;
   if (opened === null) return <Sheet kind="reading" label={t("pane")} back={back} />;
-  const look = column.wiring?.look ?? "dot";
   const squares =
     messages.length > 1 ? (
       <Squares messages={messages} walk={walk} axis={phone ? "head" : "column"} column={scroller.current} />
     ) : null;
-  const reading = !(column.wiring?.previewing ?? false);
   const latest = phone && messages.length > 1 ? messages.at(-1) : undefined;
   const eachSubject = readSubjectDisplay(host.session.scope) === "each";
   const subject = baseSubject(shown.subject);
+  const dialog = canScreen ? { id: screeningId, open: person?.cardId === screeningId } : undefined;
   return (
     <div
       className="rd-column"
@@ -138,7 +138,9 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     >
       <Sheet
         kind="reading"
+        extendTop={!phone}
         flushFoot
+        manualScrollAnchor={route.wholeThread}
         label={t("pane")}
         back={back}
         top={phone ? squares : undefined}
@@ -146,6 +148,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
         head={
           <RunReadingHead
             run={step}
+            under={under}
             subject={eachSubject ? undefined : shown.subject}
             {...facesOf(messages.length > 1 ? people : [])}
             tags={opened.labels.length > 0 ? <Tags labels={opened.labels} /> : undefined}
@@ -163,9 +166,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             run={step}
             onScreen={canScreen ? screenSender : undefined}
             onScreenKey={canScreen ? screenByKey : undefined}
-            screeningDialog={
-              canScreen ? { id: screeningId, open: person?.cardId === screeningId } : undefined
-            }
+            screeningDialog={dialog}
           />
         }
         jump={messages.length > 1 ? <WayToLatest walk={walk} last={messages.length - 1} /> : undefined}
@@ -184,8 +185,8 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             previewSelection={`${route.place}:${openId}`}
             unread={m.id === openId && visit !== null ? visit.unread : m.unread}
             subject={m === latest ? m.subject || shown.subject : undefined}
-            look={look}
-            reading={reading}
+            look={column.wiring?.look ?? "dot"}
+            reading={!column.wiring?.previewing}
             presented={presentedIds.has(m.id)}
             narrow={narrow}
             onPerson={onPerson}

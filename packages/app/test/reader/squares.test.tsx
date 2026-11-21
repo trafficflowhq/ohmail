@@ -7,7 +7,7 @@ import { READER_DOM, scrollerOf } from "../../src/reader/read-dom.js";
 import { freshRecord, letter, mountReader } from "./support/mail.js";
 
 /**
- * THE SQUARES' WALK in the column: one square a letter beside the sheets; a conversation opens AT the opened letter
+ * THE SQUARES' WALK in the column: one square a letter beside the sheets; a conversation opens AT the first unread letter
  * and stays there while bodies land, until the person's first gesture; a press puts that letter's top on the reading
  * line and holds it until a hand scroll; a wheel beside the sheets scrolls them as the person's own scroll. jsdom lays
  * nothing out: the scroller is 800 tall, each letter's top read live from `tops` against the scroll.
@@ -17,6 +17,7 @@ const thread = { threadId: "t1" };
 const LETTERS = ["a", "b", "c"].map((id, i) =>
   letter(id, { ...thread, date: new Date(Date.UTC(2026, 10, 10 + i, 9)).toISOString() }),
 );
+const unreadFrom = (first: string) => LETTERS.map((m) => ({ ...m, unread: m.id >= first }));
 
 /** The layout a browser would give; change it and call `grow()` as landing bodies would. */
 const geo = { tops: [0, 900, 1800], height: 3000 };
@@ -35,12 +36,12 @@ function rect(top: number, height: number): DOMRect {
   } as DOMRect;
 }
 
-function layOut(): HTMLElement {
+function layOut(letters = LETTERS): HTMLElement {
   const scroller = scrollerOf(document.querySelector(READER_DOM.stopsRoot!))!;
   Object.defineProperty(scroller, "clientHeight", { value: 800, configurable: true });
   Object.defineProperty(scroller, "scrollHeight", { get: () => geo.height, configurable: true });
   scroller.getBoundingClientRect = () => rect(0, 800);
-  LETTERS.forEach((m, i) => {
+  letters.forEach((m, i) => {
     const panel = document.querySelector<HTMLElement>(`[data-conv-id="${m.id}"]`)!;
     panel.getBoundingClientRect = () => rect(geo.tops[i]! - scroller.scrollTop, 800);
   });
@@ -56,11 +57,11 @@ function grow(): void {
 }
 const topOf = (id: string): number =>
   document.querySelector<HTMLElement>(`[data-conv-id="${id}"]`)!.getBoundingClientRect().top;
-const squaresOf = (name = "3 messages, 3 unread") =>
+const squaresOf = (name: string | RegExp = "3 messages, 3 unread") =>
   screen.getByRole("group", { name }).querySelectorAll<HTMLElement>("[data-square]");
 /** The square the ring stands in (the kit draws it inside that square). */
 const ringAt = (): number =>
-  [...squaresOf()].findIndex((sq) => sq.querySelector(".oh-readsquares-ring") !== null);
+  [...squaresOf(/^3 messages,/)].findIndex((sq) => sq.querySelector(".oh-readsquares-ring") !== null);
 
 beforeEach(() => {
   vi.useFakeTimers({
@@ -99,8 +100,8 @@ describe("the squares", () => {
     expect(scroller.scrollTop).toBe(0);
   });
 
-  it("the ring stands on the opened letter once the column is laid out", () => {
-    mountReader({ letters: LETTERS, open: "b" });
+  it("the ring stands on the first unread letter once the column is laid out", () => {
+    mountReader({ letters: unreadFrom("b"), open: "c", wholeThread: true });
     layOut();
     expect(ringAt()).toBe(1);
   });
@@ -143,13 +144,17 @@ describe("a long conversation's squares", () => {
     root.setProperty("--sq-more-y", "16px");
     try {
       const forty = Array.from({ length: 40 }, (_, i) =>
-        letter(`l${i}`, { ...thread, date: new Date(Date.UTC(2026, 10, 1, 8, i)).toISOString() }),
+        letter(`l${i}`, {
+          ...thread,
+          date: new Date(Date.UTC(2026, 10, 1, 8, i)).toISOString(),
+          unread: i === 39,
+        }),
       );
       mountReader({ letters: forty, open: "l39" });
       const scroller = scrollerOf(document.querySelector(READER_DOM.stopsRoot!))!;
       Object.defineProperty(scroller, "clientHeight", { value: 400, configurable: true });
       grow();
-      const group = screen.getByRole("group", { name: "40 messages, 40 unread" });
+      const group = screen.getByRole("group", { name: "40 messages, 1 unread" });
       expect(group.textContent).toMatch(/^\+\d+$/);
       expect(Number(group.textContent!.slice(1))).toBeGreaterThan(10);
       cleanup();
@@ -164,8 +169,8 @@ describe("a long conversation's squares", () => {
 });
 
 describe("the open", () => {
-  it("a conversation opens at the opened letter, not at its oldest, and it stays read-free", () => {
-    const { mail } = mountReader({ letters: LETTERS, open: "c" });
+  it("a conversation can open on its final message if that is the first unread, and it stays read-free", () => {
+    const { mail } = mountReader({ letters: unreadFrom("c"), open: "c" });
     const scroller = layOut();
     expect(scroller.scrollTop).toBeGreaterThan(1000);
     expect(topOf("c")).toBeGreaterThanOrEqual(0);
@@ -175,7 +180,7 @@ describe("the open", () => {
   });
 
   it("opens as today's reader opens: the opened letter's top 14 px under the head that stays over the column", () => {
-    mountReader({ letters: LETTERS, open: "c" });
+    mountReader({ letters: unreadFrom("c"), open: "c" });
     const head = screen.getByRole("heading", { level: 2 }).closest("header")!;
     head.style.position = "sticky";
     head.getBoundingClientRect = () => rect(0, 100);
@@ -183,13 +188,13 @@ describe("the open", () => {
     expect(topOf("c")).toBe(114);
     // Where nothing stays over it, 14 px under the column's top.
     cleanup();
-    mountReader({ letters: LETTERS, open: "b" });
+    mountReader({ letters: unreadFrom("b"), open: "b" });
     layOut();
     expect(topOf("b")).toBe(14);
   });
 
   it("a sibling growing above keeps the opened letter where it stood", () => {
-    mountReader({ letters: LETTERS, open: "c" });
+    mountReader({ letters: unreadFrom("c"), open: "c" });
     layOut();
     const before = topOf("c");
     geo.tops = [0, 1500, 2400];
@@ -199,7 +204,7 @@ describe("the open", () => {
   });
 
   it("a hand scroll lets it go: a body landing after it moves nothing", () => {
-    mountReader({ letters: LETTERS, open: "c" });
+    mountReader({ letters: unreadFrom("c"), open: "c" });
     const scroller = layOut();
     act(() => {
       scroller.scrollTop = 200;
@@ -215,7 +220,7 @@ describe("the open", () => {
     for (const gesture of ["keydown", "pointerdown", "ceiling"] as const) {
       geo.tops = [0, 900, 1800];
       geo.height = 3000;
-      mountReader({ letters: LETTERS, open: "c" });
+      mountReader({ letters: unreadFrom("c"), open: "c" });
       const scroller = layOut();
       const held = scroller.scrollTop;
       act(() => {
@@ -231,9 +236,9 @@ describe("the open", () => {
   });
 
   it("a square's press wins over the anchor", () => {
-    mountReader({ letters: LETTERS, open: "c" });
+    mountReader({ letters: unreadFrom("c"), open: "c" });
     const scroller = layOut();
-    fireEvent.click(squaresOf()[0]!);
+    fireEvent.click(squaresOf("3 messages, 1 unread")[0]!);
     geo.tops = [0, 1500, 2400];
     geo.height = 3600;
     grow();
@@ -257,7 +262,7 @@ describe("the way to the latest message", () => {
   });
 
   it("does not stand where the column is at the end, nor for a single letter", () => {
-    mountReader({ letters: LETTERS, open: "c" });
+    mountReader({ letters: unreadFrom("c"), open: "c" });
     layOut();
     expect(way()).toBeNull();
     cleanup();
@@ -316,5 +321,135 @@ describe("the walk's channel", () => {
     expect(topOf("b")).toBeGreaterThanOrEqual(0);
     expect(topOf("b")).toBeLessThan(400);
     expect(channel.pending).toBeNull();
+  });
+});
+
+function mountThread(count: number, unread: readonly number[]) {
+  const letters = Array.from({ length: count }, (_, i) =>
+    letter(`message-${i + 1}`, {
+      ...thread,
+      date: new Date(Date.UTC(2026, 10, 1, 8, i)).toISOString(),
+      unread: unread.includes(i + 1),
+    }),
+  );
+  geo.tops = letters.map((_, i) => i * 900);
+  geo.height = count * 900;
+  const { mail } = mountReader({ letters, open: letters.at(-1)!.id, wholeThread: true });
+  return { mail, scroller: layOut(letters) };
+}
+
+describe("the read state in the squares", () => {
+  function square(position: number, count: number, state?: "read" | "unread") {
+    const suffix = state ? `.*, ${state}$` : "";
+    return screen.getByRole("button", { name: new RegExp(`^Message ${position} of ${count} ${suffix}`) });
+  }
+
+  it("shows four read and two unread squares and keeps each status in sync with the mirror", () => {
+    const { mail } = mountThread(6, [3, 4]);
+    expect(screen.getByRole("group", { name: "6 messages, 2 unread" })).toBeTruthy();
+    for (const i of [1, 2, 5, 6]) expect(square(i, 6, "read")).toBeTruthy();
+    for (const i of [3, 4]) expect(square(i, 6, "unread")).toBeTruthy();
+    expect(mail.mutations).toEqual([]);
+
+    fireEvent.click(square(3, 6));
+    expect(screen.getByRole("button", { name: /^Message 3 of 6 /, current: true })).toBeTruthy();
+    expect(topOf("message-3")).toBeGreaterThanOrEqual(0);
+    expect(topOf("message-3")).toBeLessThan(400);
+    act(() => mail.patch("message-3", { unread: false }));
+    expect(screen.getByRole("group", { name: "6 messages, 1 unread" })).toBeTruthy();
+    expect(square(3, 6, "read")).toBeTruthy();
+    act(() => mail.patch("message-3", { unread: true }));
+    expect(screen.getByRole("group", { name: "6 messages, 2 unread" })).toBeTruthy();
+    expect(square(3, 6, "unread")).toBeTruthy();
+  });
+
+  it("lets the keyboard reach either end of a 60-message thread through the squares", () => {
+    const root = document.documentElement.style;
+    const tokens = { "--sq-y": "10px", "--sq-y-gap": "8px", "--sq-more-y": "16px" };
+    for (const [name, value] of Object.entries(tokens)) root.setProperty(name, value);
+    try {
+      const { scroller } = mountThread(60, [29, 30]);
+      fireEvent.click(square(59, 60));
+      expect(square(59, 60).getAttribute("aria-current")).toBe("true");
+      fireEvent.keyDown(square(59, 60), { key: "End" });
+      expect(document.activeElement).toBe(square(60, 60));
+      fireEvent.keyDown(square(60, 60), { key: "Enter" });
+      expect(square(60, 60).getAttribute("aria-current")).toBe("true");
+      fireEvent.keyDown(square(60, 60), { key: "Home" });
+      expect(document.activeElement).toBe(square(1, 60));
+      fireEvent.keyDown(square(1, 60), { key: "Enter" });
+      expect(scroller.scrollTop).toBe(0);
+      expect(square(1, 60).getAttribute("aria-current")).toBe("true");
+    } finally {
+      for (const name of Object.keys(tokens)) root.removeProperty(name);
+    }
+  });
+});
+
+describe("reading a thread from the squares", () => {
+  it("starts at the first unread message and updates each square as that message is read and marked unread", () => {
+    const { mail } = mountThread(6, [3, 4]);
+    const group = () => screen.getByRole("group", { name: /^6 messages/ });
+    const square = (position: number) =>
+      screen.getByRole("button", { name: new RegExp(`^Message ${position} of 6 `) });
+    expect(group().getAttribute("aria-label")).toBe("6 messages, 2 unread");
+    expect([1, 2, 3, 4, 5, 6].map((i) => square(i).getAttribute("aria-label")?.split(", ").at(-1))).toEqual([
+      "read",
+      "read",
+      "unread",
+      "unread",
+      "read",
+      "read",
+    ]);
+    expect(topOf("message-3")).toBe(14);
+    expect(square(3).getAttribute("aria-current")).toBe("true");
+    expect(mail.mutations).toEqual([]);
+
+    act(() => mail.patch("message-3", { unread: false }));
+    grow();
+    expect(group().getAttribute("aria-label")).toBe("6 messages, 1 unread");
+    expect(square(3).getAttribute("aria-label")).toMatch(/, read$/);
+    expect(topOf("message-3")).toBe(14);
+    act(() => mail.patch("message-3", { unread: true }));
+    expect(group().getAttribute("aria-label")).toBe("6 messages, 2 unread");
+    expect(square(3).getAttribute("aria-label")).toMatch(/, unread$/);
+    fireEvent.click(square(4));
+    expect(square(4).getAttribute("aria-current")).toBe("true");
+    expect(topOf("message-4")).toBeGreaterThanOrEqual(0);
+    expect(topOf("message-4")).toBeLessThan(400);
+  });
+
+  it("starts at the top of an all-read thread", () => {
+    const { scroller, mail } = mountThread(6, []);
+    expect(scroller.scrollTop).toBe(0);
+    expect(screen.getByRole("button", { name: /^Message 1 of 6 /, current: true })).toBeTruthy();
+    expect(mail.mutations).toEqual([]);
+  });
+
+  it("starts at the first unread message of 60 and can navigate to either end by square", () => {
+    const root = document.documentElement.style;
+    const tokens = { "--sq-y": "10px", "--sq-y-gap": "8px", "--sq-more-y": "16px" };
+    for (const [name, value] of Object.entries(tokens)) root.setProperty(name, value);
+    try {
+      const { scroller, mail } = mountThread(60, [29, 30]);
+      expect(topOf("message-29")).toBe(14);
+      const square = (position: number) =>
+        screen.getByRole("button", { name: new RegExp(`^Message ${position} of 60 `) });
+      const current = square(29);
+      expect(current.getAttribute("aria-current")).toBe("true");
+      expect(screen.getByRole("group", { name: "60 messages, 2 unread" }).textContent).toMatch(
+        /^\+\d+\+\d+$/,
+      );
+      expect(mail.mutations).toEqual([]);
+      fireEvent.keyDown(current, { key: "End" });
+      fireEvent.keyDown(square(60), { key: "Enter" });
+      expect(square(60).getAttribute("aria-current")).toBe("true");
+      fireEvent.keyDown(square(60), { key: "Home" });
+      fireEvent.keyDown(square(1), { key: "Enter" });
+      expect(scroller.scrollTop).toBe(0);
+      expect(square(1).getAttribute("aria-current")).toBe("true");
+    } finally {
+      for (const name of Object.keys(tokens)) root.removeProperty(name);
+    }
   });
 });

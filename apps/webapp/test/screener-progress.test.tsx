@@ -69,16 +69,23 @@ describe("the apply-all run's progress", () => {
 
   it("the Apply verb carries the run and refuses a second press while it is on", () => {
     const applyAll = vi.fn();
-    const gate = { suggestedCount: 3, suggestedDests: ["ohbox", "reads"], applyAll } satisfies Partial<ScreenerState>;
+    const suggested = [
+      sender("one", "One", { ai: { dest: "ohbox" } }),
+      sender("two", "Two", { ai: { dest: "reads" } }),
+      sender("three", "Three", { ai: { dest: "reads" } }),
+    ];
+    const gate = {
+      waiting: suggested, waitingCount: suggested.length, suggestedCount: 3, suggestedDests: ["ohbox", "reads"], applyAll,
+    } satisfies Partial<ScreenerState>;
     const world = mount({ ...gate, applying: { done: 7, total: 40 } });
-    const apply = screen.getByRole<HTMLButtonElement>("button", { name: /^Apply 3/ });
-    expect(apply.disabled).toBe(true);
-    expect(apply.getAttribute("aria-busy")).toBe("true");
-    fireEvent.click(apply);
+    const progress = screen.getByText("Applying 7 of 40…");
+    expect(progress.getAttribute("role")).toBe("status");
+    expect(screen.queryByRole("button", { name: "Apply 3 — Ohbox & News" })).toBeNull();
+    fireEvent.click(progress);
     expect(applyAll).not.toHaveBeenCalled();
 
-    world.again(modelOf({ flushes: 0 }, { waiting: QUEUE, waitingCount: QUEUE.length, ...gate, applying: null }));
-    const idle = screen.getByRole<HTMLButtonElement>("button", { name: /^Apply 3/ });
+    world.again(modelOf({ flushes: 0 }, { ...gate, applying: null }));
+    const idle = screen.getByRole<HTMLButtonElement>("button", { name: "Apply 3 — Ohbox & News" });
     expect(idle.disabled).toBe(false);
     expect(idle.getAttribute("aria-busy")).toBeNull();
     fireEvent.click(idle);

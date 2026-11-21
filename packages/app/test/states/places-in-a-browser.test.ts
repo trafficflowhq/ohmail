@@ -64,10 +64,14 @@ async function look(key: string, lang: "en" | "de"): Promise<{ stood: boolean; f
     await page.evaluate(() => {
       document.documentElement.style.setProperty("zoom", "1.5");
     });
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
     await page.waitForTimeout(300);
     const faults = await page.evaluate((keyPattern) => {
       const out: { at: string; said: string }[] = [];
       const shownKey = new RegExp(keyPattern);
+      const history = new URLSearchParams(location.search).get("screen") === "history";
       const all = [...document.body.querySelectorAll<HTMLElement>("*")];
       for (const [i, el] of all.entries()) {
         if (el.tagName === "svg" || el.closest("svg") || el.closest("iframe")) continue;
@@ -76,8 +80,14 @@ async function look(key: string, lang: "en" | "de"): Promise<{ stood: boolean; f
         const cs = getComputedStyle(el);
         const clips = cs.textOverflow === "ellipsis" || cs.overflowX === "hidden" || cs.overflowX === "clip";
         const words = el.textContent!.trim().slice(0, 60);
-        if (el.scrollWidth > el.clientWidth + 1 && cs.display !== "inline")
-          out.push({ at: `wide#${i}`, said: `${clips ? "cut" : "overflows"}: "${words}"` });
+        if (el.scrollWidth > el.clientWidth + 1 && cs.display !== "inline") {
+          // History's byline keeps the timestamp and uses an ellipsis only while enough of the address fits.
+          const byline = history && el.classList.contains("oh-row-address") && cs.textOverflow === "ellipsis";
+          const aboveFloor = el.clientWidth >= Math.max(96, el.scrollWidth * 0.6);
+          if (byline && !aboveFloor)
+            out.push({ at: `byline#${i}`, said: "a History address is clipped below its fit floor" });
+          if (!byline) out.push({ at: `wide#${i}`, said: `${clips ? "cut" : "overflows"}: "${words}"` });
+        }
         if (shownKey.test(el.textContent!)) out.push({ at: `key#${i}`, said: `key shown: "${words}"` });
       }
       for (const el of document.body.querySelectorAll<HTMLElement>(
@@ -181,10 +191,17 @@ describe("the places' states, each drawn", () => {
       ] as const) {
         if (!side.stood) found.push(`${key} ${lang}: nothing stood`);
         for (const f of side.faults)
-          if (f.at === "error" || f.at.startsWith("key#")) found.push(`${key} ${lang}: ${f.said}`);
+          if (f.at === "error" || f.at.startsWith("key#") || f.at.startsWith("byline#"))
+            found.push(`${key} ${lang}: ${f.said}`);
       }
       for (const f of de.faults)
-        if (!english.has(f.at) && f.at !== "error" && !f.at.startsWith("key#") && !(f.said in DECLARED))
+        if (
+          !english.has(f.at) &&
+          f.at !== "error" &&
+          !f.at.startsWith("key#") &&
+          !f.at.startsWith("byline#") &&
+          !(f.said in DECLARED)
+        )
           found.push(`${key} de: ${f.said}`);
     }
     expect(found).toEqual([]);

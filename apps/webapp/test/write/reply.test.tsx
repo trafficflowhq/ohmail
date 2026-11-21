@@ -95,7 +95,10 @@ describe("the reply's sheet", () => {
     expect(screen.getByRole("region", { name: W.reply.label.replace("{name}", "The colleague") })).toBeTruthy();
     expect(screen.getByText("The colleague")).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: W.to })).toBeNull();
-    expect(sendButton().disabled).toBe(true);
+    expect(sendButton().getAttribute("aria-disabled")).toBe("true");
+    expect(sendButton().title).toBe(en.compose.needContent);
+    await act(async () => { fireEvent.click(sendButton()); });
+    expect(sends(w)).toEqual([]);
     await write(W.reply.text, "Noon works for me.");
     w.sendGate.wait = new Promise(() => undefined);
     await act(async () => {
@@ -301,7 +304,7 @@ describe("draft reply in one press", () => {
   it("where drafting is not charged, no price is said", async () => {
     const d = drafter();
     await open("reply", [message("m1")], ["m1"], { draftWire: d.wire, metered: false });
-    expect(draftButton(W.draft.verb).title).toBe(W.draft.verb);
+    expect(draftButton(W.draft.verb).title).toBe(en.draftReply.offerBodyUnmetered);
     expect(document.body.textContent).not.toContain("credits");
   });
 

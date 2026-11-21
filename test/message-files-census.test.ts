@@ -50,6 +50,7 @@ const PHONE: Door = {
 /** `file#Component` → why that mount shows no files. */
 const NO_FILES: Record<string, string> = {
   "packages/letter-body/src/MessageBody.tsx#MessageBody": "the viewer itself; every host that mounts it is held here",
+  "packages/app/src/reader/entry.tsx#PreviewBody": "the collapsed stream preview only; an expanded card goes through OpenCard to Letter and its strip",
   "packages/app/src/reader/body/LetterBody.tsx#LetterBody": "the body the hosts hand the reader; the letter that draws it draws the strip",
   "apps/mobile/src/ui/MailBodyFrame.tsx#MailBodyFrame": "the reader's frame; its host, MessageReader, draws the tiles",
   "apps/mobile/src/ui/DraftReader.tsx#DraftReader": "the person's own unsent draft; its files are the composer's",
@@ -155,6 +156,7 @@ describe("web and desktop: every body mount draws MessageFiles, or is named", ()
     expect(hosts(mounts)).toEqual([
       "packages/app/src/reader/Letter.tsx#Letter",
       "packages/app/src/reader/body/LetterBody.tsx#LetterBody",
+      "packages/app/src/reader/entry.tsx#PreviewBody",
       HEADER_NOTICE,
       "packages/app/src/screener/held/HeldLetter.tsx#HeldLetterContent",
       "packages/letter-body/src/MessageBody.tsx#MessageBody",

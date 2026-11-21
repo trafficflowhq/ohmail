@@ -18,7 +18,7 @@ const frame = vi.hoisted(() => ({
 
 vi.mock("@ohmail/app-logic/consent", () => ({ useConsent: () => frame.consent }));
 vi.mock("@ohmail/app-logic/engine", () => ({ useDemoMode: () => false }));
-vi.mock("../../src/frame/index.js", () => ({
+vi.mock("../../src/frame/commands.js", () => ({
   useFrame: () => ({ host: { session: frame.session, device: { build: frame.build } } }),
 }));
 vi.mock("../../src/text/index.js", () => ({ useText: () => (key: string) => key }));

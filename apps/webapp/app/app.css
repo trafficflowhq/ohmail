@@ -5680,14 +5680,12 @@ input.set-tag-input {
      `stream.css`) — the card's action pill is sticky against the scrollport, and bottom padding
      would push its resting edge up by exactly that much. So the phone's value goes to the
      variable the spacer is sized from, and the padding here stays 0. */
-  /* The sending pill's height (`--send-pill-h`, 0 when it is not drawn) joins the reservation, so
-     the last row or control rests clear of it at scroll end. */
   .view .stream {
     padding: 0 6px 0;
-    --stream-tail: calc(48px + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
+    --stream-tail: calc(48px + env(safe-area-inset-bottom, 0px));
   }
   .view .scroller {
-    padding-bottom: calc(48px + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
   }
   /* The sent-mail seed review scrolls the whole card (`.view-seed { overflow:auto }`), and its
      Confirm / Not now actions sit at the bottom of it. */

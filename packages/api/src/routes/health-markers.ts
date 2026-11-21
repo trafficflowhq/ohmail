@@ -890,6 +890,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the column at every read (`materializeSettings`: the snapshot's first page and every settings change of the
   // feed), so a host ahead of the migration 42703s on each. Deploy order migration, then the API.
   ["devices", "revoked_at"],
+  // The calendar feed and export read this column to keep availability identities stable.
+  ["cal_calendars", "availability_key"],
 ] as const;
 
 /**
@@ -1327,7 +1329,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0212_devices_revoked_at";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0213_calendar_availability_identity";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

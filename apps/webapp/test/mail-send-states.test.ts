@@ -1699,14 +1699,12 @@ describe("the row the composer is holding decides too, not only the jar", () => 
       + "have been delivered",
     ).toBe(true);
 
-    const verbs = within(resolveBox()!).getAllByRole<HTMLElement>("button");
-    const arrived = verbs.find((b) => (b.textContent ?? "").trim() === messages.drafts.heldItWasSent);
-    const not = verbs.find((b) => (b.textContent ?? "").trim() === messages.drafts.sendAgain);
-    expect(arrived, "the editor lost the arrived verb").toBeDefined();
-    expect(not, "the editor lost the did-not-arrive verb").toBeDefined();
+    const choices = within(resolveBox()!);
+    const arrived = choices.getByRole("button", { name: messages.write.held.itWasSent });
+    const not = choices.getByRole("button", { name: messages.drafts.sendAgain });
 
-    await act(async () => { not!.click(); });
-    await act(async () => { arrived!.click(); });
+    await act(async () => { not.click(); });
+    await act(async () => { arrived.click(); });
     expect(
       heldAnswers,
       "the editor's verbs report the wrong row or the wrong outcome — the reader's answer is "

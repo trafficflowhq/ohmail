@@ -13,6 +13,8 @@ import type { SendLineItem, SentCopyNote } from "@ohmail/app-logic/writing/mail-
 import { shellMessagesOnly } from "../vite.config.js";
 import { SettingsMenu } from "../../../packages/app/src/settings/SettingsMenu.js";
 import { paneOf } from "../../../packages/app/src/settings/facts.js";
+import { NotificationsPane, notificationsState } from "@ohmail/app/settings/notifications";
+import { noticeChoicesOf } from "@ohmail/client-engine";
 import { fillOver, TextProvider, useTextLookup, type Messages } from "../../../packages/app/src/text/index.js";
 
 /**
@@ -93,6 +95,26 @@ describe("the desktop's Settings catalogue", () => {
       try {
         const expected = (locale === "de" ? de : en).settingsMenu.desktop;
         expect(buttonNamed(window.document.body, expected)).toBeDefined();
+      } finally {
+        window.close();
+      }
+    });
+
+    it(`names the Calendar notification switches in ${locale} with the catalogue the window ships`, () => {
+      const model = { ...notificationsState(), carries: ["cal_alert"] as const };
+      const html = renderToStaticMarkup(h(TextProvider, {
+        locale, messages: DESKTOP[locale], timeZone: "UTC",
+        children: h(NotificationsPane, {
+          model,
+          calendar: { choices: noticeChoicesOf(null, null, {}), set: () => undefined },
+        }),
+      }));
+      const { window } = new JSDOM(html);
+      try {
+        const switches = Array.from(window.document.querySelectorAll('[role="switch"]'));
+        const labels = switches.map((control) => control.getAttribute("aria-label"));
+        const expected = (locale === "de" ? de : en).settingsNotifications;
+        expect(labels).toEqual(expect.arrayContaining([expected.alert, expected.showTitles]));
       } finally {
         window.close();
       }

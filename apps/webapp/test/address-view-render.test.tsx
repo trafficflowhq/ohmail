@@ -165,10 +165,11 @@ describe("the search result row — the address is printed, and it is the contro
   it("prints the name on line one and the address on line two, linked to the address view", async () => {
     await results();
     const result = hit("a");
-    expect(within(result).getByText("Anna Berg")).toBeTruthy();
+    const name = within(result).getByText("Anna Berg");
     const link = within(result).queryByRole("link", { name: anna });
     expect(link, "line two is the address, as a link").not.toBeNull();
-    expect(result.querySelector(".oh-row-first")?.contains(link)).toBe(false);
+    expect(link!.parentElement).toBe(name.parentElement);
+    expect(name.nextElementSibling).toBe(link);
     expect(link!.getAttribute("href")).toBe(addressHref(anna));
   });
 
@@ -187,8 +188,8 @@ describe("the search result row — the address is printed, and it is the contro
     const link = within(hit("a")).queryByRole("link", { name: anna });
     expect(link?.getAttribute("href")).toBe(addressHref(anna));
     await click(link);
-    expect(window.location.hash).toBe(addressHref(anna));
-    expect(window.location.hash).not.toContain("/m/");
+    expect(window.location.hash).toBe(`${addressHref(anna)}/m/a`);
+    expect(await screen.findByRole("heading", { name: "Anna Berg" })).toBeTruthy();
   });
 });
 
@@ -231,10 +232,10 @@ describe("the address view — header, toggle, count line, rows", () => {
   it("with no archive behind the client, the count line says so beside the device's number", async () => {
     const engine = await withReply();
     await mountAddress(engine);
-    const scope = within(host!).getByText(/2 recent/);
+    const scope = within(host!).getByText("2 recent").closest("p")!;
     expect(scope.textContent).toContain("2 recent");
     expect(scope.textContent).toContain(messages.search.scopeNoArchive);
-    // A sentence, not a phrase: it stands on its own line rather than after a separator.
+    // The scope is a complete sentence with its own text element beside the count.
     expect(within(host!).queryByText(messages.search.scopeNoArchive, { exact: true })).not.toBeNull();
     expect(scope.textContent).not.toContain("showing the first");
   });
@@ -323,10 +324,8 @@ describe("the archive's half — by sender under All, the named line under To th
     expect(scope.textContent).toContain("7 in your whole mailbox (by sender)");
     // The archive holds 7 and returned 2 — a page. Said, in Search's own words.
     expect(scope.textContent).toContain("showing the first 2");
-    // The caveat's sentence rides a gloss — a real button whose name IS the sentence.
-    const gloss = within(host!).queryByRole("button", { name: messages.search.addressArchiveBySenderWhy });
-    expect(gloss).not.toBeNull();
-    expect(gloss!.getAttribute("aria-label")).toBe(messages.search.addressArchiveBySenderWhy);
+    const caveat = within(host!).getByText(messages.search.addressArchiveBySenderWhy, { exact: true });
+    expect(caveat.closest("p")).not.toBe(scope.closest("p"));
 
     const rows = addressRows("All");
     expect(rows.map((r) => r.getAttribute("data-id"))).toEqual(["jonas", "older-1"]);
@@ -337,7 +336,7 @@ describe("the archive's half — by sender under All, the named line under To th
     // From them; the device's zero under To them.
     const directions = within(host!).getByRole("group", { name: "Direction" });
     const segs = within(directions).getAllByRole("button").map((button) => button.textContent);
-    expect(segs).toEqual(["All2", "From them2", "To them0"]);
+    expect(segs).toEqual(["All 2", "From them 2", "To them 0"]);
   });
 
   it("To them: the archive slot is the named line, no archive row is listed, the empty state names the address", async () => {
@@ -351,14 +350,15 @@ describe("the archive's half — by sender under All, the named line under To th
     expect(within(host!).queryAllByRole("option")).toHaveLength(0);
     expect(text()).not.toContain("from the archive");
 
-    const empty = within(host!).getByText(`Nothing sent to ${JONAS}.`, { exact: true });
+    const empty = within(host!).getByText((_, el) =>
+      el?.tagName === "P" && el.textContent === `Nothing sent to ${JONAS}.`);
     expect(empty.textContent).toBe(`Nothing sent to ${JONAS}.`);
     const count = within(host!).getByText(/0 recent/);
     expect(count.textContent).toContain("0 recent");
     expect(count.textContent).toContain("your whole mailbox cannot be searched by recipient yet");
     expect(count.textContent).not.toContain("in your whole mailbox (by sender)");
-    const gloss = within(host!).queryByRole("button", { name: messages.search.addressArchiveNoRecipientsWhy });
-    expect(gloss!.getAttribute("aria-label")).toBe(messages.search.addressArchiveNoRecipientsWhy);
+    const caveat = within(host!).getByText(messages.search.addressArchiveNoRecipientsWhy, { exact: true });
+    expect(caveat.closest("p")).not.toBe(count.closest("p"));
   });
 
   it("From them: the archive covers the direction, so the number is plain", async () => {
@@ -398,7 +398,7 @@ describe("the archive's half — by sender under All, the named line under To th
 
     const legacy = await archiveThatRefusesOnce();
     await mountAddress(legacy.engine);
-    const legacyScope = within(host!).getByText(/1 recent/);
+    const legacyScope = within(host!).getByText("1 recent").closest("p")!;
     expect(legacyScope.textContent).toContain("1 recent");
     expect(legacyScope.textContent).toContain(messages.search.scopeUnanswered);
     expect(within(host!).queryByText(messages.search.scopeUnanswered, { exact: true })).not.toBeNull();
@@ -406,7 +406,7 @@ describe("the archive's half — by sender under All, the named line under To th
     const { engine, attempts } = await archiveThatRefusesOnce();
     await mountAddress(engine);
     const scope = within(host!);
-    const failure = scope.getByText(messages.search.scopeUnanswered, { exact: false });
+    const failure = scope.getByText(messages.search.scopeUnanswered, { exact: true }).closest("p")!;
     expect(failure.textContent).toContain("1 recent");
     expect(failure.textContent).toContain(messages.search.scopeUnanswered);
     expect(scope.queryByRole("alert")).toBeNull();

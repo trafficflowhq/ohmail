@@ -41,6 +41,7 @@ import { MailGround, mailReader, NO_PANE_PARTS, NO_STAGE_PARTS, useMailSupplies,
 import { letterBody } from "@ohmail/app/reader/body";
 /* The ground's mounts one by one, by path: the ground stands them inside `MailGround`; the second entry
    `@ohmail/app/mail/ground` leaves with the switch. */
+import { DoorsMount } from "../../../../packages/app/src/mail/ground/DoorsMount.js";
 import { ConsentMount } from "../../../../packages/app/src/mail/ground/ConsentMount.js";
 import { MailStateMount } from "../../../../packages/app/src/mail/ground/MailStateMount.js";
 import { PresentedMount } from "../../../../packages/app/src/mail/ground/PresentedMount.js";
@@ -872,7 +873,7 @@ const writingPlaces = (mount: "above every place" | "with this place's body"): P
  * The Screener's model stands above it, as `MailGround` has it: the composer's price reads the Screener's standing.
  */
 function GroundWithNoComposer({ children }: { readonly children: ReactNode }): ReactNode {
-  return h(MailStateMount, null, h(ConsentMount, null, h(PresentedMount, null, h(ScreenerMount, null, children))));
+  return h(MailStateMount, null, h(ConsentMount, null, h(PresentedMount, null, h(DoorsMount, null, h(ScreenerMount, null, children)))));
 }
 function StoodOverTheGround({ engine, places, above }: {
   engine: OhmailEngine; places: Places; above: (props: { readonly children: ReactNode }) => ReactNode;

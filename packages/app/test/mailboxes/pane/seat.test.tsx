@@ -755,21 +755,17 @@ describe("the section's notices, in the frame's slot", () => {
   });
 
   it.each([
-    { state: "stopped", holder: "Office · stopped", unknown: "stopped", rest: 1, count: "1 other mailbox" },
+    { state: "stopped", holder: "Office · stopped", unknown: "stopped", total: 4 },
     {
       state: "held",
       holder: "Office",
       unknown: "another ohmail install",
-      rest: 2,
-      count: "2 other mailboxes",
+      total: 5,
     },
   ] as const)(
-    "names up to three mailboxes when their organizer is $state and opens the full roster",
-    async ({ state, holder, unknown, rest, count }) => {
-      const addresses = [A, B, ...[3, 4, 5].map((n) => A.replace(/^[^@]+/, `mailbox${n}`))].slice(
-        0,
-        3 + rest,
-      );
+    "shows the count when the organizer is $state and opens the full roster",
+    async ({ state, holder, unknown, total }) => {
+      const addresses = [A, B, ...[3, 4, 5].map((n) => A.replace(/^[^@]+/, `mailbox${n}`))].slice(0, total);
       const idOf = (index: number) => `mailbox-${index}`;
       const facts = addresses.map((address, index) =>
         fact(idOf(index), address, {
@@ -794,19 +790,27 @@ describe("the section's notices, in the frame's slot", () => {
 
       const notice = screen.getByRole("button", { name: M.noticeDismiss }).closest('[role="status"]')!;
       expect(notice.textContent).toContain(
-        `${A} · ${holder}, ${B} · ${unknown}, ${addresses[2]} · ${holder} and ${count}.`,
+        state === "stopped"
+          ? `${total} mailboxes are no longer being organized.`
+          : `${total} mailboxes are organized elsewhere now.`,
       );
-      for (const address of addresses.slice(3)) expect(notice.textContent).not.toContain(address);
+      for (const address of addresses) expect(notice.textContent).not.toContain(address);
 
       press(M.noticeDismiss);
       await answered();
-      expect(notice.textContent).toContain(`${addresses[2]} · ${holder} and ${count}.`);
       expect(notice.textContent).toContain(M.noticeDismissOffline);
 
-      fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: M.noticeOpenMailboxes }));
-      await answered();
-      expect(made.address.read()).toBe("#/settings/mailboxes");
-      for (const address of addresses) expect(rowOf(address)).toBeTruthy();
+      fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: M.noticeCountShow }));
+      const roster = screen.getByRole("dialog");
+      expect(
+        within(roster)
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+      ).toEqual(addresses.map((address, index) => `${address} · ${index === 1 ? unknown : holder}`));
+      expect(roster.textContent).toContain(M.noticeDismissOffline);
+      fireEvent.click(within(roster).getByRole("button", { name: "Close" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(made.address.read()).toBe("#/ohbox");
       expect(acknowledge).toHaveBeenCalledTimes(addresses.length);
     },
   );
@@ -826,7 +830,7 @@ describe("the section's notices, in the frame's slot", () => {
     { door: "without the list wire", capability: "here", settings: SETTINGS, wire: NONE },
     { door: "without mailbox capability", capability: NONE, settings: SETTINGS, wire: fakePane().wire },
   ] as const)(
-    "keeps an uninspectable group pending on a host that is $door",
+    "keeps a group pending until inspected on a host that is $door",
     async ({ door, capability, settings, wire }) => {
       const rows = [A, B, ...[3, 4].map((n) => A.replace(/^[^@]+/, `mailbox${n}`))].map((address, index) =>
         fact(`mailbox-${index}`, address, {
@@ -851,9 +855,18 @@ describe("the section's notices, in the frame's slot", () => {
       const notice = screen
         .getByText(/4 mailboxes are organized elsewhere/)
         .closest('[role="status"]') as HTMLElement;
-      expect(notice.textContent).toContain("1 other mailbox.");
+      for (const row of rows) expect(notice.textContent).not.toContain(row.address);
       expect(within(notice).queryByRole("button", { name: M.noticeOpenMailboxes })).toBeNull();
       expect(within(notice).queryByRole("button", { name: M.noticeDismiss })).toBeNull();
+      expect(acknowledge).not.toHaveBeenCalled();
+      fireEvent.click(within(notice).getByRole("button", { name: M.noticeCountShow }));
+      const roster = screen.getByRole("dialog");
+      expect(
+        within(roster)
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+      ).toEqual(rows.map((row) => `${row.address} · Office`));
+      expect(within(roster).getByRole("button", { name: M.noticeDismiss })).toBeTruthy();
       expect(acknowledge).not.toHaveBeenCalled();
     },
   );

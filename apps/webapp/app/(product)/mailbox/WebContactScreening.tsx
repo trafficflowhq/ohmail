@@ -26,8 +26,7 @@ import {
   FOLDER_OF_VIEW, PRESS_VISIBLE_ROWS, autoUnsubscribeConfirms, consentPartition, inverseMutations, outrankCoveringDomains,
   pressForecast, pressGained, pressRuleId, ruleFingerprint, rulesInPlay, rulesList, senderKey, unsubscribeClaim, unsubscribeLetterOf, type PressForecast,
 } from "@ohmail/client-engine";
-import { cssRect } from "@ohmail/ui";
-import { MenuItem } from "@ohmail/ui/base";
+import { cssRect, MenuItem } from "@ohmail/ui/base";
 import type { EngineMessage } from "@ohmail/wire";
 import { usePileNames } from "../../shell/decision-copy";
 import { SenderAuditPanel } from "../../screening/SenderAuditPanel";

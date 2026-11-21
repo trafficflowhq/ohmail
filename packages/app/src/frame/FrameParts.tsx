@@ -216,7 +216,7 @@ export function FrameParts({
   const docks = { feed: inner.rail, places: host.features.places, route, commands };
   const rails = { ...docks, foot: inner.foot };
   /* On a phone's width a letter stands open over the list or the wide pane: no dock stands at the foot then. */
-  const letterUp = plan.rail === "dock" && (route.open !== null || holds);
+  const letterUp = plan.columns === 1 && (route.open !== null || holds);
   const sheet = railOpen && plan.rail !== "words";
   const active = !staged && !held && over === null;
   /* A letter stands over its list: one column, a reading column drawn, a letter named. Its Escape is the frame's. */
@@ -263,7 +263,7 @@ export function FrameParts({
       <NoticeMore store={inner.notices} />
       {calendar && active ? <ProductKeys /> : null}
       {!inCalendar ? <PlaceChords places={host.features.places} go={commands.go} /> : null}
-      {letterOver ? <LetterOverKeys close={() => commands.open(null)} /> : null}
+      {letterOver ? <LetterOverKeys close={() => commands.open(null)} push={plan.ribbon === "push"} /> : null}
       {letterBeside ? <LetterBesideClose close={() => commands.open(null, "replace")} /> : null}
       <RailKeys side={plan.rail === "words"} up={railOpen} put={commands.rail} />
       <div

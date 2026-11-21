@@ -19,11 +19,14 @@ import type { CalendarSuggestionRecord } from "@ohmail/app-logic/calendar/found"
 import calendarEn from "../../messages/calendar.en.json" with { type: "json" };
 import eventEn from "../../messages/event.en.json" with { type: "json" };
 import frommailEn from "../../messages/frommail.en.json" with { type: "json" };
+import receiptsEn from "../../messages/receipts.en.json" with { type: "json" };
 import { calendar } from "../../src/calendar/entry.js";
 import { Frame } from "../../src/frame/Frame.js";
 import type { CalendarEntry } from "../../src/frame/contract.js";
 import { fromMailPlace } from "../../src/frommail/index.js";
+import { MailGround, mailPlaces } from "../../src/mail/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
+import { fakeMail, letter } from "../reader/support/fake-mail.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, type FakeAddress } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
@@ -235,6 +238,60 @@ describe("From mail", () => {
     expect(screen.queryByText("Dinner at mine")).toBeNull();
     expect(screen.queryByText("Court booking")).toBeNull();
     expect(screen.queryByText(/Dinner at mine on Friday/)).toBeNull();
+  });
+
+  it.each(["sentence", "sentence_model"])(
+    "keeps a %s finding hidden when opened by its link",
+    async (evidence) => {
+      const m = mirror({ newEventsCalendarId: null });
+      m.put("calendar", "cal-1", cal("cal-1"));
+      m.put("calendar_suggestion", "found", found("found", "Workshop", evidence));
+      mount(m, "#/cal/from-mail/e/found");
+      await settle();
+      expect(screen.queryByRole("dialog", { name: "Workshop" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+      expect(m.pressed).toEqual([]);
+    },
+  );
+
+  it("offers only the structured finding on a receipt", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    for (const [id, title, evidence] of [
+      ["ticket", "Train to Basel", "data"],
+      ["rules", "Wrong departure", "sentence"],
+      ["model", "Wrong arrival", "sentence_model"],
+    ] as const) {
+      m.put("calendar_suggestion", id, { ...found(id, title, evidence), messageId: "receipt" });
+    }
+    const receipt = letter("receipt", { subject: "Your ticket", folder: "ohmail/Receipts" });
+    const mail = fakeMail([receipt]);
+    const { host } = fakeHost({
+      engine: Object.assign(mail.engine, { store: m.engine.store }),
+      service: "managed",
+      scope: "acct-1",
+      calendar: withPlace,
+      products: "both",
+      wires: { calendar: m.port },
+      places: mailPlaces(),
+      above: MailGround,
+      address: fakeAddress("#/receipts"),
+    });
+    render(
+      <TextProvider locale="en" messages={{ ...WORDS, ...receiptsEn } as Messages} timeZone={ZURICH}>
+        <Frame host={host} />
+      </TextProvider>,
+    );
+    await settle();
+    const stream = screen.getByRole("region", { name: "Receipts stream" });
+    expect(within(stream).getByText("Train to Basel")).toBeTruthy();
+    expect(within(stream).queryByText("Wrong departure")).toBeNull();
+    expect(within(stream).queryByText("Wrong arrival")).toBeNull();
+    fireEvent.click(within(stream).getByRole("button", { name: "Add" }));
+    await settle();
+    expect(m.pressed.map(({ act }) => act.kind === "calendar_event_create" && act.event.title)).toEqual([
+      "Train to Basel",
+    ]);
   });
 
   it("adds one event under one press into the settings' calendar, and then says it is on the calendar", async () => {

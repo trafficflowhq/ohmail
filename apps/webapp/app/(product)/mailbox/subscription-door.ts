@@ -10,7 +10,7 @@ import {
 import { SELF_HOST_BUILD } from "../../hello";
 import { dayStamp } from "../../shell/format";
 import { formatStorageBytes } from "../../shell/storage-state";
-import { leaveForManagePage } from "./SubscriptionSection";
+import { leaveForManagePage } from "./manage-navigation";
 
 /** A day as the reader says it, by the product's one day formatter; nothing for a day that cannot be read. */
 const dayOf = (iso: string | null | undefined): string | null =>

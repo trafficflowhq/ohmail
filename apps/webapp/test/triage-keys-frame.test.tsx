@@ -142,7 +142,7 @@ describe("⇧F inside Triage — the pill's keycap and the key are one claim", (
 
     // The bar in this view prints the keycap, which is the claim the key has to honour.
     const fwd = reading().getByRole("button", { name: /^Forward/ });
-    expect(fwd.title).toBe("Forward · ⇧F");
+    expect(fwd.title).toBe("Forward · ⇧ f");
     const shortcut = fwd.getAttribute("aria-keyshortcuts");
     await key("F", { shiftKey: true });
     await waitFor(

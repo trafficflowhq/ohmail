@@ -79,7 +79,7 @@ export function useHistoryLive(args: PlaceLiveArgs, own: HistoryLiveOwn): Histor
     ...feed.list,
     arrival: "first",
     messages,
-    windowed: { scroller: own.scroller, window, slots, jump: tl.jump },
+    windowed: { scroller: own.scroller, window, total: tl.length, slots, jump: tl.jump },
     timelineCount: tl.state === "ready" || mirrorOnly ? (tl.total ?? tl.length) : undefined,
     timelineMonths: months,
     settled: mirrorOnly ? feed.settled : tl.state === "ready",

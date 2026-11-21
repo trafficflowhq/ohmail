@@ -23,3 +23,4 @@ export {
 } from "./walk.js";
 export { useTakeEntered } from "./entered.js";
 export { usePlaceVerbs, type ListAnswer, type PlaceVerbs, type PlaceVerbsOwn } from "./verbs.js";
+export type { ListVerbs } from "../press/list-verbs.js";

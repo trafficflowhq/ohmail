@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection, Switch } from "@ohmail/ui";
+import { SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import type { StorageChange } from "./StorageNotice";
 import {
@@ -174,8 +175,9 @@ export function StoragePane({ facts, linksOut, change, mail }: {
         </p>
       ) : null}
 
-      <h3 className="storage-sub">{t("storageWhatCountsHead")}</h3>
-      <p className="storage-p">{t("storageWhatCountsBody")}</p>
+      <SettingsSheet title={t("storageWhatCountsHead")}>
+        <SettingNote>{t("storageWhatCountsBody")}</SettingNote>
+      </SettingsSheet>
       <h3 className="storage-sub">{t("storageWhyHead")}</h3>
       <p className="storage-p">{t("storageWhyBody")}</p>
       <h3 className="storage-sub">{t("storagePlanHead")}</h3>

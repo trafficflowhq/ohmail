@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   COPY_CENSUS_ROOTS,
-  filesHandedAReader,
+  filesHandedAReader, checkForwardedReader,
   HANDED_READERS,
   handedReaderNamespaces,
   isProse,
@@ -87,7 +87,24 @@ describe("the copy census — the scan itself", () => {
     } finally {
       fs.rmSync(tree, { recursive: true, force: true });
     }
+    {
+      const tree = fs.mkdtempSync(path.join(os.tmpdir(), "copy-census-"));
+      const file = "packages/app-logic/src/place-list/verbs.ts";
+      const target = path.join(tree, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.mkdirSync(path.join(tree, "apps/webapp/messages"), { recursive: true });
+      fs.writeFileSync(path.join(tree, "apps/webapp/messages/en.json"), JSON.stringify({ screening: {} }));
+      const bridge = fs.readFileSync(path.join(REPO, file), "utf8");
+      fs.writeFileSync(target, bridge + '\nexport const extra = (t: Translator) => t("missing.message");\n');
+      try {
+        checkForwardedReader(tree);
+        expect(filesHandedAReader(tree, ["packages/app-logic/src"])).toEqual([file]);
+      } finally {
+        fs.rmSync(tree, { recursive: true, force: true });
+      }
+    }
   });
+
 });
 
 describe("every user-visible string is either in the catalogue or dispositioned", () => {
@@ -180,7 +197,7 @@ describe("every key the code reads is in BOTH catalogues", () => {
 
     const drift: string[] = [];
     for (const [file, row] of Object.entries(HANDED_READERS)) {
-      const table = [...new Set(Object.values(row.readers))].sort();
+      const table = [...new Set(Object.values(row.readers).flat())].sort();
       const glued = [...handedReaderNamespaces(REPO, KEY_ROOTS, row.glue)].map(String).sort();
       if (JSON.stringify(table) !== JSON.stringify(glued)) {
         drift.push(`${file}: the table says ${JSON.stringify(table)}, ${JSON.stringify(row.glue)} binds ${JSON.stringify(glued)}`);
@@ -190,6 +207,7 @@ describe("every key the code reads is in BOTH catalogues", () => {
   });
 
   it("every file that takes a Translator, binds none and reads a key has its readers in the table", () => {
+    checkForwardedReader(REPO);
     const unlisted = filesHandedAReader(REPO, KEY_ROOTS).filter((file) => !(file in HANDED_READERS));
     expect(unlisted, "add a row to HANDED_READERS in copy-census.scan.ts").toEqual([]);
   });

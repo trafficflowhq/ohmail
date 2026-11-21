@@ -633,9 +633,12 @@ describe("News and Receipts on their own seats, over the mail ground", () => {
     await act(() => vi.advanceTimersByTimeAsync(30));
     const scroller = layOut("News stream");
     firstFrame(scroller);
-    fireEvent.click(
-      within(screen.getByRole("toolbar", { name: "Actions" })).getByRole("button", { name: "Reply" }),
-    );
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("toolbar", { name: "Actions" })).getByRole("button", { name: "Reply" }),
+      );
+    });
+    await act(() => vi.dynamicImportSettled());
     const reply = within(scroller).getByRole("textbox", { name: "Reply body" });
     fireEvent.keyDown(reply, { key: "o" });
     fireEvent.keyDown(reply, { key: " " });

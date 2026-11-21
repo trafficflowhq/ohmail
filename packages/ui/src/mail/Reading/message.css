@@ -58,12 +58,14 @@
   }
 
   .oh-message-heading[data-preview] {
-    display: flow-root;
+    display: flex;
+    align-items: baseline;
+    gap: var(--s4);
   }
 
   .oh-message-heading[data-preview] > .oh-message-amount {
-    float: inline-end;
-    margin-inline-start: var(--s4);
+    order: 1;
+    margin-inline-start: auto;
   }
 
   .oh-message-amount {

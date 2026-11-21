@@ -8,6 +8,7 @@
  * factors the account enrolled are offered, a passkey only where this browser can run the ceremony. The ways out to
  * the join and the demo are links, as the card's were, to the addresses written here.
  */
+import { useTranslations } from "next-intl";
 import { signupPosture } from "@ohmail/app/doors";
 import { SignInPage, type SignInDoor, type SignInState } from "@ohmail/app/doors/sign-in";
 import { webauthnAvailable } from "../../api-client";
@@ -28,9 +29,10 @@ function stateOf(c: SignInCeremony): SignInState {
 }
 
 export function SignInRoute(
-  { publicSignup = false, next = null }: { publicSignup?: boolean; next?: Continuation | null },
+  { publicSignup = false, next = null, handoff = null }: { publicSignup?: boolean; next?: Continuation | null; handoff?: string | null },
 ) {
-  const c = useSignInDoor({ next });
+  const c = useSignInDoor({ next, handoff });
+  const t = useTranslations("gate");
   const pending = usePendingDoor(c.pending);
   const door: SignInDoor = {
     state: stateOf(c),
@@ -54,7 +56,10 @@ export function SignInRoute(
   };
   return (
     <WebDoor>
-      <SignInPage door={door} />
+      {handoff !== null && <p role={c.invalidHandoff ? "alert" : undefined}>
+        {t(c.invalidHandoff ? "settingsHandoffInvalid" : "settingsHandoffSignIn")}
+      </p>}
+      {c.invalidHandoff ? null : <SignInPage door={door} />}
     </WebDoor>
   );
 }

@@ -17,8 +17,8 @@ import { DesktopFrame, type DesktopFrameProps } from "../src/DesktopFrame";
 import { DesktopLocale } from "../src/DesktopLocale";
 import { linkSlot } from "../src/link-in";
 
-vi.mock("../src/local-mailbox-facts", async (load) => ({
-  ...await load<typeof import("../src/local-mailbox-facts")>(),
+vi.mock("../src/local-mailbox-facts", async () => ({
+  ...await vi.importActual<typeof import("../src/local-mailbox-facts")>("../src/local-mailbox-facts"),
   readMailboxFacts: async () => ROSTER,
 }));
 

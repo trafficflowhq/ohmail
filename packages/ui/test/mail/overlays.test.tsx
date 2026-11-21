@@ -1,8 +1,16 @@
 /** @vitest-environment jsdom */
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { createPortal } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MenuItem } from "../../src/base/index.js";
-import { ContactCard, MovePicker, QuickLook, type ContactCardProps } from "../../src/mail/index.js";
+import { portalRenderer } from "../../src/base/Overlays/portal-renderer.js";
+import {
+  ContactCard,
+  FileQuickLook,
+  MovePicker,
+  QuickLook,
+  type ContactCardProps,
+} from "../../src/mail/index.js";
 
 afterEach(cleanup);
 
@@ -236,6 +244,26 @@ describe("QuickLook", () => {
     expect(within(dialog).getByText("the page")).toBeTruthy();
   });
 
+  it("the host seats a file preview outside the composer and keeps paste and drop there", () => {
+    const onPaste = vi.fn();
+    const onDrop = vi.fn();
+    const { container } = render(
+      <portalRenderer.Provider value={createPortal}>
+        <div onPaste={onPaste} onDrop={onDrop}>
+          <QuickLook {...look} portal onClose={() => {}}>
+            <p>the page</p>
+          </QuickLook>
+        </div>
+      </portalRenderer.Provider>,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Attachment preview" });
+    expect(container.contains(dialog)).toBe(false);
+    expect(fireEvent.paste(dialog)).toBe(false);
+    expect(fireEvent.drop(dialog)).toBe(false);
+    expect(onPaste).not.toHaveBeenCalled();
+    expect(onDrop).not.toHaveBeenCalled();
+  });
+
   it("closes on Escape, on Space and from its button, and saves from Download", () => {
     const onClose = vi.fn();
     const onPress = vi.fn();
@@ -289,5 +317,33 @@ describe("QuickLook", () => {
     );
     expect(screen.queryByRole("button", { name: "Next file" })).toBeNull();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+  });
+});
+
+describe("a file preview across updates", () => {
+  it("keeps the chosen control focused and closes on Escape", () => {
+    const onClose = vi.fn();
+    const draw = (facts: string) => (
+      <div className="oh-root">
+        <FileQuickLook
+          open
+          onClose={onClose}
+          label="File preview"
+          name="Document"
+          facts={facts}
+          close={{ label: "Close" }}
+          next={{ label: "Next file" }}
+        >
+          <p>File content</p>
+        </FileQuickLook>
+      </div>
+    );
+    const { rerender } = render(draw("First"));
+    const next = screen.getByRole("button", { name: "Next file" });
+    next.focus();
+    rerender(draw("Updated"));
+    expect(document.activeElement).toBe(next);
+    fireEvent.keyDown(next, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

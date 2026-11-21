@@ -21,7 +21,7 @@
 import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { useState, type RefObject } from "react";
 import { useDemoMode, useEngine } from "../engine/context.js";
-import { CURSOR_HINT_MS, useCursorPlacer, useKeyBindings } from "../keys/index.js";
+import { CURSOR_HINT_MS, cursorPlacementText, useCursorPlacer, useKeyBindings } from "../keys/index.js";
 import { useZoneNav } from "../keys/zone-nav.js";
 import type { PlaceLiveArgs } from "../lists/place-live.js";
 import { nothingOrganizesOf, type NotOrganizingYet } from "../mail-state/mail-state.js";
@@ -153,7 +153,7 @@ function useOhboxPlacer(args: PlaceLiveArgs, own: OhboxLiveOwn, model: OhboxList
     model.selectByUser(first);
     /* The nudge a pressed row's selection gets: the placed row is on screen when the sentence names it. */
     row.scrollIntoView?.({ block: "nearest" });
-    args.report(own.cursor("placed", { label }), { duration: CURSOR_HINT_MS });
+    args.report(cursorPlacementText(own.cursor, label), { duration: CURSOR_HINT_MS });
     return true;
   }, "view");
 }

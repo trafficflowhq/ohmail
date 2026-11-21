@@ -17,7 +17,7 @@ import trashEn from "../../messages/trash.en.json" with { type: "json" };
 import { bodyDouble, freshRecord, letter, mountReader, READER_PLACE } from "./support/mail.js";
 
 /**
- * THE COLUMN'S KEYS while it has the keyboard: `u` presses the read slot, `r` answers. Never from a field, never with
+ * THE COLUMN'S KEYS while it has the keyboard: Shift+I marks read, `u` marks unread, `r` answers. Never from a field, never with
  * a modifier, never with nothing open, never while the column does not have the keys. They are declared in the key
  * map's registry, which listens on the document: a key reaches them pressed anywhere in it.
  */
@@ -31,10 +31,10 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("the column's keys", () => {
-  it("u presses the read slot", () => {
+  it("Shift+I marks the unread letter read", () => {
     const { mail } = mountReader({ letters: [letter("m1")], open: "m1" });
     act(() => {
-      fireEvent.keyDown(document.body, { key: "u" });
+      fireEvent.keyDown(document.body, { key: "I", shiftKey: true });
     });
     expect(reads(mail.mutations)).toMatchObject([{ messageIds: ["m1"], unread: false }]);
   });
@@ -169,7 +169,7 @@ describe("the column's keys in the key map's registry", () => {
       fireEvent.keyDown(document.body, { key, ...init });
     });
 
-  it("where no list handed a visit: the column's own u and the letter's ten verbs, each once beside the list's own", () => {
+  it("where no list handed a visit: the column lists Mark read and its ten verbs once alongside the list", () => {
     const place = placeBinding(false);
     mountReader({
       letters: [letter("m1")],
@@ -177,7 +177,7 @@ describe("the column's keys in the key map's registry", () => {
       host: { places: { ohbox: place } },
       children: <Table />,
     });
-    expect([...LETTER, "u", "x", "j", "k"].map(times)).toEqual([...LETTER.map(() => 1), 1, 1, 0, 0]);
+    expect([...LETTER, "shift+i", "x", "j", "k"].map(times)).toEqual([...LETTER.map(() => 1), 1, 1, 0, 0]);
     const reply = table.find((b) => b.chord === "r");
     expect(reply).toMatchObject({ group: "message", label: "Reply inside the message" });
     expect(table.find((b) => b.chord === "shift+f")).toMatchObject({ label: "Forward the message on" });

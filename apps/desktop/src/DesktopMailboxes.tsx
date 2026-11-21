@@ -24,8 +24,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { appPasswordPresetFor, unsentDraftsOf } from "@ohmail/client-engine";
 import { storageRowSentence } from "./storage-row-sentence.js";
+import { SettingsSheet } from "@ohmail/ui/mail";
 import {
-  Button, Gloss, SettingsActions, SettingsField, SettingsNote, SettingsRow, SettingsSection,
+  Button, Gloss, SettingsActions, SettingsField, SettingsNote, SettingsRow,
   SettingsVerdict,
 } from "@ohmail/ui";
 
@@ -59,7 +60,7 @@ import {
   CertificateTrust, certificateOfferOf, trustClaims, type TrustOffer,
 } from "../../webapp/app/shell/CertificateTrust";
 import { refusalCopy } from "../../webapp/app/shell/server-refusal";
-import { openServerMailboxes, openWeb } from "./native.js";
+import { openWeb } from "./native.js";
 import { linksOutToBilling } from "./distribution.js";
 
 /** Whether this install can reach ONE mailbox's server right now — see {@link MailboxReachSlice}. */
@@ -691,7 +692,7 @@ const signInEnded = (id: string): void => {
  * confirmation states the extra consequence only when it is true.
  */
 export function DesktopMailboxes(
-  { door, host, flavor, server, onShellStatus, scope, goToSetup, removalDoor }: {
+  { door, host, flavor, server, openServer, onShellStatus, scope, goToSetup, removalDoor }: {
     door?: string | null;
     /**
      * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it reads through one.
@@ -711,6 +712,7 @@ export function DesktopMailboxes(
     /** The mounted mailbox's scope: whose choice to read along this pane reads and keeps. */
     scope: string;
     removalDoor?: { readonly active: boolean; readonly version?: number };
+    openServer?: () => Promise<void>;
     goToSetup?(how: "add" | "again", mailbox?: string): void;
   },
 ) {
@@ -1418,10 +1420,9 @@ export function DesktopMailboxes(
 
   if (facts === null) {
     return (
-      <SettingsSection>
-        <h2 className="acct-h">{heading}</h2>
+      <SettingsSheet title={heading}>
         <p className="set-note-inline">{t("desktopLoading")}</p>
-      </SettingsSection>
+      </SettingsSheet>
     );
   }
 
@@ -2181,8 +2182,7 @@ export function DesktopMailboxes(
      account's own disconnected mailboxes, whose copy stays on the server. */
   const listed = cloud ? facts : facts.filter((m) => !isRemovedMailbox(m));
   return (
-    <SettingsSection>
-      <h2 className="acct-h">{heading}</h2>
+    <SettingsSheet title={heading}>
       {listed.length === 0 ? (
         <p className="set-note-inline">
           {paired
@@ -2665,7 +2665,7 @@ export function DesktopMailboxes(
           control={
             <Button
               onClick={() =>
-                void openServerMailboxes().catch(() =>
+                void (openServer?.() ?? Promise.reject()).catch(() =>
                   setProblem(t("desktopNoBrowserServer", { host: server! })))
               }
             >
@@ -2736,6 +2736,6 @@ export function DesktopMailboxes(
             and what is on this machine is a copy that can be deleted without losing anything. */}
         {t("desktopCopyIsACopy")}
       </SettingsNote>
-    </SettingsSection>
+    </SettingsSheet>
   );
 }

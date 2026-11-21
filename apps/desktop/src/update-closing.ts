@@ -7,7 +7,7 @@
  * report's `closing` carries it; one sentence per wait, in the toast host's polite live region.
  */
 import { useEffect } from "react";
-import { useToast } from "@ohmail/ui";
+import { useToast } from "@ohmail/ui/toast";
 
 import { DOOR_COPY } from "./door-copy.js";
 import { onUpdateState } from "./update.js";

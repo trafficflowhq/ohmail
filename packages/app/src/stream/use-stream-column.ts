@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useEngine } from "@ohmail/app-logic/engine";
 import { useStreamNear } from "@ohmail/app-logic/lists/stream-near";
 import { afterPaint } from "@ohmail/app-logic/lists/visit";
 import { useStreamWindow } from "@ohmail/app-logic/lists/stream-window";
@@ -80,7 +81,9 @@ export function useStreamViewport(model: StreamModel) {
   const mounted = useMemo(() => ids.slice(start, end), [ids, start, end]);
   const openingIds = useMemo(() => ids.slice(0, opening), [ids, opening]);
   const { near, onApproach } = useStreamNear(mounted, openingIds, armed, () => root.current, inFlight);
-  const { prefetch, prefetchSource } = model;
+  const mountedKey = mounted.join("\u0000");
+  const { prefetch } = model;
+  const engine = useEngine();
   useEffect(() => {
     const scroller = model.scroller;
     const Observer = scroller?.ownerDocument.defaultView?.IntersectionObserver;
@@ -105,7 +108,7 @@ export function useStreamViewport(model: StreamModel) {
       active = false;
       observer.disconnect();
     };
-  }, [model.scroller, model.place, armed, onApproach, prefetch, prefetchSource, mounted]);
+  }, [model.scroller, model.place, armed, onApproach, prefetch, engine, mountedKey]);
   return { attach, column, width, ids, start, end, padTopPx, padBottomPx, ensure, near };
 }
 
@@ -175,10 +178,14 @@ export function useStreamClips(
   const [whole, setWhole] = useState<ReadonlySet<string>>(() => new Set());
   const [linkedOpen, setLinkedOpen] = useState<string | null>(null);
   const [restored, setRestored] = useState<string | null>(null);
+  const [collapsedAction, setCollapsedAction] = useState<string | null>(null);
+  useEffect(() => setCollapsedAction(null), [model.actionId]);
   useStreamPosition(model, viewport);
   const landed = useRef<Landing | null>(null);
   const setOne = useStableCallback((id: string, open: boolean) => {
     model.scroll.toggled(id, open);
+    if (!open && model.actionId === id) setCollapsedAction(id);
+    else if (open) setCollapsedAction((current) => (current === id ? null : current));
     if (landed.current?.id === id) {
       landed.current.mayExpand = false;
       setLinkedOpen((value) => (value === id ? null : value));
@@ -214,7 +221,7 @@ export function useStreamClips(
     setLinkedOpen,
     setRestored,
   });
-  return { clip, keyboardOpened, restored, whole };
+  return { clip, keyboardOpened, restored, whole, collapsedAction };
 }
 
 function useStreamLanding({

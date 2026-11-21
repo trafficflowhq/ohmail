@@ -1,12 +1,11 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { fireEvent, within } from "@testing-library/react";
 import * as React from "react";
 import messages from "../messages/en.json";
 import { stubDom } from "./_draft-shell.js";
 import { mountWriting, rounds, unmountWritings } from "./_write-1-writing.js";
+import { formatRecipientChips } from "@ohmail/app-logic/writing/compose-from";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 
 const ADDRESS_MAX = 34;
@@ -28,7 +27,7 @@ const input = () =>
   line().getByRole<HTMLInputElement>("textbox", { name: messages.write.to });
 const chips = () => line().queryAllByRole("button").filter((button) => button.getAttribute("aria-haspopup") === "menu");
 const entries = () => chips().map((chip) => chip.getAttribute("data-person")?.split("\0").slice(2).join("\0"));
-const labels = () => chips().map((chip) => chip.textContent ?? "");
+const labels = () => chips().map((chip) => chip.querySelector(".oh-recipients-name")!.textContent ?? "");
 
 async function type(text: string): Promise<void> {
   await act(async () => { fireEvent.change(input(), { target: { value: text } }); });
@@ -40,19 +39,33 @@ afterEach(async () => {
 });
 
 describe("a field seeded from stored addresses is ALL chips — CMP-F3", () => {
-  /** A file under `apps/webapp`, from the app dir or the repo root — the root run is what CI does. */
-  const readSource = (rel: string): string => {
-    try {
-      return readFileSync(resolve(process.cwd(), rel), "utf8");
-    } catch {
-      return readFileSync(resolve(process.cwd(), "../../", rel), "utf8");
-    }
-  };
-
-  it("every address-seeding surface goes through formatRecipientChips: an accepted AI draft", () => {
-    const view = readSource("packages/app/src/write/Letter.tsx");
-    expect(view, "an accepted AI draft seeds To without the chips form")
-      .toMatch(/to: fields\.to \|\| formatRecipientChips\(draft\.to\)/);
+  it("every address-seeding surface goes through formatRecipientChips: an accepted AI draft", async () => {
+    stubDom();
+    const stored = ["one", "two"].map((local) => ({ name: null, address: local + "@example.test" }));
+    const seed = formatRecipientChips(stored);
+    const draft = "Shall we meet on Friday?";
+    world = await mountWriting({
+      view: true,
+      draftWire: {
+        configured: () => true,
+        create: async () => ({ draftId: "reply" }),
+        fromText: async () => ({ draftId: "letter" }),
+        read: async () => ({ body: draft, html: null }),
+      },
+    });
+    await act(async () => {
+      world.now().onComposeFields({ ...world.now().compose, to: seed, body: "meet Fri?" });
+    });
+    await rounds(6);
+    expect(entries()).toEqual(stored.map(({ address }) => address));
+    await act(async () => {
+      fireEvent.click(within(world.el).getByRole("button", { name: messages.write.draft.fromText }));
+    });
+    await rounds(10);
+    expect(world.now().compose.body).toBe(draft);
+    expect(world.now().compose.to).toBe(seed);
+    expect(entries()).toEqual(stored.map(({ address }) => address));
+    expect(input().value).toBe("");
   });
 });
 
@@ -81,12 +94,16 @@ describe("chips: every settled recipient is one", () => {
 
 describe("keyboard: chips are reachable, removable and movable without a mouse", () => {
   it("is announced: the chips ride a listbox, each one an option with its name", async () => {
-    await render("a@x.invalid, ");
-    const list = line().getByRole("listbox");
-    expect(list.getAttribute("role")).toBe("listbox");
-    const chip = within(list).getByRole("option");
-    expect(chip.getAttribute("role")).toBe("option");
-    expect(chip.getAttribute("aria-label")).toContain("a@x.invalid");
+    // The mounted editor follows the studio recipient button pattern. The title is the retirement ledger key.
+    const address = "a@x.invalid";
+    await render(address + ", ");
+    const chip = line().getByRole("button", { name: address });
+    expect(chip.getAttribute("aria-haspopup")).toBe("menu");
+    await act(async () => { input().focus(); fireEvent.keyDown(input(), { key: "ArrowLeft" }); });
+    expect(document.activeElement).toBe(chip);
+    await act(async () => { fireEvent.keyDown(chip, { key: "Delete" }); });
+    expect(entries()).toEqual([]);
+    expect(document.activeElement).toBe(input());
   });
 });
 

@@ -26,6 +26,8 @@ const SURFACES: Array<{ file: string; door: RegExp }> = [
 ];
 
 /** What reading the window, or the device's partition as a list, looks like in source. */
+/** History gives its view the list window made from the store timeline. */
+const STORE_LIST_WINDOW = /windowed: \{ scroller: own\.scroller, window, total: tl\.length, slots, jump: tl\.jump \}/;
 const WINDOW_READS = /storeWindow\s*\(|windowedMirror|\bwindowed\b|storePolicy|liveHistory\(|consentView\?*\.history|w\.history\b/;
 
 describe("History and Search read the store, never the mirror's window", () => {
@@ -33,17 +35,21 @@ describe("History and Search read the store, never the mirror's window", () => {
     it(`${file.replace(/^(\.\.\/)+/, "")}: uses the store's door, reads no window`, () => {
       const src = read(file);
       expect(src, "the surface is bound to the store's door").toMatch(door);
-      expect(src.match(WINDOW_READS)?.[0] ?? null, "a read of the mirror's window").toBeNull();
+      const checked = file.endsWith("/history/live.ts") ? src.replace(STORE_LIST_WINDOW, "") : src;
+      expect(checked.match(WINDOW_READS)?.[0] ?? null, "a read of the mirror's window").toBeNull();
     });
   }
 
   it("the shell hands History no mirror list and no window flag", () => {
     const seat = read("../../../packages/app/src/history/Seat.tsx");
     const live = read("../../../packages/app-logic/src/history/live.ts");
-    expect(seat).toContain("useHistoryLive(usePlaceLiveArgs(), usePlaceListOwn())");
+    expect(seat).toContain("const args = usePlaceLiveArgs()");
+    expect(seat).toContain("useHistoryLive(args, { ...usePlaceListOwn(), scroller })");
     expect(seat).toMatch(/<HistoryAbove model=\{model\}>/);
     expect(seat).not.toMatch(/\bmessages=|\bwindowed=/);
     expect(live).toContain("useStoreTimeline(engine, derived, mirrorRows)");
+    expect(live).toContain("useListWindow({ scrollerRef: own.scroller, count: tl.length, inserted: tl.shifted })");
+    expect(live).toMatch(STORE_LIST_WINDOW);
   });
 
   /**

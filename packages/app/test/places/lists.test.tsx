@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, FolderEntity, TagEntity as TagDTO } from "@ohmail/wire";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { useContext, useState } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useAddressList } from "@ohmail/app-logic/address";
 import { useFolderList } from "@ohmail/app-logic/folder";
@@ -19,6 +19,15 @@ import { createFeed } from "../../src/frame/feeds.js";
 import { ListMenu } from "../../src/place-list/index.js";
 import { at, draw, inWords, msg, NO_HIT, pane, PHONE, stamp, walkAt } from "./lists-world.js";
 import { wideWindow } from "../ohbox/setup.js";
+import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
+
+function ListFrame({ children, route }: { children: ReactNode; route: ReturnType<typeof pane>["route"] }) {
+  const { host } = fakeHost({ engine: NO_ENGINE, service: "self", scope: "a" });
+  const inner = {
+    api: { host, route, commands: { go: () => undefined } },
+  } as unknown as FrameInner;
+  return <FrameContext.Provider value={inner}>{children}</FrameContext.Provider>;
+}
 
 interface Seen {
   marked: Array<{ ids: string[]; unread: boolean }>;
@@ -243,7 +252,11 @@ describe("History", () => {
     });
 
     it("under a finger, the years alone; on the unfolded phone the years stand in the head", () => {
-      draw(<Months plan={PHONE} />);
+      draw(
+        <ListFrame route={pane("history").route}>
+          <Months plan={PHONE} />
+        </ListFrame>,
+      );
       expect(steps("Year")).toEqual(["2026", "2025"]);
       fireEvent.click(
         within(screen.getByRole("navigation", { name: "Year" })).getByRole("button", { name: "2025" }),
@@ -251,7 +264,11 @@ describe("History", () => {
       expect(went).toEqual(["y25"]);
       cleanup();
       went = [];
-      draw(<Months plan={{ ...PHONE, device: "fold", size: "medium" }} />);
+      draw(
+        <ListFrame route={pane("history").route}>
+          <Months plan={{ ...PHONE, device: "fold", size: "medium" }} />
+        </ListFrame>,
+      );
       expect(screen.queryByRole("navigation", { name: /Year|Month/ })).toBeNull();
       const years = within(screen.getByRole("banner")).getByRole("group", { name: "Year" });
       fireEvent.click(within(years).getByRole("button", { name: "2025" }));
@@ -288,11 +305,14 @@ describe("Tags", () => {
       rename: (id, name) => props.renamed?.push(`${id}:${name}`),
       remove: (id) => props.removed?.push(id),
     });
+    const propsForPane = pane("tags", { sub: props.tagId, open: seat.openId });
     return (
-      <TagsAbove model={model}>
-        <TagsList {...pane("tags", { sub: props.tagId, open: seat.openId })} />
-        <Column />
-      </TagsAbove>
+      <ListFrame route={propsForPane.route}>
+        <TagsAbove model={model}>
+          <TagsList {...propsForPane} />
+          <Column />
+        </TagsAbove>
+      </ListFrame>
     );
   }
 
@@ -433,11 +453,14 @@ describe("a folder", () => {
       settled: true,
       owed: false,
     });
+    const propsForPane = pane("folder", { sub: "f1", open: seat.openId });
     return (
-      <FolderAbove model={model}>
-        <FolderList {...pane("folder", { sub: "f1", open: seat.openId })} />
-        <Column />
-      </FolderAbove>
+      <ListFrame route={propsForPane.route}>
+        <FolderAbove model={model}>
+          <FolderList {...propsForPane} />
+          <Column />
+        </FolderAbove>
+      </ListFrame>
     );
   }
 

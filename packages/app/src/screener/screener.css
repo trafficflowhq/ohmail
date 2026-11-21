@@ -1,4 +1,4 @@
-/* The Screener's placement only: where its parts stand. Every look is the kit's. */
+/* The Screener's layout and the progress it reports. */
 .sc-list {
   display: flex;
   flex-direction: column;
@@ -21,6 +21,36 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s1);
+}
+.sc-progress {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--ink2);
+  font-size: var(--t-meta);
+  font-variant-numeric: tabular-nums;
+}
+.sc-progress-track {
+  appearance: none;
+  inline-size: 120px;
+  max-inline-size: 40%;
+  block-size: 3px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+.sc-progress-track::-webkit-progress-bar {
+  background: var(--line);
+}
+.sc-progress-track::-webkit-progress-value {
+  border-radius: var(--r-pill);
+  background: var(--hot);
+}
+.sc-progress-track::-moz-progress-bar {
+  border-radius: var(--r-pill);
+  background: var(--hot);
 }
 .sc-held-letters {
   display: flex;

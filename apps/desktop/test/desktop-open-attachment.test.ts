@@ -425,9 +425,12 @@ describe("the reading pane offers the in-app viewer on the types the web preview
     // draws; the letter is held to it. A tile offers the look by its declared type alone (`fileLookOf`, the set
     // `isPreviewable` names) beside the look the host hands: no host's exception.
     const app = resolve(shared, "../../../packages/app/src/reader");
-    expect(readFileSync(resolve(app, "Letter.tsx"), "utf8")).toMatch(/<LetterFiles messageId=\{message\.id\} \/>/);
+    expect(readFileSync(resolve(app, "Letter.tsx"), "utf8")).toMatch(
+      /<LetterFiles messageId=\{message\.id\} selection=\{previewSelection\} parts=\{parts\} \/>/,
+    );
     const pane = readFileSync(resolve(app, "files/Files.tsx"), "utf8");
-    expect(pane.match(/lookable = [^\n]*/g)).toEqual(['lookable = look !== NONE && fileLookOf(item.mimeType) !== "other";']);
+    expect(pane).toMatch(/const look = fileLookOf\(item\.mimeType\) !== "other" \? preview : null;/);
+    expect(pane).toMatch(/const preview =\s*look === NONE \? null :/);
   });
 
   it("no shared source keeps a desktop exception to the preview", () => {

@@ -1618,6 +1618,8 @@ export function useScreenerState(
       }, OUT_MS),
       commitTimer: setTimeout(() => commit(id), COMMIT_MS),
     };
+    // The optimistic move can empty the gate before the toast is drawn.
+    const message = opts.quiet ? null : decisionMessage(sender, dest, opts, read);
     /**
      * The decision is on disk before anything else happens to it — ahead of `s.pending.set`,
      * the toast, the render, and synchronously, which is why this journal is `localStorage` and
@@ -1657,10 +1659,9 @@ export function useScreenerState(
       });
     }
     bump();
-    if (opts.quiet) return;
-    const message = decisionMessage(sender, dest, opts, read);
+    if (message === null) return;
     if (!holds) {
-      toast(`${message} ${tSession("noUndoHere")}`);
+      toast(written === "stored" ? message : `${message} ${tSession("noUndoHere")}`);
       return;
     }
     entry.offer = { ids: [id], ends: new AbortController() };

@@ -97,7 +97,11 @@ const SAID = en.search.saidPart;
 describe("the store's empty and closest-words answers say where a part inside a word is looked for", () => {
   it("an empty answer for a part: the sentence, in the empty state, in both catalogues", async () => {
     expect(await reach("levation", NOTHING)).toEqual([SAID]);
-    expect(within(host).getByText((_, node) => node?.textContent === "Nothing matched", { selector: "p" }).compareDocumentPosition(within(host).getByText(SAID))
+    const shown = within(host);
+    const result = shown.getByText(/^nothing matched · [1-9]\d* ms$/);
+    const verdict = result.parentElement!;
+    expect(verdict.textContent).toBe(`Searched your whole mailbox — ${result.textContent}`);
+    expect(verdict.compareDocumentPosition(shown.getByText(SAID))
       & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(await reach("levation", NOTHING, "de")).toEqual([de.search.saidPart]);
   });

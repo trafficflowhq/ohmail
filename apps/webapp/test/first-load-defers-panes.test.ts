@@ -19,7 +19,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * `shell/browser-mail.tsx`, and the panes it draws are the new tree's: the walk starts there and follows the
  * workspace's packages by their manifests' `ohmail-source` export as well as relative paths (today's shell lived
  * in this app alone, so its walk stopped at the app's border; the new shell's parts live in `packages/`). The
- * panes are Settings' place (`packages/app/src/settings/place.tsx`) and Write's letter
+ * panes are Settings' columns and Write's letter
  * (`packages/app/src/write/Letter.tsx`); the editor is Write's (`packages/app/src/write/editor/RichEditor.tsx`).
  */
 const APP = resolve(__dirname, "../app");
@@ -114,6 +114,8 @@ describe("the first-paint bundle defers the Settings and Compose panes and the e
 
   it("neither lazy pane is statically reachable from the shell", () => {
     expect(graph.has(resolve(APP_SRC, "settings/place.tsx"))).toBe(false);
+    expect(graph.has(resolve(APP_SRC, "settings/SettingsList.tsx"))).toBe(false);
+    expect(graph.has(resolve(APP_SRC, "settings/SettingsReading.tsx"))).toBe(false);
     expect(graph.has(resolve(APP_SRC, "write/Letter.tsx"))).toBe(false);
   });
 

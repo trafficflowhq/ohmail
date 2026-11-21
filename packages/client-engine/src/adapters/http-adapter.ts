@@ -912,6 +912,7 @@ export class HttpAdapter implements EngineAdapter {
   calendarSetupTransport(): CalendarSetupTransport {
     return {
       calendarWays: this.calendarWays.bind(this),
+      calendarConnections: this.calendarConnections.bind(this),
       connectCalendar: this.connectCalendar.bind(this),
       removeCalendarConnection: this.removeCalendarConnection.bind(this),
       checkCalendarConnection: this.checkCalendarConnection.bind(this),

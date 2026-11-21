@@ -22,8 +22,8 @@ export function NoticeMore({ store }: { store: NoticeStore }) {
       cancel={{ label: t("notice.moreClose") }}
       confirm={more.confirmLabel ? { label: more.confirmLabel, onPress: store.confirmMore } : undefined}
     >
-      {more.rows.map((row) => (
-        <p key={row} role="listitem" className="oh-text">
+      {more.rows.map((row, index) => (
+        <p key={index} role="listitem" className="oh-text">
           {row}
         </p>
       ))}

@@ -14,6 +14,10 @@ import { useLocale, useText } from "../text/index.js";
 import { monthAt, railOf, yearsOf } from "./months.js";
 import "./history.css";
 
+import { MailSelectionFoot } from "../place-list/MailSelectionFoot.js";
+import { useRowContact } from "../place-list/use-row-contact.js";
+import { useRowSelection } from "../place-list/use-row-selection.js";
+
 export function HistoryList({ plan }: PaneProps) {
   const model = useHistoryModel();
   const t = useText("history");
@@ -22,6 +26,8 @@ export function HistoryList({ plan }: PaneProps) {
   const localScroller = useRef<HTMLDivElement>(null);
   const scroller = model.windowed?.scroller ?? localScroller;
   const windowed = model.windowed;
+  const selection = useRowSelection(model.list.rows);
+  const contact = useRowContact();
   /* The month on show: the one pressed, else the one the list's top stands in. */
   const [at, setAt] = useState<string | null>(null);
   const shown = months.some((m) => m.month === at) ? at : (months[0]?.month ?? null);
@@ -73,6 +79,7 @@ export function HistoryList({ plan }: PaneProps) {
       plan={plan}
       showEdges
       cursor={model.list.cursor}
+      foot={<MailSelectionFoot selection={selection} verbs={model.list.verbs} />}
       scrollerRef={scroller}
       manualScrollAnchor={windowed !== undefined}
     >
@@ -90,11 +97,14 @@ export function HistoryList({ plan }: PaneProps) {
       >
         {model.list.rows.length > 0 || windowed?.slots.length ? (
           <LetterRows
+            selection={selection}
+            contact={contact}
             label={t("title")}
             rows={model.list.rows}
             windowed={
               windowed && {
                 start: windowed.window.start,
+                total: windowed.total,
                 top: windowed.window.padTop,
                 bottom: windowed.window.padBottom,
                 rowHeight: windowed.window.rowHeight,
@@ -114,6 +124,7 @@ export function HistoryList({ plan }: PaneProps) {
         {model.loading ? <Empty label={t("loading")} /> : null}
         {model.empty ? <Empty label={t("emptyTitle")} /> : null}
       </MonthRail>
+      {contact.card}
     </ListColumn>
   );
 }

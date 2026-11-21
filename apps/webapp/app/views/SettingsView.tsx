@@ -59,7 +59,7 @@ import {
 } from "../shell/notification-settings";
 import { NONE } from "@ohmail/app/host";
 import { isDemoOwned } from "@ohmail/app-logic/storage/storage-owner";
-import { useScopeHere } from "@ohmail/app/frame";
+import { useScopeHere } from "@ohmail/app/frame/scope";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { settingsPanes } from "./settings-panes";
 import { RulesView, type RuleOutcome } from "./RulesView";

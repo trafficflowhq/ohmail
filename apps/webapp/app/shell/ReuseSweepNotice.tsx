@@ -77,9 +77,8 @@ export function useSweepsAnswer(
 }
 
 /**
- * THE SWEEPS AS THE FRAME'S NOTICE, on every host that mounts the frame: the sentence, the advice as its line (the
- * one place a person whose sign-in somebody else copied is told to change the password), OK, and Details, behind
- * which each swept sign-in stands with its client and its date. Null while none is shown.
+ * THE SWEEPS AS THE FRAME'S NOTICE, on every host that mounts the frame: the sentence, advice, OK, and Details.
+ * Details shows each swept sign-in with its client and date. Null while none is shown.
  */
 export function useSweepsFrameNotice(shown: readonly ReuseSweepLine[], ok: () => void): FrameNotice | null {
   const t = useTranslations("settings");
@@ -91,6 +90,7 @@ export function useSweepsFrameNotice(shown: readonly ReuseSweepLine[], ok: () =>
     acts: [{ label: t("reuseSweepsOk"), onPress: ok }],
     more: {
       label: t("reuseSweepsDetails"),
+      line: t("reuseSweepsBody"),
       rows: shown.map((s) =>
         t("reuseSweepsLine", {
           client: t(CLIENT_KEY.get(s.client ?? "") ?? "reuseClientUnknown"),

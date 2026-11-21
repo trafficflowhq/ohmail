@@ -132,7 +132,7 @@ describe("the worker's metered usage composition", () => {
     ["the Screener passes take no hook", "index", "                ...(usageRelay ? { usageHook: usageRelay.hook } : {}),\n", ""],
     ["the drain's drafter is unattributed", "index", "attributedWorkflowDrafter(config.drafter, accountId, usageRelay.hook, usageBuffer)", "config.drafter"],
     ["the body composes no buffer", "index", /const usageBuffer = usageRelay && recordUsage\n\s*\? makeAiUsageBuffer\([^\n]*\n\s*: undefined;/, "const usageBuffer = undefined;"],
-    ["the workflow backstop is unmetered", "workflow", "const entitlements: SpendComposition = client ?? UNMETERED;", "const entitlements: SpendComposition = UNMETERED;"],
+    ["the workflow backstop is unmetered", "workflow", "const entitlements: EntitlementsComposition = client ?? UNMETERED;", "const entitlements: EntitlementsComposition = UNMETERED;"],
     ["the workflow backstop has no buffer", "workflow", /const usageBuffer = usageRelay && client\?\.recordUsage\n\s*\? makeAiUsageBuffer\([^\n]*\n\s*: undefined;/, "const usageBuffer = undefined;"],
     ["the proposal backstop takes no hook", "proposal", "          ...(usageRelay ? { usageHook: usageRelay.hook } : {}),\n", ""],
     ["the body's buffer has no port", "index", "const recordUsage = isMetered(entitlements) ? entitlements.recordUsage?.bind(entitlements) : undefined;", "const recordUsage = undefined;"],

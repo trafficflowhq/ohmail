@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { forgetOwner, rememberOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import type { SignOutResult } from "../app/sign-out";
@@ -25,7 +26,10 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 const FINISHED: SignOutResult = { cleared: true, remaining: [], inventoryComplete: true, serverRefused: null };
 let outcome: SignOutResult = FINISHED;
-vi.mock("../app/sign-out", () => ({ signOut: vi.fn(async () => outcome) }));
+vi.mock("../app/sign-out", async (original) => ({
+  ...await original<typeof import("../app/sign-out")>(),
+  signOut: vi.fn(async () => outcome),
+}));
 
 const account = (messages as unknown as { account: Record<string, string> }).account;
 let navigatedTo: string | null = null;
@@ -35,6 +39,7 @@ const realLocation = window.location;
 
 beforeEach(() => {
   navigatedTo = null;
+  rememberOwner("account-under-test");
   Object.defineProperty(window, "location", {
     configurable: true,
     value: { get href() { return document.URL; }, assign: (url: string) => { navigatedTo = url; } },
@@ -46,6 +51,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => { root.unmount(); });
   host.remove();
+  forgetOwner();
   Object.defineProperty(window, "location", { configurable: true, value: realLocation });
 });
 
@@ -97,10 +103,14 @@ describe("the one reader, in the account pane's order", () => {
   it("unverifiable before blocked before refused, and nothing for a finished one", async () => {
     const { signOutTrouble } = await import("../app/sign-out-trouble");
     expect(signOutTrouble({ cleared: false, remaining: [], inventoryComplete: false, serverRefused: "x" }))
-      .toEqual({ key: "signOutUnverified" });
+      .toEqual({ key: "signOutServerRefused", reason: "x", cleanupIncomplete: true });
     expect(signOutTrouble({ cleared: false, remaining: ["a"], inventoryComplete: true, serverRefused: "x" }))
+      .toEqual({ key: "signOutServerRefused", reason: "x", cleanupIncomplete: true });
+    expect(signOutTrouble({ ...FINISHED, serverRefused: "x" })).toEqual({ key: "signOutServerRefused", reason: "x", cleanupIncomplete: false });
+    expect(signOutTrouble({ cleared: false, remaining: [], inventoryComplete: false, serverRefused: null }))
+      .toEqual({ key: "signOutUnverified" });
+    expect(signOutTrouble({ cleared: false, remaining: ["a"], inventoryComplete: true, serverRefused: null }))
       .toEqual({ key: "signOutBlocked" });
-    expect(signOutTrouble({ ...FINISHED, serverRefused: "x" })).toEqual({ key: "signOutServerRefused", reason: "x" });
     expect(signOutTrouble(FINISHED)).toBeNull();
   });
 });

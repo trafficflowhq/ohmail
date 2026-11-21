@@ -1,22 +1,15 @@
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { useSetupPort } from "../calsetup/index.js";
-import { CalendarSettingsScope, useCalendarEnabled } from "../calsettings/settings-read.js";
+import { CalendarSettingsScope, useSharedCalendarSettings } from "../calsettings/settings-read.js";
 import { useFrame } from "../frame/commands.js";
-import { isCalendarPlace } from "../frame/product.js";
 import { MonthRunScope } from "../month/MonthRunScope.js";
 import { NONE } from "../host/index.js";
 import { CalendarCheckScope } from "./check.js";
+import { CalendarFirstStepScope } from "./CalendarFirstStep.js";
 import { CalendarKeys } from "./CalendarKeys.js";
 
-function CalendarState() {
-  const { route, commands, host } = useFrame();
-  const enabled = useCalendarEnabled();
-  const hasSettings = host.features.places.settings !== NONE;
-  useEffect(() => {
-    if (!enabled && isCalendarPlace(route.place) && hasSettings) {
-      commands.go({ place: "settings", sub: "calaccounts" }, { replace: true });
-    }
-  }, [enabled, route.place, commands, hasSettings]);
+function CalendarBindings() {
+  const enabled = useSharedCalendarSettings()?.said?.enabledAt !== null;
   return enabled ? <CalendarKeys /> : null;
 }
 
@@ -27,10 +20,12 @@ export function CalendarAbove({ children }: { children: ReactNode }) {
   if (port === NONE) return children;
   return (
     <CalendarSettingsScope port={port} setup={setup}>
-      <CalendarCheckScope>
-        <CalendarState />
-        <MonthRunScope>{children}</MonthRunScope>
-      </CalendarCheckScope>
+      <CalendarFirstStepScope port={port}>
+        <CalendarCheckScope>
+          <CalendarBindings />
+          <MonthRunScope>{children}</MonthRunScope>
+        </CalendarCheckScope>
+      </CalendarFirstStepScope>
     </CalendarSettingsScope>
   );
 }

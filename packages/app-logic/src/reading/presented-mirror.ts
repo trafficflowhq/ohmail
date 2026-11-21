@@ -8,8 +8,11 @@
 import type { Folder } from "@ohmail/wire";
 import { createContext, useContext, type Context } from "react";
 import {
+  NOT_DERIVED_FROM,
   presentAt,
   presentationReader,
+  senderKey,
+  threadParticipantsIndex,
   type ConsentPartition,
   type EntityReader,
 } from "@ohmail/client-engine";
@@ -23,6 +26,28 @@ export const PresentedMirrorContext: Context<EntityReader | null> = createContex
  */
 export function usePresentedMirror(): EntityReader | null {
   return useContext(PresentedMirrorContext);
+}
+
+type ThreadIndex = ReturnType<typeof threadParticipantsIndex>;
+const threadIndices = new WeakMap<EntityReader, { stamp: number; index: ThreadIndex }>();
+
+function readThreadIndex(presented: EntityReader): ThreadIndex {
+  const stamp = presented.stampExcept(NOT_DERIVED_FROM);
+  const held = threadIndices.get(presented);
+  if (held?.stamp === stamp) return held.index;
+  const index = threadParticipantsIndex(presented);
+  threadIndices.set(presented, { stamp, index });
+  return index;
+}
+
+/** The other people on a row, from the presented mirror's versioned index. */
+export function useOtherThreadPeople() {
+  const presented = usePresentedMirror();
+  return (threadId: string | null, leadAddress: string) => {
+    const members = presented && threadId ? readThreadIndex(presented).get(threadId) : undefined;
+    const leadKey = senderKey(leadAddress);
+    return members?.filter((person) => senderKey(person.address) !== leadKey) ?? [];
+  };
 }
 
 /**

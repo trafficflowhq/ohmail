@@ -1,5 +1,6 @@
 {
   "calendar": {
+    "connect": "Einen Kalender verbinden",
     "actions": {
       "delete": "Löschen",
       "moveTo": "Verschieben nach",
