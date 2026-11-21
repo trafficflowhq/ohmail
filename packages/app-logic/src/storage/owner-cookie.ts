@@ -19,10 +19,15 @@
  * reading the cookie is all this file does.
  */
 
-import { cookieFromJar } from "./cookie-jar.js";
+import { cookieFromJar, HOST_PREFIX } from "./cookie-jar.js";
 
 /** The cookie the API sets beside the session. Kept identical to the API's own constant. */
 export const OWNER_COOKIE = "tf_owner";
+
+/** Compare the browser's live marker to the account already confirmed by the page request. */
+export function ownerMatchesBeforePaint(owner: string): string {
+  return `(${cookieFromJar.toString()})(document.cookie,${JSON.stringify(OWNER_COOKIE)},${JSON.stringify(HOST_PREFIX)})===${JSON.stringify(owner)}`;
+}
 
 /**
  * "A sign-out was asked for and the server did not confirm it" — a reserved value this CLIENT writes; the edge re-sets

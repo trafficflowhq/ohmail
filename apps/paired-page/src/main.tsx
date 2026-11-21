@@ -16,7 +16,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { ThemeProvider } from "@ohmail/ui";
 import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { localStorageDoor } from "@ohmail/client-engine/durable";
 
@@ -109,9 +109,7 @@ createRoot(root).render(
     <DesktopLocale>
       <ThemeProvider storageKey="ohmail.theme" faces storage={THEME_DOOR}>
         <portalRenderer.Provider value={createPortal}>
-          <ToastHost>
-            <Gate />
-          </ToastHost>
+          <Gate />
         </portalRenderer.Provider>
       </ThemeProvider>
     </DesktopLocale>

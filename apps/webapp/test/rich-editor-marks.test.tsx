@@ -2,13 +2,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import * as React from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
+import { within } from "@testing-library/react";
+import { linkCard, mountWriteEditor, WRITE_WORDS, type MountedEditor } from "./_write-1-editor.js";
 import type { Editor } from "@tiptap/react";
-import { RichEditor } from "../app/shell/RichEditor";
 import { EDITOR_RULES, autolinkHref, nextMarks } from "@ohmail/app/write/editor/marks";
 import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { key, load, MARKS, posOf, typeText } from "./fixtures/rich-editor-boundaries-driver";
@@ -34,8 +31,7 @@ beforeAll(() => {
   }
 });
 
-let host: HTMLElement | null = null;
-let root: Root | null = null;
+let mounted: MountedEditor | null = null;
 
 interface Mounted {
   editor: () => Editor;
@@ -45,34 +41,19 @@ interface Mounted {
 }
 
 function mount(initial: RichValue = EMPTY_RICH): Mounted {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  let current = initial;
-  let instance: Editor | null = null;
-  function Harness() {
-    const [v, setV] = React.useState<RichValue>(initial);
-    current = v;
-    return (
-      <NextIntlClientProvider locale="en" messages={messages as never}>
-        <RichEditor value={v} onChange={(n) => setV(n)} ariaLabel="Reply" editorRef={(e) => { if (e) instance = e; }} />
-      </NextIntlClientProvider>
-    );
-  }
-  root = createRoot(host);
-  act(() => { root!.render(<Harness />); });
+  const view = mountWriteEditor(initial);
+  mounted = view;
   return {
-    editor: () => { if (!instance) throw new Error("no editor"); return instance; },
-    button: (label) => host!.querySelector<HTMLButtonElement>(`.rte-b[aria-label="${label}"]`)!,
-    html: () => instance!.getHTML(),
-    get value() { return current; },
+    editor: view.editor,
+    button: view.button,
+    html: () => view.editor().getHTML(),
+    get value() { return view.value; },
   };
 }
 
 afterEach(() => {
-  act(() => { root?.unmount(); });
-  root = null;
-  host?.remove();
-  host = null;
+  mounted?.unmount();
+  mounted = null;
 });
 
 function backspace(ed: Mounted): void {
@@ -224,7 +205,7 @@ describe("the toolbar says what the next letter carries", () => {
   it("[toolbar-next] bold, italic, strike and code light up exactly when the next letter would carry them", () => {
     const ed = mount();
     for (const [mark, [o, c]] of Object.entries(MARKS)) {
-      const label = { bold: "Bold", italic: "Italic", strike: "Strikethrough", code: "Code" }[mark]!;
+      const label = { bold: "Bold", italic: "Italic", strike: "Strikethrough", code: "Inline code" }[mark]!;
       load(ed, `<p>ab ${o}cd${c} ef</p>`, 0);
       act(() => { ed.editor().commands.focus(posOf(ed, "cd")); });
       expect(ed.button(label).getAttribute("aria-pressed")).toBe("true");
@@ -253,8 +234,8 @@ describe("the toolbar says what the next letter carries", () => {
     act(() => { link.click(); });
     act(() => { ed.editor().commands.focus(posOf(ed, "cd")); });
     act(() => { link.click(); });
-    expect(host!.querySelector<HTMLInputElement>(".rte-linkpop-url")!.value).toBe("https://x.example/p");
-    for (const label of ["Bold", "Italic", "Strikethrough", "Code"]) {
+    expect(within(linkCard()!).getByRole<HTMLInputElement>("textbox", { name: WRITE_WORDS.link.field }).value).toBe("https://x.example/p");
+    for (const label of ["Bold", "Italic", "Strikethrough", "Inline code"]) {
       expect(ed.button(label).hasAttribute("aria-pressed")).toBe(true);
     }
   });

@@ -269,6 +269,8 @@ function calendarRouteOf(whole: string): Route | null {
   const words: Record<string, string> = {};
   const panel = query.get("panel");
   if (panel !== null && CALENDAR_PANELS.has(panel)) words.panel = panel;
+  const slot = query.get("slot");
+  if (panel === "new" && slot !== null && /^\d{1,4}-\d{1,4}$/.test(slot)) words.slot = slot;
   const q = query.get("q");
   if (place === "calsearch" && q !== null && q.trim() !== "") words.q = q;
   return route(place, { sub, open: place === "calsettings" ? null : open, words });
@@ -287,6 +289,7 @@ function calendarFragmentOf(place: CalendarPlaceId, to: Route): string {
   const words: Record<string, string> = {};
   const panel = to.words.panel;
   if (panel !== undefined && CALENDAR_PANELS.has(panel)) words.panel = panel;
+  if (panel === "new" && to.words.slot !== undefined) words.slot = to.words.slot;
   if (place === "calsearch" && to.words.q !== undefined && to.words.q.trim() !== "") words.q = to.words.q;
   return `${head}${day}${open}${queryOf(words)}`;
 }

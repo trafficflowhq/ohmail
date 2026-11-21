@@ -188,3 +188,151 @@ it.each([
   expect(restored.getByRole("button", { name: "Calendar" }).textContent).toBe("Studio");
   expect(press).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["click", 600, 600, "10:00", "11:00"],
+  ["drag", 610, 682, "10:15", "11:15"],
+])("opens a draft for an empty Day slot by %s", async (_gesture, down, up, from, to) => {
+  mountFrame("#/cal/day/2026-11-16", world(), NONE);
+  const column = screen.getByRole("group", { name: /November 16/ });
+  vi.spyOn(column, "getBoundingClientRect").mockReturnValue(DOMRect.fromRect({ width: 120, height: 1440 }));
+  const pointer = (target: EventTarget, type: string, y: number) =>
+    fireEvent(
+      target,
+      Object.assign(new MouseEvent(type, { bubbles: true, clientX: 30, clientY: y }), { pointerId: 1 }),
+    );
+  pointer(column, "pointerdown", down);
+  pointer(document, "pointerup", up);
+  const form = within(await screen.findByRole("dialog", { name: "New event" }));
+  expect(form.getByDisplayValue(from)).toBeTruthy();
+  expect(form.getByDisplayValue(to)).toBeTruthy();
+});
+
+it("opens a new draft by keyboard and uses the selected empty hour", async () => {
+  mountFrame("#/cal/week/2026-11-16", world(), NONE);
+  fireEvent.keyDown(document.body, { key: "c" });
+  const form = within(await screen.findByRole("dialog", { name: "New event" }));
+  fireEvent.click(form.getByRole("button", { name: "Cancel" }));
+  fireEvent.keyDown(document.body, { key: "ArrowDown" });
+  fireEvent.keyDown(document.body, { key: "ArrowDown" });
+  fireEvent.keyDown(document.body, { key: "Enter" });
+  const slot = within(await screen.findByRole("dialog", { name: "New event" }));
+  expect(slot.getByDisplayValue("10:00")).toBeTruthy();
+  expect(slot.getByDisplayValue("11:00")).toBeTruthy();
+});
+
+it("offers a writable calendar when the preferred one is view-only", async () => {
+  const w = world();
+  w.put("calendar", "personal", calendarRecord({ id: "personal", name: "Personal", access: "reader" }));
+  mountFrame("#/cal/week/2026-11-16", w, NONE);
+  fireEvent.click(screen.getByRole("button", { name: "New event" }));
+  const form = within(await screen.findByRole("dialog", { name: "New event" }));
+  expect(await form.findByText("This calendar can be looked at, not changed.")).toBeTruthy();
+  expect(form.getByRole("button", { name: "Calendar" }).textContent).toBe("Studio");
+});
+
+it("keeps the next date when a selected slot ends at midnight", () => {
+  const draft = { ...startDraft("2026-11-16", 9 * 60, "0-1440"), title: "Open studio" };
+  expect(fieldsOfDraft(draft, calendarRecord(), ZURICH)).toMatchObject({
+    start: { value: "20261116T000000" },
+    end: { value: "20261117T000000" },
+  });
+});
+
+const openDraft = (entry: "button" | "keyboard") => {
+  if (entry === "button") fireEvent.click(screen.getByRole("button", { name: "New event" }));
+  else fireEvent.keyDown(document.body, { key: "c" });
+  return within(screen.getByRole("dialog", { name: "New event" }));
+};
+
+it.each([
+  {
+    entry: "button",
+    timeZone: ZURICH,
+    before: "2026-11-20T22:59:50Z",
+    now: "2026-11-20T23:00:10Z",
+    date: "Sat 21 Nov",
+    from: "01:00",
+  },
+  {
+    entry: "keyboard",
+    timeZone: "America/Los_Angeles",
+    before: "2026-11-21T07:59:50Z",
+    now: "2026-11-21T08:00:10Z",
+    date: "Sat 21 Nov",
+    from: "01:00",
+  },
+  {
+    entry: "keyboard",
+    timeZone: ZURICH,
+    before: "2026-11-21T22:48:00Z",
+    now: "2026-11-21T22:48:00Z",
+    date: "Sat 21 Nov",
+    from: "23:00",
+  },
+  {
+    entry: "button",
+    timeZone: "America/Los_Angeles",
+    before: "2026-11-22T07:48:00Z",
+    now: "2026-11-22T07:48:00Z",
+    date: "Sat 21 Nov",
+    from: "23:00",
+  },
+] as const)(
+  "opens by $entry on the local date in $timeZone at $now",
+  ({ entry, timeZone, before, now, date, from }) => {
+    vi.setSystemTime(new Date(before));
+    mountFrame("#/cal/week", world(), NONE, { timeZone });
+    // The new-event action can run before the calendar's next minute tick.
+    vi.setSystemTime(new Date(now));
+    const form = openDraft(entry);
+    expect(form.getByRole("button", { name: "Event date" }).textContent).toBe(date);
+    expect(form.getByRole<HTMLInputElement>("textbox", { name: "Start time" }).value).toBe(from);
+  },
+);
+
+it.each(["button", "keyboard"] as const)("opens by %s at the next hour on a selected day", (entry) => {
+  vi.setSystemTime(new Date("2026-11-21T13:42:00Z"));
+  mountFrame("#/cal/week/2026-11-20", world(), NONE);
+  const form = openDraft(entry);
+  expect(form.getByRole("button", { name: "Event date" }).textContent).toBe("Fri 20 Nov");
+  expect(form.getByDisplayValue("15:00")).toBeTruthy();
+});
+
+it("opens today's draft after saving on the previous day from an undated calendar", async () => {
+  vi.setSystemTime(new Date("2026-11-20T13:42:00Z"));
+  const w = world();
+  w.port.press = async () => ({ key: "create" });
+  mountFrame("#/cal/week", w, NONE);
+  const yesterday = openDraft("button");
+  fireEvent.change(yesterday.getByRole("textbox", { name: "Event title" }), {
+    target: { value: "Workshop" },
+  });
+  await act(async () => fireEvent.click(yesterday.getByRole("button", { name: "Add" })));
+  expect(screen.queryByRole("dialog", { name: "New event" })).toBeNull();
+
+  vi.setSystemTime(new Date("2026-11-21T13:42:00Z"));
+  const today = openDraft("keyboard");
+  expect(today.getByRole("button", { name: "Event date" }).textContent).toBe("Sat 21 Nov");
+  expect(today.getByDisplayValue("15:00")).toBeTruthy();
+});
+
+it.each([
+  ["2026-03-29", "02:30", /clock change skips/i, true],
+  ["2026-10-25", "02:30", /first occurrence/i, false],
+] as const)("explains the clock change when creating on %s", async (day, end, message, disabled) => {
+  const morning = new Date(day);
+  morning.setUTCHours(9);
+  vi.setSystemTime(morning);
+  mountFrame(`#/cal/week/${day}?panel=new`, world(), NONE);
+  const form = within(await screen.findByRole("dialog", { name: "New event" }));
+  for (const [name, value] of [
+    ["Event title", "Workshop"],
+    ["Start time", "01:30"],
+    ["End time", end],
+  ]) {
+    fireEvent.change(form.getByRole("textbox", { name }), { target: { value } });
+  }
+  expect(form.getByText(message)).toBeTruthy();
+  expect(form.getByRole<HTMLButtonElement>("button", { name: "Add" }).disabled).toBe(disabled);
+});

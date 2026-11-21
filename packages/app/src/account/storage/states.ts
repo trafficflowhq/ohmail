@@ -55,6 +55,7 @@ function plansOf(
 function trial(amounts: StorageStateAmounts | null): StorageFigures {
   return {
     used: "235 MB",
+    percent: 5,
     limit: "5 GB",
     room: { kind: "trial", limit: "5 GB" },
     tag: null,
@@ -91,6 +92,7 @@ function near(amounts: StorageStateAmounts | null): StorageFigures {
   return {
     ...base,
     used: "4.6 GB",
+    percent: 92,
     tag: { kind: "percent", percent: 92 },
     bar: {
       parts: [
@@ -116,6 +118,7 @@ function full(amounts: StorageStateAmounts | null): StorageFigures {
   return {
     ...base,
     used: "5 GB",
+    percent: 100,
     tag: { kind: "full" },
     bar: { ...base.bar, rest: { kind: "onServer", from: 0.8197, width: 0.1803 } },
     rows: [row("m1", MILA, "201,000", "4.1 GB", "5 GB"), row("m2", HELLO, "43,000", "920 MB", "1.1 GB")],
@@ -131,6 +134,7 @@ function held(amounts: StorageStateAmounts | null, until: string | null): Storag
   return {
     ...base,
     used: "3.4 GB",
+    percent: 68,
     room: until === null ? { kind: "plan", limit: "5 GB" } : { kind: "held", limit: "5 GB", until },
     bar: {
       ...base.bar,

@@ -7,8 +7,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import RootLayout from "../../app/(product)/layout";
 import en from "../../messages/en.json";
 
+const request = vi.hoisted(() => ({ signedIn: false }));
+
 vi.mock("next/headers", () => ({
-  headers: () => new Headers({ "x-nonce": "browser-test" }),
+  headers: () => new Headers({
+    "x-nonce": "browser-test",
+    ...(request.signedIn ? { "x-ohmail-first-page": "now", "x-ohmail-first-page-owner": "reader", cookie: "tf_owner=reader" } : {}),
+  }),
 }));
 
 let browser: Browser;
@@ -36,10 +41,10 @@ beforeAll(async () => {
 
 afterAll(async () => browser?.close());
 
-function withHead(content: string) {
-  return documentHtml.includes("</head>")
-    ? documentHtml.replace("</head>", () => content + "</head>")
-    : documentHtml.replace("<body", () => "<head>" + content + "</head><body");
+function withHead(content: string, html = documentHtml) {
+  return html.includes("</head>")
+    ? html.replace("</head>", () => content + "</head>")
+    : html.replace("<body", () => "<head>" + content + "</head><body");
 }
 
 const ORIGIN = "https://mail.browser.test";
@@ -135,19 +140,35 @@ describe("the mail frame's list separator", () => {
 
 const looks = [
   { name: "saved paper and dark", key: "ohmail.face.account", face: "paper", theme: "dark", system: "light",
-    platform: "Linux x86_64", ground: "rgb(14, 13, 12)" },
+    platform: "Linux x86_64", ground: "rgb(14, 13, 12)", owner: "reader", deviceFace: null },
   { name: "saved ohmarchy and light", key: "ohmail.face", face: "ohmarchy", theme: "light", system: "dark",
     platform: "Linux x86_64", ground: "rgb(242, 239, 228)" },
   { name: "Linux default with system dark", key: null, face: "ohmarchy", theme: null, system: "dark",
     platform: "Linux x86_64", ground: "rgb(19, 20, 28)" },
   { name: "paper default with system light", key: null, face: "paper", theme: null, system: "light",
     platform: "MacIntel", ground: "rgb(240, 235, 227)" },
+  { name: "saved account face, dark scheme and larger text on a signed-in page",
+    key: null, face: "ohmarchy", theme: "dark", system: "light", platform: "Linux x86_64",
+    ground: "rgb(19, 20, 28)", owner: "reader", deviceFace: "paper" },
+  { name: "a signed-in page with another account's saved face",
+    key: null, face: "paper", theme: "dark", system: "light", platform: "Linux x86_64",
+    ground: "rgb(14, 13, 12)", owner: "previous-reader", deviceFace: null },
 ] as const;
 
 describe("the web document's first paint", () => {
   for (const look of looks) {
     it(look.name, async () => {
-      const html = withHead(`<style>${css}</style>`);
+      const signedIn = "owner" in look;
+      let rendered = documentHtml;
+      if (signedIn) {
+        request.signedIn = true;
+        try {
+          rendered = "<!doctype html>" + renderToString(await RootLayout({ children: null }));
+        } finally {
+          request.signedIn = false;
+        }
+      }
+      const html = withHead(`<style>${css}</style>`, rendered);
       const boundary = html.indexOf(">", html.indexOf("<body")) + 1;
       const page = await browser.newPage({ colorScheme: look.system });
       const server = createServer((request, response) => {
@@ -165,10 +186,17 @@ describe("the web document's first paint", () => {
       try {
         await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
         const port = (server.address() as { port: number }).port;
-        await page.addInitScript(({ key, face, theme, platform }) => {
-          Object.defineProperty(navigator, "platform", { value: platform });
-          if (key) localStorage.setItem(key, face);
-          if (theme) localStorage.setItem("ohmail.theme", theme);
+        await page.addInitScript((saved) => {
+          Object.defineProperty(navigator, "platform", { value: saved.platform });
+          if (saved.key) localStorage.setItem(saved.key, saved.face);
+          if (saved.theme) localStorage.setItem("ohmail.theme", saved.theme);
+          if ("owner" in saved) {
+            document.cookie = "tf_owner=reader; Path=/";
+            localStorage.setItem("ohmail.face.account.owner", saved.owner);
+            localStorage.setItem("ohmail.face.account", saved.key ? saved.face : "ohmarchy");
+            if (saved.deviceFace) localStorage.setItem("ohmail.face", saved.deviceFace);
+            if (!saved.key) localStorage.setItem("ohmail.textSize", "125");
+          }
         }, look);
         await page.goto(`http://127.0.0.1:${port}/#/ohbox`, { waitUntil: "commit" });
         await page.waitForFunction(() => performance.getEntriesByName("first-paint").length > 0, null, { timeout: 5000 });
@@ -177,8 +205,11 @@ describe("the web document's first paint", () => {
           scheme: document.documentElement.dataset.scheme,
           theme: document.documentElement.dataset.theme ?? null,
           ground: getComputedStyle(document.body).backgroundColor,
+          zoom: Number(getComputedStyle(document.documentElement).zoom),
         }));
-        expect(first).toEqual({ face: look.face, scheme: look.theme ?? look.system, theme: look.theme, ground: look.ground });
+        expect(first).toEqual({
+          face: look.face, scheme: look.theme ?? look.system, theme: look.theme, ground: look.ground, zoom: signedIn && !look.key ? 1.25 : 1,
+        });
       } finally {
         await page.close();
         server.closeAllConnections();

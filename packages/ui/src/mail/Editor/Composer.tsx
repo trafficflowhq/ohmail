@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Button } from "../../base/index.js";
 import "./composer.css";
+import { AfterComposerTextSlot } from "./AfterComposerText.js";
 import { ComposerMarks, type ComposerMarksProps } from "./ComposerMarks.js";
 
 export interface ComposerProps {
@@ -160,12 +161,14 @@ export function Composer(props: ComposerProps) {
       <div className="oh-composer-editor">
         {marks ? <ComposerMarks {...marks} /> : null}
         {tabs}
-        <div className="oh-composer-text">
-          {props.placeholder ? (
-            <span className="oh-composer-placeholder" aria-hidden="true" data-words={props.placeholder} />
-          ) : null}
-          {children}
-        </div>
+        <AfterComposerTextSlot>
+          <div className="oh-composer-text">
+            {props.placeholder ? (
+              <span className="oh-composer-placeholder" aria-hidden="true" data-words={props.placeholder} />
+            ) : null}
+            {children}
+          </div>
+        </AfterComposerTextSlot>
         {signature ? <ComposerSignature signature={signature} going={props.going} /> : null}
         {forwarded || files ? (
           <div className="oh-composer-files">

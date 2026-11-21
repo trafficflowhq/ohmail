@@ -48,7 +48,7 @@ import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { useDefaultMailNotice } from "./DesktopDefaultMail.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
-import { DesktopDevices } from "./DesktopDevices.js";
+import { DesktopPairingDevices } from "./DesktopDevices.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
 import { ownModelAutoSuggest } from "./local-auto-suggest.js";
 import { DesktopScreening, DesktopUnsubscribeSettings } from "./DesktopScreening.js";
@@ -197,7 +197,7 @@ function DesktopAiPane() {
 
 function DesktopDevicesPane() {
   const { host } = useFrame();
-  return host.capabilities.pairing === "hostMode" ? <DesktopDevices /> : <BrowserDevicesPane />;
+  return host.capabilities.pairing === "hostMode" ? <DesktopPairingDevices /> : <BrowserDevicesPane />;
 }
 
 function BrowserDevicesPane() {

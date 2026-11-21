@@ -80,7 +80,7 @@ export interface Calls {
   marked: Array<{ ids: string[]; unread: boolean; via?: "glance" }>;
   held: Array<string | null>;
   selected: Array<string | null>;
-  bulk: Array<{ action: string; ids: string[] }>;
+  bulk: Array<{ action: string; ids: string[]; via?: "glance" }>;
   entered: string[];
 }
 
@@ -138,8 +138,9 @@ export async function mount(
     onAction: () => {},
     onAddTag: () => {},
     bulk: {
-      run: (action, ids) => {
-        calls.bulk.push({ action, ids });
+      run: (action, ids, options) => {
+        const via = options?.via;
+        calls.bulk.push({ action, ids, ...(via ? { via } : {}) });
         return !opts.bulkRefuses;
       },
       tag: () => {},

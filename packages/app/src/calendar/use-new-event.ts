@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { viewOnlyOf, type CalendarConnectionRecord, type CalendarRecord } from "@ohmail/app-logic/calendar";
+import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { useCalendarGuest, useFrame, type CalendarGuest } from "../frame/commands.js";
 import { fragmentOf } from "../frame/route.js";
 import { isCalendarPlace } from "../frame/product.js";
+import { useText } from "../text/index.js";
 import { NONE } from "../host/index.js";
 
 const noChanges = () => () => undefined;
@@ -30,12 +32,31 @@ export function useNewEvent(withGuest?: CalendarGuest) {
     () => false,
   );
   if (!canCreate) return null;
-  return () => {
+  return (day?: string, from?: number, to?: number) => {
     const here = isCalendarPlace(route.place) && route.place !== "calsettings" && route.place !== "frommail";
     const place = here ? route.place : "week";
-    const target = { place, sub: here ? route.sub : null, open: null, stage: null, words: { panel: "new" } };
+    const target = {
+      place,
+      sub: day ?? (here ? route.sub : null),
+      open: null,
+      stage: null,
+      words: {
+        panel: "new",
+        ...(from !== undefined && to !== undefined && { slot: `${from}-${to}` }),
+      },
+    };
     if (guest) guest.current = withGuest ?? null;
     commands.go(target, { history: "open-dialog" });
     if (guest && host.device.address.read() !== fragmentOf(target)) guest.current = null;
   };
+}
+
+export function useNewEventKey(create: ReturnType<typeof useNewEvent>, enabled: boolean) {
+  const t = useText("calendar");
+  useKeyBindings(
+    create && enabled
+      ? [{ chord: "c", group: "navigate", label: t("create.title"), run: () => create() }]
+      : [],
+    "global",
+  );
 }

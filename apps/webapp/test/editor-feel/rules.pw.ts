@@ -13,7 +13,7 @@ const MARKS: Record<string, [string, string, string]> = {
   bold: ["<strong>", "</strong>", "Bold"],
   italic: ["<em>", "</em>", "Italic"],
   strike: ["<s>", "</s>", "Strikethrough"],
-  code: ["<code>", "</code>", "Code"],
+  code: ["<code>", "</code>", "Inline code"],
 };
 
 /** The document's selection caught up with the DOM's (see `rig.ts`), then a read. */
@@ -203,7 +203,7 @@ test.describe("the toolbar says what the next letter carries", () => {
     await setDoc(page, "<p>ab <code>cd</code></p>");
     await caretAt(page, await posOf(page, "cd"));
     await page.keyboard.type(" ");
-    await expect(page.getByRole("button", { name: "Code", exact: true })).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("button", { name: "Inline code", exact: true })).toHaveAttribute("aria-pressed", "false");
   });
 
   test("[link-not-toggle] the link button claims no pressed state; it opens the dialog, which edits the link the caret ends", async ({ page }) => {

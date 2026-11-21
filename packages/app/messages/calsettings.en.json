@@ -46,6 +46,8 @@
       "noWritable": "No calendar to write to",
       "week": "Week",
       "weekNumbers": "Week numbers",
+      "weekNumbersOn": "Week numbers on",
+      "weekNumbersOff": "Week numbers off",
       "on": "On",
       "off": "Off",
       "hours": "Hours in view",

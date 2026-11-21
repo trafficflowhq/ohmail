@@ -32,9 +32,14 @@ import type { PlaceEntry, PlaceRail } from "../frame/contract.js";
 import { useFrame } from "../frame/index.js";
 import { NONE, type HostContract, type None } from "../host/index.js";
 import { mailboxesPane, type MailboxesParts } from "../mailboxes/pane/pane.js";
+import { useProfileImportState } from "../profile-import/ground.js";
+import { SavedProfileSettings } from "../profile-import/SavedProfileSettings.js";
 import { PANE_IDS } from "../settings/contract.js";
 import type { PaneId, SettingsBeside, SettingsPane, SettingsPanes } from "../settings/contract.js";
 import { paneOf } from "../settings/facts.js";
+import { useFoldersSummary, useSignaturesSummary } from "../settings/consent-summary.js";
+import { useAwaySummary } from "../settings/away/summary.js";
+import { useRulesSummary } from "../settings/rules/summary.js";
 import { menuOf } from "../settings/menu.js";
 import { lazyView } from "../frame/lazy-view.js";
 import { settingsPlaceWith, type SettingsAbove } from "../settings/place-with.js";
@@ -94,6 +99,10 @@ export const NO_PANE_PARTS: MailPaneParts = {
 
 /** The mail's panes over one host's parts. Call it once per mount: a registration made again is a pane mounted again. */
 export function mailPanes(parts: MailPaneParts): SettingsPanes {
+  function useAboutSummary() {
+    const version = useFrame().host.device.build.version;
+    return version === null ? null : { value: version };
+  }
   return {
     general: parts.general === NONE ? NONE : paneOf("general", { Body: parts.general }),
     notifications:
@@ -104,11 +113,17 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
         : paneOf("mailboxes", mailboxesPane({ ...parts.mailboxes, mailState: useMailState })),
     screener: parts.screener === NONE ? NONE : paneOf("screener", { Body: parts.screener }),
     ai: parts.ai === NONE ? NONE : paneOf("ai", { Body: parts.ai }),
-    away: parts.away === NONE ? NONE : paneOf("away", { Body: parts.away }),
-    rules: parts.rules === NONE ? NONE : paneOf("rules", { Body: parts.rules }),
+    away: parts.away === NONE ? NONE : paneOf("away", { Body: parts.away, useSummary: useAwaySummary }),
+    rules: parts.rules === NONE ? NONE : paneOf("rules", { Body: parts.rules, useSummary: useRulesSummary }),
     tags: parts.tags === NONE ? NONE : paneOf("tags", { Body: parts.tags }),
-    folders: parts.folders === NONE ? NONE : paneOf("folders", { Body: parts.folders }),
-    signatures: parts.signatures === NONE ? NONE : paneOf("signatures", { Body: parts.signatures }),
+    folders:
+      parts.folders === NONE
+        ? NONE
+        : paneOf("folders", { Body: parts.folders, useSummary: useFoldersSummary }),
+    signatures:
+      parts.signatures === NONE
+        ? NONE
+        : paneOf("signatures", { Body: parts.signatures, useSummary: useSignaturesSummary }),
     desktop: parts.desktop === NONE ? NONE : paneOf("desktop", { Body: parts.desktop }),
     devices:
       parts.devices === NONE
@@ -126,7 +141,7 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
     invites: parts.invites === NONE ? NONE : invitesPane(parts.invites),
     security: parts.security === NONE ? NONE : securityPane(parts.security),
     account: parts.account === NONE ? NONE : accountPane(parts.account),
-    about: parts.about === NONE ? NONE : paneOf("about", { Body: parts.about }),
+    about: parts.about === NONE ? NONE : paneOf("about", { Body: parts.about, useSummary: useAboutSummary }),
     help: parts.help === NONE ? NONE : paneOf("help", { Body: parts.help }),
   };
 }
@@ -152,6 +167,7 @@ const RAIL: PlaceRail = {
 
 /** The sections each Settings place made here was made over, by the place itself: what its menu can list. */
 const MADE = new WeakMap<PlaceEntry, SettingsPanes>();
+const SAVED_MAILBOXES = { ...paneOf("mailboxes", { Body: SavedProfileSettings }), listed: () => true };
 
 /** The mail's Settings place over one host's parts, or `none` where no section is registered. Once per mount. */
 export function mailSettings(parts: MailPaneParts, Above?: SettingsAbove): PlaceEntry | None {
@@ -159,9 +175,14 @@ export function mailSettings(parts: MailPaneParts, Above?: SettingsAbove): Place
   if (Object.values(panes).every((pane) => pane === NONE)) return NONE;
   const withoutFolders = { ...panes, folders: NONE } as const;
   function useAccountPanes() {
-    return useConsent().foldersStorable ? panes : withoutFolders;
+    const saved = useProfileImportState();
+    const available = useConsent().foldersStorable ? panes : withoutFolders;
+    if (parts.mailboxes === NONE && saved && (saved.declined.length > 0 || saved.unkept.length > 0)) {
+      return { ...available, mailboxes: SAVED_MAILBOXES };
+    }
+    return available;
   }
-  const sections = parts.folders === NONE ? panes : useAccountPanes;
+  const sections = parts.folders === NONE && parts.mailboxes !== NONE ? panes : useAccountPanes;
   const place: PlaceEntry = {
     ...settingsPlaceWith(sections, useSettingsBeside, Above, SettingsList, SettingsReading),
     rail: RAIL,

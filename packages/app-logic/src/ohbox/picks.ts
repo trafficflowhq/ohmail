@@ -144,10 +144,30 @@ export function usePickVerbs(
          application of it. A reader's Move, Screening or Delete does not happen: `run` answers
          `false` at the press, nothing was dispatched, and throwing the set away would make the
          person rebuild it before trying a verb that works. */
-      if (bulk.run(action, pickedIds)) clearPicked();
+      const conversationIds = action.startsWith("move:")
+        ? new Set(
+            navRows.flatMap(({ members }) =>
+              members.length > 1 && members.every(({ id }) => picked.has(id))
+                ? members.map(({ id }) => id)
+                : [],
+            ),
+          )
+        : undefined;
+      if (bulk.run(action, pickedIds, { conversationIds })) clearPicked();
       else setPickPanel(null);
     },
-    [bulk, pickedIds, clearPicked, returnToNew, selectedId, lastActed, setPickPanel, verbTook],
+    [
+      bulk,
+      picked,
+      pickedIds,
+      navRows,
+      clearPicked,
+      returnToNew,
+      selectedId,
+      lastActed,
+      setPickPanel,
+      verbTook,
+    ],
   );
 
   /**

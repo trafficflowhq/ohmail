@@ -31,7 +31,8 @@ import { useLetterKeys, useLetterWriting } from "./keys.js";
 import { useSignature } from "./text/Signature.js";
 import { LetterText } from "./text/LetterText.js";
 import { unwritten } from "./text/unwritten.js";
-import { useLetterDraftOffer } from "./draft/Draft.js";
+import { useWritingViewport } from "./keyboard-viewport.js";
+import { OfferedLetterDraft, useLetterDraftOffer } from "./draft/Draft.js";
 
 export function Letter({ keysHere, plan }: PaneProps) {
   const t = useText("write");
@@ -50,8 +51,6 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const { mayGo, long, empty, went, pressable, signature, then } = useLetterSend(
     files.model.attaching.length > 0,
   );
-  const tooLong = long.tooLong;
-  const nothing = empty.empty;
   const [handle, setHandle] = useState<EditorHandle | null>(null);
   const marks = useMarks(handle, !locked, plan.pointer !== "coarse");
   const lines = useLetterSendLines();
@@ -70,6 +69,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const stamp = letterStamp(going, drafting, w, t, tc);
   const from = fromLine && { ...fromLine, stamp: { label: stamp, hint: reassurance } };
   const { sheet, first } = useComposeFocus(keysHere, compose, t);
+  const compact = useWritingViewport(sheet, plan.pointer === "coarse");
   return (
     <>
       <Sheet
@@ -80,12 +80,13 @@ export function Letter({ keysHere, plan }: PaneProps) {
         back={plan.device === "phone" ? { word: t("back"), onPress: () => then("leave") } : undefined}
         foot={
           <Verbs
+            compact={compact}
             canSend={mayGo}
             going={going}
             keysHere={keysHere}
             discardHeld={letterDiscardHeld(w.composeSend)}
-            resting={tooLong}
-            said={sendSaid(nothing ? tc("needContent") : went.refusal, w.composeSend)}
+            resting={long.tooLong}
+            said={sendSaid(empty.empty ? tc("needContent") : went.refusal, w.composeSend)}
             onSend={() => {
               if (!modalIsOpen()) then("send");
             }}
@@ -126,6 +127,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
           }}
           placeholder={unwritten({ text: compose.body, html: compose.html }) ? placeholder : undefined}
         >
+          <OfferedLetterDraft locked={locked} focus={() => handle?.focus({ preventScroll: true })} />
           <LetterText
             placeholder={placeholder}
             editable={!locked && !drafting}

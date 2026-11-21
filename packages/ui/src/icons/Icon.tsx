@@ -4,13 +4,15 @@ import data from "./icons.json" with { type: "json" };
 /** Every icon of the design, by name: the words it is found by and its drawing on the 24 grid. */
 export const icons = data.icons;
 export type IconName = keyof typeof icons;
+export type ComposerIconName = keyof typeof data.composer;
+const drawings = { ...icons, ...data.composer };
 
 /** The sizes an icon is drawn at. `icons.json` lists the same ones; the icons' test holds the two equal. */
 export const ICON_SIZES = [16, 18, 20, 22, 24] as const;
 export type IconSize = (typeof ICON_SIZES)[number];
 
 export interface IconProps {
-  name: IconName;
+  name: IconName | ComposerIconName;
   size: IconSize;
   /** What the icon says when it stands alone. Without it the icon is decoration beside a word. */
   label?: string;
@@ -34,7 +36,7 @@ export function Icon({ name, size, label, className }: IconProps) {
       stroke="currentColor"
       {...named}
       // The markup is this package's own file, and its test admits shapes and geometry only.
-      dangerouslySetInnerHTML={{ __html: icons[name].svg }}
+      dangerouslySetInnerHTML={{ __html: drawings[name].svg }}
     />
   );
 }

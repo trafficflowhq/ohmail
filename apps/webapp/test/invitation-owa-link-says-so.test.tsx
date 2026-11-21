@@ -8,34 +8,15 @@
  * rebuilt Microsoft 365 options page, reports that link to the shell, and stays outside the mail.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import type { JunkWire } from "@ohmail/app-logic/screener/junk-window";
+import { MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
+import { fireEvent, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import de from "../messages/de.json";
-import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";
 import { setRenderedLinksSink } from "../../../packages/letter-body/src/rendered-links";
+import { answerConsentWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-
-type Catalog = Record<string, Record<string, string>>;
-const DE_MERGED = fillFrom(en as never, de as never) as never;
-const EN = (en as unknown as Catalog).body!;
+const EN = en.body;
 
 const NOW = new Date("2026-10-19T09:00:00.000Z");
 
@@ -66,107 +47,114 @@ function msg(id: string, extra: Partial<EngineMessage> = {}): EngineMessage {
   } as unknown as EngineMessage;
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
 let reported = new Map<string, readonly string[]>();
 
-async function settle(): Promise<void> {
-  await act(async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); });
-}
-
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-}
-
-afterEach(async () => {
-  await unmount();
-  setRenderedLinksSink(null);
-  setActiveCatalog(DEFAULT_LOCALE, null);
-});
-
-type Body = { text: string; state?: "full" | "snippet" | "loading" };
-
-async function mount(open: EngineMessage, body: Body, opts: { locale?: "en" | "de"; dull?: boolean } = {}) {
-  await unmount();
+function setup() {
+  installShellEnv();
+  vi.setSystemTime(NOW);
   reported = new Map();
   setRenderedLinksSink((surface, hrefs) => {
     if (hrefs.length === 0) reported.delete(surface);
     else reported.set(surface, hrefs);
   });
-  const locale = opts.locale ?? "en";
-  const { HeldMail } = await import("../app/views/ScreenerView.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  const view = h(HeldMail as never, {
-    messageId: open.id, message: { id: open.id, snippet: open.snippet },
-    from: "A Colleague", subject: open.subject, body: open.snippet, ...(opts.dull ? { dull: true } : {}),
-  } as never);
-  host = document.createElement("div");
-  host.className = "read-col";
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale, messages: locale === "de" ? DE_MERGED : en, timeZone: "UTC", now: NOW,
-        children: h(MessageChromeProvider as never, {
-          value: {
-            ownAddresses: ["me@x.invalid"],
-            absoluteTime: false,
-            onToggleAbsoluteTime: () => {},
-            replyTo: null,
-            replyBody: { text: "", html: "" },
-            onReplyBody: () => {},
-            closeReply: () => {},
-            sendReply: () => {},
-            replySendState: () => ({ phase: "idle" }),
-            openSenderMenu: () => {},
-            openAttachmentPreview: () => {},
-            conversationOf: () => [],
-            bodyOf: () => ({
-              text: body.text, state: body.state ?? "full", html: null, loadedRemoteContent: false,
-              unsubscribe: "no_header", unsubscribeUrl: null,
-            }),
-            hydrateBody: () => {},
-            hydrateBodies: () => {},
-            hydrateThread: () => {},
-            openReply: () => {},
-            forward: () => {},
-          },
-          children: view,
-        } as never),
-      }),
-    );
+}
+
+beforeEach(setup);
+
+afterEach(async () => {
+  await teardownShellEnv();
+  setRenderedLinksSink(null);
+});
+
+const refused = async () => { throw new Error("This action is outside the invitation test"); };
+const junkWire: JunkWire = {
+  list: async () => ({
+    mailboxes: [{ id: "mb", address: msg("junk").to[0]!.address, window: "ok" }],
+    items: [{
+      mailboxId: "mb", uid: 1, uidValidity: "7", subject: "Think tank held",
+      from: msg("junk").from, date: NOW.toISOString(), messageIdHeader: null, seen: false, origin: "provider",
+    }],
+    nextCursor: null,
+  }),
+  body: async () => ({ subject: "Think tank held", text: STUB }),
+  rescue: refused,
+  dismissRescue: refused,
+  search: refused,
+  sweepPreview: async () => ({ mailboxes: [], movable: 0, pending: false }),
+  sweepRequest: refused,
+  isGone: () => false,
+  codeOf: () => null,
+};
+
+type Segment = "Waiting" | "Screened out" | "Spam" | "Junk";
+async function mount(segment: Segment, text: string) {
+  const folders: Record<Segment, EngineMessage["folder"]> = {
+    Waiting: "ohmail/Screener", "Screened out": "ohmail/Screened",
+    Spam: "ohmail/Quarantine", Junk: "ohmail/Quarantine",
+  };
+  const letter = msg("held", { folder: folders[segment] });
+  const store = new MemoryMirrorStore();
+  await store.load();
+  await store.applyChanges([{
+    type: "message", op: "create", id: letter.id, seq: 1, updatedAt: letter.updatedAt, entity: letter,
+  }]);
+  const engine = new OhmailEngine({
+    store,
+    now: () => NOW,
+    adapter: {
+      sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "1", hasMore: false, serverTime: NOW.toISOString() }),
+      mutate: async () => ({ changes: [], seq: null }),
+      withdrawSend: async () => ({ outcome: "unsupported" }),
+      fetchBody: async () => ({ text, html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }),
+    },
   });
-  await settle();
-  return host;
+  if (segment === "Junk") answerConsentWith({ foldersEnabledAt: NOW.toISOString() });
+  window.location.hash = "#/screener/waiting";
+  await engine.start();
+  const view = within(await mountShell([mailbox({ id: "mb", lastSyncAt: NOW.toISOString() })], {
+    engine, junkWire: segment === "Junk" ? junkWire : "none",
+  }));
+  await tick(500);
+  fireEvent.click(view.getByRole("button", { name: new RegExp(`^${segment}(?:$|[, ])`) }));
+  await tick(500);
+  const reading = within(view.getByRole("region", { name: en.frame.landmark.reading }));
+  const article = reading.getByRole("article");
+  expect(article.textContent).toContain("Think tank held");
+  return article;
 }
 
 const reportedHrefs = (): string[] => [...reported.values()].flat();
-const settingLink = (el: HTMLElement): HTMLAnchorElement | null =>
-  [...el.querySelectorAll<HTMLAnchorElement>("[role=note] a")][0] ?? null;
 
 describe("the other body surfaces say the same", () => {
   it("the Screener's preview: the stub line above .hm-body, with the link", async () => {
-    const el = await mount(msg("held"), { text: STUB });
-    expect(el.textContent).toContain(EN.invitationOwaLink);
-    expect(settingLink(el)?.getAttribute("href")).toBe(HREF);
-    expect(el.querySelector(".hm-body")!.textContent).not.toContain(EN.invitationOwaLink);
+    const article = await mount("Waiting", STUB);
+    const note = within(article).getByRole("note");
+    const body = within(article).getByText(/Microsoft Outlook Web Access:/);
+    expect(note.textContent).toContain(EN.invitationOwaLink);
+    expect(within(note).getByRole("link", { name: EN.invitationOwaOpenSetting }).getAttribute("href")).toBe(HREF);
+    expect(body.textContent).not.toContain(EN.invitationOwaLink);
+    expect(note.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(reportedHrefs()).toContain(HREF);
   });
 
   it("a dull Screener preview (spam, junk, screened out) says nothing: a lure there gets no ohmail voice", async () => {
-    const el = await mount(msg("held-dull"), { text: STUB }, { dull: true });
-    expect(el.querySelector("[role=note]")).toBeNull();
-    expect(el.textContent).not.toContain(EN.invitationOwaLink);
-    expect(reportedHrefs()).not.toContain(HREF);
-    expect(el.querySelector(".hm-body")!.textContent).toContain("Microsoft Outlook Web Access:");
+    for (const [index, segment] of (["Screened out", "Spam", "Junk"] as const).entries()) {
+      if (index > 0) {
+        await teardownShellEnv();
+        setup();
+      }
+      const article = await mount(segment, STUB);
+      expect(within(article).queryByRole("note")).toBeNull();
+      expect(article.textContent).not.toContain(EN.invitationOwaLink);
+      expect(reportedHrefs()).not.toContain(HREF);
+      expect(within(article).getByText(/Microsoft Outlook Web Access:/)).toBeTruthy();
+    }
   });
 
   it("the Screener's preview of ordinary mail says nothing", async () => {
-    const el = await mount(msg("held2"), { text: ORDINARY });
-    expect(el.querySelector("[role=note]")).toBeNull();
+    const article = await mount("Waiting", ORDINARY);
+    expect(within(article).getByText(/Here is the calendar for next week:/)).toBeTruthy();
+    expect(within(article).queryByRole("note")).toBeNull();
+    expect(reportedHrefs()).not.toContain(HREF);
   });
 });

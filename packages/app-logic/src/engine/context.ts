@@ -45,6 +45,8 @@ export interface EngineBinding {
   serverDemo: boolean;
   /** What the sync loop is doing, for the views that must say so. Always settled in demo. */
   sync: SyncStatus;
+  /** The signed-in web list waits for the device copy before it shows loading rows. */
+  waitForLocalCopy?: boolean;
 }
 
 export const EngineContext = createContext<EngineBinding | null>(null);
@@ -86,6 +88,30 @@ export function useSyncStatus(): SyncStatus {
 
 /** Nothing to subscribe to — the mode is decided once per engine, at construction. */
 const NEVER_CHANGES = (): (() => void) => () => {};
+
+/** The first local read is still pending on a host that opens its list from a persisted copy. */
+export function useLocalCopyPending(): boolean {
+  const binding = useContext(EngineContext);
+  const engine = binding?.waitForLocalCopy ? binding.engine : null;
+  const subscribe = useCallback((cb: () => void) => engine?.subscribe(cb) ?? NEVER_CHANGES(), [engine]);
+  return useSyncExternalStore(
+    subscribe,
+    () => engine !== null && !engine.localCopyRead(),
+    () => false,
+  );
+}
+
+/** The live mirror is being replaced after a cursor expires. */
+export function useMirrorReplacing(): boolean {
+  const binding = useContext(EngineContext);
+  const engine = binding?.waitForLocalCopy ? binding.engine : null;
+  const subscribe = useCallback((cb: () => void) => engine?.subscribe(cb) ?? NEVER_CHANGES(), [engine]);
+  return useSyncExternalStore(
+    subscribe,
+    () => engine?.mirrorIsReplacing() ?? false,
+    () => false,
+  );
+}
 
 /**
  * The mode the UI should render, hydration-safe.

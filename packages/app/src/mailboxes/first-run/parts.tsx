@@ -37,15 +37,25 @@ export function wordsOf(said: SaidLine, say: Say): string {
     : say(`${said.ns}.${said.key}`, said.values ? { ...said.values } : undefined);
 }
 
-/** How far the run is: the kit's dots, a dot a phase, said as one sentence ("Step 2 of 5, Mailbox"). */
+/** How far the run is, with a dot per phase and a screen count for phases with several screens. */
 export function Progress({ run, say }: { run: FirstRun; say: Say }): ReactNode {
-  const { rail, railAt } = run.cursor;
-  const phase = say(`onboarding.rail_${rail[railAt]?.id ?? "mailbox"}`);
+  const { path, rail, railAt, step } = run.cursor;
+  const current = rail[railAt];
+  const phase = say(`onboarding.rail_${current?.id ?? "mailbox"}`);
+  const screens = path.filter((screen) => current?.steps.includes(screen));
+  const screen = step === null ? 0 : screens.indexOf(step) + 1;
+  const hasCount = screens.length > 1 && screen > 0;
+  const values = { n: railAt + 1, total: rail.length, phase };
   return (
     <StepDots
-      label={say("onboarding.railSaid", { n: railAt + 1, total: rail.length, phase })}
+      label={
+        hasCount
+          ? say("onboarding.railSaidSub", { ...values, screen, screens: screens.length })
+          : say("onboarding.railSaid", values)
+      }
       steps={rail.length}
       at={railAt}
+      sub={hasCount ? `${screen}/${screens.length}` : undefined}
     />
   );
 }

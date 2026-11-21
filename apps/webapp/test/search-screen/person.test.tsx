@@ -274,6 +274,11 @@ describe("the filters beside the words", () => {
     const narrowed = new Promise<Awaited<ReturnType<StoreFn>>>((resolve) => { answer = resolve; });
     const world = await search([first, second, outside], {
       searchBy: "people",
+      searchPlaces: async () => [
+        { folder: first.folder, count: 1 },
+        { folder: second.folder, count: 1 },
+        { folder: outside.folder, count: 1 },
+      ],
       store: (q, opts) => opts.filters?.folder
         ? narrowed
         : page([first, second, outside], { facets })(q, opts),
@@ -290,6 +295,37 @@ describe("the filters beside the words", () => {
     expect(asked.opts.filters).toEqual({ folder: first.folder });
     await act(async () => { answer(await page([first])(asked.q, asked.opts)); });
     expect(results().map((li) => li.getAttribute("data-hit"))).toEqual([first.id]);
+  });
+
+  it("keeps the inventory in Place after typing and sends the folder with the words", async () => {
+    const hit = letter({ id: "glaze-note", subject: "Glaze note" });
+    const remoteFolder = "Archive/Samples";
+    const facets = {
+      folder: { INBOX: 1 },
+      sender: [],
+      hasAttachments: { true: 0, false: 1 },
+      unread: { true: 0, false: 1 },
+    };
+    const world = await search([hit], {
+      searchBy: "people",
+      searchPlaces: async () => [
+        { folder: "INBOX", count: 20 },
+        { folder: remoteFolder, count: 8 },
+        { folder: "Archive/Empty", count: 0 },
+      ],
+      store: (q, opts) => page(opts.filters?.folder ? [] : [hit], { facets })(q, opts),
+    });
+    await type("glaze");
+    await settle();
+    expect(results().map((row) => row.getAttribute("data-hit"))).toEqual([hit.id]);
+    await press("Place");
+    const menu = within(screen.getByRole("menu", { name: "Place" }));
+    expect(menu.getByRole("menuitem", { name: "Empty 0" })).toBeTruthy();
+    expect(menu.getByRole("menuitem", { name: "Ohbox 20" })).toBeTruthy();
+    await act(async () => { fireEvent.click(menu.getByRole("menuitem", { name: "Samples 8" })); });
+    await settle();
+    expect(pages(world.asked).at(-1)).toMatchObject({ q: "glaze", opts: { filters: { folder: remoteFolder } } });
+    expect(results()).toEqual([]);
   });
 
   it("a date window asks for the days it spans, and a press takes it off", async () => {
@@ -328,6 +364,43 @@ describe.each(["desktop", "phone"] as const)("resting Search on %s", (device) =>
     ? { ...DESKTOP, device, size: "compact", pointer: "coarse", columns: 1 } as const
     : DESKTOP;
 
+  it("shows mirror counts while loading and can search a folder that only the server knows", async () => {
+    const local = letter({ id: "local-report", subject: "Local report", folder: "Archive/Local" });
+    const remote = letter({ id: "older-report", subject: "Older report", folder: "Archive/Reports" });
+    let loaded!: (places: readonly { folder: string; count: number }[]) => void;
+    const pending = new Promise<readonly { folder: string; count: number }[]>((resolve) => { loaded = resolve; });
+    const world = await search([local], {
+      plan, searchBy: "people", searchPlaces: () => pending, store: page([remote]),
+    });
+
+    await press("Place");
+    const menu = within(screen.getByRole("menu", { name: "Place" }));
+    const localRow = menu.getByRole("menuitem", { name: /^Local 1$/ });
+    await act(async () => { localRow.focus(); });
+    expect(document.activeElement).toBe(localRow);
+    expect(menu.queryByRole("menuitem", { name: /Reports/ })).toBeNull();
+    expect(world.asked).toEqual([]);
+
+    await act(async () => {
+      loaded([
+        { folder: remote.folder, count: 28 },
+        { folder: "Other/Local", count: 7 },
+        { folder: local.folder, count: 6 },
+      ]);
+    });
+    const updated = menu.getByRole("menuitem", { name: /^Archive\/Local 6$/ });
+    expect(menu.getAllByRole("menuitem")[0]).toBe(updated);
+    expect(updated).toBe(localRow);
+    expect(document.activeElement).toBe(localRow);
+    await act(async () => {
+      fireEvent.click(menu.getByRole("menuitem", { name: /^Reports 28$/ }));
+    });
+    await settle();
+    expect(pages(world.asked).at(-1)).toMatchObject({ q: "", opts: { filters: { folder: remote.folder } } });
+    expect(screen.getByRole("button", { name: "Reports", pressed: true })).toBeTruthy();
+    expect(results().map((li) => li.getAttribute("data-hit"))).toEqual([remote.id]);
+  });
+
   it("exposes Place and Has attachment before asking, and either can start a search", async () => {
     const filed = letter({ id: "filed", subject: "Fired samples", folder: "Archive", file: true });
     const world = await search([BEN, filed], { plan, searchBy: "people", store: page([filed]) });
@@ -337,7 +410,7 @@ describe.each(["desktop", "phone"] as const)("resting Search on %s", (device) =>
     expect(world.asked).toEqual([]);
     await press("Place");
     await act(async () => {
-      fireEvent.click(within(screen.getByRole("menu", { name: "Place" })).getByRole("menuitem", { name: "Archive" }));
+      fireEvent.click(within(screen.getByRole("menu", { name: "Place" })).getByRole("menuitem", { name: /^Archive 1$/ }));
     });
     await settle();
     expect(pages(world.asked).at(-1)).toMatchObject({ q: "", opts: { filters: { folder: "Archive" } } });
@@ -414,7 +487,7 @@ it("keeps the refine controls while a query waits and after both kinds of answer
   checkControls();
   expect(screen.queryByRole("button", { name: /^Sorted by/ })).toBeNull();
   await press("Place");
-  expect(within(screen.getByRole("menu", { name: "Place" })).getByRole("menuitem", { name: "Archive" })).toBeTruthy();
+  expect(within(screen.getByRole("menu", { name: "Place" })).getByRole("menuitem", { name: /^Archive 1$/ })).toBeTruthy();
   await press("Place");
 
   await type("glaze");

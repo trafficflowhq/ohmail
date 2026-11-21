@@ -499,6 +499,7 @@
     "rail_decide": "Erste Entscheidung",
     "rail_done": "Fertig",
     "railSaid": "Schritt {n} von {total}, {phase}",
+    "railSaidSub": "Schritt {n} von {total}, {phase}, {screen} von {screens}",
     "cancel": "Einrichtung abbrechen",
     "restart": "Von vorn",
     "back": "Zurück",

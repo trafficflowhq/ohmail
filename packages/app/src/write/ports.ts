@@ -19,36 +19,15 @@ import type { ComposedTime, ScheduleFiles } from "@ohmail/app-logic/write/later"
 import type { PaneProps } from "../frame/contract.js";
 import type { None } from "../host/contract.js";
 import type { HostDevice } from "../host/device.js";
+import type { QuotedHistoryControl } from "./text/history-ports.js";
 import type { ReaderReply } from "../reader/ports.js";
+import type { EditorMarks } from "./editor-controls.js";
+
+export type { EditorLink, EditorMarks, MarkId, ParagraphStyle } from "./editor-controls.js";
 
 export type { ReaderReply };
 
 /* ---------------------------------------------------------------- the editor */
-
-/** The marks an editor may offer. An editor names the ones it has; the strip draws those alone. */
-export type MarkId =
-  "bold" | "italic" | "underline" | "strike" | "link" | "bullets" | "numbers" | "quote" | "code";
-
-export interface EditorMarks {
-  readonly ids: readonly MarkId[];
-  /** The marks that hold where the caret is now. */
-  active(): ReadonlySet<MarkId>;
-  /** Called when `active()` may answer otherwise; the return stops it. */
-  subscribe(changed: () => void): () => void;
-  run(id: MarkId): void;
-  readonly link: {
-    /** Capture the range before focus leaves the editor. */
-    open(): EditorLink;
-    /** Mod+K in the text: `ask` is called as a press on the strip's Link is; the return stops it. */
-    onKey(ask: () => void): () => void;
-  };
-}
-
-export interface EditorLink {
-  readonly href: string | null;
-  set(href: string | null): "ok" | "refused";
-  restore(): void;
-}
 
 /** What an editor hands the screen once it stands: its marks, and the two moves the screen makes in the text. */
 export interface EditorHandle {
@@ -66,6 +45,7 @@ export interface EditorProps {
   readonly value: RichValue;
   readonly onChange: (next: RichValue) => void;
   readonly label: string;
+  readonly quotedHistory?: QuotedHistoryControl;
   readonly placeholder: string;
   /** False while a send is in flight: the words stay, input is refused. */
   readonly editable: boolean;
@@ -89,8 +69,6 @@ export interface WriteEntry {
   readonly Letter: ComponentType<PaneProps>;
   readonly reply: ReaderReply;
 }
-
-/* ---------------------------------------------------------------- the composition, as the screen reads it */
 
 /** Who a letter goes from, as the composition resolved it (the From line, the wire and the ceiling agree). */
 export interface WriteFrom {
@@ -162,6 +140,7 @@ export interface WriteReply {
   readonly subject: { readonly value: string; readonly editable: boolean };
   readonly from: WriteFrom;
   readonly send: SendState;
+  readonly saveRefused?: boolean;
   /** Why Send rests, as the send's own gate reads the reply as it would go now; null: it may go. */
   readonly refusal: "locked" | "too_long" | "needs_content" | "incomplete" | null;
   /** The row of this reply's send nobody confirmed (a reply only): its two answers are offered. */
@@ -238,6 +217,8 @@ export interface Writing {
   /** The live binding changes when another letter takes the same composer. */
   readonly composeEpochNow?: () => number;
   readonly onComposeFields: (next: ComposeFields) => void;
+  readonly offeredDraft?: EngineDraft;
+  readonly takeOfferedDraft?: (id: string) => Promise<void>;
   readonly plan: ComposePlan;
   readonly composeFrom: WriteFrom;
   /** The letter's row moved on another device (sent, deleted or changed there), or null. */
@@ -248,6 +229,8 @@ export interface Writing {
   readonly composeResumed: boolean;
   readonly composeWaitNote: string | null;
   readonly composeCloseRefusal: string | null;
+  readonly composeHistoryTarget?: { readonly messageId: string; readonly forward: boolean } | null;
+  readonly loadQuotedHistory?: (messageId: string, forward: boolean) => Promise<readonly string[]>;
   readonly composeForwardFiles: WriteForwardFiles | null;
   /** Send now, or at `sendAt` (an ISO instant). The composition's gate decides; a press is never "sent". */
   readonly sendCompose: (sendAt?: string) => void;
@@ -323,8 +306,6 @@ export interface Writing {
   readonly discardCompose: () => void;
   readonly discardReply: () => void;
 }
-
-/* ---------------------------------------------------------------- the shell's helpers beside it */
 
 export type RecipientRow = "to" | "cc" | "bcc";
 export interface RecipientMoveInput {

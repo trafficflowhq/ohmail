@@ -12,6 +12,7 @@ import type {
   Complete,
   Facets,
   MessageDTO,
+  SearchPlacesResult,
   SearchResult,
   AddressSearchDirection as WireAddressSearchDirection,
 } from "@ohmail/wire";
@@ -153,6 +154,8 @@ const SENDER_FACET_LIMIT = 10;
 const SUMMARY_EXACT_CAP = 2_000;
 /** The exact count's own time box, transaction-local; past it the summary answers as past the cap. */
 const SUMMARY_EXACT_TIMEOUT_MS = 1_500;
+/** The account-wide Place inventory is a single menu and one response. */
+const SEARCH_PLACES_MAX = 1_000;
 /** The address view counts exactly up to this many letters, then says "at least". */
 const ADDRESS_EXACT_CAP = 10_000;
 /**
@@ -720,6 +723,41 @@ export class SearchService {
   private static folderOf(id: SQL): SQL {
     return sql`coalesce((select fq.desired_folder from folder_state fq where fq.message_id = ${id}),
       (select mq.native_locator->>'folder' from messages mq where mq.id = ${id}), 'INBOX')`;
+  }
+
+  /** The folder filter uses paths across all of the account's mailboxes. Count that same corpus. */
+  async places(ctx: ServiceContext): Promise<SearchPlacesResult> {
+    const d = dialect(ctx.db);
+    const statement = sql`
+      select folder, sum(n) as total
+      from (
+        select ${this.folderExpr} as folder, count(*) as n
+        from messages m
+        left join folder_state fs on fs.message_id = m.id
+        where ${this.whereSql(d, ctx.accountId, {})}
+        group by ${this.folderExpr}
+        union all
+        select mf.folder, 0 as n
+        from mailbox_folders mf
+        join mailboxes mb on mb.id = mf.mailbox_id
+        where mf.account_id = ${ctx.accountId} and mb.account_id = ${ctx.accountId}
+      ) inventory
+      group by folder
+      order by total desc, folder
+      limit ${SEARCH_PLACES_MAX + 1}
+    `;
+    let rows: unknown[][];
+    try {
+      rows = await this.inSession(ctx, d, { tier: "exact", preferIndexes: false, statementTimeoutMs: SUMMARY_EXACT_TIMEOUT_MS },
+        (db) => d.exec(db, statement));
+    } catch (err) {
+      if (!isStatementTimeout(err)) throw err;
+      throw new ServiceError("unavailable", 503, "Search folder counts could not be read in time", undefined, true);
+    }
+    if (rows.length > SEARCH_PLACES_MAX) {
+      throw new ServiceError("search_too_many_folders", 422, `Too many folders to list in Search (limit: ${SEARCH_PLACES_MAX})`);
+    }
+    return { places: rows.map(([folder, count]) => ({ folder: String(folder), count: Number(count) })) };
   }
 
   /** Refuse an over-long query BEFORE anything scans it; see {@link SEARCH_QUERY_MAX_CHARS}. */
@@ -2456,12 +2494,13 @@ export class SearchService {
    * shaping.
    */
   private async inSession<T>(
-    ctx: ServiceContext, d: Dialect, opts: { tier: SearchTier; preferIndexes: boolean },
+    ctx: ServiceContext, d: Dialect, opts: { tier: SearchTier; preferIndexes: boolean; statementTimeoutMs?: number },
     fn: (db: unknown) => Promise<T>,
   ): Promise<T> {
     const setup = d.search.searchSession({
       ...(opts.tier === "similar" ? { typoThreshold: FUZZY_THRESHOLD } : {}),
       preferIndexes: opts.preferIndexes,
+      ...(opts.statementTimeoutMs === undefined ? {} : { statementTimeoutMs: opts.statementTimeoutMs }),
     });
     if (setup === null) return fn(ctx.db);
     return txOf(ctx)((t) => afterSettings(t, d, setup, () => fn(t)));

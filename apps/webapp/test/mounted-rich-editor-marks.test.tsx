@@ -14,6 +14,8 @@ import { useMarks } from "../../../packages/app/src/write/text/Marks.js";
 import type { EditorHandle } from "../../../packages/app/src/write/ports.js";
 import messages from "../messages/en.json";
 import type { Editor } from "@tiptap/react";
+import { normalizeMime } from "@trafficflow/core/mail";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { editorOf } from "./fixtures/rich-editor-driver";
 import { EDITOR_RULES, autolinkHref, nextMarks } from "@ohmail/app/write/editor/marks";
 import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text";
@@ -91,6 +93,172 @@ afterEach(() => {
   root = null;
   host?.remove();
   host = null;
+});
+
+describe("composer block formats", () => {
+  it("puts the formats in the composer toolbar order", () => {
+    mount();
+    const toolbar = within(host!).getByRole("toolbar", { name: "Formatting" });
+    expect(within(toolbar).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Bold", "Italic", "Underline", "Strikethrough", "Paragraph style", "Link", "Numbered list",
+      "Bulleted list", "Quote", "Inline code", "Code block", "Divider",
+    ]);
+  });
+
+  it("keeps single line breaks when choosing Paragraph and when returning a heading to Paragraph", async () => {
+    const draft = { text: "one\ntwo\nthree", html: "" };
+    const ed = mount(draft);
+    act(() => ed.editor().commands.focus(posOf(ed, "two")));
+    const choose = (name: string) => {
+      act(() => ed.button("Paragraph style").click());
+      const menu = within(host!).getByRole("menu", { name: "Paragraph style" });
+      act(() => within(menu).getByRole("menuitemradio", { name }).click());
+    };
+    const expectPlainLetter = async () => {
+      expect(ed.html()).toBe("<p>one<br>two<br>three</p>");
+      expect(ed.value).toEqual(draft);
+      const raw = await new Promise<Buffer>((resolve, reject) => {
+        new MailComposer({ text: ed.value.text, ...(ed.value.html ? { html: ed.value.html } : {}) })
+          .compile().build((error: Error | null, bytes: Buffer) => error ? reject(error) : resolve(bytes));
+      });
+      const parts = await normalizeMime(raw);
+      expect(parts.textBody).toBe(draft.text + "\n");
+      expect(parts.htmlBody).toBeNull();
+    };
+    choose("Paragraph");
+    await expectPlainLetter();
+    choose("Large heading");
+    expect(ed.html()).toContain("<h1>two</h1>");
+    choose("Paragraph");
+    await expectPlainLetter();
+  });
+
+  it.each([0, 1, 2])("keeps exactly %i authored trailing breaks through a heading round trip", (breaks) => {
+    const ed = mount();
+    typeText(ed, "one");
+    for (let i = 0; i < breaks; i += 1) key(ed, "Enter");
+    const expected = "one" + "\n".repeat(breaks);
+    expect(ed.value.text).toBe(expected);
+    act(() => ed.editor().commands.focus(posOf(ed, "one", "start") + 1));
+    const choose = (name: string) => {
+      act(() => ed.button("Paragraph style").click());
+      const menu = within(host!).getByRole("menu", { name: "Paragraph style" });
+      act(() => within(menu).getByRole("menuitemradio", { name }).click());
+    };
+    choose("Large heading");
+    expect(within(host!).getByRole("heading", { name: "one", level: 1 })).toBeTruthy();
+    choose("Paragraph");
+    expect(ed.value.text).toBe(expected);
+    expect(ed.html()).toBe(`<p>one${"<br>".repeat(breaks)}</p>`);
+  });
+
+  it("turns just the current one-character line into code when the fence precedes it", () => {
+    const ed = mount();
+    load(ed, "<p>intro<br>x</p>");
+    act(() => ed.editor().commands.focus(posOf(ed, "x", "start")));
+    typeText(ed, "```");
+    expect(ed.html()).toContain('<p>intro</p><pre data-ohmail-code="1"><code>x</code></pre>');
+  });
+
+  it("keeps untouched legacy code unmarked and marks the block the author edits", () => {
+    const ed = mount();
+    load(ed, "<pre><code>one</code></pre><pre><code>two</code></pre>");
+    expect(ed.html()).toContain("<pre><code>one</code></pre><pre><code>two</code></pre>");
+    act(() => ed.editor().commands.focus(posOf(ed, "two")));
+    typeText(ed, " more");
+    expect(ed.html()).toContain('<pre><code>one</code></pre><pre data-ohmail-code="1"><code>two more</code></pre>');
+  });
+
+  it("emits a divider as content on its own", () => {
+    const ed = mount();
+    act(() => ed.button("Divider").click());
+    expect(ed.value.text).toBe("--------");
+    expect(ed.value.html).toContain("<hr>");
+  });
+
+  it("opens a named paragraph menu and checks the style at the caret", () => {
+    const ed = mount();
+    typeText(ed, "Release notes");
+    for (const [name, tag] of [
+      ["Large heading", "h1"], ["Medium heading", "h2"], ["Small heading", "h3"], ["Paragraph", "p"],
+    ]) {
+      act(() => ed.button("Paragraph style").click());
+      const menu = within(within(host!).getByRole("menu", { name: "Paragraph style" }));
+      act(() => menu.getByRole("menuitemradio", { name }).click());
+      expect(ed.html()).toContain(`<${tag}>Release notes</${tag}>`);
+      act(() => ed.button("Paragraph style").click());
+      expect(within(within(host!).getByRole("menu", { name: "Paragraph style" }))
+        .getByRole("menuitemradio", { name, checked: true })).toBeTruthy();
+      act(() => ed.button("Paragraph style").click());
+    }
+  });
+
+  it("uses one hard break per typed or pasted newline and can format just the last line", () => {
+    const ed = mount();
+    typeText(ed, "one");
+    key(ed, "Enter");
+    const clipboard = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(clipboard, "clipboardData", {
+      value: { getData: (type: string) => type === "text/plain" ? "two\n\nthree" : "" },
+    });
+    act(() => { ed.editor().view.dom.dispatchEvent(clipboard); });
+    expect(ed.html()).toBe("<p>one<br>two<br><br>three</p>");
+    key(ed, "1", { ctrlKey: true, altKey: true, code: "Digit1" });
+    expect(ed.html()).toBe("<p>one<br>two<br></p><h1>three</h1><p></p>");
+    key(ed, "2", { ctrlKey: true, altKey: true, code: "Digit2" });
+    expect(ed.html()).toContain("<h2>three</h2>");
+    key(ed, "3", { ctrlKey: true, altKey: true, code: "Digit3" });
+    expect(ed.html()).toContain("<h3>three</h3>");
+    key(ed, "0", { ctrlKey: true, altKey: true, code: "Digit0" });
+    expect(ed.html()).not.toMatch(/<h[1-3]>/);
+  });
+
+  it("offers inline code, a code block and a divider as separate controls", () => {
+    const ed = mount();
+    act(() => ed.button("Inline code").click());
+    typeText(ed, "inline");
+    expect(ed.html()).toBe("<p><code>inline</code></p>");
+    key(ed, "Enter");
+    typeText(ed, "block");
+    act(() => ed.button("Code block").click());
+    expect(ed.html()).toContain('<pre data-ohmail-code="1"><code>block</code></pre>');
+    act(() => ed.button("Divider").click());
+    expect(ed.html()).toContain("<hr>");
+  });
+
+  it("inserts a divider after the selected line without replacing its words", () => {
+    const ed = mount();
+    load(ed, "<p>one<br>two</p>");
+    act(() => ed.editor().commands.setTextSelection({
+      from: posOf(ed, "one", "start"), to: posOf(ed, "one"),
+    }));
+    act(() => ed.button("Divider").click());
+    expect(ed.html()).toBe("<p>one</p><hr><p>two</p>");
+  });
+
+  it("toggles inline code from the keyboard", () => {
+    const ed = mount();
+    key(ed, "C", { ctrlKey: true, shiftKey: true, code: "KeyC" });
+    typeText(ed, "inline");
+    expect(ed.html()).toBe("<p><code>inline</code></p>");
+  });
+
+  it("opens a code block with the Slack shortcut or three backticks at a line start", () => {
+    const ed = mount();
+    key(ed, "C", { ctrlKey: true, altKey: true, shiftKey: true, code: "KeyC" });
+    typeText(ed, "first");
+    key(ed, "Enter");
+    typeText(ed, "  second");
+    expect(ed.html()).toContain('<pre data-ohmail-code="1"><code>first\n  second</code></pre>');
+    key(ed, "Enter");
+    key(ed, "Enter");
+    key(ed, "Enter");
+    typeText(ed, "plain");
+    key(ed, "Enter");
+    typeText(ed, "```");
+    typeText(ed, "next");
+    expect(ed.html()).toContain('<p>plain</p><pre data-ohmail-code="1"><code>next</code></pre>');
+  });
 });
 
 function backspace(ed: Mounted): void {
@@ -242,7 +410,7 @@ describe("the toolbar says what the next letter carries", () => {
   it("[toolbar-next] bold, italic, strike and code light up exactly when the next letter would carry them", () => {
     const ed = mount();
     for (const [mark, [o, c]] of Object.entries(MARKS)) {
-      const label = { bold: "Bold", italic: "Italic", strike: "Strikethrough", code: "Code" }[mark]!;
+      const label = { bold: "Bold", italic: "Italic", strike: "Strikethrough", code: "Inline code" }[mark]!;
       load(ed, `<p>ab ${o}cd${c} ef</p>`, 0);
       act(() => { ed.editor().commands.focus(posOf(ed, "cd")); });
       expect(ed.button(label).getAttribute("aria-pressed")).toBe("true");
@@ -272,7 +440,7 @@ describe("the toolbar says what the next letter carries", () => {
     act(() => { ed.editor().commands.focus(posOf(ed, "cd")); });
     act(() => { link.click(); });
     expect(within(within(document.body).getByRole("dialog", { name: "Link" })).getByRole<HTMLInputElement>("textbox", { name: "Address" }).value).toBe("https://x.example/p");
-    for (const label of ["Bold", "Italic", "Strikethrough", "Code"]) {
+    for (const label of ["Bold", "Italic", "Strikethrough", "Inline code"]) {
       expect(ed.button(label).hasAttribute("aria-pressed")).toBe(true);
     }
   });

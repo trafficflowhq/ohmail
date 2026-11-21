@@ -441,3 +441,16 @@
     display: none;
   }
 }
+
+.oh-sheet[data-writing-keyboard] .oh-recipients {
+  --oh-recipients-chip: var(--s6);
+  margin-block-end: var(--s1);
+}
+
+.oh-sheet[data-writing-keyboard] .oh-recipients-line {
+  min-height: var(--s6);
+}
+
+.oh-sheet[data-writing-keyboard] .oh-recipients-subject:not(:focus) {
+  max-block-size: calc(1lh + var(--s2));
+}

@@ -77,24 +77,17 @@ const stripComments = (src: string): string =>
 
 describe("one derivation, every consumer — no instance folds by a rule of its own", () => {
   it("Compose CALLS ccBccOpen(; the reply stack does NOT fold at all", () => {
-    // The failure mode this guards is quiet: a surface that re-derives the fold inline keeps
-    // working today and drifts the first time the rule moves. Comments are stripped because
-    // the prose here quotes the code it describes.
-    expect(stripComments(readSource("app/views/ComposeView.tsx"))).toContain("ccBccOpen(");
-    // THE REPLY/FORWARD STACK STOPPED FOLDING, DELIBERATELY (2026-08-27): opening it IS the
-    // "change recipients" act, so Cc and Bcc show at once — no second click. The fold rule is
-    // the compose form's alone now, and InlineReply may neither call it nor re-derive it: a
-    // toggle reappearing there is the two-clicks-for-one-decision defect coming back.
-    expect(
-      stripComments(readSource("app/shell/InlineReply.tsx")),
-      "the reply stack folds Cc/Bcc again — opening it must reveal all three rows at once",
-    ).not.toContain("ccBccOpen(");
-    // …and nobody re-derives it: the expression's shape appears nowhere but the one export.
-    for (const rel of ["app/views/ComposeView.tsx", "app/shell/InlineReply.tsx"]) {
-      expect(
-        stripComments(readSource(rel)),
-        `${rel} re-derives the fold inline`,
-      ).not.toMatch(/\.trim\(\) !== ""\s*\|\|.*\.trim\(\) !== ""/);
+    const write = "../../packages/app/src/write/";
+    const head = stripComments(readSource(write + "head/People.tsx"));
+    const letter = stripComments(readSource(write + "Letter.tsx"));
+    const reply = stripComments(readSource(write + "Reply.tsx"));
+    const readsBoth = /rows\.cc\.trim\(\) !== "" \|\| rows\.bcc\.trim\(\) !== ""/g;
+    expect(head.match(readsBoth)).toHaveLength(1);
+    expect(head).toMatch(/allOpen === true \|\| opened \|\| rows\.cc/);
+    expect(letter).toMatch(/<People\b/);
+    expect(reply).toMatch(/<People[\s\S]*?\ballOpen\b/);
+    for (const source of [letter, reply]) {
+      expect(source).not.toMatch(/\.trim\(\) !== ""\s*\|\|.*\.trim\(\) !== ""/);
     }
   });
 });

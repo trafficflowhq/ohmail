@@ -596,6 +596,7 @@ export abstract class EngineHydration extends EnginePastEnd {
         if (draftsIn) await this.pruneToPolicy(page.asOfSeq);
       }
       applied = true;
+      if (last) this.replacingMirror = false;
       this.notify();
       if (last) return true;
       cursor = page.nextCursor as string;

@@ -315,6 +315,12 @@
     "subjectAria": "Subject of this reply"
   },
   "write": {
+    "history": {
+      "show": "Show quoted history",
+      "hide": "Hide quoted history",
+      "restore": "Restore original",
+      "unavailable": "Quoted history unavailable"
+    },
     "held": {
       "sendAgain": "Send again",
       "itWasSent": "It was sent"
@@ -378,7 +384,14 @@
       "italic": "Italic",
       "underline": "Underline",
       "strike": "Strikethrough",
-      "code": "Code",
+      "code": "Inline code",
+      "codeBlock": "Code block",
+      "divider": "Divider",
+      "paragraphStyle": "Paragraph style",
+      "paragraph": "Paragraph",
+      "heading1": "Large heading",
+      "heading2": "Medium heading",
+      "heading3": "Small heading",
       "link": "Link",
       "bullets": "Bulleted list",
       "numbers": "Numbered list",

@@ -7,6 +7,7 @@ import type {
   NoticeKind,
   NoticePermission,
   NotificationChannels,
+  NoticeChoices,
 } from "@ohmail/client-engine";
 
 export type { NoticeKind, NoticePermission, NotificationChannels };
@@ -23,6 +24,11 @@ export interface NotificationsModel {
   readonly live: boolean;
   /** The kinds this surface's emitter draws (its `carries`); every other kind has no switch. None where it draws none. */
   readonly carries: readonly NoticeKind[];
+  /** The calendar choices already held by this device, when the calendar is available. */
+  readonly calendarChoices?: Pick<
+    NoticeChoices,
+    "cal_alert" | "cal_invitation" | "cal_change" | "cal_answer" | "cal_found"
+  >;
   /** The platform, not this window, holds the permission (the desktop): the switch only decides whether ohmail asks. */
   readonly osHolds: boolean;
   /** What the last reconcile said, when it said something a person can act on. */

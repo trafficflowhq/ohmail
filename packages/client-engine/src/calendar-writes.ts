@@ -62,6 +62,7 @@ export interface CalendarWriteTransport {
 /** The account-bound operations a host needs to offer the calendar. */
 export interface CalendarHostTransport extends CalendarWriteTransport {
   calendarSettings(): Promise<CalendarSettingsWire>;
+  setSuggestionDismissed?(id: string, dismissed: boolean): Promise<void>;
 }
 
 function isRecord(v: unknown): v is CalendarOutboxRecord {

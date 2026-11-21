@@ -29,6 +29,6 @@ export function SettingsHandoffGate({ reference }: { reference: string }) {
     return () => abort.abort();
   }, [reference, router]);
 
-  if (account) return <CloudShell demo={false} drawMail="wait" settingsAccount={account} />;
+  if (account) return <CloudShell demo={false} drawMail="wait" edgeOwner={null} settingsAccount={account} />;
   return invalid ? <p role="alert">{t("settingsHandoffInvalid")}</p> : null;
 }

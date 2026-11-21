@@ -86,7 +86,8 @@ it("calendar settings and a queued retry use the engine's account binding", asyn
     expect(calendar).not.toBeNull();
     await expect(calendar!.calendarSettings()).rejects.toBeDefined();
     await expect(calendar!.retryCalendarWrite(crypto.randomUUID(), crypto.randomUUID())).rejects.toBeDefined();
-    expect(accounts).toEqual([owner, owner]);
+    await expect(calendar!.setSuggestionDismissed!(crypto.randomUUID(), true)).rejects.toBeDefined();
+    expect(accounts).toEqual([owner, owner, owner]);
   } finally {
     engine.dispose();
     bindApiOwner(null);

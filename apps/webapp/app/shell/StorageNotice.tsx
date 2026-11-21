@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { useOptionalToast } from "@ohmail/ui/toast";
+import { useOptionalReport } from "@ohmail/app/frame";
 import { STORAGE_PANE_HREF } from "./EmptiedLetter";
 import {
   formatStorageBytes, formatStoragePrice, storageDayName, storageFitExtraBytes, storageFitIsChange, storageMonthName,
@@ -48,7 +48,7 @@ export function StorageNotice({ facts, linksOut, onDismiss, change }: {
 }) {
   const t = useTranslations("settings");
   const locale = useLocale();
-  const toast = useOptionalToast();
+  const report = useOptionalReport();
   const fitName = useStorageFitName();
   const level = facts.card;
   if (level === null) return null;
@@ -90,7 +90,7 @@ export function StorageNotice({ facts, linksOut, onDismiss, change }: {
   const changes = linksOut && change !== null && offer !== null && offer.canChange;
   const dismiss = () => {
     onDismiss();
-    toast?.(t(DISMISSED[level]));
+    report?.(t(DISMISSED[level]));
   };
   return (
     <section className="scard" data-level={level} aria-label={t("storage")} data-storage-card={level}>

@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CalendarSettingsWire } from "@ohmail/app-logic/calendar";
 import type { CalendarSetupPort } from "@ohmail/app-logic/calendar/setup";
 import { calendarAccountsPane, calendarViewPane } from "../../src/calsettings/index.js";
+import { useCalendarPanes } from "../../src/calsettings/panes.js";
+import { CalendarSettingsScope } from "../../src/calsettings/settings-read.js";
+import { SettingsMenu } from "../../src/settings/SettingsMenu.js";
+import settingsEn from "../../messages/settings.en.json" with { type: "json" };
 import type { ComponentType } from "react";
 import type { CalendarPlaceId, PaneProps, PlaceEntry } from "../../src/frame/contract.js";
 import type { None } from "../../src/host/index.js";
@@ -222,6 +226,30 @@ describe("Calendar accounts", () => {
 });
 
 describe("View", () => {
+  it("summarizes the saved view choices in Settings", async () => {
+    const w = world();
+    function Menu() {
+      const menu = useCalendarPanes(true);
+      return (
+        <CalendarSettingsScope port={w.port} setup="none">
+          <SettingsMenu menu={menu} current={null} go={() => {}} />
+        </CalendarSettingsScope>
+      );
+    }
+    mountFrame("#/cal/calendars", w, NONE, {
+      entry: { places: { ...emptyPlaces(), calsettings: paneAt(Menu) } },
+      words: settingsEn,
+    });
+    await act(async () => undefined);
+    const row = screen.getByRole("button", { name: "View" });
+    expect(within(row).getByText("Week numbers off")).toBeTruthy();
+    expect(row.textContent).toContain("Studio");
+    const accounts = screen.getByRole("button", { name: "Calendar accounts" });
+    expect(within(accounts).getByText("2")).toBeTruthy();
+    expect(accounts.textContent).toContain("CalDAV");
+    expect(accounts.textContent).toContain("iCloud");
+  });
+
   it("says each value and draws no control where settings cannot be saved", async () => {
     mountPane("view", SHUT);
     await act(async () => undefined);

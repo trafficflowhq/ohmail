@@ -3,6 +3,7 @@
  * for it. Pure; the words come in from the `event` namespace, so the face says them in the reader's language.
  */
 import { viewOnlyOf, type CalendarConnectionRecord, type ShownOccurrence } from "@ohmail/app-logic/calendar";
+import { canEditRecord } from "./editable-event.js";
 import type { CalendarEventView } from "./view.js";
 
 /** An event as every view takes it: the time grid's face, and the words Search finds it by. */
@@ -31,6 +32,7 @@ export function faceOf(
   connections: ReadonlyMap<string, CalendarConnectionRecord>,
   words: FaceWords,
   tone: CalendarEventView["tone"],
+  own: readonly string[] | null,
 ): CalendarEventFace {
   const event = (o.series ?? o.record).id;
   // A single override keeps its stored key even when this device reads its zone differently.
@@ -58,6 +60,8 @@ export function faceOf(
       notes: null,
     };
   }
+  const connection = connections.get(o.calendar.connectionId);
+  const viewOnly = viewOnlyOf(o.calendar, connection);
   const { waiting, refusal } = o.writes;
   const status =
     refusal !== null
@@ -76,7 +80,8 @@ export function faceOf(
     title: o.record.title,
     state: stateOf(o),
     repeats: o.occurrence.source === "override" ? "apart" : o.occurrence.source === "rule" ? "series" : null,
-    viewOnly: viewOnlyOf(o.calendar, connections.get(o.calendar.connectionId)),
+    viewOnly,
+    timeEditable: !viewOnly && o.record.end !== null && canEditRecord(o.record, connection, own),
     waits: o.record.myAnswer === "none",
     status,
     second: o.record.place,

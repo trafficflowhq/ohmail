@@ -78,8 +78,12 @@ export function hitAt(to: PlaceEntry["id"], open: string): PlaceEntry {
 
 export function mountStreamFrame(o: {
   at: string;
+  phone?: boolean;
   mailboxes?: Parameters<typeof fakeHost>[0]["mailboxes"];
   letters?: readonly EngineMessage[];
+  bodies?: Readonly<Record<string, unknown>>;
+  overs?: Parameters<typeof fakeHost>[0]["overs"];
+  catalogue?: Messages;
   hit?: PlaceEntry;
   withReply?: boolean;
   readerBody?: ReaderBody;
@@ -89,7 +93,7 @@ export function mountStreamFrame(o: {
   mirror?: EntityReader;
 }) {
   const freshMail = (letters: readonly EngineMessage[] = o.letters ?? [...NEWS, ...RECEIPTS]) =>
-    fakeMail(letters, [], {}, { ...RULES, ...o.rows });
+    fakeMail(letters, [], o.bodies, { ...RULES, ...o.rows });
   const mail = freshMail();
   const { mirror } = o;
   if (mirror) {
@@ -104,6 +108,7 @@ export function mountStreamFrame(o: {
     scope: "acct-1",
     places: { ...mailPlaces(), ...(o.hit ? { search: o.hit } : {}) },
     above: MailGround,
+    overs: o.overs,
     reader: o.withReply
       ? mailReader({ body, look: "none" })
       : readerEntry({
@@ -116,11 +121,11 @@ export function mountStreamFrame(o: {
           invitation: "none",
         }),
     ...(o.mailboxes ? { mailboxes: o.mailboxes } : {}),
-    window: fakeWindow("desktop"),
+    window: fakeWindow(o.phone ? "phone" : "desktop"),
     address,
   });
   const forAccount = (scope: string | null, engine = mail.engine, account = host.session.account) => (
-    <TextProvider locale="en" messages={MESSAGES} timeZone="Europe/Zurich">
+    <TextProvider locale="en" messages={o.catalogue ?? MESSAGES} timeZone="Europe/Zurich">
       <Frame host={{ ...host, engine, session: { ...host.session, scope, account } }} />
     </TextProvider>
   );
@@ -134,6 +139,7 @@ export function mountStreamFrame(o: {
   return {
     mail,
     address,
+    page,
     again: (sync: SyncStatus) => page.rerender(over(sync)),
     switchAccount: (scope: string) => page.rerender(forAccount(scope)),
     replaceEngine: (scope = host.session.scope, letters?: readonly EngineMessage[]) => {

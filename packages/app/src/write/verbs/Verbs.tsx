@@ -6,6 +6,8 @@
  * Discard asks nothing and goes, with its Undo; while a send only waits (queued, not on the wire) Discard stays
  * pressable and takes the send back first: its press is the composition's own, which asks the send machine's withdraw.
  */
+import { useState } from "react";
+import { Menu, MenuItem } from "@ohmail/ui/base";
 import { ActionPanel, type PanelVerb } from "@ohmail/ui/mail";
 import { chordKeys, useModGlyph } from "@ohmail/app-logic/keys";
 import { SEND_IN_FLIGHT_PHASES, type SendPhase, type SendState } from "@ohmail/app-logic/writing/mail-send";
@@ -14,6 +16,7 @@ import "./verbs.css";
 
 export function Verbs({
   canSend,
+  compact = false,
   going,
   keysHere,
   discardHeld,
@@ -25,6 +28,7 @@ export function Verbs({
   onDiscard,
 }: {
   canSend: boolean;
+  compact?: boolean;
   going: boolean;
   keysHere?: boolean;
   discardHeld: boolean;
@@ -40,7 +44,6 @@ export function Verbs({
 }) {
   const t = useText("write");
   const mod = useModGlyph();
-  // Write has no More menu. Its actions can give up their words, but need to stay within reach.
   const send = { ...sendVerb(t("send"), canSend, going, onSend, resting, said), rank: 0 };
   const items: PanelVerb[] = [
     keysHere ? { ...send, keyHint: chordKeys("mod+Enter", mod).join(" ") } : send,
@@ -58,9 +61,45 @@ export function Verbs({
   ];
   return (
     <div className="write-verbs">
-      {discardReason ? <p className="oh-text write-discard-reason">{discardReason}</p> : null}
-      <ActionPanel label={t("verbs")} items={items} />
+      {discardReason && !compact ? <p className="oh-text write-discard-reason">{discardReason}</p> : null}
+      {compact ? (
+        <CompactSendPanel label={t("verbs")} items={items} />
+      ) : (
+        <ActionPanel label={t("verbs")} items={items} />
+      )}
     </div>
+  );
+}
+
+function CompactSendPanel({ label, items }: { label: string; items: readonly PanelVerb[] }) {
+  const more = useText("frame")("dock.more");
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const close = () => setAnchor(null);
+  return (
+    <>
+      <ActionPanel
+        label={label}
+        items={items.slice(0, 1)}
+        more={{ label: more, behind: true, expanded: anchor !== null, onPress: setAnchor }}
+      />
+      {anchor ? (
+        <Menu open anchor={anchor} label={more} onClose={close} anchored up right>
+          {items.slice(1).map((item) => (
+            <MenuItem
+              key={item.id}
+              icon={item.icon}
+              disabled={item.disabled}
+              onPress={() => {
+                close();
+                item.onPress?.(anchor);
+              }}
+            >
+              {item.name ?? item.label}
+            </MenuItem>
+          ))}
+        </Menu>
+      ) : null}
+    </>
   );
 }
 

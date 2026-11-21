@@ -1,19 +1,29 @@
 import { useLayoutEffect, useState, type KeyboardEvent, type RefObject } from "react";
-import { type CalendarEventRecord, type CalendarPort, type CalendarRecord } from "@ohmail/app-logic/calendar";
+import {
+  type CalendarConnectionRecord,
+  type CalendarEventRecord,
+  type CalendarPort,
+  type CalendarRecord,
+} from "@ohmail/app-logic/calendar";
 import { Button, RefusalLine } from "@ohmail/ui/base";
+import type { PanelVerb } from "@ohmail/ui/mail";
+import { EditorActionBar } from "./EditorActionBar.js";
 import { EventCard, QuestionBeforeAct } from "@ohmail/ui/calendar";
 import { useFrame } from "../frame/commands.js";
 import type { CardPlacement } from "./use-event-placement.js";
 import { useEditLeave } from "./use-edit-leave.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { DraftFields } from "./DraftFields.js";
-import { useDiscardReport } from "./draft-undo.js";
-import { draftOfRecord, eventChanges } from "./edit-draft.js";
-import type { EventDraft } from "./event-draft.js";
+import { useDiscardReport, useDuplicateDraft } from "./draft-undo.js";
+import { draftOfRecord, draftTimeChanged, eventChanges } from "./edit-draft.js";
+import { draftTimes, type EventDraft } from "./event-draft.js";
+import { DraftTimeNotice } from "./DraftTimeNotice.js";
 import type { CalendarEventFace } from "./faces.js";
 
 interface Props {
   readonly port: CalendarPort;
+  readonly actionItems: readonly PanelVerb[];
+  readonly provider: CalendarConnectionRecord["provider"] | undefined;
   readonly original: CalendarEventRecord;
   readonly allowed: () => { record: CalendarEventRecord; calendar: CalendarRecord } | null;
   readonly calendar: CalendarRecord;
@@ -29,6 +39,8 @@ interface Props {
 
 export function EditEvent({
   port,
+  actionItems,
+  provider,
   original,
   allowed,
   calendar,
@@ -44,9 +56,10 @@ export function EditEvent({
   const { commands, plan } = useFrame();
   const t = useText("calendar");
   const zone = useTimeZone();
-  const [initial] = useState(() => draftOfRecord(original));
+  const [initial] = useState(() => draftOfRecord(original, zone));
   const [draft, setDraft] = useState(recovered ?? initial.draft);
   const discardReport = useDiscardReport(port);
+  const duplicate = useDuplicateDraft(port);
   const dirty = draftDiffers(draft, initial.draft);
   const reportDraft = () => discardReport({ kind: "edit", draft, original });
   const onLeave = () => {
@@ -54,20 +67,7 @@ export function EditEvent({
   };
   usePreserveEdit(beforeRestore, draftDiffers(draft, recovered ?? initial.draft), reportDraft);
   const patch = eventChanges(original, draft, calendar, zone);
-  const {
-    busy,
-    failure,
-    conflict,
-    clear,
-    mine,
-    discard,
-    question,
-    confirm,
-    cancel,
-    chooseScope,
-    scopeAsked,
-    submit,
-  } = useEditLeave(
+  const saving = useEditLeave(
     port,
     original,
     () => allowed()?.record ?? null,
@@ -77,6 +77,8 @@ export function EditEvent({
     finish,
     onLeave,
   );
+  const { busy, conflict, clear, discard, question, confirm, cancel, chooseScope, scopeAsked, submit } =
+    saving;
   const blocked = busy || scopeAsked || question !== null;
   const ready = !blocked && !conflict && patch !== null && Object.keys(patch).length > 0;
   const cancelEdit = () => {
@@ -89,6 +91,22 @@ export function EditEvent({
     clear();
   };
   const sourceZone = original.start.kind === "instant" ? "UTC" : original.start.zone;
+  const panel = (
+    <EditorActionBar
+      items={actionItems}
+      close={() => commands.event(null)}
+      duplicate={() => duplicate(draftOfRecord(original, zone).draft, calendar.id)}
+      blocked={blocked}
+      timeZone={
+        initial.timeEditable && !original.repeat && !draft.allDay
+          ? (draft.zone ?? sourceZone ?? zone)
+          : undefined
+      }
+      draft={draft}
+      change={change}
+    />
+  );
+  const phone = plan.device === "phone";
   return (
     <>
       <EventCard
@@ -96,7 +114,8 @@ export function EditEvent({
         {...placement}
         title={t("edit.event")}
         tone={face.tone}
-        frame={plan.device === "phone" ? "sheet" : "card"}
+        frame={phone ? "sheet" : "card"}
+        foot={phone ? panel : undefined}
         titleInput={{
           label: t("create.name"),
           value: draft.title,
@@ -106,42 +125,107 @@ export function EditEvent({
         close={{ label: t("closeEvent"), onPress: () => commands.event(null) }}
         onKeyDown={(event) => editorKeys(event, ready, cancelEdit, submit)}
         editor={
-          <>
-            <div inert={blocked}>
-              <DraftFields
-                draft={draft}
-                today={today}
-                calendar={calendar}
-                tone={face.tone}
-                choices={[]}
-                change={change}
-                cancel={{ label: t("edit.cancel"), onPress: cancelEdit }}
-                submit={{ label: t("edit.save"), keyHint: "↵", disabled: !ready, onPress: submit }}
-                {...(!initial.timeEditable || original.repeat ? { fixedTime: when } : {})}
-                {...(sourceZone ? { timeZone: sourceZone } : {})}
-              />
-            </div>
-            {failure ? (
-              <>
-                <RefusalLine>{failure}</RefusalLine>
-                {conflict && (
-                  <Button kind="two" size="s" onPress={mine} disabled={busy}>
-                    {t("edit.keepMine")}
-                  </Button>
-                )}
-                <Button kind="quiet" size="s" onPress={discard} disabled={busy}>
-                  {t(conflict ? "edit.keepTheirs" : "edit.discard")}
-                </Button>
-              </>
-            ) : null}
-          </>
+          <EditorContents
+            {...{
+              draft,
+              today,
+              calendar,
+              tone: face.tone,
+              original,
+              provider,
+              change,
+              cancelEdit,
+              ready,
+              when,
+              blocked,
+              saving,
+            }}
+            zone={draft.zone ?? sourceZone ?? zone}
+            timeEditable={initial.timeEditable && !original.repeat}
+            issue={
+              draftTimeChanged(draft, initial.draft) ? draftTimes(draft, draft.zone ?? zone).issue : null
+            }
+          />
         }
       />
+      {!phone && <div className="cal-event-panel cal-edit-panel">{panel}</div>}
       <EditQuestions
         anchor={card}
         title={draft.title}
         {...{ scopeAsked, question, cancel, chooseScope, confirm }}
       />
+    </>
+  );
+}
+
+function EditorContents({
+  draft,
+  today,
+  calendar,
+  tone,
+  original,
+  provider,
+  change,
+  cancelEdit,
+  ready,
+  when,
+  blocked,
+  saving,
+  zone,
+  timeEditable,
+  issue,
+}: Pick<Props, "today" | "calendar" | "original" | "provider" | "when"> & {
+  draft: EventDraft;
+  tone: CalendarEventFace["tone"];
+  change: (edit: Partial<EventDraft>) => void;
+  cancelEdit: () => void;
+  ready: boolean;
+  blocked: boolean;
+  saving: ReturnType<typeof useEditLeave>;
+  zone: string;
+  timeEditable: boolean;
+  issue: ReturnType<typeof draftTimes>["issue"];
+}) {
+  const t = useText("calendar");
+  const { failure, conflict, busy, mine, discard, submit } = saving;
+  return (
+    <>
+      <div inert={blocked}>
+        <DraftTimeNotice issue={issue} />
+        <DraftFields
+          {...{ draft, today, calendar, tone, change }}
+          choices={[]}
+          cancel={{ label: t("edit.cancel"), onPress: cancelEdit }}
+          submit={{ label: t("edit.save"), keyHint: "↵", disabled: !ready, onPress: submit }}
+          fixedTime={timeEditable ? undefined : when}
+          timeZone={zone}
+          edit={{
+            canInvite:
+              !original.repeat &&
+              original.invitees.every(
+                ({ address, role }) =>
+                  address.toLowerCase() === original.organizer?.address.toLowerCase() ||
+                  role === "optional" ||
+                  role === "required",
+              ),
+            canAddAlert: original.alarms.every(({ method }) => method === "notice"),
+            canAddSecondAlert: provider !== "microsoft" && !draft.allDay,
+          }}
+        />
+      </div>
+      {failure && (
+        <>
+          <RefusalLine>{failure}</RefusalLine>
+          {conflict && (
+            <Button kind="two" size="s" onPress={mine} disabled={busy}>
+              {t("edit.keepMine")}
+            </Button>
+          )}
+          <Button kind="quiet" size="s" onPress={discard} disabled={busy}>
+            {t(conflict ? "edit.keepTheirs" : "edit.discard")}
+          </Button>
+        </>
+      )}
     </>
   );
 }
@@ -189,7 +273,9 @@ function EditQuestions({
 }: EditQuestionsProps) {
   const locale = useLocale();
   const t = useText("calendar");
-  const names = question?.names;
+  const invited = question?.invited ?? [];
+  const inviting = invited.length > 0;
+  const names = inviting ? invited : question?.names;
   const list = new Intl.ListFormat(locale, { style: "long", type: "conjunction" });
   const whom = names
     ? list.format(
@@ -227,10 +313,17 @@ function EditQuestions({
           open
           anchor={anchor}
           onClose={cancel}
-          question={t("edit.tell", { guests: whom })}
-          follows={t("edit.tells", { title: title.trim() })}
+          question={t(inviting ? "edit.confirmInvite" : "edit.tell", { guests: whom })}
+          follows={t(inviting ? "edit.inviteFollows" : "edit.tells", { title: title.trim() })}
           cancel={t("edit.cancel")}
-          answers={[{ id: "send", label: t("edit.sendUpdate"), keyHint: "↵", onPress: confirm }]}
+          answers={[
+            {
+              id: "send",
+              label: t(inviting ? "edit.invite" : "edit.sendUpdate"),
+              keyHint: "↵",
+              onPress: confirm,
+            },
+          ]}
         />
       )}
     </>
@@ -238,7 +331,9 @@ function EditQuestions({
 }
 
 function draftDiffers(draft: EventDraft, baseline: EventDraft): boolean {
-  return (Object.keys(draft) as (keyof EventDraft)[]).some((key) => draft[key] !== baseline[key]);
+  return (Object.keys(draft) as (keyof EventDraft)[]).some(
+    (key) => JSON.stringify(draft[key]) !== JSON.stringify(baseline[key]),
+  );
 }
 
 function usePreserveEdit(

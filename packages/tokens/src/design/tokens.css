@@ -51,6 +51,7 @@
   --find-chip-max: 56%;
   --find-chip-touch-h: 32px;
   --rail: 232px;
+  --rail-drawer: 300px;
   --listw: 420px;
   --gap: 12px;
   --edge: 12px;
@@ -587,6 +588,10 @@
   --dayhead: 52px;
   --allday: 28px;
   --ev-min: 22px;
+  --cal-resize-hit: 6px;
+  --cal-edit-title-inset: 52px;
+  --cal-edit-touch: 44px;
+  --cal-edit-touch-time: 76px;
   --ev-r: var(--r-row);
   --t-ev: var(--t-ui);
   --rule: color-mix(in srgb,var(--ink2) 34%,var(--sheet));

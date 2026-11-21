@@ -30,6 +30,7 @@ import {
   type PlainDate,
   type TimeGridDay,
 } from "@ohmail/app-logic/calendar";
+import { timedResizeProps } from "../calendar/view.js";
 import type {
   CalendarEventView,
   CalendarView,
@@ -90,23 +91,7 @@ export function WeekView(props: CalendarViewProps) {
   });
   const open = (e: CalendarEventView): void => props.onOpen(e.ref);
 
-  const capsule = (d: TimeGridDay<CalendarEventView>, side: "above" | "below") => {
-    const list = side === "above" ? d.above : d.below;
-    const nearest = list.length > 0 ? d.blocks.find((b) => b.item.id === list[0]!.item.id) : undefined;
-    return nearest === undefined ? null : (
-      <OutOfSightCapsule
-        side={side}
-        items={list.map((s) =>
-          s.item.tone === null
-            ? { kind: "outlined" as const }
-            : { kind: "calendar" as const, tone: s.item.tone },
-        )}
-        label={t(side, { count: list.length })}
-        onPress={() => hours.show(nearest.top, side)}
-      />
-    );
-  };
-
+  const calendar = useText("calendar");
   const kitDays: KitDay[] = model.days.map((d) => ({
     ...dayHead(d.day, locale),
     id: d.id,
@@ -114,8 +99,8 @@ export function WeekView(props: CalendarViewProps) {
     cursor:
       props.cursor != null && sameDay(d.day, anchor) ? { minutes: props.cursor, length: 60 } : undefined,
     picked: d.picked,
-    above: capsule(d, "above"),
-    below: capsule(d, "below"),
+    above: capsule(d, "above", hours.show, t),
+    below: capsule(d, "below", hours.show, t),
     children: d.blocks.map((b) => (
       <EventChip
         key={b.item.id}
@@ -124,12 +109,15 @@ export function WeekView(props: CalendarViewProps) {
         dense={dense}
         label={t("chip", { title: b.item.title, from: clockOf(b.from), to: clockOf(b.to) })}
         onPress={() => open(b.item)}
-        onPointerDown={props.onDrag ? (event) => props.onDrag?.(b.item.id, event) : undefined}
+        {...timedResizeProps(props, b, {
+          start: calendar("actions.resizeTimeStart"),
+          end: calendar("actions.resizeTimeEnd"),
+        })}
       />
     )),
   }));
 
-  const lane = weekPills(model.lane.pills, crease, props, t, useText("calendar"));
+  const lane = weekPills(model.lane.pills, crease, props, t, calendar);
 
   return (
     <section className="cw-week" aria-label={t("hours")}>
@@ -173,11 +161,34 @@ export function WeekView(props: CalendarViewProps) {
           const day = model.days.find((m) => m.id === id)?.day;
           if (day !== undefined) props.onDay(day);
         }}
+        onDayPointerDown={props.onSlot}
         scrollRef={hours.ref}
         scrollGestures={swipe}
         onScroll={hours.onScroll}
       />
     </section>
+  );
+}
+
+function capsule(
+  d: TimeGridDay<CalendarEventView>,
+  side: "above" | "below",
+  show: ReturnType<typeof useHoursScroller>["show"],
+  t: ReturnType<typeof useText>,
+) {
+  const list = side === "above" ? d.above : d.below;
+  const nearest = list.length > 0 ? d.blocks.find((b) => b.item.id === list[0]!.item.id) : undefined;
+  return nearest === undefined ? null : (
+    <OutOfSightCapsule
+      side={side}
+      items={list.map((s) =>
+        s.item.tone === null
+          ? { kind: "outlined" as const }
+          : { kind: "calendar" as const, tone: s.item.tone },
+      )}
+      label={t(side, { count: list.length })}
+      onPress={() => show(nearest.top, side)}
+    />
   );
 }
 

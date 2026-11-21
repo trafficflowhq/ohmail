@@ -13,7 +13,13 @@ import type { ActedMarker, AfterVerbChoice } from "../press/after-verb.js";
 import type { NotOrganizingYet } from "../mail-state/mail-state.js";
 import type { UndoLink } from "../press/shell-dispatch.js";
 import type { ListWindow } from "../lists/list-window.js";
-import type { BulkAction, MessageAction, MoveSubject, MoveTarget } from "../press/actions.js";
+import type {
+  BulkAction,
+  BulkActionOptions,
+  MessageAction,
+  MoveSubject,
+  MoveTarget,
+} from "../press/actions.js";
 import type { DragSource, RailDropTarget } from "../lists/drag-source.js";
 import type { ScreeningDest } from "../press/sender-screening.js";
 import type { KeyBinding } from "../keys/index.js";
@@ -35,7 +41,7 @@ export interface BulkVerbs {
    * rather than clearing it. A set thrown away by a press that did nothing is a set the
    * person has to rebuild before they can try the verb that would have worked.
    */
-  run: (action: BulkAction, ids: string[]) => boolean;
+  run: (action: BulkAction, ids: string[], options?: BulkActionOptions) => boolean;
   tag: (ids: string[], anchor: HTMLElement | null) => void;
   screenPreview: (ids: string[], dest: ScreeningDest) => { senders: number; messages: number; rules: number };
   /** Commit the screening. `false` for the refusal, exactly as `run` — see there. */
@@ -92,6 +98,7 @@ export interface OhboxListInput {
   tags: TagDTO[];
   now: Date;
   selectedId: string | null;
+  initialSquare?: string | null;
   lastActed?: React.MutableRefObject<ActedMarker | null>;
   onSelect: (id: string | null, wholeThread?: true) => void;
   onEnterReader: (messageId: string, wholeThread?: true) => void;
@@ -206,7 +213,7 @@ export interface OhboxListModel {
   enter: (m: EngineMessage) => void;
   selectByUser: (id: string, extend?: boolean) => void;
   /** A press on a row: a pick while picking on a phone, the open where there is no column or on a second press, else select and enter. */
-  pressRow: (row: OhboxRowGroup) => void;
+  pressRow: (row: OhboxRowGroup, keyboard?: true) => void;
   markUnread: (m: EngineMessage) => void;
   markConversationRead: (m: EngineMessage) => void;
   readSet: string[];
@@ -231,6 +238,7 @@ export interface OhboxListModel {
   pointer: OhboxPointer;
   /** Done on a row: its pins released, the open row read as the reader reads it, else its waiting letters read. */
   doneRow: (row: OhboxRowGroup) => void;
+  markRowRead: (row: OhboxRowGroup) => void;
   /** Does the row wait for anything Done would answer: an unread letter somebody else wrote, or a pin? */
   doneOffered: (row: OhboxRowGroup) => boolean;
   /** The row as it is presented: unread when a member is, a pinned one included. */

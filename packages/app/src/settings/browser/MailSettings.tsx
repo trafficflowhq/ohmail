@@ -57,7 +57,15 @@ export function BrowserSettingsAbove({
   const activeScope =
     door !== NONE && (!door.liveNoticeScope || door.liveNoticeScope() === scope) ? scope : null;
   const model = useNotificationSettings(door, activeScope, route.sub === "notifications", preferences);
-  return <NotificationsContext.Provider value={model}>{children}</NotificationsContext.Provider>;
+  const calendarChoices =
+    host.wires.calendar === NONE || door === NONE
+      ? undefined
+      : door.choices?.(door.liveNoticeScope?.() === scope ? scope : null);
+  return (
+    <NotificationsContext.Provider value={{ ...model, calendarChoices }}>
+      {children}
+    </NotificationsContext.Provider>
+  );
 }
 
 export function BrowserNotificationsPane() {

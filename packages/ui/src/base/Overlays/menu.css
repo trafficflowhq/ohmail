@@ -54,9 +54,12 @@
     justify-content: flex-end;
     background: var(--sheet);
   }
+  :root[data-device="phone"] .oh-menu-close {
+    --oh-menu-close-min: calc(var(--s5) + var(--s4) + var(--s1));
+  }
   .oh-menu-close > .oh-button {
-    min-width: var(--h-s);
-    min-height: var(--h-s);
+    min-width: var(--oh-menu-close-min, var(--h-s));
+    min-height: var(--oh-menu-close-min, var(--h-s));
   }
 
   .oh-menu-title {
@@ -167,8 +170,11 @@
   .oh-menu-item[aria-checked="true"] {
     font-weight: var(--w-bold);
   }
+  .oh-menu-item[data-checkmark][aria-checked="false"] > :first-child {
+    visibility: hidden;
+  }
   /* The taken one carries the ink dot. */
-  .oh-menu-item[aria-checked="true"] > .oh-menu-word::after {
+  .oh-menu-item[aria-checked="true"]:not([data-checkmark]) > .oh-menu-word::after {
     --oh-menu-mark: 6px;
     --oh-menu-mark-gap: 3px;
     content: "";

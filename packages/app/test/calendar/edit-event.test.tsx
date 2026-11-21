@@ -1210,3 +1210,222 @@ it("leaves a padded stored title untouched on Enter and when saving another fiel
   expect(press.mock.calls).toEqual([[expect.objectContaining({ change: { place: "Studio" } })]]);
   await act(async () => {});
 });
+
+it.each(["week", "day"])("resizes a timed event's end by dragging in %s", async (view) => {
+  const world = eventWorld(
+    meeting({
+      start: { kind: "zoned", value: "20261116T110000", zone: ZURICH },
+      end: { kind: "zoned", value: "20261116T130000", zone: ZURICH },
+    }),
+  );
+  const press = vi.fn(async () => ({ key: "resize" }));
+  world.port.press = press;
+  mountFrame(`#/cal/${view}/2026-11-16`, world, NONE, { words: calmail });
+  const chip = screen.getByRole("button", { name: /Kiln check/ });
+  const handle = within(chip).getByTitle("Resize end");
+  const column = chip.parentElement!;
+  vi.spyOn(column, "getBoundingClientRect").mockReturnValue(DOMRect.fromRect({ width: 120, height: 1440 }));
+  const prior = Object.getOwnPropertyDescriptor(document, "elementsFromPoint");
+  Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [column] });
+  const pointer = (target: EventTarget, type: string, y: number) =>
+    fireEvent(target, Object.assign(new MouseEvent(type, { bubbles: true, clientY: y }), { pointerId: 1 }));
+  try {
+    pointer(handle, "pointerdown", 780);
+    pointer(document, "pointermove", 840);
+    pointer(document, "pointerup", 840);
+    await vi.waitFor(() =>
+      expect(press).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "calendar_event_update",
+          change: {
+            start: { kind: "zoned", value: "20261116T110000", zone: ZURICH },
+            end: { kind: "zoned", value: "20261116T140000", zone: ZURICH },
+          },
+        }),
+      ),
+    );
+  } finally {
+    if (prior) Object.defineProperty(document, "elementsFromPoint", prior);
+    else Reflect.deleteProperty(document, "elementsFromPoint");
+  }
+});
+
+it("resizes the focused event with the keyboard and gives read-only events no handles", async () => {
+  const world = eventWorld(meeting());
+  const press = vi.fn(async () => ({ key: "resize" }));
+  world.port.press = press;
+  mountFrame("#/cal/week/2026-11-16", world, NONE, { words: calmail });
+  const chip = screen.getByRole("button", { name: /Kiln check/ });
+  chip.focus();
+  fireEvent.keyDown(chip, { key: "ArrowDown", altKey: true, shiftKey: true });
+  await vi.waitFor(() =>
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change: { start: { kind: "zoned", value: "20261116T091500", zone: ZURICH }, end: meeting().end },
+      }),
+    ),
+  );
+  act(() => world.put("calendar", "cal-1", calendarRecord({ access: "reader" })));
+  expect(within(chip).queryByTitle("Resize end")).toBeNull();
+  fireEvent.keyDown(chip, { key: "ArrowDown", altKey: true });
+  expect(press).toHaveBeenCalledTimes(1);
+});
+
+it("saves the time zone and Show as choices through the event editor", async () => {
+  const { world } = open(meeting());
+  const press = vi.fn(async () => ({ key: "change" }));
+  world.port.press = press;
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const edit = within(screen.getByRole("dialog", { name: "Edit event" }));
+  fireEvent.click(edit.getByRole("button", { name: "Show as" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "Free" }));
+  fireEvent.click(edit.getByRole("button", { name: "Time zone" }));
+  const zones = within(screen.getByRole("dialog", { name: "Time zone" }));
+  fireEvent.change(zones.getByRole("textbox", { name: "Find a time zone" }), { target: { value: "London" } });
+  fireEvent.click(zones.getByRole("menuitemradio", { name: "Europe/London" }));
+  fireEvent.click(edit.getByRole("button", { name: "Save" }));
+  await vi.waitFor(() =>
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change: {
+          start: { kind: "zoned", value: "20261116T090000", zone: "Europe/London" },
+          end: { kind: "zoned", value: "20261116T100000", zone: "Europe/London" },
+          busy: false,
+        },
+      }),
+    ),
+  );
+});
+
+it("never reduces a timed event to zero and can undo an accepted resize", async () => {
+  const record = meeting({ end: { kind: "zoned", value: "20261116T091500", zone: ZURICH } });
+  const world = eventWorld(record);
+  world.port.verdict = () => ({ kind: "taken" });
+  const updatedAt = "2026-11-17T08:00:00.000Z";
+  const press = vi.fn<CalendarPort["press"]>(async (act) => {
+    if (act.kind === "calendar_event_update") {
+      world.put("calendar_event", record.id, { ...record, ...act.change, updatedAt });
+    }
+    return { key: "resize" };
+  });
+  world.port.press = press;
+  mountFrame("#/cal/week/2026-11-16", world, NONE, { words: calmail });
+  const chip = screen.getByRole("button", { name: /Kiln check/ });
+  chip.focus();
+  fireEvent.keyDown(chip, { key: "ArrowUp", altKey: true });
+  expect(press).not.toHaveBeenCalled();
+  fireEvent.keyDown(chip, { key: "ArrowDown", altKey: true });
+  fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+  await vi.waitFor(() =>
+    expect(press).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        base: updatedAt,
+        change: { start: record.start, end: record.end },
+      }),
+    ),
+  );
+});
+
+it("stays unchanged after returning the editor to the original time zone", async () => {
+  open(meeting());
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const edit = within(screen.getByRole("dialog", { name: "Edit event" }));
+  for (const [typed, zone] of [
+    ["London", "Europe/London"],
+    ["Zurich", ZURICH],
+  ]) {
+    fireEvent.click(edit.getByRole("button", { name: "Time zone" }));
+    const picker = within(screen.getByRole("dialog", { name: "Time zone" }));
+    fireEvent.change(picker.getByRole("textbox", { name: "Find a time zone" }), { target: { value: typed } });
+    fireEvent.click(picker.getByRole("menuitemradio", { name: zone }));
+  }
+  expect(edit.getByRole<HTMLButtonElement>("button", { name: "Save" }).disabled).toBe(true);
+});
+
+it("Alt+Down extends an end in the second repeated hour by fifteen minutes", async () => {
+  vi.setSystemTime(new Date("2026-10-25T09:00:00Z"));
+  const start = { kind: "instant", value: "20261024T233000Z" } as const;
+  const end = { kind: "instant", value: "20261025T011500Z" } as const;
+  const world = eventWorld(meeting({ start, end }));
+  const press = vi.fn(async () => ({ key: "resize" }));
+  world.port.press = press;
+  mountFrame("#/cal/week/2026-10-25", world, NONE, { words: calmail });
+  const chip = screen.getByRole("button", { name: /Kiln check/ });
+  chip.focus();
+  fireEvent.keyDown(chip, { key: "ArrowDown", altKey: true });
+  await vi.waitFor(() =>
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change: { start, end: { ...end, value: "20261025T013000Z" } },
+      }),
+    ),
+  );
+});
+
+it("explains a skipped time when editing a spring clock-change event", async () => {
+  vi.setSystemTime(new Date("2026-03-29T09:00:00Z"));
+  const world = eventWorld(
+    meeting({
+      start: { kind: "zoned", value: "20260329T013000", zone: ZURICH },
+      end: { kind: "zoned", value: "20260329T033000", zone: ZURICH },
+    }),
+  );
+  const press = vi.fn(async () => ({ key: "change" }));
+  world.port.press = press;
+  mountFrame("#/cal/week/2026-03-29/e/firing", world, NONE, { words: calmail });
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const form = within(screen.getByRole("dialog", { name: "Edit event" }));
+  fireEvent.change(form.getByRole("textbox", { name: "End time" }), { target: { value: "02:30" } });
+  expect(form.getByText(/clock change skips/i)).toBeTruthy();
+  expect(form.getByRole<HTMLButtonElement>("button", { name: "Save" }).disabled).toBe(true);
+  expect(press).not.toHaveBeenCalled();
+});
+
+it("opens an invitee picker, shows reminders and offers the editor's lower actions", async () => {
+  open(meeting({ alarms: [{ minutesBefore: 15, method: "notice" }] }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const form = within(screen.getByRole("dialog", { name: "Edit event" }));
+  expect(form.getByRole("button", { name: "Alert" })).toBeTruthy();
+  fireEvent.click(form.getByRole("button", { name: "Invitees" }));
+  expect(screen.getByRole("dialog", { name: "Add invitees" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Duplicate" })).toBeTruthy();
+});
+
+it("only invites a new guest after explicit confirmation and sends the chosen alerts", async () => {
+  const { world } = open(meeting({ alarms: [{ minutesBefore: 15, method: "notice" }] }));
+  const press = vi.fn(async () => ({ key: "change" }));
+  world.port.press = press;
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const form = within(screen.getByRole("dialog", { name: "Edit event" }));
+  fireEvent.click(form.getByRole("button", { name: "and another" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "30 minutes before" }));
+  fireEvent.click(form.getByRole("button", { name: "Invitees" }));
+  const picker = within(screen.getByRole("dialog", { name: "Add invitees" }));
+  fireEvent.change(picker.getByRole("textbox", { name: "Name or email address" }), {
+    target: { value: "Sam <sam@example.test>" },
+  });
+  fireEvent.click(picker.getByRole("button", { name: "Add person" }));
+  expect(press).not.toHaveBeenCalled();
+  fireEvent.click(form.getByRole("button", { name: "Save" }));
+  expect(press).not.toHaveBeenCalled();
+  const consent = within(screen.getByRole("dialog", { name: "Invite Sam?" }));
+  fireEvent.click(consent.getByRole("button", { name: "Invite" }));
+  await vi.waitFor(() => expect(press).toHaveBeenCalledTimes(1));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      change: { alarms: [15, 30], invitees: [expect.objectContaining({ name: "Sam", role: "required" })] },
+      audience: { organizer: null, guests: [] },
+    }),
+  );
+});
+
+it("duplicates into an unsent draft from the editor actions", async () => {
+  open(meeting());
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.click(
+    within(screen.getByRole("toolbar", { name: "Event actions" })).getByRole("button", { name: "Duplicate" }),
+  );
+  const draft = within(await screen.findByRole("dialog", { name: "New event" }));
+  expect(draft.getByDisplayValue("Kiln check")).toBeTruthy();
+  expect(draft.getByDisplayValue("09:00")).toBeTruthy();
+});

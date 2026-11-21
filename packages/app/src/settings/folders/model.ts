@@ -17,6 +17,10 @@ export interface FoldersModel {
   setMailbox(mailboxId: string, enabled: boolean): Promise<unknown>;
 }
 
+/** A mailbox participates unless the saved choices explicitly switch it off. */
+export const mailboxUsesFolders = (off: Readonly<Record<string, string>>, id: string): boolean =>
+  (off[id] ?? null) === null;
+
 /**
  * The mailboxes' list, or null. It stands only while folders are on, once the server's exceptions are known, where
  * the shell can write one, and with a second mailbox: with one, the master IS the mailbox's switch.
@@ -30,7 +34,7 @@ export function foldersMailboxes(at: {
 }): FoldersMailbox[] | null {
   const { on, known, settable, mailboxes, off } = at;
   if (!on || !known || !settable || !mailboxes || mailboxes.length < 2) return null;
-  return mailboxes.map((mb) => ({ id: mb.id, address: mb.address, on: (off[mb.id] ?? null) === null }));
+  return mailboxes.map((mb) => ({ id: mb.id, address: mb.address, on: mailboxUsesFolders(off, mb.id) }));
 }
 
 /**

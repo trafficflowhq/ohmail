@@ -3,7 +3,7 @@
  * new events go, the week's numbers, the day's hours, a second time zone. The device's own zone is said as the one
  * zone source names it. What the account's settings do not carry yet is not drawn.
  */
-import { clockTime, readerZones, type CalendarSettingsWire } from "@ohmail/app-logic/calendar";
+import { clockTime, type CalendarSettingsWire } from "@ohmail/app-logic/calendar";
 import { newEventsCalendarOf, writableOf, type CalendarSettingsBody } from "@ohmail/app-logic/calendar/setup";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useReport } from "../../frame/commands.js";
@@ -16,16 +16,7 @@ import { useCalendarSettings } from "../settings-read.js";
 import { Choice, type ChoiceItem } from "./Choice.js";
 import { Hours } from "./Hours.js";
 
-/** The zones the platform names and this device can place a time in, read once. */
-let known: readonly string[] | null = null;
-function knownZones(): readonly string[] {
-  if (known) return known;
-  const zones = readerZones();
-  const listed = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
-  known = listed.filter((z) => zones.offsetAt(z, Date.now()) !== null);
-  return known;
-}
-const zoneName = (zone: string) => zone.replaceAll("_", " ");
+import { knownZones, zoneName } from "../../calendar/zone-names.js";
 
 export function useViewSummary(): PaneSummary | null {
   const t = useText("calsettings");
@@ -43,7 +34,7 @@ export function useViewSummary(): PaneSummary | null {
     to: to === 1440 ? "24:00" : clockTime(to, locale),
   });
   return {
-    value: t("view.summary"),
+    value: t(said.weekNumbers ? "view.weekNumbersOn" : "view.weekNumbersOff"),
     detail: calendar ? t("view.scheduleSummary", { hours, calendar: calendar.name }) : hours,
   };
 }

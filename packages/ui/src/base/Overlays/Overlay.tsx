@@ -1,10 +1,13 @@
-import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import { useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { closeTopmost, useOverlayEscape } from "./overlay-escape.js";
 import { cycleTab, useOverlayFocus } from "./overlay-focus.js";
 import "./overlay.css";
 
 export interface OverlayProps {
   open: boolean;
+  /** A panel being pulled into view, before it takes focus or becomes modal. */
+  preview?: boolean;
+  panelRef?: RefObject<HTMLDivElement | null>;
   onClose: () => void;
   /** Its name, said to a screen reader: the words, or the id of the node that holds them. */
   label?: string;
@@ -17,7 +20,7 @@ export interface OverlayProps {
   /** Fade the scrim with the panel, or just its backdrop. Omitted: the backdrop is steady. */
   scrimMotion?: "together" | "backdrop";
   /** Where it stands: in the middle, or under the window's top. */
-  place?: "top";
+  place?: "top" | "start";
   /** What takes the keys as it opens. Left out: its first button. */
   first?: (box: HTMLElement) => HTMLElement | null | undefined;
   /** The part's own keys, asked before Esc and Tab. True: the key was taken. */
@@ -35,6 +38,8 @@ const firstButton = (box: HTMLElement) => box.querySelector<HTMLElement>("button
  */
 export function Overlay({
   open,
+  preview = false,
+  panelRef,
   onClose,
   label,
   labelledBy,
@@ -47,10 +52,11 @@ export function Overlay({
   onKey,
   children,
 }: OverlayProps) {
-  const box = useRef<HTMLDivElement | null>(null);
+  const ownBox = useRef<HTMLDivElement | null>(null);
+  const box = panelRef ?? ownBox;
   useOverlayFocus(open, box, first ?? firstButton);
   useOverlayEscape(open, box, onClose);
-  if (!open) return null;
+  if (!open && !preview) return null;
 
   const keys = (e: KeyboardEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -62,7 +68,7 @@ export function Overlay({
   };
 
   return (
-    <div className="oh-over">
+    <div className="oh-over" inert={!open || undefined} aria-hidden={!open || undefined}>
       <div
         className="oh-scrim"
         data-scrim=""
@@ -74,7 +80,7 @@ export function Overlay({
           ref={box}
           className={`oh-overlay ${className}`}
           role={role}
-          aria-modal="true"
+          aria-modal={open || undefined}
           aria-label={label}
           aria-labelledby={labelledBy}
           aria-describedby={describedBy}

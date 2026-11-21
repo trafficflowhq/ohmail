@@ -468,7 +468,6 @@ describe("the wiring, from source", () => {
        take them away with today's shell, or with their place's mount); nothing else may join them. */
     const todays = [
       "apps/webapp/app/shell/RichEditor.tsx",
-      "apps/webapp/app/views/ScreenerView.tsx",
     ].filter((f) => existsSync(join(REPO, f)));
     expect(reaching).toEqual([
       "apps/desktop/src/DesktopSubscription.tsx",

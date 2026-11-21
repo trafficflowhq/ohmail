@@ -1,3 +1,6 @@
+import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
+import { requireDraftQuoteEcho } from "./draft-quote-echo.js";
+import type { DraftBodyRead } from "./adapter.js";
 import {
   CursorExpiredError,
   FOLDER_OF_VIEW,
@@ -70,6 +73,7 @@ import type {
   RuleEntity as RuleDTO,
   ScreenerWaitingItemWire,
   ScreenerWaitingWire,
+  SearchPlaceCount,
   SearchResult,
   StayedWire,
   SyncSnapshotPage,
@@ -411,11 +415,14 @@ const SEND_WIRE_STATUSES = new Set(["sent", "unverified", "queued", "in_flight",
 export const EDIT_OWN_REFUSALS = new Set(["400 validation_failed", "413 draft_too_large", "413 payload_too_large"]);
 
 /**
- * One of `body`/`html` on the wire, never both. `html: null` (kept by `Engine.enrich` only for a row
+ * Edited quotes include both fields so servers that cannot keep the edit reject the write.
+ * Otherwise one of `body`/`html` goes on the wire. `html: null` (kept by `Engine.enrich` only for a row
  * the mirror holds as formatted) rides beside `body` and makes that row plain.
  */
-function bodyOnWire(m: { body: string; html?: string | null }): { html: string } | { body: string; html?: null } {
-  if (typeof m.html === "string" && m.html !== "") return { html: m.html };
+function bodyOnWire(m: { body: string; html?: string | null }): { html: string; body?: string } | { body: string; html?: null } {
+  if (typeof m.html === "string" && m.html !== "") {
+    return hasEditedQuotedHistory(m.html) ? { html: m.html, body: m.body } : { html: m.html };
+  }
   return m.html === null ? { body: m.body, html: null } : { body: m.body };
 }
 
@@ -924,6 +931,12 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
+  async setSuggestionDismissed(id: string, dismissed: boolean): Promise<void> {
+    const res = await this.call("PATCH /calendar/suggestions/:id", { params: { id }, body: { dismissed } });
+    if (!res.ok) throw await this.rejectionOf(res);
+    this.noteSeq(res);
+  }
+
   async calendarSettings(): Promise<CalendarSettingsWire> {
     const res = await this.call("GET /calendar/settings", {});
     if (!res.ok) throw await this.rejectionOf(res);
@@ -1159,12 +1172,12 @@ export class HttpAdapter implements EngineAdapter {
    * throws through `rejectionOf` so "the server said no" cannot be mistaken for "the draft is
    * empty". A body the server omits is `null` — the one answer that means "no text of record".
    */
-  async fetchDraftBody(draftId: string): Promise<string | null> {
+  async fetchDraftBody(draftId: string): Promise<DraftBodyRead | null> {
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
       const res = await this.call("GET /drafts/:id", { params: { id: draftId }, signal });
       if (!res.ok) throw await this.rejectionOf(res, "read");
       const wire = await this.readUntrusted<"GET /drafts/:id">(res);
-      return typeof wire.body === "string" ? wire.body : null;
+      return typeof wire.body === "string" ? { body: wire.body, html: typeof wire.html === "string" ? wire.html : null } : null;
     });
   }
 
@@ -1294,6 +1307,16 @@ export class HttpAdapter implements EngineAdapter {
       ...(facetsOf(wire.facets) ? { facets: facetsOf(wire.facets)! } : {}),
       ...(wire.answeredFrom === "mirror" ? { answeredFrom: "mirror" as const } : {}),
     };
+  }
+
+  async searchPlaces(): Promise<readonly SearchPlaceCount[] | null> {
+    const res = await this.call("GET /search", { query: new URLSearchParams({ places: "1" }), urgent: true });
+    if (!res.ok) return null;
+    const wire = await this.readAnswer<"GET /search">(res);
+    if (wire.answeredFrom === "mirror" || !("places" in wire) || !Array.isArray(wire.places)) return null;
+    return wire.places.every((row) =>
+      row && typeof row.folder === "string" && row.folder !== "" && Number.isSafeInteger(row.count) && row.count >= 0,
+    ) ? wire.places : null;
   }
 
   /**
@@ -2405,7 +2428,7 @@ export class HttpAdapter implements EngineAdapter {
        * landed, one with a single caller and one with none. The create returns its id, and that is the point:
        * `entityId` lets the surface adopt it, so the next autosave PUTs the same row and the send sends it — without
        * it, every two seconds of typing is a new `drafts` row. The echo also goes into `changes`, so the mirror holds
-       * the real row under the real id while the client-local overlay drops. One of `body`/`html`, never both —
+       * the real row under the real id while the client-local overlay drops. For ordinary drafts one of `body`/`html` —
        * identical to the send path: `DraftsService` derives the plain half from the sanitized markup and refuses a
        * request asserting what plaintext readers see.
        */
@@ -2471,6 +2494,7 @@ export class HttpAdapter implements EngineAdapter {
           }
           // THE VERSION THIS CLIENT WAS TOLD, kept — see `revisionForDraft`. The row was just
           // written from this screen, so it is a version this client vouched for by writing it.
+          requireDraftQuoteEcho(m.html, dto.html, dto.id);
           this.noteDraftRevision(dto.id, dto.contentRevision);
           return {
             changes: seq === null ? [] : [{
@@ -2504,6 +2528,7 @@ export class HttpAdapter implements EngineAdapter {
         const dto: Partial<AnswerOf<"PUT /drafts/:id">> = await this.readAnswer<"PUT /drafts/:id">(res);
         // THE AUTOSAVE'S OWN OBSERVATION. This answer names the version the row is now at, and a
         // send whose own PUT fails carries it rather than nothing — the whole of the fallback.
+        requireDraftQuoteEcho(m.html, dto.html, m.draftId);
         this.noteDraftRevision(m.draftId, dto.contentRevision);
         this.noteOwnStep(m.draftId, stated, dto.contentRevision);
         return {
@@ -2745,6 +2770,14 @@ export class HttpAdapter implements EngineAdapter {
       this.forgetSendKey(idempotencyKey);
       throw new MutationRejectedError("This message can't be sent again from here.", { code: "send_again_invalid", retryable: false });
     }
+    const confirmQuote = (html: unknown, row: string): void => {
+      try {
+        requireDraftQuoteEcho(m.html, html, row);
+      } catch (error) {
+        this.forgetSendKey(idempotencyKey);
+        throw error;
+      }
+    };
     const pressed = sendFingerprint(m);
     const resumed = this.draftForKey.has(idempotencyKey);
     const rewrite = resumed && this.fingerprintForKey.get(idempotencyKey) !== pressed;
@@ -2755,7 +2788,7 @@ export class HttpAdapter implements EngineAdapter {
       const wantsBcc = (m.bcc?.length ?? 0) > 0;
       // `draftId` is a `let` and a closure does not keep its narrowing; the row is fixed here.
       const row = draftId;
-      type PutEcho = Pick<Untrusted<AnswerOf<"PUT /drafts/:id">>, "bcc" | "mailboxId" | "contentRevision" | "status">;
+      type PutEcho = Pick<Untrusted<AnswerOf<"PUT /drafts/:id">>, "bcc" | "mailboxId" | "contentRevision" | "status" | "html">;
       /**
        * How the last save ended: `answered` with an echo, `frozen` (a send holds the row), `own` (the
        * edit itself was refused — {@link EDIT_OWN_REFUSALS}), or `unanswered`: no reply, an
@@ -2907,6 +2940,7 @@ export class HttpAdapter implements EngineAdapter {
         : recordedRevision !== null && typeof echoed?.contentRevision === "string" && echoed.contentRevision !== recordedRevision;
       if (frozen || (pastDraft && rewritten)) earlierWordsKept = true;
       if (!frozen) {
+        confirmQuote(echoed?.html, row);
 
         // ── THE VERSION-SKEW GUARD, ON THIS PATH TOO ────────────────────────────────────────
         //
@@ -3008,7 +3042,7 @@ export class HttpAdapter implements EngineAdapter {
           ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
           ...(m.forwardOf && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
           subject: m.subject ?? "",
-          // ONE of the two, never both. `DraftsService` derives the text/plain alternative
+          // The body fields follow `bodyOnWire`. `DraftsService` derives the text/plain alternative
           // from the sanitized html itself and refuses a request that carries a `body`
           // beside it — a client that sent both would be asserting what plaintext readers
           // see, which is precisely the assertion the server takes back so the two parts of
@@ -3076,6 +3110,7 @@ export class HttpAdapter implements EngineAdapter {
         );
       }
       draftId = draft.id;
+      confirmQuote(draft.html, draftId);
       this.draftForKey.set(idempotencyKey, draftId);
       // The row this press made a moment ago — vouched for on the send exactly as an existing
       // row's is, so the field is on every send this client makes rather than on most of them.

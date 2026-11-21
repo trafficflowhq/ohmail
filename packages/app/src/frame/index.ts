@@ -2,12 +2,14 @@
 export * from "./contract.js";
 export { FRAME_NAMESPACES } from "./namespaces.js";
 export { Frame } from "./Frame.js";
+export { FrameReports, useWindowReport } from "./WindowReports.js";
 export {
   useConnectionFeed,
   useEntered,
   useFrame,
   useLinkedDraft,
   useNotice,
+  useOptionalReport,
   usePaletteFeeds,
   usePaletteOffers,
   useRailFoot,

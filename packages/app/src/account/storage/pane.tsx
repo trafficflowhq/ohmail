@@ -5,7 +5,7 @@
  * (`accountBodies(host).storage`): `pane` where the build may link out (figures, plans and the change), `facts`
  * elsewhere (what is stored, no figure, no verb); both are drawn over the one door.
  */
-import type { ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { useFrame } from "../../frame/index.js";
 import { NONE, type HostContract } from "../../host/index.js";
 import type { SettingsPane } from "../../settings/contract.js";
@@ -15,6 +15,8 @@ import type { FactorSlot } from "../contract.js";
 import type { StorageDoor } from "./model.js";
 import { StoragePane } from "./StoragePane.js";
 import { useStorage } from "./use-storage.js";
+import { useText } from "../../text/index.js";
+import { tagSaid } from "./said.js";
 
 /** What only a host can hand the Storage section. */
 export interface StoragePaneParts {
@@ -32,6 +34,17 @@ function bodyOf(host: HostContract): "pane" | "facts" | null {
 
 /** The Storage section over one host's parts. Call it once per mount: a registration made again is a pane mounted again. */
 export function storagePane(parts: StoragePaneParts): SettingsPane {
+  function useSummary() {
+    const { figures: signal } = parts.useDoor();
+    const figures = useSyncExternalStore(signal.subscribe, signal.read, signal.read);
+    const t = useText("settings");
+    if (figures === null) return null;
+    return {
+      value: tagSaid(t, figures.tag ?? { kind: "percent", percent: figures.percent }),
+      detail: t("storageOf", { used: figures.used, limit: figures.limit }),
+      hot: figures.tag !== null,
+    };
+  }
   function Drawn({ body }: { readonly body: "pane" | "facts" }): ReactNode {
     return <StoragePane model={useStorage(parts.useDoor())} body={body} factor={parts.factor} />;
   }
@@ -40,7 +53,7 @@ export function storagePane(parts: StoragePaneParts): SettingsPane {
     return body === null ? null : <Drawn body={body} />;
   }
   return {
-    ...paneOf("storage", { Body }),
+    ...paneOf("storage", { Body, useSummary }),
     listed: (host) => PANE_FACTS.storage.listed(host) && bodyOf(host) !== null,
   };
 }

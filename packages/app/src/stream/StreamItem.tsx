@@ -3,7 +3,7 @@ import type { EngineMessage } from "@ohmail/wire";
 import type { ConversationShown } from "@ohmail/app-logic/reader";
 import type { StreamModel } from "@ohmail/app-logic/streams";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
-import { Message, MessageHead } from "@ohmail/ui/mail";
+import { Message, MessageHead, type MessageHeadProps } from "@ohmail/ui/mail";
 import { NONE, type ReaderEntry } from "../host/index.js";
 import { BodyLoadStatus } from "../reader/BodyLoadStatus.js";
 import type { Text } from "../text/index.js";
@@ -12,6 +12,7 @@ import { senderOf, stampOf } from "./words.js";
 
 interface StreamItemProps {
   m: EngineMessage;
+  selection?: MessageHeadProps["selection"];
   reader: ReaderEntry | typeof NONE;
   t: Text;
   locale: string;
@@ -119,6 +120,7 @@ export const StreamItem = memo(function StreamItem(props: StreamItemProps) {
 
 function FoldedCard({
   m,
+  selection,
   reader,
   t,
   locale,
@@ -143,13 +145,14 @@ function FoldedCard({
   const PreviewBody = reader !== NONE && preview ? reader.PreviewBody : undefined;
   const previewHead =
     reader !== NONE && reader.PreviewHead ? (
-      <reader.PreviewHead message={m} hideBodyNotice={text === null} />
+      <reader.PreviewHead message={m} hideBodyNotice={text === null} selection={selection} />
     ) : (
       <MessageHead
         sender={{ ...who, displayAddress: displayAddress(who.address) }}
         stamp={{ when: stamp.when, full: false, title: stamp.full }}
         amount={amountInHead ? m.amount : undefined}
         staticMetadata
+        selection={selection}
       />
     );
   const hasReceiptEvents = receiptEvents !== null;

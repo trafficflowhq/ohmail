@@ -1,3 +1,4 @@
+import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
   carryBinding, claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, recordChanges,
@@ -796,13 +797,15 @@ export class DraftsService {
     if (typeof html !== "string") {
       throw new ServiceError("validation_failed", 400, "html must be a string or null");
     }
-    if (body !== undefined) {
+    const prepared = prepareOutboundBody(html, true);
+    // An edited quote sends both fields so an older server rejects the write instead of flattening it.
+    // The plain part still comes exclusively from the sanitized HTML.
+    if (body !== undefined && !(typeof body === "string" && hasEditedQuotedHistory(prepared.html))) {
       throw new ServiceError(
         "validation_failed", 400,
         "body is derived from html on the server; send one or the other, not both",
       );
     }
-    const prepared = prepareOutboundBody(html);
     const size = htmlByteLength(prepared.html);
     if (size > DRAFT_HTML_CAP_BYTES) {
       // Refused HERE so the constraint never has to. `drafts_html_cap` is the tripwire behind

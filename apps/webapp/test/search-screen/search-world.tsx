@@ -89,6 +89,8 @@ export type ServerSearchWire = NonNullable<Awaited<ReturnType<NonNullable<Engine
 
 /** What the store answers a question with: a page, a refusal, or nothing at all (no store on this host). */
 export type StoreFn = (q: string, opts: ServerSearchOpts) => ServerSearchWire | Promise<ServerSearchWire>;
+type PlaceRead = () => Promise<readonly { folder: string; count: number }[]>;
+
 export type StoreAnswer = StoreFn | "none";
 
 export interface Asked {
@@ -97,7 +99,7 @@ export interface Asked {
 }
 
 let seq = 0;
-async function engineOf(rows: readonly EngineMessage[], store: StoreAnswer, asked: Asked[]): Promise<OhmailEngine> {
+async function engineOf(rows: readonly EngineMessage[], store: StoreAnswer, asked: Asked[], searchPlaces?: PlaceRead): Promise<OhmailEngine> {
   const mirror = new MemoryMirrorStore();
   await mirror.load();
   await mirror.applyChanges(
@@ -113,6 +115,7 @@ async function engineOf(rows: readonly EngineMessage[], store: StoreAnswer, aske
     mutate: async (): Promise<MutationOutcome> => ({ changes: [], seq: null }),
     withdrawSend: async () => ({ outcome: "unsupported" as const }),
     fetchBody: async () => null,
+    ...(searchPlaces ? { searchPlaces } : {}),
     ...(store === "none"
       ? {}
       : {
@@ -232,11 +235,12 @@ export async function search(
     /** Whether the host's server takes a person, unread and the days. Left out: words, as today's server. */
     searchBy?: "people" | "words";
     readMailboxTotal?: () => Promise<number | null>;
+    searchPlaces?: PlaceRead;
   } = {},
 ): Promise<World> {
   const said: Said = { opened: [], went: [], exits: 0 };
   const asked: Asked[] = [];
-  const engine = await engineOf(rows, opts.store ?? page([]), asked);
+  const engine = await engineOf(rows, opts.store ?? page([]), asked, opts.searchPlaces);
   const lang = opts.lang ?? "en";
   let view!: RenderResult;
   await act(async () => {

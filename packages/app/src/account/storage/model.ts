@@ -93,6 +93,7 @@ export interface StoragePlan {
 /** The storage block, as the pane draws it, in the order a person reads it. */
 export interface StorageFigures {
   readonly used: string;
+  readonly percent: number;
   readonly limit: string;
   readonly room: StorageRoom;
   /** From 80 percent a tag says the share; at the limit it says full. */

@@ -11,7 +11,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { ThemeProvider } from "@ohmail/ui";
+import { FrameReports } from "@ohmail/app/frame";
 import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { localStorageDoor } from "@ohmail/client-engine/durable";
 
@@ -237,7 +238,7 @@ const paint = (bootFailure: unknown): void =>
           systemScheme={omarchySchemeSource}
         >
           <portalRenderer.Provider value={createPortal}>
-            <ToastHost>
+            <FrameReports>
               <RendererReloaded reloaded={RENDERER_RELOADED} />
               <UpdateClosing />
               {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
@@ -251,7 +252,7 @@ const paint = (bootFailure: unknown): void =>
                   <DesktopGate />
                 )}
               </GateBoundary>
-            </ToastHost>
+            </FrameReports>
           </portalRenderer.Provider>
         </ThemeProvider>
       </DesktopLocale>

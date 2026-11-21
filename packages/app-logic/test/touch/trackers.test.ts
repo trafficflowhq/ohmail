@@ -39,7 +39,7 @@ describe("a finger on a row", () => {
         ]),
         false,
       ),
-    ).toBe("read");
+    ).toBe("right");
     expect(
       swipeEnd(
         run([
@@ -48,7 +48,7 @@ describe("a finger on a row", () => {
         ]),
         false,
       ),
-    ).toBe("later");
+    ).toBe("left");
   });
 
   it("presses nothing when the system takes the finger after the claim", () => {
@@ -79,7 +79,7 @@ describe("a finger on a row", () => {
       [100, 12],
     ]);
     expect(turned.claimed).toBe(true);
-    expect(swipeEnd(turned, false)).toBe("read");
+    expect(swipeEnd(turned, false)).toBe("right");
   });
 
   it("draws the row by the phone's travel once claimed, and not before", () => {
@@ -107,9 +107,9 @@ describe("a finger on a row", () => {
       [20, 0],
       [100, 0],
     ]);
-    expect(swipeDrawn(right, { read: false, later: true })).toBe(0);
-    expect(swipeEnd(right, false, { read: false, later: true })).toBeNull();
-    expect(swipeEnd(right, false, { read: true, later: false })).toBe("read");
+    expect(swipeDrawn(right, { right: false, left: true })).toBe(0);
+    expect(swipeEnd(right, false, { right: false, left: true })).toBeNull();
+    expect(swipeEnd(right, false, { right: true, left: false })).toBe("right");
   });
 });
 

@@ -4,6 +4,7 @@
  * hold no calendar code (its bundle census refuses one). A composition that keeps a calendar
  * imports this and hands `calendarFeed` to the sync feed's reader as its port.
  */
+export { setCalendarSuggestionDismissed } from "./suggestions.js";
 export { calendarFeed } from "./port.js";
 export { calendarEnabledAt, CALENDAR_BUILDERS, cutToFit } from "./feed.js";
 export {

@@ -49,6 +49,7 @@ const emptyPage = (since: string): SyncResponse => ({
 
 /** The account's answers: a page of one hosted row, an exact count, its own server ms. */
 function accountSearch(url: URL): unknown {
+  if (url.searchParams.get("places") === "1") return { places: [{ folder: "Archive/Reports", count: 28 }] };
   const parts = url.searchParams.get("parts");
   if (url.searchParams.has("address")) return { items: [dto(HOSTED_ONLY, "From the heron")], total: 812, direction: "from" };
   if (parts === "estimate") {
@@ -155,6 +156,17 @@ describe("reachable: the whole-mailbox verdict and count are the account's", () 
   it("the account's own index progress is relayed: the account's store fills its index", async () => {
     const info = await verdictOf("heron");
     expect(info).toMatchObject({ fromMirror: false, indexed: { done: 1, total: 4 } });
+  });
+
+  it("relays the Place inventory and lets the window use its own counts when the account is unavailable", async () => {
+    state.mode = "up";
+    const engine = await windowEngine();
+    expect(await engine.searchPlaces()).toEqual([{ folder: "Archive/Reports", count: 28 }]);
+
+    state.mode = "503";
+    expect((await get("/search?places=1")).status).toBe(503);
+    expect(await engine.searchPlaces()).toBeNull();
+    state.mode = "up";
   });
 
   it("the address arm is the account's too", async () => {

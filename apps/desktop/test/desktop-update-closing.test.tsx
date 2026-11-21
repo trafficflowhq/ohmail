@@ -11,7 +11,7 @@ import * as React from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createRoot, type Root } from "react-dom/client";
-import { ToastHost } from "@ohmail/ui";
+import { FrameReports } from "@ohmail/app/frame";
 
 import { DOOR_COPY } from "../src/door-copy.js";
 import { UpdateClosing } from "../src/update-closing.js";
@@ -78,9 +78,9 @@ async function mount(): Promise<void> {
   await act(async () => {
     root!.render(
       <React.StrictMode>
-        <ToastHost>
+        <FrameReports>
           <UpdateClosing />
-        </ToastHost>
+        </FrameReports>
       </React.StrictMode>,
     );
   });

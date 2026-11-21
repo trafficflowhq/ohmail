@@ -11,6 +11,7 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { EngineMessage, EngineMutation, FeedView } from "@ohmail/wire";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { feedPartition } from "../../../../test/support/engine-fixtures.js";
 import { SEEN_QUIET_MS } from "@ohmail/app-logic/reading/seen-batch";
 import { SYNC_BOOTSTRAPPING, SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
@@ -2191,4 +2192,81 @@ describe("pending Receipts bodies earn read evidence in the reading viewport", (
     leaveReceipts();
     expect(sent(mail)).toEqual(["mark_seen r0 read glance", "feed_mark_seen receipts up to r0 r0,r2"]);
   });
+});
+
+it("moves only the selected account-authored News card on a phone and undoes that move", async () => {
+  const own = "owner@example.invalid";
+  const threadId = "conversation";
+  const { mail } = seat({
+    at: "#/reads",
+    phone: true,
+    mailboxes: async () => [
+      {
+        id: "mb-1",
+        address: own,
+        addressIsOwn: true,
+        status: "active",
+      } as MailboxFacts,
+    ],
+    letters: [
+      issue("written", 13, { threadId, from: { name: "Account owner", address: own } }),
+      issue("received", 12, { threadId }),
+    ],
+  });
+  const record = mail.engine.mutate.bind(mail.engine);
+  vi.spyOn(mail.engine, "mutate").mockImplementation(async (action) => {
+    const answer = await record(action);
+    if (action.kind === "move") mail.patch(action.messageId, { folder: action.folder, placeDecided: true });
+    return answer;
+  });
+  await settle();
+  const card = within(screen.getByRole("heading", { name: "Issue 13" }).closest("article")!);
+  fireEvent.click(card.getByRole("button", { name: "Select the message" }));
+  const bar = within(screen.getByRole("toolbar", { name: "Selection" }));
+  fireEvent.click(bar.getByRole("button", { name: "Move" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "move to" })).getByRole("menuitem", { name: "Ohbox" }),
+  );
+  await settle();
+
+  const moves = () => mail.mutations.filter((action) => action.kind === "move");
+  expect(moves().map(({ messageId, folder }) => [messageId, folder])).toEqual([["written", "INBOX"]]);
+  expect(screen.getByRole("heading", { name: "Issue 12" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Issue 13" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+  await settle();
+
+  expect(moves().map(({ messageId, folder }) => [messageId, folder])).toEqual([
+    ["written", "INBOX"],
+    ["written", "ohmail/News"],
+  ]);
+  expect(screen.getByRole("heading", { name: "Issue 13" })).toBeTruthy();
+});
+
+it("screens only the selected Ohbox letter when its sender has another listed letter", async () => {
+  const { mail } = seat({
+    at: "#/ohbox",
+    letters: [
+      issue("chosen", 13, { folder: "INBOX", placeDecided: true }),
+      issue("left", 12, { folder: "INBOX", placeDecided: true }),
+    ],
+  });
+  await settle();
+  const chosen = screen.getByRole("option", { name: /Issue 13/ });
+  fireEvent.click(within(chosen.parentElement!).getByRole("button", { name: "Select the message" }));
+  fireEvent.click(
+    within(screen.getByRole("toolbar", { name: "Selection" })).getByRole("button", { name: "Screening" }),
+  );
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "screen to" })).getByRole("menuitem", { name: "News" }),
+  );
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Screening" })).getByRole("menuitem", { name: "Screen them" }),
+  );
+  await settle();
+
+  expect(mail.mutations.filter((action) => action.kind === "move").map((action) => action.messageId)).toEqual(
+    ["chosen"],
+  );
+  expect(screen.getByRole("option", { name: /Issue 12/ })).toBeTruthy();
 });

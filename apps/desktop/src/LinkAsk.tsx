@@ -6,8 +6,9 @@
  * the token back (`link_ask_open`) and the shell opens what it holds; Cancel and Escape send nothing.
  * The window never names an address to the shell.
  */
+import { useWindowReport } from "@ohmail/app/frame";
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
-import { Button, useOptionalToast } from "@ohmail/ui";
+import { Button } from "@ohmail/ui";
 import { MAIL_BODY_COPY as COPY } from "@ohmail/letter-body";
 import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
 import { linkAskOpen, type LinkAsk as HeldPress } from "./native.js";
@@ -17,7 +18,7 @@ const BODY_ID = "link-ask-body";
 
 /** The ask over whichever screen the gate shows. The layer claims the window while it is up. */
 export function LinkAsk({ ask, onClose }: { ask: HeldPress; onClose: () => void }) {
-  const toast = useOptionalToast();
+  const report = useWindowReport();
   const layer = useRef<HTMLDivElement | null>(null);
   useModalGate(true);
   /* Everything beside the layer, up to the body, is inert while it is up, and the focus goes back
@@ -41,7 +42,7 @@ export function LinkAsk({ ask, onClose }: { ask: HeldPress; onClose: () => void 
   const host = new URL(ask.url).hostname;
   const open = (): void => {
     onClose();
-    linkAskOpen(ask.token).catch(() => toast?.(COPY.linkAskGone));
+    linkAskOpen(ask.token).catch(() => report?.(COPY.linkAskGone));
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
     if (e.key !== "Escape") return;

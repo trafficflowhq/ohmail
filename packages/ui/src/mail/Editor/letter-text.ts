@@ -9,6 +9,8 @@ export const letterText = {
   /** The box the blocks stand in: the editor's own root, or what holds a formatted signature. */
   text: "oh-lettertext",
   paragraph: "oh-lettertext-p",
+  heading: "oh-lettertext-heading",
+  divider: "oh-lettertext-divider",
   /** A list with marks, a list with numbers, and an item of either. */
   bullets: "oh-lettertext-bullets",
   numbers: "oh-lettertext-numbers",

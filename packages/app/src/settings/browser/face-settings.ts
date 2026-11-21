@@ -4,7 +4,7 @@ import { useState } from "react";
 import { newFaceEdits, type ApplyFaceAllDevices, type FaceEdits } from "../../mail/ground/boot-face.js";
 import type { GeneralModel } from "../general/index.js";
 import { useTheme, type FaceName } from "@ohmail/ui/theme";
-import { useToast } from "@ohmail/ui/toast";
+import type { ToastFn } from "@ohmail/app-logic/press/report";
 
 export interface FaceSettingsProps {
   accountWrite: { apply: ApplyFaceAllDevices; captureOwner: () => () => boolean } | null;
@@ -15,8 +15,8 @@ export interface FaceSettingsProps {
 export function useFaceSettings(
   { accountWrite, holdForAccount, edits: shared }: FaceSettingsProps,
   failed: () => string,
+  report: ToastFn,
 ): GeneralModel["look"] {
-  const toast = useToast();
   const { face, resolved, facePreference, accountFace, setFace, adoptAccountFace } = useTheme();
   /** Local, so a rejection can be reported without any shared flag owning the message. */
   const [saving, setSaving] = useState(false);
@@ -54,7 +54,7 @@ export function useFaceSettings(
         if (edits.pending !== work || !stillOwns()) return;
         adoptAccountFace(edits.confirmed);
         setFace(edits.pin);
-        toast(failed());
+        report(failed());
       } finally {
         if (edits.pending === work) {
           edits.pending = null;

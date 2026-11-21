@@ -199,10 +199,9 @@ describe("the dark toggle stands in the host's header when the host offers a slo
 
   it("the held Screener card passes its header slot", async () => {
     const { readFileSync } = await import("node:fs");
-    const { existsSync } = await import("node:fs");
-    const rel = "app/views/ScreenerView.tsx";
-    const src = readFileSync(existsSync(`apps/webapp/${rel}`) ? `apps/webapp/${rel}` : rel, "utf8");
-    expect(src).toMatch(/<span className="t num">\{time \?\? ""\}<\/span>\s*<span className="hm-adapt" ref=\{setAdaptSlot\} \/>/);
-    expect(src).toContain("adaptSlot={adaptSlot}");
+    const src = readFileSync("packages/app/src/screener/held/HeldLetter.tsx", "utf8");
+    expect(src).toMatch(/<Body[\s\S]*?onNotice=\{setNotice\}[\s\S]*?onControls=\{setControls\}/);
+    expect(src).toMatch(/<HeldHead[\s\S]*?note=\{[\s\S]*?<BlockedImages/);
+    expect(src).toMatch(/lead=\{[\s\S]*?<LetterViews[\s\S]*?views=\{views\.map/);
   });
 });

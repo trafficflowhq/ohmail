@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -116,7 +117,7 @@ async function mount(): Promise<void> {
   await act(async () => {
     root.render(
       h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-        h(ThemeProvider, null, h(ToastHost, null, h(DesktopDevices)))),
+        h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DesktopDevices })))),
     );
   });
   await flush();

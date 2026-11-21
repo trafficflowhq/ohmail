@@ -52,7 +52,7 @@ function Navigation(props: CalendarRailProps & { readonly waiting?: string; read
   const t = useText("calendar");
   const open = useNewEvent();
   const create = open
-    ? { label: t("create.title"), icon: "plus" as const, onPress: open, keyHint: "C" }
+    ? { label: t("create.title"), icon: "plus" as const, onPress: () => open(), keyHint: "C" }
     : undefined;
   const settings = () =>
     route.place === "calsettings" ? commands.closeCalendarSettings() : commands.go({ place: "calsettings" });

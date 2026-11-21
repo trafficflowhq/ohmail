@@ -74,11 +74,16 @@ describe("the windowed lists reveal an externally-set cursor", () => {
     // against a row the window never mounted (a silent no-op). Two spellings of the offset:
     // rows times one height where rows are equal, and the window's own prefix sum where they
     // are not (the Ohbox — see `useListWindow`'s height cache).
-    for (const view of ["OhboxView", "ReadsView", "ReceiptsView"]) {
-      const src = view === "OhboxView" ? read("../../../packages/app-logic/src/ohbox/window.ts") : read(`../app/views/${view}.tsx`);
-      expect(src, `${view} reveals an unmounted cursor row`).toMatch(
-        /scrollTop = Math\.max\(0, [^)]*win\.(rowHeight|offsetOf\()/,
-      );
+    const ohbox = read("../../../packages/app-logic/src/ohbox/window.ts");
+    expect(ohbox).toMatch(/scrollTop = Math\.max\(0, [^)]*win\.offsetOf\(/);
+    for (const place of ["news", "receipts"]) {
+      expect(read(`../../../packages/app/src/${place}/place.ts`)).toContain("List: StreamList");
     }
+    const streams = read("../../../packages/app/src/stream/StreamList.tsx");
+    expect(streams).toMatch(/model\.items\.findIndex\(\(item\) => item\.id === model\.openId\)/);
+    expect(streams).toMatch(/useListWindow\(\{[\s\S]*?cursor: model\.openId === null \? undefined : \{ id: model\.openId, index: slot \}/);
+    const window = read("../../../packages/app-logic/src/lists/list-window.ts");
+    expect(window).toMatch(/el\.scrollTop = offsetOf\(cursorIndex\)/);
+
   });
 });

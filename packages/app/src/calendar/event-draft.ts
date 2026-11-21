@@ -1,6 +1,14 @@
 import type { CalendarEventFace } from "./faces.js";
-import { addDays, dayOfIso, eventTimeOf, type CalendarRecord } from "@ohmail/app-logic/calendar";
-import type { CalendarEventFields, CalendarTime } from "@ohmail/wire";
+import {
+  addDays,
+  clockOf,
+  dayOfIso,
+  eventTimeOf,
+  readerZones,
+  wallInstants,
+  type CalendarRecord,
+} from "@ohmail/app-logic/calendar";
+import type { CalendarEventFields, CalendarInvitee, CalendarTime } from "@ohmail/wire";
 
 export interface EventDraft {
   readonly title: string;
@@ -9,22 +17,28 @@ export interface EventDraft {
   readonly from: string;
   readonly to: string;
   readonly allDay: boolean;
+  readonly zone?: string;
   readonly busy: boolean;
   readonly private: boolean;
   readonly place: string | null;
   readonly notes: string | null;
+  readonly invitees?: readonly CalendarInvitee[];
+  readonly alarms?: readonly number[];
 }
 
 const hour = (h: number) => `${String(h % 24).padStart(2, "0")}:00`;
 
-export function startDraft(anchor: string, minute: number): EventDraft {
-  const next = Math.floor(minute / 60) + 1;
+export function startDraft(anchor: string, minute: number, slot?: string): EventDraft {
+  const [start, end] = slot?.split("-").map(Number) ?? [];
+  const hasSlot = start !== undefined && end !== undefined && start >= 0 && end <= 1440 && start < end;
+  // Midnight starts a different civil day. Keep the last start hour on the chosen date.
+  const next = Math.min(23, Math.floor(minute / 60) + 1);
   return {
     title: "",
-    day: next === 24 ? addDays(anchor, 1) : anchor,
-    endDay: null,
-    from: hour(next),
-    to: hour(next + 1),
+    day: anchor,
+    endDay: hasSlot && end === 1440 ? addDays(anchor, 1) : null,
+    from: hasSlot ? clockOf(start) : hour(next),
+    to: hasSlot ? clockOf(end % 1440) : hour(next + 1),
     allDay: false,
     busy: true,
     private: false,
@@ -46,33 +60,54 @@ export function endDayOf(draft: EventDraft): string {
   return !draft.allDay && from !== null && to !== null && to < from ? addDays(draft.day, 1) : draft.day;
 }
 
+type TimedFields = Pick<CalendarEventFields, "start" | "end">;
+type DraftTimes = { times: TimedFields; issue: "fold" | null } | { times: null; issue: "gap" | null };
+
+export function draftTimes(draft: EventDraft, zone: string): DraftTimes {
+  const last = endDayOf(draft);
+  if (!dayOfIso(draft.day) || !dayOfIso(last) || last < draft.day) return { times: null, issue: null };
+  const stamp = (day: string) => day.replaceAll("-", "");
+  if (draft.allDay)
+    return {
+      times: {
+        start: { kind: "date", value: stamp(draft.day) },
+        end: { kind: "date", value: stamp(addDays(last, 1)) },
+      },
+      issue: null,
+    };
+  const from = clock(draft.from);
+  const to = clock(draft.to);
+  if (from === null || to === null) return { times: null, issue: null };
+  const zoned = (day: string, time: string): CalendarTime => ({
+    kind: "zoned",
+    value: stamp(day) + "T" + time + "00",
+    zone,
+  });
+  const times = { start: zoned(draft.day, from), end: zoned(last, to) };
+  const instants = (time: CalendarTime) => {
+    const read = eventTimeOf(time);
+    return read?.kind === "zoned" ? wallInstants(read.wall, zone, readerZones()) : [];
+  };
+  const starts = instants(times.start);
+  const ends = instants(times.end);
+  const [start] = starts,
+    [end] = ends;
+  if (start === undefined || end === undefined) return { times: null, issue: "gap" };
+  if (end <= start) return { times: null, issue: null };
+  return { times, issue: starts.length > 1 || ends.length > 1 ? "fold" : null };
+}
+
 export function fieldsOfDraft(
   draft: EventDraft,
   calendar: CalendarRecord,
   zone: string,
 ): CalendarEventFields | null {
   const title = draft.title.trim();
-  if (!title || !dayOfIso(draft.day)) return null;
-  const last = endDayOf(draft);
-  if (!dayOfIso(last) || last < draft.day) return null;
-  const stamp = (day: string) => day.replaceAll("-", "");
-  let start: CalendarTime;
-  let end: CalendarTime;
-  if (draft.allDay) {
-    start = { kind: "date", value: stamp(draft.day) };
-    end = { kind: "date", value: stamp(addDays(last, 1)) };
-  } else {
-    const from = clock(draft.from),
-      to = clock(draft.to);
-    if (from === null || to === null || from === to) return null;
-    if (last === draft.day && to < from) return null;
-    start = { kind: "zoned", value: stamp(draft.day) + "T" + from + "00", zone };
-    end = { kind: "zoned", value: stamp(last) + "T" + to + "00", zone };
-  }
+  const { times } = draftTimes(draft, zone);
+  if (!title || !times) return null;
   return {
     title,
-    start,
-    end,
+    ...times,
     busy: draft.busy,
     private: draft.private,
     place: draft.place?.trim() || null,
@@ -80,7 +115,7 @@ export function fieldsOfDraft(
     callLink: null,
     repeat: null,
     invitees: [],
-    alarms: [...new Set(calendar.defaultAlarms.map((alarm) => alarm.minutesBefore))],
+    alarms: [...new Set(draft.alarms ?? calendar.defaultAlarms.map((alarm) => alarm.minutesBefore))],
   };
 }
 

@@ -4,7 +4,7 @@
  * first render, and the address is put back without it so a later reload says nothing.
  */
 import { useEffect } from "react";
-import { useToast } from "@ohmail/ui/toast";
+import { useWindowReport } from "@ohmail/app/frame";
 
 import { DOOR_COPY } from "./door-copy.js";
 
@@ -31,12 +31,12 @@ export function takeReloadedMark(place: Place = location, entries: Entries = his
   return true;
 }
 
-/** The one sentence, standing until dismissed. Inside the toast host (a polite live region) and the language provider. */
+/** The one sentence, standing until dismissed. Inside the window report (a polite live region) and the language provider. */
 export function RendererReloaded({ reloaded }: { reloaded: boolean }): null {
-  const toast = useToast();
+  const report = useWindowReport();
   useEffect(() => {
-    if (reloaded) toast(DOOR_COPY.rendererReloaded, { dismiss: DOOR_COPY.rendererReloadedDismiss });
-  }, [reloaded, toast]);
+    if (reloaded) report?.(DOOR_COPY.rendererReloaded, { dismiss: DOOR_COPY.rendererReloadedDismiss });
+  }, [reloaded, report]);
   return null;
 }
 

@@ -33,7 +33,7 @@
       "indexing": "Deine neueren Mails werden noch gelesen. Es kommen noch Treffer dazu.",
       "device": "{count, plural, one {1 neuere} other {# neuere}}",
       "retry": "Erneut versuchen",
-      "offline": "ohmail Cloud ist nicht erreichbar. Angezeigt werden die Mails auf diesem Computer.",
+      "offline": "ohmail Cloud ist nicht erreichbar. Angezeigt werden die Mails auf <device>diesem Computer</device>.",
       "unanswered": "Dein Server hat nicht geantwortet. Angezeigt werden die neueren Mails, die dieses Gerät hat.",
       "searching": "Dein ganzes Postfach wird durchsucht …",
       "unavailable": "Die Suche umfasst das Beispielpostfach.",

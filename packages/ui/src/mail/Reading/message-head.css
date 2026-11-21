@@ -63,9 +63,15 @@
     display: contents;
   }
 
-  .oh-messagehead-line > .oh-avatar {
+  .oh-messagehead-line > :is(.oh-avatar, .oh-selection-circle) {
     grid-row: 1 / span 2;
     align-self: center;
+  }
+
+  .oh-messagehead-contact {
+    grid-column: 2;
+    min-width: 0;
+    text-align: left;
   }
 
   .oh-messagehead-who {

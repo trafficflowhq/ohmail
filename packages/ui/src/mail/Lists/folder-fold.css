@@ -1,6 +1,7 @@
 /* The open fold: a line that looks for a folder, then each mailbox's tree, scrolling inside its own region. */
 @layer oh {
   .oh-folderfold {
+    --oh-folderfold-step: var(--s3);
     --oh-folderfold-gap: 2px;
     --oh-folderfold-lead: 14px;
     --oh-folderfold-branch: 20px;
@@ -13,6 +14,10 @@
     flex-direction: column;
     gap: var(--s1);
     min-height: 0;
+  }
+
+  .oh-folderfold[data-narrow] {
+    --oh-folderfold-step: var(--s4);
   }
 
   .oh-folderfold-find {
@@ -92,7 +97,7 @@
     display: flex;
     align-items: center;
     min-width: 0;
-    --oh-folderfold-in: calc(var(--oh-folderfold-depth, 0) * var(--s3));
+    --oh-folderfold-in: calc(var(--oh-folderfold-depth, 0) * var(--oh-folderfold-step));
 
     padding-left: var(--oh-folderfold-in);
   }

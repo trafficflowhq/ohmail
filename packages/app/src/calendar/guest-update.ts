@@ -20,12 +20,20 @@ export interface GuestUpdate {
   readonly names: readonly string[];
   readonly audience: { readonly organizer: string | null; readonly guests: readonly string[] };
   readonly proposal: string;
+  readonly invited: readonly string[];
 }
 
 export function guestUpdate(record: CalendarEventRecord, change: Partial<CalendarEventFields>) {
   const guests = guestsOf(record);
+  const invited =
+    change.invitees?.filter((person) => {
+      const address = person.address.trim().toLowerCase();
+      return address !== guests.organizer && !guests.addresses.includes(address);
+    }) ?? [];
+  const names = invited.map((person) => person.name?.trim() || person.address);
   return {
-    names: guests.names,
+    names: [...guests.names, ...names],
+    invited: names,
     audience: { organizer: guests.organizer, guests: guests.addresses },
     proposal: JSON.stringify(change),
   };

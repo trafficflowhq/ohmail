@@ -119,7 +119,7 @@ export function ToastHost({ children }: ToastHostProps) {
       setHeldOn(true);
       // PLACED above a notice already standing, never moved into place.
       setLift(s.noticeOn ? s.noticeLift || LIFT_FALLBACK : 0);
-      heldTimer.current = setTimeout(() => {
+      heldTimer.current = options?.actionUntilPressed ? null : setTimeout(() => {
         s.heldOn = false;
         setHeldOn(false);
         // Faded, then gone: the Undo button leaves the tree with its capsule.

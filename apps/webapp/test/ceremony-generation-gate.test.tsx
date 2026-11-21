@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -387,7 +388,7 @@ describe("StepUpPrompt: the gate is the generation, not the host dropping the pa
    */
   it("through DevicesSection: Cancel unmounts the prompt, the factor lands, and the PANE says nothing ran", async () => {
     const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
-    const el = await render(h(DevicesSection));
+    const el = await render(h(WithReport, { view: DevicesSection }));
 
     await waitFor(() => byText(el, dev.addAction!) != null, "the add-a-device verb");
     await click(byText(el, dev.addAction!)!);

@@ -43,11 +43,14 @@ function Rail(props: {
   recent?: string[];
   open?: string | null;
   drag?: FolderRailProps["drag"];
+  folders?: FolderEntity[];
+  narrow?: boolean;
 }) {
   const [pinned, setPinned] = useState(props.pinned ?? []);
   return (
     <FolderRail
-      folders={FOLDERS}
+      folders={props.folders ?? FOLDERS}
+      narrow={props.narrow}
       messages={MAIL}
       shelf={{
         pinned,
@@ -113,6 +116,28 @@ describe("the rail's folders", () => {
     expect(within(tree).getByRole("button", { name: "Clients" })).toBeTruthy();
     fireEvent.click(within(tree).getByRole("button", { name: "Hostwerk, 2 unread" }));
     expect(said.went).toEqual(["Clients/Hostwerk"]);
+  });
+
+  it.each([
+    ["full", false],
+    ["narrow", true],
+  ])("the %s rail caps indentation at five levels and still opens a deeper folder", (_layout, narrow) => {
+    const said = fresh();
+    const names = ["Archive", "Travel", "Europe", "France", "Lyon", "Visits", "Receipts"];
+    const folders = names.map((_, i) => folder(names.slice(0, i + 1).join("/")));
+    draw(<Rail said={said} folders={folders} narrow={narrow} />);
+    fireEvent.click(screen.getByRole("button", { name: "All folders" }));
+    const tree = screen.getByRole("tree", { name: "All folders" });
+    for (const name of names.slice(0, -1)) {
+      fireEvent.click(within(tree).getByRole("button", { name: `Expand ${name}` }));
+    }
+    const row = (name: string) => within(tree).getByRole("button", { name });
+    const depth = (name: string) => row(name).parentElement?.style.getPropertyValue("--oh-folderfold-depth");
+    expect(depth("Lyon")).toBe("4");
+    expect(depth("Visits")).toBe("5");
+    expect(depth("Receipts")).toBe("5");
+    fireEvent.click(row("Receipts"));
+    expect(said.went).toEqual([names.join("/")]);
   });
 
   it("a folder's menu pins it to the shelf, and on a pinned one takes the pin off", () => {

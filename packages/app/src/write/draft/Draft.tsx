@@ -10,7 +10,9 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { isRichEmpty, type RichValue } from "@ohmail/app-logic/writing/rich-text";
-import { DraftControl, DraftTabs } from "@ohmail/ui/mail";
+import { Button } from "@ohmail/ui/base";
+import { DraftControl, DraftTabs, GroupHeading } from "@ohmail/ui/mail";
+import { useOptionalReport } from "../../frame/commands.js";
 import { useText, type Text } from "../../text/index.js";
 import { useWriteBeside, useWriting } from "../above.js";
 import type { WriteDraftControl, WriteOwnText } from "../ports.js";
@@ -189,4 +191,46 @@ export function useLetterDraftOffer(): DraftOffer | null {
     tabs: ownTabs(t, control, texts, body, set),
     drafting,
   };
+}
+
+/** A saved offer can fill the envelope as well as the text. It keeps the sender already chosen. */
+export function OfferedLetterDraft({ locked, focus }: { locked: boolean; focus: () => void }) {
+  const { offeredDraft, takeOfferedDraft } = useWriting();
+  const report = useOptionalReport();
+  const t = useText("compose");
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  if (!offeredDraft || !takeOfferedDraft || dismissed === offeredDraft.id) return null;
+  const hide = () => setDismissed(offeredDraft.id);
+  const take = (said: boolean) => {
+    hide();
+    void takeOfferedDraft(offeredDraft.id);
+    if (said) report?.(t("toastUseDraft"));
+    requestAnimationFrame(focus);
+  };
+  return (
+    <section aria-label={t("draftTag")}>
+      <GroupHeading>{t("draftTag")}</GroupHeading>
+      <p className="oh-text">{offeredDraft.body}</p>
+      {offeredDraft.rationale ? <p className="oh-text">{offeredDraft.rationale}</p> : null}
+      <div>
+        <Button kind="ink" size="s" disabled={locked} onPress={() => take(true)}>
+          {t("useDraft")}
+        </Button>
+        <Button kind="quiet" size="s" disabled={locked} onPress={() => take(false)}>
+          {t("edit")}
+        </Button>
+        <Button
+          kind="quiet"
+          size="s"
+          disabled={locked}
+          onPress={() => {
+            hide();
+            report?.(t("toastDiscard"));
+          }}
+        >
+          {t("discard")}
+        </Button>
+      </div>
+    </section>
+  );
 }

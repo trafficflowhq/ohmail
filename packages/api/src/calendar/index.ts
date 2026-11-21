@@ -7,7 +7,7 @@
  */
 import { isWriteKey } from "@trafficflow/db/calendar";
 import {
-  calendarSettings, dismissCalendarWrite, recordCalendarWrite, retryCalendarWrite, setCalendarSettings,
+  calendarSettings, dismissCalendarWrite, recordCalendarWrite, retryCalendarWrite, setCalendarSettings, setCalendarSuggestionDismissed,
 } from "@trafficflow/services/calendar";
 import { ServiceError } from "@trafficflow/services";
 import { serviceContext } from "../context.js";
@@ -60,6 +60,20 @@ export const calendarRoutes: Route[] = [
     handler: async (req, deps) => {
       const { settings, seq } = await setCalendarSettings(serviceContext(deps, req), await readBody<unknown>(req));
       return answer<"PATCH /calendar/settings">()(settings, { seq });
+    },
+  },
+  {
+    method: "PATCH",
+    pattern: "/calendar/suggestions/:id",
+    wire: true,
+    relay: false,
+    cost: "work",
+    replay: "state",
+    handler: async (req, deps, params) => {
+      const { dismissed, seq } = await setCalendarSuggestionDismissed(
+        serviceContext(deps, req), params.id!, await readBody<unknown>(req),
+      );
+      return answer<"PATCH /calendar/suggestions/:id">()({ dismissed }, { seq });
     },
   },
   {

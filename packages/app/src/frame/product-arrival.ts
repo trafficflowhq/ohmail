@@ -32,6 +32,7 @@ export function useProductArrival(
   frame: RefObject<HTMLDivElement | null>,
   device: LayoutPlan["device"],
   product: Product,
+  resumed: boolean,
 ): void {
   const previous = useRef(product);
   useLayoutEffect(() => {
@@ -56,26 +57,27 @@ export function useProductArrival(
       );
 
     if (device !== "desktop") {
+      if (resumed) return;
       const animation = arrive(shell, motionShape(shell, "--x-app-open"), motionMs(shell, "--d-slide"));
       return () => animation.cancel();
     }
 
+    const rail = shell.querySelector<HTMLElement>(".oh-rail");
+    const knob = rail ? playKnob(rail) : undefined;
+    if (resumed) return () => knob?.cancel();
+
     const transform = motionShape(shell, "--x-in");
     const duration = motionMs(shell, "--d-in");
     const stagger = motionMs(shell, "--d-product-stagger");
-    const animations: Animation[] = [];
-    const rail = shell.querySelector<HTMLElement>(".oh-rail");
-    if (rail) {
-      const knob = playKnob(rail);
-      if (knob) animations.push(knob);
-      for (const group of rail.querySelectorAll(".oh-rail-group:not(:empty), :scope > .oh-rail-scroll ~ *")) {
-        animations.push(arrive(group, transform, duration));
-      }
+    const animations: Animation[] = knob ? [knob] : [];
+    for (const group of rail?.querySelectorAll(".oh-rail-group:not(:empty), :scope > .oh-rail-scroll ~ *") ??
+      []) {
+      animations.push(arrive(group, transform, duration));
     }
     const columns = shell.querySelectorAll(".fr-main > :is(.fr-list, .fr-reading, .fr-wide)");
     columns.forEach((column, index) => {
       animations.push(arrive(column, transform, duration, stagger * (index + 1)));
     });
     return () => animations.forEach((animation) => animation.cancel());
-  }, [device, frame, product]);
+  }, [device, frame, product, resumed]);
 }

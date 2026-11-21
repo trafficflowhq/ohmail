@@ -116,6 +116,11 @@ export const MOVE_TARGETS: MoveTarget[] = ["ohbox", "reads", "receipts", "screen
  * ceremony of its own, so it travels as its own callback — folding it in would be the design error the ruling names
  * by name.
  */
+export interface BulkActionOptions {
+  readonly conversationIds?: ReadonlySet<string> | undefined;
+  readonly via?: "glance";
+}
+
 export type BulkAction =
   | "later"
   | "aside"

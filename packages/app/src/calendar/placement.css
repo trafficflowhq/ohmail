@@ -48,6 +48,11 @@
   inset-block-end: 0;
 }
 
+.cal-edit-panel {
+  --cal-edit-panel-z: 7;
+  z-index: var(--cal-edit-panel-z);
+}
+
 .cal-body-strip,
 .cal-mo-pick {
   touch-action: pan-y;

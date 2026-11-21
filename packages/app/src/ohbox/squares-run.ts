@@ -27,12 +27,12 @@ function roomOf(el: Element): SquaresRoom | null {
   return pitch > 0 && slots > 0 && count >= 0 ? { room: slots * pitch + count, pitch, count } : null;
 }
 
-const same = (a: SquaresRoom | null, b: SquaresRoom | null): boolean =>
-  a === b || (a !== null && b !== null && a.room === b.room && a.pitch === b.pitch && a.count === b.count);
+const same = (a: SquaresRoom | null | undefined, b: SquaresRoom | null): boolean =>
+  a === b || (!!a && !!b && a.room === b.room && a.pitch === b.pitch && a.count === b.count);
 
 /** The room a row has for its squares, read off the list's scroller; one object while it holds. */
-export function useSquaresRoom(scroller: RefObject<HTMLElement | null>): SquaresRoom | null {
-  const [room, setRoom] = useState<SquaresRoom | null>(null);
+export function useSquaresRoom(scroller: RefObject<HTMLElement | null>): SquaresRoom | null | undefined {
+  const [room, setRoom] = useState<SquaresRoom | null>();
   useLayoutEffect(() => {
     const el = scroller.current;
     const view = el?.ownerDocument.defaultView;
@@ -55,12 +55,13 @@ export function useSquaresRoom(scroller: RefObject<HTMLElement | null>): Squares
 }
 
 /** The list's room, for its rows; none where the list has not measured it. */
-export const SquaresRoomContext = createContext<SquaresRoom | null>(null);
+export const SquaresRoomContext = createContext<SquaresRoom | null | undefined>(null);
 
 /** The run for `n` squares around square `current` (-1: the newest), or undefined where they all fit. */
-export function useSquaresRun(n: number, current: number): SquaresRun | undefined {
+export function useSquaresRun(n: number, current: number): SquaresRun | null | undefined {
   const fit = useContext(SquaresRoomContext);
   return useMemo(() => {
+    if (fit === undefined) return null;
     if (fit === null || n * fit.pitch <= fit.room) return undefined;
     const w = squaresWindow({ n, current, room: fit.room, pitch: fit.pitch, count: fit.count });
     return { from: w.from, to: w.to, scale: w.scale };

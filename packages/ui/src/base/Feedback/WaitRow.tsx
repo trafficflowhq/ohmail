@@ -12,7 +12,7 @@ export interface WaitRowProps {
   /** It was refused: the reason stands in ink, with the warning sign. */
   refused?: boolean;
   /** Its own answers: the first a second button, the other a word. */
-  acts?: readonly { label: string; onPress: () => void }[];
+  acts?: readonly { label: string; onPress: () => void; busy?: boolean }[];
 }
 
 /** One thing that waits, in the list of what waits: what, about which letter, why, and its own answers. */
@@ -30,7 +30,7 @@ export function WaitRow({ what, about, why, refused, acts }: WaitRowProps) {
       {acts?.length ? (
         <span className="oh-waitrow-acts">
           {acts.map((act, i) => (
-            <Button key={act.label} size="s" kind={i ? "quiet" : "two"} onPress={act.onPress}>
+            <Button key={act.label} size="s" kind={i ? "quiet" : "two"} onPress={act.onPress} busy={act.busy}>
               {act.label}
             </Button>
           ))}

@@ -57,11 +57,13 @@ export interface ThreadLayout {
 
 export function stubThreadLayout(opts: {
   viewport?: number; defaultHeight?: number; heights?: Record<string, number>;
+  scrollerSelector?: string;
   /** Where a panel's body starts, by id (default 80px down): a tall header pushes it down. */
   bodyAt?: Record<string, number>;
   /** Is the reading column `display:none` now (a phone width)? Then it lays out nothing. */
   columnHidden?: () => boolean;
 } = {}): ThreadLayout {
+  const scrollers = opts.scrollerSelector ?? SCROLLERS;
   const viewport = opts.viewport ?? 800;
   const defaultHeight = opts.defaultHeight ?? 400;
   const heights: Record<string, number> = { ...(opts.heights ?? {}) };
@@ -92,8 +94,8 @@ export function stubThreadLayout(opts: {
   };
 
   const hiddenCol = (el: Element): boolean => (opts.columnHidden?.() ?? false) && el.matches(".read-col");
-  const isScroller = (el: Element): boolean => el.matches(SCROLLERS) && !hiddenCol(el);
-  const scrollerOf = (el: Element): HTMLElement | null => el.closest<HTMLElement>(SCROLLERS);
+  const isScroller = (el: Element): boolean => el.matches(scrollers) && !hiddenCol(el);
+  const scrollerOf = (el: Element): HTMLElement | null => el.closest<HTMLElement>(scrollers);
   /**
    * A scroller's panels in order, kept until its subtree changes: one look measures every panel
    * several times, and a fresh query per measure made a long thread cost minutes in jsdom.

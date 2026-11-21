@@ -244,3 +244,95 @@ for (const [name, engine] of ENGINES) {
     }, 90_000);
   });
 }
+
+it("returns from Calendar to the open conversation at its reading position on the first frame", async () => {
+  const { readerStatesPage } = await import("../../../packages/app/test/states/reader-states.mjs");
+  const html = await readerStatesPage("packages/app/test/states/squares-reader-1-page.tsx");
+  const browser = await pw.chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    page.setDefaultTimeout(10_000);
+    await page.route("**/*", (route) => route.request().url().startsWith(`${ORIGIN}/`)
+      ? route.fulfill({ contentType: "text/html; charset=utf-8", body: html })
+      : route.abort());
+    await page.goto(`${ORIGIN}/?switch&n=32&open=3&motion=full`);
+    await page.getByRole("button", { name: "Q3 plan" }).click();
+    const reader = page.getByRole("region", { name: "Reading", exact: true });
+    await reader.getByRole("group", { name: /^32 messages,/ }).waitFor();
+    await reader.getByRole("button", { name: /history/i }).first().waitFor();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    const initial = await reader.locator("[data-reading-scroll]").evaluate((element) => element.scrollTop);
+    await reader.hover();
+    await page.mouse.wheel(0, 1000);
+    await page.waitForFunction((top) =>
+      document.querySelector("[data-reading-scroll]")!.scrollTop > top + 500, initial);
+    await page.waitForTimeout(400); // Let the squares settle after the scroll.
+
+    const recording = await page.evaluateHandle(() => {
+      function readMailFrame() {
+        const rail = document.querySelector<HTMLElement>(".oh-rail");
+        const list = document.querySelector<HTMLElement>(".fr-list");
+        const reader = document.querySelector<HTMLElement>("[data-reading-scroll]");
+        const reading = reader?.closest(".fr-reading");
+        const squares = document.querySelector<HTMLElement>('[role="group"][aria-label$="unread"]');
+        const box = (element: HTMLElement | null) => {
+          if (!element?.getClientRects().length) return null;
+          const { x, y, width, height } = element.getBoundingClientRect();
+          return [x, y, width, height].map((value) => Math.round(value * 100) / 100);
+        };
+        return {
+          rail: box(rail),
+          railGroup: box(rail?.querySelector(".oh-rail-group:not(:empty)") ?? null),
+          list: box(list),
+          listOpacity: list ? getComputedStyle(list).opacity : null,
+          reader: box(reader),
+          readerOpacity: reading ? getComputedStyle(reading).opacity : null,
+          squares: box(squares),
+          scrollTop: reader?.scrollTop ?? null,
+          loading: [...(reader?.querySelectorAll('[role="status"]') ?? [])]
+            .some((line) => line.textContent?.includes("Loading the full message")),
+        };
+      }
+
+      const frames: ReturnType<typeof readMailFrame>[] = [];
+      const shifts: number[] = [];
+      type Shift = PerformanceEntry & { value: number };
+      const before = readMailFrame();
+      let away = false;
+      let arrived: number | undefined;
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as Shift[]) {
+          if (arrived !== undefined && entry.startTime >= arrived) shifts.push(entry.value);
+        }
+      });
+      observer.observe({ type: "layout-shift" });
+      let frame = requestAnimationFrame(function sample(now) {
+        if (document.documentElement.dataset.product === "cal") away = true;
+        if (away && document.documentElement.dataset.product === "mail") {
+          arrived ??= now;
+          frames.push(readMailFrame());
+        }
+        frame = requestAnimationFrame(sample);
+      });
+      return { before, frames, shifts, stop: () => { observer.disconnect(); cancelAnimationFrame(frame); } };
+    });
+    const products = page.getByRole("group", { name: "Mail or Calendar" });
+    await products.getByRole("button", { name: "Calendar" }).click();
+    await page.getByRole("heading", { name: "Calendar week" }).waitFor();
+    expect(await reader.count()).toBe(0);
+    await products.getByRole("button", { name: "Mail" }).click();
+    await page.waitForFunction((record) => record.frames.length >= 8, recording);
+    await page.waitForTimeout(400); // Sample through the product arrival animation.
+    const { before, frames, shifts } = await recording.evaluate((record) => {
+      record.stop();
+      return { before: record.before, frames: record.frames, shifts: record.shifts };
+    });
+    expect(before.squares).not.toBeNull();
+    expect(before.loading).toBe(false);
+    expect.soft(shifts, "layout shifts after returning to Mail").toEqual([]);
+    expect([...new Set(frames.map((frame) => JSON.stringify(frame)))].map((frame) => JSON.parse(frame)),
+      "geometry, visibility, and scroll position from the first Mail frame").toEqual([before]);
+  } finally {
+    await browser.close();
+  }
+}, 60_000);

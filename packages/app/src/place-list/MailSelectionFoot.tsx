@@ -7,7 +7,7 @@ import type { PanelVerb } from "@ohmail/ui/mail";
 import { useFrame } from "../frame/commands.js";
 import { TagPicker } from "../tags/TagPicker.js";
 import { useText } from "../text/index.js";
-import { SelectionFoot } from "./SelectionFoot.js";
+import { PickedFoot, SelectionStatus } from "./SelectionFoot.js";
 import type { RowSelection } from "./use-row-selection.js";
 
 interface MailSelectionProps {
@@ -18,7 +18,13 @@ interface MailSelectionProps {
 }
 
 export function MailSelectionFoot({ verbs, ...props }: MailSelectionProps) {
-  return verbs && props.selection.ids.length > 0 ? <MailActions {...props} verbs={verbs} /> : null;
+  if (!verbs) return null;
+  return (
+    <>
+      <SelectionStatus count={props.selection.pickedRows.length} />
+      {props.selection.active ? <MailActions {...props} verbs={verbs} /> : null}
+    </>
+  );
 }
 
 function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProps & { verbs: ListVerbs }) {
@@ -61,7 +67,7 @@ function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProp
     )
     .map(({ id }) => id);
   return (
-    <SelectionFoot selection={selection} verbs={items}>
+    <PickedFoot selection={selection} verbs={items}>
       <Menu
         open={menu?.kind === "move"}
         onClose={close}
@@ -100,6 +106,6 @@ function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProp
           {t("actionDelete")}
         </MenuItem>
       </Menu>
-    </SelectionFoot>
+    </PickedFoot>
   );
 }

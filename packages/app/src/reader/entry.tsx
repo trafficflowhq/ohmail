@@ -42,9 +42,11 @@ function StreamConversation({
 }) {
   const walk = useThreadWalk({ scroller, messages, openedId, onEnter, names: READER_DOM });
   return (
-    <div className="rd-stream-conversation">
+    <div className="rd-stream-conversation" data-thread={messages.length > 1 || undefined}>
       <div className="rd-stream-squares">
-        {messages.length > 1 && <Squares messages={messages} walk={walk} axis="column" column={scroller} />}
+        {messages.length > 1 && (
+          <Squares messages={messages} walk={walk} axis="column" column={scroller} waitForFit={false} />
+        )}
       </div>
       <div className="rd-stream-letters">{children}</div>
     </div>
@@ -103,7 +105,8 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
     const parts = useParts();
     const [person, onPerson, close] = useOpenCard();
     useConversationBodies(conversation ? message.id : null, conversation?.messages ?? []);
-    const letters = (conversation?.messages ?? [message]).map((m) => (
+    const members = conversation?.messages ?? [message];
+    const letters = members.map((m) => (
       <Letter
         key={m.id}
         message={m}
@@ -121,18 +124,9 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
     ));
     return (
       <PartsContext.Provider value={parts}>
-        {conversation ? (
-          <StreamConversation
-            messages={conversation.messages}
-            openedId={message.id}
-            scroller={scroller}
-            onEnter={onEnter}
-          >
-            {letters}
-          </StreamConversation>
-        ) : (
-          letters
-        )}
+        <StreamConversation messages={members} openedId={message.id} scroller={scroller} onEnter={onEnter}>
+          {letters}
+        </StreamConversation>
         <Contact person={person} onClose={close} />
       </PartsContext.Provider>
     );
@@ -166,7 +160,7 @@ export function readerEntry(parts: ReaderParts): ReaderEntry {
 }
 
 function previewHeadOf(useParts: () => ReaderParts): NonNullable<ReaderEntry["PreviewHead"]> {
-  const PreviewHead: NonNullable<ReaderEntry["PreviewHead"]> = ({ message, hideBodyNotice }) => {
+  const PreviewHead: NonNullable<ReaderEntry["PreviewHead"]> = ({ message, hideBodyNotice, selection }) => {
     const parts = useParts();
     const [person, onPerson, close] = useOpenCard();
     const [notice, setNotice] = useState<LetterNotice | null>(null);
@@ -184,6 +178,7 @@ function previewHeadOf(useParts: () => ReaderParts): NonNullable<ReaderEntry["Pr
           onPerson={onPerson}
           card={person?.slot ?? null}
           preview
+          selection={selection}
         />
         {html ? (
           <Body

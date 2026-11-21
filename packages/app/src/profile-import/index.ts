@@ -27,3 +27,4 @@ export type {
   ProfileImportStatusWire,
   ProfileImportTransport,
 } from "./wire.js";
+export { SavedProfileRows, SavedProfileSettings } from "./SavedProfileSettings.js";

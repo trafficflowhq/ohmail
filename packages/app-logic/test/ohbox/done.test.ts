@@ -81,6 +81,29 @@ describe("Done on a row", () => {
     expect(ohbox.calls.bulk).toEqual([{ action: "done", ids: ["p1", "p2"] }]);
   });
 
+  it.each([1, 2])("marks %i unread messages with a pin-preserving read", async (count) => {
+    const pinned = Array.from({ length: count }, (_, i) =>
+      msg({ id: `p${i}`, threadId: "t", triage: { state: "resurfaced" } as never }),
+    );
+    const row: ResurfacedThreadRow = {
+      key: "t",
+      threadId: "t",
+      members: pinned,
+      pinned,
+      openTarget: pinned[0]!,
+      count,
+      countFromThread: false,
+      resurfacedAt: null,
+      newSince: [],
+      badge: false,
+      pulledForward: false,
+    };
+    ohbox = await mount({ resurfacedRows: [row] });
+    await ohbox.run(() => ohbox!.model.markRowRead(ohbox!.model.groupedResurfaced[0]!));
+    expect(ohbox.calls.marked).toEqual([]);
+    expect(ohbox.calls.bulk).toEqual([{ action: "read", ids: pinned.map((m) => m.id), via: "glance" }]);
+  });
+
   it("a read row offers nothing to be done", async () => {
     ohbox = await mount({ previouslySeen: [msg({ id: "r", unread: false })] });
     expect(ohbox.model.doneOffered(ohbox.model.groupedPrev[0]!)).toBe(false);

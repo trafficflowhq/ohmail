@@ -1,4 +1,5 @@
 import sanitizeHtml from "sanitize-html";
+import { hasEditedQuotedHistory, QUOTED_HISTORY_ATTRIBUTE } from "@trafficflow/core/outbound-text";
 import { DRAFT_BODY_MAX_BYTES, htmlToPlainText } from "@trafficflow/core/mail";
 
 /**
@@ -33,7 +34,7 @@ export const htmlByteLength = (html: string): number => Buffer.byteLength(html, 
  * treats each pair identically, so the two spellings can never render differently.
  */
 const ALLOWED_TAGS = [
-  "p", "br",
+  "p", "br", "h1", "h2", "h3", "hr",
   "strong", "b", "em", "i", "s", "strike", "del", "u",
   "a",
   "ul", "ol", "li",
@@ -45,13 +46,15 @@ const ALLOWED_TAGS = [
 ] as const;
 
 /**
- * `href` on a link, and nothing else anywhere.
+ * A link target and the fixed authored-code flag on a draft block.
  *
  * No `target`, no `rel`, no `title`, no `id`, no `class`, no `style`. A mail client decides how
  * to open a link; the two attributes a web page would need for that are meaningless in a message
  * and are one more thing for a policy to be wrong about.
  */
-const ALLOWED_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
+const AUTHORED_CODE = "data-ohmail-code";
+const AUTHORED_PRE = `<pre ${AUTHORED_CODE}="1">`;
+const ALLOWED_ATTRIBUTES: sanitizeHtml.IOptions["allowedAttributes"] = {
   a: ["href"],
 };
 
@@ -68,7 +71,7 @@ const ALLOWED_SCHEMES = ["http", "https", "mailto"] as const;
 
 /**
  * The policy, whole, in one object. `disallowedTagsMode: "discard"` drops a disallowed TAG and
- * keeps its text — pasted `<h1>Hello</h1>` becomes `Hello`. `nonTextTags` is the exception that
+ * keeps its text — pasted `<h4>Hello</h4>` becomes `Hello`. `nonTextTags` is the exception that
  * makes that safe: `script`, `style`, `textarea` and `option` lose their content WITH the tag,
  * else a `<script>`'s source would paste into the body as prose. `allowProtocolRelative: false`
  * closes `//evil.example/x`, which passes a scheme allowlist by having no scheme and resolves to
@@ -76,9 +79,17 @@ const ALLOWED_SCHEMES = ["http", "https", "mailto"] as const;
  */
 const POLICY: sanitizeHtml.IOptions = {
   allowedTags: [...ALLOWED_TAGS],
-  allowedAttributes: Object.fromEntries(
-    Object.entries(ALLOWED_ATTRIBUTES).map(([tag, attrs]) => [tag, [...attrs]]),
-  ),
+  allowedAttributes: {
+    ...ALLOWED_ATTRIBUTES,
+    pre: [AUTHORED_CODE],
+  },
+  transformTags: {
+    pre: (tagName, attribs) => {
+      const kept: Record<string, string> = {};
+      if (attribs[AUTHORED_CODE] === "1") kept[AUTHORED_CODE] = "1";
+      return { tagName, attribs: kept };
+    },
+  },
   allowedSchemes: [...ALLOWED_SCHEMES],
   allowedSchemesAppliedToAttributes: ["href"],
   allowProtocolRelative: false,
@@ -105,8 +116,41 @@ const POLICY: sanitizeHtml.IOptions = {
  * disagree, and `sanitize(sanitize(x)) === sanitize(x)` is what makes the second pass a no-op on
  * anything the first pass produced.
  */
-export function sanitizeOutboundHtml(html: string): string {
-  return sanitizeHtml(html, POLICY);
+/** Drafts keep the editor's boundary. Outgoing HTML keeps only the quotes inside it. */
+export function sanitizeOutboundHtml(html: string, keepQuotedHistory = false): string {
+  return sanitizeHtml(html, {
+    ...POLICY,
+    allowedAttributes: keepQuotedHistory
+      ? { ...POLICY.allowedAttributes, blockquote: [QUOTED_HISTORY_ATTRIBUTE] }
+      : POLICY.allowedAttributes,
+    transformTags: {
+      ...POLICY.transformTags,
+      blockquote: (tagName, attrs): sanitizeHtml.Tag => {
+        if (attrs[QUOTED_HISTORY_ATTRIBUTE] !== "edited") return { tagName, attribs: {} };
+        if (keepQuotedHistory) return { tagName, attribs: { [QUOTED_HISTORY_ATTRIBUTE]: "edited" } };
+        return { tagName: "div", attribs: {} };
+      },
+    },
+  });
+}
+
+/**
+ * Apply the letter styles to the already sanitized draft at delivery. Mail clients need inline
+ * values. The heading sizes, weight, ink and code background use the Paper theme's default tokens.
+ */
+export function prepareOutboundDelivery(rawHtml: string, draftText: string): OutboundBody {
+  const sanitized = sanitizeOutboundHtml(rawHtml);
+  const html = sanitized
+    .replace(/<(h[1-3])>/g, (_tag, heading: "h1" | "h2" | "h3") => {
+      const size = { h1: 28, h2: 20, h3: 17 }[heading];
+      return `<${heading} style="font-size:${size}px;font-weight:700;line-height:1.6;margin:8px 0">`;
+    })
+    .replaceAll(AUTHORED_PRE, '<pre style="font-family:monospace;font-size:0.9em;color:#12100e;background-color:#f0ebe3;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;padding:8px 12px">')
+    .replace(/<hr \/>/g, '<hr style="border:0;border-top:1px solid #8a8176;margin:12px 0" />');
+  const text = sanitized.includes(AUTHORED_PRE)
+    ? htmlToPlainText(sanitized, { indentCode: true })
+    : draftText;
+  return { html, text };
 }
 
 /**
@@ -119,6 +163,7 @@ export function sanitizeQuotedHtml(html: string, cids: ReadonlySet<string>): str
   const quote: sanitizeHtml.IOptions = {
     ...POLICY,
     allowedTags: [...ALLOWED_TAGS, QUOTE_LINE, QUOTE_CELL],
+    allowedAttributes: ALLOWED_ATTRIBUTES,
     nonTextTags: [...POLICY.nonTextTags!, "head", "title", "noscript", "template"],
     transformTags: {
       ...Object.fromEntries(LINE_TAGS.map((t) => [t, QUOTE_LINE])),
@@ -128,7 +173,7 @@ export function sanitizeQuotedHtml(html: string, cids: ReadonlySet<string>): str
   return keepLines(sanitizeHtml(html, cids.size === 0 ? quote : {
     ...quote,
     allowedTags: [...quote.allowedTags as string[], "img"],
-    allowedAttributes: { ...POLICY.allowedAttributes, img: ["src", "alt", "width", "height"] },
+    allowedAttributes: { ...ALLOWED_ATTRIBUTES, img: ["src", "alt", "width", "height"] },
     allowedSchemesByTag: { img: ["cid"] },
     allowedSchemesAppliedToAttributes: ["href", "src"],
     exclusiveFilter: (frame) => frame.tag === "img" && !cids.has((frame.attribs.src ?? "").replace(/^cid:/i, "")),
@@ -218,7 +263,8 @@ export interface OutboundBody {
   text: string;
 }
 
-export function prepareOutboundBody(rawHtml: string): OutboundBody {
-  const html = sanitizeOutboundHtml(rawHtml);
-  return { html, text: htmlToPlainText(html) };
+export function prepareOutboundBody(rawHtml: string, keepQuotedHistory = false): OutboundBody {
+  const html = sanitizeOutboundHtml(rawHtml, keepQuotedHistory);
+  const outgoing = keepQuotedHistory && hasEditedQuotedHistory(html) ? sanitizeOutboundHtml(html) : html;
+  return { html, text: htmlToPlainText(outgoing) };
 }
