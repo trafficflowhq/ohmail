@@ -5,7 +5,7 @@
   "place": "window",
   "target": [59.5, 64, 600, 380],
   "clip": [59, 64, 601, 380],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "fold",
     "face": "paper",

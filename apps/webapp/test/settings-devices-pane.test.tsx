@@ -313,11 +313,11 @@ describe("useDevicePairing — the runtime gate, asked on the MANAGED build too"
 describe("the Settings nav — a wired devicesSection is an entry, an absent one is none", () => {
   const mountSettings = (withDevices: boolean) =>
     mountDevices(withDevices ? () => h("p", { className: "devices-probe" }, "the pane") : NONE, "general");
-  const nav = (c: HTMLElement) => within(within(c).getByRole("navigation", { name: messages.settings.navAria }));
+  const nav = async (c: HTMLElement) => within(await within(c).findByRole("navigation", { name: messages.settings.navAria }));
 
   it("wired ⇒ a Devices entry that opens the node", async () => {
     const c = await mountSettings(true);
-    const entry = nav(c).queryByRole("button", { name: "Devices" });
+    const entry = (await nav(c)).queryByRole("button", { name: "Devices" });
     expect(entry, "the Devices nav entry").toBeTruthy();
     await click(entry!);
     expect(c.querySelector(".devices-probe")).toBeTruthy();
@@ -325,7 +325,7 @@ describe("the Settings nav — a wired devicesSection is an entry, an absent one
 
   it("absent ⇒ no entry, structurally", async () => {
     const c = await mountSettings(false);
-    expect(nav(c).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim())).not.toContain("Devices");
+    expect((await nav(c)).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim())).not.toContain("Devices");
   });
 });
 

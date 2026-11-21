@@ -40,12 +40,12 @@
   }
 
   /* The sentence's card is as wide as its sentence, and as close around it as a menu is around its lines. */
-  .oh-menu:has(> .oh-blocked-said) {
+  .oh-menu[data-kind="card"]:has(> .oh-blocked-said) {
     --oh-menu-width: auto;
     --oh-menu-pad: var(--s2);
   }
 
-  :root[data-face="ohmarchy"] .oh-menu:has(> .oh-blocked-said) {
+  :root[data-face="ohmarchy"] .oh-menu[data-kind="card"]:has(> .oh-blocked-said) {
     --oh-menu-width: auto;
     --oh-menu-pad: var(--s1);
   }

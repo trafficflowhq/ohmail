@@ -19,6 +19,7 @@ import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/sto
 import { createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 import type { WebWords } from "../app/(product)/mailbox/web-supplies";
 import messages from "../messages/en.json";
+import { quotedResponse, withQuotedPairs } from "../../../test/support/screener-quote";
 import { settleFirstPaint } from "./_first-paint.js";
 import type { SuggestBatchControl } from "@ohmail/app-logic/screener/screener-suggest";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
@@ -112,7 +113,7 @@ function msg(id: string, from: string, hour: number, folder: Folder = "ohmail/Sc
 interface Recorded {
   method: string;
   path: string;
-  body: { senders?: string[]; dryRun?: boolean; maxCredits?: number; automatic?: boolean } | null;
+  body: { senders?: string[]; dryRun?: boolean; maxCredits?: number; automatic?: boolean; quoteGrant?: string } | null;
   idempotencyKey: string | null;
 }
 
@@ -123,7 +124,7 @@ let host: HTMLElement | null = null;
 let mountedFrame = false;
 
 /** What `POST /screener/suggest` answers next. A function so a test can vary it per call. */
-let suggestReply: (body: { senders: string[]; dryRun?: boolean; maxCredits?: number }, n: number) => Response;
+let suggestReply: (body: { senders: string[]; dryRun?: boolean; maxCredits?: number }, n: number) => Response | Promise<Response>;
 /** What `GET /screener` answers — the already-bought half. */
 let listReply: () => Response;
 
@@ -152,7 +153,9 @@ function installFetch(other?: typeof fetch): void {
     });
     if (path.startsWith("/screener/suggest")) {
       suggestCalls++;
-      return liveAccountResponse(suggestReply(raw as { senders: string[]; dryRun?: boolean; maxCredits?: number }, suggestCalls));
+      const body = raw as { senders: string[]; dryRun?: boolean; maxCredits?: number };
+      const res = await suggestReply(body, suggestCalls);
+      return liveAccountResponse(body.dryRun ? await quotedResponse(res, body.senders) : res);
     }
     if (path.startsWith("/screener")) return liveAccountResponse(listReply());
     return liveAccountResponse(json({}));
@@ -173,6 +176,7 @@ const purchases = () => calls.filter((c) => c.path.startsWith("/screener/suggest
 async function engineWith(
   held: EngineMessage[],
   refuse?: (m: EngineMutation) => boolean,
+  syncChanges: () => SyncChange[] = () => [],
 ): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
   await store.load();
@@ -184,7 +188,7 @@ async function engineWith(
     now: () => NOW,
     adapter: {
       sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
+        changes: { creates: syncChanges(), updates: [], moves: [], deletes: [] },
         cursor: store.getCursor(),
         hasMore: false,
         serverTime: NOW.toISOString(),
@@ -489,6 +493,67 @@ describe("the trigger — nothing is spent before the price is on screen", () =>
     expect(buy.idempotencyKey).toBeTruthy();
     // A PRESS IS A PRESS: neither half says `automatic`, so the server asks about every sender.
     for (const c of [buy, ...dryRuns()]) expect(c.body?.automatic).toBeUndefined();
+
+    // Keep the newly opened quote on screen while the live queue replaces a sender.
+    let incoming: SyncChange[] = [];
+    await act(async () => { root!.unmount(); });
+    await teardownShellEnv();
+    host = null;
+    calls = [];
+    const waiting = MANY.slice(0, 3);
+    const replacement = msg("replacement", "replacement@lists.example.invalid", 23);
+    listReply = () => json({
+      items: [...waiting, replacement].map((letter) => ({
+        sender: { address: letter.from.address }, messageId: letter.id,
+        aiSuggestion: { decision: "yes", confidence: 0.9, rationale: "existing answer" },
+      })),
+      nextCursor: null, suggestable: { senders: [], maxPerRequest: 2 },
+    });
+    const finishes: Array<() => void> = [];
+    suggestReply = (body) => {
+      const first = body.senders.length === 2;
+      const priced = waiting[first ? 1 : 2]!;
+      if (body.dryRun) return json({
+        dryRun: true, requested: body.senders.length, quoted: 1, quotedCredits: 1, charged: 0,
+        quoteGrant: {
+          proof: first ? "fixture-first-quote" : "fixture-second-quote",
+          pairs: [{ sender: priced.from.address, messageId: priced.id }],
+        },
+        suggestions: [], skipped: [],
+      });
+      return new Promise<Response>((resolve) => {
+        finishes.push(() => resolve(json({
+          dryRun: false, requested: body.senders.length, quoted: 1, quotedCredits: 1, charged: 1,
+          suggestions: (first ? waiting.slice(0, 2) : [priced]).map((item) => ({
+            sender: item.from.address, messageId: item.id, decision: "yes", confidence: 0.9, rationale: "returned answer",
+          })),
+          skipped: [],
+        })));
+      });
+    };
+    const engine = await engineWith(waiting, undefined, () => incoming.splice(0));
+    await mountView(engine);
+    await press("Suggest again…");
+    incoming = [
+      { type: "message", op: "create", id: waiting[0]!.id, seq: ++seq, updatedAt: NOW.toISOString(), entity: { ...waiting[0]!, folder: "INBOX" } },
+      { type: "message", op: "create", id: replacement.id, seq: ++seq, updatedAt: NOW.toISOString(), entity: replacement },
+    ];
+    await act(async () => { await engine.syncOnce(); });
+    await flush();
+    expect(screenerRowIds(host!)).toContain(replacement.id);
+    await press("Suggest again for 2 senders");
+    expect.soft(purchases()[0]?.body?.senders).toEqual(dryRuns()[0]?.body?.senders);
+    expect.soft(purchases()[0]?.body?.quoteGrant).toBe("fixture-first-quote");
+    expect.soft(text()).toContain("0 of 2 suggested…");
+
+    await act(async () => { finishes.shift()?.(); });
+    await flush();
+    expect.soft(text()).toContain("1 of 2 suggested…");
+    expect.soft(text()).toContain("returned answer");
+    expect.soft(purchases()[1]?.body?.senders).toEqual(dryRuns()[1]?.body?.senders);
+    expect.soft(purchases()[1]?.body?.quoteGrant).toBe("fixture-second-quote");
+    await act(async () => { finishes.shift()?.(); });
+
   });
 
   it("cancelling spends nothing and leaves no purchase behind", async () => {
@@ -1315,7 +1380,7 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
       const idx = pending.findIndex(match);
       if (idx < 0) throw new Error(`no pending matches; have: ${pending.map((p) => `${p.path} ${JSON.stringify(p.body)}`).join(" | ")}`);
       const [p] = pending.splice(idx, 1);
-      p!.resolve(json(value));
+      p!.resolve(json(withQuotedPairs(value, p!.body?.senders ?? [])));
       await flush();
     };
     const isList = (p: Pend) => p.path === "/screener" || p.path.startsWith("/screener?");
@@ -1493,7 +1558,7 @@ describe("SCR-SUGGEST-FLAKE — the auto batch must not cancel a manual purchase
       const idx = pending.findIndex(match);
       if (idx < 0) throw new Error(`no pending request matches; have: ${pending.map((p) => `${p.path} ${JSON.stringify(p.body)}`).join(" | ")}`);
       const [p] = pending.splice(idx, 1);
-      p!.resolve(new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } }));
+      p!.resolve(json(withQuotedPairs(value, p!.body?.senders ?? [])));
       await flush();
     };
     const isList = (p: Pending) => p.path === "/screener" || p.path.startsWith("/screener?");
@@ -1640,7 +1705,7 @@ describe("SUGGEST-PROGRESS — a running purchase publishes done/total, not only
       const idx = pending.findIndex(match);
       if (idx < 0) throw new Error(`no pending matches; have: ${pending.map((x) => `${x.path} ${JSON.stringify(x.body)}`).join(" | ")}`);
       const [x] = pending.splice(idx, 1);
-      x!.resolve(json(value));
+      x!.resolve(json(withQuotedPairs(value, x!.body?.senders ?? [])));
       await flush();
     };
     const isList = (x: Pend) => x.path.startsWith("/screener") && !x.path.startsWith("/screener/suggest");
@@ -1654,7 +1719,7 @@ describe("SUGGEST-PROGRESS — a running purchase publishes done/total, not only
 
     await act(async () => { p.control().open(); });
     await flush();
-    for (let i = 0; i < 3; i++) await answer(isDry, { dryRun: true, requested: 5, quoted: 5, quotedCredits: 5, charged: 0, suggestions: [], skipped: [] });
+    for (const count of [5, 5, 2]) await answer(isDry, { dryRun: true, requested: count, quoted: count, quotedCredits: count, charged: 0, suggestions: [], skipped: [] });
 
     await act(async () => { p.control().confirm(); });
     await flush();

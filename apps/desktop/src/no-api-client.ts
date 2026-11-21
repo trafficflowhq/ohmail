@@ -196,7 +196,16 @@ export interface EnrollmentSession {
     next: "enroll_2fa";
     enrollmentToken: string;
     expiresIn: number;
+    familyId?: string;
 }
+
+export interface EnrollmentExpectation {
+    expectedOwner: string;
+    expectedFamily: string;
+    mayProceed(): boolean;
+}
+
+export const captureEnrollment: (owner: string, family: string | undefined) => EnrollmentExpectation = absent;
 
 export interface RegistrationPending {
     status: "ok";
@@ -213,6 +222,7 @@ export type LoginResult = EnrollmentSession | TwofaChallenge;
 export interface AuthenticatedSession {
     status: "authenticated";
     user: SessionUser;
+    familyId?: string;
 }
 
 export interface MailboxDTO {
@@ -860,6 +870,7 @@ export interface ScreenerSuggestWire {
     requested: number;
     quoted: number;
     quotedCredits?: number;
+    quoteGrant?: import("@ohmail/wire").ScreenerQuoteGrant;
     charged: number;
     stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
     remainingCredits?: number;
@@ -891,6 +902,7 @@ export const screener: {
         dryRun?: boolean;
         idempotencyKey?: string;
         maxCredits?: number;
+        quoteGrant?: string;
         automatic?: boolean;
     }) => Promise<ScreenerSuggestWire>;
     junkList: (opts?: {

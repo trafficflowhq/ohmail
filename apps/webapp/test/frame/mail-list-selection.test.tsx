@@ -118,7 +118,7 @@ describe.each([1440, 390])("mail lists at %i pixels wide", (width) => {
         const row = place.list === "Search"
           ? within(screen.getByRole("list", { name: words.search.aria })).getByRole("button", { name })
           : screen.getByRole("option", { name });
-        return within(row).getByRole("button", { name: words.ohbox.keyPick });
+        return within(row.closest<HTMLElement>(".oh-row-slot") ?? row.parentElement!).getByRole("button", { name: words.ohbox.keyPick });
       };
       await act(async () => { fireEvent.click(circle(ids[0]!)); });
       await act(async () => { fireEvent.click(circle(ids[1]!), { shiftKey: true }); });

@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 153.8281, 22],
   "clip": [24, 24, 154, 22],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -37,6 +37,7 @@
     }
   ],
   "paints": [
+    { "boxShadow": "oklch(0.6 0.14 288) 0px 0px 0px 1px inset", "borderRadius": "999px" },
     { "backgroundColor": "oklch(0.6 0.14 288)", "borderRadius": "2px" },
     { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 2 199f07f2a48b" }
   ],
@@ -62,8 +63,9 @@
       },
       "text": [{ "said": "Photo selects due", "type": 0 }],
       "surfaces": [
-        { "box": [8, 7, 8, 8], "paint": 0 },
-        { "box": [131.8, 4, 14, 14], "paint": 1 }
+        { "box": [0, 0, 153.8, 22], "paint": 0 },
+        { "box": [8, 7, 8, 8], "paint": 1 },
+        { "box": [131.8, 4, 14, 14], "paint": 2 }
       ]
     }
   ],

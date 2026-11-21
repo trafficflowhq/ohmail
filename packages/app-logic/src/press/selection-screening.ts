@@ -1,4 +1,4 @@
-/** Screen the letters named by the selection, grouped by sender for the forecast and report. */
+/** Screen the selected letters and decide the waiting senders they name. */
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { FOLDER_OF_VIEW, landingOfMoves, pressGained } from "@ohmail/client-engine";
 import { readerMoveRefusal } from "../mail-state/mail-state.js";
@@ -22,22 +22,28 @@ export interface BulkScreeningPlan {
   subject: EngineMessage[];
 }
 
-/** Plan the selected letters with the existing screening forecast. Sender decisions remain in the Screener. */
+/** Use the Screener's decision for waiting senders and limit explicit moves to the selection. */
 export function planBulkScreening(cx: VerbContext, ids: string[], dest: ScreeningDest): BulkScreeningPlan {
   const picked = new Set(ids);
   const seen = new Set<string>();
   const plans: EngineMutation[] = [];
   const subject: EngineMessage[] = [];
   let senders = 0;
+  let messages = 0;
+  let rules = 0;
   const read = setRead(cx);
   const planned: ScreeningPlan[] = [];
   for (const id of ids) {
     const s = senderScreening(read, id);
     if (!s || seen.has(s.key)) continue;
     seen.add(s.key);
-    const plan = planScreeningChange(s, dest, "sender", false, false, "leave");
+    const plan = planScreeningChange(s, dest, "sender", false);
     planned.push({ ...plan, outOfPlace: plan.outOfPlace.filter((m) => picked.has(m.id)) });
-    subject.push(...s.scopes.sender.messages.filter((m) => picked.has(m.id)));
+    subject.push(
+      ...s.scopes.sender.messages.filter(
+        (m) => picked.has(m.id) || (plan.ruleState === "promoted" && m.folder === FOLDER_OF_VIEW.screener),
+      ),
+    );
   }
   /* THE MOVES THE LISTS WILL SHOW AT THE PLACE (`movesAtLanding`), over ONE partition for the whole selection; the
      demo's lists are not partitioned, so every candidate lands there. */
@@ -54,11 +60,13 @@ export function planBulkScreening(cx: VerbContext, ids: string[], dest: Screenin
   const forecast = landing === null ? null : { keep: { landing }, remove: { landing } };
   for (const plan of planned) {
     const moves = movesAtLanding(plan, forecast);
-    if (moves.length === 0) continue;
+    if (plan.mutations.length === 0 && moves.length === 0) continue;
     senders++;
-    plans.push(...moves);
+    messages += plan.moved + moves.length;
+    if (plan.rule) rules++;
+    plans.push(...plan.mutations, ...moves);
   }
-  return { senders, messages: plans.length, rules: 0, mutations: plans, subject };
+  return { senders, messages, rules, mutations: plans, subject };
 }
 
 /**
@@ -88,7 +96,9 @@ export function screenBulk(cx: VerbContext, ids: string[], dest: ScreeningDest):
   const before = screeningShown(engine.verbRead(), plan.subject, dest, facts);
   const gained = () => pressGained(before, screeningShown(engine.verbRead(), plan.subject, dest, facts));
   void cx.press.mutateSetAndReport(plan.mutations, () =>
-    t("screening.toastBulkMoved", { place, senders: plan.senders, count: gained() }),
+    plan.rules > 0
+      ? t("screening.toastBulkRuled", { place, senders: plan.senders, count: gained(), rules: plan.rules })
+      : t("screening.toastBulkMoved", { place, senders: plan.senders, count: gained() }),
   );
   return true;
 }

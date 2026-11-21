@@ -6,7 +6,9 @@
     display: flex;
     align-items: flex-start;
     gap: var(--s2);
+    min-width: 0;
     max-width: var(--measure);
+    overflow-wrap: anywhere;
     margin-top: var(--oh-settingnote-rise);
     padding: 0 0 var(--s3);
     color: var(--ink2);
@@ -23,7 +25,7 @@
     margin-top: var(--oh-settingnote-sign-drop);
   }
 
-  [role="dialog"] .oh-settingnote > .oh-settingnote-copy {
-    overflow-wrap: anywhere;
+  .oh-settingnote > .oh-settingnote-copy {
+    min-width: 0;
   }
 }

@@ -11,7 +11,8 @@ import { bindApiOwner } from "../app/api-client";
 import messages from "../messages/en.json";
 import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { NONE } from "@ohmail/app/host";
-import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
 import { DemoShell } from "../app/(product)/demo/DemoShell";
 import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
 import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
@@ -61,7 +62,11 @@ function carrying(carries: readonly NoticeKind[]): HostNoticeEmitter {
 }
 
 function hostAt(state: NoticePermission, afterAsk: NoticePermission = state): NotificationHost {
-  return { permission: () => state, request: () => Promise.resolve(afterAsk), emitter: carrying(MAIL_NOTICE_KINDS) };
+  return {
+    permission: () => state,
+    request: async () => { state = afterAsk; return state; },
+    emitter: carrying(MAIL_NOTICE_KINDS),
+  };
 }
 
 /** Records what the pane asked the subscription layer for, and answers a fixed outcome. */
@@ -125,7 +130,9 @@ afterEach(async () => {
 function WebSettings({ door }: { door: NotificationHost }) {
   const scope = "account-b";
   const frame = useBrowserMail(NONE, WEB_MAIL_PARTS);
-  const { host } = fakeHost({ engine: NO_ENGINE, scope, service: "self", places: { settings: frame.places.settings } });
+  const { host } = fakeHost({
+    engine: fakeMail([]).engine, scope, service: "self", above: frame.above, places: { settings: frame.places.settings },
+  });
   const consent = useConsentState(false, scope, NONE);
   return h(ConsentContext.Provider, { value: consent }, h(MailFrame, {
     host: { ...host, device: { ...host.device, address: frame.address, notifications: door } },

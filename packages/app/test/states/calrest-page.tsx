@@ -110,6 +110,7 @@ function addressOf(): string {
   if (screen === "frommail") return open ? `#/cal/from-mail/e/${open}` : "#/cal/from-mail";
   if (screen === "calsettings") return "#/cal/calendars";
   if (screen === "calsetup") return setupAddress();
+  if (screen === "day" || screen === "week") return `#/cal/${screen}/2026-11-10`;
   const view = q.get("over") === "day" ? "day" : q.get("over") === "month" ? "month" : "week";
   if (open) return `#/cal/${view}/${DAY_OF[open] ?? "2026-11-10"}/e/${open}?panel=invitations`;
   return `#/cal/${view}/2026-11-10?panel=invitations`;

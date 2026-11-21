@@ -184,8 +184,17 @@ export const reading: KitSubject[] = [
   {
     key: "MessageHead/details",
     place: "block",
+    on: "sheet",
+    target: ".oh-messagehead",
     render: () => (
-      <div style={{ background: "var(--sheet-new)", ["--oh-under" as string]: "var(--sheet-new)" }}>
+      <div
+        style={{
+          background: "var(--sheet-new)",
+          ["--oh-under" as string]: "var(--sheet-new)",
+          paddingBlock: "var(--s1)",
+          marginBlock: "calc(-1 * var(--s1))",
+        }}
+      >
         <MessageHead
           sender={W.GIULIA}
           unread

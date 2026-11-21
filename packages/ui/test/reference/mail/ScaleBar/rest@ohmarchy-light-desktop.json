@@ -5,7 +5,7 @@
   "place": "block",
   "target": [728, 170, 656, 12],
   "clip": [728, 170, 656, 12],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",
@@ -22,7 +22,11 @@
     { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
   ],
   "types": [],
-  "paints": [{ "backgroundColor": "rgb(16, 15, 15)" }, { "backgroundColor": "rgb(56, 54, 53)" }],
+  "paints": [
+    { "backgroundColor": "rgb(16, 15, 15)", "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 2px" },
+    { "backgroundColor": "rgb(56, 54, 53)", "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 2px" },
+    { "backgroundColor": "rgb(16, 15, 15)" }
+  ],
   "nodes": [
     {
       "role": "img",
@@ -44,9 +48,9 @@
         "borderColor": "rgb(16, 15, 15)"
       },
       "surfaces": [
-        { "box": [0, 0, 26, 12], "paint": 0 },
-        { "box": [26, 0, 4.8, 12], "paint": 1 },
-        { "box": [655, -4, 2, 20], "paint": 0 }
+        { "box": [0, 0, 232, 12], "paint": 0 },
+        { "box": [26, 0, 232, 12], "paint": 1 },
+        { "box": [655, -4, 2, 20], "paint": 2 }
       ]
     }
   ],

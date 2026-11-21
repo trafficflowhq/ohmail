@@ -4,6 +4,7 @@ import { chromium, pageOf } from "../../../packages/app/test/support/browser-pag
 import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AWAY_ANSWERABLE_PILES, AWAY_PILE_VIEW, type AwayPile } from "@ohmail/app-logic/away";
+import * as awaySettings from "@ohmail/app/settings/away";
 import messages from "../messages/en.json";
 import {
   act, installConfirmEnv, ISO, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
@@ -372,31 +373,38 @@ describe("the away responder's Ohbox notice", () => {
   });
 
   it("A SAVE THAT LANDS FIRST WINS — the in-flight initial read must not undo it", async () => {
+    const feeds = vi.spyOn(awaySettings, "awayFeedOver");
     stored = { ...stored, enabled: true, body: "Back Monday." };
     const stale = { ...stored };
     const first = Promise.withResolvers<Response>();
-    await mount({ active: true, firstRead: first.promise });
-    expect(reads).toBe(1);
-    await act(async () => { window.location.hash = "#/settings/away"; });
-    await tick(3000);
-    expect(reads).toBe(2);
-    await click(pane().getByRole("button", { name: messages.away.everyone }));
-    await click(pane().getByRole("button", { name: messages.away.throttleLabel }));
-    await click(ui().getByRole("menuitemradio", { name: messages.away.per_week }));
-    await save();
-    expect(writes).toBe(1);
-    expect(stored.audience).toBe("everyone");
-    expect(stored.throttle).toBe("per_week");
-    await act(async () => { first.resolve(Response.json(stale)); });
-    await tick(0);
-    await returnToOhbox();
-    expect(notice()?.textContent).toContain("everyone who writes");
-    expect(notice()?.textContent).toContain("at most once a week");
-    expect(reads).toBe(2);
+    try {
+      await mount({ active: true, firstRead: first.promise });
+      expect(reads).toBe(1);
+      await act(async () => { window.location.hash = "#/settings/away"; });
+      await tick(3000);
+      expect(reads).toBe(1);
+      // The pane waits for the same read. Drive the save through the wire it uses.
+      const feed = feeds.mock.results.at(-1)?.value;
+      expect(feed).toBeDefined();
+      await act(async () => { await feed.wire.save({ ...stored, audience: "everyone", throttle: "per_week" }); });
+      expect(writes).toBe(1);
+      expect(stored.audience).toBe("everyone");
+      expect(stored.throttle).toBe("per_week");
+      await act(async () => { first.resolve(Response.json(stale)); });
+      await tick(0);
+      await returnToOhbox();
+      expect(notice()?.textContent).toContain("everyone who writes");
+      expect(notice()?.textContent).toContain("at most once a week");
+      expect(reads).toBe(1);
+    } finally {
+      feeds.mockRestore();
+    }
   });
 
   it("the settings row's save echo flips the notice in the SAME tab, without a refetch", async () => {
     await mount({ active: true, withRow: true });
+    const opened = reads;
+    expect(opened).toBe(1);
     expect(notice()).toBeNull();
     await click(pane().getByRole("switch", { name: messages.away.title }));
     expect(pane().queryByRole("textbox", { name: "Subject" })).toBeNull();
@@ -408,7 +416,7 @@ describe("the away responder's Ohbox notice", () => {
     expect(notice()).not.toBeNull();
     expect(stored.body).toBe("Back Monday.");
     expect(writes).toBe(1);
-    expect(reads).toBe(2);
+    expect(reads).toBe(opened);
   });
 
   it("the hosted notice opens Away Settings without an intermediate route", async () => {

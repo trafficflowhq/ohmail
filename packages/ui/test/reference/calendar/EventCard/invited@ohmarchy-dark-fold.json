@@ -5,7 +5,7 @@
   "place": "block",
   "target": [-20.5, 287, 255.5, 482.75],
   "clip": [0, 287, 235, 483],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "fold",
     "face": "ohmarchy",
@@ -155,7 +155,10 @@
     }
   ],
   "paints": [
-    { "boxShadow": "rgb(122, 162, 247) 0px 0px 0px 2px" },
+    {
+      "boxShadow": "rgb(122, 162, 247) 0px 0px 0px 2px",
+      "clipPath": "path(evenodd, \"M -4000 -4000 H 8000 V 8000 H -4000 Z M 378 83 H 473 A 0 0 0 0 1 473 83 V 321 A 0 0 0 0 1 473 321 H 378 A 0 0 0 0 1 378 321 V 83 A 0 0 0 0 1 378 83 Z\")"
+    },
     { "backgroundColor": "oklch(0.83 0.085 286.7)" },
     {
       "backgroundColor": "oklch(0.281406 0.036579 256.924)",

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { EngineMessage } from "@ohmail/wire";
 import { issue, mountStreamFrame } from "../../../packages/app/test/streams/registered-world.js";
 import { stubStreamDom } from "./stream-check-frame.js";
@@ -12,6 +12,11 @@ const card = (day: number) => read().querySelector<HTMLElement>(
   `[data-stream-item="${day === 20 ? "one" : "two"}"]`,
 )!;
 const panel = () => within(read()).queryByRole("toolbar", { name: "Actions" });
+
+beforeAll(async () => {
+  const { prepareWriting } = await import("@ohmail/app/mail");
+  await prepareWriting();
+});
 
 beforeEach(stubStreamDom);
 afterEach(() => {

@@ -110,6 +110,39 @@ function sheet(rules, shared, under, from) {
   return out.join("\n");
 }
 
+/** The sender and audit sheets read the host's names. Give them the frame's palette when mounted inside it. */
+function screeningSheet() {
+  const root = ".fr-root";
+
+  return `
+/* The hosted screening sheets use the frame palette. Capture its shadow before the sheets map --float to a fill. */
+${root} {
+  --screening-lift: var(--float);
+}
+
+${root} :is(.senderm, .senderm-veil, .sa, .sa-bg) {
+  --z-pal: var(--oh-layer-top);
+}
+
+${root} :is(.senderm, .sa) {
+  --float: var(--sheet);
+  --panel: var(--sheet);
+  --tint: var(--soft-sheet);
+  --accent-soft: var(--sheet-new);
+  --accent: var(--hot);
+  --accent-hair: var(--hot);
+  --accent-ink: var(--hot-ink);
+  --on-accent: var(--on-hot);
+  --hair-soft: var(--line-soft);
+  --r-overlay: var(--r-sheet);
+  --r-card: var(--r-row);
+  --r-ctl: var(--r-row);
+  --lift-0: var(--oh-ring-line);
+  --lift-3: var(--screening-lift);
+}
+`;
+}
+
 /** The shared names and the frame sheet, generated from the source tokens. */
 export function seamSheets(root = ROOT) {
   const read = (files) => files.flatMap((file) => rulesOf(readFileSync(join(root, file), "utf8")));
@@ -118,7 +151,7 @@ export function seamSheets(root = ROOT) {
   const shared = sharedNames(oldRules, newRules);
   return {
     shared,
-    frame: sheet(newRules, shared, ".oh-root", NEW_SHEETS),
+    frame: sheet(newRules, shared, ".oh-root", NEW_SHEETS) + screeningSheet(),
   };
 }
 

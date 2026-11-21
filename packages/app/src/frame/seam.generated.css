@@ -110,3 +110,29 @@
   --oh-ring-focus: inset 0 0 0 var(--oh-focus) var(--focus);
   --oh-ring-ink: inset 0 0 0 var(--oh-focus) var(--ink);
 }
+
+/* The hosted screening sheets use the frame palette. Capture its shadow before the sheets map --float to a fill. */
+.fr-root {
+  --screening-lift: var(--float);
+}
+
+.fr-root :is(.senderm, .senderm-veil, .sa, .sa-bg) {
+  --z-pal: var(--oh-layer-top);
+}
+
+.fr-root :is(.senderm, .sa) {
+  --float: var(--sheet);
+  --panel: var(--sheet);
+  --tint: var(--soft-sheet);
+  --accent-soft: var(--sheet-new);
+  --accent: var(--hot);
+  --accent-hair: var(--hot);
+  --accent-ink: var(--hot-ink);
+  --on-accent: var(--on-hot);
+  --hair-soft: var(--line-soft);
+  --r-overlay: var(--r-sheet);
+  --r-card: var(--r-row);
+  --r-ctl: var(--r-row);
+  --lift-0: var(--oh-ring-line);
+  --lift-3: var(--screening-lift);
+}

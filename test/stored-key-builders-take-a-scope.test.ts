@@ -13,6 +13,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { STORED_KEYS } from "../packages/client-engine/src/stored-keys.js";
 import { routingIntentsKey } from "@ohmail/client-engine";
+import { unsubscribeSeenKey } from "@ohmail/app-logic/screener";
 import { composeDraftKey, composeRowKey, composeSessionKey } from "@ohmail/app-logic/writing/compose";
 import { replyDraftKey, replyMetaKey, sentCopyNotesKey } from "@ohmail/app-logic/writing/mail-send";
 import { sendLocksKey } from "@ohmail/app-logic/writing/send-lock";
@@ -25,7 +26,7 @@ import { readingAlongKey } from "@ohmail/app-logic/reading/reading-along";
 import { toldDevicesKey } from "@ohmail/app-logic/notices/use-notices";
 import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
-import { foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
+import { foldersOpenedKey, mailOriginalKey, searchSortKey, subjectDisplayKey } from "@ohmail/app-logic/storage/persisted-ui";
 import { imageQualityKeyFor } from "../apps/webapp/app/components/image-quality.js";
 import { seedNotNowKey } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 
@@ -57,15 +58,17 @@ const BUILDERS: Record<string, (scope: Scope) => string> = {
   searchOrder: (s) => searchSortKey(s),
   foldersOpened: (s) => foldersOpenedKey(s),
   originalLook: (s) => mailOriginalKey(s),
+  subjectDisplay: (s) => subjectDisplayKey(s),
   reviewPutOff: (s) => seedNotNowKey(s),
   afterVerb: afterVerbKey,
   pictureQuality: (s) => imageQualityKeyFor(s),
 };
 
-/** The families kept for an account and under no scope at all: the two remembered answers (the boot caches). */
+/** The families that exist only for an identified account. */
 const KEPT_FOR_SOMEBODY: Record<string, (scope: string) => string> = {
   consentCache: (s) => bootCacheKey(CONSENT_BOOT_SCOPE, s),
   ownAddresses: (s) => bootCacheKey("own-addresses", s),
+  unsubscribeSeen: unsubscribeSeenKey,
 };
 
 /** The hosts' own families: each named by the session's account or a page's, never by a view's scope. */
@@ -74,6 +77,7 @@ const HOSTS_OWN: Record<string, string> = {
   "ohmail.access.": "the web host's wall keeps whether this device last found the session's account open",
   "ohmail.revoke.owed.": "the resume page keeps a wipe it still owes after a revoke",
   "ohmail.resume-attempted.": "the resume page marks that this tab tried to resume the session's account",
+  "ohmail.session.scopeCleanup.": "the sign-out keeps the cleanup it still owes, named by the signed-out session's account or an isolated scope (apps/webapp/app/pending-sign-out-storage.ts)",
   "ohmail.session.lateWatch.": "the session client watches for a late renewal answer, per session",
   "ohmail.oauth.owner.": "a provider's sign-in remembers which session's account started it",
   "ohmail.notifications.subscription": "the push registration names the session's account it was made for",

@@ -5,7 +5,7 @@
   "place": "block",
   "target": [720, 36, 676, 178.1875],
   "clip": [720, 36, 676, 179],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -34,6 +34,20 @@
       "textTransform": "none",
       "textOverflow": "ellipsis",
       "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
     },
     {
       "color": "oklch(0.36 0.105 150)",
@@ -126,20 +140,6 @@
     {
       "color": "rgb(90, 83, 75)",
       "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
-      "lineHeight": "18.2px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "fontVariantNumeric": "tabular-nums",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(90, 83, 75)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
       "fontSize": "16px",
       "fontWeight": "600",
       "fontStyle": "normal",
@@ -210,6 +210,27 @@
       ]
     },
     {
+      "role": "status",
+      "name": "",
+      "box": [646.1, 6.9, 29.9, 18.2],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "Draft", "type": 1 }]
+    },
+    {
       "role": "button",
       "name": "N Nadja Lehner nadja@erdton-atelier.example",
       "box": [55.2, 36, 316.8, 32],
@@ -229,9 +250,9 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [
-        { "said": "N", "type": 1 },
-        { "said": "Nadja Lehner", "type": 2 },
-        { "said": "nadja@erdton-atelier.example", "type": 3 }
+        { "said": "N", "type": 2 },
+        { "said": "Nadja Lehner", "type": 3 },
+        { "said": "nadja@erdton-atelier.example", "type": 4 }
       ],
       "surfaces": [{ "box": [60.2, 41, 22, 22], "paint": 2 }]
     },
@@ -275,7 +296,7 @@
         "paddingLeft": "5px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "text": [{ "said": "petra@makersfest", "type": 2 }],
+      "text": [{ "said": "petra@makersfest", "type": 3 }],
       "surfaces": [{ "box": [413, 43, 18, 18], "paint": 4 }]
     },
     {
@@ -300,7 +321,7 @@
       "surfaces": [{ "box": [582.1, 42, 20, 20], "paint": 5 }]
     },
     {
-      "role": "textbox",
+      "role": "combobox",
       "name": "To",
       "box": [55.2, 72, 542.6, 32],
       "drawn": {
@@ -317,7 +338,8 @@
         "paddingBottom": "0px",
         "paddingLeft": "4px",
         "borderColor": "rgb(18, 16, 14)"
-      }
+      },
+      "state": ["collapsed"]
     },
     {
       "role": "button",
@@ -338,7 +360,7 @@
         "paddingLeft": "12px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "text": [{ "said": "Cc Bcc", "type": 4 }]
+      "text": [{ "said": "Cc Bcc", "type": 5 }]
     },
     {
       "role": "textbox",
@@ -359,14 +381,13 @@
         "paddingLeft": "59.2px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "text": [{ "said": "Re: Would you teach the December glaze evening?", "type": 5, "shown": true }]
+      "text": [{ "said": "Re: Would you teach the December glaze evening?", "type": 6, "shown": true }]
     }
   ],
   "loose": {
     "text": [
-      { "said": "From", "type": 6 },
-      { "said": "Studio", "type": 7 },
-      { "said": "Draft", "type": 8 },
+      { "said": "From", "type": 7 },
+      { "said": "Studio", "type": 8 },
       { "said": "To", "type": 9 },
       { "said": "Not an address: petra@makersfest", "type": 10 }
     ],

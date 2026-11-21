@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider, createTranslator } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { getByRole, queryByRole, within } from "@testing-library/react";
+import { findByRole, getByRole, queryByRole, within } from "@testing-library/react";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { DesktopFrame } from "../src/DesktopFrame.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -132,7 +132,7 @@ async function render(
         }))),
     ));
   });
-  pane = getByRole(mountPoint, "region", { name: catalogue.settings.mailboxes });
+  pane = await findByRole(mountPoint, "region", { name: catalogue.settings.mailboxes }, { timeout: 5000 });
   return pane.querySelector(".mbx-org")?.textContent ?? "";
 }
 

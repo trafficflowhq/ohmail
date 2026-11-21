@@ -3,9 +3,9 @@
   "state": "rest",
   "look": "ohmarchy-light-fold",
   "place": "block",
-  "target": [398, 11, 311, 144.2656],
-  "clip": [398, 11, 311, 145],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [398, -77, 311, 140.2656],
+  "clip": [398, 0, 311, 64],
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "fold",
     "face": "ohmarchy",
@@ -25,13 +25,14 @@
     {
       "color": "rgb(16, 15, 15)",
       "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-      "fontSize": "19px",
-      "fontWeight": "700",
+      "fontSize": "14px",
+      "fontWeight": "600",
       "fontStyle": "normal",
-      "lineHeight": "21.28px",
-      "letterSpacing": "-0.19px",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
       "fontVariationSettings": "normal",
       "textTransform": "none",
+      "textOverflow": "ellipsis",
       "webkitLocale": "\"en\"",
       "textRendering": "optimizelegibility"
     }
@@ -48,7 +49,7 @@
     {
       "role": "banner",
       "name": "",
-      "box": [0, 0, 311, 144.3],
+      "box": [0, 0, 311, 140.3],
       "drawn": {
         "color": "rgb(16, 15, 15)",
         "backgroundColor": "rgb(242, 239, 228)",
@@ -60,33 +61,12 @@
         "borderRadius": "0px",
         "paddingTop": "9px",
         "paddingRight": "18px",
-        "paddingBottom": "16px",
+        "paddingBottom": "12px",
         "paddingLeft": "20px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "surfaces": [{ "box": [0, 0, 311, 144.3], "paint": 0 }]
-    },
-    {
-      "role": "heading",
-      "name": "Glaze order #2291",
-      "box": [20, 9, 273, 21.3],
-      "drawn": {
-        "color": "rgb(16, 15, 15)",
-        "backgroundColor": "rgba(0, 0, 0, 0)",
-        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-        "fontSize": "19px",
-        "fontWeight": "700",
-        "lineHeight": "21.28px",
-        "letterSpacing": "-0.19px",
-        "borderRadius": "0px",
-        "paddingTop": "0px",
-        "paddingRight": "0px",
-        "paddingBottom": "0px",
-        "paddingLeft": "0px",
-        "borderColor": "rgb(16, 15, 15)"
-      },
-      "level": 1,
-      "text": [{ "said": "Glaze order #2291", "type": 0 }]
+      "text": [{ "said": "Glaze order #2291", "type": 0 }],
+      "surfaces": [{ "box": [0, 0, 311, 140.3], "paint": 0 }]
     },
     {
       "role": "group",

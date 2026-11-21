@@ -110,21 +110,22 @@ function useStreamAddress(
   entered: StreamInput["entered"],
   beforePreview: () => void,
 ) {
-  const pending = useRef<string | null>(null);
-  const address = useRef({ id: addressId, local: false });
+  const pending = useRef<{ id: string; inPlace: boolean } | null>(null);
+  const address = useRef({ id: addressId, local: false, inPlace: false });
   useLayoutEffect(() => {
     if (address.current.id === addressId) return;
-    const local = addressId !== null && pending.current === addressId;
+    const local = addressId !== null && pending.current?.id === addressId;
+    address.current = { id: addressId, local, inPlace: local && (pending.current?.inPlace ?? false) };
     pending.current = null;
-    address.current = { id: addressId, local };
     if (addressId === null || local || entered?.letter === addressId) return;
     beforePreview();
   }, [addressId, entered, beforePreview]);
   const openedLocally = useCallback((id: string) => address.current.id === id && address.current.local, []);
-  const requestLocalOpen = useCallback((id: string) => {
-    pending.current = id;
+  const openedInPlace = useCallback((id: string) => address.current.id === id && address.current.inPlace, []);
+  const requestLocalOpen = useCallback((id: string, inPlace: boolean) => {
+    pending.current = { id, inPlace };
   }, []);
-  return { openedLocally, requestLocalOpen };
+  return { openedLocally, openedInPlace, requestLocalOpen };
 }
 
 /** Receipts fetches the cursor's body. Its viewport lookahead builds previews from the cache. */
@@ -147,6 +148,17 @@ function useReceiptCursorBody(
     kept.current = cursor === null ? id : null;
     if (id !== null && !(bodyReady?.(id) ?? textOf(id) !== null)) prefetch?.([id]);
   }, [place, cursor, id, bodyReady, textOf, prefetch, prefetchSource]);
+}
+
+function useStreamHydration(inputRef: RefObject<StreamInput>): StreamModel["hydrateOpened"] {
+  return useCallback(
+    (id: string, ask = true) => {
+      const current = inputRef.current;
+      current.revealPrefetch?.(id);
+      if (ask && current.textOf(id) === null) current.hydrate([id]);
+    },
+    [inputRef],
+  );
 }
 
 export function useStream(input: StreamInput): StreamModel {
@@ -172,15 +184,12 @@ export function useStream(input: StreamInput): StreamModel {
   } = useStreamViewport(input);
   const beforePreview = useStreamLeave(inputRef, itemsRef, read, scroll);
   useExternalUnreadHolds(items, read.keepUnread);
-  const hydrateOpened = useCallback(
-    (id: string, ask = true) => {
-      const current = inputRef.current;
-      current.revealPrefetch?.(id);
-      if (ask && current.textOf(id) === null) current.hydrate([id]);
-    },
-    [inputRef],
+  const hydrateOpened = useStreamHydration(inputRef);
+  const { openedLocally, openedInPlace, requestLocalOpen } = useStreamAddress(
+    input.openId,
+    input.entered,
+    beforePreview,
   );
-  const { openedLocally, requestLocalOpen } = useStreamAddress(input.openId, input.entered, beforePreview);
   const { prefetch, prefetchSource } = input;
   useEffect(() => {
     if (input.place === "news" && openId !== null && input.openId === openId && !openedLocally(openId))
@@ -200,15 +209,16 @@ export function useStream(input: StreamInput): StreamModel {
     [read, openId, scroll, scrolled, setScrolled],
   );
   const open = useCallback(
-    (id: string, byKeyboard = false, viewport = false) => {
+    (id: string, byKeyboard = false, viewport = false, inPlace = false) => {
       setKeyboardOpened(byKeyboard ? { id } : null);
       selectForReading(id, viewport);
-      if (inputRef.current.openId !== id) requestLocalOpen(id);
+      if (inputRef.current.openId !== id) requestLocalOpen(id, inPlace);
       inputRef.current.open(id);
     },
     [inputRef, selectForReading, requestLocalOpen],
   );
   const stepTo = (id: string): void => {
+    scroll.select(id);
     if (input.inlineKeys) {
       selectForReading(id);
       setInlineId(id);
@@ -238,7 +248,7 @@ export function useStream(input: StreamInput): StreamModel {
     newCount: partition.newCount,
     openId: selected,
     toolbar,
-    standingId: input.openId === null ? standingId : null,
+    standingId: input.openId === null ? (current ?? standingId) : null,
     actionVisit: openId !== null || hadCursor,
     actionId: openId ?? selected,
     canDeleteKey: (id) =>
@@ -249,6 +259,7 @@ export function useStream(input: StreamInput): StreamModel {
     canAnswerKey: (id) => id === openId && scroll.settledInReadView(id),
     addressedId: openId,
     openedLocally,
+    openedInPlace,
     stamp: input.stamp,
     scroller,
     attach,
@@ -305,7 +316,7 @@ function useStreamViewport(input: StreamInput) {
   /* A jump to an end that rested: the scroll's run starts again where it rests (set once the scroll stands, below). */
   const landedRef = useRef<() => void>(() => {});
   const judgedRef = useRef<() => void>(() => {});
-  const readingBlocked = useRef<() => boolean>(() => false);
+  const scrollRef = useRef<StreamScroll | null>(null);
   const bodyReady = input.bodyReady ?? ((id: string) => input.textOf(id) !== null);
   const read = useStreamRead({
     scroller,
@@ -320,7 +331,8 @@ function useStreamViewport(input: StreamInput) {
     write: (ids) => inputRef.current.markSeen(ids),
     onLanded: () => landedRef.current(),
     onJudged: () => judgedRef.current(),
-    readingBlocked: () => readingBlocked.current(),
+    readingBlocked: () => scrollRef.current?.readingBlocked() ?? false,
+    pendingShift: () => scrollRef.current?.pendingShift() ?? 0,
   });
 
   /* The scroll: an app move is no hand's, and drives nothing by itself; a press that moves it drives it (`open`). */
@@ -348,6 +360,7 @@ function useStreamViewport(input: StreamInput) {
       moved: read.moved,
       hands: read.hands,
       landing: read.flying,
+      edgeLanding: read.edgeFlight,
       judging: read.judging,
       settled: read.settled,
       readView: streamReadView,
@@ -355,7 +368,7 @@ function useStreamViewport(input: StreamInput) {
   });
   landedRef.current = scroll.endLanded;
   judgedRef.current = scroll.judged;
-  readingBlocked.current = scroll.readingBlocked;
+  scrollRef.current = scroll;
 
   return {
     partition,

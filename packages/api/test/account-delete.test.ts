@@ -253,10 +253,10 @@ describe("DELETE /account", () => {
       let opened = 0;
       Object.defineProperty(holder, "transaction", {
         configurable: true, writable: true,
-        value: (...a: unknown[]) => {
+        value: function (this: unknown, ...a: unknown[]) {
           opened += 1;
           if (opened === 1) return Promise.reject(Object.assign(new Error("the erasure's transaction failed"), code === undefined ? {} : { code }));
-          return (real as (...x: unknown[]) => unknown).apply(holder, a);
+          return real.apply(this, a);
         },
       });
       const d = { ...deps, services: { ...deps.services, entitlementsPort: portStub("cancelled", []) } };
@@ -308,20 +308,20 @@ describe("DELETE /account", () => {
       let opened = 0; let readArmed = false;
       Object.defineProperty(holder, "transaction", {
         configurable: true, writable: true,
-        value: (...a: unknown[]) => {
+        value: function (this: unknown, ...a: unknown[]) {
           opened += 1;
-          if (opened !== 1) return (real as (...x: unknown[]) => unknown).apply(holder, a);
+          if (opened !== 1) return real.apply(this, a);
           readArmed = o.readFails;
           return o.commits
-            ? (real as (...x: unknown[]) => Promise<unknown>).apply(holder, a).then(() => Promise.reject(lost))
+            ? (real.apply(this, a) as Promise<unknown>).then(() => Promise.reject(lost))
             : Promise.reject(lost);
         },
       });
       Object.defineProperty(holder, "select", {
         configurable: true, writable: true,
-        value: (...a: unknown[]) => {
+        value: function (this: unknown, ...a: unknown[]) {
           if (readArmed) { readArmed = false; throw new Error("the connection is gone"); }
-          return (realSelect as (...x: unknown[]) => unknown).apply(holder, a);
+          return realSelect.apply(this, a);
         },
       });
       const d = { ...deps, services: { ...deps.services, entitlementsPort: portStub("cancelled", []) } };

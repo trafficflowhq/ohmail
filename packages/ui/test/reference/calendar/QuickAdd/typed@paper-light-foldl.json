@@ -3,9 +3,9 @@
   "state": "typed",
   "look": "paper-light-foldl",
   "place": "block",
-  "target": [432.5, 349, 392.5, 296],
-  "clip": [432, 349, 393, 296],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [432.5, 301, 392.5, 344],
+  "clip": [432, 301, 393, 344],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "foldl",
     "face": "paper",
@@ -137,6 +137,18 @@
       "webkitLocale": "\"en\""
     },
     {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
       "color": "rgb(255, 255, 255)",
       "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
       "fontSize": "16px",
@@ -196,7 +208,7 @@
     {
       "role": "dialog",
       "name": "New event",
-      "box": [0, 0, 392.5, 296],
+      "box": [0, 0, 392.5, 344],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "rgb(255, 255, 255)",
@@ -217,7 +229,7 @@
         { "said": "to All day Invite", "type": 1 }
       ],
       "surfaces": [
-        { "box": [0, 0, 392.5, 296], "paint": 0 },
+        { "box": [0, 0, 392.5, 344], "paint": 0 },
         { "box": [0, 0, 392.5, 56], "paint": 1 },
         { "box": [181.2, 17, 104.1, 26], "paint": 2 },
         { "box": [289.7, 17, 41.3, 26], "paint": 2 },
@@ -571,7 +583,7 @@
     {
       "role": "button",
       "name": "Notes",
-      "box": [20, 248, 71, 36],
+      "box": [301.3, 210, 71, 36],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -588,12 +600,12 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "text": [{ "said": "Notes", "type": 8 }],
-      "surfaces": [{ "box": [26, 258, 16, 16], "paint": 18 }]
+      "surfaces": [{ "box": [307.3, 220, 16, 16], "paint": 18 }]
     },
     {
       "role": "button",
       "name": "More fields",
-      "box": [93, 248, 32, 36],
+      "box": [20, 248, 32, 36],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -609,12 +621,33 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "surfaces": [{ "box": [101, 258, 16, 16], "paint": 19 }]
+      "surfaces": [{ "box": [28, 258, 16, 16], "paint": 19 }]
+    },
+    {
+      "role": "button",
+      "name": "Cancel",
+      "box": [229.1, 288, 82.3, 44],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "16px",
+        "paddingBottom": "0px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "Cancel", "type": 9 }]
     },
     {
       "role": "button",
       "name": "Add",
-      "box": [323.4, 240, 53.1, 44],
+      "box": [315.4, 288, 61.1, 44],
       "drawn": {
         "color": "rgb(255, 255, 255)",
         "backgroundColor": "rgb(18, 16, 14)",
@@ -625,12 +658,12 @@
         "letterSpacing": "normal",
         "borderRadius": "999px",
         "paddingTop": "0px",
-        "paddingRight": "12px",
+        "paddingRight": "16px",
         "paddingBottom": "0px",
-        "paddingLeft": "12px",
+        "paddingLeft": "16px",
         "borderColor": "rgb(255, 255, 255)"
       },
-      "text": [{ "said": "Add", "type": 9 }]
+      "text": [{ "said": "Add", "type": 10 }]
     }
   ],
   "loose": { "text": [], "surfaces": [] }

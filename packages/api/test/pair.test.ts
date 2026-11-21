@@ -442,8 +442,9 @@ describe("the options census — the pipeline each pairing route actually runs",
     const handoff = byKey.get("POST /pair/handoff")!;
     expect(handoff.cost).toBe("ceremony");
     expect(handoff.relay).toBe(false);
+    // The native rotation looks up its credential before the account is known.
     expect({ ...handoff.options, middleware: handoff.options?.middleware?.length })
-      .toEqual({ public: true, credentialSubject: true, replaySafe: true, middleware: 1 });
+      .toEqual({ public: true, credentialSubject: true, credentialLookup: true, replaySafe: true, middleware: 1 });
     // The state read by a token's hash: no session, no burn, a ceremony like the revoke.
     const state = byKey.get("POST /pair/state")!;
     expect(state.cost).toBe("ceremony");

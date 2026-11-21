@@ -20,6 +20,7 @@ import {
   FieldPair,
   FieldStack,
   FindField,
+  Icon,
   JumpBack,
   Mark,
   Menu,
@@ -36,7 +37,7 @@ import {
   StepDots,
   Tag,
 } from "../../src/base/index.js";
-import { AgendaRow, EventChip, MiniMonth } from "../../src/calendar/index.js";
+import { AgendaRow, EventBridge, EventCard, EventChip, MiniMonth } from "../../src/calendar/index.js";
 import {
   ActionPanel,
   ColumnHandle,
@@ -200,28 +201,40 @@ async function opened<T>(
 }
 
 it.each([
-  ["paper", "phone"],
-  ["ohmarchy", "desktop"],
-] as const)("keeps a Settings summary on one truncating line in %s on %s", async (face, device) => {
-  const reading = await drawn(
-    <Rows>
-      <Row entry who="Rules" people={[]} subject="On" preview={"Ohbox and News · ".repeat(50)} />
-    </Rows>,
-    () => {
-      const line = document.querySelector<HTMLElement>(".oh-row-second")!;
-      const style = getComputedStyle(line);
-      const value = line.querySelector(".oh-row-subject")!.getBoundingClientRect();
-      const detail = line.querySelector(".oh-row-preview")!.getBoundingClientRect();
-      return {
-        ellipsis: style.textOverflow,
-        singleLine: Math.abs(value.top - detail.top) < value.height,
-        clipped: line.scrollWidth > line.clientWidth,
-      };
-    },
-    { entry: "mail", face, device },
-  );
-  expect(reading).toEqual({ ellipsis: "ellipsis", singleLine: true, clipped: true });
-});
+  ["paper", "desktop", true],
+  ["paper", "phone", false],
+  ["ohmarchy", "desktop", false],
+] as const)(
+  "keeps a Settings summary readable and truncates long detail in %s on %s",
+  async (face, device, singleLine) => {
+    const reading = await drawn(
+      <Rows>
+        <Row entry who="Rules" people={[]} subject="On" preview={"Ohbox and News · ".repeat(50)} />
+      </Rows>,
+      () => {
+        const line = document.querySelector<HTMLElement>(".oh-row-second")!;
+        const preview = line.querySelector<HTMLElement>(".oh-row-preview")!;
+        const value = line.querySelector(".oh-row-subject")!.getBoundingClientRect();
+        const detail = preview.getBoundingClientRect();
+        const sharesLine = Math.abs(value.top - detail.top) < value.height;
+        const truncation = sharesLine ? line : preview;
+        return {
+          ellipsis: getComputedStyle(truncation).textOverflow,
+          singleLine: sharesLine,
+          detailBelowValue: detail.top >= value.bottom,
+          clipped: truncation.scrollWidth > truncation.clientWidth,
+        };
+      },
+      { entry: "mail", face, device },
+    );
+    expect(reading).toEqual({
+      ellipsis: "ellipsis",
+      singleLine,
+      detailBelowValue: !singleLine,
+      clipped: true,
+    });
+  },
+);
 
 describe("the product's mark", () => {
   it.each([
@@ -3955,13 +3968,138 @@ it("lets the pointer resize timed events across their top and bottom edges", asy
           start: cursorAt(left + width / 2, top + 2),
           end: cursorAt(left + width / 2, bottom - 2),
           side: cursorAt(left + 2, top + height / 2),
+          decoration: [...chip.querySelectorAll(".oh-ev-hd")].map(
+            (handle) => getComputedStyle(handle, "::after").content,
+          ),
         };
       }),
   );
   expect(directions.start).toBe("ns-resize");
   expect(directions.end).toBe("ns-resize");
   expect(directions.side).not.toBe("ew-resize");
+  expect(directions.decoration).toEqual(["none", "none"]);
 });
+
+it("draws a small lock in the view-only event's calendar row from the shared token", async () => {
+  const size = await drawn(
+    <EventCard
+      title="Open studio"
+      tone={243}
+      close={{ label: "Close" }}
+      rows={[
+        {
+          label: "Calendar",
+          tone: 243,
+          text: "Studio",
+          children: <Icon name="lock" size={16} className="oh-ecard-lock" />,
+        },
+      ]}
+    />,
+    () => {
+      const lock = document.querySelector(".oh-ecard-value .oh-icon")!;
+      const { width, height } = lock.getBoundingClientRect();
+      return {
+        size: [width, height],
+        token: getComputedStyle(lock).getPropertyValue("--cal-lock-size").trim(),
+      };
+    },
+    { entry: "calendar" },
+  );
+  expect(size).toEqual({ size: [14, 14], token: "14px" });
+});
+
+it("names both timed resize edges and shows their keyboard focus", async () => {
+  await opened(
+    <div style={{ position: "relative", width: 240, height: 80 }}>
+      <EventChip
+        size="block"
+        tone={243}
+        title="Lunch"
+        timeEdges={{ start: "Resize start", end: "Resize end" }}
+        place={{ top: 0, height: 58 }}
+        onResizeKey={() => {}}
+      />
+    </div>,
+    { entry: "calendar" },
+    async (tab) => {
+      await tab.getByRole("button", { name: "Lunch" }).focus();
+      for (const edge of ["Resize start", "Resize end"]) {
+        await tab.keyboard.press("Tab");
+        const focused = await tab.getByRole("button", { name: edge, exact: true }).evaluate(
+          (target) => {
+            const style = getComputedStyle(target);
+            return {
+              active: target === document.activeElement,
+              outline: style.outlineStyle,
+              width: style.outlineWidth,
+              token: style.getPropertyValue("--oh-focus").trim(),
+            };
+          },
+          undefined,
+          { timeout: 1000 },
+        );
+        expect(focused).toEqual({ active: true, outline: "solid", width: focused.token, token: "2px" });
+      }
+    },
+  );
+});
+
+it.each(["paper", "ohmarchy"] as const)(
+  "joins an open event to its card with a flat fill in %s",
+  async (face) => {
+    const paint = await drawn(
+      <EventBridge
+        tone={243}
+        width={540}
+        height={300}
+        event={{ box: { left: 0, top: 30, right: 160, bottom: 90 }, radius: 0 }}
+        card={{ box: { left: 170, top: 0, right: 514, bottom: 270 }, radius: 0, headBottom: 20 }}
+        side="r"
+        line={2}
+      />,
+      () => {
+        const bridge = document.querySelector(".oh-bridge")!;
+        const form = [...bridge.querySelectorAll(".oh-bridge-form")].find(
+          (part) => getComputedStyle(part).display !== "none",
+        )!;
+        const fill = form.querySelector(".oh-bridge-fill")!;
+        const edge = form.querySelector(".oh-bridge-edge")!;
+        const swatch = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        bridge.append(swatch);
+        swatch.style.fill = "var(--oh-cal-open, var(--oh-cal-open-plain))";
+        swatch.style.stroke = "var(--oh-cal-mark, var(--ink))";
+        swatch.style.stopColor = "var(--hot)";
+        const stroke = getComputedStyle(edge).stroke;
+        const gradientId = stroke.match(/^url\("#(.+)"\)$/)?.[1];
+        const gradient = gradientId ? document.getElementById(gradientId) : null;
+        const stops = [...(gradient?.querySelectorAll("stop") ?? [])].map(
+          (stop) => getComputedStyle(stop).stopColor,
+        );
+        return {
+          fill: getComputedStyle(fill).fill,
+          open: getComputedStyle(swatch).fill,
+          stroke,
+          mark: getComputedStyle(swatch).stroke,
+          hot: getComputedStyle(swatch).stopColor,
+          stops,
+          acrossGap: gradient?.getAttribute("x1") !== gradient?.getAttribute("x2"),
+          join: getComputedStyle(edge).strokeLinejoin,
+          ends: bridge.querySelectorAll(".oh-bridge-end").length,
+        };
+      },
+      { entry: "calendar", face },
+    );
+    expect(paint.fill).toBe(paint.open);
+    expect(paint.join).toBe("round");
+    expect(paint.ends).toBe(0);
+    if (face === "ohmarchy") {
+      expect(paint.stops).toEqual([paint.mark, paint.hot]);
+      expect(paint.acrossGap).toBe(true);
+    } else {
+      expect(paint.stroke).toBe(paint.mark);
+    }
+  },
+);
 
 describe("an agenda row the keys are on", () => {
   it.each(["paper", "ohmarchy"] as const)(

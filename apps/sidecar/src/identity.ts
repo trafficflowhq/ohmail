@@ -520,11 +520,9 @@ export async function resolveExpiredLaunchSession(
       userId: sessions.userId,
       lastTwofaAt: sessions.lastTwofaAt,
       scope: sessions.scope,
-      emailVerifiedAt: users.emailVerifiedAt,
     })
     .from(sessions)
-    /* THE SAME INNER JOIN `resolveSession` TAKES, and for its reason: a session whose user is gone
-       resolves to nothing rather than to an identity with nobody behind it. */
+    // The launch bearer must still have a user in this store.
     .innerJoin(users, eq(users.id, sessions.userId))
     .where(and(
       eq(sessions.accessTokenHash, hashToken(token)),
@@ -543,7 +541,6 @@ export async function resolveExpiredLaunchSession(
     sessionId: row.id,
     lastTwofaAt: row.lastTwofaAt,
     scope: row.scope === "enrollment" ? "enrollment" : "full",
-    emailVerifiedAt: row.emailVerifiedAt,
   };
 }
 

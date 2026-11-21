@@ -33,10 +33,11 @@ import { linkSlot } from "./link-in.js";
 import { setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { setComposerScope } from "@ohmail/app-logic/writing/compose";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
+import { writingReady } from "../../webapp/app/shell/browser-mail";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
 import { goCompose } from "@ohmail/app-logic/writing/compose-door";
 import { setMailtoSink } from "@ohmail/app-logic/session/open-external";
-import { agoStamp } from "../../webapp/app/shell/format";
+import { agoStamp } from "@ohmail/app-logic/text/format";
 import {
   unknownSpeaks, type HostConnection,
 } from "@ohmail/app-logic/doors/host-connection";
@@ -109,7 +110,7 @@ import {
   createLocalEngine, onAccessRefused, waitingFor, type AccessRefusedFacts, type EngineStatus, type SignedOut,
 } from "./bridge-fetch.js";
 import { desktopSendSurface, stagesAttachments } from "./desktop-send-surface.js";
-import { forgetErasedWindowScopes, forgetWindowScopes, rememberCloudScope, rememberedCloudScope } from "./window-sweep.js";
+import { forgetErasedWindowScopes, forgetWindowScopes, rememberCloudScope, rememberedCloudDisclosureOwner, rememberedCloudScope } from "./window-sweep.js";
 
 /** How much of a refused address the one-line toast shows. The host is at the front. */
 const ADDRESS_SHOWN = 80;
@@ -429,7 +430,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * THE MAILBOX WHOSE SHELL WAS ON SCREEN, and whether on a Cloud door: written only by `ScopeShown`,
    * once the shell is drawn, and read when that account ends here (the sweeps below).
    */
-  const served = useRef<{ scope: string; cloud: boolean } | null>(null);
+  const served = useRef<{ scope: string; cloud: boolean; disclosureOwner: string | null } | null>(null);
   /** The last door this window served: a Sign out's status names none. */
   const leftDoor = useRef<string | null>(null);
   /* THE WINDOW KEYS A SIGN OUT OWES (`window-sweep.ts`), swept after the commit that took the shell
@@ -569,7 +570,9 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   useEffect(() => {
     if (!accountEnded) return;
     const scopes = [served.current?.scope ?? null, rememberedCloudScope()];
-    if (erased) forgetErasedWindowScopes(scopes);
+    if (erased) {
+      forgetErasedWindowScopes(scopes, served.current?.disclosureOwner ?? rememberedCloudDisclosureOwner());
+    }
     else forgetWindowScopes(scopes);
     served.current = null;
   }, [accountEnded, erased]);
@@ -865,10 +868,20 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * THE FIRST-RUN CHOOSER, HELD while an adopted claim's engine is relaunched behind its door: the
    * door on disk flips the gate to the app a moment before that engine serves, and the person must
    * see the sign-in finish rather than a boot frame or a second chooser. Held until the mail can
-   * mount with the door's auth state known; a refused relaunch hands the screen back at once.
+   * mount with the door's auth state known and the writing imports settled; a refused relaunch
+   * hands the screen back at once.
    */
+  const [writingSettled, setWritingSettled] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    void writingReady.then(() => {
+      if (mounted) setWritingSettled(true);
+    });
+    return () => { mounted = false; };
+  }, []);
+
   const [adoption, setAdoption] = useState(false);
-  const adoptionHeld = adoption && !(mount.kind === "engine" && (authKey === null || hostedAuthKnown));
+  const adoptionHeld = adoption && !(mount.kind === "engine" && (authKey === null || hostedAuthKnown) && writingSettled);
   useEffect(() => {
     if (adoption && !adoptionHeld) setAdoption(false);
   }, [adoption, adoptionHeld]);
@@ -876,10 +889,12 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * AND HELD FROM A PRESS ON PAIR. The pairing writes its door before the other computer answers,
    * so the lifecycle poll read a chosen door mid-pairing and drew the boot frame over the card, then
    * the pre-auth arm drew the Cloud sign-in form. `held` until a door the chooser opens is entered —
-   * a refusal stays on the card — and `entered` until that engine's auth answer is read.
+   * a refusal stays on the card — and `entered` until that engine's auth answer is read and the
+   * writing imports settle.
    */
   const [pairing, setPairing] = useState<"none" | "held" | "entered">("none");
-  const pairingHeld = pairing === "held" || (pairing === "entered" && authKey !== null && !hostedAuthKnown);
+  const pairingHeld = pairing === "held" ||
+    (pairing === "entered" && (!writingSettled || (authKey !== null && !hostedAuthKnown)));
   useEffect(() => {
     if (pairing === "entered" && !pairingHeld) setPairing("none");
   }, [pairing, pairingHeld]);
@@ -1429,7 +1444,8 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
       )}
       {doorOverlay}
       {refusedCard}
-      <ScopeShown scope={shellKey} cloud={status?.mode === "cloud"} into={served} />
+      <ScopeShown scope={shellKey} cloud={status?.mode === "cloud"} into={served}
+        disclosureOwner={status?.accountId ?? hostedAccountId} />
     </>
   );
 }
@@ -1454,13 +1470,14 @@ function ConnectionValue({ feed, value }: { feed: ReturnType<typeof createFeed<H
   return null;
 }
 
-function ScopeShown({ scope, cloud, into }: {
-  scope: string; cloud: boolean; into: { current: { scope: string; cloud: boolean } | null };
+function ScopeShown({ scope, cloud, disclosureOwner, into }: {
+  scope: string; cloud: boolean; disclosureOwner: string | null;
+  into: { current: { scope: string; cloud: boolean; disclosureOwner: string | null } | null };
 }) {
   useEffect(() => {
-    into.current = { scope, cloud };
-    if (cloud) rememberCloudScope(scope);
-  }, [scope, cloud, into]);
+    into.current = { scope, cloud, disclosureOwner };
+    if (cloud) rememberCloudScope(scope, disclosureOwner);
+  }, [scope, cloud, disclosureOwner, into]);
   return null;
 }
 

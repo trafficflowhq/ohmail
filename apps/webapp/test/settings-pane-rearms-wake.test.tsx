@@ -10,7 +10,8 @@ import { findByRole, getByRole } from "@testing-library/react";
 import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { NONE } from "@ohmail/app/host";
 import { mirror } from "../../../packages/app/test/calsetup/world.js";
-import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
 import { bindApiOwner } from "../app/api-client";
 import messages from "../messages/en.json";
 import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
@@ -133,7 +134,7 @@ function WebSettings({ door, calendar }: { door: NotificationHost; calendar: boo
   const scope = "account-b";
   const frame = useBrowserMail(NONE, WEB_MAIL_PARTS);
   const { host } = fakeHost({
-    engine: NO_ENGINE, scope, service: "self", places: { settings: frame.places.settings },
+    engine: fakeMail([]).engine, scope, service: "self", above: frame.above, places: { settings: frame.places.settings },
     wires: { calendar: calendar ? calendarPort : NONE },
   });
   const consent = useConsentState(false, scope, "none");

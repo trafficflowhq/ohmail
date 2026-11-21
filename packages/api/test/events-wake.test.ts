@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createApp, apiRoutes, type ApiDeps, type ChangeWakeHub, type SseConfig } from "@trafficflow/api";
+import { users } from "@trafficflow/db";
 import { resetSseCounters, sseLiveCounts } from "../src/routes/events.js";
 import { makeDeps, req, FIXED_NOW } from "./helpers.js";
 
@@ -22,7 +23,7 @@ import { makeDeps, req, FIXED_NOW } from "./helpers.js";
  *      the poll loop keeps running underneath a healthy hub (reliability floor, not fallback).
  *
  * Every case presets the session (the subject is the stream machinery, not auth) and stubs
- * the db to the one query the poll makes, exactly as `events-cost.test.ts` does.
+ * the db to admit that user and script the poll, as `events-cost.test.ts` does.
  */
 const app = createApp(apiRoutes);
 
@@ -33,7 +34,6 @@ const PRESET_SESSION: ApiDeps["session"] = {
   lastTwofaAt: null,
   scope: "full",
   via: "bearer",
-  emailVerifiedAt: FIXED_NOW,
 };
 const ACCT = PRESET_SESSION!.accountId;
 
@@ -45,7 +45,11 @@ const ACCT = PRESET_SESSION!.accountId;
 function pollOn(db: object, onPoll: () => Promise<Array<{ max: string | null; live: boolean }>>): void {
   Object.defineProperty(db, "select", {
     configurable: true, writable: true,
-    value: () => ({ from: () => ({ where: () => onPoll() }) }),
+    value: () => ({
+      from: (table: unknown) => ({
+        where: () => table === users ? { limit: async () => [{ emailVerifiedAt: FIXED_NOW }] } : onPoll(),
+      }),
+    }),
   });
 }
 

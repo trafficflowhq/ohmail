@@ -108,7 +108,7 @@ export function EventCard(p: EventCardProps) {
   }, []);
   const why = p.why ? (
     <span className="oh-tag oh-ecard-tag oh-ecard-why">
-      {p.why.locked ? <Icon name="lock" size={16} className="oh-ecard-why-ico" /> : null}
+      {p.why.locked ? <Icon name="lock" size={16} className="oh-ecard-lock" /> : null}
       {p.why.text}
     </span>
   ) : null;

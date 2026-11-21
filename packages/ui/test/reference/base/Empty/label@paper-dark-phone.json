@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [73.3281, 53.7969, 151.3438, 90.3906],
   "clip": [73, 53, 152, 92],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "phone",
     "face": "paper",

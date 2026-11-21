@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, Folder } from "@ohmail/wire";
 import { fireEvent, within } from "@testing-library/react";
+import { quotedResponse } from "../../../test/support/screener-quote";
 import messages from "../messages/en.json";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
@@ -69,7 +70,10 @@ function installFetch(autoSuggest: boolean): void {
       idempotencyKey: headers.get("Idempotency-Key"),
     });
     if (path.startsWith("/screener/suggest")) {
-      return suggestReply(raw as { senders: string[]; dryRun?: boolean });
+      const body = raw as { senders: string[]; dryRun?: boolean };
+      const response = suggestReply(body);
+      return body.dryRun ? quotedResponse(response, body.senders, (sender) =>
+        SEVENTY_FOUR.find((letter) => letter.from.address === sender)!.id) : response;
     }
     return listReply();
   }) as typeof fetch;
@@ -149,6 +153,7 @@ async function mountLive(letters = TWELVE, autoSuggest = false): Promise<void> {
     window.location.hash = "#/screener";
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
+  await act(async () => { await vi.dynamicImportSettled(); });
   await tick(2500);
 }
 
@@ -186,7 +191,7 @@ describe("a Screener with nothing left to buy still shows the AI surface", () =>
     listReply = () => answers(SEVENTY_FOUR);
     const newlyQuoted = exactNames(SEVENTY_FOUR.slice(0, 3));
     suggestReply = (body) => {
-      const quoted = body.senders.filter((sender) => newlyQuoted.includes(sender)).length;
+      const quoted = body.senders.length === 10 ? 0 : body.senders.filter((sender) => newlyQuoted.includes(sender)).length;
       return json({
         dryRun: true, requested: body.senders.length, quoted, quotedCredits: quoted,
         charged: 0, suggestions: [], skipped: [],
@@ -195,8 +200,15 @@ describe("a Screener with nothing left to buy still shows the AI surface", () =>
     await mountLive(SEVENTY_FOUR);
     await press("Suggest again…");
     expect(document.body.textContent).toContain("all 74");
-    expect(document.body.textContent).toContain("Suggest again for the first");
+    expect(within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain })).toBeTruthy();
     expect(document.body.textContent).toContain("Suggest again for 3 senders");
+    await press("10");
+    const menu = within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain });
+    expect(within(menu).getByRole("status").textContent).toBe("No senders in this selection need a new suggestion.");
+    expect(within(menu).queryByRole("button", { name: /^Suggest again for / })).toBeNull();
+    await press("all 74");
+    expect(within(menu).getByRole("button", { name: "Suggest again for 3 senders" })).toBeTruthy();
+    expect(purchases()).toHaveLength(0);
   });
 });
 
@@ -275,10 +287,9 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
       });
     await mountLive();
     await press("Suggest again…");
-    expect(document.body.textContent).toContain("Every one of these already has an answer for their latest mail.");
-    // And the confirm is not pressable over a set the server priced at nothing.
-    const confirm = within(document.body).getByRole("button", { name: /^Suggest again for / });
-    expect(confirm.hasAttribute("disabled")).toBe(true);
+    const menu = within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain });
+    expect(within(menu).getByRole("status").textContent).toBe("No senders need a new suggestion.");
+    expect(within(menu).queryByRole("button", { name: /^Suggest again for / })).toBeNull();
     expect(purchases()).toHaveLength(0);
   });
 

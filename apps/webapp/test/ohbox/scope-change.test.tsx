@@ -87,13 +87,13 @@ describe("a change of scope", () => {
     setStorageOwner(A);
     await draw(a, A);
     await waitFor(() => ids().length === 3, "A's three rows");
-    // Pick a1 (⌘-click), then open a2: the engine holds it in New.
+    // Open a2 so the engine holds it in New, then pick a1 (⌘-click).
+    await click(ohboxRow(document.body, "a2"), "a2's row");
+    await waitFor(() => a.openRowHeld() === "a2", "A's open row held");
     await act(async () => {
       ohboxRow(document.body, "a1")!.dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true, ctrlKey: true }));
     });
-    await click(ohboxRow(document.body, "a2"), "a2's row");
     await waitFor(() => pickedCount(document.body) === "1", "A's pick");
-    await waitFor(() => a.openRowHeld() === "a2", "A's open row held");
 
     setStorageOwner(B);
     await draw(b, B);
@@ -114,10 +114,10 @@ describe("a change of scope", () => {
     setStorageOwner(A);
     await draw(one, A);
     await waitFor(() => ids().length === 2, "A's two rows");
+    await click(ohboxRow(document.body, "a2"), "a2's row");
     await act(async () => {
       ohboxRow(document.body, "a1")!.dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true, ctrlKey: true }));
     });
-    await click(ohboxRow(document.body, "a2"), "a2's row");
     await waitFor(() => pickedCount(document.body) === "1", "A's pick");
 
     setStorageOwner(B);

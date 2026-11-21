@@ -5,7 +5,7 @@
   "place": "block",
   "target": [532, 644, 620, 228],
   "clip": [532, 644, 620, 228],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -131,6 +131,18 @@
       "fontWeight": "600",
       "fontStyle": "normal",
       "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
       "textTransform": "none",
@@ -626,6 +638,27 @@
     },
     {
       "role": "button",
+      "name": "Cancel",
+      "box": [444.6, 184, 74.3, 32],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "text": [{ "said": "Cancel", "type": 9 }]
+    },
+    {
+      "role": "button",
       "name": "Add ↵",
       "box": [522.9, 184, 81.1, 32],
       "drawn": {
@@ -644,8 +677,8 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [
-        { "said": "Add", "type": 9 },
-        { "said": "↵", "type": 10 }
+        { "said": "Add", "type": 10 },
+        { "said": "↵", "type": 11 }
       ],
       "surfaces": [{ "box": [572, 190, 20, 20], "paint": 20 }]
     }

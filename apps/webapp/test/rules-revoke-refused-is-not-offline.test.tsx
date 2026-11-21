@@ -86,6 +86,7 @@ async function open(
       children: h(ThemeProvider, { children: h(ToastHost, { children: h(MailFrame, { host: recorded }) }) }),
     }));
   });
+  await within(host).findByRole("list", { name: messages.settings.rules }, { timeout: 5000 });
 }
 
 const buttonIn = (el: HTMLElement, name: string | RegExp) =>

@@ -18,7 +18,7 @@ const FACE = "packages/tokens/src/ohmarchy.css";
 
 /** Reads with no declaration anywhere, before this census existed. Each is a gap row, never a new entry. */
 const KNOWN_UNDEFINED = new Set([
-  "--accent-soft-ink", "--bg", "--bg2", "--ink1", "--line", "--mono", "--r-control",
+  "--accent-soft-ink", "--bg", "--bg2", "--ink1", "--line", "--mono",
 ]);
 
 const walk = (dir: string, out: string[] = []): string[] => {

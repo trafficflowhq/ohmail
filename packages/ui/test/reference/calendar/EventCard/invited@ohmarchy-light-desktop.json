@@ -3,9 +3,9 @@
   "state": "invited",
   "look": "ohmarchy-light-desktop",
   "place": "block",
-  "target": [790.8438, 378.5, 372, 381.75],
-  "clip": [790, 378, 373, 383],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [790.8438, 389, 372, 381.75],
+  "clip": [790, 389, 373, 382],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",
@@ -167,7 +167,10 @@
     }
   ],
   "paints": [
-    { "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 2px" },
+    {
+      "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 2px",
+      "clipPath": "path(evenodd, \"M -4000 -4000 H 8000 V 8000 H -4000 Z M -160.28 0 H -10 A 0 0 0 0 1 -10 0 V 271 A 0 0 0 0 1 -10 271 H -160.28 A 0 0 0 0 1 -160.28 271 V 0 A 0 0 0 0 1 -160.28 0 Z\")"
+    },
     { "backgroundColor": "oklch(0.59 0.099 277.3)" },
     {
       "backgroundColor": "oklch(0.938301 0.0320379 112)",

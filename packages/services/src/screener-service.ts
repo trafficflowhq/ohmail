@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import type { ScreenerQuoteGrant } from "@ohmail/wire";
 import {
   messages,
   mailboxes,
@@ -35,7 +36,7 @@ import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import { usageLines } from "./ai-usage-lines.js";
 import type {
   AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy,
-  SenderSignals,
+  KeyProvider, SenderSignals,
 } from "@trafficflow/core/mail";
 import {
   applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
@@ -176,6 +177,8 @@ export interface ScreenerDeps {
 export interface ScreenerSuggestDeps extends ScreenerDeps {
   /** The model. Absent ⇒ `POST /screener/suggest` answers 503; no read path is affected. */
   classifier?: ClassifierPort;
+  /** Stable across processes serving the same deployment. */
+  quoteKeys?: Pick<KeyProvider, "deriveSubkey">;
   /**
    * The AI spend gate FACTORY, per account like every other gate. Absent ⇒ unmetered. A factory
    * rather than a gate because this service is constructed ONCE per host bag and serves every
@@ -495,6 +498,7 @@ export interface ScreenerSuggestBody {
    * ignored field — a money bound that silently disappears is worse than none claimed.
    */
   maxCredits?: unknown;
+  quoteGrant?: unknown;
   /**
    * NOBODY PRESSED THIS ONE — the opt-in's automatic batch says so with `true`. Such a request asks
    * only about held mail {@link automaticAiAdmits} passes, the always-on pass's own rule; a flagged
@@ -599,6 +603,7 @@ export interface ScreenerSuggestResult {
    * multiplies.
    */
   quotedCredits?: number;
+  quoteGrant?: ScreenerQuoteGrant;
   /** Credits this request moved. A re-run over the same mail is a `duplicate` and charges 0. */
   charged: number;
   /**
@@ -1888,9 +1893,11 @@ export class ScreenerService extends ScreenerReadService {
   private readonly pricing: ActionPricing;
   /** See {@link ScreenerSuggestDeps.usageHost}. */
   private readonly usageHost?: AiUsageHost;
+  private readonly quoteKeys?: Pick<KeyProvider, "deriveSubkey">;
+  private quoteKey?: Buffer;
 
   constructor(deps: ScreenerSuggestDeps) {
-    const { classifier, credits, access, remaining, invocationBudgetMs, pricing, usageHost, ...readOnly } = deps;
+    const { classifier, credits, access, remaining, invocationBudgetMs, pricing, usageHost, quoteKeys, ...readOnly } = deps;
     super(readOnly);
     this.classifier = classifier;
     this.credits = credits;
@@ -1899,6 +1906,16 @@ export class ScreenerService extends ScreenerReadService {
     this.invocationBudgetMs = invocationBudgetMs;
     this.pricing = pricing ?? UNPRICED;
     this.usageHost = usageHost;
+    this.quoteKeys = quoteKeys;
+  }
+
+  private quoteProof(
+    account: string, senders: readonly string[], pairs: ScreenerQuoteGrant["pairs"], ceiling: number,
+  ): string {
+    this.quoteKey ??= this.quoteKeys?.deriveSubkey("ohmail screener quote v1") ?? randomBytes(32);
+    return createHmac("sha256", this.quoteKey)
+      .update(JSON.stringify([account, ceiling, senders, pairs.map(({ sender, messageId }) => [sender, messageId])]))
+      .digest("hex");
   }
 
   /**
@@ -1916,6 +1933,7 @@ export class ScreenerService extends ScreenerReadService {
     body: ScreenerSuggestBody,
     opts: {
       idempotency?: ScreenIdempotency | null;
+      requireQuoteGrant?: boolean;
       /** Where a refund this press owes is written down, per request like the drafting route's;
        *  composed wherever {@link ScreenerSuggestDeps.credits} is. Absent on an unmetered host. */
       obligations?: RefundObligationPort;
@@ -1932,6 +1950,12 @@ export class ScreenerService extends ScreenerReadService {
     const ceiling = parseConfirmedCeiling(body);
     /* A press, or the opt-in's automatic batch — the same place, for the same reason. */
     const automatic = parseAutomatic(body);
+    const proof = body?.quoteGrant;
+    if (proof !== undefined && (dryRun || automatic)) throw changedSuggestionQuote();
+    const mustVerify = !dryRun && !automatic && (proof !== undefined || (ceiling !== null && opts.requireQuoteGrant));
+    if (mustVerify && (typeof proof !== "string" || !/^[0-9a-f]{64}$/.test(proof) || ceiling === null)) {
+      throw changedSuggestionQuote();
+    }
     const classifier = this.classifier;
     if (!classifier) {
       // The same grammar as `drafter_unconfigured`: a host with no model is not broken,
@@ -2098,6 +2122,7 @@ export class ScreenerService extends ScreenerReadService {
     const stops: Array<ScreenerSuggestResult["stopped"] | undefined> = senders.map(() => undefined);
     const refusals: Array<GateRefusal | undefined> = senders.map(() => undefined);
     const purchases: Purchase[] = [];
+    const pairs: Array<ScreenerQuoteGrant["pairs"][number]> = [];
     // The same check the always-on pass runs, over the senders THIS press named — the pressed
     // path asks the same question about the same mail, so withholding the facts here would leave
     // the defect standing on the path a person pays for.
@@ -2139,6 +2164,7 @@ export class ScreenerService extends ScreenerReadService {
         };
         return;
       }
+      if (dryRun || mustVerify) pairs.push({ sender, messageId: r.messageId });
       /**
        * THE QUOTE IS THE CEILING — the first of two bounds, and the lower one is
        * {@link MAX_SUGGEST_SENDERS}, which caps the set before this loop sees it.
@@ -2161,6 +2187,14 @@ export class ScreenerService extends ScreenerReadService {
       if (dryRun) return;
       purchases.push({ index, sender, row: r });
     });
+
+    if (mustVerify && typeof proof === "string" && ceiling !== null) {
+      const expected = this.quoteProof(ctx.accountId, senders, pairs, ceiling);
+      if (price === null || pairs.length * price > ceiling ||
+          !timingSafeEqual(Buffer.from(proof, "hex"), Buffer.from(expected, "hex"))) {
+        throw changedSuggestionQuote();
+      }
+    }
 
     const grant = automatic
       ? (purchases.length > 0 ? await readSuggestionGrant(asTx(ctx), ctx.accountId) : null)
@@ -2531,6 +2565,9 @@ export class ScreenerService extends ScreenerReadService {
       const dto: ScreenerSuggestResult = {
         dryRun, requested: senders.length, quoted,
         ...(price !== null ? { quotedCredits: quoted * price } : {}), charged,
+        ...(dryRun && !automatic && price !== null && pairs.length === quoted ? {
+          quoteGrant: { pairs, proof: this.quoteProof(ctx.accountId, senders, pairs, quoted * price) },
+        } : {}),
         ...(stopped ? { stopped } : {}),
         ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
         suggestions, skipped,
@@ -2737,6 +2774,10 @@ function parseSenderSet(body: ScreenerSuggestBody): string[] {
     throw new ServiceError("validation_failed", 400, "senders must name at least one sender");
   }
   return [...out];
+}
+
+function changedSuggestionQuote(): ServiceError {
+  return new ServiceError("suggest_quote_changed", 409, "The waiting mail changed. Check the quote again.");
 }
 
 /**

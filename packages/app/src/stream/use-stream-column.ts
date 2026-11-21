@@ -76,7 +76,7 @@ export function useStreamViewport(model: StreamModel) {
     ids,
     getRoot: () => root.current,
     cardAttribute: "data-stream-window-item",
-    endFlight: () => (model.read.flying() ? model.read.hands() : null),
+    endFlight: () => (model.read.edgeFlight() ? model.read.hands() : null),
   });
   const mounted = useMemo(() => ids.slice(start, end), [ids, start, end]);
   const openingIds = useMemo(() => ids.slice(0, opening), [ids, opening]);
@@ -258,7 +258,7 @@ function useStreamLanding({
    * Land the addressed card once per opening. Links and Search hits expand it. A local cursor step keeps its fold.
    * Only the explicit Search entry gives this landing permission to read.
    */
-  const { scroll, entered: entry, read, openedLocally, toolbar } = model;
+  const { scroll, entered: entry, read, openedLocally, openedInPlace, toolbar } = model;
   useEffect(() => {
     if (openAt < 0 || openId === null) {
       const previous = landed.current;
@@ -285,9 +285,8 @@ function useStreamLanding({
       return;
     }
     const local = openedLocally(openId);
-    if (local && linkedOpen !== null && linkedOpen !== openId) {
+    if (local && linkedOpen !== null && linkedOpen !== openId)
       setWhole((was) => new Set(was).add(linkedOpen));
-    }
     const mayExpand = !phone && (request !== null || !local);
     const prior = toolbar.current;
     const priorToolbar =
@@ -308,6 +307,7 @@ function useStreamLanding({
       read.enter(openId);
       request.taken();
     }
+    if (openedInPlace(openId)) return;
     scroll.scrollTo(
       openId,
       mayExpand
@@ -334,6 +334,7 @@ function useStreamLanding({
     phone,
     read,
     openedLocally,
+    openedInPlace,
     linkedOpen,
     ensure,
     routeOpen,

@@ -10,6 +10,8 @@ import { serverHello } from "../../app/hello";
 import { useDevicesDoor } from "../../app/(product)/mailbox/devices-door";
 import { ALLOWED_API_ORIGINS } from "../../app/api-origin";
 import { Frame } from "@ohmail/app/frame";
+import { NONE } from "@ohmail/app/host";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
 import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
 import { fakeMail } from "../../../../packages/app/test/reader/support/mail.js";
@@ -184,6 +186,11 @@ async function laneIs(state: "warm" | "cold"): Promise<void> {
   server.forget();
 }
 
+function DeviceConsent({ children }: { children?: ReactNode }) {
+  const consent = useConsentState(false, "devices-visit", NONE);
+  return <ConsentContext.Provider value={consent}>{children}</ConsentContext.Provider>;
+}
+
 /** One visit to mounted Settings, from the same warm or cold API state as the original walk. */
 async function mountedWalk(lane: "warm" | "cold") {
   const settings = mailSettings({
@@ -197,7 +204,7 @@ async function mountedWalk(lane: "warm" | "cold") {
   });
   const pairingHost = { ...host, capabilities: { ...host.capabilities, pairing: "account" as const } };
   await laneIs(lane);
-  const asked = await walk(<Frame host={pairingHost} />, {
+  const asked = await walk(<DeviceConsent><Frame host={pairingHost} /></DeviceConsent>, {
     factorVerified: () => verify!(),
     confirm: (name) => press(name, screen.getByRole("dialog")),
   });

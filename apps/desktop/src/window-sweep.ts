@@ -20,6 +20,7 @@ import {
 import { isOwnerShaped } from "@ohmail/app-logic/storage/owner-cookie";
 import { RETIRED_ID_SETS } from "@ohmail/app-logic/storage/persisted-ui";
 import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
+import { unsubscribeSeenKey } from "@ohmail/app-logic/screener";
 import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
 import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import { namesOwner } from "@ohmail/app-logic/storage/storage-owner";
@@ -45,15 +46,35 @@ export const WINDOW_SCOPED_PREFIXES: readonly string[] = [
  */
 export const CLOUD_SCOPE_KEY = "ohmail.desktop.cloudScope";
 
-export function rememberCloudScope(scope: string): void {
+const CLOUD_DISCLOSURE_OWNER_KEY = "ohmail.desktop.cloudDisclosureOwner";
+
+export function rememberCloudScope(scope: string, owner?: string | null): void {
   try {
     window.localStorage.setItem(CLOUD_SCOPE_KEY, scope);
+    if (owner && isOwnerShaped(owner)) {
+      window.localStorage.setItem(CLOUD_DISCLOSURE_OWNER_KEY, JSON.stringify({ scope, owner }));
+    } else {
+      window.localStorage.removeItem(CLOUD_DISCLOSURE_OWNER_KEY);
+    }
   } catch { /* a refused jar holds no keys to sweep either */ }
 }
 
 export function rememberedCloudScope(): string | null {
   try {
     return window.localStorage.getItem(CLOUD_SCOPE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** The remembered account is attached to the last mailbox this window actually served. */
+export function rememberedCloudDisclosureOwner(): string | null {
+  try {
+    const raw = window.localStorage.getItem(CLOUD_DISCLOSURE_OWNER_KEY);
+    if (raw === null) return null;
+    const marker = JSON.parse(raw) as { scope?: unknown; owner?: unknown } | null;
+    return typeof marker?.scope === "string" && marker.scope === rememberedCloudScope() &&
+      typeof marker.owner === "string" && isOwnerShaped(marker.owner) ? marker.owner : null;
   } catch {
     return null;
   }
@@ -90,19 +111,24 @@ export function forgetWindowScopes(scopes: readonly (string | null | undefined)[
  * nothing else would ever prune them. The send-record door census admits this function, and no other, to name
  * the jar's prefix.
  */
-export function forgetErasedWindowScopes(scopes: readonly (string | null | undefined)[]): LocalSweep | null {
+export function forgetErasedWindowScopes(
+  scopes: readonly (string | null | undefined)[], disclosureOwner?: string | null,
+): LocalSweep | null {
   return sweepScopes(scopes, (key, scope) =>
     key === `${SEND_LOCKS_PREFIX}${scope}` || key === sentCopyNotesKey(scope) || namesOwner(key, scope)
-    || RETIRED_ID_SETS.includes(key), true);
+    || RETIRED_ID_SETS.includes(key), true,
+    disclosureOwner && isOwnerShaped(disclosureOwner) && disclosureOwner !== "local" && disclosureOwner !== "anon"
+      ? unsubscribeSeenKey(disclosureOwner) : undefined);
 }
 
 function sweepScopes(
   scopes: readonly (string | null | undefined)[], alsoGone: (key: string, scope: string) => boolean, notes = false,
+  exactKey?: string,
 ): LocalSweep | null {
   const owed = [...new Set(scopes.filter((s): s is string => typeof s === "string" && isOwnerShaped(s)))];
-  if (owed.length === 0) return null;
+  if (owed.length === 0 && !exactKey) return null;
   const keys = dropLocalStorageKeysWhere((k) =>
-    k === LEGACY_COMPOSE_DRAFT_KEY || k.startsWith(REPLY_DRAFT_PREFIX) || k.startsWith(REPLY_META_PREFIX)
+    k === exactKey || (owed.length > 0 && (k === LEGACY_COMPOSE_DRAFT_KEY || k.startsWith(REPLY_DRAFT_PREFIX) || k.startsWith(REPLY_META_PREFIX)))
     || owed.some((s) => scopedTo(k, s) || k === windowSentFoldersKey(s) || alsoGone(k, s)));
   const sweeps = [keys, ...owed.map((s) => clearBootCaches(s))];
   // The tab's notes naming the mailbox, an erasure's alone; one left over keeps the marker below for a retry.
@@ -115,6 +141,7 @@ function sweepScopes(
     const marker = rememberedCloudScope();
     if (marker !== null && owed.includes(marker)) {
       try {
+        window.localStorage.removeItem(CLOUD_DISCLOSURE_OWNER_KEY);
         window.localStorage.removeItem(CLOUD_SCOPE_KEY);
       } catch { /* kept: the next end sweeps again */ }
     }

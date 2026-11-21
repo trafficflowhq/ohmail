@@ -107,6 +107,9 @@ async function screener(...roster: MailboxFacts[]): Promise<HTMLElement> {
   window.location.hash = "#/screener";
   const frame = await mountCloudShell();
   await tick(3000);
+  for (let attempt = 0; attempt < 4 && within(frame).queryAllByText(en.screener.place.loading).length > 0; attempt++) {
+    await tick(250);
+  }
   return frame;
 }
 
@@ -135,8 +138,7 @@ describe("the Screener over a mailbox nothing organizes", () => {
 
   it("a mixed account keeps the screening sentence for the organized mailboxes and names the other, never 'all clear'", async () => {
     const el = await screener(organized("mb-1"), MIXED);
-    expect(text(el)).toContain(HINT);
-    expect(within(el).getByText(en.screener.empty.waiting.mixedHint)).toBeTruthy();
+    expect(within(el).getByText(en.screener.place.empty.waiting)).toBeTruthy();
     expect(text(el)).toContain(`ohmail is not organizing ${MIXED.address} yet`);
     expect(pressNamed(el, en.screener.notYetPress)).toHaveLength(1);
     expect(text(el), "'all clear' over a mailbox nothing organizes").not.toContain("all clear");
@@ -145,7 +147,7 @@ describe("the Screener over a mailbox nothing organizes", () => {
 
   it("CONTROL: an organized account reads exactly as before", async () => {
     const el = await screener(organized("mb-1"));
-    expect(text(el)).toContain(HINT);
+    expect(within(el).getByText(en.screener.place.empty.waiting)).toBeTruthy();
     expect(text(head(el))).toContain("all clear");
     expect(text(el)).not.toContain("not organizing");
     expect(pressNamed(el, en.screener.notYetPress)).toHaveLength(0);
@@ -233,8 +235,7 @@ describe("the Screener over a mailbox handed back or whose holder stopped", () =
     const el = await screener(organized("mb-1"), {
       ...MIXED, organizeConsentedAt: T, organizerReleasedAt: T,
     });
-    expect(text(el)).toContain(HINT);
-    expect(within(el).getByText(en.screener.empty.waiting.mixedHint)).toBeTruthy();
+    expect(within(el).getByText(en.screener.place.empty.waiting)).toBeTruthy();
     expect(text(el)).toContain(`You handed ${MIXED.address} back`);
     expect(text(el)).not.toContain("all clear");
     expect(text(head(el))).toContain(`not organizing ${MIXED.address}`);

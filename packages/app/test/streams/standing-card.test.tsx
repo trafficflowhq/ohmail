@@ -21,9 +21,9 @@ it.each([
     replacement = replaceEngine("acct-1", [make("new", 14), ...letters]);
   });
   expect(
-    within(region)
-      .getAllByRole("heading")
-      .map((heading) => heading.textContent),
+    [...region.querySelectorAll<HTMLElement>("[data-stream-item]")].map(
+      (item) => within(item).getByRole("heading").textContent,
+    ),
   ).toEqual([make("new", 14).subject, ...letters.map((letter) => letter.subject)]);
   expect(list.queryByRole("option", { selected: true })?.dataset.id).toBe("first");
   expect(within(region).queryByRole("button", { name: "Collapse" })).toBeNull();

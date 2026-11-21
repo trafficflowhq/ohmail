@@ -3586,6 +3586,7 @@ export interface ScreenerSuggestWire {
   quoted: number;
   /** ABSENT when the server can state no price: then there is no quote and no purchase. */
   quotedCredits?: number;
+  quoteGrant?: import("@ohmail/wire").ScreenerQuoteGrant;
   /** Credits actually moved. Lower than the quote when a sender's answer was already bought. */
   charged: number;
   /** Set when the spend gate stopped the run PART-WAY; absent on a run that served everything. */
@@ -3643,7 +3644,7 @@ export const screener = {
    */
   suggest: (
     senders: string[],
-    opts: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; automatic?: boolean; maySend?: () => boolean } = {},
+    opts: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; quoteGrant?: string; automatic?: boolean; maySend?: () => boolean } = {},
     expectedOwner?: string,
   ) =>
     api<ScreenerSuggestWire>(SUGGESTION_PATH, {
@@ -3657,6 +3658,7 @@ export const screener = {
         ...(opts.dryRun
           ? { senders, dryRun: true }
           : { senders, ...(typeof opts.maxCredits === "number" ? { maxCredits: opts.maxCredits } : {}) }),
+        ...(!opts.dryRun && opts.quoteGrant !== undefined ? { quoteGrant: opts.quoteGrant } : {}),
         ...(opts.automatic === true ? { automatic: true } : {}),
       },
       ...(opts.idempotencyKey ? { headers: { "Idempotency-Key": opts.idempotencyKey } } : {}),

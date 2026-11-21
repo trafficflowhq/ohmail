@@ -120,6 +120,10 @@ function engineAnswering(refuseBuy?: { status: number; code: string }): { asked:
         requested: senders.length,
         quoted: senders.length,
         quotedCredits: senders.length * 2,
+        ...(dryRun ? { quoteGrant: {
+          proof: "fixture-quote",
+          pairs: senders.map((sender, i) => ({ sender, messageId: "m-" + i })),
+        } } : {}),
         charged: dryRun ? 0 : senders.length * 2,
         remainingCredits: dryRun ? undefined : 500,
         suggestions: dryRun ? [] : senders.map((s, i) => ({

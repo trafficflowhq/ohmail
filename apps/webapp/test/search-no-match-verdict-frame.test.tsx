@@ -220,7 +220,10 @@ describe("the no-match verdict is not held behind the device pass (a large mailb
     // Said once: the verdict, never a title beside it,
     // and how far into a long message the search reads.
     expect(text()).not.toContain("Nothing matched.");
-    expect(text().match(/nothing matched/gi)?.length).toBe(1);
+    expect(within(host).getAllByText((_, node) => node?.textContent === messages.search.nothingMatched, {
+      selector: ".oh-empty-label",
+    })).toHaveLength(1);
+    expect(text().match(/— nothing matched/g)?.length).toBe(1);
     expect(within(host).getByText("A long message is searched in its first 65,536 characters.").textContent).toBe("A long message is searched in its first 65,536 characters.");
   }, 30_000);
 

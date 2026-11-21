@@ -3,9 +3,9 @@
   "state": "tell",
   "look": "paper-light-desktop",
   "place": "block",
-  "target": [945.4219, 670, 376, 207.7813],
-  "clip": [945, 670, 377, 208],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [945.4219, 655, 376, 207.7813],
+  "clip": [945, 655, 377, 208],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",

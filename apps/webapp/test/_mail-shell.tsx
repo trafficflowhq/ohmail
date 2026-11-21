@@ -26,7 +26,7 @@ import {
   type HostSession, type JunkWire, type LinkedDraft, type OrganizerNoticeWire, type SuggestWire, type TrashWire,
   type LinkIn, type None, type ReaderEntry, type Signal,
 } from "@ohmail/app/host";
-import { NO_PANE_PARTS, useMailSupplies, useThemeLook, type MailHostParts, type MailPaneParts } from "@ohmail/app/mail";
+import { NO_PANE_PARTS, prepareWriting, useMailSupplies, useThemeLook, type MailHostParts, type MailPaneParts } from "@ohmail/app/mail";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
@@ -53,6 +53,8 @@ import type { ProfileImportTransport } from "../app/shell/ProfileImportCard";
 import type { ImageDoor } from "../app/shell/remote-images";
 import { CLOUD_WIRE as CLOUD_SUGGEST } from "../app/(product)/mailbox/suggest-wire";
 import { fakePane, ok, row } from "../../../packages/app/test/mailboxes/pane/support.js";
+
+await prepareWriting();
 
 /** The scope this harness hands where a test names none: an account of its own, never a key's word for nobody. */
 export const HARNESS_SCOPE = "acc-harness";

@@ -58,7 +58,7 @@ export type ServiceErrorCode =
   | "server_error" | "session_conflict" | "shared_provider_domain" | "sign_in_slowed" | "signed_out"
   | "signup_capacity" | "signup_unavailable" | "smtp_not_settled" | "sse_capacity" | "sse_disabled"
   | "sse_too_many_streams" | "staging_quota_exceeded" | "stale_press" | "step_up_required"
-  | "stored_login_not_cleared" | "subscription_required" | "suggest_unconfigured"
+  | "stored_login_not_cleared" | "subscription_required" | "suggest_unconfigured" | "suggest_quote_changed"
   | "sync_engine_absent" | "text_kept" | "trash_body_too_large" | "trash_message_gone"
   | "unauthorized" | "unavailable" | "unprocessable" | "unsubscribe_already_recorded"
   | "unsubscribe_author_failed_authentication" | "unsubscribe_budget_spent"

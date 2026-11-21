@@ -79,6 +79,7 @@ async function mountShell(): Promise<void> {
     );
   });
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await screen.findByRole("navigation", { name: "Places" });
 }
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {

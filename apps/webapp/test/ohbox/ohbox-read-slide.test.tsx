@@ -131,6 +131,7 @@ describe("a conversation moves as one row", () => {
        `ohboxView`'s filing; the rule itself is pinned by the engine census, where putting it back
        to per message reddens it. What this measures is the view: the read member rides the row,
        the row stays one, and it leaves New only with its last unread member. */
+    layout.heights.t1 = 900; // Opening at the first unread shows only t1.
     await mount([
       { id: "t3", unread: true, threadId: "T", n: 3 },
       { id: "t2", unread: true, threadId: "T", n: 2 },
@@ -141,23 +142,26 @@ describe("a conversation moves as one row", () => {
     expect(idsInGroup("New")).toEqual(["t3", "solo"]);
     expect(rowEl("t3").dataset.ids?.split(" ").length, "the row stands for its 3 letters").toBe(3);
 
-    // Read the conversation's lead, then leave it.
+    // Read the first unread letter, then leave the conversation.
     await readAndLeave("t3", "solo");
     await settle();
 
     // The conversation is still waiting — two replies of it are unread — so the row stands.
     // The read message RIDES that row (2026-09-28): the conversation is one row, and
     // its count is the conversation's length, not what is left unread. The row keeps t3's id:
-    // a conversation opens on its newest, its older unread members wait.
+    // it represents the entire conversation.
     expect(idsInGroup("New")).toEqual(["t3", "solo"]);
     expect(rowEl("t3").dataset.ids?.split(" ").length, "the row stands for its 3 letters").toBe(3);
     expect(idsInGroup("Earlier")).toEqual([]);
 
     // Work through the rest, read in the conversation's column. The last one takes the row with it.
-    await readInColumn("t2");
+    const readOnOpen = writes().flatMap((w) => w.ids);
+    expect(readOnOpen).toEqual(["t1"]);
+    const rest = ["t3", "t2", "t1"].filter((id) => !readOnOpen.includes(id));
+    await readInColumn(rest[0]!);
     expect(idsInGroup("New")).toEqual(["t3", "solo"]);
 
-    await readInColumn("t1");
+    await readInColumn(rest[1]!);
     expect(idsInGroup("New")).toEqual(["solo"]);
     // The whole conversation is one row under Earlier now.
     expect(idsInGroup("Earlier")).toEqual(["t3"]);

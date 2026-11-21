@@ -5,7 +5,7 @@
   "place": "block",
   "target": [1067.75, 180.9063, 247.7656, 55.1875],
   "clip": [1067, 180, 249, 57],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -44,8 +44,8 @@
   ],
   "nodes": [
     {
-      "role": "menu",
-      "name": "",
+      "role": "dialog",
+      "name": "Tracker blocked",
       "box": [0, 0, 247.8, 55.2],
       "drawn": {
         "color": "rgb(18, 16, 14)",

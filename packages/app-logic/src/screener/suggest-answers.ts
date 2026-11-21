@@ -1,3 +1,5 @@
+import type { ScreenerQuoteGrant } from "@ohmail/wire";
+
 /**
  * WHAT THE SUGGESTION WIRE ANSWERS, AS THE RUN READS IT: one page of what is already bought, and the answer to a
  * priced or bought set, each field with the type the server client's own declaration gives it (that declaration
@@ -48,6 +50,7 @@ export interface ScreenerSuggestWire {
   requested: number;
   quoted: number;
   quotedCredits?: number;
+  quoteGrant?: ScreenerQuoteGrant;
   charged: number;
   stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
   remainingCredits?: number;

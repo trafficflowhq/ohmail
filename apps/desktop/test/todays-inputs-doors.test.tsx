@@ -149,7 +149,9 @@ describe("the desktop's host, read door by door at the contract", () => {
     const host = await draw(props(selfHosted));
     expect(host.capabilities.service).toBe("self");
     expect(host.features.security).not.toBe(NONE);
-    expect(host.features.account, "the managed browser action belongs to the managed service").toBe(NONE);
+    expect(host.features.account, "a confirmed account on a self-hosted server: Account opens that server's own page").not.toBe(NONE);
+    const unconfirmed = await draw(props(selfHosted, { account: null }));
+    expect(unconfirmed.features.account, "no confirmed account, no Account").toBe(NONE);
   });
 
   it("on a paired door: the other computer's away and nothing priced", async () => {

@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, type CSSProperties } from "react";
 import { cx, toneOf, toneStyle, type CalendarTone } from "../tone.js";
 import { bridgeShape, type BridgeForm, type BridgeInput } from "./bridge-shape.js";
 import "./event-bridge.css";
@@ -22,18 +22,14 @@ export interface EventBridgeProps extends BridgeInput {
  * app the point the card grows from.
  */
 export function EventBridge({ tone, width, height, still, ...input }: EventBridgeProps) {
-  const fade = `oh-bridge-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+  const edge = `oh-bridge-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const shape = bridgeShape(input);
   if (!shape) return null;
   const own = toneOf(tone);
-  const paint = `url(#${fade})`;
   const turn = shape.turned ? "matrix(0 1 1 0 0 0)" : undefined;
   const form = (name: "liquid" | "straight", { fill, sides }: BridgeForm) => (
     <g className="oh-bridge-form" data-form={name} transform={turn}>
-      <path className="oh-bridge-fill" d={fill} fill={paint} />
-      {shape.ends.map((d) => (
-        <path key={d} className="oh-bridge-end" d={d} stroke={paint} strokeWidth={shape.endWidth} />
-      ))}
+      <path className="oh-bridge-fill" d={fill} fill="var(--oh-cal-open, var(--oh-cal-open-plain))" />
       {sides.map((d) => (
         <path key={d} className="oh-bridge-edge" d={d} />
       ))}
@@ -44,18 +40,23 @@ export function EventBridge({ tone, width, height, still, ...input }: EventBridg
       className={cx("oh-bridge", own.className)}
       data-tone={own["data-tone"]}
       data-side={input.side}
-      data-meets={shape.meets}
       data-still={still ? "" : undefined}
       aria-hidden
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      style={{ ...toneStyle(tone), transformOrigin: `${shape.root.x}px ${shape.root.y}px` }}
+      style={
+        {
+          ...toneStyle(tone),
+          transformOrigin: `${shape.root.x}px ${shape.root.y}px`,
+          "--oh-bridge-gradient": `url(#${edge})`,
+        } as CSSProperties
+      }
     >
       <defs>
-        <linearGradient id={fade} gradientUnits="userSpaceOnUse" x1={shape.from} y1={0} x2={shape.to} y2={0}>
-          <stop className="oh-bridge-near" offset="0" />
-          <stop className="oh-bridge-far" offset="1" />
+        <linearGradient id={edge} gradientUnits="userSpaceOnUse" x1={shape.from} y1={0} x2={shape.to} y2={0}>
+          <stop className="oh-bridge-edge-start" offset="0" />
+          <stop className="oh-bridge-edge-end" offset="1" />
         </linearGradient>
       </defs>
       {form("liquid", shape.liquid)}

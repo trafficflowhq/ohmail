@@ -56,15 +56,6 @@
     ]
   },
   {
-    "key": "BlockedImages/said",
-    "since": "2026-11-14",
-    "reason": "the kit says the sentence in a card named for what was kept out; the reference holds it in an unnamed menu",
-    "nodes": [
-      { "role": "menu", "name": "" },
-      { "role": "dialog", "name": "Tracker blocked" }
-    ]
-  },
-  {
     "key": "FileNotArrived/set@paper-light-foldl",
     "question": "picture",
     "since": "2026-11-14",
@@ -115,7 +106,7 @@
   {
     "key": "Composer",
     "reason": "The kit names the letter's sheet as a region and each line of people as a group; the reference leaves them unnamed. They are read as the reference's plain boxes, so the sheet, the lines' words and their fields stand outside every node as the reference's do and still bind.",
-    "since": "2026-11-15",
+    "since": "2026-11-21",
     "plain": [".oh-composer", ".oh-recipients-line"]
   },
   {
@@ -133,7 +124,7 @@
   {
     "key": "Recipients",
     "reason": "The kit gives each line of people its group, named by the line; the reference leaves the lines unnamed. The lines are read as the reference's plain boxes, so their words and fields stand outside every node as the reference's do and still bind.",
-    "since": "2026-11-15",
+    "since": "2026-11-21",
     "plain": [".oh-recipients-line"]
   },
   {
@@ -671,30 +662,6 @@
     "question": "names",
     "since": "2026-11-16",
     "reason": "The row's name holds the address, which has left the line whole beside the label (the kit lets it leave by layout alone; the reference's script takes it out of the row). The control that chooses another place says whether its menu is open and carries its name alone, where the reference's holds unseen words. Every node's box and drawn values are read."
-  },
-  {
-    "key": "Row/waiting@paper-light-desktop",
-    "question": "boxes",
-    "since": "2026-11-16",
-    "reason": "The reference holds the unseen words of the control that chooses another place in a box of one pixel inside it; the kit names the control and draws no such box. The place's two controls stand on the reference's boxes."
-  },
-  {
-    "key": "Row/waiting@paper-dark-desktop",
-    "question": "boxes",
-    "since": "2026-11-16",
-    "reason": "The reference holds the unseen words of the control that chooses another place in a box of one pixel inside it; the kit names the control and draws no such box. The place's two controls stand on the reference's boxes."
-  },
-  {
-    "key": "Row/waiting@ohmarchy-light-desktop",
-    "question": "boxes",
-    "since": "2026-11-16",
-    "reason": "The reference holds the unseen words of the control that chooses another place in a box of one pixel inside it; the kit names the control and draws no such box. The place's two controls stand on the reference's boxes."
-  },
-  {
-    "key": "Row/waiting@ohmarchy-dark-desktop",
-    "question": "boxes",
-    "since": "2026-11-16",
-    "reason": "The reference holds the unseen words of the control that chooses another place in a box of one pixel inside it; the kit names the control and draws no such box. The place's two controls stand on the reference's boxes."
   },
   {
     "key": "SettingsSheet/choice@paper-light-phone",

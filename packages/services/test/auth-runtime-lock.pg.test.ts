@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { accounts, bindDb, changeLog, refreshTokens, sessions, users } from "@trafficflow/db";
 import {
   credentials, loginTokens, makeOwnedDb, readLock, totpSecrets, webauthnChallenges, type OwnedDb,
@@ -263,9 +263,16 @@ describe.skipIf(!own)("sign-in under the forced account lock", () => {
   it("resolves a bearer’s user in the account named by the session row", async () => {
     const a = await person("A");
     const f = await family(a);
-    expect(await resolveSession(bindDb(api.db, { account: null }), f.access, now)).toMatchObject({
-      accountId: a.accountId, userId: a.userId, sessionId: f.sessionId, emailVerifiedAt: now,
+    const found = await resolveSession(bindDb(api.db, { account: null }), f.access, now);
+    expect(found).toMatchObject({
+      accountId: a.accountId, userId: a.userId, sessionId: f.sessionId,
     });
+    const [user] = await bindDb(api.db, { account: found!.accountId })
+      .select({ emailVerifiedAt: users.emailVerifiedAt })
+      .from(users)
+      .where(and(eq(users.id, found!.userId), eq(users.accountId, found!.accountId)))
+      .limit(1);
+    expect(user).toEqual({ emailVerifiedAt: now });
   });
 
   it("a resolved bearer’s scope hides the other account’s session", async () => {

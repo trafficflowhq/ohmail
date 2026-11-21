@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { unsubscribeSeenKey } from "@ohmail/app-logic/screener";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -38,6 +39,7 @@ const CLOUD_SERVING: EngineStatus = {
   mode: "cloud",
   address: "someone@ohmail.app",
   mailboxId: "mbx-1",
+  accountId: "cloud-account",
   credentialState: "ready",
 };
 
@@ -225,10 +227,16 @@ describe("a deleted hosted account", () => {
     fakeShell(LIVE);
     expect(mounted(await render())).toBe(true);
     const keys = seedWindowKeys("erased");
+    const seen = unsubscribeSeenKey("cloud-account");
+    const other = unsubscribeSeenKey("another-account");
+    localStorage.setItem(seen, "1");
+    localStorage.setItem(other, "1");
     await quit();
     fakeShell(ERASED, { status: { ...CLOUD_SERVING, mailboxId: "mbx-2" } });
     expect((await render()).textContent ?? "").toContain(DOOR_COPY.gateAccountErased(machineWord()));
     expectSwept(keys, "the next launch");
+    expect(localStorage.getItem(seen)).toBeNull();
+    expect(localStorage.getItem(other)).toBe("1");
   });
 });
 

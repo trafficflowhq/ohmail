@@ -42,7 +42,7 @@ describe("the block is mounted, never re-spelled", () => {
   it("both surfaces mount MessageHead and neither draws its own chips", () => {
     const parts = [
       "../../../packages/app/src/reader/Letter.tsx",
-      "../../../packages/app/src/stream/StreamColumn.tsx",
+      "../../../packages/app/src/stream/StreamItem.tsx",
     ];
     for (const part of parts) {
       const source = code(readFileSync(new URL(part, import.meta.url), "utf8"));

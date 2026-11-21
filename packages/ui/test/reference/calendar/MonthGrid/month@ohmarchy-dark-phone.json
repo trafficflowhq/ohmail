@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 1392, 816],
   "clip": [24, 24, 1392, 816],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "phone",
     "face": "ohmarchy",
@@ -144,8 +144,10 @@
     { "boxShadow": "oklch(0.83 0.085 151.7) 0px 0px 0px 2px inset" },
     { "outline": "1px dashed rgb(141, 150, 188) -1px" },
     { "boxShadow": "oklch(0.83 0.085 151.7) 0px 0px 0px 1px inset" },
+    { "after.backgroundColor": "oklch(0.83 0.085 151.7)", "after.opacity": "0", "after.borderRadius": "1px" },
     { "boxShadow": "rgb(169, 177, 214) 0px 0px 0px 1.5px inset" },
     { "boxShadow": "oklch(0.83 0.085 241.7) 0px 0px 0px 1px inset" },
+    { "after.backgroundColor": "oklch(0.83 0.085 241.7)", "after.opacity": "0", "after.borderRadius": "1px" },
     { "boxShadow": "oklch(0.83 0.085 286.7) 0px 0px 0px 1px inset" },
     { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(66, 66, 69) 0px 0px 0px 2px" },
     { "before.backgroundColor": "rgb(42, 46, 66)" },
@@ -1154,7 +1156,7 @@
       "box": [206.6, 372.7, 188.6, 20],
       "drawn": {
         "color": "rgb(169, 177, 214)",
-        "backgroundColor": "oklab(0.4156 -0.0455207 0.0245104)",
+        "backgroundColor": "oklab(0.3596 -0.0415585 0.022377)",
         "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
         "fontSize": "12px",
         "fontWeight": "400",
@@ -1619,7 +1621,9 @@
       "text": [{ "said": "Makersfest", "type": 2 }],
       "surfaces": [
         { "box": [796.3, 458, 581.7, 20], "paint": 15 },
-        { "box": [804.3, 464, 8, 8], "paint": 3 }
+        { "box": [804.3, 464, 8, 8], "paint": 3 },
+        { "box": [796.3, 458, 22, 20], "paint": 16, "parts": { "after": [6, 5, 2, 10] } },
+        { "box": [1356, 458, 22, 20], "paint": 16, "parts": { "after": [14, 5, 2, 10] } }
       ]
     },
     {
@@ -2052,7 +2056,7 @@
         { "said": "Tech check, main hall", "type": 2 }
       ],
       "surfaces": [
-        { "box": [796.3, 521, 188.6, 20], "paint": 16 },
+        { "box": [796.3, 521, 188.6, 20], "paint": 17 },
         { "box": [968.8, 527, 8, 8], "paint": 9 }
       ]
     },
@@ -2355,8 +2359,10 @@
       },
       "text": [{ "said": "Days off", "type": 2 }],
       "surfaces": [
-        { "box": [10, 585.3, 581.7, 20], "paint": 17 },
-        { "box": [18, 591.3, 8, 8], "paint": 5 }
+        { "box": [10, 585.3, 581.7, 20], "paint": 18 },
+        { "box": [18, 591.3, 8, 8], "paint": 5 },
+        { "box": [10, 585.3, 22, 20], "paint": 19, "parts": { "after": [6, 5, 2, 10] } },
+        { "box": [569.7, 585.3, 22, 20], "paint": 19, "parts": { "after": [14, 5, 2, 10] } }
       ]
     },
     {
@@ -2380,7 +2386,7 @@
       },
       "text": [{ "said": "Photo selects due", "type": 2 }],
       "surfaces": [
-        { "box": [206.6, 606.3, 188.6, 20], "paint": 18 },
+        { "box": [206.6, 606.3, 188.6, 20], "paint": 20 },
         { "box": [214.6, 612.3, 8, 8], "paint": 4 },
         { "box": [357, 609.3, 14, 14], "paint": 2 }
       ]
@@ -2432,7 +2438,7 @@
       },
       "text": [{ "said": "Proofs due", "type": 2 }],
       "surfaces": [
-        { "box": [796.3, 585.3, 188.6, 20], "paint": 18 },
+        { "box": [796.3, 585.3, 188.6, 20], "paint": 20 },
         { "box": [804.3, 591.3, 8, 8], "paint": 4 },
         { "box": [896.3, 588.3, 14, 14], "paint": 2 }
       ]
@@ -2777,7 +2783,7 @@
       },
       "text": [{ "said": "Catalogue to print", "type": 2 }],
       "surfaces": [
-        { "box": [796.3, 712.7, 188.6, 20], "paint": 18 },
+        { "box": [796.3, 712.7, 188.6, 20], "paint": 20 },
         { "box": [804.3, 718.7, 8, 8], "paint": 4 },
         { "box": [953.9, 715.7, 14, 14], "paint": 2 }
       ]
@@ -2804,7 +2810,9 @@
       "text": [{ "said": "Open studio? (hold)", "type": 2 }],
       "surfaces": [
         { "box": [992.8, 712.7, 188.6, 20], "paint": 15 },
-        { "box": [1000.8, 718.7, 8, 8], "paint": 3 }
+        { "box": [1000.8, 718.7, 8, 8], "paint": 3 },
+        { "box": [992.8, 712.7, 22, 20], "paint": 16, "parts": { "after": [6, 5, 2, 10] } },
+        { "box": [1159.4, 712.7, 22, 20], "paint": 16, "parts": { "after": [14, 5, 2, 10] } }
       ]
     },
     {
@@ -2962,15 +2970,15 @@
   "loose": {
     "text": [{ "said": "Mon Tue Wed Thu Fri Sat Sun", "type": 7 }],
     "surfaces": [
-      { "box": [0, 0, 1392, 816], "paint": 19 },
-      { "box": [8, 171.3, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } },
-      { "box": [8, 298.7, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } },
-      { "box": [381.1, 309.7, 14, 14], "paint": 21 },
-      { "box": [577.7, 309.7, 14, 14], "paint": 22 },
-      { "box": [8, 426, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } },
-      { "box": [184.6, 437, 14, 14], "paint": 21 },
-      { "box": [8, 553.3, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } },
-      { "box": [8, 680.7, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } }
+      { "box": [0, 0, 1392, 816], "paint": 21 },
+      { "box": [8, 171.3, 1376, 127.3], "paint": 22, "parts": { "before": [4, 0, 1368, 1] } },
+      { "box": [8, 298.7, 1376, 127.3], "paint": 22, "parts": { "before": [4, 0, 1368, 1] } },
+      { "box": [381.1, 309.7, 14, 14], "paint": 23 },
+      { "box": [577.7, 309.7, 14, 14], "paint": 24 },
+      { "box": [8, 426, 1376, 127.3], "paint": 22, "parts": { "before": [4, 0, 1368, 1] } },
+      { "box": [184.6, 437, 14, 14], "paint": 23 },
+      { "box": [8, 553.3, 1376, 127.3], "paint": 22, "parts": { "before": [4, 0, 1368, 1] } },
+      { "box": [8, 680.7, 1376, 127.3], "paint": 22, "parts": { "before": [4, 0, 1368, 1] } }
     ]
   }
 }

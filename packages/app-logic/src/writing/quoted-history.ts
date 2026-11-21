@@ -1,5 +1,6 @@
-import { bodyOf, threadOf, type OhmailEngine } from "@ohmail/client-engine";
+import { threadOf, type OhmailEngine } from "@ohmail/client-engine";
 import type { EngineMessage } from "@ohmail/wire";
+import { readLetterBody } from "../reader/open-conversation.js";
 import { writtenDateTime } from "../text/format.js";
 
 export async function loadQuotedHistory(
@@ -29,7 +30,7 @@ export async function loadQuotedHistory(
   );
   return history.flatMap((message) => {
     if (engine.messageIsGone(message.id)) return [];
-    const body = bodyOf(engine.read(), message);
+    const body = readLetterBody(engine, message);
     if (body.state !== "full") return [];
     return [quote(message, body.text)];
   });

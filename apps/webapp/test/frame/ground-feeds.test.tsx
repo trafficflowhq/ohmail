@@ -44,6 +44,7 @@ describe("the rail's account line, fed by the ground", () => {
 
   it("is withheld where nobody is known: no circle with a question mark and an empty name", async () => {
     await mountMail({ pull: true });
+    await screen.findByRole("navigation", { name: "Places" });
     expect(accountLine()).toBeNull();
     expect(within(rail()).queryByText("?")).toBeNull();
     // Pull new mail still stands in the foot.

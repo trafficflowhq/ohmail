@@ -65,12 +65,7 @@ export function RailFoot({ notice, pull, account, tools }: RailFootProps) {
             onClick={account.onPress}
           >
             <Avatar name={account.name} address={account.address} size="s" />
-            <span
-              className="oh-railfoot-who"
-              title={[account.name, account.note, account.address]
-                .filter((part, index, all) => all.indexOf(part) === index)
-                .join(" · ")}
-            >
+            <span className="oh-railfoot-who">
               <b className="oh-railfoot-name">{account.name}</b>
               <span className="oh-railfoot-note">{account.note}</span>
             </span>

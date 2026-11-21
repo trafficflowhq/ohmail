@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 420, 560],
   "clip": [24, 24, 420, 560],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -82,19 +82,6 @@
       "fontSize": "13px",
       "fontWeight": "400",
       "fontStyle": "normal",
-      "lineHeight": "22px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(90, 83, 75)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
       "lineHeight": "13px",
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
@@ -137,6 +124,26 @@
   ],
   "nodes": [
     {
+      "role": "group",
+      "name": "all day",
+      "box": [0, 0, 420, 28],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "6px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
       "role": "button",
       "name": "Glaze order #2291 arrives",
       "box": [54, 0, 350, 22],
@@ -164,7 +171,7 @@
     {
       "role": "button",
       "name": "Run with Reto",
-      "box": [54, 206, 352, 43],
+      "box": [54, 266, 352, 43],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "oklch(0.945 0.042 243)",
@@ -182,16 +189,16 @@
       },
       "text": [{ "said": "Run with Reto", "type": 1 }],
       "surfaces": [
-        { "box": [54, 206, 352, 43], "paint": 2 },
-        { "box": [61, 217, 8, 8], "paint": 3 },
-        { "box": [386, 213, 13, 13], "paint": 4 },
-        { "box": [387, 213, 13, 13], "paint": 5 }
+        { "box": [54, 266, 352, 43], "paint": 2 },
+        { "box": [61, 277, 8, 8], "paint": 3 },
+        { "box": [386, 273, 13, 13], "paint": 4 },
+        { "box": [387, 273, 13, 13], "paint": 5 }
       ]
     },
     {
       "role": "button",
       "name": "Dentist",
-      "box": [54, 356, 352, 73],
+      "box": [54, 416, 352, 73],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "oklch(0.945 0.042 243)",
@@ -209,14 +216,14 @@
       },
       "text": [{ "said": "Dentist", "type": 1 }],
       "surfaces": [
-        { "box": [54, 356, 352, 73], "paint": 2 },
-        { "box": [61, 367, 8, 8], "paint": 3 }
+        { "box": [54, 416, 352, 73], "paint": 2 },
+        { "box": [61, 427, 8, 8], "paint": 3 }
       ]
     },
     {
       "role": "button",
       "name": "Glaze evening, planning call",
-      "box": [103.3, 386, 302.7, 28],
+      "box": [103.3, 446, 302.7, 28],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "oklch(0.945 0.042 243)",
@@ -234,9 +241,9 @@
       },
       "text": [{ "said": "Glaze evening, planning call", "type": 2 }],
       "surfaces": [
-        { "box": [103.3, 386, 302.7, 28], "paint": 6 },
-        { "box": [110.3, 396, 8, 8], "paint": 3 },
-        { "box": [391, 396, 8, 8], "paint": 7 }
+        { "box": [103.3, 446, 302.7, 28], "paint": 6 },
+        { "box": [110.3, 456, 8, 8], "paint": 3 },
+        { "box": [391, 456, 8, 8], "paint": 7 }
       ]
     },
     {
@@ -269,9 +276,8 @@
   ],
   "loose": {
     "text": [
-      { "said": "all day", "type": 4 },
-      { "said": "04:00 05:00 06:00 07:00 08:00 09:00 10:00 11:00 12:00 13:00", "type": 5 },
-      { "said": "1 h 45 min 2 h 15 min", "type": 6 }
+      { "said": "03:00 04:00 05:00 06:00 07:00 08:00 09:00 10:00 11:00 12:00", "type": 4 },
+      { "said": "1 h 45 min 2 h 15 min", "type": 5 }
     ],
     "surfaces": [{ "box": [0, 0, 420, 560], "paint": 12 }]
   }

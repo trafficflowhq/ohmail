@@ -51,6 +51,8 @@ export interface StreamScrollOptions {
 export interface StreamScroll {
   /** Bring one card to the reading line and keep it there until it IS there; `onLanded` once, when it is. */
   scrollTo(id: string, onLanded?: () => void): void;
+  /** Announce a keyboard selection once, before its landing scroll. */
+  select(id: string): void;
   /** Is this card in the port right now? */
   onScreen(id: string): boolean;
   settledInReadView(id: string): boolean;
@@ -75,6 +77,7 @@ export interface StreamScroll {
   windowChanged(): void;
   /** A far landing or displaced anchor has no stable viewport to read. */
   readingBlocked(): boolean;
+  pendingShift(): number;
 }
 
 /** The handle over one core: stable for the core's life. */
@@ -82,6 +85,11 @@ function handleOf(core: StreamScrollCore): StreamScroll {
   const scrollTo = (id: string, onLanded?: () => void): void => landOn(core, id, onLanded);
   return {
     scrollTo,
+    select: (id) => {
+      if (id === core.cur) return;
+      core.pin(id);
+      core.inputs.onCurrentChange(id);
+    },
     onScreen: (id) => core.inPort(id),
     settledInReadView: (id) => core.settledInReadView(id),
     settledCursorInReadView: (id) => core.cur === id && core.settledInReadView(id),
@@ -141,6 +149,7 @@ function handleOf(core: StreamScrollCore): StreamScroll {
     judged: () => core.judged(),
     windowChanged: () => core.respy(),
     readingBlocked: () => core.landing || core.pendingShift() !== 0,
+    pendingShift: () => core.pendingShift(),
   };
 }
 /** The view's cursor as last rendered, per core (`cur` can differ: a quiet reading, a cursor cleared by Back). */

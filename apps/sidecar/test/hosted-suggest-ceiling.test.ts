@@ -49,7 +49,7 @@ class Yes implements ClassifierPort {
 }
 
 /** What reached the account: the purchase body as the engine forwarded it, and its key. */
-interface Reached { body: { senders?: unknown; maxCredits?: unknown }; key: string | null }
+interface Reached { body: { senders?: unknown; maxCredits?: unknown; quoteGrant?: unknown }; key: string | null }
 
 /**
  * The hosted account's HTTP edge: what the engine's mirror reads to come online, and the purchase
@@ -176,8 +176,9 @@ describe("a confirmed purchase on the hosted door, end to end", () => {
     const { model, reached, relayGrant } = await hostedDoor({ metered: false });
     const quote = await cloudSuggestWire.suggest(SENDERS, { relayGrant, dryRun: true });
     expect(quote.quotedCredits).toBe(0);
-    const res = await cloudSuggestWire.suggest(SENDERS, { relayGrant, idempotencyKey: "k-3", maxCredits: quote.quotedCredits });
+    const res = await cloudSuggestWire.suggest(SENDERS, { relayGrant, idempotencyKey: "k-3", maxCredits: quote.quotedCredits, quoteGrant: quote.quoteGrant?.proof });
     expect(reached.map((r) => r.body.maxCredits)).toEqual([undefined, 0]);
+    expect(reached[1]?.body.quoteGrant === quote.quoteGrant?.proof && quote.quoteGrant !== undefined).toBe(true);
     expect(res.suggestions).toHaveLength(SENDERS.length);
     expect(res.stopped).toBeUndefined();
     expect(res.skipped).toEqual([]);

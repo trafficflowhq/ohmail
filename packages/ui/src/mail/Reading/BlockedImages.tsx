@@ -44,7 +44,14 @@ export function BlockedImages({ caption, sentence, describe, open, onOpen, onClo
         <Icon name="shield" size={16} />
         <span>{caption}</span>
       </button>
-      <Menu open={open} onClose={onClose} anchor={chip ?? undefined} label={caption} kind="card" right>
+      <Menu
+        open={open && chip !== null}
+        onClose={onClose}
+        anchor={chip ?? undefined}
+        label={caption}
+        kind="card"
+        right
+      >
         <p className="oh-text oh-blocked-said" role="note">
           {sentence}
         </p>

@@ -522,8 +522,6 @@ async function mountSender(list: EngineMessage[], seedId: string, rules: RuleDTO
   const reader = within(frame.getByRole("region", { name: messages.frame.landmark.reading }));
   await click(reader.getByRole("button", { name: (name) => name.startsWith(sender) }));
   const page = within(document.body);
-  const contact = within(page.getByRole("dialog", { name: messages.message.contactAria.replace("{who}", sender) }));
-  await click(contact.getByRole("menuitem", { name: messages.screening.action }));
   return {
     el: page.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", sender) }),
     mutate,
@@ -534,7 +532,7 @@ async function mountSender(list: EngineMessage[], seedId: string, rules: RuleDTO
 
 async function renderSheet(list: EngineMessage[], seedId: string, rules: RuleDTO[] = []) {
   const { el, mutate, frame, page } = await mountSender(list, seedId, rules);
-  await click(within(el).getByRole("button", { name: messages.screening.subjectRuleOpen }));
+  await click(within(el).getByRole("menuitem", { name: messages.screening.cardSubject }));
   const sender = list.find((message) => message.id === seedId)!.from.address;
   return {
     el: page.getByRole("dialog", { name: messages.screening.subjectAria.replace("{who}", sender) }),
@@ -557,7 +555,7 @@ async function pressSubject(list: EngineMessage[], rules: RuleDTO[], applyRetro 
 
 async function pressWholeSender(rules: RuleDTO[]) {
   const mounted = await mountSender(CORPUS(), "invoice", rules);
-  await click(option(mounted.el, "News"));
+  await click(within(mounted.el).getByRole("radio", { name: /^News/ }));
   const keep = mounted.page.queryByRole("radio", { name: /Keep the split/ });
   if (keep) {
     await click(keep);
@@ -731,7 +729,7 @@ describe("the sheet a person actually presses", () => {
 describe("the sender popover offers the way in", () => {
   it("has a row that reaches the finer sheet", async () => {
     const { page, el } = await mountSender(CORPUS(), "alert-1");
-    const row = within(el).queryByRole("button", { name: messages.screening.subjectRuleOpen });
+    const row = within(el).queryByRole("menuitem", { name: messages.screening.cardSubject });
     expect(row, "the sender sheet offers no way to split a sender by subject").toBeTruthy();
     await click(row);
     expect(page.getAllByRole("dialog", {
@@ -747,6 +745,6 @@ describe("the sender popover offers the way in", () => {
       msg("b", "no-reply-2@sichersatt.example", `${TOKEN} y`),
     ], "a");
     await click(within(el).getByRole("radio", { name: /^Everyone at sichersatt\.example/ }));
-    expect(within(el).queryByRole("button", { name: messages.screening.subjectRuleOpen })).toBeFalsy();
+    expect(within(el).queryByRole("menuitem", { name: messages.screening.cardSubject })).toBeFalsy();
   });
 });

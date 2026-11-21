@@ -3,9 +3,9 @@
   "state": "kept",
   "look": "ohmarchy-light-foldl",
   "place": "block",
-  "target": [445, 356.5156, 366, 156.3906],
-  "clip": [445, 356, 366, 157],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [445, 352.5156, 366, 156.3906],
+  "clip": [445, 352, 366, 157],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "foldl",
     "face": "ohmarchy",

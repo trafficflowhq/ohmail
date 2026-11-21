@@ -5,7 +5,9 @@ import {
   dayOfIso,
   eventTimeOf,
   readerZones,
+  viewOnlyOf,
   wallInstants,
+  type CalendarConnectionRecord,
   type CalendarRecord,
 } from "@ohmail/app-logic/calendar";
 import type { CalendarEventFields, CalendarInvitee, CalendarTime } from "@ohmail/wire";
@@ -24,6 +26,13 @@ export interface EventDraft {
   readonly notes: string | null;
   readonly invitees?: readonly CalendarInvitee[];
   readonly alarms?: readonly number[];
+}
+
+export function draftCalendars(
+  calendars: readonly CalendarRecord[],
+  connections: ReadonlyMap<string, CalendarConnectionRecord>,
+): readonly CalendarRecord[] {
+  return calendars.filter((c) => c.shown && !viewOnlyOf(c, connections.get(c.connectionId)));
 }
 
 const hour = (h: number) => `${String(h % 24).padStart(2, "0")}:00`;

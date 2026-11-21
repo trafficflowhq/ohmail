@@ -161,8 +161,7 @@ async function openTab(name: string, accountId = ACCOUNT, subject = SUBJECT): Pr
   shell.scriptSync(() => shell.syncPage(subject, accountId));
   const el = await shell.mountCloudShell();
   await shell.tick(2_000);
-  expect(el.textContent, `${name} never painted its mailbox, so this proves nothing: ${el.innerHTML.slice(0, 300)}`)
-    .toContain(subject);
+  await vi.waitFor(() => expect(el.textContent, `${name} never painted its mailbox, so this proves nothing`).toContain(subject));
   return el;
 }
 

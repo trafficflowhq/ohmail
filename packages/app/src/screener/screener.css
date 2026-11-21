@@ -1,5 +1,7 @@
 /* The Screener's layout and the progress it reports. */
 .sc-next-sender {
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
 }
@@ -26,6 +28,18 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s1);
+}
+.sc-suggest-copy {
+  padding: 0 var(--s3) var(--s3);
+  font-weight: var(--w-mid);
+  font-variant-numeric: tabular-nums;
+}
+.sc-suggest-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+  padding: 0 var(--s2) var(--s2);
 }
 .sc-progress {
   display: flex;

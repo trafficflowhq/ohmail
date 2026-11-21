@@ -176,8 +176,14 @@ describe("the send hold is answered in one place, and every write site asks", ()
         'if (starting !== shown || starting.status === "sent" || starting.status === "scheduled") return;',
         // Reopen only the changed, newly confirmed draft after resolving the held send.
         'if (!current || current === starting || current.status !== "draft") return;',
+        // An offered draft fills empty fields only while it is still an ordinary draft.
+        // A row a send took is never adopted.
+        'if (id !== "draft-compose" || !draft || draft.accepted || draft.status !== "draft") return;',
       ],
-      [WRITING_PROJECTION]: [],
+      [WRITING_PROJECTION]: [
+        // Select the ordinary, unaccepted draft offered in the composer. Its send state comes from holdOf.
+        '(draft) => draft.id === "draft-compose" && draft.status === "draft" && !draft.accepted,',
+      ],
       // The predicate's own file, where the question is allowed to be answered — and, in source
       // order after it, `discardDecision` reading the HOLD's status: a projection of `holdOf`'s
       // answer into what the Drafts list's Discard does with it, not a second reading of the row.

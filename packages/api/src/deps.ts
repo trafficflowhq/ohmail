@@ -874,14 +874,6 @@ export interface ResolvedSession {
   scope: SessionScope;
   via: SessionVia;
   /**
-   * When this user's address was proven, or `null` for an unproven one. Comes from
-   * `resolveSession`'s `users` JOIN, so it costs no extra query, and it is read by exactly one
-   * thing: `withSpendGate`. A handler on a route whose `cost` is not one of the permissive
-   * classes can assume it is non-null, for the same reason `scope` lets it assume enrollment
-   * was handled.
-   */
-  emailVerifiedAt: Date | null;
-  /**
    * The row's `last_synced_at` as `resolveSession` read it. Bookkeeping only: `GET /sync` reads it
    * to skip a stamp that is not due. Absent means unknown, and the stamp runs as before.
    */

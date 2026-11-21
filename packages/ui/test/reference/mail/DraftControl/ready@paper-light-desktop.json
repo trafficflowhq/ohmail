@@ -5,7 +5,7 @@
   "place": "block",
   "target": [1189.625, 719.5625, 198.375, 32],
   "clip": [1189, 719, 199, 33],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",

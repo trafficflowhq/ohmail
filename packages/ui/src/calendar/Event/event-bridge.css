@@ -1,12 +1,8 @@
-/* The bridge: the liquid between an open event and its card. The event's colour at the event, the colour of
-   the card's surface it meets at the card, and the line of the two rings along its two sides. No shadow, no
-   blur, no second colour. */
+/* The bridge takes the open event's fill and joins the two rings along its sides. */
 @layer oh {
   .oh-bridge {
     --oh-bridge-edge: var(--oh-cal-mark, var(--ink));
-    --oh-bridge-near: var(--oh-cal-open, var(--oh-cal-open-plain));
-    --oh-bridge-far: var(--oh-bridge-near);
-    --oh-bridge-grow: scale(0, 1);
+    --oh-bridge-grow: scale(1, 0);
     --oh-bridge-seen: 1;
     --oh-bridge-z: 7;
     position: absolute;
@@ -20,11 +16,7 @@
   }
   .oh-bridge[data-side="t"],
   .oh-bridge[data-side="b"] {
-    --oh-bridge-grow: scale(1, 0);
-  }
-  /* Under the card's head the liquid thins into the sheet: the one fade. */
-  .oh-bridge[data-meets="body"] {
-    --oh-bridge-far: var(--sheet);
+    --oh-bridge-grow: scale(0, 1);
   }
   @keyframes oh-bridge-in {
     from {
@@ -46,21 +38,21 @@
       --oh-bridge-seen: 0;
     }
   }
-  .oh-bridge-near {
-    stop-color: var(--oh-bridge-near);
+  .oh-bridge-edge-start {
+    stop-color: var(--oh-bridge-edge);
   }
-  .oh-bridge-far {
-    stop-color: var(--oh-bridge-far);
-  }
-  .oh-bridge-end {
-    fill: none;
-    stroke-linecap: butt;
+  .oh-bridge-edge-end {
+    stop-color: var(--hot);
   }
   .oh-bridge-edge {
     fill: none;
     stroke: var(--oh-bridge-edge);
     stroke-width: var(--oh-cal-open-line);
     stroke-linecap: butt;
+    stroke-linejoin: round;
+  }
+  :root[data-face="ohmarchy"] .oh-bridge-edge {
+    stroke: var(--oh-bridge-gradient);
   }
   /* One face keeps the sides straight, as it keeps square corners. */
   .oh-bridge-form[data-form="straight"] {

@@ -5,7 +5,7 @@
   "place": "block",
   "target": [684, 12, 744, 772],
   "clip": [684, 12, 744, 772],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",
@@ -34,6 +34,20 @@
       "textTransform": "none",
       "textOverflow": "ellipsis",
       "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
     },
     {
       "color": "oklch(0.38 0.085 150)",
@@ -201,20 +215,6 @@
       "textRendering": "optimizelegibility"
     },
     {
-      "color": "rgb(56, 54, 53)",
-      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-      "fontSize": "12px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
-      "lineHeight": "16.8px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "fontVariantNumeric": "tabular-nums",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
       "color": "rgb(16, 15, 15)",
       "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
       "fontSize": "13px",
@@ -298,6 +298,8 @@
     { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 447c0f4542bb" },
     { "boxShadow": "rgb(226, 223, 212) 0px 1px 0px 0px" },
     { "backgroundColor": "rgb(134, 132, 125)", "opacity": "0.55" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 acddc4eba6ee" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 541a4a0ad8ca" },
     { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 2 db61eb05bb0f" },
     { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 2 43c46b290178" },
     { "ink": "fill rgb(56, 54, 53); stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 4 9ce2f856a47e" },
@@ -306,6 +308,7 @@
     },
     { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 08973770abf0" },
     { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 2 1f9f8725cdc4" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 42674f310e5c" },
     { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 3 93b4b80b8950" },
     { "boxShadow": "rgb(226, 223, 212) 0px -1px 0px 0px" },
     { "boxShadow": "rgb(159, 157, 150) 0px 0px 0px 1px inset" },
@@ -346,6 +349,27 @@
       ]
     },
     {
+      "role": "status",
+      "name": "",
+      "box": [664, 31.6, 36, 16.8],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "text": [{ "said": "Draft", "type": 1 }]
+    },
+    {
       "role": "button",
       "name": "N Nadja Lehner nadja@erdton-atelier.example",
       "box": [89.6, 56, 339.2, 28],
@@ -365,9 +389,9 @@
         "borderColor": "rgb(16, 15, 15)"
       },
       "text": [
-        { "said": "N", "type": 1 },
-        { "said": "Nadja Lehner", "type": 2 },
-        { "said": "nadja@erdton-atelier.example", "type": 3 }
+        { "said": "N", "type": 2 },
+        { "said": "Nadja Lehner", "type": 3 },
+        { "said": "nadja@erdton-atelier.example", "type": 4 }
       ],
       "surfaces": [{ "box": [93.6, 60, 20, 20], "paint": 2 }]
     },
@@ -393,7 +417,7 @@
       "surfaces": [{ "box": [432.8, 60, 20, 20], "paint": 3 }]
     },
     {
-      "role": "textbox",
+      "role": "combobox",
       "name": "To",
       "box": [460.8, 56, 172.4, 28],
       "drawn": {
@@ -410,7 +434,8 @@
         "paddingBottom": "0px",
         "paddingLeft": "4px",
         "borderColor": "rgb(16, 15, 15)"
-      }
+      },
+      "state": ["collapsed"]
     },
     {
       "role": "button",
@@ -431,7 +456,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "Cc Bcc", "type": 4 }]
+      "text": [{ "said": "Cc Bcc", "type": 5 }]
     },
     {
       "role": "textbox",
@@ -452,7 +477,7 @@
         "paddingLeft": "49.6px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "text": [{ "said": "Re: Would you teach the December glaze evening?", "type": 5, "shown": true }]
+      "text": [{ "said": "Re: Would you teach the December glaze evening?", "type": 6, "shown": true }]
     },
     {
       "role": "toolbar",
@@ -476,9 +501,11 @@
       "surfaces": [
         { "box": [44, 132, 656, 36], "paint": 4 },
         { "box": [176, 141, 1, 18], "paint": 5 },
-        { "box": [223, 141, 1, 18], "paint": 5 },
-        { "box": [306, 141, 1, 18], "paint": 5 },
-        { "box": [353, 141, 1, 18], "paint": 5 }
+        { "box": [241, 141, 1, 18], "paint": 5 },
+        { "box": [288, 141, 1, 18], "paint": 5 },
+        { "box": [371, 141, 1, 18], "paint": 5 },
+        { "box": [418, 141, 1, 18], "paint": 5 },
+        { "box": [501, 141, 1, 18], "paint": 5 }
       ]
     },
     {
@@ -500,7 +527,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "B", "type": 6 }]
+      "text": [{ "said": "B", "type": 7 }]
     },
     {
       "role": "button",
@@ -521,7 +548,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "I", "type": 7 }]
+      "text": [{ "said": "I", "type": 8 }]
     },
     {
       "role": "button",
@@ -542,7 +569,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "U", "type": 8 }]
+      "text": [{ "said": "U", "type": 9 }]
     },
     {
       "role": "button",
@@ -563,12 +590,36 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "S", "type": 9 }]
+      "text": [{ "said": "S", "type": 10 }]
+    },
+    {
+      "role": "button",
+      "name": "Paragraph style",
+      "box": [183, 136, 52, 28],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "13px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [191, 141, 18, 18], "paint": 6 },
+        { "box": [209, 141, 18, 18], "paint": 7 }
+      ]
     },
     {
       "role": "button",
       "name": "Link",
-      "box": [183, 136, 34, 28],
+      "box": [248, 136, 34, 28],
       "drawn": {
         "color": "rgb(56, 54, 53)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -584,12 +635,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "surfaces": [{ "box": [191, 141, 18, 18], "paint": 6 }]
+      "surfaces": [{ "box": [256, 141, 18, 18], "paint": 8 }]
     },
     {
       "role": "button",
-      "name": "Ordered list",
-      "box": [230, 136, 34, 28],
+      "name": "Numbered list",
+      "box": [295, 136, 34, 28],
       "drawn": {
         "color": "rgb(56, 54, 53)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -605,12 +656,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "surfaces": [{ "box": [238, 141, 18, 18], "paint": 7 }]
+      "surfaces": [{ "box": [303, 141, 18, 18], "paint": 9 }]
     },
     {
       "role": "button",
       "name": "Bulleted list",
-      "box": [266, 136, 34, 28],
+      "box": [331, 136, 34, 28],
       "drawn": {
         "color": "rgb(56, 54, 53)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -626,12 +677,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "surfaces": [{ "box": [274, 141, 18, 18], "paint": 8 }]
+      "surfaces": [{ "box": [339, 141, 18, 18], "paint": 10 }]
     },
     {
       "role": "button",
-      "name": "Blockquote",
-      "box": [313, 136, 34, 28],
+      "name": "Quote",
+      "box": [378, 136, 34, 28],
       "drawn": {
         "color": "rgb(56, 54, 53)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -647,12 +698,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "surfaces": [{ "box": [321, 141, 18, 18], "paint": 9 }]
+      "surfaces": [{ "box": [386, 141, 18, 18], "paint": 11 }]
     },
     {
       "role": "button",
-      "name": "Code",
-      "box": [360, 136, 34, 28],
+      "name": "Inline code",
+      "box": [425, 136, 34, 28],
       "drawn": {
         "color": "rgb(56, 54, 53)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -668,12 +719,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "surfaces": [{ "box": [368, 141, 18, 18], "paint": 10 }]
+      "surfaces": [{ "box": [433, 141, 18, 18], "paint": 12 }]
     },
     {
       "role": "button",
       "name": "Code block",
-      "box": [396, 136, 34, 28],
+      "box": [461, 136, 34, 28],
       "drawn": {
         "color": "rgb(56, 54, 53)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -689,7 +740,28 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "surfaces": [{ "box": [404, 141, 18, 18], "paint": 11 }]
+      "surfaces": [{ "box": [469, 141, 18, 18], "paint": 13 }]
+    },
+    {
+      "role": "button",
+      "name": "Divider",
+      "box": [508, 136, 34, 28],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "13px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [{ "box": [516, 141, 18, 18], "paint": 14 }]
     },
     {
       "role": "textbox",
@@ -713,7 +785,7 @@
       "text": [
         {
           "said": "Yes, gladly. The 17th suits me better. I would bring the matte white and two test tiles per person, and",
-          "type": 10
+          "type": 11
         }
       ]
     },
@@ -736,7 +808,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "Mila Brunner Lichtgrat · Winterthur", "type": 11 }]
+      "text": [{ "said": "Mila Brunner Lichtgrat · Winterthur", "type": 12 }]
     },
     {
       "role": "button",
@@ -779,10 +851,10 @@
         "borderColor": "rgb(16, 15, 15)"
       },
       "text": [
-        { "said": "Not sent.", "type": 12 },
-        { "said": "Sending did not work, but your draft is kept, so try again.", "type": 13 }
+        { "said": "Not sent.", "type": 13 },
+        { "said": "Sending did not work, but your draft is kept, so try again.", "type": 14 }
       ],
-      "surfaces": [{ "box": [56, 669.6, 18, 18], "paint": 12 }]
+      "surfaces": [{ "box": [56, 669.6, 18, 18], "paint": 15 }]
     },
     {
       "role": "toolbar",
@@ -803,9 +875,9 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "15 credits", "type": 14 }],
+      "text": [{ "said": "15 credits", "type": 1 }],
       "surfaces": [
-        { "box": [44, 712, 656, 36], "paint": 13 },
+        { "box": [44, 712, 656, 36], "paint": 16 },
         { "box": [90, 721, 1, 18], "paint": 5 }
       ]
     },
@@ -829,8 +901,8 @@
         "borderColor": "rgb(16, 15, 15)"
       },
       "surfaces": [
-        { "box": [52, 716, 28, 28], "paint": 14 },
-        { "box": [57, 721, 18, 18], "paint": 15 }
+        { "box": [52, 716, 28, 28], "paint": 17 },
+        { "box": [57, 721, 18, 18], "paint": 18 }
       ]
     },
     {
@@ -874,7 +946,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "surfaces": [{ "box": [138.6, 720, 20, 20], "paint": 16 }]
+      "surfaces": [{ "box": [138.6, 720, 20, 20], "paint": 19 }]
     },
     {
       "role": "button",
@@ -897,8 +969,8 @@
       },
       "text": [{ "said": "Draft from your text", "type": 16 }],
       "surfaces": [
-        { "box": [494, 716, 198, 28], "paint": 14 },
-        { "box": [504, 721, 18, 18], "paint": 17 }
+        { "box": [494, 716, 198, 28], "paint": 17 },
+        { "box": [504, 721, 18, 18], "paint": 20 }
       ]
     }
   ],
@@ -906,17 +978,16 @@
     "text": [
       { "said": "From", "type": 17 },
       { "said": "Studio", "type": 18 },
-      { "said": "Draft", "type": 14 },
       { "said": "To", "type": 19 }
     ],
     "surfaces": [
-      { "box": [0, 0, 744, 772], "paint": 18 },
+      { "box": [0, 0, 744, 772], "paint": 21 },
       { "box": [44, 24, 656, 32], "paint": 4 },
-      { "box": [291, 29, 59.2, 22], "paint": 19 },
+      { "box": [291, 29, 59.2, 22], "paint": 22 },
       { "box": [44, 56, 656, 32], "paint": 4 },
-      { "box": [89.6, 56, 367.2, 28], "paint": 20 },
+      { "box": [89.6, 56, 367.2, 28], "paint": 23 },
       { "box": [44, 88, 656, 32], "paint": 4 },
-      { "box": [44, 132, 656, 616], "paint": 21, "parts": { "after": [0, 0, 656, 616] } }
+      { "box": [44, 132, 656, 616], "paint": 24, "parts": { "after": [0, 0, 656, 616] } }
     ]
   }
 }

@@ -5,12 +5,13 @@ import {
   daySpanOf,
   type CalendarEventRecord,
   type CalendarPort,
+  type CalendarRecord,
   type ZoneSource,
 } from "@ohmail/app-logic/calendar";
-import { Button } from "@ohmail/ui/base";
-import { EventBridge, EventCard } from "@ohmail/ui/calendar";
+import { Button, Icon } from "@ohmail/ui/base";
+import { EventBridge, EventCard, type EventCardRow } from "@ohmail/ui/calendar";
 import { EventAnswers } from "../invitations/EventAnswers.js";
-import { NONE } from "../host/index.js";
+import { NONE, type HostContract } from "../host/index.js";
 import { useFrame } from "../frame/commands.js";
 import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
 import { useKnownOwnAddresses } from "../frame/room.js";
@@ -47,6 +48,27 @@ function timeOf(
     }
   }
   return when;
+}
+
+function rowsOf(event: CalendarEventFace, host: HostContract, t: Text): EventCardRow[] {
+  const port = host.wires.calendar;
+  const stored = port === NONE ? undefined : port.events().find(({ record }) => record.id === event.recordId);
+  const calendar =
+    stored &&
+    host.engine.store
+      .entries<CalendarRecord | null>("calendar")
+      .find(({ entity }) => entity?.id === stored.record.calendarId)?.entity;
+  const rows: EventCardRow[] = [];
+  if (calendar) {
+    rows.push({
+      label: t("create.calendar"),
+      tone: event.tone,
+      text: calendar.name,
+      children: event.viewOnly ? <Icon name="lock" size={16} className="oh-ecard-lock" /> : null,
+    });
+  }
+  if (event.people.length) rows.push({ label: t("people"), text: event.people.join(", ") });
+  return rows;
 }
 
 export function OpenEvent({
@@ -154,7 +176,7 @@ export function OpenEvent({
         close={{ label: t("closeEvent"), onPress: () => commands.event(null) }}
         {...(event.second ? { where: [{ text: event.second }] } : {})}
         {...(event.notes ? { notes: event.notes } : {})}
-        {...(event.people.length ? { rows: [{ label: t("people"), text: event.people.join(", ") }] } : {})}
+        rows={rowsOf(event, host, t)}
         {...(event.status ? { status: event.status } : {})}
       />
       {plan.device !== "phone" && panel && (

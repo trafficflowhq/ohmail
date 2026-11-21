@@ -36,6 +36,12 @@
     --oh-menu-width: 300px;
     --oh-menu-pad: var(--s3);
   }
+  .oh-menu[data-kind="ask"][data-fit-content] {
+    --oh-menu-width: max-content;
+    --oh-menu-max: calc(100% - 2 * var(--oh-menu-edge));
+    --oh-menu-pad: var(--s2);
+    min-width: min(var(--oh-menu-min), var(--oh-menu-max));
+  }
   .oh-menu[data-kind="card"] {
     --oh-menu-width: 344px;
     --oh-menu-max: calc(100% - 2 * var(--oh-menu-edge));
@@ -70,7 +76,7 @@
     font-weight: var(--w-bold);
   }
   /* A small form's title stands on its field's edge, not on a menu row's. */
-  .oh-menu[data-kind="ask"] > .oh-menu-title {
+  .oh-menu[data-kind="ask"]:not([data-fit-content]) > .oh-menu-title {
     --oh-menu-title-pad: var(--s2) var(--s1) var(--s1);
   }
   .oh-menu[data-kind="card"] .oh-menu-title {
@@ -217,7 +223,7 @@
   :root[data-face="ohmarchy"] .oh-menu {
     --oh-menu-pad: var(--s1);
   }
-  :root[data-face="ohmarchy"] .oh-menu[data-kind="ask"] {
+  :root[data-face="ohmarchy"] .oh-menu[data-kind="ask"]:not([data-fit-content]) {
     --oh-menu-pad: var(--s3);
   }
   :root[data-face="ohmarchy"] .oh-menu[data-kind="card"] {
