@@ -202,6 +202,7 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
     writeTo: (address: string, name?: string) => compose.writeTo(address, name),
     writeSupport: compose.writeSupport,
     composeSend: send,
+    composeReopenedSending: compose.composeReopenedSending,
     composeLocked: compose.composeHeldBySend
       ? {
           sentence: t(

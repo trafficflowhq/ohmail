@@ -3429,6 +3429,7 @@ export function useShellCompose({
     compose,
     composeEpochNow: autosave.epochNow,
     composeHeldBySend,
+    composeReopenedSending: composeHandedOff.current && pressedHere,
     composeResumed,
     composeWaitNote: sendCarriesThis ? waitNote : null,
     composeCloseRefusal,

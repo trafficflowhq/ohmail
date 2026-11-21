@@ -541,6 +541,12 @@ describe("CONTROLS: an unhealthy send keeps its editor and says why", () => {
     expect(replySurface(s.el), "the dock closed with the outbox held").not.toBeNull();
     expect(lineUnder()).toBeNull();
     expect(footLine()).toBe("");
+
+    // Keep the wire held through the long-send threshold.
+    await waitFor(() => lineUnder()?.textContent === en.write.status.sendingLong, "the reply's Still sending line", 240);
+    expect(replySurface(s.el), "the dock closed during the long send").not.toBeNull();
+    expect(footLine()).toBe("");
+
     await act(async () => { release(); });
     await waitFor(() => toasts().includes(en.reply.toastSent), "today's sent toast");
   }, 40_000);

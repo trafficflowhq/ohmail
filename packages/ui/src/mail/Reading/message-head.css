@@ -461,6 +461,50 @@
   }
 }
 
+/* In a narrow desktop receipt, give the sender the full line and let the address wrap below the name. */
+@container stream-card (inline-size < 360px) {
+  :root[data-touch="0"] [data-stream-window][data-receipts] .oh-messagehead > .oh-messagehead-sender {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  :root[data-touch="0"] [data-stream-window][data-receipts] .oh-messagehead > .oh-messagehead-tools {
+    grid-row: 2;
+  }
+
+  :root[data-touch="0"] [data-stream-window][data-receipts] .oh-messagehead > .oh-messagehead-to {
+    grid-row: 3;
+  }
+
+  :root[data-touch="0"] [data-stream-window][data-receipts] .oh-messagehead-who {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    line-height: var(--oh-messagehead-lh);
+  }
+
+  :root[data-touch="0"] [data-stream-window][data-receipts] .oh-messagehead-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  :root[data-touch="0"] [data-stream-window][data-receipts] .oh-messagehead-address {
+    container-type: normal;
+    flex: none;
+    max-inline-size: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  :root[data-touch="0"]
+    [data-stream-window][data-receipts]
+    .oh-messagehead-who
+    :is(.oh-address, .oh-address-local) {
+    display: inline;
+    white-space: normal;
+  }
+}
+
 @container receipt-address (inline-size < 14ch) {
   [data-stream-window][data-receipts] .oh-messagehead-address > .oh-address {
     position: absolute;

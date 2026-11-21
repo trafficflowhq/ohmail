@@ -135,9 +135,11 @@ function PasswordStep(p: {
                 {pending.act}
               </Button>
             )}
-            <WayButton way={door.join} kind="quiet" size="l">
-              {login("createAccount")}
-            </WayButton>
+            {door.note === "managed-open" ? (
+              <WayButton way={door.join} kind="quiet" size="l">
+                {login("createAccount")}
+              </WayButton>
+            ) : null}
           </>
         }
       >

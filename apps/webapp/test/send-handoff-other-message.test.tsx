@@ -496,9 +496,11 @@ describe("a door over a letter whose send came back unverified, with a signature
     s.refuseSend.on = false;
     await rounds(100);
   }
+  // The report draws its final stop as a dot, outside the sentence's text.
+  const reopenWasBlocked = (): boolean => toasts().includes(en.drafts.reopenBlockedUnsaved.replace(/\.$/u, ""));
   /** The door's answer: its letter on screen, or the refusal said. */
   const answered = (s: DraftShell, shows: string): Promise<void> => waitFor(() => composeSubject(s.el) === shows
-    || toasts().includes(en.drafts.reopenBlockedUnsaved), "an answer to the door", 400);
+    || reopenWasBlocked(), "an answer to the door", 400);
   const doors: Array<[string, (s: DraftShell) => Promise<void>, string]> = [
     ["a mail link", (s) => s.mailto.open(LINK), LINK.subject],
     ["Write to", writeToKim, ""],
@@ -510,7 +512,7 @@ describe("a door over a letter whose send came back unverified, with a signature
       await parkA(s, false);
       await open(s);
       await answered(s, shows);
-      expect({ shown: composeSubject(s.el), refused: toasts().includes(en.drafts.reopenBlockedUnsaved) }).toEqual({ shown: shows, refused: false });
+      expect({ shown: composeSubject(s.el), refused: reopenWasBlocked() }).toEqual({ shown: shows, refused: false });
       const row = s.store.get<EngineDraft>("draft", "d-a");
       expect([row?.subject, row?.body], "A's row").toEqual([AT_ONE, `Shall we meet at noon?\n\n${SIG.mb1}`]);
     }, 90_000);
@@ -535,7 +537,7 @@ describe("a door over a letter whose send came back unverified, with a signature
     await waitFor(() => composeSubject(now.el) === AT_ONE, "A back in the composer");
     await now.mailto.open(LINK);
     await answered(now, LINK.subject);
-    expect({ shown: composeSubject(now.el), refused: toasts().includes(en.drafts.reopenBlockedUnsaved) }).toEqual({ shown: LINK.subject, refused: false });
+    expect({ shown: composeSubject(now.el), refused: reopenWasBlocked() }).toEqual({ shown: LINK.subject, refused: false });
   }, 90_000);
   it("words typed since, while the browser stopped storing the letter, are not taken for the press's", async () => {
     const s = await mountShell("#/drafts", [M1_KIM], [A, B], { signatures: SIG });
@@ -548,14 +550,17 @@ describe("a door over a letter whose send came back unverified, with a signature
     await setSubject(s, `${AT_ONE}, typed since`);
     await s.mailto.open(LINK);
     await answered(s, LINK.subject);
-    expect({ shown: composeSubject(s.el), refused: toasts().includes(en.drafts.reopenBlockedUnsaved) })
+    expect({ shown: composeSubject(s.el), refused: reopenWasBlocked() })
       .toEqual({ shown: `${AT_ONE}, typed since`, refused: true });
+    expect(letterText(s.el)?.textContent).toContain("Shall we meet at noon?");
   }, 90_000);
   it("a file on screen is on no row, so a mail link leaves the letter and says so", async () => {
     const s = await mountShell("#/drafts", [M1_KIM], [A, B], { signatures: SIG });
     await parkA(s, false, true);
     await s.mailto.open(LINK);
     await answered(s, LINK.subject);
-    expect({ shown: composeSubject(s.el), refused: toasts().includes(en.drafts.reopenBlockedUnsaved) }).toEqual({ shown: AT_ONE, refused: true });
+    expect({ shown: composeSubject(s.el), refused: reopenWasBlocked() }).toEqual({ shown: AT_ONE, refused: true });
+    expect(letterText(s.el)?.textContent).toContain("Shall we meet at noon?");
+    expect(letterButton(s.el, "Remove notes.txt")).not.toBeNull();
   }, 90_000);
 });

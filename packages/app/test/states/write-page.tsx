@@ -337,6 +337,7 @@ function useWritingDouble(): Writing {
     writeTo: nothing,
     reply: null,
     composeSend: said.send,
+    composeReopenedSending: false,
     composeLocked: said.locked ? { sentence: SHELL[lang].lastSession } : null,
     composeHeld: said.held === null ? null : { draftId: said.held },
     composeFilesNotKept: null,

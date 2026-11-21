@@ -288,6 +288,8 @@ export interface Writing {
   /** The reply open on a letter, planned; null: none is open, or its letter is not known here. */
   readonly reply: WriteReply | null;
   readonly composeSend: SendState;
+  /** The composer is back on the same message after its send moved to the sidebar. */
+  readonly composeReopenedSending: boolean;
   /** Send is locked by a send this letter cannot see the end of: the sentence that says so. */
   readonly composeLocked: { readonly sentence: string } | null;
   /** The letter's row, while its send is not confirmed: the two answers resolve it. */

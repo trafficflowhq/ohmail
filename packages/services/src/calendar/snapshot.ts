@@ -129,10 +129,12 @@ export async function calendarSnapshotPage(db: Db, accountId: string, q: Calenda
   // An earlier page can then prune without losing the series before its child is present.
   const start = sql<Date>`case when ${heldBySpanSql(span)} then ${calEvents.startsAt}
     else greatest(${calEvents.startsAt}, (${firstChild}) + interval '1 millisecond') end`.mapWith(calEvents.startsAt);
-  const keyset = after === null ? undefined : or(
-    gt(start, new Date(after.startsAtMs)),
-    and(eq(start, new Date(after.startsAtMs)), gt(calEvents.id, after.id)),
-  );
+  let keyset: SQL | undefined;
+  if (after !== null) {
+    // The computed start supplies only a result decoder, so bind the cursor as a timestamp explicitly.
+    const afterStart = sql`${new Date(after.startsAtMs).toISOString()}::timestamptz`;
+    keyset = or(gt(start, afterStart), and(eq(start, afterStart), gt(calEvents.id, after.id)));
+  }
   // scoped-by: leads with eq(calEvents.accountId, accountId)
   const rows = await db.select({ id: calEvents.id, startsAt: start }).from(calEvents)
     .where(and(eq(calEvents.accountId, accountId), heldRows, keyset))
