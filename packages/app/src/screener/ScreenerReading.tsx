@@ -4,7 +4,9 @@
  * many wait.
  */
 import { BlankColumn } from "@ohmail/ui/mail";
+import { motionEase, motionMs, motionReduced, motionShape } from "@ohmail/ui/base";
 import { junkKey } from "@ohmail/app-logic/screener";
+import { useLayoutEffect, useRef } from "react";
 import type { PaneProps } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import { useText } from "../text/index.js";
@@ -21,6 +23,25 @@ export function ScreenerReading({ route }: PaneProps) {
   const { facts, junk } = useScreenerBeside();
   const above = useScreenerAbove();
   const allDecided = useAllDecided(view);
+  const nextSender = useRef<HTMLDivElement>(null);
+  const lastDecision = useRef(view?.decisionMotion ?? 0);
+  useLayoutEffect(() => {
+    const sequence = view?.decisionMotion ?? 0;
+    const changed = sequence !== lastDecision.current;
+    lastDecision.current = sequence;
+    const node = nextSender.current;
+    if (!changed || !node || motionReduced(node)) return;
+    const duration = motionMs(node, "--d-out");
+    if (!duration) return;
+    const flight = node.animate(
+      [
+        { opacity: 0, transform: motionShape(node, "--x-col") },
+        { opacity: 1, transform: "none" },
+      ],
+      { duration, easing: motionEase(node, "--e-out"), fill: "none" },
+    );
+    return () => flight.cancel();
+  }, [view?.decisionMotion]);
   if (junk !== NONE && segmentOf(route.sub) === "spam" && !view?.quarantine) {
     /* The Junk row the list has open; with none (being read, not read, empty) the list says why. */
     const key = above.selected("junk");
@@ -29,7 +50,12 @@ export function ScreenerReading({ route }: PaneProps) {
   }
   if (view !== null && view.failedOpen !== null && !view.full)
     return <Failed view={view} letter={view.failedOpen} />;
-  if (view !== null && view.open !== null && !view.full) return <Sender view={view} />;
+  if (view !== null && view.open !== null && !view.full)
+    return (
+      <div ref={nextSender} className="sc-next-sender">
+        <Sender view={view} />
+      </div>
+    );
   if (allDecided)
     return (
       <div className="sc-all-decided">

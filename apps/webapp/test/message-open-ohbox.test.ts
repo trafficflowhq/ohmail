@@ -79,7 +79,7 @@ async function mountShell(): Promise<void> {
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
 }
 
 /** A key, then the hash change it may make: jsdom says one in a task of its own, which this file's fake clock holds. */

@@ -55,7 +55,7 @@ it("shows a disabled Off preference while the standalone read is pending or refu
   expect(bridge.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "PUT")).toBe(false);
 });
 
-it.each([null, day])("shows the paired computer's suggestion status as read-only (%s)", (stamp) => {
+it.each([null, day])("shows the paired computer's suggestion status as read-only (%s)", async (stamp) => {
   const setAutoSuggest = vi.fn();
   const consent = {
     suggestionConsentKnown: stamp !== null,
@@ -77,8 +77,9 @@ it.each([null, day])("shows the paired computer's suggestion status as read-only
       <ConsentContext.Provider value={consent}><Frame host={host} /></ConsentContext.Provider>
     </TextProvider>,
   );
-  expect(setting().disabled).toBe(true);
-  expect(setting().getAttribute("aria-checked")).toBe(String(stamp !== null));
-  fireEvent.click(setting());
+  const pairedSetting = await screen.findByRole<HTMLButtonElement>("switch", { name: messages.screener.suggest.autoTitle });
+  expect(pairedSetting.disabled).toBe(true);
+  expect(pairedSetting.getAttribute("aria-checked")).toBe(String(stamp !== null));
+  fireEvent.click(pairedSetting);
   expect(setAutoSuggest).not.toHaveBeenCalled();
 });

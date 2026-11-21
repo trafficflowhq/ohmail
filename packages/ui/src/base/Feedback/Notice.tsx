@@ -1,6 +1,7 @@
 import { Button } from "../Primitives/Button.js";
 import { EndDot } from "../Primitives/EndDot.js";
 import { useSaidOnArrival } from "../said-on-arrival.js";
+import { ActivityLine } from "./ActivityLine.js";
 import "./notice.css";
 
 export interface NoticeAct {
@@ -22,24 +23,35 @@ export interface NoticeProps {
   title: string;
   /** Hot while it needs you. */
   hot?: boolean;
-  /** At most one line: what is wrong and what to do. */
+  /** Draw a waiting line and put the count below the title. */
+  progress?: boolean;
+  /** At most one line of detail or a progress count. */
   line?: string;
   /** Up to two answers: the first a small capsule, the second a word. Left out where nothing can be done: it stands calm. */
   acts?: readonly [NoticeAct] | readonly [NoticeAct, NoticeAct];
 }
 
 /** Something needs you. It stands in the one slot, one at a time. */
-export function Notice({ place, title, hot, line, acts }: NoticeProps) {
+export function Notice({ place, title, hot, progress, line, acts }: NoticeProps) {
   /* Said when it appears: its words are given to a screen reader once the region stands; its answers at once. */
   const held = useSaidOnArrival(true) ? true : undefined;
   return (
-    <div className="oh-notice" role="status" data-place={place}>
+    <div className="oh-notice" role="status" data-place={place} data-progress={progress || undefined}>
       <p className="oh-text oh-notice-say" aria-hidden={held}>
         <b className="oh-notice-title">
-          <EndDot kind={hot ? "hot" : "ink"}>{title}</EndDot>
+          <EndDot kind={hot || progress ? "hot" : "ink"}>{title}</EndDot>
         </b>
-        {line ? ` ${line}` : null}
+        {line &&
+          (progress ? (
+            <>
+              {" "}
+              <span className="oh-notice-count">{line}</span>
+            </>
+          ) : (
+            ` ${line}`
+          ))}
       </p>
+      {progress ? <ActivityLine /> : null}
       {acts ? (
         <div className="oh-notice-acts">
           {acts.map((act, i) => (

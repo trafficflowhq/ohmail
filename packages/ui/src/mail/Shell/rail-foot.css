@@ -50,7 +50,7 @@
   }
 
   .oh-railfoot-who {
-    flex: 1 1 0;
+    flex: 0 1 auto;
     display: flex;
     flex-direction: column;
     min-width: 0;

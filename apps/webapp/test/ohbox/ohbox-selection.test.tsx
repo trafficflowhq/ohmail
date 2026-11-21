@@ -105,7 +105,7 @@ async function mountShell(room: "desktop" | "phone" = "desktop"): Promise<void> 
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
   if (room === "desktop") await key("j");
 }
 

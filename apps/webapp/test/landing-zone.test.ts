@@ -167,7 +167,7 @@ describe("the zone decision is taken on the path the router serves, not only the
       ["/a/../subprocessors", "/subprocessors"], ["/landing%2Fa.webp", "/landing/a.webp"],
       ["/privacy/", "/privacy"], ["/privacy/.", "/privacy"], ["/privacy/%2e", "/privacy"], ["/privacy/x/..", "/privacy"],
       ["/de/.", "/de"], ["/%70rivacy/.", "/privacy"], ["/imprint/.", "/imprint"], ["/subprocessors/.", "/subprocessors"],
-      ["/%73upport", "/support"], ["/delete-account/.", "/delete-account"],
+      ["/%73upport", "/support"], ["/delete-account/.", "/delete-account"], ["/%6Fhcal/.", "/ohcal"],
     ]) {
       expect(zonePathOf(spelling!), spelling).toBe(path);
     }
@@ -506,6 +506,7 @@ describe("armed: a zone path in other capitals is a 308 to the zone's own spelli
   const VARIANTS: Array<[string, string]> = [
     ["/PRIVACY", "/privacy"], ["/De", "/de"], ["/IMPRINT", "/imprint"], ["/SubProcessors", "/subprocessors"],
     ["/Flathub-Verification", "/flathub-verification"], ["/SUPPORT", "/support"], ["/Delete-Account", "/delete-account"],
+    ["/OHCAL", "/ohcal"],
     ["/.Well-Known/org.flathub.verifiedapps.txt", "/.well-known/org.flathub.VerifiedApps.txt"],
     ["/Landing/x.webp", "/landing/x.webp"], ["/SITE-ASSETS/_next/static/A.js", "/site-assets/_next/static/A.js"],
     ["/API/Waitlist", "/api/waitlist"],

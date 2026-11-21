@@ -245,6 +245,12 @@ function FrameBody({ host }: { host: FrameHost }) {
     noticePlace === null &&
     (isCalendarPlace(addressed.place) || addressed.stage?.id === "calSetup");
   const route = folded ? HOME : addressed;
+  const placeHere = spot(route);
+  const [startupPlace, setStartupPlace] = useState<string | null>(() =>
+    route.open === null ? placeHere : null,
+  );
+  const initialPlace = startupPlace === placeHere;
+  if (startupPlace !== null && !initialPlace) setStartupPlace(null);
   const product = productOf(route.place);
   const layout = product === "mail" ? look.layout : undefined;
   const plan: LayoutPlan = useMemo(() => layoutPlan(facts, layout), [facts, layout]);
@@ -269,8 +275,8 @@ function FrameBody({ host }: { host: FrameHost }) {
     [host, route, plan, commands, slot.report, over, product, previousProduct],
   );
   const context: FrameInner = useMemo(
-    () => ({ ...inner, api, railOpen: [railOpen, setRailOpen] as const }),
-    [inner, api, railOpen, setRailOpen],
+    () => ({ ...inner, api, initialPlace, railOpen: [railOpen, setRailOpen] as const }),
+    [inner, api, initialPlace, railOpen, setRailOpen],
   );
   const places = host.features.places;
   const place = isCalendarPlace(route.place)

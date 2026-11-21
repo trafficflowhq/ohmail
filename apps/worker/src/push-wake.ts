@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, eq, gte, inArray, lte, notInArray, sql } from "drizzle-orm";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
 import { CALENDAR_RECORD_KINDS, changeLog, type Tx } from "@trafficflow/db";
@@ -8,26 +9,14 @@ import {
 } from "@trafficflow/core/net";
 
 /**
- * THE WAKE SENDER — a content-free "something changed", and NOTHING ELSE, ever. `push_subscriptions`
- * gains its sender here: when an account's `change_log` advances, POST a CONSTANT to every registered
- * endpoint; the device then pulls `/sync` over its own authenticated connection. {@link WAKE_BODY} is a
- * module-level `const` with no interpolation — a wake travels through a third party (often somebody's
- * `ntfy`), so no count/folder/sender rides it; the only thing learned from the hub is `(accountId, seq)`,
- * the id used only to SELECT rows and `seq` only to bound the one read that asks whether the window held
- * anything but the calendar's records (a wake draws "New mail" on a closed app). Two wire forms: a row with `p256dh` AND `auth` gets
- * the constant SEALED (RFC 8291 `aes128gcm`) and signed (RFC 8292 VAPID); neither gets `application/json`,
- * fifteen bytes. NOT here: a wake to a DEAD process (`{"type":"wake"}` has no `id`, connector renders
- * nothing) and desktop-host wake (`push_subscriptions` is cloud-half) — both need native/foreground work. */
-
-/**
- * THE WAKE. Byte-identical, forever, on every deployment.
- *
- * A `const` and not a function, and not `JSON.stringify({ type: "wake" })`: a stringify call is a
- * place a second key can be added by editing an object literal that reads like configuration,
- * whereas this is fifteen bytes that a diff shows changing. The census asserts the literal AND
- * its byte length, so widening it is not something a reviewer has to notice.
+ * Wakes carry no mail content. UnifiedPush keeps its original constant. A browser wake
+ * seals an opaque digest of the registration's account and session family alongside the type.
  */
 export const WAKE_BODY = '{"type":"wake"}';
+
+function browserWakeBinding(accountId: string, familyId: string): string {
+  return createHash("sha256").update(JSON.stringify([accountId, familyId])).digest("hex");
+}
 
 /** {@link WAKE_BODY}'s length in bytes — pinned separately so a same-length swap is still caught. */
 export const WAKE_BODY_BYTES = 15;
@@ -135,7 +124,7 @@ export interface PushWakeDeps {
  * were offered and the plaintext constant goes out.
  */
 export type PushWakePost = (
-  url: string, pin: readonly string[], keys: WebPushKeys | null,
+  url: string, pin: readonly string[], keys: WebPushKeys | null, binding?: string,
 ) => Promise<{ status: number }>;
 
 export interface RunningPushWake {
@@ -169,7 +158,7 @@ function makeDefaultPost(
 ): PushWakePost {
   const vapid = opts.vapid;
   return async function post(
-    url: string, pin: readonly string[], keys: WebPushKeys | null,
+    url: string, pin: readonly string[], keys: WebPushKeys | null, binding?: string,
   ): Promise<{ status: number }> {
     /**
      * SEAL, OR DO NOT — and the headers follow from that one decision. `sealed === null` is the
@@ -184,7 +173,8 @@ function makeDefaultPost(
     let sealedHeaders: Record<string, string> = {};
     if (keys !== null) {
       if (vapid === null) throw new Error("cannot seal a wake without a VAPID identity");
-      sealed = encryptWebPushBody(WAKE_BODY, keys);
+      const payload = binding === undefined ? WAKE_BODY : `{"type":"wake","binding":"${binding}"}`;
+      sealed = encryptWebPushBody(payload, keys);
       sealedHeaders = {
         "content-encoding": "aes128gcm",
         // RFC 8292. The audience is derived from THIS url's origin inside `authorizationFor`, so a
@@ -336,16 +326,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
    */
   let warnedNoVapid = false;
 
-  /**
-   * Dial one account's endpoints.
-   *
-   * The account id is used ONCE — as the SELECT predicate — and never leaves this function. The
-   * rows it reads are `{ id, endpoint, p256dh, auth }` and nothing else: the projection is narrow
-   * on purpose, so that a future edit which wants a message-derived value has to widen the SELECT,
-   * which the census sees. The two key columns are in it because sealing needs them and for no
-   * other reason — they are the device's own material, they are never logged, and they never leave
-   * this function except as the encryptor's input.
-   */
+  /** Dial only the wake's account, keeping the session family and endpoint from the same row snapshot. */
   const fire = async (accountId: string, lowest: bigint, highest: bigint): Promise<void> => {
     /**
      * IS THIS ACCOUNT OURS? Asked before the query, not after.
@@ -366,6 +347,8 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
       endpoint: pushSubscriptions.endpoint,
       p256dh: pushSubscriptions.p256dh,
       auth: pushSubscriptions.auth,
+      transport: pushSubscriptions.transport,
+      familyId: pushSubscriptions.sessionFamilyId,
     }).from(pushSubscriptions).where(and(
       eq(pushSubscriptions.accountId, accountId),
       /**
@@ -376,7 +359,6 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
        * fix; the sender needed no change because a `webpush` row carries both key columns and takes the
        * SEALED arm. `apns` stays out and its absence is load-bearing: an Apple device token is not an
        * endpoint URL, so it cannot be POSTed to, and it is refused by omission until that sender exists.
-       * The payload does not move — both arms send the same closed constant, and the census keeps saying so.
        */
       inArray(pushSubscriptions.transport, ["unifiedpush", "webpush"]),
     ));
@@ -411,6 +393,9 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
        */
       if (stopped) return;
 
+      const binding = row.transport === "webpush" && row.familyId
+        ? browserWakeBinding(accountId, row.familyId)
+        : undefined;
       const url = row.endpoint;
       if (!url) continue;                        // a unifiedpush row with no endpoint is unusable
 
@@ -429,6 +414,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
       const keys: WebPushKeys | null = row.p256dh !== null && row.auth !== null
         ? { p256dh: row.p256dh, auth: row.auth }
         : null;
+      if (row.transport === "webpush" && (binding === undefined || keys === null)) continue;
 
       /**
        * A KEYED REGISTRATION ON A DEPLOYMENT THAT CANNOT SEAL IS SKIPPED, NOT DOWNGRADED.
@@ -477,7 +463,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
 
       let status: number;
       try {
-        ({ status } = await post(url, pin, keys));
+        ({ status } = await (binding === undefined ? post(url, pin, keys) : post(url, pin, keys, binding)));
       } catch {
         // A socket error, a timeout, an abort. Not evidence about the registration — retried on
         // the next wake. Deliberately not logged per failure: a distributor outage would otherwise
@@ -501,6 +487,9 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
           await db.delete(pushSubscriptions).where(and(
             eq(pushSubscriptions.id, row.id),
             eq(pushSubscriptions.accountId, accountId),
+            row.transport === "webpush" && row.familyId
+              ? eq(pushSubscriptions.sessionFamilyId, row.familyId)
+              : undefined,
           ));
           lastSentAt.delete(url);
           log?.info("push_wake_endpoint_pruned", { status });

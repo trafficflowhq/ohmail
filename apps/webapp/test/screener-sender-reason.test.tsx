@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, Folder, SyncResponse } from "@ohmail/wire";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 import * as React from "react";
 import { within } from "@testing-library/react";
@@ -127,7 +127,8 @@ async function mount(
   }));
   await tick(3000);
   if (advised) {
-    const rail = within(host).getByRole("navigation", { name: catalogue.frame.landmark.places });
+    const page = within(host);
+    const rail = await vi.waitFor(() => page.getByRole("navigation", { name: catalogue.frame.landmark.places }));
     await click(within(rail).getByRole("button", { name: /^Screener/ }));
     await tick(1000);
   }

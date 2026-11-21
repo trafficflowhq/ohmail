@@ -18,6 +18,7 @@ journeysOf("search", () => {
     const { person, row } = await personWith(b, LETTER);
     await person.arrive("search");
     await person.act("type", "search-box", { value: row.from });
-    await person.see("search-hit", { named: row.subject });
+    await person.act("press", "search-hit", { sender: row.from, named: row.subject });
+    await person.see("reader-subject", { named: row.subject });
   });
 });

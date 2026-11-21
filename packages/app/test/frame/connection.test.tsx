@@ -140,14 +140,14 @@ describe("the connection states: one closed set", () => {
     [
       "mailServerDown",
       input(ladder("mailboxError", { errorCode: "connect", address: "lena@example.com" })),
-      "lena@example.com not reached The mail server could not be reached.Mailboxes",
-      "lena@example.com nicht erreicht Der Mailserver war nicht erreichbar.Postfächer",
+      "lena@example.com failed to sync The mail server could not be reached.Mailboxes",
+      "lena@example.com konnte nicht synchronisiert werden Der Mailserver war nicht erreichbar.Postfächer",
     ],
     [
       "mailboxPassword",
       input(ladder("mailboxError", { errorCode: "auth" })),
-      "The password was refused The mail server refused the password.Mailboxes",
-      "Das Passwort wurde abgelehnt Der Mailserver hat das Passwort abgelehnt.Postfächer",
+      "A mailbox failed to sync The mail server refused the password.Mailboxes",
+      "Ein Postfach konnte nicht synchronisiert werden Der Mailserver hat das Passwort abgelehnt.Postfächer",
     ],
     [
       "mailboxSync",
@@ -165,8 +165,8 @@ describe("the connection states: one closed set", () => {
     [
       "firstSync",
       input(ladder("importing", { count: 412, total: 9120 })),
-      "First sync, 412 of 9,120",
-      "Erste Synchronisierung, 412 von 9.120",
+      "First sync 412 of 9,120",
+      "Erste Synchronisierung 412 von 9.120",
     ],
     [
       "filing",
@@ -256,16 +256,25 @@ describe("the connection states: one closed set", () => {
     expect(host.acts.follow).toHaveBeenCalledWith("/pair");
   });
 
+  it("shows the count on its own and clears the notice as soon as mail is caught up", () => {
+    const { again } = said(input(ladder("importing", { count: 3935 })));
+    const notice = screen.getByRole("status");
+    expect(notice.contains(screen.getByText("3,935 so far", { exact: true }))).toBe(true);
+    act(() => again(input(ladder("quiet"))));
+    expect(notice.isConnected).toBe(false);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("speaks the first sync's count once a poll and once a twentieth of the way, not at every step", () => {
     expect(ANNOUNCE_MS).toBe(POLL_MS);
     vi.useFakeTimers();
     const { again } = said(input(ladder("importing", { count: 100, total: 1000 })));
-    expect(status()).toEqual(["First sync, 100 of 1,000"]);
+    expect(status()).toEqual(["First sync 100 of 1,000"]);
     act(() => again(input(ladder("importing", { count: 120, total: 1000 }))));
     act(() => again(input(ladder("importing", { count: 160, total: 1000 }))));
-    expect(status()).toEqual(["First sync, 100 of 1,000"]);
+    expect(status()).toEqual(["First sync 100 of 1,000"]);
     act(() => vi.advanceTimersByTime(ANNOUNCE_MS));
-    expect(status()).toEqual(["First sync, 160 of 1,000"]);
+    expect(status()).toEqual(["First sync 160 of 1,000"]);
   });
 });
 

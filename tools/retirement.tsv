@@ -1490,6 +1490,7 @@ test/imapflow-upstream-outside-the-phone.test.ts	source-text	reads source as tex
 test/import-hold-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/invariant-table.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/journeys/guards.test.ts	source-text	reads the journeys' own files as text: a control is found by role and name, and nothing waits for time	lint rule: a journey finds a control by role and name	journeys	
+test/journeys/journeys/calendar.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/compose.hostile.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/compose.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/drafts.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
@@ -1499,6 +1500,7 @@ test/journeys/journeys/gate.journeys.test.ts	data	through test/journeys/bench/we
 test/journeys/journeys/gate.sign-in.journeys.test.ts	data	through test/journeys/bench/far-end.ts, test/journeys/vocabulary/catalogue.ts: reads the stack's handover and the invites it took; the message catalogue	none	journeys	
 test/journeys/journeys/history.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/ohbox.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/reader.filing.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/reader.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/reads.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/receipts.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	

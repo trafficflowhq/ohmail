@@ -128,7 +128,7 @@ describe("a letter answered in place", () => {
     await act(async () => { fireEvent.click(list.getByRole("option", { name: /subject of one/ })); });
     const actions = within(stream()).getByRole("toolbar", { name: "Actions" });
     await act(async () => { fireEvent.click(within(actions).getByRole("button", { name: "Reply" })); });
-    const editor = within(card("one").parentElement!).getByRole("textbox", { name: "Reply body" });
+    const editor = await within(card("one").parentElement!).findByRole("textbox", { name: "Reply body" });
     await act(async () => { mail.add(SENT as unknown as EngineMessage); });
     await act(async () => { fireEvent.keyDown(editor, { key: "Escape" }); });
 
@@ -155,7 +155,7 @@ describe("a letter answered in place", () => {
     await act(async () => { fireEvent.click(list.getByRole("option", { name: /Issue 20/ })); });
     const actions = () => within(stream()).getByRole("toolbar", { name: "Actions" });
     await act(async () => { fireEvent.click(within(actions()).getByRole("button", { name: "Reply" })); });
-    expect(within(card("one").parentElement!).getByRole("textbox", { name: "Reply body" })).toBeTruthy();
+    expect(await within(card("one").parentElement!).findByRole("textbox", { name: "Reply body" })).toBeTruthy();
 
     await act(async () => { fireEvent.click(within(actions()).getByRole("button", { name: "Later" })); });
     expect(mail.mutations.filter((mutation) => mutation.kind === "triage_set")).toEqual([

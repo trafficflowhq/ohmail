@@ -39,7 +39,7 @@ it("opens the calendar's first step before a signed-in account sets up Calendar"
   });
   await mountMailPage();
 
-  expect(server.on("GET /api/calendar/settings").length).toBeGreaterThan(0);
+  await vi.waitFor(() => expect(server.on("GET /api/calendar/settings").length).toBeGreaterThan(0));
   expect(products().getByRole("button", { name: "Mail" }).getAttribute("aria-current")).toBe("true");
   fireEvent.click(products().getByRole("button", { name: "Calendar" }));
   await tick(0);

@@ -4,21 +4,23 @@
 @layer oh {
   :root {
     --oh-cal-open-mix: 20%;
+    --oh-cal-open-mix-dark: 26%;
     --oh-cal-open-plain: color-mix(in oklab, var(--ink) 8%, var(--sheet));
     --oh-cal-open-line: var(--ev-line);
   }
   :root[data-scheme="dark"] {
-    --oh-cal-open-mix: 26%;
+    --oh-cal-open-mix: var(--oh-cal-open-mix-dark);
     --oh-cal-open-plain: color-mix(in oklab, var(--ink) 16%, var(--sheet));
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-scheme]) {
-      --oh-cal-open-mix: 26%;
+      --oh-cal-open-mix: var(--oh-cal-open-mix-dark);
       --oh-cal-open-plain: color-mix(in oklab, var(--ink) 16%, var(--sheet));
     }
   }
   :root[data-face="ohmarchy"] {
     --oh-cal-open-line: 2px;
+    --oh-cal-open-mix-dark: 16%;
   }
 
   .oh-cal-tone {

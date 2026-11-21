@@ -42,6 +42,8 @@ const realLocation = window.location;
 
 beforeEach(() => {
   session = () => NO_SESSION;
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
   entitled = false;
   create = () => json(201, {});
   sent = [];
@@ -157,7 +159,9 @@ describe("the join's page over its ceremony", () => {
   });
 
   it("the authenticator: its picture, and its code taken as six digits and sent as typed", async () => {
-    session = () => json(200, { user: user({ totp: false, recoveryCodes: false }), scope: "enrollment" });
+    document.cookie = "tf_family=enroll-fixture; Path=/";
+    document.cookie = "tf_owner=a1; Path=/";
+    session = () => json(200, { user: user({ totp: false, recoveryCodes: false }), scope: "enrollment", familyId: "enroll-fixture" });
     const ui = await mount();
     expect(ui.heading()).toBe(J.step_factor_title);
     await ui.press(J.useTotp);

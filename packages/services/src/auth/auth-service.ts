@@ -4,7 +4,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
-  markFenced, accountOfUser, bindDb, type Tx,
+  markFenced, accountOfUser, bindDb, BINDING_KEY_MAX, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { createLogger } from "@trafficflow/core/mail";
@@ -19,13 +19,14 @@ import {
   authEvents,
   authThrottle,
   invites,
+  mailboxOauthDeviceCeremonies,
   waitlist,
   pushSubscriptions,
   pruneWebauthnChallenges,
   erasedBearerAccount,
   KNOWN_CLIENT_RETENTION_MS,
 } from "@trafficflow/db/cloud";
-import { bridgeTx, type Db, type ServiceContext, type UnboundDb } from "../context.js";
+import { bridgeTx, credentialContext, keyedCredentialDb, type Db, type ServiceContext, type UnboundDb } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { pruneWakeRows } from "../push-service.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
@@ -75,6 +76,8 @@ const REUSE_SWEEP_WINDOW_DAYS = 14;
 export const REUSE_SWEEPS_MAX = 20;
 /** Sweep rows read per listing, acknowledged ones included, before the newest open ones are kept. */
 const REUSE_SWEEPS_SCAN = 100;
+/** Ended session families, and matched mailbox grants, one sign-out prune statement takes. */
+const GRANT_PRUNE_BATCH = 500;
 /** An acknowledgement row's `device`: this prefix and the sweep row's id. */
 const REUSE_ACK_PREFIX = "ack=";
 /** The swept session's id in the sweep row's `device` (`family=… session=… depth=…`). */
@@ -1085,23 +1088,28 @@ export class AuthService extends SessionLifecycle {
     const known = hC !== null && await this.isKnownClient(db, hA, hC);
     await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
 
-    // scoped-by: pre-auth sign-in — the row is located by the presented email, throttled and timing-hardened above
-    const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
-    const user = rows[0];
+    // An input the binder cannot carry follows the same unknown-address path.
+    const key = email.length <= BINDING_KEY_MAX && !/[\u0000-\u001f\u007f\p{Cs}]/u.test(email) ? email : null;
+    const [found] = await bridgeTx(keyedCredentialDb(ctx, key))
+      .select().from(users).where(eq(users.email, key ?? "")).limit(1);
+    const user = found && (ctx.credentialDb || !ctx.accountId || ctx.accountId === found.accountId)
+      ? found : undefined;
+    const owner = user ? credentialContext(ctx, user.accountId) : ctx;
+    const accountDb = asTx(owner);
 
     // THE UNKNOWN ADDRESS WALKS THE KNOWN ONE'S STATEMENTS: the factor-lock read and the credential
     // read run against a user id no row carries, and the verify runs against the decoy whenever
     // there is no stored hash, so status, statements and hash cost do not tell the two apart. A
     // password failure never touches `user:<id>`: that key is the second factor's.
     await this.throttleCheck(db, `user:${user?.id ?? NO_USER}`);
-    const cred = (await db.select().from(credentials)
+    const cred = (await accountDb.select().from(credentials)
       .where(eq(credentials.userId, user?.id ?? NO_USER)).limit(1))[0];
     const verified = await this.deps.passwordHasher.verify(
       b.password, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher));
     if (!verified || !user || !cred) {
       if (pwKey) await this.throttleLock(db, pwKey);
       if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
-      if (user) await this.audit(db, user, "login_failed", "password", ctx);
+      if (user) await this.audit(accountDb, user, "login_failed", "password", owner);
       throw credentialRefused("invalid email or password");
     }
 
@@ -1111,9 +1119,9 @@ export class AuthService extends SessionLifecycle {
     // their own client. See {@link throttleRefund} for why this is a decrement and never a reset.
     if (pwKey) await this.throttleRefund(db, pwKey);
     if (!known) await this.throttleRefund(db, ceilingKey, this.ceilingPolicy());
-    const verifiedHash = await this.rehashIfStale(db, user.id, cred.passwordHash, b.password);
+    const verifiedHash = await this.rehashIfStale(accountDb, user.id, cred.passwordHash, b.password);
 
-    const methods = await this.enrolledMethods(db, user.id);
+    const methods = await this.enrolledMethods(accountDb, user.id);
 
     // RE-ENTRY. Zero enrolled methods ⇒ there is no second factor to
     // challenge. This used to return `{twofa_required, methods: []}` and no endpoint
@@ -1126,12 +1134,15 @@ export class AuthService extends SessionLifecycle {
     // BOTH ARMS write a row keyed to the user (a session, a login token), so each opens on the
     // account row; one erased under it answers what its credentials answer once it is gone.
     const fence = { accountId: user.accountId, onErased: refusedSignIn };
-    if (methods.length === 0) return this.inTransaction(ctx, (txCtx) => this.establishEnrollment(txCtx, user), { fence });
+    if (methods.length === 0) {
+      refuseCrossAccountCredential(ctx, user.accountId);
+      return this.inTransaction(owner, (txCtx) => this.establishEnrollment(txCtx, user), { fence });
+    }
 
     // First factor OK → mint a single-use, short-lived login token carrying the
     // user's enrolled 2FA methods (never a full session on step one).
     const rawToken = generateToken();
-    const minted = await this.inTransaction(ctx, async (txCtx) => {
+    const minted = await this.inTransaction(owner, async (txCtx) => {
       const tx = asTx(txCtx);
       // ONLY WHILE THE PASSWORD IT CHECKED IS STILL THE ACCOUNT'S. A password change voids every
       // first step there is ({@link voidPendingGrants}); one committing between the verify above
@@ -1156,7 +1167,7 @@ export class AuthService extends SessionLifecycle {
       await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
       if (pwKey) await this.throttleLock(db, pwKey);
       if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
-      await this.audit(db, user, "login_failed", "password", ctx);
+      await this.audit(accountDb, user, "login_failed", "password", owner);
       throw credentialRefused("invalid email or password");
     }
     return { status: "twofa_required", loginToken: rawToken, methods };
@@ -1806,16 +1817,15 @@ export class AuthService extends SessionLifecycle {
   }
 
   async webauthnAssertOptions(ctx: ServiceContext, b: { loginToken: string }): Promise<{ options: unknown }> {
-    const db = asTx(ctx);
     requireField(b.loginToken, "loginToken");
-    // Origin admission, before the FIRST DATABASE READ (`peekLoginToken`) — same ordering
-    // as `webauthnRegisterOptions`. `asTx` above only unwraps the handle; it queries
-    // nothing.
     const origin = resolveCeremonyOrigin(this.cfg, ctx.origin);
-    const lt = await this.peekLoginToken(db, ctx, b.loginToken);
+    const lt = await this.peekLoginToken(ctx, b.loginToken);
+    refuseCrossAccountCredential(ctx, lt.accountId);
+    const owner = credentialContext(ctx, lt.accountId);
+    const db = asTx(owner);
     const allow = await this.webauthnCreds(db, lt.userId);
     const options = await buildAuthenticationOptions(this.cfg, allow);
-    await this.openChallenge(db, ctx, {
+    await this.openChallenge(db, owner, {
       loginTokenId: lt.id, challenge: options.challenge, type: "authentication", origin,
     });
     return { options };
@@ -1824,17 +1834,14 @@ export class AuthService extends SessionLifecycle {
   async webauthnAssertVerify(
     ctx: ServiceContext, b: { loginToken: string; credential: any },
   ): Promise<SessionEstablished> {
-    const db = asTx(ctx);
     requireField(b.loginToken, "loginToken");
     if (b.credential == null) throw new ServiceError("validation_failed", 400, "credential is required");
-    const lt = await this.peekLoginToken(db, ctx, b.loginToken);
+    const lt = await this.peekLoginToken(ctx, b.loginToken);
+    // A conflicting session is refused before any factor or login token is spent.
+    refuseCrossAccountCredential(ctx, lt.accountId);
+    const owner = credentialContext(ctx, lt.accountId);
+    const db = asTx(owner);
     const user = await this.loadUser(db, lt.userId);
-    // BEFORE THE CREDENTIAL IS SPENT. `peekLoginToken` reads without consuming, so refusing here
-    // burns nothing: the login token, the factor's replay window and the recovery code are all
-    // still intact, and clearing the ambient session and retrying succeeds. Placed at the peek
-    // rather than inside `establish` because `establish` runs after the consume — a 409 from
-    // there answered correctly and destroyed the credential on the way out.
-    refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read — see {@link throttleReserve}. `peekLoginToken` deliberately does not
     // consume, so one live login token can be presented arbitrarily many times at once; with a
     // pure read in front of the verify the second factor had the same concurrency bound the
@@ -1844,7 +1851,14 @@ export class AuthService extends SessionLifecycle {
     await this.throttleReserve(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     await this.throttleReserve(db, `user:${user.id}`);
 
-    const ch = await this.consumeChallenge(db, ctx, { loginTokenId: lt.id, type: "authentication" });
+    const challenge = challengeOfAssertion(b.credential);
+    if (!challenge || challenge.length > BINDING_KEY_MAX || !/^[A-Za-z0-9_-]+$/.test(challenge)) {
+      await this.twofaFail(db, user, ctx, true);
+      throw credentialRefused("two-factor verification failed");
+    }
+    const ch = await this.consumeChallenge(bridgeTx(keyedCredentialDb(ctx, challenge)), ctx, {
+      loginTokenId: lt.id, challenge, type: "authentication",
+    });
     const credId = b.credential?.id as string | undefined;
     const stored = (await this.webauthnCreds(db, user.id)).find((c) => c.credentialId === credId);
     if (!stored) {
@@ -1867,7 +1881,7 @@ export class AuthService extends SessionLifecycle {
     // The first step's burn, the session and the day counter's refund, one transaction
     // ({@link firstStepFence}): a refund that fails takes the session back with it. A WebAuthn
     // assertion just succeeded, here. `now` is the factor's real time.
-    return this.inTransaction(ctx, async (txCtx) => {
+    return this.inTransaction(owner, async (txCtx) => {
       await this.consumeLoginToken(asTx(txCtx), lt.id, txCtx.now());
       const est = await this.establish(txCtx, user, { method: "webauthn", kind: "web", twofaAt: ctx.now() });
       await this.throttleRefund(asTx(txCtx), `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
@@ -1994,7 +2008,6 @@ export class AuthService extends SessionLifecycle {
   async totpVerify(
     ctx: ServiceContext, b: { loginToken: string; code: string; kind?: unknown },
   ): Promise<SessionEstablished> {
-    const db = asTx(ctx);
     requireField(b.loginToken, "loginToken");
     requireField(b.code, "code");
     let kind: DeviceKind = "web";
@@ -2004,14 +2017,12 @@ export class AuthService extends SessionLifecycle {
       }
       kind = b.kind as DeviceKind;
     }
-    const lt = await this.peekLoginToken(db, ctx, b.loginToken);
+    const lt = await this.peekLoginToken(ctx, b.loginToken);
+    // A conflicting session is refused before any factor or login token is spent.
+    refuseCrossAccountCredential(ctx, lt.accountId);
+    const owner = credentialContext(ctx, lt.accountId);
+    const db = asTx(owner);
     const user = await this.loadUser(db, lt.userId);
-    // BEFORE THE CREDENTIAL IS SPENT. `peekLoginToken` reads without consuming, so refusing here
-    // burns nothing: the login token, the factor's replay window and the recovery code are all
-    // still intact, and clearing the ambient session and retrying succeeds. Placed at the peek
-    // rather than inside `establish` because `establish` runs after the consume — a 409 from
-    // there answered correctly and destroyed the credential on the way out.
-    refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read: six digits behind a pure-read gate is a code an attacker can spray as
     // wide as their connection count. See {@link throttleReserve}.
     // THE DAY CAP, first, so a locked day refuses before the 15-minute counter moves. Pre-session
@@ -2061,14 +2072,14 @@ export class AuthService extends SessionLifecycle {
     // ({@link firstStepFence}). A TOTP code was just verified, here. `now` is the factor's real
     // time. `kind` is the caller's declaration or `"web"` — either way it derives the cookie window
     // (see the header), so the declaration reaches the device row and nothing else.
-    const verified = await this.inTransaction(ctx, async (txCtx) => {
+    const verified = await this.inTransaction(owner, async (txCtx) => {
       await this.consumeLoginToken(asTx(txCtx), lt.id, txCtx.now());
       const est = await this.establish(txCtx, user, { method: "totp", kind, twofaAt: ctx.now() });
       await this.throttleRefund(asTx(txCtx), `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
       return est;
     }, { fence: firstStepFence(user.accountId) });
     // A desktop that declared itself got a device row of its own; a browser's sign-in made none.
-    if (mintsNamedDevice(kind)) await ringDeviceMade(ctx, user.accountId);
+    if (mintsNamedDevice(kind)) await ringDeviceMade(owner, user.accountId);
     return verified;
   }
 
@@ -2459,17 +2470,14 @@ export class AuthService extends SessionLifecycle {
   async recoveryVerify(
     ctx: ServiceContext, b: { loginToken: string; code: string },
   ): Promise<SessionEstablished & { remainingCodes: number }> {
-    const db = asTx(ctx);
     requireField(b.loginToken, "loginToken");
     requireField(b.code, "code");
-    const lt = await this.peekLoginToken(db, ctx, b.loginToken);
+    const lt = await this.peekLoginToken(ctx, b.loginToken);
+    // A conflicting session is refused before any factor or login token is spent.
+    refuseCrossAccountCredential(ctx, lt.accountId);
+    const owner = credentialContext(ctx, lt.accountId);
+    const db = asTx(owner);
     const user = await this.loadUser(db, lt.userId);
-    // BEFORE THE CREDENTIAL IS SPENT. `peekLoginToken` reads without consuming, so refusing here
-    // burns nothing: the login token, the factor's replay window and the recovery code are all
-    // still intact, and clearing the ambient session and retrying succeeds. Placed at the peek
-    // rather than inside `establish` because `establish` runs after the consume — a 409 from
-    // there answered correctly and destroyed the credential on the way out.
-    refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read — {@link throttleReserve}.
     // THE DAY CAP, first, so a locked day refuses before the 15-minute counter moves. Pre-session
     // verifies only: a live session's step-up keeps `user:` alone (a password holder cannot lock it).
@@ -2488,7 +2496,7 @@ export class AuthService extends SessionLifecycle {
     // code is exactly as it was found. The `used_at IS NULL` race guard is unchanged.
     let spent: { est: SessionEstablished; remaining: number };
     try {
-      spent = await this.inTransaction(ctx, (txCtx) =>
+      spent = await this.inTransaction(owner, (txCtx) =>
         this.spendRecoveryCode(txCtx, user, { ...match, loginTokenId: lt.id }),
       { fence: { accountId: user.accountId } });
     } catch (e) {
@@ -2971,17 +2979,17 @@ export class AuthService extends SessionLifecycle {
    * control.
    */
   private async peekLoginToken(
-    db: Tx, ctx: ServiceContext, raw: string,
-  ): Promise<{ id: string; userId: string; methods: Method[] }> {
-    const row = (await db.select().from(loginTokens)
-      .where(and(
-        eq(loginTokens.tokenHash, hashToken(raw)),
-        eq(loginTokens.purpose, "login"),
-      )).limit(1))[0];
-    if (!row || row.consumedAt || row.expiresAt.getTime() <= ctx.now().getTime()) {
+    ctx: ServiceContext, raw: string,
+  ): Promise<{ id: string; accountId: string; userId: string }> {
+    const digest = hashToken(raw);
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, digest)).select({
+      id: loginTokens.id, accountId: loginTokens.accountId, userId: loginTokens.userId,
+      consumedAt: loginTokens.consumedAt, expiresAt: loginTokens.expiresAt,
+    }).from(loginTokens).where(and(eq(loginTokens.tokenHash, digest), eq(loginTokens.purpose, "login"))).limit(1);
+    if (!row?.accountId || row.consumedAt || row.expiresAt.getTime() <= ctx.now().getTime()) {
       throw credentialRefused("login session expired");
     }
-    return { id: row.id, userId: boundUserId(row.userId), methods: (row.methods as Method[]) ?? [] };
+    return { id: row.id, accountId: row.accountId, userId: boundUserId(row.userId) };
   }
 
   /**
@@ -3027,12 +3035,12 @@ export class AuthService extends SessionLifecycle {
         expiresAt: new Date(ctx.now().getTime() + this.cfg.webauthnChallengeTtlMs),
       });
     };
-    // A challenge bound to the session's own USER is a row the erasure deletes, so it opens on
-    // that account's row. An assertion's challenge names only its login token: no key to `users`.
+    // User ceremonies are fenced in their account. A login ceremony keeps the unowned
+    // challenge format, and the insert and claim each name the single generated challenge.
     if (v.userId !== undefined) {
       await this.inTransaction(ctx, (txCtx) => open(asTx(txCtx)), { fence: { accountId: ctx.accountId } });
     } else {
-      await open(db);
+      await open(bridgeTx(keyedCredentialDb(ctx, v.challenge)));
     }
     await pruneWebauthnChallenges(db, { now: ctx.now() }).catch(() => 0);
   }
@@ -3569,28 +3577,15 @@ export class AuthService extends SessionLifecycle {
    * Signing out a device takes its wake registration with it — {@link revokeDevice}'s rule, on the
    * door people actually use: a phone that forgot a server kept a live row, its endpoint answering 2xx
    * for ever. HERE, not `SessionLifecycle`: the desktop-host door's database has no push table.
-   * `/auth/logout`'s arms prune AFTER `super.logout` (a step-up refusal deletes nothing), in ONE
-   * transaction: the revoked family is the only credential that could retry. The web's door COMMITS its
-   * revoke and audit first and prunes after, logged on failure and never rethrown: a fault that rolled
-   * the sign-out back would leave a session live; a row left is wakes to a signed-out device.
+   * The session arms prune wake registrations and unused mailbox grants in the same transaction
+   * after `super.logout`. Refresh sign-out prunes each family on its account handle after revocation.
    */
   override async logout(
     ctx: ServiceContext, b: {
       allDevices?: boolean; refreshToken?: string; expectedFamily?: string; browser?: boolean; expectedAccount?: string;
     } = {},
   ): Promise<{ familyIds: string[] }> {
-    if (!b.allDevices && b.refreshToken !== undefined) {
-      const out = await super.logout(ctx, b);
-      try {
-        await this.pruneWakeRegistrations(asTx(ctx), out.familyIds);
-      } catch (err) {
-        authLog.error("auth_logout_wake_prune_failed", {
-          requestId: ctx.requestId, count: out.familyIds.length, err,
-          reason: "the sign-out committed; the signed-out device's wake registration was left in place",
-        });
-      }
-      return out;
-    }
+    if (!b.allDevices && b.refreshToken !== undefined) return super.logout(ctx, b);
     // Asked before the fence, which needs the session's account: the same 401 `super.logout` gives.
     this.requireUser(ctx);
     return this.inTransaction(ctx, async (txCtx) => {
@@ -3615,8 +3610,46 @@ export class AuthService extends SessionLifecycle {
         ));
       }
       await this.pruneWakeRegistrations(db, out.familyIds);
+      await this.pruneDeviceGrants(db, out.familyIds);
       return out;
     }, { fence: { accountId: ctx.accountId, onErased: () => ({ familyIds: [] }) } });
+  }
+
+  protected override async pruneDeviceGrants(db: Tx, familyIds: readonly string[]): Promise<void> {
+    const families = [...new Set(familyIds)];
+    const table = mailboxOauthDeviceCeremonies;
+    const unusedMailboxGrant = and(eq(table.purpose, "mailbox"), isNull(table.consumedAt));
+    for (let i = 0; i < families.length; i += GRANT_PRUNE_BATCH) {
+      const chunk = families.slice(i, i + GRANT_PRUNE_BATCH);
+      const ended = await db.select({ id: sessions.id, accountId: sessions.accountId })
+        .from(sessions).where(and(inArray(sessions.familyId, chunk), isNotNull(sessions.revokedAt)));
+      if (ended.length === 0) continue;
+
+      // A family keeps the account it was minted in (a rotation never moves it), so these are at
+      // most one account per family of the chunk.
+      const accountsBySession = new Map(ended.map(({ id, accountId }) => [id, accountId]));
+      const grants = await db.select({
+        state: table.state, accountId: table.accountId, ciphertext: table.deviceCodeEnc, keyVersion: table.deviceCodeKeyVersion,
+      }).from(table).where(and(unusedMailboxGrant, inArray(table.accountId, [...new Set(accountsBySession.values())])));
+
+      // The session identity is inside the sealed grant. Older or unreadable grants already fail
+      // closed at poll time, as do grants whose session was revoked before this cleanup.
+      const toDelete: string[] = [];
+      for (const grant of grants) {
+        try {
+          const sealed = await this.deps.keyProvider.decrypt(grant.ciphertext, grant.keyVersion);
+          const sessionId: unknown = JSON.parse(sealed)?.sessionId;
+          if (typeof sessionId === "string" && accountsBySession.get(sessionId) === grant.accountId) {
+            toDelete.push(grant.state);
+          }
+        } catch {
+          // Retention will remove a grant whose session cannot be read.
+        }
+      }
+      for (let j = 0; j < toDelete.length; j += GRANT_PRUNE_BATCH) {
+        await db.delete(table).where(and(unusedMailboxGrant, inArray(table.state, toDelete.slice(j, j + GRANT_PRUNE_BATCH))));
+      }
+    }
   }
 
   /**

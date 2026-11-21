@@ -193,7 +193,9 @@ async function mount(): Promise<void> {
     }),
   }));
   await settle();
-  for (const f of FILES) expect(tile(f.filename), `the letter never drew ${f.filename}`).not.toBeNull();
+  await vi.waitFor(() => {
+    for (const file of FILES) expect(tile(file.filename), `the letter never drew ${file.filename}`).not.toBeNull();
+  });
 }
 
 const tile = (name: string): HTMLButtonElement | null => {

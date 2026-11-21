@@ -31,8 +31,10 @@ export function RegisteredSearch({ engine, now, locale = "en", catalogue = messa
   );
 }
 
-export const searchField = (host: HTMLElement) =>
-  within(host).getByRole("textbox", { name: (name) => name === messages.search.aria || name === german.search.aria });
+const searchName = (name: string) => name === messages.search.aria || name === german.search.aria;
+
+export const searchField = (host: HTMLElement) => within(host).getByRole("textbox", { name: searchName });
+export const findSearchField = (host: HTMLElement) => within(host).findByRole("textbox", { name: searchName });
 
 export function typeSearch(host: HTMLElement, query: string): void {
   fireEvent.change(searchField(host), { target: { value: query } });

@@ -5,6 +5,7 @@
  * in Chromium under every sheet the product page loads: today's, unlayered, and the new design's. The notice's box
  * lies inside the bar's box, and its title is on screen.
  */
+import { execFileSync } from "node:child_process";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Frame } from "../../src/frame/Frame.js";
@@ -144,4 +145,51 @@ describe("the notice at rest", () => {
     expect(running.length).toBeGreaterThan(0);
     expect(running.every((r) => r.startsWith("notice: probe-pulse"))).toBe(true);
   });
+});
+
+describe("first sync at the notice slot", () => {
+  let html: string;
+  beforeAll(() => {
+    // Bundle in Node because this suite also renders frame markup in jsdom.
+    html = execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        'import { statesPage } from "./packages/app/test/states/build-states.mjs"; process.stdout.write(await statesPage());',
+      ],
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+    );
+  }, 120_000);
+
+  it.each([
+    ["phone", 390, 844],
+    ["desktop", 1440, 900],
+  ] as const)(
+    "%s keeps the count aligned and removes the moving line when first sync finishes",
+    async (device, width, height) => {
+      const page = await browser!.newPage({ viewport: { width, height }, reducedMotion: "no-preference" });
+      try {
+        const url = `http://states.test/?show=firstsync&device=${device}&controls=1`;
+        await page.route(url, (route) => route.fulfill({ contentType: "text/html", body: html }));
+        await page.goto(url);
+        const notice = page.getByRole("status").filter({ hasText: "First sync" });
+        const count = notice.getByText("3,846 so far", { exact: true });
+        expect(await count.evaluate((el) => getComputedStyle(el).fontVariantNumeric)).toBe("tabular-nums");
+        const animations = () => notice.evaluate((el) => el.getAnimations({ subtree: true }).length);
+        expect(await animations()).toBe(1);
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        expect(await animations()).toBe(0);
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        expect(await animations()).toBe(1);
+        const shown = await notice.elementHandle();
+        await page.getByRole("button", { name: "Finish first sync" }).click();
+        await notice.waitFor({ state: "detached" });
+        expect(await shown!.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
+      } finally {
+        await page.close();
+      }
+    },
+    30_000,
+  );
 });

@@ -34,15 +34,19 @@ export function useEventCardActions({
     if (
       blocked ||
       moveMenu ||
-      key.altKey ||
-      key.ctrlKey ||
+      (key.ctrlKey && !key.altKey) ||
       key.metaKey ||
       key.repeat ||
       target.closest("input, textarea, select, [contenteditable]")
     )
       return;
     const pressed = key.key;
-    if (!key.shiftKey && pressed === "e" && edit) {
+    if (key.altKey) {
+      if (!key.shiftKey || !edit || event.start.kind !== "date") return;
+      const days = pressed === "ArrowLeft" ? -1 : pressed === "ArrowRight" ? 1 : 0;
+      if (!days) return;
+      actions.start(event, { kind: "resize", edge: key.ctrlKey ? "start" : "end", days }, target);
+    } else if (!key.shiftKey && pressed === "e" && edit) {
       edit.onPress();
     } else if (!key.shiftKey && pressed === "m" && canTransfer) {
       setMoveMenu(target);

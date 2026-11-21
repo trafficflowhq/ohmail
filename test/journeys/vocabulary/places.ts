@@ -25,7 +25,7 @@ const pane = (id: string, key: CatalogueKey): Place => ({
 
 export const PLACES = {
   ohbox: view("ohbox", "ohbox.title"),
-  reads: view("reads", "reads.title"),
+  reads: view("reads", "news.title"),
   receipts: view("receipts", "receipts.title"),
   screener: view("screener", "screener.title"),
   triage: view("triage", "triage.title"),
@@ -34,8 +34,9 @@ export const PLACES = {
   /** Write's place: its letter is the reading column's sheet, named as the kit's Write names it (`write.letter`). */
   compose: { id: "compose", route: "#/compose", landmark: { role: "region", key: "write.letter" } },
   drafts: view("drafts", "drafts.title"),
-  trash: view("trash", "rail.trash"),
+  trash: view("trash", "trash.title"),
   settings: view("settings", "settings.title"),
+  calendar: { id: "calendar", route: "#/cal/week", landmark: { role: "region", key: "calendar.landmark" } },
 
   "settings-general": pane("general", "settings.general"),
   "settings-notifications": pane("notifications", "settings.notifications"),
@@ -64,7 +65,7 @@ export const PLACES = {
   gate: { id: "gate", route: "/login", landmark: { role: "heading", key: "login.title" } },
   "first-run": { id: "first-run", route: "/", landmark: { role: "list", key: "join.progress" } },
   "sign-out": { id: "sign-out", route: "#/settings/account", landmark: { role: "button", key: "account.signOut" } },
-  erase: { id: "erase", route: "#/settings/account", landmark: { role: "button", key: "account.begin" } },
+  erase: { id: "erase", route: "/account/delete", landmark: { role: "button", key: "deleteAccount.begin" } },
 } as const satisfies Record<string, Place>;
 
 export type PlaceId = keyof typeof PLACES;

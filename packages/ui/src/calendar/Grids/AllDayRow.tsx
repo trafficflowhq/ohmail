@@ -3,7 +3,7 @@ import { dayColumn } from "./time-grid-layout.js";
 import "./all-day-row.css";
 
 export interface AllDayRowProps {
-  /** The lane's name in the gutter: "all day". Drawn only while the lane holds something. */
+  /** The accessible name of the lane when it holds events. */
   label: string;
   /** How many days the lane spans, where it stands outside a time grid. Inside one it takes the grid's. */
   days?: number;
@@ -25,11 +25,12 @@ export function AllDayRow({ label, days, targets, crease = 0, children }: AllDay
   return (
     <div
       className="oh-allday"
+      role={none ? undefined : "group"}
+      aria-label={none ? undefined : label}
       data-none={none ? "" : undefined}
       data-cal-all-day-lane={targets ? "" : undefined}
       style={days === undefined ? undefined : ({ "--oh-tg-days": days } as CSSProperties)}
     >
-      {none ? null : <span className="oh-allday-label">{label}</span>}
       {none
         ? null
         : targets?.map((day, index) => (

@@ -51,7 +51,7 @@ export interface DeviceNotifications {
    * by the shell from its own store at each settle of the copy, so a switch pressed a moment ago counts. Never held
    * by the caller. Absent: this surface stores no switch, and its emitter is handed nothing to draw.
    */
-  choices?: () => NoticeChoices;
+  choices?: (scope: string | null) => NoticeChoices;
   /** Moves when this device's choices change, even while the mail copy stands still. */
   choicesVersion?: Signal<number>;
   /**
@@ -60,13 +60,13 @@ export interface DeviceNotifications {
    * device's registration and keeps the switches; without this door a person who signs back in sees every switch
    * on over no registration. Never throws; bounded by the shell. Absent: nothing is registered here to put back.
    */
-  reconcile?: (body: string) => Promise<PushSyncOutcome | null>;
+  reconcile?: (body: string, scope: string | null) => Promise<PushSyncOutcome | null>;
   /**
    * THE WORKER'S WORDS ALONE, in the account's language once it is adopted. A RELABEL, NEVER A RECONCILE: what is
    * stored of "may draw" is kept byte for byte and never worked out again from the switches, or a previous person's
    * surviving registration would be armed again on a shared device. Absent exactly where `reconcile` is.
    */
-  relabel?: (title: string, body: string) => Promise<void>;
+  relabel?: (title: string, body: string, scope: string | null) => Promise<void>;
 }
 
 /**
@@ -103,7 +103,7 @@ export interface Appearance {
 /** The address bar, owned by the shell. The frame reads and writes the fragment through it, never `location`. */
 export interface HostAddress {
   /** The current pane holds a leave while a draft differs from its saved value. */
-  holdLeave(ask: (leave: () => void) => void, at: string): () => void;
+  holdLeave(ask: (leave: () => void) => void, at: string, leaves?: (next: string) => boolean): () => void;
   /** Ask before a route command changes any state. Discard resumes that same command once. */
   heldBefore(next: string, resume: () => void): boolean;
   read(): string;

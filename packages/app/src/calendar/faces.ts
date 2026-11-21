@@ -2,12 +2,7 @@
  * AN OCCURRENCE'S FACE: what a view draws of it, made from its record, its calendar, its connection and what waits
  * for it. Pure; the words come in from the `event` namespace, so the face says them in the reader's language.
  */
-import {
-  hueOf,
-  viewOnlyOf,
-  type CalendarConnectionRecord,
-  type ShownOccurrence,
-} from "@ohmail/app-logic/calendar";
+import { viewOnlyOf, type CalendarConnectionRecord, type ShownOccurrence } from "@ohmail/app-logic/calendar";
 import type { CalendarEventView } from "./view.js";
 
 /** An event as every view takes it: the time grid's face, and the words Search finds it by. */
@@ -35,6 +30,7 @@ export function faceOf(
   o: ShownOccurrence,
   connections: ReadonlyMap<string, CalendarConnectionRecord>,
   words: FaceWords,
+  tone: CalendarEventView["tone"],
 ): CalendarEventFace {
   const event = (o.series ?? o.record).id;
   // A single override keeps its stored key even when this device reads its zone differently.
@@ -45,7 +41,7 @@ export function faceOf(
     recordId: o.record.id,
     start: o.occurrence.start,
     end: o.occurrence.end,
-    tone: hueOf(o.calendar.color),
+    tone,
     ref: { event, occurrence: key, day: o.day },
   };
   if (o.calendar.access === "busy") {

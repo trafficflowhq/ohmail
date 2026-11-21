@@ -305,6 +305,7 @@ function addressRows(el: HTMLElement): HTMLElement[] {
 }
 
 interface DoorFact {
+  account?: string;
   flavor?: string;
   server?: string;
   host?: string;
@@ -336,7 +337,7 @@ function frameProps(door: string, extra: DoorFact): DesktopFrameProps {
   } as EngineStatus;
   return {
     engine: engine!, status, session: "live", sessionRefused: false, sealFailed: false,
-    paired: extra.paired ?? host !== undefined, hostLabel: host ?? null, freshness: null, account: null,
+    paired: extra.paired ?? host !== undefined, hostLabel: host ?? null, freshness: null, account: extra.account ?? null,
     storage: null, mayLinkOut: true, manageOffered: false, withdrawManage: () => undefined,
     rereadAccess: () => undefined, reuseSweeps: [], recheckSweeps: async () => undefined,
     ai: null, setAi: () => undefined, onStatus, openOverlay: () => undefined, takeOver: () => undefined,
@@ -395,9 +396,13 @@ async function render(door: string | null, extra: DoorFact = {}, at = "#/setting
   document.body.appendChild(mountPoint);
   root = createRoot(mountPoint);
   await paint(door, extra);
-  if (engine === null || at !== "#/settings/mailboxes") return mountPoint;
+  if (engine === null) return mountPoint;
   const catalogue = extra.locale === "de" ? messagesDe : messages;
-  return within(mountPoint).getByRole("region", { name: catalogue.settings.mailboxes });
+  if (at === "#/search") {
+    await within(mountPoint).findByRole("textbox", { name: catalogue.search.aria });
+  }
+  if (at !== "#/settings/mailboxes") return mountPoint;
+  return within(mountPoint).findByRole("region", { name: catalogue.settings.mailboxes });
 }
 
 /** A button by its label, so a second control cannot be mistaken for the one under test. */
@@ -466,6 +471,8 @@ beforeEach(() => {
     invoke: async (command, payload) => {
       // The frame independently asks whether the operating system uses this app for mail.
       if (command === "default_mail_status" && payload === undefined) return { state: "default" };
+      // The frame subscribes to native notification opens independently of mailbox actions.
+      if (command === "plugin:event|listen" && payload?.event === "notice:open") return null;
       invoked.push({ command, ...(payload ? { payload } : {}) });
       return null;
     },
@@ -975,14 +982,14 @@ describe("the desktop mailbox pane on the hosted door", () => {
  */
 describe("the hand-off row names the door's own place", () => {
   const rows: ReadonlyArray<{
-    door: string; extra: { flavor?: string; server?: string; host?: string };
+    door: string; extra: DoorFact;
     says: string | null; button: string | null; key: string | null; never: string[];
   }> = [
     { door: "local", extra: { flavor: "local" }, says: null, button: null, key: null,
       never: ["managed in ohmail on the web", "your server's web app", "Open ohmail.app"] },
     { door: "cloud", extra: { flavor: "managed" }, says: "Mailboxes are managed in ohmail on the web",
       button: "Open ohmail.app", key: "mailboxes", never: ["your server's web app"] },
-    { door: "cloud", extra: { flavor: "selfhost", server: "mail.example.test" },
+    { door: "cloud", extra: { flavor: "selfhost", server: "mail.example.test", account: PANE_SCOPE },
       says: "Mailboxes are managed on your server's web app", button: "Open mail.example.test",
       key: "server-mailboxes", never: ["ohmail on the web", "ohmail.app"] },
     { door: "cloud", extra: { flavor: "desktop-host", host: "Kitchen Mac" },
@@ -1002,9 +1009,10 @@ describe("the hand-off row names the door's own place", () => {
       const b = buttonSaying(el, r.button);
       expect(b, `no "${r.button}" press`).not.toBeNull();
       await act(async () => { b!.click(); });
-      expect(invoked, "the window named something other than a key").toEqual([
-        { command: "open_link", payload: { key: r.key } },
-      ]);
+      const payload = r.extra.account === undefined
+        ? { key: r.key }
+        : { key: r.key, expectedAccount: PANE_SCOPE, expectedServer: `https://${r.extra.server}` };
+      expect(invoked, "the window opened the wrong Settings page").toEqual([{ command: "open_link", payload }]);
     });
   }
 

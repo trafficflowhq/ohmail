@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Seg } from "@ohmail/ui/base";
+import { Button, Seg, hueStyle } from "@ohmail/ui/base";
+import { design } from "@ohmail/tokens/design";
 import {
   LookPicture,
   SettingLine,
@@ -165,7 +166,6 @@ function MessagesSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Text 
           options={imageQuality.choices.map((id) => ({ value: id, label: t(`imageQualityLevel.${id}`) }))}
         />
       </SettingLine>
-      <SettingNote>{t("imageQualityHint")}</SettingNote>
       <SettingLine label={t("afterVerb")} narrow="under">
         <Seg
           label={t("afterVerbAria")}
@@ -174,7 +174,6 @@ function MessagesSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Text 
           options={afterVerb.choices.map((id) => ({ value: id, label: t(`afterVerbChoice.${id}`) }))}
         />
       </SettingLine>
-      <SettingNote>{t("afterVerbHint")}</SettingNote>
       {images ? <ImagesLines images={images} write={imagesWrite} t={t} /> : null}
       {pixels ? <PixelsLines pixels={pixels} write={pixelsWrite} t={t} /> : null}
     </SettingsSheet>
@@ -184,10 +183,15 @@ function MessagesSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Text 
 function SubjectPicture({ each, g }: { each: boolean; g: Text }) {
   return (
     <span className="subject-picture" data-shared={each ? undefined : ""} aria-hidden="true">
-      {!each && <b>{g("subjectSample")}</b>}
-      {["subjectSample", "subjectReplySample"].map((sample) => (
+      {!each && <b className="subject-picture-heading">{g("subjectSample")}</b>}
+      {["subjectSample", "subjectReplySample"].map((sample, index) => (
         <span className="subject-picture-letter" key={sample}>
-          {each && <b>{g(sample)}</b>}
+          {each && <b className="subject-picture-subject">{g(sample)}</b>}
+          <i
+            className="subject-picture-avatar"
+            style={hueStyle(index === 0 ? design.tagHues.terracotta : design.tagHues.slate)}
+          />
+          <i className="subject-picture-name" />
           <i className="subject-picture-line" />
           <i className="subject-picture-line" />
         </span>

@@ -10,5 +10,17 @@ export const NotificationsContext = createContext<NotificationsModel | null>(nul
 export function useNotificationSummary(): PaneSummary | null {
   const model = useContext(NotificationsContext);
   const t = useText(NOTIFICATIONS_NAMESPACE);
-  return model?.permission === "denied" ? { value: t("blocked"), hot: true } : null;
+  if (!model) return null;
+  if (model.permission === "denied") return { value: t("blocked"), hot: true };
+  if (!model.live) return { value: t("off") };
+  const labels = {
+    ohbox: "ohbox",
+    screener: "screener",
+    scheduled: "scheduled",
+    pairing: "devices",
+  } as const;
+  const detail = (Object.keys(labels) as (keyof typeof labels)[])
+    .filter((kind) => model.carries.includes(kind) && model.channels[kind])
+    .map((kind) => t(labels[kind]));
+  return { value: t("on"), detail: detail.length ? detail.join(" · ") : undefined };
 }

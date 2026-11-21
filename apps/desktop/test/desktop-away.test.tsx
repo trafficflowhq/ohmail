@@ -137,7 +137,9 @@ async function mountRow(at = "#/settings/away"): Promise<void> {
       children: h(ThemeProvider, { children: h(ToastHost, { children: h(DesktopFrame, props) }) }),
     }));
   });
-  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const label = at === "#/settings/away" ? messages.settings.away : messages.settings.general;
+  await within(hostEl).findByRole("region", { name: label });
+  await act(async () => {});
 }
 
 const away = () => within(within(hostEl).getByRole("region", { name: messages.settings.away }));
@@ -185,9 +187,11 @@ describe("the away responder on the hosted door", () => {
     const waiting = Promise.withResolvers<void>();
     holdRead = waiting.promise;
     await mountRow();
-    expect(asked).toEqual([{ method: "GET", url: AWAY_PATH, body: null }]);
+    const read = { method: "GET", url: AWAY_PATH, body: null };
+    await vi.waitFor(() => expect(asked).toEqual([read]));
     await act(async () => { waiting.resolve(); });
     expect(message().value).toBe("Back Monday.");
+    expect(asked).toEqual([read]);
     expect(away().getByRole("switch", { name: messages.away.title }).getAttribute("aria-checked")).toBe("true");
     // There is no subject to draw: the responder replies in the correspondent's own thread.
     expect(hostEl.querySelector("#away-subject")).toBeNull();
@@ -196,7 +200,7 @@ describe("the away responder on the hosted door", () => {
   it("opens on the latest responder after the notice has read it", async () => {
     stored = { ...stored, body: "Old reply." };
     await mountRow("#/settings/general");
-    expect(asked.map(({ method }) => method)).toEqual(["GET"]);
+    await vi.waitFor(() => expect(asked.map(({ method }) => method)).toEqual(["GET"]));
 
     stored = { ...stored, enabled: true, body: "Newer reply.", audience: "everyone", updatedAt: ISO };
     await act(async () => {
@@ -244,8 +248,8 @@ describe("the away responder on the hosted door", () => {
       piles: ["INBOX"],
     });
     expect(hostEl.textContent).toContain("Saved.");
-    // …and no second read: the control renders the PUT's own echo.
-    expect(asked.filter((a) => a.method === "GET")).toHaveLength(1);
+    // One read at open, shared by the notice and the pane; the save draws the PUT's own echo, with no read after it.
+    expect(asked.map(({ method }) => method)).toEqual(["GET", "PUT"]);
   });
 
   it("says so when the account cannot be reached, rather than leaving its pane blank", async () => {
@@ -258,7 +262,7 @@ describe("the away responder on the hosted door", () => {
       })),
     };
     await mountRow();
-    expect(hostEl.textContent).toContain("could not be read");
+    await vi.waitFor(() => expect(hostEl.textContent).toContain("could not be read"));
     // Still no controls: a resting OFF switch shown to somebody whose responder is ON would be a
     // lie about mail going out.
     expect(away().queryByRole("switch", { name: messages.away.title })).toBeNull();

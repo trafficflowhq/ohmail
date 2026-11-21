@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { once } from "node:events";
-import { createECDH } from "node:crypto";
+import { createECDH, createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import {
   startPushWake, WAKE_BODY, WAKE_BODY_BYTES, type WakeSource, type PushWakePost,
@@ -120,6 +120,8 @@ interface Row {
   endpoint: string | null;
   p256dh?: string | null;
   auth?: string | null;
+  transport?: "webpush" | "unifiedpush";
+  familyId?: string | null;
 }
 
 /**
@@ -349,56 +351,36 @@ describe("census 2 — the sender's SOURCE names no message-derived value", () =
     });
   }
 
-  it("carries exactly ONE request body, and it is the constant or the constant sealed", () => {
+  it("carries exactly one request body, with the constant as its only plaintext form", () => {
     const bodies = [...code.matchAll(/\bbody\s*:/g)];
     expect(bodies.length).toBe(1);
-    // The ONLY permitted shape. `sealed` is the encrypted form of `WAKE_BODY` and nothing else —
-    // see the encryptor assertion below, which pins what `sealed` was computed from.
     expect(code).toMatch(/\bbody\s*:\s*sealed\s*\?\?\s*WAKE_BODY\b/);
-    // And nothing builds a body: no stringify, no template, no concatenation into the payload.
-    expect(code).not.toMatch(/JSON\.stringify/);
   });
 
-  it("hands the encryptor exactly ONE thing, and it is the constant by NAME", () => {
-    /**
-     * The encrypted arm's half of the "one body" pin. `sealed` is opaque bytes by the time it
-     * reaches the request, so the assertion that matters is about what went IN: exactly one call,
-     * whose first argument is the identifier `WAKE_BODY` and not an expression. An expression there
-     * — even `WAKE_BODY + ""` — would be a place a value could be substituted.
-     */
-    const calls = [...code.matchAll(/encryptWebPushBody\s*\(/g)];
-    expect(calls.length).toBe(1);
-    expect(code).toMatch(/\bsealed\s*=\s*encryptWebPushBody\(WAKE_BODY,\s*keys\)/);
+  it("seals only the constant or the exact opaque browser binding", () => {
+    expect([...code.matchAll(/encryptWebPushBody\s*\(/g)]).toHaveLength(1);
+    expect(code).toMatch(/\bsealed\s*=\s*encryptWebPushBody\(payload,\s*keys\)/);
+    expect(code).toContain('const payload = binding === undefined ? WAKE_BODY : `{"type":"wake","binding":"${binding}"}`');
+    expect([...code.matchAll(/JSON\.stringify\(/g)]).toHaveLength(1);
+    expect(code).toContain('createHash("sha256").update(JSON.stringify([accountId, familyId])).digest("hex")');
+    expect(code).toMatch(/row.transport === "webpush" && row.familyId\s*\? browserWakeBinding\(accountId, row.familyId\)/);
   });
 
-  it("reads exactly four columns of exactly one table, under exactly four names", () => {
-    /**
-     * Widening the projection is how a message-derived value gets into scope in the first place,
-     * so the SHAPE is pinned and not merely the column set.
-     *
-     * The column-set check alone was measured INSUFFICIENT during the red-watch: the mutation
-     * added `subject: pushSubscriptions.transport`, which introduces a `row.subject` in scope
-     * while using only columns that were already permitted, so a set comparison stayed green.
-     * (Three other censuses went red, so nothing shipped — but a census that a plausible mutation
-     * walks past is not a census.) Pinning the KEYS is what closes it: any fifth projected name,
-     * whatever column it reads, is red here.
-     *
-     * `p256dh` and `auth` joined the permitted set when the encrypting arm landed. They are the
-     * device's own key material, they are the encryptor's only input besides the constant, and
-     * they are never logged — which is asserted separately below.
-     */
+  it("reads only delivery material and the browser session binding from the registration", () => {
     const cols = [...code.matchAll(/pushSubscriptions\.(\w+)/g)].map((m) => m[1]!);
     expect([...new Set(cols)].sort())
-      .toEqual(["accountId", "auth", "endpoint", "id", "p256dh", "transport"]);
+      .toEqual(["accountId", "auth", "endpoint", "id", "p256dh", "sessionFamilyId", "transport"]);
 
     const select = /db\.select\(\{([\s\S]*?)\}\)/.exec(code);
     expect(select).not.toBeNull();
     const keys = [...select![1]!.matchAll(/(\w+)\s*:/g)].map((m) => m[1]!);
-    expect(keys.sort()).toEqual(["auth", "endpoint", "id", "p256dh"]);
+    expect(keys.sort()).toEqual(["auth", "endpoint", "familyId", "id", "p256dh", "transport"]);
     expect(code).toMatch(/id:\s*pushSubscriptions\.id/);
     expect(code).toMatch(/endpoint:\s*pushSubscriptions\.endpoint/);
     expect(code).toMatch(/p256dh:\s*pushSubscriptions\.p256dh/);
     expect(code).toMatch(/auth:\s*pushSubscriptions\.auth/);
+    expect(code).toMatch(/transport:\s*pushSubscriptions\.transport/);
+    expect(code).toMatch(/familyId:\s*pushSubscriptions\.sessionFamilyId/);
   });
 
   it("asks the change log one question, by the literal 1, and reads no column of it", () => {
@@ -582,6 +564,41 @@ describe("census 3a — the KEYLESS wire is byte-for-byte what it always was", (
       l.close();
     }
   });
+});
+
+it("seals the browser family selected before a delayed delivery", async () => {
+  const account = "account-browser";
+  const family = "family-old";
+  const sub = makeSubscriber();
+  const { vapid } = withVapid();
+  const seen: Captured[] = [];
+  const l = await listener((request) => { seen.push(request); });
+  const reading = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<string[]>();
+  const { db } = fakeDb([
+    { id: "browser", endpoint: `http://127.0.0.1:${l.port}/wake`,
+      p256dh: sub.p256dh, auth: sub.auth, transport: "webpush", familyId: family },
+  ]);
+  const { source, emit } = fakeSource();
+  const wake = startPushWake({
+    dbOf: () => db, source, ownsAccount: OWN_ALL, vapid, debounceMs: 1, minIntervalMs: 0,
+    guard: { check: () => { reading.resolve(); return resume.promise; } },
+  });
+  try {
+    emit(account, 1n);
+    await reading.promise;
+    resume.resolve(["127.0.0.1"]);
+    for (let attempt = 0; attempt < 80 && seen.length === 0; attempt++) await tick(25);
+    expect(seen).toHaveLength(1);
+    const plaintext = openAes128Gcm(seen[0]!.body, sub).toString("utf8");
+    expect(JSON.parse(plaintext)).toEqual({
+      type: "wake",
+      binding: createHash("sha256").update(JSON.stringify([account, family])).digest("hex"),
+    });
+  } finally {
+    wake.stop();
+    l.close();
+  }
 });
 
 describe("census 3b — the SEALED wire carries the same constant and nothing else", () => {

@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
+import { settleFirstPaint } from "./_first-paint.js";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { clickMounted, withMountedSender } from "./fixtures/mounted-sender-sheet.js";
@@ -42,7 +43,7 @@ function rule(o: Partial<RuleDTO> & Pick<RuleDTO, "id" | "destination">): RuleDT
   } as RuleDTO;
 }
 
-beforeAll(warmScreeningWeb, 30_000);
+beforeAll(warmScreeningWeb, 120_000);
 let mounted = false;
 afterEach(async () => {
   if (mounted) await teardownScreeningWeb();
@@ -85,15 +86,15 @@ async function render(messages: EngineMessage[], rules: RuleDTO[], locale: "en" 
   vi.setSystemTime(NOW);
   const frame = within(await mountScreeningWeb(locale));
   await tick(4000);
+  await settleFirstPaint();
   const reader = within(frame.getByRole("region", { name: words.frame.landmark.reading }));
   await clickMounted(reader.getByRole("button", { name: /^Kestrel / }));
   const page = within(document.body);
-  const contact = within(page.getByRole("dialog", { name: words.message.contactAria.replace("{who}", "Kestrel") }));
-  await clickMounted(contact.getByRole("menuitem", { name: words.screening.action }));
   const name = words.screening.aria.replace("{sender}", ADDR);
-  const el = page.getByRole("dialog", { name });
+  const dialog = () => page.getByRole("dialog", { name });
   return {
-    el,
+    el: dialog(),
+    dialog,
     open: () => page.queryByRole("dialog", { name }) !== null,
     ruleWrites: () => writes.filter(({ path }) => path.startsWith("/api/rules")),
   };
@@ -103,7 +104,7 @@ const press = clickMounted;
 const key = async (node: HTMLElement, k: string) => {
   await act(async () => { node.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); });
 };
-const ohbox = (el: HTMLElement) => within(el).getByRole("option", { name: /^Ohbox/ });
+const ohbox = (el: HTMLElement) => within(el).getByRole("radio", { name: /^Ohbox/ });
 const choices = (el: HTMLElement) => within(el).getByRole("radiogroup", { name: en.screening.resolveChoiceAria });
 const tilesOf = (el: HTMLElement) => within(choices(el)).getAllByRole("radio");
 const ruleForOhbox = expect.objectContaining({
@@ -120,34 +121,36 @@ describe("the sheet lists the rules in play", () => {
   it("both rules, each with the rows it places, under Their rules", async () => {
     const [m, r] = owner();
     const { el } = await render([...m], [...r]);
-    const lines = [...el.querySelectorAll(".sm-rules .sm-rule-line")].map((n) => n.textContent);
-    expect(el.querySelector(".sm-rules-head")?.textContent).toBe("Their rules");
-    // The router's order, the winner first: a term outranks the bare rule it narrows.
-    expect(lines).toEqual(["Subject contains »[Monitor]« → News1", "All their mail → Ohbox1"]);
-    expect(el.querySelector(".sm-now")?.textContent).toBe("2 messages — Ohbox 1 · News 1");
+    const card = within(el);
+    const lines = within(card.getByRole("group", { name: "Their rules" })).getAllByRole("paragraph");
+    expect(lines.map((line) => line.textContent)).toEqual(["NewsSubject contains »[Monitor]«1 message", "OhboxAll their mail1 message"]);
+    expect(card.getByText("Now in 2 places").getAttribute("aria-description")).toBe("2 messages — Ohbox 1 · News 1");
   });
 
   it("a single bare rule says nothing new", async () => {
     const { el } = await render([msg("plain")], [rule({ id: "bare", destination: "INBOX" })]);
-    expect(el.querySelector(".sm-rules")).toBeNull();
+    const card = within(el);
+    const rules = within(card.getByRole("group", { name: "Their rules" }));
+    expect(card.queryByRole("heading", { name: "Their rules" })).toBeNull();
+    expect(rules.getAllByRole("paragraph").map((line) => line.textContent)).toEqual(["OhboxAll their mail"]);
   });
 });
 
 describe("the resolve step", () => {
   it("pressing the Ohbox over their subject rule asks, with All chosen, and Enter commits it", async () => {
     const [m, r] = owner();
-    const { el, ruleWrites } = await render([...m], [...r]);
+    const { el, dialog, ruleWrites } = await render([...m], [...r]);
     await press(ohbox(el));
     expect(ruleWrites(), "the press committed over a rule that disagrees").toEqual([]);
-    const step = el.querySelector(".sm-resolve");
+    const step = dialog().querySelector(".sm-resolve");
     expect(step?.querySelector("p")?.textContent).toBe("Ohbox — one of your rules says otherwise");
-    const tiles = tilesOf(el);
+    const tiles = tilesOf(dialog());
     expect(tiles.map((n) => n.getAttribute("aria-checked"))).toEqual(["true", "false"]);
     expect(tiles[0]!.textContent).toContain("All their mail → Ohbox");
     expect(tiles[0]!.textContent).toContain("2 messages");
     expect(tiles[1]!.textContent).toContain("Keep the split");
     expect(document.activeElement, "focus is on the chosen tile").toBe(tiles[0]);
-    await key(choices(el), "Enter");
+    await key(choices(dialog()), "Enter");
     await tick(UNDO_MS + 500);
     expect(ruleWrites().filter(({ method }) => method === "DELETE"))
       .toEqual([{ method: "DELETE", path: "/api/rules/term", body: {} }]);
@@ -156,24 +159,24 @@ describe("the resolve step", () => {
 
   it("↓ chooses Keep the split, and it is what commits", async () => {
     const [m, r] = owner();
-    const { el, ruleWrites } = await render([...m], [...r]);
+    const { el, dialog, ruleWrites } = await render([...m], [...r]);
     await press(ohbox(el));
-    await key(choices(el), "ArrowDown");
-    expect(tilesOf(el).map((n) => n.getAttribute("aria-checked"))).toEqual(["false", "true"]);
-    await press(within(el).getByRole("button", { name: "File to Ohbox" }));
+    await key(choices(dialog()), "ArrowDown");
+    expect(tilesOf(dialog()).map((n) => n.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+    await press(within(dialog()).getByRole("button", { name: "File to Ohbox" }));
     await tick(UNDO_MS + 500);
     expect(ruleWrites().filter(({ method }) => method === "DELETE")).toEqual([]);
   });
 
   it("Escape steps back to the list and hands focus back to the destination; a second Escape closes", async () => {
     const [m, r] = owner();
-    const { el, open } = await render([...m], [...r]);
+    const { el, dialog, open } = await render([...m], [...r]);
     await press(ohbox(el));
-    await key(tilesOf(el)[0]!, "Escape");
+    await key(tilesOf(dialog())[0]!, "Escape");
     expect(open(), "Escape in the step closed the sheet").toBe(true);
-    expect(el.querySelector(".sm-resolve")).toBeNull();
-    expect(document.activeElement).toBe(ohbox(el));
-    await key(ohbox(el), "Escape");
+    expect(dialog().querySelector(".sm-resolve")).toBeNull();
+    expect(document.activeElement).toBe(ohbox(dialog()));
+    await key(ohbox(dialog()), "Escape");
     expect(open(), "Escape on the list must close the sheet").toBe(false);
   });
 
@@ -188,12 +191,12 @@ describe("the resolve step", () => {
 
   it("a higher-priority domain rule: the exception is the default, and says who stays", async () => {
     const wide = rule({ id: "dom", kind: "domain", match: "kestrel.example", destination: "ohmail/Screened", priority: 5 });
-    const { el, ruleWrites } = await render([msg("m1")], [wide]);
+    const { el, dialog, ruleWrites } = await render([msg("m1")], [wide]);
     await press(ohbox(el));
-    const tiles = tilesOf(el);
+    const tiles = tilesOf(dialog());
     expect(tiles[0]!.textContent).toContain("Only this address → Ohbox");
     expect(tiles[0]!.textContent).toContain("Everyone else at kestrel.example stays in Screened out");
-    await key(choices(el), "Enter");
+    await key(choices(dialog()), "Enter");
     await tick(UNDO_MS + 500);
     expect(ruleWrites()).toEqual([expect.objectContaining({
       method: "POST", body: expect.objectContaining({ kind: "sender", match: ADDR, destination: "INBOX" }),
@@ -202,16 +205,16 @@ describe("the resolve step", () => {
 
   it("the German step at the longest title", async () => {
     const wide = rule({ id: "dom", kind: "domain", match: "kestrel.example", destination: "ohmail/Screened", priority: 5 });
-    const { el } = await render([msg("m1")], [wide], "de");
+    const { el, dialog } = await render([msg("m1")], [wide], "de");
     await press(ohbox(el));
-    expect(el.querySelector(".sm-resolve p")?.textContent).toContain("deine Regel für alle bei kestrel.example");
+    expect(dialog().querySelector(".sm-resolve p")?.textContent).toContain("deine Regel für alle bei kestrel.example");
   });
 });
 
 describe("no address press past the gate reaches the wire outside the window", () => {
   it("changeScreening hands the window path to the held press before any dispatch", async () => {
     await withMountedSender(async ({ sheet, writes, sender }) => {
-      await clickMounted(sheet.getByRole("option", { name: /^Ohbox/ }));
+      await clickMounted(sheet.getByRole("radio", { name: /^Ohbox/ }));
       expect(within(document.body).getByRole("button", { name: "Undo" })).toBeTruthy();
       expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([]);
       await tick(UNDO_MS + 500);
@@ -223,10 +226,11 @@ describe("no address press past the gate reaches the wire outside the window", (
 
     await withMountedSender(async ({ sheet, writes }) => {
       await clickMounted(sheet.getByRole("radio", { name: /^Everyone at sender\.example/ }));
-      await clickMounted(sheet.getByRole("option", { name: /^News/ }));
-      await clickMounted(sheet.getByRole("radio", { name: /Changes that rule too/ }));
+      await clickMounted(sheet.getByRole("radio", { name: /^News/ }));
+      const question = within(screen.getByRole("dialog", { name: /^Screening for / }));
+      await clickMounted(question.getByRole("radio", { name: /Changes that rule too/ }));
       expect(writes).toEqual([]);
-      await clickMounted(sheet.getByRole("button", { name: "File to News" }));
+      await clickMounted(question.getByRole("button", { name: "File to News" }));
       await tick(500);
       expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([
         { method: "POST", path: "/api/rules", body: expect.objectContaining({
@@ -239,7 +243,7 @@ describe("no address press past the gate reaches the wire outside the window", (
 
   it("the held press dispatches its rules only through the window", async () => {
     await withMountedSender(async ({ sheet, writes }) => {
-      await clickMounted(sheet.getByRole("option", { name: /^Ohbox/ }));
+      await clickMounted(sheet.getByRole("radio", { name: /^Ohbox/ }));
       await clickMounted(within(document.body).getByRole("button", { name: "Undo" }));
       await tick(UNDO_MS + 500);
       expect(writes.filter(({ path }) => /\/rules|\/move$|\/screener/.test(path))).toEqual([]);

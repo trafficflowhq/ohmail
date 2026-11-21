@@ -237,6 +237,7 @@ function GridMonth({
   onDrag: CalendarEventDrag | undefined;
 }) {
   const t = useText("month");
+  const calendar = useText("calendar");
   const locale = useLocale();
   const thisYear = yearOf(input.today);
   const weeks: MonthGridWeek[] = grid.weeks.map((w, index) => ({
@@ -258,6 +259,17 @@ function GridMonth({
           open={p.key === input.open}
           waits={p.item.waits}
           viewOnly={p.item.viewOnly}
+          dayEdges={
+            onDrag &&
+            (input.open === null || input.open === p.item.id) &&
+            p.item.start.kind === "date" &&
+            !p.item.viewOnly
+              ? {
+                  start: p.goesOnBefore ? undefined : calendar("actions.resizeStart"),
+                  end: p.goesOnAfter ? undefined : calendar("actions.resizeEnd"),
+                }
+              : undefined
+          }
           style={{ gridColumn: `${p.from + 1} / ${p.to + 2}`, gridRow: p.row + 2 }}
           onPress={() => acts.event(p.item)}
           onPointerDown={onDrag ? (event) => onDrag(p.item.id, event) : undefined}

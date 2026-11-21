@@ -39,8 +39,9 @@ function view(scope: string) {
 
 afterEach(() => { cleanup(); localStorage.clear(); });
 
-it("stores the reading and picture choices for the current account and resumes them on its next visit", () => {
+it("stores the reading and picture choices for the current account and resumes them on its next visit", async () => {
   const mounted = render(view("account-a"));
+  await screen.findAllByRole("group", { name: t.afterVerbAria });
   const choice = (label: string, name: string) =>
     within(screen.getAllByRole("group", { name: label })[0]!).getByRole("button", { name });
   fireEvent.click(choice(t.afterVerbAria, t.afterVerbChoice.stay));

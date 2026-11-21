@@ -17,6 +17,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } fro
 import { revealInScroller, useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { Tag, type Point } from "@ohmail/ui/base";
 import { GroupHeading, Row, Rows as KitRows, type RowPlace } from "@ohmail/ui/mail";
+import { useMovingRows } from "../../place-list/use-moving-rows.js";
 import { useText, type Text } from "../../text/index.js";
 import { useScreener, useScreenerBeside } from "../contract.js";
 import { PlaceMenu } from "../sender/PlaceMenu.js";
@@ -162,6 +163,7 @@ function WaitingRows({
 }) {
   const t = useText("screener");
   const { rows, decided, openId } = view;
+  useMovingRows(scroller, JSON.stringify([rows.map(viewRowId), decided.map(({ sender }) => sender.id)]));
   const size = rows.length + decided.length;
   const pendingStart = rows.length + 1;
   const win = useListWindow({ scrollerRef: scroller, count: size + Number(decided.length > 0) });

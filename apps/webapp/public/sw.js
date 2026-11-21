@@ -7,20 +7,9 @@
  * IS open it syncs and decides for itself, with the mirror in front of it and the per-event
  * switches to consult; this worker has neither and must not pretend otherwise.
  *
- * ── IT NEVER READS THE PUSH PAYLOAD. NOT ONE FIELD. ───────────────────────────────────────
- *
- * The wake is a closed constant with nothing in it, and the sender is held to that by a census
- * over its own source. But "the payload is empty" is a property of OUR server, and this worker
- * runs against whatever server the user paired with — the hosted one, an operator's own install,
- * or a friend's machine. A worker that rendered `payload.title` would let that server draw a
- * notice in ohmail's name with text and a tap target of its own choosing. That is a phishing
- * primitive, and the fact that our own server would never use it is not a defence.
- *
- * So: `event.data` is never parsed, never read, never logged. The words below come from the
- * PAGE — written into a cache entry by the app itself, in the user's own language — and the tap
- * target is this app's own origin. Within this handler, the worst a hostile paired server can do
- * is cause a spurious notice with our fixed text, which is inside the power it already has (it
- * decides whether to wake at all) rather than a new one.
+ * A push carries an opaque account and family binding. The worker compares it with the
+ * acknowledged registration before acting. It gets the words from the page's cache and the
+ * tap target from its own origin.
  *
  * ── AND THE LIMIT OF THAT, WHICH IS NOT THIS FILE'S TO FIX ────────────────────────────────
  *
@@ -33,7 +22,7 @@
  *
  * What that does and does not mean, stated precisely rather than reassuringly:
  *
- *  · this project's own sender emits a closed constant that is NOT a declarative notification, so
+ *  · this project's own sender emits a bound wake that is not a declarative notification, so
  *    on every browser its wakes reach this handler and behave as described;
  *  · a paired server the user does not control — a self-hosted install, a friend's machine —
  *    CAN send a declarative payload, and on Safari it will be drawn with text and a tap target
@@ -68,7 +57,7 @@ const NOTIFY_LOCK_WAIT_MS = 4_000;
 const WORDS_MAX = 120;
 
 /**
- * Read what the page last stored: `{ enabled, title, body }`.
+ * Read the words and registration last acknowledged for this browser session.
  *
  * A miss means the page has never written one — a worker that outlived its app, or a browser
  * that cleared storage. The answer then is to draw NOTHING. Defaulting the other way would put a
@@ -84,7 +73,12 @@ async function notifyState() {
     if (!state || state.enabled !== true) return null;
     if (typeof state.title !== "string" || typeof state.body !== "string") return null;
     if ([...state.title].length > WORDS_MAX || [...state.body].length > WORDS_MAX) return null;
-    return { title: state.title, body: state.body };
+    const registration = state.registration;
+    if (!registration || typeof registration.proof !== "string" || registration.proof === "" ||
+        typeof registration.owner !== "string" || registration.owner === "" ||
+        registration.owner === "signed_out_pending" ||
+        typeof registration.family !== "string" || registration.family === "") return null;
+    return { title: state.title, body: state.body, registration };
   } catch {
     return null;
   }
@@ -96,28 +90,25 @@ async function aWindowIsVisible() {
   return all.some((c) => c.visibilityState === "visible");
 }
 
-async function drawStoredNotice() {
+async function liveRegistration(registration) {
+  if (!self.cookieStore) return false;
+  const [owner, family] = await Promise.all([
+    self.cookieStore.get("tf_owner"), self.cookieStore.get("tf_family"),
+  ]);
+  return owner?.value === registration.owner && family?.value === registration.family;
+}
+
+async function withNotifyState(use) {
   let timer;
   try {
     const locks = self.navigator && self.navigator.locks;
     if (!locks) return false;
     const budget = new AbortController();
     timer = setTimeout(() => budget.abort(), NOTIFY_LOCK_WAIT_MS);
-    // A window may be revoking a write that was still in flight when its session ended.
-    // Wait briefly, then read the final state. Do not draw if this context cannot share the lock.
     return await locks.request(NOTIFY_STATE_LOCK, { signal: budget.signal }, async () => {
       clearTimeout(timer);
       const state = await notifyState();
-      if (state === null || await aWindowIsVisible()) return false;
-      await self.registration.showNotification(state.title, {
-        body: state.body,
-        // Ten wakes while the laptop is shut collapse into one notice instead of stacking.
-        tag: "ohmail-new-mail",
-        renotify: false,
-        // The click target comes from the worker's own scope.
-        data: { scope: self.registration.scope },
-      });
-      return true;
+      return state === null ? false : use(state);
     });
   } catch {
     return false;
@@ -126,22 +117,60 @@ async function drawStoredNotice() {
   }
 }
 
+function readBinding(data) {
+  try {
+    const text = data?.text();
+    if (typeof text !== "string" || text.length > 128) return null;
+    const wake = JSON.parse(text);
+    return wake?.type === "wake" && Object.keys(wake).length === 2 &&
+      typeof wake.binding === "string" && /^[a-f0-9]{64}$/.test(wake.binding) ? wake.binding : null;
+  } catch {
+    return null;
+  }
+}
+
+async function matchingWake(state, binding) {
+  if (state === null) return false;
+  const { owner, family } = state.registration;
+  const input = new TextEncoder().encode(JSON.stringify([owner, family]));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input));
+  const expected = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return binding === expected && await liveRegistration(state.registration);
+}
+
+function drawStoredNotice(binding) {
+  return withNotifyState(async (state) => {
+    if (await aWindowIsVisible() || !await matchingWake(state, binding)) return false;
+    await self.registration.showNotification(state.title, {
+      body: state.body,
+      // Ten wakes while the laptop is shut collapse into one notice instead of stacking.
+      tag: "ohmail-new-mail",
+      renotify: false,
+      data: { wake: state.registration.proof },
+    });
+    return true;
+  });
+}
+
 self.addEventListener("push", (event) => {
+  const binding = readBinding(event.data);
+  if (binding === null) return;
   event.waitUntil((async () => {
     const clientsOpen = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
 
     // A VISIBLE window handles this itself — it can sync and read the switches. Tell it a wake
-    // arrived and draw nothing. `postMessage` carries no payload content because none was read.
+    // arrived and draw nothing. The page receives a fixed sync nudge.
     if (await aWindowIsVisible()) {
+      if (!await matchingWake(await notifyState(), binding)) return;
       for (const c of clientsOpen) c.postMessage({ type: "ohmail:wake" });
       return;
     }
 
     // No window looking. Draw the app's own fixed words, if the app said to.
-    if (!(await drawStoredNotice())) {
+    if (!(await drawStoredNotice(binding))) {
       // A window can come back during the wait. Let it handle the wake as it normally would.
       const nowOpen = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      if (nowOpen.some((c) => c.visibilityState === "visible")) {
+      if (nowOpen.some((c) => c.visibilityState === "visible") && await matchingWake(await notifyState(), binding)) {
         for (const c of nowOpen) c.postMessage({ type: "ohmail:wake" });
       }
       return;
@@ -152,7 +181,7 @@ self.addEventListener("push", (event) => {
   })());
 });
 
-function askNoticeWindow(client, open) {
+function askNoticeWindow(client, opening) {
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
     const finish = (accepted) => {
@@ -164,7 +193,7 @@ function askNoticeWindow(client, open) {
     const timer = setTimeout(() => finish(false), 600);
     channel.port1.onmessage = ({ data }) => finish(data === true);
     try {
-      client.postMessage({ type: "ohmail:notice-open", open }, [channel.port2]);
+      client.postMessage({ type: "ohmail:notice-open", ...opening }, [channel.port2]);
     } catch {
       channel.port2.close();
       finish(false);
@@ -180,20 +209,31 @@ self.addEventListener("notificationclick", (event) => {
     const windows = all.filter((client) => client.url.startsWith(scope) && "focus" in client);
     const { tag, data } = event.notification;
     const open = typeof data?.open === "string" ? data.open : "";
-    if (typeof tag === "string" && (tag === "ohmail-new-mail" || tag.startsWith("ohmail-cal-")) && /^[a-f0-9-]{36}$/.test(open)) {
+    const calendar = typeof tag === "string" && tag.startsWith("ohmail-cal-");
+    if ((tag === "ohmail-new-mail" || calendar) && /^[a-f0-9-]{36}$/.test(open)) {
       // Only the window that drew the notice can resolve its opaque handle.
-      const owner = await Promise.any(windows.map((client) => askNoticeWindow(client, open))).catch(() => null);
+      const owner = await Promise.any(windows.map((client) => askNoticeWindow(client, { open }))).catch(() => null);
       return owner?.focus();
     }
     if (tag === "ohmail-new-mail") {
-      const ohbox = new URL("mailbox#/ohbox", scope).href;
-      const mailbox = windows.find((client) => client.url.split("#")[0] === ohbox.split("#")[0]);
-      if (mailbox && "navigate" in mailbox) {
-        const moved = await mailbox.navigate(ohbox).catch(() => null);
-        if (moved) return moved.focus();
-      }
-      if (self.clients.openWindow) return self.clients.openWindow(ohbox);
+      return withNotifyState(async ({ registration }) => {
+        if (data?.wake !== registration.proof || !await liveRegistration(registration)) return false;
+        const ohbox = new URL("mailbox#/ohbox", scope).href;
+        const mailbox = windows.find((client) => client.url.split("#")[0] === ohbox.split("#")[0]);
+        const { owner, family } = registration;
+        const accepted = mailbox
+          ? await askNoticeWindow(mailbox, { wake: { owner, family } }).catch(() => null)
+          : null;
+        if (!await liveRegistration(registration)) return false;
+        if (accepted) return accepted.focus();
+        const destination = new URL(scope);
+        destination.searchParams.set("wake", "1");
+        destination.hash = `wake=${registration.proof}`;
+        if (self.clients.openWindow) return self.clients.openWindow(destination.href);
+        return false;
+      });
     }
+    if (calendar) return undefined;
     if (windows.length > 0) return windows[0].focus();
     if (self.clients.openWindow) return self.clients.openWindow(scope);
     return undefined;

@@ -3,6 +3,7 @@
  * They draw from plain data and know no engine.
  */
 import "../mail/index.js";
+import "./Grids/today-pulse.css";
 
 export { toneOf, toneStyle, type CalendarTone } from "./tone.js";
 export { CalendarSquare, type CalendarSquareProps } from "./Grids/CalendarSquare.js";

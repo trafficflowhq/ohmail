@@ -4,7 +4,7 @@
  * `scheme=dark`, `kind=connection&show=offline`, `kind=reports&say=Parked`, `fx=offline,unsaved,…`) and `lang`.
  * What the frame draws is the frame's; the panes are stand-ins, and their rows are declared as other tasks'.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 import { Frame } from "../../src/frame/Frame.js";
@@ -168,15 +168,17 @@ function todayAt(hhmm: string, timeZone: string): string {
   throw new Error(`no ${hhmm} today in ${timeZone}`);
 }
 const ZONE = "Europe/Zurich";
+const firstSync = q.get("show") === "firstsync";
 
 /** The stand-in body: it feeds the frame as today's views do, and draws a plain list and reading sheet. */
 function Body({ route, plan }: PaneProps) {
+  const [syncing, setSyncing] = useState(firstSync);
   useRailModel(RAIL);
   const fx = (q.get("fx") ?? (q.get("show") === "full" ? "full" : "")).split(",");
   useNotice(fx.flatMap((k) => NOTICES[k] ?? []));
   const offline = fx.includes("offline") || (q.get("kind") === "connection" && q.get("show") === "offline");
   useConnectionFeed({
-    mail: offline ? mail("stale") : null,
+    mail: offline ? mail("stale") : syncing ? { ...mail("importing"), count: 3846 } : null,
     online: !offline,
     copyAsOf: offline ? todayAt("09:24", ZONE) : null,
     setupHref: null,
@@ -187,15 +189,23 @@ function Body({ route, plan }: PaneProps) {
   useEffect(() => {
     if (say) report(say, { action: "Undo", actionKey: "z", onAction: () => undefined });
   }, [report, say]);
+  const finish =
+    syncing && q.has("controls") ? (
+      <button onClick={() => setSyncing(false)}>Finish first sync</button>
+    ) : null;
   /* Beside a rail the list lies on the frame's sheet; on a phone's width it draws its own, under the catalogue's head, as
      the reference's does, and scrolls as the product's list does: a scroller of its own under the dock. */
   if (plan.device === "phone")
     return (
       <div className="st-phone" data-place={route.place}>
-        <div className="st-rows" />
+        <div className="st-rows">{finish}</div>
       </div>
     );
-  return <div className="st-fill" data-place={route.place} />;
+  return (
+    <div className="st-fill" data-place={route.place}>
+      {finish}
+    </div>
+  );
 }
 const today: PlaceEntry["panes"] = {
   kind: "columns",
@@ -218,7 +228,11 @@ const { host } = fakeHost({
   service: "managed",
   scope: "mila",
   places,
-  window: fakeWindow({ ...room, posture: "flat", reducedMotion: true }),
+  window: fakeWindow({
+    ...room,
+    posture: "flat",
+    reducedMotion: firstSync ? matchMedia("(prefers-reduced-motion: reduce)").matches : true,
+  }),
   /* The reference stands on its own screen, a place the dock does not carry: no entry is current, the dock's More is. */
   address: fakeAddress("#/trash"),
   appearance: fakeAppearance(look),

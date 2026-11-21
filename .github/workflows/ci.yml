@@ -81,6 +81,7 @@ jobs:
     outputs:
       # The pool this job ran on, which the suite's bound reads.
       pool: ${{ runner.environment }}
+      scope: ${{ steps.plan.outputs.scope }}
       shards: ${{ steps.plan.outputs.shards }}
       alone: ${{ steps.plan.outputs.alone }}
       sqlite: ${{ steps.plan.outputs.sqlite }}
@@ -151,9 +152,8 @@ jobs:
         with:
           node-version: 22.23.4
 
-      # Whole for the nightly, dispatch, a batch branch, a fork, a bot and a harness change; selected for
-      # the rest (.github/scripts/ci-select.mjs). Any fault here leaves the run whole.
-      - name: Whole suite or a selection
+      # Build-only for landing rounds into next. Any fault in the selector leaves the run whole.
+      - name: Choose the suite scope
         id: scope
         continue-on-error: true
         run: node .github/scripts/ci-select.mjs scope >> "$GITHUB_OUTPUT"
@@ -190,7 +190,7 @@ jobs:
           walk=$(node test/support/ci-shards.mjs --alone)
           if [ "$alone" != "$walk" ]; then echo "::error::git grep and the shard map disagree on the files that run alone"; exit 1; fi
           printf 'alone:\n%s\n' "$files"
-          # The selected plan when the selector finished, the whole run otherwise; it says which and why.
+          # The outputs say which scope is running and why.
           node .github/scripts/ci-select.mjs outputs --indexes "$shards" --sqlite-indexes "$sqlite" --alone "$alone" \
             --scope "$SCOPE" --scope-why "$SCOPE_WHY" --select-outcome "$SELECT" --plan "$RUNNER_TEMP/ci-select.json" > "$RUNNER_TEMP/plan.out"
           cat "$RUNNER_TEMP/plan.out" >> "$GITHUB_OUTPUT"
@@ -578,6 +578,7 @@ jobs:
   proxy-e2e:
     name: suite · proxy e2e
     needs: plan
+    if: needs.plan.outputs.scope != 'build-only'
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 25
     services:
@@ -746,6 +747,7 @@ jobs:
   desktop:
     name: suite · desktop
     needs: plan
+    if: needs.plan.outputs.scope != 'build-only'
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:

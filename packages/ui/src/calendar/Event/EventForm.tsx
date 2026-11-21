@@ -14,13 +14,20 @@ export type EventFormItem =
       value: string;
       label: string;
       state?: "fill" | "none";
+      hidden?: boolean;
       expanded?: boolean;
       onPress?: MouseEventHandler<HTMLButtonElement>;
     }
   /** A proposal you take by pressing it: an invitee the typed line named. It opens no menu. */
   | { kind: "take"; value: string; label: string; onPress?: () => void }
   /** A time, typed. */
-  | { kind: "time"; value: string; label: string; onChange?: (value: string) => void }
+  | {
+      kind: "time";
+      value: string;
+      label: string;
+      onChange?: (value: string) => void;
+      cue?: { word: string; expanded: boolean; onPress: MouseEventHandler<HTMLButtonElement> };
+    }
   /**
    * One line of text: the place. `suggests`: it offers while it is typed in, and is then the combobox of a
    * suggestion list (what `useSuggestions` hands for its field, which carries the text and its change); `ref`
@@ -85,7 +92,8 @@ export interface EventFormProps {
   adds?: readonly { id: string; word: string; label?: string; icon: IconName; onPress?: () => void }[];
   /** The rest of what can be added, behind one glyph. */
   more?: { label: string; expanded?: boolean; onPress?: () => void };
-  /** A new event only: Add, at the last line's end. An edit takes effect at once and has none. */
+  cancel?: { label: string; disabled?: boolean; onPress?: () => void };
+  /** Add or Save, at the last line's end. */
   submit?: { label: string; keyHint?: string; disabled?: boolean; onPress?: () => void };
 }
 
@@ -107,8 +115,8 @@ function remove(r: { label: string; onPress?: () => void }, key?: number): React
 /** A field: a time, a line of words, or the notes. */
 function field(it: Extract<EventFormItem, { kind: "time" | "text" | "notes" }>, key: number): ReactNode {
   switch (it.kind) {
-    case "time":
-      return (
+    case "time": {
+      const input = (
         <input
           key={key}
           className="oh-control oh-evform-field"
@@ -121,6 +129,23 @@ function field(it: Extract<EventFormItem, { kind: "time" | "text" | "notes" }>, 
           onChange={(e) => it.onChange?.(e.target.value)}
         />
       );
+      return (
+        <div key={key} className="oh-evform-timed">
+          {input}
+          {it.cue && (
+            <button
+              type="button"
+              className="oh-control oh-evform-cue"
+              aria-haspopup="dialog"
+              aria-expanded={it.cue.expanded}
+              onClick={it.cue.onPress}
+            >
+              {it.cue.word}
+            </button>
+          )}
+        </div>
+      );
+    }
     case "text":
       return (
         <input
@@ -191,7 +216,7 @@ function held(it: Extract<EventFormItem, { kind: "person" | "file" }>, key: numb
 function item(it: EventFormItem, key: number): ReactNode {
   switch (it.kind) {
     case "slot":
-      return (
+      return it.hidden ? null : (
         <Slot key={key} kind={it.state} label={it.label} expanded={it.expanded} onPress={it.onPress}>
           {it.value}
         </Slot>
@@ -263,10 +288,9 @@ function item(it: EventFormItem, key: number): ReactNode {
 
 /**
  * One form for a new event and for an edit: rows led by a glyph, in a fixed order. A row stands
- * only when it holds something; what is empty waits as a word in the last line. There is no Save:
- * the app writes each change as it is made.
+ * only when it holds something; what is empty waits as a word in the last line.
  */
-export function EventForm({ rows, adds, more, submit }: EventFormProps) {
+export function EventForm({ rows, adds, more, submit, cancel }: EventFormProps) {
   return (
     <div className="oh-evform">
       {rows.map((row) => (
@@ -281,7 +305,7 @@ export function EventForm({ rows, adds, more, submit }: EventFormProps) {
           <div className="oh-evform-value">{row.items.map(item)}</div>
         </div>
       ))}
-      {adds?.length || more || submit ? (
+      {adds?.length || more || submit || cancel ? (
         <div className="oh-evform-last">
           <div className="oh-evform-adds">
             {adds?.map((a) => (
@@ -312,16 +336,25 @@ export function EventForm({ rows, adds, more, submit }: EventFormProps) {
               </button>
             ) : null}
           </div>
-          {submit ? (
-            <Button
-              size="s"
-              disabled={submit.disabled}
-              keyHint={submit.keyHint}
-              keyShown
-              onPress={submit.onPress}
-            >
-              {submit.label}
-            </Button>
+          {submit || cancel ? (
+            <div className="oh-evform-verbs">
+              {cancel && (
+                <Button kind="quiet" size="s" disabled={cancel.disabled} onPress={cancel.onPress}>
+                  {cancel.label}
+                </Button>
+              )}
+              {submit && (
+                <Button
+                  size="s"
+                  disabled={submit.disabled}
+                  keyHint={submit.keyHint}
+                  keyShown
+                  onPress={submit.onPress}
+                >
+                  {submit.label}
+                </Button>
+              )}
+            </div>
           ) : null}
         </div>
       ) : null}

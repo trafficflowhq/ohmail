@@ -4,7 +4,7 @@
  * on the calendar as soon as the mirror holds it.
  */
 import { useMemo, useRef, useState } from "react";
-import { hueOf, isoOfDay, nowIn, readerZones, type CalendarPort } from "@ohmail/app-logic/calendar";
+import { isoOfDay, nowIn, readerZones, type CalendarPort } from "@ohmail/app-logic/calendar";
 import {
   addFound,
   foundOf,
@@ -42,10 +42,7 @@ export function useFound(port: CalendarPort | typeof NONE) {
       zones,
     });
     const target = targetCalendarOf(sources.calendars, sources.connections, preferred);
-    const toneOf = (id: string | null) => {
-      const on = id === null ? undefined : sources.calendars.find((c) => c.id === id);
-      return on ? hueOf(on.color) : null;
-    };
+    const toneOf = (id: string | null) => (id === null ? null : (sources.tones.get(id) ?? null));
     const onCalendar = (row: FoundRow) =>
       row.alreadyOn === null
         ? null

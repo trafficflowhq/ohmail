@@ -111,14 +111,16 @@ function addressedMailto(link: HTMLElement): { target: string; subject: string |
 describe("the Help & contact pane", () => {
   it("is a Settings pane right after About, and opens", async () => {
     mount({ pane: "general" });
+    await screen.findByRole("navigation", { name: en.settings.navAria });
     expect(names(en).slice(-2)).toEqual(["About ohmail", "Help & contact"]);
     fireEvent.click(menu(en).getByRole("button", { name: "Help & contact" }));
     expect(await screen.findByRole("button", { name: "Write to us" })).toBeDefined();
     expect(window.location.hash).toBe("#/settings/help");
   });
 
-  it("is named in German", () => {
+  it("is named in German", async () => {
     mount({ locale: "de", pane: "general" });
+    await screen.findByRole("navigation", { name: de.settings.navAria });
     expect(names(de).slice(-2)).toEqual(["Über ohmail", "Hilfe & Kontakt"]);
   });
 

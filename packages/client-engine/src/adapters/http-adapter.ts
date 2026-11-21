@@ -3,6 +3,7 @@ import {
   FOLDER_OF_VIEW,
   isWithheldMarker,
   MutationRejectedError,
+  SyncAbortedError,
   UnsupportedMutationError,
   type SyncChange,
   type SyncResponse,
@@ -739,6 +740,7 @@ export class HttpAdapter implements EngineAdapter {
         ...(init.urgent === true ? { priority: "high" as const } : {}),
       });
     } catch (err) {
+      if (err instanceof SyncAbortedError) throw err;
       // Network failure — safe to retry with the SAME Idempotency-Key (§1.6). An abort raised by
       // `withDeadline` (or by the engine's ceiling on a write) also lands here, as an `AbortError`;
       // it becomes the LOSING branch of that race and is swallowed there, so this classification

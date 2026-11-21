@@ -5,8 +5,12 @@
  */
 import { useContext, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { Button, Menu, MenuItem, MenuRule, type IconName } from "@ohmail/ui/base";
+import { useLastMailCheck } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import { usePull } from "@ohmail/app-logic/session/pull-new-mail";
+import { clockOf } from "@ohmail/app-logic/text/format";
 import { FrameContext } from "../frame/commands.js";
 import type { RailModel } from "../frame/contract.js";
+import { useText, useTimeZone } from "../text/index.js";
 
 export interface ListMenuItem {
   readonly label: string;
@@ -14,6 +18,7 @@ export interface ListMenuItem {
   readonly icon?: IconName;
   /** A note at the right: how many. */
   readonly note?: string;
+  readonly keyHint?: string;
   readonly disabled?: boolean;
   /** A rule stands above it: a group of its own (a tag's verbs under the pull). */
   readonly apart?: boolean;
@@ -30,21 +35,40 @@ function useFramePull(): RailModel["pull"] {
 
 export function ListMenu({
   label,
-  items,
+  items = [],
+  mail = false,
   anchorRef,
 }: {
   label: string;
-  items: readonly ListMenuItem[];
+  items?: readonly ListMenuItem[];
+  /** Use the mail ground's pull in registered places that offer it. */
+  mail?: boolean;
   /** The button, handed out: a question one of its verbs asks stands where the menu stood. */
   anchorRef?: RefObject<HTMLButtonElement | null>;
 }) {
-  const pull = useFramePull();
+  const railPull = useFramePull();
+  const groundPull = usePull();
+  const t = useText("ohbox");
+  const pull =
+    railPull ??
+    (mail && groundPull
+      ? { label: t("list.pull"), keyHint: "p", busy: groundPull.pulling, onPress: groundPull.pull }
+      : null);
   const [open, setOpen] = useState(false);
+  const checked = useLastMailCheckLabel(open && pull !== null && mail);
   const own = useRef<HTMLButtonElement>(null);
   const anchor = anchorRef ?? own;
   const all: ListMenuItem[] = [
     ...(pull
-      ? [{ label: pull.label, icon: "pull" as const, disabled: pull.busy, onPress: pull.onPress }]
+      ? [
+          {
+            label: pull.label,
+            icon: "pull" as const,
+            keyHint: mail ? pull.keyHint : undefined,
+            disabled: pull.busy,
+            onPress: pull.onPress,
+          },
+        ]
       : []),
     ...items,
   ];
@@ -60,13 +84,22 @@ export function ListMenu({
         expanded={open}
         onPress={() => setOpen((was) => !was)}
       />
-      <Menu open={open} onClose={() => setOpen(false)} anchor={anchor} right label={label}>
+      <Menu
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={anchor}
+        anchored={mail}
+        right
+        label={label}
+        title={checked}
+      >
         {all.map((item, index) => (
           <MenuGroup key={index} rule={index > 0 && item.apart === true}>
             <MenuItem
               label={item.spoken}
               icon={item.icon}
               note={item.note}
+              keyHint={item.keyHint}
               disabled={item.disabled}
               onPress={() => {
                 setOpen(false);
@@ -89,4 +122,13 @@ function MenuGroup({ rule, children }: { rule: boolean; children: ReactNode }) {
       {children}
     </>
   );
+}
+
+export function useLastMailCheckLabel(shown: boolean): string | undefined {
+  const checked = useLastMailCheck();
+  const t = useText("ohbox");
+  const timeZone = useTimeZone();
+  if (!shown || checked === null) return undefined;
+  const when = clockOf(checked, timeZone);
+  return t("list.checked", { when });
 }

@@ -51,8 +51,17 @@ const THREE = [
   letter("c", at(12, { subject: "Studio keys" })),
 ];
 
-function seat(o: { letters?: readonly EngineMessage[]; room?: "desktop" | "phone"; first?: string } = {}) {
-  const mail = fakeMail(o.letters ?? THREE, [], {}, ADMITTED);
+function seat(
+  o: {
+    letters?: readonly EngineMessage[];
+    room?: "desktop" | "phone";
+    first?: string;
+    more?: Readonly<Record<string, unknown>>;
+    ownAddress?: string;
+    reader?: typeof READER;
+  } = {},
+) {
+  const mail = fakeMail(o.letters ?? THREE, [], {}, { ...ADMITTED, ...o.more });
   const address = fakeAddress(o.first ?? "#/ohbox");
   const { host } = fakeHost({
     engine: mail.engine,
@@ -60,7 +69,21 @@ function seat(o: { letters?: readonly EngineMessage[]; room?: "desktop" | "phone
     scope: "acct-1",
     places: mailPlaces(),
     above: MailGround,
-    reader: READER,
+    reader: o.reader ?? READER,
+    ...(o.ownAddress === undefined
+      ? {}
+      : {
+          mailboxes: async () => [
+            {
+              id: "mb-1",
+              address: o.ownAddress,
+              status: "connected",
+              organizerRole: "organizer",
+              organizerChecked: true,
+              organizeConsentedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        }),
     window: fakeWindow(o.room ?? "desktop"),
     address,
   });
@@ -105,6 +128,87 @@ const cursorRow = (): string | null => rows().find((r) => r.hasAttribute("data-o
 const settle = () => act(async () => new Promise((r) => setTimeout(r, 0)));
 /** The sentence the frame's one report slot says now. */
 const said = (): string => screen.getByRole("status").querySelector("span")?.textContent ?? "";
+
+async function contextOnTrip() {
+  const ownAddress = "owner@example.invalid";
+  const first = letter("trip-first", at(10, { subject: "Trip", unread: false, threadId: "trip" }));
+  const latest = letter(
+    "trip-latest",
+    at(11, {
+      subject: "Re: Trip",
+      unread: false,
+      threadId: "trip",
+      from: { name: "Second sender", address: "second@example.invalid" },
+    }),
+  );
+  const reply = letter(
+    "trip-sent",
+    at(12, {
+      subject: "Re: Trip",
+      unread: false,
+      threadId: "trip",
+      folder: "Sent",
+      from: { name: "Mailbox owner", address: ownAddress },
+      to: [latest.from],
+    }),
+  );
+  const { mail, address } = seat({
+    letters: [first, latest, reply],
+    ownAddress,
+    more: { "rule:r2": { ...ADMITTED["rule:r1"], id: "r2", match: latest.from.address } },
+    reader: {
+      ...READER,
+      Screening: ({ person }) =>
+        person ? (
+          <div role="dialog" aria-label="Sender screening">
+            {person.messageId}
+          </div>
+        ) : null,
+    },
+  });
+  await act(async () => undefined);
+  const trip = () => screen.getByRole("option", { name: /Trip/ });
+  fireEvent.click(trip());
+  await act(async () => undefined);
+  expect(address.read()).toBe("#/ohbox/t/trip-latest");
+  fireEvent.contextMenu(trip());
+  return { mail, menu: within(screen.getByRole("menu")) };
+}
+
+describe("the Ohbox row menu on a read conversation with a newer Sent reply", () => {
+  it("moves only the letter the row opens and Undo puts it back", async () => {
+    const { mail, menu } = await contextOnTrip();
+    fireEvent.click(menu.getByRole("menuitem", { name: "Move" }));
+    const places = within(screen.getByRole("dialog", { name: "move to" }));
+    fireEvent.click(places.getByRole("menuitem", { name: "News" }));
+    await act(async () => undefined);
+    expect(sent(mail)).toEqual(["move trip-latest ohmail/News"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await act(async () => undefined);
+    expect(sent(mail)).toEqual(["move trip-latest ohmail/News", "move trip-latest INBOX"]);
+  });
+
+  it("opens Screening for the letter the row opens", async () => {
+    const { mail, menu } = await contextOnTrip();
+    fireEvent.click(menu.getByRole("menuitem", { name: "Screening" }));
+    expect(screen.getByRole("dialog", { name: "Sender screening" }).textContent).toBe("trip-latest");
+    expect(sent(mail)).toEqual([]);
+  });
+
+  it("deletes only the letter the row opens", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const { mail, menu } = await contextOnTrip();
+    fireEvent.click(menu.getByRole("menuitem", { name: "Delete" }));
+    const question = within(screen.getByRole("dialog", { name: "Delete this message?" }));
+    fireEvent.click(question.getByRole("menuitem", { name: "Delete" }));
+    expect(sent(mail)).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(UNDO_MS + 2000);
+    });
+    expect(sent(mail)).toEqual(["message_delete trip-latest"]);
+  });
+});
 
 describe("the Ohbox's own seat, over the mail ground", () => {
   it("lists what the ground presents, and its rail entry counts the unread letters off the ground", () => {

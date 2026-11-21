@@ -770,7 +770,7 @@ export function SettingsView({
      are this install's stored choices and the OS's own answer about whether any of it may be
      drawn. Read lazily so a blocked `localStorage` costs one render rather than a throw. */
   const [notifyChannels, setNotifyChannels] = useState<NotificationChannels>(
-    () => (typeof window === "undefined" ? { ...DEFAULT_CHANNELS } : readChannels()),
+    () => (typeof window === "undefined" ? { ...DEFAULT_CHANNELS } : readChannels(scope)),
   );
   /* Read in the INITIALIZER, not in a mount effect. The server render has no `Notification`, so
      it answers `unsupported` there and the real state on the client's first paint — which is both
@@ -825,7 +825,7 @@ export function SettingsView({
 
   const setNotify = useCallback((next: NotificationChannels, at: NoticePermission) => {
     setNotifyChannels(next);
-    writeChannels(next);
+    writeChannels(next, scope);
     /* THE TWO THINGS THAT LIVE OUTSIDE REACT, both derived from the same `next` so they cannot
        disagree with what was just stored:
 
@@ -842,8 +842,8 @@ export function SettingsView({
        the server named for THIS session. See `notification-settings.ts` for why an intent is not
        enough — the short version is that a previous user's registration can still be live on a
        shared browser, and `wanted` says nothing about whose it is. */
-    void applyWakeIntent(notificationHost, wanted, t("notifyClosedBody")).then(showDelivery);
-  }, [notificationHost, showDelivery, t]);
+    void applyWakeIntent(notificationHost, wanted, t("notifyClosedBody"), scope).then(showDelivery);
+  }, [notificationHost, scope, showDelivery, t]);
 
   /**
    * RECONCILE ON MOUNT, BECAUSE THE STORED INTENT IS ALREADY "ON": The defaults are master-on and new-mail-on, so the
@@ -872,7 +872,7 @@ export function SettingsView({
     if (isDemoOwned(scope)) return;
     let alive = true;
     const wanted = subscriptionWanted(notifyChannels, notifyPermission);
-    void applyWakeIntent(notificationHost, wanted, t("notifyClosedBody")).then((o) => {
+    void applyWakeIntent(notificationHost, wanted, t("notifyClosedBody"), scope).then((o) => {
       if (alive) showDelivery(o);
     });
     return () => { alive = false; };

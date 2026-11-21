@@ -1,0 +1,34 @@
+@layer oh {
+  .oh-activity-line {
+    display: block;
+    height: var(--activity-line-height);
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .oh-activity-line::before {
+    content: "";
+    display: block;
+    width: calc(100% / 3);
+    height: 100%;
+    background: var(--hot);
+    opacity: var(--activity-line-opacity);
+    transform: translateX(100%);
+    animation: oh-activity-pass var(--d-activity-line) var(--e-activity-line) infinite;
+  }
+  @keyframes oh-activity-pass {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+  [data-rm="1"] .oh-activity-line::before {
+    animation: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-activity-line::before {
+      animation: none;
+    }
+  }
+}

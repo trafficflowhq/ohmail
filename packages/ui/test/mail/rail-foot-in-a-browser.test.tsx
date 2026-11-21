@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launch } from "../../../../test/compare/render.mjs";
+import { ActivityLine } from "../../src/base/Feedback/ActivityLine.js";
 import { RailFoot } from "../../src/mail/index.js";
 import { entryCss, fontsCss } from "../compare/harness.js";
 
@@ -67,3 +68,26 @@ describe("the rail account and its tools", () => {
     });
   }
 });
+
+it("leaves a centered, static line a third as wide when reduced motion is requested", async () => {
+  const page = await browser.newPage({ reducedMotion: "reduce" });
+  try {
+    await page.setContent(
+      `<style>${await entryCss("base")}</style><div role="status" style="width: 300px">${renderToStaticMarkup(<ActivityLine />)}</div>`,
+    );
+    const line = await page.getByRole("status").evaluate((status) => {
+      const mark = status.firstElementChild!;
+      const style = getComputedStyle(mark, "::before");
+      return {
+        hidden: mark.getAttribute("aria-hidden"),
+        width: style.width,
+        height: style.height,
+        offset: new DOMMatrix(style.transform).m41,
+        animations: mark.getAnimations({ subtree: true }).length,
+      };
+    });
+    expect(line).toEqual({ hidden: "true", width: "100px", height: "2px", offset: 100, animations: 0 });
+  } finally {
+    await page.close();
+  }
+}, 30_000);

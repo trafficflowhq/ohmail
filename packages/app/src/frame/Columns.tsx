@@ -7,8 +7,8 @@
  *
  * What a place stands above its two columns wraps them and nothing else: the rail is outside it.
  */
-import { Fragment, useRef, type KeyboardEvent } from "react";
-import { cycleTab, useOverlayFocus } from "@ohmail/ui/base";
+import { Fragment, useLayoutEffect, useRef, type KeyboardEvent } from "react";
+import { animate, cycleTab, useOverlayFocus } from "@ohmail/ui/base";
 import { ColumnHandle, Sheet } from "@ohmail/ui/mail";
 import type { ColumnsProps } from "./contract.js";
 import { useColumnWidths } from "./column-widths.js";
@@ -38,6 +38,13 @@ export function Columns({ plan, rail, list, listKeys, reading, wide, above, labe
   const modal = over && plan.ribbon !== "push";
   const readingBox = useRef<HTMLElement>(null);
   useOverlayFocus(over, readingBox, focusReading);
+  useLayoutEffect(() => {
+    const node = readingBox.current;
+    if (over && plan.device === "phone" && node) {
+      const flight = animate(node, "slide", { ease: "--e-move" });
+      return () => flight?.cancel();
+    }
+  }, [over, plan.device]);
   const columns = (
     <>
       <section ref={listColumn} className="fr-list" aria-label={labels.list} inert={over || undefined}>

@@ -48,6 +48,32 @@ const READING = "Reading";
 afterEach(cleanup);
 
 describe("the open letter's claim, by width", () => {
+  it("brings the phone letter over the list, and holds it still when motion is reduced", () => {
+    const style = document.createElement("style");
+    style.textContent =
+      ".fr-reading { --d-slide: 280ms; --x-slide: translateX(100%); --o-slide: 1; --e-move: linear; }";
+    document.head.append(style);
+    const original = Element.prototype.animate;
+    const animated: Element[] = [];
+    Element.prototype.animate = function () {
+      animated.push(this);
+      return { cancel() {}, addEventListener() {} } as unknown as Animation;
+    };
+    try {
+      mount("phone", "#/ohbox/m/a1");
+      expect(animated).toContain(screen.getByRole("dialog", { name: READING }));
+      cleanup();
+      animated.length = 0;
+      document.documentElement.dataset.rm = "1";
+      mount("phone", "#/ohbox/m/a1");
+      expect(animated).not.toContain(screen.getByRole("dialog", { name: READING }));
+    } finally {
+      delete document.documentElement.dataset.rm;
+      Element.prototype.animate = original;
+      style.remove();
+    }
+  });
+
   it("on one column the letter over the list is a modal dialog, named as the reading column", () => {
     mount("phone", "#/ohbox/m/a1");
     const letter = screen.getByRole("dialog", { name: READING });

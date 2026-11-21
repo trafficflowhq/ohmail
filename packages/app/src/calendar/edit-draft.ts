@@ -12,16 +12,20 @@ export function draftOfRecord(record: CalendarEventRecord) {
   const allDay = start.kind === "date";
   const from = allDay ? "09:00" : clockOf(start);
   const to = end && end.kind !== "date" ? clockOf(end) : "10:00";
-  // A form with one date and two clock times can represent the same day or one night.
+  const last = end ? (allDay ? addDays(dayOf(end), -1) : dayOf(end)) : day;
+  const inferred = !allDay && to < from ? addDays(day, 1) : day;
+  // Mixed time shapes and seconds cannot be represented by the form's minute fields.
   const timeEditable = Boolean(
     end &&
     end.kind === start.kind &&
     end.zone === start.zone &&
-    dayOf(end) === (allDay || to < from ? addDays(day, 1) : day) &&
+    last >= day &&
+    (allDay || last > day || to > from) &&
     (allDay || (from !== to && start.value.slice(13, 15) === "00" && end.value.slice(13, 15) === "00")),
   );
   const draft: EventDraft = {
     day,
+    endDay: last === inferred ? null : last,
     from,
     to,
     allDay,
@@ -53,13 +57,13 @@ export function eventChanges(
   const title = draft.title.trim();
   if (!title) return null;
   const patch: Partial<CalendarEventFields> = {};
-  if (title !== first.title) patch.title = title;
+  if (draft.title !== first.title && title !== first.title) patch.title = title;
   for (const k of ["notes", "place"] as const) {
     if (draft[k] !== first[k] && (draft[k]?.trim() || null) !== first[k]) patch[k] = draft[k]?.trim() || null;
   }
   if (draft.busy !== first.busy) patch.busy = draft.busy;
   if (draft.private !== first.private) patch.private = draft.private;
-  const timeFields = ["day", "from", "to", "allDay"] as const;
+  const timeFields = ["day", "endDay", "from", "to", "allDay"] as const;
   if (timeFields.some((key) => draft[key] !== first[key])) {
     if (!baseline.timeEditable || !record.end) return null;
     const fields = fieldsOfDraft(draft, calendar, record.start.zone ?? viewerZone);

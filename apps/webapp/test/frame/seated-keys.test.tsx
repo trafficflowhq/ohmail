@@ -398,15 +398,18 @@ describe("keys available in the mounted mail frame", () => {
     await tick(50);
     const dialog = () => screen.queryByRole("dialog", { name: "Options for Sender m_Second" });
     expect(dialog()).not.toBeNull();
-    expect(sender.getAttribute("aria-expanded")).toBe("true");
+    const screening = width === 390
+      ? sender
+      : within(screen.getByRole("toolbar", { name: "Actions" })).getByRole("button", { name: en.screening.action });
+    expect(screening.getAttribute("aria-expanded")).toBe("true");
     expect(earlier.getAttribute("aria-expanded")).toBe("false");
     expect(filings()).toHaveLength(before);
 
     await key("Escape");
     await tick(50);
     expect(dialog()).toBeNull();
-    expect(sender.getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement).toBe(sender);
+    expect(screening.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(screening);
   }, 60_000);
 
   it.each([1440, 390])("opens, reads and closes keyboard help at %i", async (width) => {

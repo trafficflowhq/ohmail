@@ -191,8 +191,8 @@ function namespacesRead(src: string): Set<string> {
   // The one text reader's door reads a namespace the same way (`@ohmail/app/text`).
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   for (const m of code.matchAll(/\buseText\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
-  // Settings menu facts supply this namespace to the host text reader through their label descriptors.
-  for (const m of code.matchAll(/\bexport const SETTINGS_MENU_NAMESPACE = "([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
+  // Settings panes and menu labels hand their declared namespaces to the host text reader.
+  for (const m of code.matchAll(/\bexport const [A-Z_]+_NAMESPACE = "(settings[A-Z][A-Za-z0-9_]*)"/g)) found.add(m[1]!);
   for (const m of src.matchAll(/\b(?:liveCopy|bodyCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
     found.add(m[1]!);
   }

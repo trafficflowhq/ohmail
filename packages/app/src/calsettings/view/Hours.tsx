@@ -3,6 +3,7 @@ import { Button } from "@ohmail/ui/base";
 import { SettingLine } from "@ohmail/ui/mail";
 import { useReport } from "../../frame/commands.js";
 import { useLocale, useText } from "../../text/index.js";
+import { hoursInView } from "../hours.js";
 import type { SettingsRead } from "../settings-read.js";
 import { Choice } from "./Choice.js";
 
@@ -15,18 +16,15 @@ export function Hours({ said, save, step = false }: SettingsRead & { step?: bool
   const t = useText("calsettings");
   const locale = useLocale();
   const report = useReport();
-  const from = said?.dayFromMinute ?? 0;
-  const to = said?.dayToMinute ?? DAY;
+  const { from, to } = hoursInView(said);
   const write = async (which: "from" | "to", pick: (minute: number) => number) => {
     if (save === "none") return;
     const done = await save((current) => {
-      const from = current.dayFromMinute ?? 0;
-      const to = current.dayToMinute ?? DAY;
+      const { from, to } = hoursInView(current);
       const start = which === "from" ? pick(from) : from;
       const end = which === "to" ? pick(to) : to;
       if (start < 0 || start >= end || end > DAY) return null;
-      const fullDay = start === 0 && end === DAY;
-      return { dayFromMinute: fullDay ? null : start, dayToMinute: fullDay ? null : end };
+      return { dayFromMinute: start, dayToMinute: end };
     });
     if (!done) report(t("notSaved"));
   };

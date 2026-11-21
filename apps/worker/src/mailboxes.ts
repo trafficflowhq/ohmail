@@ -494,23 +494,31 @@ async function toTransport(
 }
 
 /**
- * Each mailbox's IMAP host, from the non-secret `meta` of its `imap` row: what the attach pool keys
- * "one attach per provider host" on. One query, run only when a roster pass has attaches to
- * schedule. A mailbox with no row is absent from the map. Nothing is decrypted, and the hosts are
- * never logged.
+ * What the attach pool uses to allow one concurrent attach per provider host.
+ * Read each account's IMAP metadata together. Nothing is decrypted or logged.
  */
-export async function loadAttachHosts(db: WorkerDb, mailboxIds: readonly string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  if (mailboxIds.length === 0) return out;
-  const rows = await db
-    .select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
-    .from(mailboxCredentials)
-    .where(and(inArray(mailboxCredentials.mailboxId, [...mailboxIds]), eq(mailboxCredentials.transport, "imap")));
-  for (const r of rows) {
-    const host = (r.meta as { host?: unknown } | null)?.host;
-    if (typeof host === "string") out.set(r.mailboxId, host);
+export async function loadAttachHosts(
+  scheduled: readonly Pick<EnabledMailbox, "accountId" | "mailboxId">[],
+  forAccount: (accountId: string) => { db: WorkerDb },
+): Promise<Map<string, string>> {
+  const grouped = new Map<string, string[]>();
+  for (const { accountId, mailboxId } of scheduled) {
+    const ids = grouped.get(accountId);
+    if (ids) ids.push(mailboxId);
+    else grouped.set(accountId, [mailboxId]);
   }
-  return out;
+  const hosts = new Map<string, string>();
+  for (const [accountId, mailboxIds] of grouped) {
+    const rows = await forAccount(accountId).db
+      .select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
+      .from(mailboxCredentials)
+      .where(and(inArray(mailboxCredentials.mailboxId, mailboxIds), eq(mailboxCredentials.transport, "imap")));
+    for (const row of rows) {
+      const host = (row.meta as { host?: unknown } | null)?.host;
+      if (typeof host === "string") hosts.set(row.mailboxId, host);
+    }
+  }
+  return hosts;
 }
 
 /**

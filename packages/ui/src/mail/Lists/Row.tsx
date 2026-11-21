@@ -140,7 +140,7 @@ export interface RowProps {
   nameActions?: readonly (RowNameAction & { id: string; text: string })[];
   addressAction?: (anchor: HTMLButtonElement) => void;
   /** A right click, the menu key or the other key that opens the context menu: the row's menu, where the pointer is. */
-  onMenu?: (at: { x: number; y: number }) => void;
+  onMenu?: (at: { x: number; y: number }, row: HTMLDivElement) => void;
   /** In a listbox: the row is an option, named and described as the list says. Absent, it is a button. */
   listing?: RowListing;
   /** A row to tick: it is a checkbox, and no dot stands on its circle. */
@@ -176,7 +176,7 @@ export function Row(props: RowProps) {
   const menu = onMenu
     ? (event: MouseEvent<HTMLDivElement>) => {
         event.preventDefault();
-        onMenu(cssPoint(event));
+        onMenu(cssPoint(event), event.currentTarget);
       }
     : undefined;
   const contact =

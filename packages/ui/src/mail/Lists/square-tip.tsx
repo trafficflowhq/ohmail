@@ -90,10 +90,11 @@ export function SquareTip({ anchor, children }: { anchor: HTMLElement; children:
       win.removeEventListener("resize", place);
     };
   }, [anchor, children]);
+  const overlayRoot = anchor.closest<HTMLElement>(".oh-root") ?? anchor.ownerDocument.body;
   return renderPortal(
     <span className="oh-square-tip" ref={chip} role="tooltip" aria-hidden="true">
       {children}
     </span>,
-    anchor.closest(".oh-root") ?? anchor.ownerDocument.body,
+    overlayRoot,
   );
 }

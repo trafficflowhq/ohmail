@@ -136,12 +136,13 @@ it.each([
   document.cookie = `tf_owner=${OWNER_A}; Path=/`;
   pendApiOwner(OWNER_A);
   const mounted = render(view(OWNER_A, pane, null));
-  await act(async () => { await Promise.resolve(); });
+  await screen.findByRole("navigation", { name: words.settings.navAria });
   expect(called.mock.calls.filter(([url]) => String(url).endsWith(path))).toEqual([]);
 
   bind(OWNER_A);
   mounted.rerender(view(OWNER_A, pane));
   const choice = await screen.findByRole("switch", { name: title });
   await waitFor(() => expect(choice).toHaveProperty("disabled", false));
-  expect(called.mock.calls.filter(([url]) => String(url).endsWith(path))).toHaveLength(1);
+  const reads = called.mock.calls.filter(([url]) => String(url).endsWith(path));
+  expect(reads).toHaveLength(1);
 });

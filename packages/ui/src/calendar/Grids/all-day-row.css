@@ -15,18 +15,4 @@
     --oh-allday-foot: 0 var(--oh-tg-end, var(--s2)) 0 0;
     min-height: 8px;
   }
-  .oh-allday-label {
-    --oh-allday-in: 10px;
-    grid-row: 1;
-    grid-column: 1;
-    padding-right: var(--oh-allday-in);
-    color: var(--ink2);
-    font-size: var(--t-meta);
-    line-height: 22px;
-    text-align: right;
-    white-space: nowrap;
-  }
-  :root[data-device="fold"] .oh-allday-label {
-    --oh-allday-in: 4px;
-  }
 }

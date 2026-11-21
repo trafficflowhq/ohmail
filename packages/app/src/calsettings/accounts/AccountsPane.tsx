@@ -141,6 +141,7 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
         >
           <AccountLines
             account={a}
+            tones={mirror.tones}
             port={doors}
             newEvents={newEvents}
             writable={writable}

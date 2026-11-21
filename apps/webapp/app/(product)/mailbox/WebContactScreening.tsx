@@ -26,7 +26,7 @@ import {
   FOLDER_OF_VIEW, PRESS_VISIBLE_ROWS, autoUnsubscribeConfirms, consentPartition, inverseMutations, outrankCoveringDomains,
   pressForecast, pressGained, pressRuleId, ruleFingerprint, rulesInPlay, rulesList, senderKey, unsubscribeClaim, unsubscribeLetterOf, type PressForecast,
 } from "@ohmail/client-engine";
-import { cssRect, MenuItem } from "@ohmail/ui/base";
+import { cssRect } from "@ohmail/ui/base";
 import type { EngineMessage } from "@ohmail/wire";
 import { usePileNames } from "../../shell/decision-copy";
 import { SenderAuditPanel } from "../../screening/SenderAuditPanel";
@@ -45,7 +45,7 @@ const termOf = (rule: ScreeningPress["shown"][number] | undefined): string =>
 const forecastKey = (forecast: PressForecast): string =>
   JSON.stringify(forecast, (_key, value: unknown) => value instanceof Map ? [...value] : value);
 
-export function WebContactScreening({ person, direct, onClose, children }: ContactScreeningProps) {
+export function WebContactScreening({ person, onClose, children }: ContactScreeningProps) {
   const t = useTranslations("screening");
   const readerText = useTranslations("reader");
   const sessionText = useTranslations("session");
@@ -62,13 +62,12 @@ export function WebContactScreening({ person, direct, onClose, children }: Conta
   const now = useNowAt();
   const report = useReport();
   const piles = usePileNames();
-  const [menu, setMenu] = useState<ReturnType<typeof positionOf> | null>(() => direct ? positionOf(person) : null);
   const [audit, setAudit] = useState<ScreeningScope | null>(null);
   const [subjectOpen, setSubjectOpen] = useState(false);
   const subjectRule = useWebSubjectRule({
     messageId: person.messageId ?? "",
     senderAddress: person.address,
-    eligible: menu !== null,
+    eligible: person.onSender === true || person.direct === true || person.slot === `${person.messageId} from`,
     open: subjectOpen,
     onOpen: () => setSubjectOpen(true),
     onClose: () => setSubjectOpen(false),
@@ -83,7 +82,7 @@ export function WebContactScreening({ person, direct, onClose, children }: Conta
       box.id === message.mailboxId && box.organizerChecked === true && box.status !== "disabled")) return null;
     const address = person.slot === `${message.id} from` ? undefined : person.address;
     const rules = press.routing.planOver.current?.(read);
-    const sender = senderScreening(read, message.id, address, consentView.placeOf, rules);
+    const sender = senderScreening(read, message.id, address, consentView.placeOf, rules, { mailbox: "seed" });
     return sender ? { read, message, address, sender, rules, placeOf: consentView.placeOf } : null;
   };
   const contact = readContact();
@@ -340,13 +339,11 @@ export function WebContactScreening({ person, direct, onClose, children }: Conta
       rows: attributeMessages(read, rows),
     }} onClose={onClose} />;
   }
-  if (!menu) return children(
-    <MenuItem icon="screener" onPress={() => setMenu(positionOf(person))}>{t("action")}</MenuItem>,
-  );
   if (subjectRule.sheet) return subjectRule.sheet;
   return <SenderMenu
-    id={person.direct ? person.cardId : undefined}
-    state={{ ...menu, messageId: message.id, address }}
+    id={person.cardId}
+    state={{ ...positionOf(person), messageId: message.id, address }}
+    renderCard={(card, subjectRule, showAddress) => children(subjectRule, card, showAddress)}
     sender={sender}
     own={isOwnSubject(read, message.id, address, ownAddresses)}
     onClose={onClose}

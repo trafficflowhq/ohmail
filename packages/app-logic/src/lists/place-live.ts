@@ -89,6 +89,8 @@ export interface PlaceLiveArgs {
   readonly route: PlaceLiveRoute;
   readonly commands: PlaceLiveCommands;
   readonly plan: PlaceLivePlan;
+  /** The frame opened at this place with no letter in the address. */
+  readonly initialPlace?: boolean;
   /** The frame's one report slot. */
   readonly report: ToastFn;
   /**

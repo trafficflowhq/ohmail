@@ -1,31 +1,42 @@
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { DatePicker } from "./DatePicker.js";
 import { Menu, MenuItem } from "@ohmail/ui/base";
-import { EventForm, type EventFormRow } from "@ohmail/ui/calendar";
-import { dayLong, hueOf, type CalendarRecord } from "@ohmail/app-logic/calendar";
+import { EventForm, type CalendarTone, type EventFormProps, type EventFormRow } from "@ohmail/ui/calendar";
+import { addDays, dayShort, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useLocale, useText, type Text } from "../text/index.js";
-import type { EventDraft } from "./event-draft.js";
+import { endDayOf, type EventDraft } from "./event-draft.js";
 
 interface Props {
   readonly draft: EventDraft;
   readonly today: string;
   readonly calendar: CalendarRecord | undefined;
+  readonly tone: CalendarTone;
   readonly choices: readonly CalendarRecord[];
   readonly choose?: (id: string) => void;
   readonly fixedTime?: string;
   readonly timeZone?: string;
   readonly change: (edit: Partial<EventDraft>) => void;
-  readonly ready?: boolean;
-  readonly add?: () => void;
+  readonly submit?: EventFormProps["submit"];
+  readonly cancel?: EventFormProps["cancel"];
 }
 
 function whenRow(
   { draft, today, change }: Pick<Props, "draft" | "today" | "change">,
   t: Text,
   locale: string,
-  expanded: boolean,
-  open: (anchor: HTMLElement) => void,
+  menu: MenuAnchor | null,
+  open: (menu: MenuAnchor) => void,
 ): EventFormRow {
+  const endDay = endDayOf(draft);
+  const nextDay = !draft.allDay && endDay === addDays(draft.day, 1);
+  const end = {
+    kind: "slot" as const,
+    label: t("create.endDate"),
+    value: dayShort(endDay, locale, today.slice(0, 4)),
+    expanded: menu?.kind === "end",
+    hidden: false,
+    onPress: (event: MouseEvent<HTMLButtonElement>) => open({ kind: "end", anchor: event.currentTarget }),
+  };
   return {
     id: "when",
     icon: "clock",
@@ -33,9 +44,9 @@ function whenRow(
       {
         kind: "slot",
         label: t("create.date"),
-        value: dayLong(draft.day, locale, today.slice(0, 4)),
-        expanded: expanded,
-        onPress: (event) => open(event.currentTarget),
+        value: dayShort(draft.day, locale, today.slice(0, 4)),
+        expanded: menu?.kind === "date",
+        onPress: (event) => open({ kind: "date", anchor: event.currentTarget }),
       },
       ...(!draft.allDay
         ? [
@@ -46,14 +57,18 @@ function whenRow(
               onChange: (from: string) => change({ from }),
             },
             { kind: "word" as const, text: t("create.toWord") },
+            { ...end, hidden: endDay === draft.day || nextDay },
             {
               kind: "time" as const,
               label: t("create.to"),
               value: draft.to,
               onChange: (to: string) => change({ to }),
+              cue: nextDay
+                ? { word: t("create.nextDay"), expanded: end.expanded, onPress: end.onPress }
+                : undefined,
             },
           ]
-        : []),
+        : [{ kind: "word" as const, text: t("create.toWord") }, end]),
       {
         kind: "switch",
         label: t("create.allDay"),
@@ -88,27 +103,28 @@ function optionalRow(
   ];
 }
 
+type MenuAnchor = { kind: "date" | "end" | "calendar"; anchor: HTMLElement };
+
 export function DraftFields({
   draft,
   today,
   calendar,
+  tone,
   choices,
   choose,
   change,
-  ready,
-  add,
+  submit,
+  cancel,
   fixedTime,
   timeZone,
 }: Props) {
   const t = useText("calendar");
   const locale = useLocale();
-  const [menu, setMenu] = useState<{ kind: "date" | "calendar"; anchor: HTMLElement } | null>(null);
+  const [menu, setMenu] = useState<MenuAnchor | null>(null);
   const rows: EventFormRow[] = [
     fixedTime
       ? { id: "when", icon: "clock", items: [{ kind: "word", text: fixedTime }] }
-      : whenRow({ draft, today, change }, t, locale, menu?.kind === "date", (anchor) =>
-          setMenu({ kind: "date", anchor }),
-        ),
+      : whenRow({ draft, today, change }, t, locale, menu, setMenu),
   ];
   if (timeZone && !fixedTime && !draft.allDay) {
     const when = rows[0]!;
@@ -117,7 +133,7 @@ export function DraftFields({
   rows.push(...optionalRow("place", draft, change, t));
   rows.push({
     id: "calendar",
-    mark: hueOf(calendar?.color ?? null),
+    mark: tone,
     items: [
       choose
         ? {
@@ -164,22 +180,27 @@ export function DraftFields({
               ]
             : []),
         ]}
-        {...(add ? { submit: { label: t("create.add"), keyHint: "↵", disabled: !ready, onPress: add } } : {})}
+        submit={submit}
+        cancel={cancel}
       />
-      {menu?.kind === "date" && (
+      {menu && menu.kind !== "calendar" && (
         <DatePicker
           locale={locale}
           today={today}
-          value={draft.day}
+          value={menu.kind === "end" ? endDayOf(draft) : draft.day}
           anchor={menu.anchor}
           labels={{
-            dialog: t("create.date"),
+            dialog: t(menu.kind === "end" ? "create.endDate" : "create.date"),
             prevMonth: t("before"),
             nextMonth: t("after"),
             today: t("today"),
           }}
           onPick={(day) => {
-            change({ day });
+            if (menu.kind === "end") {
+              change({ endDay: day < draft.day ? draft.day : day });
+            } else {
+              change({ day, endDay: draft.endDay && draft.endDay >= day ? draft.endDay : null });
+            }
             setMenu(null);
           }}
           onClose={() => setMenu(null)}

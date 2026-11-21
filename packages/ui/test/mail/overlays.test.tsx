@@ -4,13 +4,7 @@ import { createPortal } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MenuItem } from "../../src/base/index.js";
 import { portalRenderer } from "../../src/base/Overlays/portal-renderer.js";
-import {
-  ContactCard,
-  FileQuickLook,
-  MovePicker,
-  QuickLook,
-  type ContactCardProps,
-} from "../../src/mail/index.js";
+import { ContactCard, MovePicker, QuickLook, type ContactCardProps } from "../../src/mail/index.js";
 
 afterEach(cleanup);
 
@@ -325,17 +319,20 @@ describe("a file preview across updates", () => {
     const onClose = vi.fn();
     const draw = (facts: string) => (
       <div className="oh-root">
-        <FileQuickLook
-          open
-          onClose={onClose}
-          label="File preview"
-          name="Document"
-          facts={facts}
-          close={{ label: "Close" }}
-          next={{ label: "Next file" }}
-        >
-          <p>File content</p>
-        </FileQuickLook>
+        <portalRenderer.Provider value={createPortal}>
+          <QuickLook
+            open
+            portal
+            onClose={onClose}
+            label="File preview"
+            name="Document"
+            facts={facts}
+            close={{ label: "Close" }}
+            next={{ label: "Next file", onPress: () => {} }}
+          >
+            <p>File content</p>
+          </QuickLook>
+        </portalRenderer.Provider>
       </div>
     );
     const { rerender } = render(draw("First"));

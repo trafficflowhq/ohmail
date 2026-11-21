@@ -24,9 +24,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import {
-  ApiError, account, apiConfigured, auth, codeOf, createPasskey, mailboxes,
+  ApiError, account, apiConfigured, auth, captureEnrollment, codeOf, createPasskey, mailboxes,
   messageOf, webauthnAvailable,
-  type AccountAccess, type MailboxDTO,
+  type AccountAccess, type EnrollmentExpectation, type MailboxDTO,
 } from "../../api-client";
 import { neverStarted } from "../../access-verdict";
 import { markSessionAlive, sessionIsDead } from "@ohmail/app-logic/session/session-truth";
@@ -183,6 +183,7 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
    * marker (`enrollmentCookies` writes none) — only the server knows, asked again.
    */
   const wizardOwner = useRef<string | null>(null);
+  const wizardEnrollment = useRef<EnrollmentExpectation | null>(null);
   /** The bootstrap's session read, last one out: a registration hears its answer first (`submitAccount`). */
   const sessionRead = useRef<Promise<unknown> | null>(null);
   const [codesSaved, setCodesSaved] = useState(false);
@@ -285,7 +286,11 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
       }
       setEmail(s.user.email);
       setDisplayName(s.user.displayName);
-      if (s.scope === "enrollment") { setStep("factor"); return; }
+      if (s.scope === "enrollment") {
+        wizardEnrollment.current ??= captureEnrollment(s.user.accountId, s.familyId);
+        setStep("factor");
+        return;
+      }
 
       // A full session and no unused recovery code means the codes step never completed —
       // the ONLY durable trace it leaves. Deliberately `!recoveryCodes` rather than "did we
@@ -595,6 +600,11 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
       // its account cannot be re-pointed by a registration, and the ordinary signup — whose
       // bootstrap 401s and leaves this null — is where the value comes from.
       wizardOwner.current ??= out.user.accountId;
+      if (wizardOwner.current !== out.user.accountId) {
+        setError(t("accountConflict"));
+        return;
+      }
+      wizardEnrollment.current ??= captureEnrollment(out.user.accountId, out.familyId);
       setStep("factor");
     }, (err) => {
       const key = registerRefusal(err);
@@ -603,24 +613,27 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
   };
 
   const enrollPasskey = () => void run(async () => {
-    if (!await enrolling()) return;
-    const { options } = await auth.webauthnRegisterOptions();
+    const enrollment = await enrolling();
+    if (!enrollment) return;
+    const { options } = await auth.webauthnRegisterOptions(enrollment);
     const credential = await createPasskey(options);
-    await auth.webauthnRegisterVerify({ credential, label: deviceLabel() });
+    await auth.webauthnRegisterVerify({ credential, label: deviceLabel() }, enrollment);
     // The response carries the exchanged FULL session in cookies. Nothing to store.
     setStep("codes");
   });
 
   const startTotp = () => void run(async () => {
-    if (!await enrolling()) return;
-    setTotp(await auth.totpEnroll());
+    const enrollment = await enrolling();
+    if (!enrollment) return;
+    setTotp(await auth.totpEnroll(undefined, enrollment));
   });
 
   const activateTotp = (e: React.FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      if (!await enrolling()) return;
-      await auth.totpActivate({ code: totpCode.trim() });
+      const enrollment = await enrolling();
+      if (!enrollment) return;
+      await auth.totpActivate({ code: totpCode.trim() }, undefined, enrollment);
       setTotpCode("");
       setStep("codes");
     }, (err) => (totpRefusal(err) === null ? null : t("refusedTotpCode")));
@@ -679,12 +692,19 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
    * (a second /join, a reload, the tab the confirming page continued in) may have added the first factor
    * since; then this press adds no second one, the wizard re-reads where the account is instead.
    */
-  const enrolling = async (): Promise<boolean> => {
+  const enrolling = async (): Promise<EnrollmentExpectation | null> => {
+    const expected = wizardEnrollment.current;
     const now = await sessionIfSame();
-    if (now === null) return false;
-    if (now.scope === "enrollment") return true;
-    await bootstrap();
-    return false;
+    if (now === null) return null;
+    if (now.scope === "full") {
+      await bootstrap();
+      return null;
+    }
+    if (!expected || now.familyId !== expected.expectedFamily || !expected.mayProceed()) {
+      setError(t("accountConflict"));
+      return null;
+    }
+    return expected;
   };
 
   /**

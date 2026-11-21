@@ -14,7 +14,7 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { useMemo, useRef } from "react";
-import type { BulkAction, MessageAction } from "./actions.js";
+import type { BulkAction, MessageAction, MoveSubject } from "./actions.js";
 import type { ActedMarker } from "./after-verb.js";
 import { runMessageAction } from "./message-verbs.js";
 import { planBulkScreening, screenBulk } from "./selection-screening.js";
@@ -51,13 +51,15 @@ export function useListVerbs(input: ListVerbsInput) {
   /** Every id a verb here acted on this session: a tombstone one of them left is this tab's own, not "gone". */
   const actedIds = useRef<Set<string>>(new Set());
 
-  const onMessageAction = useStableCallback((action: MessageAction, m: EngineMessage) => {
-    /* THE ACTED MARKER: every message verb funnels through here, so this one write is what lets the list tell "my
+  const onMessageAction = useStableCallback(
+    (action: MessageAction, m: EngineMessage, moveSubject?: MoveSubject) => {
+      /* THE ACTED MARKER: every message verb funnels through here, so this one write is what lets the list tell "my
        verb moved the open row" from a drain applying another device's work. A ref: nothing renders for it. */
-    lastActed.current = { id: m.id, at: Date.now() };
-    actedIds.current.add(m.id);
-    runMessageAction(cx, action, m);
-  });
+      lastActed.current = { id: m.id, at: Date.now() };
+      actedIds.current.add(m.id);
+      runMessageAction(cx, action, m, moveSubject);
+    },
+  );
   const onBulkAction = useStableCallback((action: BulkAction, ids: string[]): boolean =>
     runBulkAction(cx, action, ids),
   );

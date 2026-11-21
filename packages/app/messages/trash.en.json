@@ -1,6 +1,7 @@
 {
   "trash": {
-    "emptyTitle": "Nothing deleted in ohmail.",
+    "listMenu": "List",
+    "emptyTitle": "Nothing deleted",
     "empty": "What you delete in ohmail lands here and can be put back.",
     "foot": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.",
     "footLive": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Under it, what sits in your mail server's Trash: read-only, because nothing here records where that mail came from. Your mail server decides how long Trash keeps it.",
@@ -16,7 +17,8 @@
     "noErase": "ohmail never erases mail \u2014 to remove it for good, use your own mail client.",
     "restoring": "Restoring\u2026",
     "unavailable": "Trash is not available here.",
-    "liveHead": "In your mail server's Trash",
+    "liveHead": "On your mail server",
+    "liveReadOnlyTag": "Read-only",
     "liveOrigin": "on the server",
     "liveReadOnly": "Read-only. ohmail can’t put this back — nothing here records where it came from.",
     "liveLoading": "Reading your mail server’s Trash…",

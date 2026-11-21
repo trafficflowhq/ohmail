@@ -1,5 +1,15 @@
 {
   "calmail": {
+    "inviteGuest": "{name} einladen",
+    "confirmGuest": "Eine Einladung an {name} senden?",
+    "cancelGuest": "Abbrechen",
+    "sendGuest": "Einladung senden",
+    "removeGuest": "Gast entfernen",
+    "comingHeading": "Demnächst",
+    "allEvents": "Alle Termine",
+    "newEvent": "Neuer Termin",
+    "fromMail": "Aus E-Mails",
+    "guest": "Gast: {name}",
     "today": "Heute",
     "now": "jetzt",
     "allDay": "ganztägig",

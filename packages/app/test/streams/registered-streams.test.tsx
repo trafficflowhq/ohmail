@@ -205,6 +205,38 @@ afterEach(() => {
 });
 
 describe("News and Receipts on their own seats, over the mail ground", () => {
+  it("eases a News preview open and closed", () => {
+    const style = document.createElement("style");
+    style.textContent =
+      ".oh-message-clip { --d-in: 220ms; --e-move: linear; --stream-clip-motion-threshold: 2px; }";
+    document.head.append(style);
+    const oldAnimate = Element.prototype.animate;
+    const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.matches(".oh-message-clip") ? (this.hasAttribute("data-shut") ? 100 : 300) : 600;
+    });
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(300);
+    const frames: Keyframe[][] = [];
+    Element.prototype.animate = function (keyframes) {
+      if (this.matches(".oh-message-clip")) frames.push(keyframes as Keyframe[]);
+      return { cancel() {}, addEventListener() {} } as unknown as Animation;
+    };
+    try {
+      seat({ at: "#/reads" });
+      const card = document.querySelector<HTMLElement>('[data-stream-item="n3"]')!;
+      fireEvent.click(within(card).getByRole("button", { name: "Expand" }));
+      expect(frames).toContainEqual([{ maxHeight: "100px" }, { maxHeight: "300px" }]);
+      fireEvent.click(within(card).getByRole("button", { name: "Collapse" }));
+      expect(frames).toContainEqual([{ maxHeight: "300px" }, { maxHeight: "100px" }]);
+    } finally {
+      height.mockRestore();
+      scrollHeight.mockRestore();
+      Element.prototype.animate = oldAnimate;
+      style.remove();
+    }
+  });
+
   it.each([
     ["News", "reads", issue],
     ["Receipts", "receipts", receipt],

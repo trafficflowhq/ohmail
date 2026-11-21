@@ -23,6 +23,10 @@
     "d-jump": "calc(0ms * var(--m-time))",
     "d-top": "calc(280ms * var(--m-time))",
     "d-pull": "calc(640ms * var(--m-time))",
+    "d-activity-line": "2400ms",
+    "e-activity-line": "ease-in-out",
+    "activity-line-height": "2px",
+    "activity-line-opacity": "0.4",
     "d-mark": "calc(300ms * var(--m-time))",
     "d-back": "calc(320ms * var(--m-time))",
     "d-tint": "calc(850ms * var(--m-time))",
@@ -156,6 +160,12 @@
   "calendar": {
     "slick": {
       "d-span": "calc(220ms * var(--m-time))",
+      "d-today-pulse": "700ms",
+      "d-today-outline": "1200ms",
+      "x-today-badge": "scale(1.15)",
+      "x-today-ring": "scale(1.7)",
+      "o-today-ring": ".3",
+      "o-today-ring-fading": ".24",
       "x-span": "24px",
       "g-span": "0ms",
       "d-set": "calc(200ms * var(--m-time))",

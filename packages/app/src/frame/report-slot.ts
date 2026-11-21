@@ -9,7 +9,8 @@
  *    inside the window waits and is drawn when the window ends; a newer waiting one replaces it. A report
  *    nobody pressed for (`yields`) waits behind any report a press raised, as it always has.
  * 4. A plain report stands 2600 ms, or the caller's `duration`. The fade is the kit's.
- * 5. `dismiss` stands until pressed. `signal` withdraws an Undo at once. The Undo's key is shown while it stands.
+ * 5. Retained recoveries resume newest first and keep their original deadlines.
+ * 6. `dismiss` stands until pressed. `signal` withdraws an Undo at once. The Undo's key is shown while it stands.
  */
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import type { ToastFn, ToastOptions } from "@ohmail/app-logic/press/report";
@@ -30,6 +31,7 @@ export interface SlotReport {
   readonly stands: number | null;
   readonly actionDeadline?: number;
   readonly undoDuringFade?: boolean;
+  readonly retainUndo?: boolean;
 }
 export interface ReportState {
   readonly standing:
@@ -42,6 +44,7 @@ export interface ReportState {
     | null;
   readonly waiting: SlotReport | null;
   readonly calendar: readonly SlotReport[];
+  readonly recoveries: readonly SlotReport[];
 }
 export type ReportEvent =
   | { readonly type: "arrive"; readonly report: SlotReport; readonly now: number }
@@ -51,7 +54,7 @@ export type ReportEvent =
   | { readonly type: "retireCalendar"; readonly scope: symbol; readonly now: number }
   | { readonly type: "gone"; readonly id: number; readonly now: number };
 
-export const EMPTY: ReportState = { standing: null, waiting: null, calendar: [] };
+export const EMPTY: ReportState = { standing: null, waiting: null, calendar: [], recoveries: [] };
 
 /** A report as the press seam hands it in. */
 export function reportOf(
@@ -69,6 +72,7 @@ export function reportOf(
       press: { label: options.action, keyHint: options.actionKey, onPress: onAction },
       stands: UNDO_MS,
       ...(options.actionDeadline !== undefined ? { actionDeadline: options.actionDeadline } : {}),
+      ...(options.retainUndo ? { retainUndo: true } : {}),
       ...(options.undoDuringFade ? { undoDuringFade: true } : {}),
     };
   }
@@ -91,7 +95,13 @@ function holds(standing: NonNullable<ReportState["standing"]>, arriving: SlotRep
   return false;
 }
 
+function liveRecoveries(recoveries: readonly SlotReport[], now: number) {
+  return recoveries.filter((report) => (report.actionDeadline ?? 0) > now);
+}
+
 function nextReport(state: ReportState, now: number): ReportState {
+  const [recovery, ...recoveries] = liveRecoveries(state.recoveries, now);
+  if (recovery) return { ...state, recoveries, standing: { ...recovery, since: now, leaving: false } };
   // An explicit result that waited for Undo has first claim on the open slot.
   const calendarFirst = state.waiting?.kind !== "plain" && state.calendar.length > 0;
   const next = calendarFirst ? state.calendar[0] : state.waiting;
@@ -99,6 +109,7 @@ function nextReport(state: ReportState, now: number): ReportState {
     standing: next ? { ...next, since: now, leaving: false } : null,
     waiting: calendarFirst ? state.waiting : null,
     calendar: calendarFirst ? state.calendar.slice(1) : state.calendar,
+    recoveries,
   };
 }
 
@@ -111,13 +122,28 @@ export function reportSlot(state: ReportState, event: ReportEvent): ReportState 
         return standing
           ? { ...state, calendar: [...state.calendar, report] }
           : { ...state, standing: { ...report, since: now, leaving: false, presented: false } };
-      if (standing && holds(standing, report)) return { ...state, waiting: report };
+      if (
+        standing &&
+        (holds(standing, report) ||
+          (standing.dismissed && report.kind === "plain" && liveRecoveries(state.recoveries, now).length))
+      ) {
+        return { ...state, waiting: report };
+      }
       // An explicit result can take the slot before React has drawn the Calendar report.
       const calendar =
         standing?.calendarScope !== undefined && !standing.presented
           ? [standing, ...state.calendar]
           : state.calendar;
-      return { ...state, standing: { ...report, since: now, leaving: false }, calendar };
+      const recoveries = liveRecoveries(state.recoveries, now);
+      if (
+        standing?.retainUndo &&
+        !standing.dismissed &&
+        !standing.leaving &&
+        (standing.actionDeadline ?? 0) > now
+      ) {
+        recoveries.unshift(standing);
+      }
+      return { ...state, standing: { ...report, since: now, leaving: false }, calendar, recoveries };
     }
     case "end":
       return state.standing?.id === event.id && !state.standing.leaving

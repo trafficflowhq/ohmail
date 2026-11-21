@@ -3,6 +3,7 @@ import type { CalendarHostTransport } from "@ohmail/client-engine/calendar-write
 import type { MessageBodyWire, MutationAnswer } from "@ohmail/wire";
 import {
   MutationRejectedError,
+  SyncAbortedError,
   type EngineAdapter,
   type ListOlderFn,
   type MessageByIdFn,
@@ -236,18 +237,7 @@ export function backoffDelay(
    `mutate()` is NOT gated on cadence but IS on identity — refused
    RETRYABLY, so the verb is flushed later, not discarded. */
 
-/**
- * A drain was cancelled between pages. Not a failure: it must not count against the backoff,
- * must not be reported as an error, and must not arm a retry — a torn-down scheduler has
- * nothing to resume, and a replacement scheduler's first tick resumes from the cursor.
- */
-export class SyncAbortedError extends Error {
-  readonly code = "sync_aborted";
-  constructor(reason: string) {
-    super(`ohmail: sync aborted before the next page (${reason})`);
-    this.name = "SyncAbortedError";
-  }
-}
+export { SyncAbortedError };
 
 const isAborted = (err: unknown): err is SyncAbortedError => err instanceof SyncAbortedError;
 
@@ -855,35 +845,10 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           : {}),
 
         /**
-         * The cold-start read — forwarded, and this one IS the gated page. `GET /sync/snapshot` is `sync()`'s own
-         * first page under another name: the engine takes it INSTEAD of `since=0` whenever the mirror's cursor is
-         * "0". So the user's-own-intent argument that exempts the others points the other way — a DISCARDED engine
-         * paging through a whole snapshot is exactly what this gate exists to refuse. It is gated on IDENTITY ONLY,
-         * through {@link gatedPage} — and the paragraph that used to stand here said the opposite: it said a
-         * `SyncAbortedError` from page 1 would be swallowed by `runSnapshot`'s "this route is unusable" latch, and
-         * that pages 2+ would count against the backoff. Half was still true; the other half was measured wrong.
-         */
-
-        /**
-         * Page 1: the latch is real and unreachable in practice — the scheduler re-reads identity BEFORE `syncOnce()`
-         * on every tick, so reaching page 1 with a foreign jar needs the cookie to change inside a microtask; if it
-         * does, the tab is `contradicted` and terminal anyway, and the cost is a later healed session replaying the
-         * log from seq zero — slower, never wrong. Pages 2..n are the window that matters: a cold bootstrap is ~37
-         * pages over seconds, a sign-in as somebody else in another tab rewrites the jar mid-drain, and every
-         * remaining page was selected from the NEW session and written durably into the mirror named for the old one.
-         * `runSnapshot` rethrows from page 2 on, and the scheduler's catch reads `SyncAbortedError` as a
-         * cancellation: no failure count, no report, no retry.
-         */
-
-        /**
-         * NOT gated on the CADENCE claim, deliberately: `mayContinue` is what a teardown moves, and refusing page 1
-         * for a teardown would hit the latch above for a reason unrelated to identity — the gate on `sync()` still
-         * bounds the drain there. SPREAD for the usual reason: unconditional, a `FixturesAdapter` behind a gate would
-         * claim a snapshot endpoint it has no server for and `?demo=1` would issue a request on its first drain.
-         * FORWARDED AT ALL: this literal is the whole surface the engine sees and the demo is never wrapped, so a
-         * capability missing here is missing on the LIVE PATH ONLY — every live account would replay the log from seq
-         * zero forever with every test green. `test/snapshot-wired.test.ts` builds the real live engine through
-         * `createEngine` so deleting this line goes red.
+         * A cold drain uses the snapshot as its first sync page. Gate each page on identity
+         * so a session change during the drain cancels it without a failure count or retry.
+         * The cadence gate on sync() still bounds the drain. Only forward snapshot when
+         * the underlying adapter supports it, so fixtures never request a server snapshot.
          */
         ...(adapter.snapshot
           ? {

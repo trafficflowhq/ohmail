@@ -15,14 +15,14 @@ journeysOf("ohbox", () => {
   journey(GUARDS[0]!, async (b) => {
     const { person, named } = await personWith(b, NEW);
     await person.arrive("ohbox");
-    expect((await person.spoken("conversation", { named })).description).toContain(say("message.rowUnread", {}, person.lang));
+    expect((await person.spoken("conversation", { named })).description).toContain(say("ohbox.row.unread", {}, person.lang));
   });
   journey(GUARDS[1]!, async (b) => {
     const { person, named } = await personWith(b, NEW);
     await person.arrive("ohbox");
     const count = b.fixtures ? b.fixtures.count({ pile: "ohbox", unread: true }) : 1;
     await person.act("press", "mark-all-read", { args: { count } });
-    const unread = say("message.rowUnread", {}, person.lang);
+    const unread = say("ohbox.row.unread", {}, person.lang);
     await person.until(async () => !(await person.spoken("conversation", { named })).description.includes(unread), "the conversation to stop saying it is unread");
   });
   journey(GUARDS[2]!, async (b) => {

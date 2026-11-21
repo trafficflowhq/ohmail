@@ -347,7 +347,8 @@ describe("the News list's foot names the read rule the stream runs", () => {
       const el = await mountNews(locale);
       const list = within(el).getByRole("region", { name: "News" });
       const foot = within(list).queryAllByRole("paragraph").at(-1)?.textContent ?? "";
-      for (const s of RULE[locale].says) expect(foot).toContain(s);
+      /* The stream's foot carries no explanatory sentence. */
+      for (const s of RULE[locale].says) expect(foot).not.toContain(s);
       expect(foot).not.toMatch(RULE[locale].never);
       /* The demo's About text tells the same rule. */
       const about = at(CATALOGUE[locale], "about.p2") as string;

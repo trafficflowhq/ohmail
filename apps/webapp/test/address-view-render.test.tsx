@@ -18,7 +18,7 @@ import messages from "../messages/en.json";
 import {
   ACCOUNT, ISO, installScreeningWeb, mountScreeningWeb, syncScreeningWeb, teardownScreeningWeb, tick,
 } from "./fixtures/screening-web";
-import { RegisteredSearch, enterSearchRoute, typeSearch } from "./search-registered-fixture";
+import { RegisteredSearch, enterSearchRoute, findSearchField, typeSearch } from "./search-registered-fixture";
 
 /**
  * Search contact links, the Address archive and the screening popover.
@@ -156,6 +156,7 @@ describe("the search result row — the address is printed, and it is the contro
     });
     restoreRoute = enterSearchRoute();
     const { container } = render(<RegisteredSearch engine={engine} now={NOW} />);
+    await findSearchField(container);
     await act(async () => { typeSearch(container, "invoice"); });
     await within(container).findByRole("list", { name: "Search" });
   }
@@ -168,8 +169,8 @@ describe("the search result row — the address is printed, and it is the contro
     const name = within(result).getByText("Anna Berg");
     const link = within(result).queryByRole("link", { name: anna });
     expect(link, "line two is the address, as a link").not.toBeNull();
-    expect(link!.parentElement).toBe(name.parentElement);
-    expect(name.nextElementSibling).toBe(link);
+    const who = name.closest(".oh-row-who");
+    expect(who?.nextElementSibling).toBe(link);
     expect(link!.getAttribute("href")).toBe(addressHref(anna));
   });
 
@@ -188,6 +189,12 @@ describe("the search result row — the address is printed, and it is the contro
     const link = within(hit("a")).queryByRole("link", { name: anna });
     expect(link?.getAttribute("href")).toBe(addressHref(anna));
     await click(link);
+    expect(window.location.hash).toBe("#/search");
+    expect(screen.queryByRole("region", { name: messages.reader.pane })).toBeNull();
+    const card = screen.getByRole("dialog", {
+      name: messages.message.contactAria.replace("{who}", "Anna Berg"),
+    });
+    await click(within(card).getByRole("menuitem", { name: messages.message.addressOpen }));
     expect(window.location.hash).toBe(`${addressHref(anna)}/m/a`);
     expect(await screen.findByRole("heading", { name: "Anna Berg" })).toBeTruthy();
   });
@@ -548,19 +555,21 @@ describe("the two popovers offer the view", () => {
       const shell = within(await mountScreeningWeb());
       await tick(4000);
       await click(shell.getByRole("button", { name: /^Anna Berg / }));
-      await click(shell.getByRole("menuitem", { name: messages.screening.action }));
       const address = list[0]!.from.address;
       const dialog = screen.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", address) });
       const sheet = within(dialog);
-      const addressName = "Everything from and to this address";
-      const link = sheet.queryByRole("link", { name: addressName });
-      expect(link, "the row is a link in the ways-onward block").toBeTruthy();
-      expect(link!.getAttribute("href")).toBe(addressHref(address));
+      const allMail = messages.message.contactAllMail;
+      expect(sheet.queryByRole("menuitem", { name: allMail }), "the row is in the ways-onward block").toBeTruthy();
 
       // The neighboring way onward stays available when the scope changes.
       await click(sheet.getByRole("radio", { name: /^Everyone at acme\.test/ }));
-      expect(sheet.queryByRole("link", { name: addressName })).toBeNull();
+      expect(sheet.queryByRole("menuitem", { name: allMail })).toBeNull();
       expect(sheet.getByRole("button", { name: /^See all/ })).toBeTruthy();
+
+      // Back at address scope the row leads to the address view.
+      await click(sheet.getByRole("radio", { name: /^This address/ }));
+      await click(sheet.getByRole("menuitem", { name: allMail }));
+      expect(window.location.hash).toBe(`${addressHref(address)}/m/a`);
     } finally {
       await teardownScreeningWeb();
     }

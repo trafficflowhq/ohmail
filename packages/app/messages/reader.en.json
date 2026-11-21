@@ -130,6 +130,7 @@
     "invitationOwaOpenSetting": "Open the setting in Outlook on the web"
   },
   "message": {
+    "contactAllMail": "All mail",
     "toLabel": "To",
     "ccLabel": "Cc",
     "details": "details",

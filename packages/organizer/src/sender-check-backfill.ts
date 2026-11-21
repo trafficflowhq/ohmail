@@ -168,8 +168,8 @@ export interface SenderCheckRetirement {
 
 /**
  * THE PASS RETIRES PER ACCOUNT, IN THIS PROCESS. An account whose call answered both sets empty
- * is skipped from then on, so a finished account costs no statement; once per walk ONE read
- * ({@link senderCheckReentered}) re-arms the retired accounts a row has re-entered since their
+ * is skipped from then on. The re-arm read ({@link senderCheckReentered}) runs on each retired
+ * account’s handle when the worker supplies one, and checks for a row that re-entered since its
  * last reading. A failed read re-arms nobody and keeps their readings, so the next walk covers
  * the gap. A restart, or an account leaving the walk, forgets the retirement: the next call pays
  * one full page.
@@ -178,6 +178,7 @@ export function senderCheckRetirement(opts: {
   now?: () => number;
   overlapMs?: number;
   pass?: typeof senderCheckBackfillPass;
+  forAccount?: (accountId: string) => Tx;
 } = {}): SenderCheckRetirement {
   const now = opts.now ?? Date.now;
   const overlap = opts.overlapMs ?? SENDER_CHECK_REARM_OVERLAP_MS;
@@ -194,7 +195,16 @@ export function senderCheckRetirement(opts: {
         let since = readAt;
         for (const a of asleep) since = Math.min(since, retired.get(a)!);
         try {
-          const back = await senderCheckReentered(db, asleep, new Date(since - overlap));
+          const sinceWithOverlap = new Date(since - overlap);
+          const back = new Set<string>();
+          if (opts.forAccount === undefined) {
+            for (const id of await senderCheckReentered(db, asleep, sinceWithOverlap)) back.add(id);
+          } else {
+            for (const id of asleep) {
+              const found = await senderCheckReentered(opts.forAccount(id), [id], sinceWithOverlap);
+              if (found.has(id)) back.add(id);
+            }
+          }
           for (const a of asleep) {
             if (back.has(a)) retired.delete(a);
             else retired.set(a, readAt);

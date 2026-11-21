@@ -129,8 +129,10 @@ export function SearchView({ input, acts, query, onQuery, held }: SearchViewProp
                 n++;
                 const e = h.item;
                 return (
-                  <div key={h.key} className="cal-sr-hit" data-focus={n === at ? "" : undefined}>
+                  <div key={h.key} className="cal-sr-hit">
                     <AgendaRow
+                      tinted
+                      cursor={n === at}
                       mark={{ kind: "calendar", tone: e.tone }}
                       title={e.title}
                       time={

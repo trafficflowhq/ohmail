@@ -1,5 +1,11 @@
 {
   "settingsNotifications": {
+    "on": "On",
+    "off": "Off",
+    "ohbox": "Ohbox",
+    "screener": "Screener",
+    "scheduled": "Scheduled",
+    "devices": "Devices",
     "about": "Notify about",
     "blocked": "Blocked",
     "calendar": "Calendar",

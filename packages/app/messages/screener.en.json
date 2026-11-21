@@ -205,6 +205,8 @@
     "markAllSpam": "Mark all spam",
     "askAllSpam": "{count, plural, one {Mark the # waiting sender as spam?} other {Mark all # waiting senders as spam?}}",
     "askAllSpamNote": "Their held mail moves to Spam, and so does the mail they send later.",
+    "askScreenPicked": "{count, plural, one {Screen out # sender?} other {Screen out # senders?}}",
+    "askScreenPickedNote": "Their held mail and any mail they send later go to Screened out.",
     "askAllSpamYes": "Mark {count} as spam",
     "askApplySuggestions": "{count, plural, one {Apply # suggestion?} other {Apply # suggestions?}}",
     "askApplySuggestionsYes": "{count, plural, one {Apply # suggestion} other {Apply # suggestions}}",
@@ -491,6 +493,14 @@
     "reopenAction": "Review them"
   },
   "screening": {
+    "cardSeeAll": "See all",
+    "cardNowIn": "Now in {place}",
+    "cardNowSpread": "Now in {count, plural, one {1 place} other {# places}}",
+    "cardGoesTo": "Goes to",
+    "cardScreenOut": "Screen out",
+    "cardFuture": "Rule for future mail",
+    "cardExisting": "Move mail already here",
+    "cardSubject": "Rule on a subject",
     "scopeShared": "{domain} is a shared provider. Decisions here are per address.",
     "action": "Screening",
     "openFor": "Screening for {sender}",

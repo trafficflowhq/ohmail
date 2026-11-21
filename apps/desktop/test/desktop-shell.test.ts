@@ -1017,6 +1017,8 @@ describe("the Rust side", () => {
     expect(enabled, "the local-engine feature list has stopped matching this reader").toEqual([
       "dep:getrandom",
       "dep:keyring",
+      // macOS registers the calendar notification callbacks through its native backend.
+      "dep:mac-notification-sys",
       // The calendar submits synchronously through the plugin's existing backend while the
       // engine still owns the active mailbox and schedule.
       "dep:notify-rust",
@@ -1044,6 +1046,14 @@ describe("the Rust side", () => {
     expect(cargo.match(/^notify-rust\s*=.*$/gm)).toEqual(['notify-rust = { version = "4.18", optional = true }']);
     const allFeatures = /^\[features\]([\s\S]*?)(?=^\[)/m.exec(cargo)?.[1] ?? "";
     expect(allFeatures.match(/"(?:dep:)?notify-rust(?:\??\/[^"]+)?"/g)).toEqual(['"dep:notify-rust"']);
+    expect(cargo.match(/^mac-notification-sys\s*=.*$/gm)).toEqual([
+      'mac-notification-sys = { version = "0.6.15", optional = true }',
+    ]);
+    const macDependencies = /^\[target\.'cfg\(target_os = "macos"\)'\.dependencies\]\n([\s\S]*?)(?=^\[|$(?![\s\S]))/m.exec(cargo)?.[1];
+    expect(macDependencies).toContain('mac-notification-sys = { version = "0.6.15", optional = true }');
+    expect(allFeatures.match(/"(?:dep:)?mac-notification-sys(?:\??\/[^"]+)?"/g)).toEqual([
+      '"dep:mac-notification-sys"',
+    ]);
     expect(cargo).toMatch(/^serde_json = "1"$/m);
     // The keystore dependencies stay optional: the preview has no business being
     // linked against the OS keystore at all — it stores nothing, so it needs
@@ -1353,25 +1363,14 @@ describe("the Rust side", () => {
       );
     }
 
-    /* AND `open_link` TAKES A KEY. The parameter's type is the whole of the safety argument —
-       a `url: String` here would be a way out of the webview into the user's browser with an
-       address the page chose. The table it resolves against lives in Rust, which is also what
-       keeps the bundle free of any host name at all.
-
-       THE SECOND PARAMETER IS NAMED HERE RATHER THAN THE ASSERTION BEING LOOSENED. `challenge`
-       is 43 characters of base64url the sign-in page needs and the shell validates
-       (`link_url_for`, `is_challenge`) before it appends a parameter it spells itself. It is the
-       ONLY value the window may contribute to an address, it reaches ONE key, and a malformed one
-       is a refusal rather than a page opened without it — all four properties are asserted in
-       `engine_tests.rs`. A THIRD parameter, or a rename that let something else through, still
-       fails here. */
-    // The third is `request`: the approval page's exact-shape id, admitted for `approve` alone
-    // (`open_target` refuses it elsewhere and a challenge there — `engine_tests.rs`). The `shell`
-    // state before them is Tauri's injection, never the window's: `server-mailboxes` reads the
-    // door this shell configured through it, so the self-hosted page is composed here too.
+    // The window names a key, a sign-in challenge or an approval request. The two
+    // Settings handoff arguments identify the configured server and confirmed account.
+    // The native shell validates both before opening the server's page.
     expect(engine).toMatch(
-      /fn open_link\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*key: String,\s*challenge: Option<String>,\s*request: Option<String>,\s*\)/,
+      /fn open_link\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*key: String,\s*challenge: Option<String>,\s*request: Option<String>,\s*expected_server: Option<String>,\s*expected_account: Option<String>,\s*\) -> Result<\(\), String> \{/,
     );
+    expect(engine).toContain("let origin = server_settings_origin(shell.paths.config().as_ref(), server).ok_or_else(moved)?;");
+    expect(engine).toContain("let target = server_settings_target(&origin, account, response)?;");
     expect(engine).toMatch(/fn is_request_id\(value: &str\) -> bool/);
     expect(engine).toMatch(/fn open_target\(key: &str, challenge: Option<&str>, request: Option<&str>\)/);
     expect(engine).not.toMatch(/fn open_link\([^)]*url/);
@@ -1823,7 +1822,15 @@ describe("the Rust side", () => {
     expect(engine).toMatch(/match options\.open\(&path\) \{\s*Ok\(mut file\) => \{\s*let written = fill\(&mut file\)[\s\S]{0,900}?drop\(file\);\s*let _ = fs::remove_file\(&path\);/);
     /* THE WINDOW CANNOT NAME A FILE FOR THE ENGINE TO WRITE: the save's target header is dropped
        from every window request at the one command that forwards them. */
-    expect(engine).toMatch(/fn engine_request\([\s\S]*?\{\s*let body = window_request_body\(body, body_text, body64\)\?;\s*let headers = window_headers\(headers\);[\s\S]{0,600}?shell\.engine\(\)\.request\(EngineRequest \{ method, url, headers, body \}\)/);
+    const request = /^fn engine_request\([\s\S]+?^\}/m.exec(engine)?.[0] ?? "";
+    const command = request.replace(/^\s*\/\/.*$/gm, "");
+    expect(command).toMatch(
+      /expected_calendar_session: Option<u64>,\s*\) -> Result<tauri::ipc::Response, String> \{\s*let body = window_request_body\(body, body_text, body64\)\?;\s*let headers = window_headers\(headers\);\s*let engine = match expected_calendar_session \{\s*Some\(session\) => shell\.calendar_engine\(session\)\.ok_or\("the calendar session changed"\)\?,\s*None => shell\.engine\(\),\s*\};\s*let answer = engine\.request\(EngineRequest \{ method, url, headers, body \}\)\?;/,
+    );
+    expect(command.match(/\.request\(/g)).toHaveLength(1);
+    expect(engine).toMatch(
+      /fn window_headers\(headers: Vec<\(String, String\)>\) -> Vec<\(String, String\)> \{\s*headers\s*\.into_iter\(\)\s*\.filter\(\|\(name, _\)\| !name\.trim\(\)\.eq_ignore_ascii_case\(ATTACHMENT_FILE_TARGET_HEADER\)\)\s*\.collect\(\)\s*\}/,
+    );
     expect(engine).toMatch(/let root = attachment_root\(shell\.paths\.app_data\.as_deref\(\)\)\.map_err\(serde_json::Value::String\)\?;\s*sweep_attachments\(&root, ATTACHMENT_KEEP\);\s*let staged = staging_path\(&root\)/);
     expect(engine).toMatch(/pub\(super\) fn start_ticks_of\(pid: u32\) -> Option<u64> \{[\s\S]{0,140}?File::open\(format!\("\/proc\/\{pid\}\/stat"\)\)/);
     expect(engine).toMatch(/fn tail_lines\(path: &Path, max_bytes: u64\) -> Vec<String> \{[\s\S]{0,120}?File::open\(path\)/);

@@ -130,6 +130,8 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   // have no German twin on purpose — their text is binding and deliberately outside the
   // catalogue — so this is one path, not a mirrored tree.
   { path: "/de", edge: true, marketing: true, zone: true },
+  // `/ohcal` is the calendar's own marketing page, answered by the website deployment like the other marketing pages.
+  { path: "/ohcal", edge: true, marketing: true, zone: true },
   // `/resume` is INTERNAL like `/mailbox`: the rewrite target for a browser holding the
   // `tf_resume` marker but no usable access cookie. Middleware 308s a direct request back
   // to `/`, so it never appears in the address bar — but it is a path this deployment

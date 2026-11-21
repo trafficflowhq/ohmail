@@ -90,10 +90,12 @@ async function shellOnDocument(): Promise<void> {
     );
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
+  await waitFor(() => within(document.body).queryByRole("main") !== null, "the mail frame never opened");
 }
 
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 40; i += 1) {
+  const until = Date.now() + 2_000;
+  while (Date.now() < until) {
     if (cond()) return;
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   }

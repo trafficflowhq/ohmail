@@ -8,7 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
-import { menuItem, moreButton, openLetter, reportPress, reportSays } from "./ohbox/_finders.js";
+import { menuItem, moreButton, ohboxRows, openLetter, reportPress, reportSays } from "./ohbox/_finders.js";
 
 /**
  * MOVE, FILE AND JUNK CAN BE TAKEN BACK — driven through the whole shell, counted at the adapter.
@@ -86,7 +86,7 @@ async function mountShell(): Promise<void> {
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
   await key("j");
 }
 

@@ -8,9 +8,9 @@ function panePath(fragment: string): string {
 
 /** One dirty pane at a time owns the leave question. A discarded or superseded question cannot move a later pane. */
 export function leaveHold(changed: (held: boolean) => void = () => {}) {
-  let current: { ask: Ask; at: string; attempt: number } | null = null;
-  function holdLeave(ask: Ask, at: string) {
-    const hold = { ask, at, attempt: 0 };
+  let current: { ask: Ask; leaves: (next: string) => boolean; attempt: number } | null = null;
+  function holdLeave(ask: Ask, at: string, leaves = (next: string) => panePath(next) !== panePath(at)) {
+    const hold = { ask, leaves, attempt: 0 };
     current = hold;
     changed(true);
     return () => {
@@ -21,7 +21,7 @@ export function leaveHold(changed: (held: boolean) => void = () => {}) {
   }
   function leaving(next: string): boolean {
     // The query and an optional leading hash do not change which Settings pane owns its draft.
-    return current !== null && panePath(next) !== panePath(current.at);
+    return current?.leaves(next) ?? false;
   }
   function heldBefore(next: string, resume: () => void): boolean {
     const hold = current;

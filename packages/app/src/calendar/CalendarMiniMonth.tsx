@@ -92,16 +92,27 @@ export function CalendarMiniMonth({
       }
       weekdays={weekdayNames(locale, weekStart, "narrow")}
       days={weeks.flatMap((week) =>
-        week.days.map((d, index) => ({
-          id: d.id,
-          number: String(d.day),
-          label: dayLong(d.id, locale, yearOf(today)),
-          today: d.today,
-          picked: d.picked,
-          outside: !strip && d.outside,
-          busy: d.more > 0 || week.pieces.some((piece) => piece.from <= index && index <= piece.to),
-          band: bands && week.id === start ? (index === 0 ? "start" : index === 6 ? "end" : "in") : undefined,
-        })),
+        week.days.map((d, index) => {
+          const pieces = week.pieces.filter((piece) => piece.from <= index && index <= piece.to);
+          const run =
+            mode === "rail"
+              ? pieces.find(
+                  (piece) => piece.run && (piece.from < piece.to || piece.goesOnBefore || piece.goesOnAfter),
+                )
+              : undefined;
+          return {
+            id: d.id,
+            number: String(d.day),
+            label: dayLong(d.id, locale, yearOf(today)),
+            today: d.today,
+            picked: d.picked,
+            outside: !strip && d.outside,
+            busy: d.more > 0 || pieces.length > 0,
+            run: run && { tone: run.item.tone, first: index === run.from, last: index === run.to },
+            band:
+              bands && week.id === start ? (index === 0 ? "start" : index === 6 ? "end" : "in") : undefined,
+          };
+        }),
       )}
       weekNumbers={
         weekNumbers

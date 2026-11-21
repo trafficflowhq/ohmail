@@ -141,3 +141,26 @@ export function noticeClockOf(startMs: number, nowMs: number, zone: string, zone
           : { month: at.month, dom: at.day, dow: (weekdayOf(day) + 1) % 7 },
   };
 }
+
+/** Resolve a reminder against the occurrences still held by this calendar. */
+export function reminderOccurrence(
+  events: readonly EventWithWrites[],
+  id: string,
+  startMs: number,
+  zone: string,
+  zones: ZoneSource,
+): { day: string; open: string } | null {
+  if (!Number.isSafeInteger(startMs) || startMs < 0) return null;
+  const day = nowIn(startMs, zone, zones)?.day;
+  if (!day) return null;
+  const calendars = [...new Set(events.map(({ record }) => record.calendarId))].map(
+    (calendarId) => ({ id: calendarId, shown: true }) as CalendarRecord,
+  );
+  const { shown } = occurrencesIn({ events, calendars, query: { from: day, to: day }, zone, zones });
+  const match = shown.find(
+    (o) => o.record.id === id && startMsOf(o.occurrence.start, zone, zones) === startMs,
+  );
+  if (!match) return null;
+  const series = (match.series ?? match.record).id;
+  return { day: match.day, open: match.key === null ? match.record.id : `${series}@${match.key}` };
+}

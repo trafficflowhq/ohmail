@@ -3,7 +3,6 @@ import { Fragment } from "react";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import { DELIVERY_SENTENCE, NOTIFY_ROWS, type NotificationsModel } from "./model.js";
-import { NOTIFICATIONS_NAMESPACE } from "./namespace.js";
 
 const CALENDAR_ROWS = [
   ["cal_alert", "alert"],
@@ -28,7 +27,7 @@ export interface NotificationsPaneProps {
  */
 export function NotificationsPane({ model, calendar }: NotificationsPaneProps) {
   const t = useText("settings");
-  const n = useText(NOTIFICATIONS_NAMESPACE);
+  const n = useText("settingsNotifications");
   const { channels, permission, live, carries, osHolds, delivery } = model;
   const rows = NOTIFY_ROWS.filter((row) => carries.includes(row.key));
   const calendarRows = CALENDAR_ROWS.filter(([kind]) => carries.includes(kind));

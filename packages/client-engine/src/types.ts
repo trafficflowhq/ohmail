@@ -504,3 +504,16 @@ export function isCarriedLocalType(type: string): boolean {
   return type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE || type === ROUTING_JOURNAL_TYPE
     || type === COMPOSE_LETTER_TYPE || type === COMPOSE_FILE_TYPE || isCalendarQueueType(type);
 }
+
+/**
+ * A drain was cancelled between pages. Not a failure: it must not count against the backoff,
+ * must not be reported as an error, and must not arm a retry — a torn-down scheduler has
+ * nothing to resume, and a replacement scheduler's first tick resumes from the cursor.
+ */
+export class SyncAbortedError extends Error {
+  readonly code = "sync_aborted";
+  constructor(reason: string) {
+    super(`ohmail: sync aborted before the next page (${reason})`);
+    this.name = "SyncAbortedError";
+  }
+}

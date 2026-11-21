@@ -8,6 +8,7 @@ import { useOhboxModel } from "@ohmail/app-logic/ohbox";
 import { JumpBack } from "@ohmail/ui/base";
 import { ListTail, Sheet } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
+import { useMovingRows } from "../place-list/use-moving-rows.js";
 import { MailboxProfileOffer } from "../profile-import/ground.js";
 import { useText } from "../text/index.js";
 import { ListTouch } from "../touch/index.js";
@@ -21,6 +22,12 @@ import "./ohbox.css";
 
 /** The way back stands once the list is this far from its top, or half a screen where that is more. */
 const BACK_FROM_PX = 240;
+const rowVersion = (model: ReturnType<typeof useOhboxModel>) =>
+  JSON.stringify([
+    model.groupedResurfaced.map((row) => row.key),
+    model.groupedNew.map((row) => row.key),
+    model.groupedPrev.map((row) => row.key),
+  ]);
 
 /** A pane of the frame: it takes `PaneProps` only. What a shell stands over it or first in it is `beside`'s. */
 export function OhboxList({ plan }: PaneProps) {
@@ -37,6 +44,7 @@ export function OhboxList({ plan }: PaneProps) {
     el.addEventListener("scroll", look, { passive: true });
     return () => el.removeEventListener("scroll", look);
   }, [scroller]);
+  useMovingRows(scroller, rowVersion(model));
   const room = useSquaresRoom(scroller);
   const showTaggedByline = plan.device === "phone";
 

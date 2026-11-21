@@ -185,8 +185,19 @@ describe("every key the code reads is in BOTH catalogues", () => {
    * through one has a row.
    */
   it("reads every file that is handed its reader", () => {
-    const empty = Object.keys(HANDED_READERS).filter((file) => !reads.some((r) => r.file === file));
+    const readers = Object.entries(HANDED_READERS);
+    const empty = readers.filter(([file, { forwardsTo }]) => !forwardsTo && !reads.some((r) => r.file === file))
+      .map(([file]) => file);
     expect(empty, "these files are handed a reader and the scan resolved no key in them").toEqual([]);
+    for (const [file, row] of readers) {
+      if (!row.forwardsTo) continue;
+      expect(reads.filter((r) => r.file === file), `${file} forwards its reader without calling it`).toEqual([]);
+      expect(reads.some((r) => r.file === row.forwardsTo), `${row.forwardsTo} reads the forwarded words`).toBe(true);
+      expect(handedReaderNamespaces(REPO, KEY_ROOTS, row.glue)).toEqual(new Set(Object.values(row.readers).flat()));
+    }
+    const owner = "packages/app-logic/src/keys/keymap.ts";
+    expect(reads.filter((r) => r.file === owner && r.dotted === "cursor.placed")).toHaveLength(1);
+    expect(handedReaderNamespaces(REPO, KEY_ROOTS, HANDED_READERS[owner]!.glue)).toEqual(new Set(["cursor"]));
   });
 
   it("each handed reader's namespace is the one its caller binds", () => {

@@ -4,6 +4,7 @@ import "./switch.css";
 export interface SwitchProps {
   /** Its name. Shown beside it with `labelled`. */
   label: string;
+  description?: string;
   on: boolean;
   onChange?: (on: boolean) => void;
   /** Draw the name beside the switch. */
@@ -13,7 +14,7 @@ export interface SwitchProps {
 }
 
 /** On or off, at once. Never beside a Save button. */
-export function Switch({ label, on, onChange, labelled, disabled, ref }: SwitchProps) {
+export function Switch({ label, description, on, onChange, labelled, disabled, ref }: SwitchProps) {
   const control = (
     <button
       ref={ref}
@@ -22,6 +23,8 @@ export function Switch({ label, on, onChange, labelled, disabled, ref }: SwitchP
       role="switch"
       aria-checked={on}
       aria-label={label}
+      aria-description={description}
+      title={description}
       disabled={disabled}
       onClick={() => onChange?.(!on)}
     >

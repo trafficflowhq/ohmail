@@ -67,8 +67,8 @@ describe("each surface's address, classified by the hit test it is actually unde
     expect(sender, "the Ohbox row's address opens the sender sheet").toBeTruthy();
     await click(sender, LENA.name);
     const sheet = screen.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", LENA.address) });
-    const link = within(sheet).getByRole("link", { name: messages.screening.addressOpen });
-    expect(link.getAttribute("href")).toBe(addressRoute(LENA.address));
+    await click(within(sheet).getByRole("menuitem", { name: messages.message.contactAllMail }), messages.message.contactAllMail);
+    expect(window.location.hash).toBe(`${addressRoute(LENA.address)}/m/a`);
   }, 30_000);
 
   it("stream card — the address is the sender handle; the way in is the popover's row", async () => {
@@ -114,10 +114,9 @@ describe("the search result row — the address is printed, and it is the contro
     const result = within(screen.getByRole("button", { name: new RegExp(namedSubject) }));
     const name = result.getByText(RECIPIENT.name);
     const link = result.getByRole("link", { name: RECIPIENT.address });
-    expect(link.parentElement).toBe(name.parentElement);
+    const who = name.closest(".oh-row-who");
+    expect(who?.nextElementSibling).toBe(link);
     expect(link.getAttribute("href")).toBe(addressRoute(RECIPIENT.address));
-    await click(link, RECIPIENT.address);
-    expect(window.location.hash).toBe(addressRoute(RECIPIENT.address));
   });
 
   it("with no name, the address takes line one — and is still the link", async () => {
@@ -136,6 +135,11 @@ describe("the search result row — the address is printed, and it is the contro
     const link = result.getByRole("link", { name: RECIPIENT.address });
     expect(link.getAttribute("href")).toBe(addressRoute(RECIPIENT.address));
     await click(link, RECIPIENT.address);
+    expect(window.location.hash).toBe("#/search");
+    const card = screen.getByRole("dialog", {
+      name: messages.message.contactAria.replace("{who}", RECIPIENT.name),
+    });
+    await click(within(card).getByRole("menuitem", { name: messages.message.addressOpen }), messages.message.addressOpen);
     expect(window.location.hash).toBe(addressRoute(RECIPIENT.address));
     expect(screen.queryByRole("heading", { name: namedSubject })).toBeNull();
   });

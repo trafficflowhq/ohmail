@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import {
   dayLong,
   clockTime,
@@ -8,16 +8,19 @@ import {
   type ZoneSource,
 } from "@ohmail/app-logic/calendar";
 import { Button } from "@ohmail/ui/base";
-import { EventCard } from "@ohmail/ui/calendar";
+import { EventBridge, EventCard } from "@ohmail/ui/calendar";
 import { EventAnswers } from "../invitations/EventAnswers.js";
 import { NONE } from "../host/index.js";
 import { useFrame } from "../frame/commands.js";
 import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
 import { useKnownOwnAddresses } from "../frame/room.js";
+import { useDraftRestore } from "./draft-undo.js";
+import type { EventDraft } from "./event-draft.js";
 import { EditEvent } from "./EditEvent.js";
 import { editableEvent, moveDestinations, removableEvent } from "./editable-event.js";
 import type { CalendarEventFace } from "./faces.js";
 import type { EventActions } from "./use-event-actions.js";
+import { useEventPlacement } from "./use-event-placement.js";
 import { useEventCardActions } from "./use-event-card-actions.js";
 
 function timeOf(
@@ -64,34 +67,23 @@ export function OpenEvent({
   const allowed = () =>
     port === NONE || event.viewOnly ? null : editableEvent(host, port, event.recordId, known);
   const current = allowed();
-  const available = current !== null;
-  const [editing, setEditing] = useState<{
-    port: CalendarPort;
-    engine: typeof host.engine;
-    record: CalendarEventRecord;
-  } | null>(null);
-  useEffect(() => {
-    if (!available || editing?.port !== port || editing?.engine !== host.engine) setEditing(null);
-  }, [available, editing?.port, editing?.engine, port, host.engine]);
+  const { editing, begin, end, beforeRestore } = useEventEditor(event, port, allowed);
   const locale = useLocale();
   const zone = useTimeZone();
   const card = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const opener = card.current?.ownerDocument.activeElement;
-    card.current?.querySelector("button")?.focus();
-    return () => {
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
-    };
-  }, [event.id]);
+  const seat = useEventPlacement(card, plan.device === "desktop", editing?.revision);
+  const bridge = seat?.bridge && <EventBridge {...seat.bridge} tone={event.tone} />;
+  const focusReadCard = useCardFocus(card, event.id, editing === null);
+  const finish = () => {
+    end();
+    focusReadCard();
+  };
   const when = timeOf(event, zone, zones, today, locale, t);
   const edit =
     current && port !== NONE
       ? {
           label: t("edit.action"),
-          onPress: () => {
-            const present = allowed();
-            if (present) setEditing({ port, engine: host.engine, record: present.record });
-          },
+          onPress: begin,
         }
       : null;
   const { blocked, onKeyDown, panel, menu } = useEventCardActions({
@@ -103,23 +95,38 @@ export function OpenEvent({
   });
   if (editing && editing.port === port && editing.engine === host.engine && current) {
     return (
-      <EditEvent
-        port={editing.port}
-        original={editing.record}
-        allowed={allowed}
-        calendar={current.calendar}
-        face={event}
-        when={when}
-        today={today}
-      />
+      <>
+        <EditEvent
+          card={card}
+          placement={seat?.card}
+          key={editing.revision}
+          beforeRestore={beforeRestore}
+          port={editing.port}
+          original={editing.record}
+          allowed={allowed}
+          calendar={current.calendar}
+          face={event}
+          when={when}
+          today={today}
+          recovered={editing.draft}
+          finish={finish}
+        />
+        {bridge}
+      </>
     );
   }
   return (
     <>
       <EventCard
         ref={card}
+        {...seat?.card}
         frame={plan.device === "phone" ? "sheet" : "card"}
         onKeyDown={onKeyDown}
+        keyShortcuts={
+          edit && event.start.kind === "date" && event.end.kind === "date"
+            ? "Alt+Shift+ArrowLeft Alt+Shift+ArrowRight Control+Alt+Shift+ArrowLeft Control+Alt+Shift+ArrowRight"
+            : undefined
+        }
         answers={
           port !== NONE && !event.viewOnly ? (
             <EventAnswers key={event.id} port={port} recordId={event.recordId} />
@@ -145,14 +152,68 @@ export function OpenEvent({
         {...(event.second ? { where: [{ text: event.second }] } : {})}
         {...(event.notes ? { notes: event.notes } : {})}
         {...(event.people.length ? { rows: [{ label: t("people"), text: event.people.join(", ") }] } : {})}
-        {...(event.status ? { tags: [{ text: event.status.text, hot: event.status.failed }] } : {})}
+        {...(event.status ? { status: event.status } : {})}
       />
       {plan.device !== "phone" && panel && (
         <div className="cal-event-panel" onKeyDown={onKeyDown}>
           {panel}
         </div>
       )}
+      {bridge}
       {menu}
     </>
   );
+}
+
+function useEventEditor(
+  event: CalendarEventFace,
+  port: CalendarPort | typeof NONE,
+  allowed: () => ReturnType<typeof editableEvent>,
+) {
+  const { host } = useFrame();
+  const available = allowed() !== null;
+  const beforeRestore = useRef<(() => void) | null>(null);
+  const revision = useRef(0);
+  const [editing, setEditing] = useState<{
+    port: CalendarPort;
+    engine: typeof host.engine;
+    record: CalendarEventRecord;
+    draft?: EventDraft;
+    revision: number;
+  } | null>(null);
+  useEffect(() => {
+    setEditing((was) => (was && available && was.port === port && was.engine === host.engine ? was : null));
+  }, [available, port, host.engine]);
+  useDraftRestore("edit", port, ({ draft, original }) => {
+    if (port !== NONE && original.id === event.recordId && allowed()) {
+      beforeRestore.current?.();
+      setEditing({ port, engine: host.engine, record: original, draft, revision: ++revision.current });
+    }
+  });
+  const begin = () => {
+    const present = allowed();
+    if (port !== NONE && present)
+      setEditing({ port, engine: host.engine, record: present.record, revision: ++revision.current });
+  };
+  return { editing, begin, end: () => setEditing(null), beforeRestore };
+}
+
+function useCardFocus(card: RefObject<HTMLDivElement | null>, id: string, reading: boolean) {
+  const readAgain = useRef(false);
+  useLayoutEffect(() => {
+    if (reading && readAgain.current) {
+      readAgain.current = false;
+      card.current?.querySelector("button")?.focus();
+    }
+  }, [card, reading]);
+  useLayoutEffect(() => {
+    const opener = card.current?.ownerDocument.activeElement;
+    card.current?.querySelector("button")?.focus();
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, [card, id]);
+  return () => {
+    readAgain.current = true;
+  };
 }

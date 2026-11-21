@@ -140,6 +140,8 @@ function jarOf(res) {
   return {
     cookie: Object.entries(values).map(([k, v]) => `${k}=${v}`).join("; "),
     csrf: values["tf_csrf"] ?? "",
+    owner: values["tf_owner"],
+    family: values["tf_family"],
   };
 }
 
@@ -675,16 +677,22 @@ async function main() {
     ok("no secret, no alert endpoint and no api alert pass — the documented unarmed state");
   }
 
-  // [16] SIGNING OUT THROUGH THE FRONT DOOR. The web client signs out at the door below the
-  // refresh cookie's path, the one path a browser sends `tf_refresh` to, so the proxy has to carry
-  // it to the API. Last, because it ends the session every step above used.
-  step("sign out at the refresh path's door: 204, the five session cookies expired, the refresh refused after");
-  const signedOut = await post("/auth/refresh/logout", {}, jar);
-  await expectStatus(signedOut, 204, "the sign-out door with the signed-in jar");
-  const cleared = signedOut.headers.getSetCookie();
+  // The browser first revokes the family, then clears the pending jar under its cookie lock.
+  step("sign out at the refresh path's door: revoke the family, expire its cookies, refuse the old refresh");
+  assert(jar.owner && jar.family, "the signed-in browser jar names its account and family");
+  const pending = { ...jar, cookie: jar.cookie.replace(/(^|; )tf_owner=[^;]*/, "$1tf_owner=signed_out_pending") };
+  const family = { "x-ohmail-expected-family": jar.family };
+  const signedOut = await post("/auth/refresh/logout", {}, pending, { ...family, "x-ohmail-expected-account": jar.owner });
+  await expectStatus(signedOut, 204, "revoking the signed-in browser's family");
+  assert(signedOut.headers.getSetCookie().length === 0, "revocation must leave the pending jar in place for the cookie lock");
+  assert(signedOut.headers.get("clear-site-data") === null, "revocation must not carry Clear-Site-Data");
+
+  const cleaned = await post("/auth/refresh/logout", {}, pending, { ...family, "x-ohmail-clear-logout": "1" });
+  await expectStatus(cleaned, 204, "clearing the revoked browser's pending jar");
+  const cleared = cleaned.headers.getSetCookie();
   const clearedNames = cleared.map((line) => line.split("=")[0]).sort();
-  assert(clearedNames.join(",") === "tf_csrf,tf_owner,tf_refresh,tf_resume,tf_session",
-    "the sign-out must expire the five session cookies by name", clearedNames);
+  assert(clearedNames.join(",") === "tf_csrf,tf_family,tf_owner,tf_refresh,tf_resume,tf_session",
+    "the sign-out must expire the six session cookies by name", clearedNames);
   for (const line of cleared) {
     const redacted = line.replace(/^([^=]+)=[^;]*/, "$1=<redacted>");
     assert(/Max-Age=0(;|$)/.test(line), "every cleared cookie must carry Max-Age=0", redacted);
@@ -692,8 +700,8 @@ async function main() {
   }
   assert(/Path=\/auth\/refresh(;|$)/.test(cleared.find((line) => line.startsWith("tf_refresh=")) ?? ""),
     "the refresh cookie's clear must name its own path, or a browser keeps the cookie");
-  assert(signedOut.headers.get("clear-site-data") === null,
-    "the sign-out must not carry Clear-Site-Data: Chrome holds such an answer for a walk of its whole cache");
+  assert(cleaned.headers.get("clear-site-data") === null,
+    "the cookie clear must not carry Clear-Site-Data: Chrome holds such an answer for a walk of its whole cache");
   const renewAfter = await post("/auth/refresh", {}, jar);
   assert(renewAfter.status === 401, `the signed-out jar must not renew (got ${renewAfter.status})`);
   assert(renewAfter.headers.get("clear-site-data") === null,
@@ -704,7 +712,7 @@ async function main() {
   assert(purge.headers.get("clear-site-data") === '"cache"', "the purge must carry Clear-Site-Data: \"cache\"",
     purge.headers.get("clear-site-data"));
   assert(purge.headers.getSetCookie().length === 0, "the purge must set no cookie");
-  ok("signed out through the proxy: 204, five cookies expired, the session no longer renews, the purge answers alone");
+  ok("signed out through the proxy: family revoked, six cookies expired, the session no longer renews, the purge answers alone");
 
   process.stdout.write("\n✓ BOOT SMOKE GREEN — compose boots, migrates, signs in, syncs seeded mail, stages bytes, signs out.\n");
 }

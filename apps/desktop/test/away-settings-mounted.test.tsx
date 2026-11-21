@@ -87,6 +87,12 @@ async function mount(
     render(<DesktopLocale><ThemeProvider><ToastHost><DesktopFrame {...props} /></ToastHost></ThemeProvider></DesktopLocale>);
   });
   await tick(3000);
+  const mounted = hash.startsWith("#/settings/") ? en.settings.navAria : en.frame.landmark.places;
+  await vi.waitFor(() => screen.getByRole("navigation", { name: mounted }));
+  if (hash === "#/settings/away") {
+    await vi.waitFor(() => screen.getByRole("region", { name: en.settings.away }));
+    await tick(0);
+  }
   return calls;
 }
 
@@ -114,6 +120,7 @@ it("loads the stored reply over the desktop bridge and saves one complete row", 
   await act(async () => { fireEvent.click(pane.getAllByRole("button", { name: en.away.save })[0]!); });
   await tick(0);
   expect(calls).toEqual([
+    { method: "GET", body: undefined },
     { method: "GET", body: undefined },
     { method: "PUT", body: { ...row, body: "Back Tuesday." } },
   ]);

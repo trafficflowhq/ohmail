@@ -53,6 +53,40 @@ export class PlaywrightPerson implements Person {
     await this.here("settings-general");
   }
 
+  async goOffline(): Promise<void> {
+    await this.page.waitForLoadState("networkidle");
+    await this.context.setOffline(true);
+    // The bench's request fence normally continues local requests.
+    await this.page.route("**/*", (route) => route.abort("internetdisconnected"));
+  }
+
+  async goOfflineWhileOpeningSettings(): Promise<void> {
+    const previous = this.page.url();
+    let held = false;
+    let disconnect!: () => void;
+    const cut = new Promise<void>((resolve) => { disconnect = resolve; });
+    let offline = false;
+    await this.page.route("**/*", async (route) => {
+      const isChunk = route.request().resourceType() === "script" &&
+        new URL(route.request().url()).pathname.startsWith("/_next/static/chunks/");
+      if (!offline && !isChunk) return route.fallback();
+      held = true;
+      await cut;
+      await route.abort("internetdisconnected");
+    });
+    try {
+      await this.page.goto(`${this.origin}${this.base}${PLACES.settings.route}`, { waitUntil: "commit" });
+      await this.until(async () => held, "a Settings script request to be held", 5_000);
+      await this.page.getByRole("status").filter({ hasText: say("viewError.loading", {}, this.lang) })
+        .first().waitFor({ state: "visible", timeout: 5_000 });
+      await this.context.setOffline(true);
+      offline = true;
+      await this.page.goto(previous, { waitUntil: "commit" });
+    } finally {
+      disconnect();
+    }
+  }
+
   /** A second tab of the same browser: the same cookies and storage, its own page. */
   async tab(): Promise<PlaywrightPerson> {
     const other = new PlaywrightPerson(await this.context.newPage(), this.context, this.origin, this.base, this.lang);
@@ -83,6 +117,10 @@ export class PlaywrightPerson implements Person {
     if (from === "none") return null;
     const text = from === "visible" ? found.named : say(c.key!, found.args ?? {}, this.lang);
     if (text === undefined) throw new Error(`the control ${id} is named by the world: say which one`);
+    if (c.searchResult) {
+      if (!found.sender) throw new Error("a search result needs its sender and subject");
+      return new RegExp(`(?:^|\\s)${escapeRe(found.sender)}\\s+.*?${escapeRe(text)}(?=\\s|$)`);
+    }
     return c.counted ? new RegExp(`^${escapeRe(text)}(?: [0-9][0-9.,'’]*\\+?)?$`) : text;
   }
 
@@ -223,9 +261,10 @@ export class PlaywrightPerson implements Person {
     await mark.waitFor({ state: "visible", timeout: ms }).catch(() => { throw new Error(`never arrived at ${place}: no ${p.landmark.role} named ${JSON.stringify(name)}`); });
   }
 
-  /** Wait until the page says the catalogue's sentence for `key`. For a sentence that is itself the promise. */
-  async reads(key: string, args: Record<string, string | number> = {}, ms = 20_000): Promise<void> {
-    const sentence = say(key, args, this.lang);
+  /** Wait for the catalogue sentence, or the title and sentence drawn together. */
+  async reads(key: string | readonly string[], args: Record<string, string | number> = {}, ms = 20_000): Promise<void> {
+    const keys = typeof key === "string" ? [key] : key;
+    const sentence = keys.map((part) => say(part, args, this.lang)).join(" ");
     await this.page.getByText(sentence, { exact: true }).first().waitFor({ state: "visible", timeout: ms }).catch(() => {
       throw new Error(`the page never said ${key}: ${JSON.stringify(sentence)}`);
     });

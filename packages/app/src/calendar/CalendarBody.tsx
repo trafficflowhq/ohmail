@@ -5,7 +5,7 @@
  *
  * A host whose port is `none` gets one line that says the calendar cannot be read here; nothing is guessed.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { Notice, RefusalLine } from "@ohmail/ui/base";
 import {
@@ -40,13 +40,13 @@ import { useSharedCalendarSettings } from "../calsettings/settings-read.js";
 import { CalendarFirstStep, useCalendarFirstStep } from "./CalendarFirstStep.js";
 import { useNewEvent } from "./use-new-event.js";
 import { DRAFT_EVENT } from "./event-draft.js";
-import type { CalendarEventFace } from "./faces.js";
 import type { CalendarViewProps } from "./view.js";
-import { NewEvent } from "./NewEvent.js";
+import { NewEvent, type DraftPreview } from "./NewEvent.js";
 import { OpenEvent } from "./OpenEvent.js";
 import { EventActionQuestion } from "./EventActionQuestion.js";
 import { useEventActions } from "./use-event-actions.js";
 import { useEventDrag } from "./use-event-drag.js";
+import { useTodayPulse, type TodayVisit } from "./use-today-pulse.js";
 import "./placement.css";
 
 export function CalendarBody(pane: PaneProps) {
@@ -87,7 +87,7 @@ function CalendarOn({
   const zones = readerZones();
   const settings = useSettings(port);
   const where = useWhere(port, route, settings, zone, zones);
-  const [todayVisit, setTodayVisit] = useState(0);
+  const [todayVisit, setTodayVisit] = useState<TodayVisit | null>(null);
   const panelOn = route.words.panel === "agenda" && plan.device !== "phone";
   const monthRun = useMonthViewport();
   const found = useFaces(port, sources, monthRun ?? where?.span ?? null, where?.today ?? null, zone, zones);
@@ -136,8 +136,8 @@ function CalendarOn({
       keysHere={keysHere}
       monthRun={monthRun}
       todayVisit={todayVisit}
-      onToday={() => {
-        if (!monthRun) setTodayVisit((visit) => visit + 1);
+      onToday={(top) => {
+        setTodayVisit((visit) => ({ id: (visit?.id ?? 0) + 1, place: where.place, top }));
       }}
       cursor={cursor}
       openAgendaRow={openAgendaRow}
@@ -156,8 +156,8 @@ interface CalendarSurfaceProps extends Pick<PaneProps, "route" | "plan" | "keysH
   beside: ReturnType<typeof useFaces>;
   panelOn: boolean;
   monthRun: MonthRun | null;
-  todayVisit: number;
-  onToday: () => void;
+  todayVisit: TodayVisit | null;
+  onToday: (top: number | undefined) => void;
   cursor: number | null;
   openAgendaRow: (id: string, day: string) => void;
 }
@@ -182,17 +182,28 @@ function CalendarSurface(props: CalendarSurfaceProps) {
   } = props;
   const { commands } = useFrame();
   const t = useText("calendar");
-  const { anchor, today, now } = where;
-  const { actions, suppressClick, setPreview, go, closePanel, edge, input, acts, timeProps } =
+  const { anchor, today, now, place } = where;
+  const body = useRef<HTMLElement>(null);
+  const view = useRef<HTMLDivElement>(null);
+  useTodayPulse(
+    body,
+    view,
+    anchor === today && todayVisit?.place === place ? todayVisit : null,
+    monthRun?.scrollRef,
+  );
+  const { actions, suppressClick, setPreview, rangePreview, go, closePanel, edge, input, acts, timeProps } =
     useCalendarCanvas(props, commands);
   const opened =
-    route.open === null
+    route.open === null || route.words.panel === "new"
       ? undefined
       : (found.events.find((event) => event.id === route.open) ??
         beside?.events.find((event) => event.id === route.open));
 
   return (
-    <section className="cal-body" aria-label={t("landmark")}>
+    <section ref={body} className="cal-body" aria-label={t("landmark")}>
+      {opened && plan.device === "phone" && (
+        <div className="cal-event-backdrop" aria-hidden onClick={() => commands.event(null)} />
+      )}
       <CalendarFrameHead
         where={where}
         route={route}
@@ -208,9 +219,9 @@ function CalendarSurface(props: CalendarSurfaceProps) {
       />
       {port.hasOwedWrites?.() && <Notice place="bar" title={t("waiting.device")} />}
       <div className="cal-body-views">
-        <div className="cal-body-view" onClickCapture={suppressClick}>
+        <div ref={view} className="cal-body-view" onClickCapture={suppressClick}>
           <CurrentView
-            key={todayVisit}
+            key={monthRun ? undefined : todayVisit?.id}
             where={where}
             monthRun={monthRun}
             route={route}
@@ -220,6 +231,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
             acts={acts}
             edge={edge}
           />
+          {rangePreview}
           {route.words.panel === "new" && (
             <NewEvent
               port={port}
@@ -228,6 +240,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
               today={today}
               minute={now.minutes}
               calendars={sources.calendars}
+              tones={sources.tones}
               connections={sources.connections}
               preferred={settings.newEventsCalendarId}
             />
@@ -258,14 +271,14 @@ function useCalendarCanvas(
   commands: FrameCommands,
 ) {
   const actions = useEventActions(port, zones);
-  const { drag, preview: dragged, suppressClick } = useEventDrag(actions, fragmentOf(route));
-  const [preview, setPreview] = useState<CalendarEventFace | null>(null);
+  const { drag, preview: dragged, suppressClick, rangePreview } = useEventDrag(actions, fragmentOf(route));
+  const [preview, setPreview] = useState<DraftPreview | null>(null);
   const { place, anchor, anchorDay, today, now, nowMs } = where;
   const go = (to: Partial<Route> & { place: CalendarPlaceId }) =>
     commands.go({ words: route.words.panel ? { panel: route.words.panel } : {}, ...to });
   const closePanel = () => commands.go({ place, sub: route.sub, open: route.open, words: {} });
   const edge: HeldEdge = { ...found.edge, load: port.load };
-  const events = route.words.panel === "new" && preview ? [...found.events, preview] : found.events;
+  const events = route.words.panel === "new" && preview ? [...found.events, preview.face] : found.events;
   const open: FrameCommands["event"] = (ref) => {
     if (ref?.event !== DRAFT_EVENT) commands.event(ref);
   };
@@ -288,10 +301,16 @@ function useCalendarCanvas(
     reveal: (e) => go({ place: "week", sub: e.ref.day, open: e.id }),
   };
   const onDrag: CalendarViewProps["onDrag"] =
-    route.open === null && route.words.panel !== "new"
+    !actions.busy && !actions.question
       ? (id, press) => {
+          if (route.words.panel === "new") {
+            if (id === DRAFT_EVENT && preview?.face.start.kind === "date") {
+              drag(preview.face, press, preview.moveRange);
+            }
+            return;
+          }
           const face = found.events.find((event) => event.id === id);
-          if (face) drag(face, press);
+          if (face && (route.open === null || route.open === face.id)) drag(face, press);
         }
       : undefined;
   const timeProps: CalendarViewProps = {
@@ -314,7 +333,7 @@ function useCalendarCanvas(
     ...(dragged ? { dragPreview: dragged } : {}),
     onDay: (day: PlainDate) => go({ place: "day", sub: isoOfDay(day) }),
   };
-  return { actions, suppressClick, setPreview, go, closePanel, edge, input, acts, timeProps };
+  return { actions, suppressClick, setPreview, rangePreview, go, closePanel, edge, input, acts, timeProps };
 }
 
 function CurrentView({

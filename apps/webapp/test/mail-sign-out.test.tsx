@@ -178,8 +178,9 @@ async function mount(at = "#/ohbox"): Promise<void> {
   await settle();
 }
 const press = async (name: string): Promise<void> => {
+  const button = await screen.findByRole("button", { name });
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name }));
+    fireEvent.click(button);
   });
   await settle();
   await settle();
@@ -189,12 +190,12 @@ const said = (sentence: string): boolean => (document.body.textContent ?? "").in
 describe("the way out, on the new shell", () => {
   it("the rail leads to Settings, and its Account section says who is signed in", async () => {
     await mount();
-    const places = within(screen.getByRole("navigation", { name: "Places" }));
+    const places = within(await screen.findByRole("navigation", { name: "Places" }));
     await act(async () => {
       fireEvent.click(places.getByRole("button", { name: "Settings" }));
     });
     await settle();
-    const menu = within(screen.getByRole("navigation", { name: en.settings.navAria }));
+    const menu = within(await screen.findByRole("navigation", { name: en.settings.navAria }));
     await act(async () => {
       fireEvent.click(menu.getByRole("button", { name: "Account" }));
     });

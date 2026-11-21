@@ -121,6 +121,7 @@ async function shellOnDocument(): Promise<void> {
     );
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
+  await waitFor(() => within(document.body).queryByRole("main") !== null, "the mail frame never opened");
 }
 
 const page = () => within(document.body);

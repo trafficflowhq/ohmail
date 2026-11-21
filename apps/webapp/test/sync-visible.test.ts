@@ -315,8 +315,8 @@ describe("a failing sync is visible WITH ROWS PRESENT", () => {
 
     // The premise, asserted rather than assumed: this mailbox has mail in it. Without this
     // the whole file could pass against the empty state it is here to stop relying on.
-    expect(rowCount(container), "the fixture never landed — nothing below would prove anything")
-      .toBeGreaterThan(0);
+    await vi.waitFor(() => expect(rowCount(container), "the fixture never landed — nothing below would prove anything")
+      .toBeGreaterThan(0));
     expect(container.textContent ?? "").not.toContain(FAILING);
 
     // …and now the drains stop working, exactly as an outage does.

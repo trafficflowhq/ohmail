@@ -110,7 +110,7 @@ export const sessionLifecycleRoutes: Route[] = [
     pattern: "/auth/refresh/logout",
     relay: false,  /* resolves a credential from the request */
     cost: "ceremony",
-    options: { public: true, enrollmentOk: true, middleware: [withSessionAcquireCeiling] },
+    options: { public: true, enrollmentOk: true, credentialLookup: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
       const jar = parseCookies(req.headers.get("cookie"));
       const expectedFamily = req.headers.get(EXPECTED_FAMILY_HEADER) ?? undefined;
@@ -171,7 +171,7 @@ export const sessionLifecycleRoutes: Route[] = [
     // safe: the rotation re-answers a repeated attempt id and converges a cookie retry in its grace.
     // `withCachePurge` first: the cache clear a refusal no longer carries is answered before the jar is read.
     options: {
-      public: true, credentialSubject: true, replaySafe: true, middleware: [withCachePurge, withSessionAcquireCeiling],
+      public: true, credentialSubject: true, credentialLookup: true, replaySafe: true, middleware: [withCachePurge, withSessionAcquireCeiling],
     },
     handler: async (req, deps) => {
       const jar = parseCookies(req.headers.get("cookie"));

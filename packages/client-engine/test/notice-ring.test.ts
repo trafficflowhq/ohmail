@@ -164,7 +164,7 @@ describe("the notice an alert becomes when its minute has come", () => {
     const acting = aheadAlert({ id: "ev-weekly", title: "Catalogue weekly", private: false, heldBack: false }, true,
       { startMs: weekly.startMs, allDay: false, leadMin: 10, acts: ["join", "again"] })!;
     expect(dueNotice(acting, two, ["again"])).toEqual({
-      kind: "cal_alert", eventId: "ev-weekly", label: { as: "title", text: "Catalogue weekly" }, at: two, allDay: false, leadMin: 10, acts: ["again"],
+      kind: "cal_alert", eventId: "ev-weekly", startMs: weekly.startMs, label: { as: "title", text: "Catalogue weekly" }, at: two, allDay: false, leadMin: 10, acts: ["again"],
     });
     expect(dueNotice(acting, two, [])).toMatchObject({ acts: [] });
     expect(dueNotice({ ...weekly, body: "Zqbody" } as never, two, [])).toBeNull();

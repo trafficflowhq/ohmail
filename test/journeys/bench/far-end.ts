@@ -70,10 +70,10 @@ export class FarEnd {
     return this.h.invites[n]!;
   }
 
-  private async post(path: string, body: unknown, jar?: Baked[]): Promise<Response> {
+  private async write(path: string, body: unknown, jar?: Baked[], method: "POST" | "PATCH" = "POST"): Promise<Response> {
     const csrf = jar?.find((c) => c.name === "tf_csrf")?.value;
     return fetch(`${this.h.origin}${path}`, {
-      method: "POST",
+      method,
       headers: { "content-type": "application/json", ...(jar ? { cookie: cookieHeader(jar) } : {}), ...(csrf ? { "x-csrf-token": csrf } : {}) },
       body: JSON.stringify(body),
     });
@@ -89,22 +89,22 @@ export class FarEnd {
     const email = `journeys-${randomUUID().slice(0, 8)}@selfhost.example`;
     const password = minted("journeys");
     const displayName = "Ada Journey";
-    const redeemed = await this.must(await this.post("/pair/redeem", { grant: "invite", token: this.takeInvite(), email }), 200, "the invite's redeem");
+    const redeemed = await this.must(await this.write("/pair/redeem", { grant: "invite", token: this.takeInvite(), email }), 200, "the invite's redeem");
     const { invite } = await redeemed.json() as { invite: { code: string } };
-    const reg = await this.must(await this.post("/auth/register", { email, password, displayName, inviteCode: invite.code }), 201, "the registration");
+    const reg = await this.must(await this.write("/auth/register", { email, password, displayName, inviteCode: invite.code }), 201, "the registration");
     const enrolling = baked(reg.headers.getSetCookie());
-    const enroll = await this.must(await this.post("/auth/2fa/totp/enroll", {}, enrolling), 200, "the authenticator's enrollment");
+    const enroll = await this.must(await this.write("/auth/2fa/totp/enroll", {}, enrolling), 200, "the authenticator's enrollment");
     const { secret } = await enroll.json() as { secret: string };
     const auth = new Authenticator(secret);
-    await this.must(await this.post("/auth/2fa/totp/activate", { code: await auth.code() }, enrolling), 200, "the authenticator's activation");
+    await this.must(await this.write("/auth/2fa/totp/activate", { code: await auth.code() }, enrolling), 200, "the authenticator's activation");
     return { email, password, displayName, auth, code: () => auth.code() };
   }
 
   /** The person signs in at the API: the password, then the authenticator's code. */
   async signIn(r: Registered): Promise<Session> {
-    const login = await this.must(await this.post("/auth/login", { email: r.email, password: r.password }), 200, "the sign-in");
+    const login = await this.must(await this.write("/auth/login", { email: r.email, password: r.password }), 200, "the sign-in");
     const { loginToken } = await login.json() as { loginToken: string };
-    const verify = await this.must(await this.post("/auth/2fa/totp/verify", { loginToken, code: await r.code() }), 200, "the second factor");
+    const verify = await this.must(await this.write("/auth/2fa/totp/verify", { loginToken, code: await r.code() }), 200, "the second factor");
     const cookies = baked(verify.headers.getSetCookie());
     const who = await this.session(cookies);
     if (!who) throw new Error("the stack signed the person in, and its session names nobody");
@@ -112,15 +112,17 @@ export class FarEnd {
   }
 
   /**
-   * A mailbox on the compose's GreenMail, connected through the API's door as the setup's mailbox step does. GreenMail
-   * runs without authentication, so the address stands in for the password a real server would ask.
+   * An account ready to use Mail. Connect on GreenMail, agree to organizing and record that setup was left,
+   * through the same doors as first run. GreenMail runs without authentication.
    */
-  async connectMailbox(session: Session): Promise<{ id: string; address: string }> {
+  async setUpMailbox(session: Session): Promise<string> {
     const address = `journeys-${randomUUID().slice(0, 8)}@${this.h.mail.domain}`;
     const imap = { host: this.h.mail.imapHost, port: this.h.mail.imapPort, secure: false, allowInsecure: true, user: address, pass: address };
-    const made = await this.must(await this.post("/api/mailboxes", { provider: "imap", address, imap }, session.cookies), 201, "the mailbox's connection");
+    const made = await this.must(await this.write("/api/mailboxes", { provider: "imap", address, imap }, session.cookies), 201, "the mailbox's connection");
     const { id } = await made.json() as { id: string };
-    return { id, address };
+    await this.must(await this.write(`/api/mailboxes/${id}/organize`, { intent: "join" }, session.cookies), 202, "the mailbox's organize consent");
+    await this.must(await this.write("/api/consent/settings", { onboardingCompleted: true }, session.cookies, "PATCH"), 200, "leaving first-run setup");
+    return address;
   }
 
   /** A letter from an invented sender to `to`, through the compose's mail server, as the outside world sends one. */

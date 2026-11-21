@@ -39,7 +39,7 @@
  * left to decide.
  */
 import type { Folder, RuleEntity as RuleDTO, StayedWhy } from "@ohmail/wire";
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   VIEW_OF_FOLDER, type ConflictGroup, type PressForecast, type RulesInPlay,
@@ -49,6 +49,8 @@ import {
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { Avatar, Icon, InfoNote, Kbd } from "@ohmail/ui/sender-sheet";
+import { ContactCard, type ContactCardProps } from "@ohmail/ui/mail";
+import { Button, MenuItem } from "@ohmail/ui/base";
 import { usePileNames } from "../../shell/decision-copy";
 import { avatarHue, initialsOf, placeLabel } from "../../shell/format";
 import { displayAddress, displayAddressee, displayDomain } from "@ohmail/app-logic/text/idn";
@@ -122,6 +124,7 @@ export function SenderMenu({
   id = SENDER_SHEET_ID,
   state,
   sender,
+  renderCard,
   onChoose,
   onOpenDetail,
   onSubjectRule,
@@ -140,6 +143,7 @@ export function SenderMenu({
   onClose,
 }: {
   id?: string;
+  renderCard?: (props: ContactCardProps, subjectRule?: ReactNode, showAddress?: boolean) => ReactNode;
   state: SenderMenuState;
   sender: SenderScreening;
   /**
@@ -246,6 +250,7 @@ export function SenderMenu({
   const [applyRetro, setApplyRetro] = useState(RETRO_DEFAULT_ON);
 
   useEffect(() => {
+    if (renderCard && step.kind === "list") return;
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) onClose();
     };
@@ -253,7 +258,7 @@ export function SenderMenu({
     // the very click that opened this.
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [onClose]);
+  }, [onClose, renderCard, step.kind]);
 
   /** Back to the list, focus on the destination that opened the step. `false` on the list. */
   const refocus = useRef<ScreeningDest | null>(null);
@@ -414,7 +419,7 @@ export function SenderMenu({
    * scroll, but never past the viewport's edges. See `overlay-clamp.ts` for the geometry.
    */
   const { style, full } = useOverlayFit(rootRef, state);
-  useFocusFollows(rootRef, { onEscape: () => { if (!stepBack()) onClose(); } });
+  useFocusFollows(rootRef, { active: !renderCard || step.kind !== "list", onEscape: () => { if (!stepBack()) onClose(); } });
 
   const head = (
     <div className="sm-head">
@@ -428,6 +433,134 @@ export function SenderMenu({
   const selectedTile = step.kind === "resolve" ? tilesOf(step.cls, step.forecast, step.choice) : null;
   const widerChoice = step.kind === "resolve" && selectedTile?.scope === "domain" ? step.wider : null;
   const shownUnsub = step.kind === "resolve" ? widerChoice?.unsub ?? step.unsub : "none";
+
+  const effectText = subject.waiting
+    ? applyRetro
+      ? scope === "domain"
+        ? t("footRuleRetroDomain", { domain: whichDomain })
+        : t("footRuleRetro", { sender: who })
+      : scope === "domain"
+        ? t("footRuleDomain", { domain: whichDomain })
+        : t("footRule", { sender: who })
+    : makeRule
+      ? applyRetro
+        ? scope === "domain"
+          ? t(`footWillRuleRetroDomain${seedSays}`, { domain: whichDomain })
+          : t(`footWillRuleRetro${seedSays}`, { sender: who })
+        : scope === "domain"
+          ? t(`footWillRuleDomain${seedSays}`, { domain: whichDomain })
+          : t(`footWillRule${seedSays}`, { sender: who })
+      : t("footNoRule");
+
+  const nowSentence = subject.current
+    ? t("nowIn", { place: placeName(subject.current), count: countedOf(subject) })
+    : subject.places.length >= 2 && subject.places.length <= 3
+      ? t("nowSplit", {
+          count: countedOf(subject),
+          places: subject.places.map((p) => t("nowSplitPart", { place: placeName(p.place), count: p.count })).join(" · "),
+        })
+      : t("nowSpread", { count: countedOf(subject) });
+
+  if (renderCard && step.kind === "list") {
+    const count = countedOf(subject);
+    const current = subject.current === null ? "" : placeName(subject.current);
+    const detail = {
+      label: t("cardSeeAll"), ariaLabel: t("auditOpen", { count: subject.messages.length }), onPress: () => onOpenDetail(scope),
+    };
+    const organizerLine = organizerNote ? <p className="sm-org">{t(organizerNote.key, organizerNote.values)}</p> : null;
+    const check = own ? failedLine : checkLine;
+    const notice = check ? (
+      <p className="sm-check" data-reason={check.reason}><Icon name="shield" size={12} /><span>{check.text}</span></p>
+    ) : own ? <p className="sm-now">{t("toastOwnAddress")}</p> : sharedDomain ? (
+      <p className="sm-shared" data-reason="shared-provider">{t("scopeShared", { domain: whichDomain })}</p>
+    ) : undefined;
+    return renderCard({
+      open: true,
+      id,
+      onClose,
+      label: t("aria", { sender: who }),
+      closeWhenFull: t("auditClose"),
+      person: { name: label, address: who },
+      notice,
+      scope: own || !canScope ? undefined : {
+        label: t("scopeAria"),
+        value: scope,
+        options: [
+          { value: "sender", label: t("scopeAddress"), note: t("scopeCountOne", { count: countedOf(sender.scopes.sender) }) },
+          { value: "domain", label: t("scopeDomain", { domain: whichDomain }), note: t("scopeCount", {
+            count: countedOf(sender.scopes.domain), senders: sender.scopes.domain.placedSenders,
+          }) },
+        ],
+        onChange: (value) => setScope(value === "domain" ? "domain" : "sender"),
+      },
+      now: !own && count > 0 ? {
+        place: current,
+        description: nowSentence,
+        line: current ? t("cardNowIn", { place: current }) : t("cardNowSpread", { count: subject.places.length }),
+        all: detail,
+      } : undefined,
+      goes: own ? undefined : {
+        label: t("cardGoesTo"),
+        description: organizer?.nobody ? undefined : effectText,
+        focus: refocus.current ?? undefined,
+        value: subject.ruled ?? undefined,
+        places: SCREENING_DESTS.map((dest) => ({
+          value: dest,
+          label: dest === "screened" ? t("cardScreenOut") : piles[dest],
+          warning: DECISION_OF_DEST[dest] === "no" && subject.waiting && !listClaims,
+        })),
+        onChange: (value) => {
+          const dest = SCREENING_DESTS.find((dest) => dest === value);
+          if (dest) commit(dest);
+        },
+      },
+      rulesLabel: t("rulesHead"),
+      rules: own ? undefined : (inPlay?.worthShowing ? inPlay.lines.flatMap(({ rules, count }) => {
+        const [rule] = rules;
+        return rule ? [{ place: pileOf(rule.destination), note: conditionOf(rule),
+          detail: count === null ? undefined : t("scopeCountOne", { count }) }] : [];
+      }) : sender.rules.map((rule) => ({ place: pileOf(rule.destination), note: conditionOf(rule) }))).slice(0, 3),
+      switches: own ? undefined : [
+        ...(subject.waiting ? [] : [{
+          label: t("cardFuture"), ariaLabel: t("ruleToggleAria"), on: makeRule, onChange: setMakeRule,
+        }]),
+        ...(subject.waiting || makeRule ? [{
+          label: t("cardExisting"), ariaLabel: t("retroToggleAria"), on: applyRetro, onChange: setApplyRetro,
+          description: t("retroToggleNote", { count: subject.messages.length }),
+        }] : []),
+      ],
+      more: <>
+        {organizerLine}
+        {inPlay?.worthShowing && inPlay.inside ? <p className="sm-rule-line">
+          <span>{t("ruleInside", { senders: inPlay.inside.senders })}</span>
+          <span>{inPlay.inside.count}</span>
+        </p> : null}
+        {inPlay?.worthShowing && inPlay.lines.length > 3 ? <p className="sm-rules-more">
+          {t("rulesMore", { count: inPlay.lines.length - 3 })}
+        </p> : null}
+        {!own && stayed.length > 0 && subject.ruled !== null ? <div className="sm-stayed">
+          {stayed.map((line) => (
+            <div className="sm-stayed-line" key={`${line.place}:${line.why}`}>
+              <span>{t(STAYED_KEY[line.why], { count: line.ids.length, place: placeName(line.place) })}</span>
+              {line.why !== "failed-checks" && onMoveToo ? (
+                <Button kind="quiet" size="s" onPress={() => onMoveToo(line.ids, subject.ruled!)}>
+                  {t("stayedMoveToo", { count: line.ids.length })}
+                </Button>
+              ) : null}
+            </div>
+          ))}
+        </div> : null}
+        {own || count === 0 ? <Button kind="quiet" size="s" onPress={detail.onPress}>
+          {t("auditOpen", { count: subject.messages.length })}
+        </Button> : null}
+        {!own && subject.waiting && listClaims ? <p className="sm-foot">
+          {t("footListClaim", { brand: sender.listClaims!.brand })}
+        </p> : null}
+      </>,
+    }, !own && scope === "sender" && onSubjectRule ? (
+      <MenuItem icon="plus" onPress={onSubjectRule}>{t("cardSubject")}</MenuItem>
+    ) : undefined, scope === "sender");
+  }
 
   // Our own address: the sentence instead of the press, and the ways onward that write nothing.
   if (own) {
@@ -514,15 +647,7 @@ export function SenderMenu({
       {/* The counts are the places' own: a row in no place (Trash, Junk, Sent) is in no number, and
           a subject with nothing in any place has no count line at all. */}
       {countedOf(subject) > 0 ? <div className="sm-now">
-        {subject.current
-          ? t("nowIn", { place: placeName(subject.current), count: countedOf(subject) })
-          : subject.places.length >= 2 && subject.places.length <= 3
-            // Two or three places are named, each with its count; four or more stay "spread".
-            ? t("nowSplit", {
-                count: countedOf(subject),
-                places: subject.places.map((p) => t("nowSplitPart", { place: placeName(p.place), count: p.count })).join(" · "),
-              })
-            : t("nowSpread", { count: countedOf(subject) })}
+        {nowSentence}
       </div> : null}
 
       {stayed.length > 0 && subject.ruled !== null ? (
@@ -757,23 +882,7 @@ export function SenderMenu({
             mail already in your mailbox", which was wider than the pass: only the six folders
             ohmail organizes are candidates, so a customer's own folders and their Sent are never
             touched. */}
-        {subject.waiting
-          ? applyRetro
-            ? scope === "domain"
-              ? t("footRuleRetroDomain", { domain: whichDomain })
-              : t("footRuleRetro", { sender: who })
-            : scope === "domain"
-              ? t("footRuleDomain", { domain: whichDomain })
-              : t("footRule", { sender: who })
-          : makeRule
-            ? applyRetro
-              ? scope === "domain"
-                ? t(`footWillRuleRetroDomain${seedSays}`, { domain: whichDomain })
-                : t(`footWillRuleRetro${seedSays}`, { sender: who })
-              : scope === "domain"
-                ? t(`footWillRuleDomain${seedSays}`, { domain: whichDomain })
-                : t(`footWillRule${seedSays}`, { sender: who })
-            : t("footNoRule")}
+        {effectText}
         {/* A list's claims the store says a screen-out files alone: those two presses make no rule. */}
         {subject.waiting && listClaims ? <> {t("footListClaim", { brand: sender.listClaims!.brand })}</> : null}
       </div>}

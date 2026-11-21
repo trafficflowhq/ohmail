@@ -4,9 +4,9 @@ import type { FrameSupplies } from "@ohmail/app/host";
 
 /** Open an event that the calendar still serves to this window. */
 export function openCalendarNotice(
-  address: FrameSupplies["address"], port: CalendarPort, id: string, zone: string,
+  address: FrameSupplies["address"], port: CalendarPort, id: string, zone: string, startMs?: number,
 ): boolean {
-  const destination = calendarNoticeFragment(port, id, zone);
+  const destination = calendarNoticeFragment(port, id, zone, startMs);
   if (destination === null) return false;
   address.write(destination, "push");
   return true;

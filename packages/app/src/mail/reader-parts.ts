@@ -51,5 +51,6 @@ export function useMailReaderParts(host: MailReaderHost): ReaderParts {
 
 /** The reader a host hands the frame over the mail ground. Made once per host, never in a render. */
 export function mailReader(host: MailReaderHost): ReaderEntry {
-  return readerEntryFrom(() => useMailReaderParts(host));
+  const reader = readerEntryFrom(() => useMailReaderParts(host));
+  return typeof host.copy === "function" ? { ...reader, copy: host.copy } : reader;
 }

@@ -157,9 +157,14 @@ function mailboxNotice(
   tm: Text,
   locale: Locale,
 ): FrameNotice {
-  const title = mail.address
-    ? t(`connection.${kind}.named`, { address: mail.address })
-    : t(`connection.${kind}.title`);
+  const title =
+    mail.key === "mailboxError"
+      ? mail.address
+        ? t("connection.mailboxFailed.named", { address: mail.address })
+        : t("connection.mailboxFailed.title")
+      : mail.address
+        ? t(`connection.${kind}.named`, { address: mail.address })
+        : t(`connection.${kind}.title`);
   const sentence =
     mail.key === "mailboxError"
       ? mailboxErrorKey(
@@ -240,11 +245,12 @@ function noticeOf(
       };
     case "firstSync": {
       const count = mail?.count ?? 0;
-      if (mail?.total) return { kind, title: t("connection.firstSync.of", { count, total: mail.total }) };
-      return {
-        kind,
-        title: count > 0 ? t("connection.firstSync.count", { count }) : t("connection.firstSync.title"),
-      };
+      const line = mail?.total
+        ? t("connection.firstSync.of", { count, total: mail.total })
+        : count > 0
+          ? t("connection.firstSync.count", { count })
+          : undefined;
+      return { kind, title: t("connection.firstSync.title"), line };
     }
     case "filing":
       return {
@@ -335,9 +341,12 @@ export function useConnectionNotice(
       ? { ...framed, title: said.title ?? framed.title, line: said.line ?? framed.line }
       : framed;
   const progress = kind === "firstSync" && input.mail?.total ? input.mail.count / input.mail.total : null;
-  const title = useGatedWords(kind === "firstSync" ? notice!.title : null, progress);
+  const countLine = useGatedWords(kind === "firstSync" ? (framed?.line ?? null) : null, progress);
   if (kind === null || notice === null) return null;
-  const gated = kind === "firstSync" && title !== null ? { ...notice, title } : notice;
+  const gated =
+    kind === "firstSync" && countLine !== null
+      ? { ...notice, line: said?.line ? `${countLine} · ${said.line}` : countLine }
+      : notice;
   const answers = actsOf(kind, input, t, acts, said?.href ?? null);
   return answers ? { ...gated, acts: answers, more: undefined } : gated;
 }

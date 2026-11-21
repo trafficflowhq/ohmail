@@ -327,6 +327,8 @@ type MountedReader =
 export interface HandedReaders {
   /** Identifier in the file → the namespace of the reader it holds ("" is the catalogue root). */
   readers: Record<string, string | readonly string[]>;
+  /** This file passes its reader onward without calling it. */
+  forwardsTo?: string;
   /**
    * Where the namespaces are chosen: every reader bound in that file, or every reader handed at each call of that
    * hook. The mounted suggestion record is resolved through its consumer.
@@ -396,6 +398,12 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
   },
   "packages/app-logic/src/ohbox/live.ts": {
     readers: { "own.cursor": "cursor" },
+    forwardsTo: "packages/app-logic/src/keys/keymap.ts",
+    glue: { mounted: "cursorHint" },
+  },
+  // Ohbox and the shared list setup hand the reader to cursorPlacementText.
+  "packages/app-logic/src/keys/keymap.ts": {
+    readers: { cursor: "cursor" },
     glue: { mounted: "cursorHint" },
   },
   "packages/app-logic/src/ohbox/live-verbs.ts": {
@@ -600,8 +608,15 @@ function mountedNamespaces(repo: string, mounted: MountedReader): Set<string | n
   if (mounted === "cursorKeys" || mounted === "cursorHint") {
     source(`${app}/ohbox/Seat.tsx`, "const own = useOwn(", "useOhboxLive(args, own)",
       mounted === "cursorKeys" ? 'shortcuts: useText("shortcuts")' : 'cursor: useText("cursor")');
-    source(`${logic}/ohbox/live.ts`, mounted === "cursorKeys" ? "cursorRowKeys({ t: own.shortcuts," : 'own.cursor("placed",');
-    return new Set([mounted === "cursorKeys" ? "shortcuts" : "cursor"]);
+    if (mounted === "cursorKeys") {
+      source(`${logic}/ohbox/live.ts`, "cursorRowKeys({ t: own.shortcuts,");
+      return new Set(["shortcuts"]);
+    }
+    source(`${logic}/ohbox/live.ts`, "args.report(cursorPlacementText(own.cursor, label),");
+    source(`${app}/place-list/own.ts`, 'const cursor = useText("cursor");',
+      "placed: (label: string) => cursorPlacementText(cursor, label)");
+    source(`${logic}/keys/keymap.ts`, 'return cursor("placed", { label });');
+    return new Set(["cursor"]);
   }
   if (mounted === "ohboxWords") {
     source(`${app}/ohbox/Seat.tsx`, 'const markAll = useText("markAll");',

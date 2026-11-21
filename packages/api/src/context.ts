@@ -54,6 +54,8 @@ function refuseUnmintedHandle(deps: ApiDeps, what: string): void {
   }
 }
 
+const credentialDbs = new WeakMap<ApiDeps, UnboundDb>();
+
 /**
  * BIND THE REQUEST TO ITS SESSION'S ACCOUNT: the one place a request's handle comes to name an
  * account. Called by `withSession` alone, as its last step: after the token was resolved, after an
@@ -65,16 +67,21 @@ function refuseUnmintedHandle(deps: ApiDeps, what: string): void {
  * body, query, path, header or cookie, and no other field of `deps`. A session whose account is
  * empty or no id is refused by the binder, never bound to nothing. A request with no session keeps
  * the handle bound to nothing. The session doors' second handle (`deps.sessionDb`) is closed here:
- * nothing swaps the request's handle after it was bound.
+ * the request keeps its account handle. Only the credential ceremonies retain a handle for
+ * an exact lookup started before its owner is known.
  *
  * The handle must be as the host minted it ({@link refuseUnmintedHandle}): one that names an
  * account or carries a key is refused, so a container handed to a second request fails here, and
  * so is one no host minted.
  */
-export function bindRequest(deps: ApiDeps): void {
+export function bindRequest(deps: ApiDeps, credentialLookup = false): void {
   refuseUnmintedHandle(deps, "the session's binding");
   delete deps.sessionDb;
-  if (deps.session) deps.db = bindDb(deps.db, { account: deps.session.accountId });
+  credentialDbs.delete(deps);
+  if (deps.session) {
+    if (credentialLookup) credentialDbs.set(deps, bindDb(deps.db, { account: null }));
+    deps.db = bindDb(deps.db, { account: deps.session.accountId });
+  }
 }
 
 /**
@@ -127,6 +134,7 @@ export function serviceContext(deps: ApiDeps, req: Request): ServiceContext {
   const s = deps.session;
   return {
     db: contextDb(deps),
+    ...(credentialDbs.has(deps) ? { credentialDb: credentialDbs.get(deps) } : {}),
     accountId: s?.accountId ?? "",
     userId: s?.userId ?? null,
     sessionId: s?.sessionId ?? null,

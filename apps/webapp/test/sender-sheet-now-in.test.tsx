@@ -161,8 +161,8 @@ describe("the shell hands the sheet the list's placement", () => {
       const history = within(shell).getByRole("listbox", { name: "History" });
       const row = within(history).getByRole("option", { name: /Ada: A note from Ada/ });
       expect(within(row).getByText("Ohbox")).toBeTruthy();
-      expect(sheet.getByText(/now in Screened out/)).toBeTruthy();
-      expect(sheet.getByRole("option", { name: /^Screened out/, selected: true })).toBeTruthy();
+      expect(sheet.getByText(/Now in/).textContent).toContain("Screened out");
+      expect(sheet.getByRole("radio", { name: "Screen out", checked: true })).toBeTruthy();
 
       await webAct(async () => {
         window.location.hash = "#/screener/screened";

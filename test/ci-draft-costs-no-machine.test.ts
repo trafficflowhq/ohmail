@@ -29,7 +29,7 @@ const load = (t: string) => yaml.load(t) as Workflow;
 const GUARD_LINE = "    if: github.event.pull_request.draft != true\n";
 
 /** A plan that hands every matrix a job, so nothing is skipped for want of work. */
-const PLAN: IfContext = { "needs.plan.outputs.shards": '[{"shard":0}]', "needs.plan.outputs.alone": '["a.test.ts"]', "needs.plan.outputs.sqlite": '[{"shard":0}]' };
+const PLAN: IfContext = { "needs.plan.outputs.scope": "whole", "needs.plan.outputs.shards": '[{"shard":0}]', "needs.plan.outputs.alone": '["a.test.ts"]', "needs.plan.outputs.sqlite": '[{"shard":0}]' };
 
 /** A maintainer's pull request from a pr/ branch, or a run with no pull request (draft null). */
 function ctxOf(draft: boolean | null, extra: IfContext = {}): IfContext {
@@ -90,6 +90,20 @@ describe("a draft's push starts no test job in ci.yml", () => {
     }
   });
 
+  it("a build-only plan starts only the required checks", () => {
+    const ev = prEvent("ready_for_review", false, {
+      "github.head_ref": "pr/round-example",
+      "needs.plan.outputs.scope": "build-only",
+      "needs.plan.outputs.shards": "[]",
+      "needs.plan.outputs.alone": "[]",
+      "needs.plan.outputs.sqlite": "[]",
+    });
+    expect(jobsOn(ci, ev)).toEqual({
+      ...all("skipped"), plan: "success", "webapp-build": "success", typecheck: "success",
+    });
+    expect(ci.jobs.plan).toMatchObject({ outputs: { scope: "${{ steps.plan.outputs.scope }}" } });
+  });
+
   it("every event but a draft's runs the jobs it ran without the condition", () => {
     const before = CI.replaceAll(GUARD_LINE, "");
     expect(CI.split(GUARD_LINE).length - 1, "the condition stands on plan and typecheck").toBe(2);
@@ -123,9 +137,15 @@ describe("a draft's push starts no test job in ci.yml", () => {
     expect(startsOnADraft(planted(new RegExp(`(    name: suite · plan\\n(?: *#.*\\n)*)${GUARD_LINE}`), "$1")))
       .toEqual(JOBS.filter((j) => j !== "typecheck").map((j) => `${j}: starts on a draft`));
     // A status function lets a job past a skipped plan.
-    expect(startsOnADraft(planted("    name: suite · desktop\n", "    name: suite · desktop\n    if: \"!cancelled()\"\n"))).toEqual(["desktop: starts on a draft"]);
+    expect(startsOnADraft(planted(
+      "    name: suite · desktop\n    needs: plan\n    if: needs.plan.outputs.scope != 'build-only'\n",
+      "    name: suite · desktop\n    needs: plan\n    if: \"!cancelled() && needs.plan.outputs.scope != 'build-only'\"\n",
+    ))).toEqual(["desktop: starts on a draft"]);
     // always() is a condition this reader does not decide: it refuses, by name, rather than guess.
-    expect(startsOnADraft(planted("    name: suite · desktop\n", "    name: suite · desktop\n    if: always()\n"))).toEqual([expect.stringMatching(/^desktop: .*always/)]);
+    expect(startsOnADraft(planted(
+      "    name: suite · desktop\n    needs: plan\n    if: needs.plan.outputs.scope != 'build-only'\n",
+      "    name: suite · desktop\n    needs: plan\n    if: \"always() && needs.plan.outputs.scope != 'build-only'\"\n",
+    ))).toEqual([expect.stringMatching(/^desktop: .*always/)]);
     // ready_for_review dropped from the trigger: marking a draft ready would start nothing.
     expect(readyStartsIt(planted("types: [opened, synchronize, reopened, ready_for_review]", "types: [opened, synchronize, reopened]"))).toBe(false);
     // The string literal: GitHub reads `true != 'true'` as true, so every draft would run.

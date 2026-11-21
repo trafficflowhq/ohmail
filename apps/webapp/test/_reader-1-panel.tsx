@@ -14,7 +14,7 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { act, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { vi } from "vitest";
 import type { EntityReader } from "@ohmail/client-engine";
 import {
@@ -26,7 +26,7 @@ import {
   type ThreadReadWiring,
 } from "@ohmail/app-logic/reading";
 import { KeymapContext, useKeymapStore } from "@ohmail/app-logic/keys";
-import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
+import { useKeyBindings, type KeymapStore } from "@ohmail/app-logic/keys/keymap";
 import { Frame } from "../../../packages/app/src/frame/Frame.js";
 import { useRoomResurface } from "../../../packages/app/src/frame/room.js";
 import type { PaneProps, PlaceEntry } from "../../../packages/app/src/frame/contract.js";
@@ -68,8 +68,20 @@ const WRITE_PLACE: PlaceEntry = {
 };
 
 /** The key map's registry above the frame, as a shell stands one: the panel's keys and a case's own chords meet in it. */
-function Keys({ children }: { children: ReactNode }) {
-  return <KeymapContext.Provider value={useKeymapStore()}>{children}</KeymapContext.Provider>;
+function Keys({ children, caseBindings }: { children: ReactNode; caseBindings: boolean }) {
+  const store = useKeymapStore();
+  // A supplied registry tests which hints follow its declarations, with the reader active.
+  const registry = useMemo<KeymapStore>(() => {
+    if (!caseBindings) return store;
+    return {
+      ...store,
+      register: (layer) => store.register({
+        ...layer,
+        get: () => layer.get().filter((binding) => binding.group !== "message"),
+      }),
+    };
+  }, [store, caseBindings]);
+  return <KeymapContext.Provider value={registry}>{children}</KeymapContext.Provider>;
 }
 
 /** A fresh read record, as a list's visit holds one (made by the column's own visit hook). */
@@ -135,7 +147,7 @@ function Declare({
   useKeyBindings(
     bound.map((chord) => ({
       chord,
-      group: "message",
+      group: "app",
       label: `runs ${chord}`,
       disabled: disabled.includes(chord),
       run: () => {
@@ -231,8 +243,8 @@ export function mountPanel(over: Partial<EngineMessage> = {}, opts: PanelOpts = 
     places: { ohbox: READER_PLACE, write: WRITE_PLACE },
     reader: opts.bound === undefined ? entry : {
       ...entry,
-      // Cases supplying a registry exercise exactly its declarations.
-      Reading: (pane) => <entry.Reading {...pane} keysHere={false} />,
+      // The reading column has the keyboard while a case supplies its own bindings.
+      Reading: (pane) => <entry.Reading {...pane} keysHere />,
     },
     window: fakeWindow(opts.size ?? "desktop"),
     address,
@@ -247,7 +259,7 @@ export function mountPanel(over: Partial<EngineMessage> = {}, opts: PanelOpts = 
   );
   render(
     <TextProvider locale="en" messages={WORDS} timeZone="Europe/Zurich">
-      <Keys>
+      <Keys caseBindings={opts.bound !== undefined}>
         {meeting === undefined ? frame : <ListMeetingContext.Provider value={meeting}>{frame}</ListMeetingContext.Provider>}
         {opts.bound === undefined ? null : <Declare bound={opts.bound} disabled={opts.disabled ?? []} ran={ran} />}
       </Keys>

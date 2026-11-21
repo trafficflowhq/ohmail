@@ -13,6 +13,22 @@ afterEach(cleanup);
 const close = { label: "Close" };
 
 describe("the event card", () => {
+  it("shows a failed sync with the event details", () => {
+    render(
+      <EventCard
+        title="Poster review"
+        tone={153}
+        when="14:30"
+        close={close}
+        status={{ text: "Not saved", failed: true }}
+        rows={[{ label: "Calendar", text: "Work" }]}
+      />,
+    );
+    const status = screen.getByText("Not saved");
+    expect(status.closest("dd")?.previousElementSibling?.textContent).toBe("");
+    expect(status.closest("dl")?.textContent).toContain("Calendar");
+    expect(status.querySelector("svg")).not.toBeNull();
+  });
   it("is a dialog named with the event's title, with the title as its heading", () => {
     render(<EventCard title="Poster review" tone={153} when="Tue 10 Nov, 14:30–15:30" close={close} />);
     const card = screen.getByRole("dialog", { name: "Poster review" });

@@ -252,6 +252,8 @@ export interface RouteOptions {
    * carrying it wrongly can only stop naming an account.
    */
   credentialSubject?: boolean;
+  /** A public ceremony may resolve a credential separate from the ambient session. */
+  credentialLookup?: boolean;
   /**
    * NO session resolution at all — not even the opportunistic "populate it if a token
    * happens to be present" that `public` still does. `/health` only: a liveness probe must

@@ -29,4 +29,15 @@ describe("the setup's fault sentences in the catalogues", () => {
       /App-spezifisches Passwort/,
     );
   });
+  it.each([
+    [
+      "fault.signInRefusedCaldav",
+      /username and password.*server address/,
+      /Benutzernamen und das Passwort.*Serveradresse/,
+    ],
+    ["fault.signInRefusedIcs", /feed asked for a sign-in/, /Feed verlangt eine Anmeldung/],
+  ])("gives %s its own guidance in both languages", (key, en, de) => {
+    expect(said(calsetupEn.calsetup as Tree, key)).toMatch(en);
+    expect(said(calsetupDe.calsetup as Tree, key)).toMatch(de);
+  });
 });

@@ -1,7 +1,5 @@
 "use client";
 
-import type { ListVerbs } from "../press/list-verbs.js";
-
 import type { EngineMessage, MessageBody, WaterlineMeta } from "@ohmail/wire";
 import { type RefObject } from "react";
 import { type EntityReader } from "@ohmail/client-engine";
@@ -9,6 +7,7 @@ import { type StreamLeaveCommit } from "./leave.js";
 import { type StreamReadDom } from "./stream-read-dom.js";
 import { type StreamScroll } from "./stream-scroll.js";
 import type { PlaceLiveArgs } from "../lists/place-live.js";
+import type { ListVerbs } from "../press/list-verbs.js";
 
 export type StreamPlace = "news" | "receipts";
 

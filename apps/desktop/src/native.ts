@@ -438,7 +438,7 @@ export async function postOsNotice(
 
 /** The shell's current document and sign-in, captured when the frame mounts. */
 export interface NoticeWriter { document: number; session: number }
-type NoticeOpening = NoticeWriter & { scope: string } & ({ letter: string | null } | { event: string });
+type NoticeOpening = NoticeWriter & { scope: string } & ({ letter: string | null } | { event: string; startMs?: number });
 
 let noticeOpening: ((opening: NoticeOpening) => void) | null = null;
 let noticeOpeningShell: ReturnType<typeof internals> = null;
@@ -458,12 +458,15 @@ export function watchNoticeOpening(run: (opening: NoticeOpening) => void): () =>
 
 function readNoticeOpening(event: unknown): NoticeOpening | null {
   const value = (event as { payload?: Partial<NoticeWriter> & {
-    scope?: unknown; letter?: unknown; event?: unknown;
+    scope?: unknown; letter?: unknown; event?: unknown; startMs?: unknown;
   } } | null)?.payload;
   if (!value || typeof value.scope !== "string" || typeof value.document !== "number" ||
       typeof value.session !== "number" || !Number.isSafeInteger(value.document) || !Number.isSafeInteger(value.session)) return null;
   const owner = { document: value.document, session: value.session, scope: value.scope };
-  if (typeof value.event === "string" && /^[\w:-]{1,128}$/.test(value.event)) return { ...owner, event: value.event };
+  if (typeof value.event === "string" && /^[\w:-]{1,128}$/.test(value.event)) {
+    if (value.startMs !== undefined && (typeof value.startMs !== "number" || !Number.isSafeInteger(value.startMs) || value.startMs < 0)) return null;
+    return { ...owner, event: value.event, startMs: value.startMs as number | undefined };
+  }
   if (value.letter === null || (typeof value.letter === "string" && /^[\w-]{1,128}$/.test(value.letter))) {
     return { ...owner, letter: value.letter };
   }

@@ -111,7 +111,7 @@ describe("Remove that rule is offered only for the pressed address's own rule", 
       await press(reader.getByRole("button", { name: en.screening.action }));
       const dialog = within(screen.getByRole("dialog", { name: /^Screening/ }));
       await press(dialog.getByRole("switch", { name: en.screening.ruleToggleAria }));
-      await press(dialog.getByRole("option", { name: new RegExp(en.screener.pileReads) }));
+      await press(dialog.getByRole("radio", { name: new RegExp(en.screener.pileReads) }));
       await tick(250);
       expect(verdict).toHaveBeenCalled();
       expect(sent).toContainEqual(expect.objectContaining({ kind: "move", messageId: seed.id, folder: "ohmail/News" }));
@@ -268,7 +268,7 @@ describe("Move them moves every row it counted, fifty at a time", () => {
       await press(reading.getByRole("button", { name: en.screening.action }));
       const dialogue = within(screen.getByRole("dialog", { name: /^Screening/ }));
       await press(dialogue.getByRole("switch", { name: en.screening.ruleToggleAria }));
-      await press(dialogue.getByRole("option", { name: new RegExp(en.screener.pileReads) }));
+      await press(dialogue.getByRole("radio", { name: new RegExp(en.screener.pileReads) }));
       await tick(250);
       expect([...sent].sort()).toEqual(["seed", ...firstBatch].sort());
       expect(verdict).toHaveBeenCalled();

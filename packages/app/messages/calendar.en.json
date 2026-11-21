@@ -2,6 +2,9 @@
   "calendar": {
     "connect": "Connect a calendar",
     "actions": {
+      "resizeStart": "Change first day",
+      "resizePreview": "{first} – {last} · {title}",
+      "resizeEnd": "Change last day",
       "delete": "Delete",
       "moveTo": "Move to",
       "whichMove": "Which events will move?",
@@ -24,7 +27,12 @@
         "yearlyWeekday": "Every year on the {ordinal} {weekday} of {month}"
       }
     },
+    "draft": {
+      "discarded": "Discarded",
+      "undo": "Undo"
+    },
     "edit": {
+      "save": "Save",
       "whichEvents": "Which events will change?",
       "thisEvent": "This event",
       "following": "This and following",
@@ -41,6 +49,8 @@
       "discard": "Discard changes"
     },
     "create": {
+      "endDate": "End date",
+      "nextDay": "next day",
       "title": "New event",
       "name": "Event title",
       "date": "Event date",
