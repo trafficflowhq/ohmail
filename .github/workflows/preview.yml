@@ -290,4 +290,4 @@ jobs:
           name: ohmail-preview-linux-${{ github.sha }}
           path: build/ohmail-preview-linux-x86_64.AppImage
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
