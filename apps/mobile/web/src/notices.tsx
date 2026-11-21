@@ -13,7 +13,7 @@ import { useEffect, useMemo } from "react";
 import { useDerivedVersion, useEngine, useSyncStatus } from "@ohmail/app-logic/engine";
 import { noticeReadsOf, useNotices } from "@ohmail/app-logic/notices/use-notices";
 import { NONE, type HostContract } from "@ohmail/app/host";
-import { noticeChoicesOf, type NoticeChoices } from "./engine-package";
+import { calendarChoicesOf, mailChoicesOf, noticeChoicesOf, type NoticeChoices } from "./engine-package";
 
 /** The names this device keeps its notice choices under: mail's record and the calendar's, as every shell does. */
 const MAIL_CHOICES = "ohmail.notifications.channels";
@@ -32,6 +32,13 @@ function stored(storage: Pick<Storage, "getItem">, name: string): unknown {
 /** This device's choices, through the one reader of the two stored records. */
 export function storedNoticeChoices(storage: Pick<Storage, "getItem">, ohcalPhone: boolean): NoticeChoices {
   return noticeChoicesOf(stored(storage, MAIL_CHOICES), stored(storage, CALENDAR_CHOICES), { ohcalPhone });
+}
+
+export function storedWidgetChoices(storage: Pick<Storage, "getItem">) {
+  const raw = stored(storage, CALENDAR_CHOICES);
+  const calendar = calendarChoicesOf(raw, { ohcalPhone: true });
+  const mail = mailChoicesOf(stored(storage, MAIL_CHOICES), { ohcalPhone: true });
+  return { ...calendar, cal_alert: mail.master && calendar.cal_alert };
 }
 
 /**

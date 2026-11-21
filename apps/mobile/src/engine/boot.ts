@@ -460,12 +460,19 @@ async function verifyAccountId(
   origin: string,
   authHeaders: () => Record<string, string>,
   accountId: string,
+  accountWithoutSession?: () => Promise<string | null>,
 ): Promise<{ kind: "verified" | "unverified" } | { kind: "mismatch"; serverSays: string }> {
   try {
     const res = await fetchImpl(`${origin}/auth/session`, { headers: authHeaders() });
-    if (!res.ok) return { kind: "unverified" };
-    const body = (await res.json()) as { user?: { accountId?: unknown } };
-    const serverSays = body.user?.accountId;
+    let serverSays: unknown;
+    if (res.ok) {
+      const named = res.headers.get("x-ohmail-account");
+      if (named !== null && named !== accountId) return { kind: "mismatch", serverSays: named };
+      const body = (await res.json()) as { user?: { accountId?: unknown } };
+      serverSays = body.user?.accountId;
+    } else if (res.status === 404 && accountWithoutSession !== undefined) {
+      serverSays = await accountWithoutSession();
+    }
     if (typeof serverSays !== "string" || serverSays === "") return { kind: "unverified" };
     return serverSays === accountId ? { kind: "verified" } : { kind: "mismatch", serverSays };
   } catch {
@@ -483,6 +490,7 @@ export async function identityProbe(
   authHeaders: () => Record<string, string>,
   accountId: string,
   deadline: number,
+  accountWithoutSession?: () => Promise<string | null>,
 ): Promise<{ kind: "verified" | "unverified" } | { kind: "mismatch"; serverSays: string }> {
   // BOUNDED — see {@link IDENTITY_PROBE_DEADLINE_MS}: a probe the server accepts and never
   // answers times out into `unverified` (the timer is cleared when the probe wins).
@@ -491,7 +499,7 @@ export async function identityProbe(
     timer = setTimeout(() => resolve({ kind: "unverified" }), deadline);
   });
   return Promise.race([
-    verifyAccountId(fetchImpl, origin, authHeaders, accountId).finally(() => clearTimeout(timer)),
+    verifyAccountId(fetchImpl, origin, authHeaders, accountId, accountWithoutSession).finally(() => clearTimeout(timer)),
     timedOut,
   ]);
 }

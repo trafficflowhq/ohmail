@@ -100,12 +100,18 @@ export interface Appearance {
   readonly scheme: "light" | "dark";
   readonly layout?: "classic" | "zero";
 }
+export interface PhysicalLeave {
+  readonly signal: AbortSignal;
+  keep(): void;
+}
+export type AskLeave = (leave: (drop?: () => void) => void, physical?: PhysicalLeave) => void;
+
 /** The address bar, owned by the shell. The frame reads and writes the fragment through it, never `location`. */
 export interface HostAddress {
   /** The current pane holds a leave while a draft differs from its saved value. */
-  holdLeave(ask: (leave: () => void) => void, at: string, leaves?: (next: string) => boolean): () => void;
+  holdLeave(ask: AskLeave, at: string, leaves?: (next: string) => boolean): () => void;
   /** Ask before a route command changes any state. Discard resumes that same command once. */
-  heldBefore(next: string, resume: () => void): boolean;
+  heldBefore(next: string, resume: () => void | Promise<boolean>, physical?: PhysicalLeave): boolean;
   read(): string;
   /** Whether the reader was explicitly closed in this history entry. */
   readerClosed?(): boolean;

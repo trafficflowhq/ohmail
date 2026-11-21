@@ -12,12 +12,15 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vitest";
-import type { ShellConfig } from "../src/shell/bridge-kinds";
+import type { WakePaneState } from "@ohmail/app-logic/phone/wake";
+import type { ShellSession } from "../src/net/pairing";
+import type { PhoneNameRow, ShellConfig } from "../src/shell/bridge-kinds";
+import { HttpDoor } from "../src/shell/http-door";
 import { BENCH_MARKER, buildShell, policyOf } from "../scripts/build-shell.mjs";
 import { design } from "@ohmail/tokens/design";
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
-const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");
+const { chromium, expect: browserExpect } = require_("@playwright/test") as typeof import("@playwright/test");
 
 const POLICY =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; " +
@@ -240,23 +243,123 @@ describe("the built page in a browser", () => {
 
   /** What native's keeper reads for the live scope. */
   type KeptReading = { words: [string, string][]; refused: [string, string | null][] };
+  type PhoneSettingsReading = {
+    wake?: WakePaneState;
+    names?: readonly PhoneNameRow[];
+    refuseFirstNameRead?: boolean;
+    refuseName?: string;
+  };
+  type MailCopy = { accountId: string; subject: string };
+  type Feeds = { snapshot: MailCopy[]; updates?: MailCopy[] };
 
   /** The native side as the page sees it: answers by kind, records every kind and every http path asked. */
-  function nativeDouble({ config, kept }: { config: ShellConfig; kept: KeptReading }) {
+  function nativeDouble({ config, kept, settings, feeds, nativeHttp, replies }: {
+    config: ShellConfig; kept: KeptReading; settings: PhoneSettingsReading; feeds?: Feeds; nativeHttp: boolean; replies: Readonly<Record<string, object>>;
+  }) {
     const w = window as unknown as Record<string, unknown>;
-    const asked: { kind: string; path?: string; place?: string }[] = [];
+    const asked: { kind: string; path?: string; place?: string; do?: string; distributor?: string; mailboxId?: string; name?: string | null; took?: unknown; askId?: number }[] = [];
     const listeners: ((e: { data: string }) => void)[] = [];
+    let { wake, names, refuseFirstNameRead } = settings;
+    const reply = (message: object) => {
+      setTimeout(() => { for (const l of listeners) l({ data: JSON.stringify(message) }); }, 0);
+    };
+    const changesOf = (rows: MailCopy[], start: number) => rows.map(({ accountId, subject }, index) => {
+      const seq = start + index;
+      const id = `message-${seq}`;
+      const date = new Date().toISOString();
+      return { type: "message", op: "create", seq, id, updatedAt: date, entity: {
+        id, accountId, mailboxId: "mailbox", threadId: null, messageIdHeader: null,
+        from: { name: "Fixture sender", address: ["sender", "example.invalid"].join("@") },
+        to: [], cc: [], date, subject, snippet: "Preview", folder: "INBOX", unread: true,
+        hasAttachments: false, attachmentCount: 0, triage: null, labels: [], remoteContent: "none", updatedAt: date,
+        sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+      } };
+    });
     const answers: Record<string, () => object> = {
       kept: () => kept, config: () => config, keptRows: () => ({ rows: [] }), keepRows: () => ({ kept: true }),
       keep: () => ({ kept: true }), http: () => ({ status: 503, headers: [["content-type", "application/json"]], body: { as: "text", text: "{\"error\":{\"code\":\"not_ready\"}}" } }),
     };
-    w.__native = { asked };
+    const emit = (event: object) => {
+      for (const receive of listeners) receive({ data: JSON.stringify(event) });
+    };
+    let holdAcknowledgement = false;
+    let finishAcknowledgement: (() => void) | undefined;
+    let finishExit: (() => void) | undefined;
+    w.__native = {
+      asked,
+      back: (askId: number, delay = false) => {
+        holdAcknowledgement = delay;
+        emit({ type: "ask", epoch: "e1", askId, what: "back" });
+      },
+      finishAcknowledgement: () => finishAcknowledgement?.(),
+      finishExit: () => finishExit?.(),
+    };
     w.ohmailShell = {
       postMessage(text: string) {
-        const m = JSON.parse(text) as { id: number; epoch: string; kind: string; path?: string; place?: string };
-        asked.push({ kind: m.kind, path: m.path, place: m.place });
-        const answer = { ...(answers[m.kind]?.() ?? {}), id: m.id, epoch: m.epoch, ok: true };
-        setTimeout(() => { for (const l of listeners) l({ data: JSON.stringify(answer) }); }, 0);
+        const m = JSON.parse(text) as (typeof asked)[number] & { id: number; epoch: string; act?: string };
+        asked.push({ kind: m.kind, path: m.path, place: m.place, do: m.do, distributor: m.distributor, mailboxId: m.mailboxId, name: m.name, took: m.took, askId: m.askId });
+        const envelope = { id: m.id, epoch: m.epoch, ok: true };
+        if (m.kind === "http" && nativeHttp) {
+          const ask = w.__askNativeHttp as (request: object) => Promise<object>;
+          void ask(m).then((answer) => {
+            reply({ ...envelope, ...answer, ok: !("refused" in answer) });
+          });
+          return;
+        }
+        if (m.kind === "http" && (names || feeds)) {
+          const [path, query] = m.path?.split("?") ?? [];
+          const body = { text: "The fixture letter body" };
+          const response = path === "/sync/snapshot"
+            ? { asOfSeq: 7, changes: changesOf(feeds?.snapshot ?? [], 1), nextCursor: null }
+            : path === "/sync"
+              ? { changes: { creates: changesOf(feeds?.updates ?? [], 8), updates: [], deletes: [], moves: [] }, cursor: "OA", hasMore: false, serverTime: new Date().toISOString() }
+              : path === "/messages/bodies"
+                ? { items: (new URLSearchParams(query).get("ids") ?? "").split(",").map((messageId) => ({ messageId, ...body })) }
+                : path?.endsWith("/body") ? body : null;
+          if (response) {
+            reply({ ...envelope, status: 200, headers: [["content-type", "application/json"]], body: { as: "text", text: JSON.stringify(response) } });
+            return;
+          }
+        }
+        if (m.kind === "phone.wake" && wake) {
+          if (m.do === "read") {
+            reply({ ...envelope, wake });
+            return;
+          }
+          wake = m.do === "choose"
+            ? { ...wake, chosen: m.distributor!, state: { k: "on" } }
+            : { ...wake, chosen: null, state: { k: "no_distributor" } };
+          reply(envelope);
+          reply({ epoch: m.epoch, type: "wakePane", wake });
+          return;
+        }
+        if (m.kind === "phone.name" && names) {
+          if (m.do === "read") {
+            if (refuseFirstNameRead) {
+              refuseFirstNameRead = false;
+              reply({ ...envelope, ok: false, refused: "notReady" });
+            } else {
+              reply({ ...envelope, rows: names });
+            }
+          } else if (m.name === settings.refuseName) {
+            reply({ ...envelope, ok: false, refused: "notReady" });
+          } else {
+            const name = m.name ?? null;
+            names = names.map((row) => row.id === m.mailboxId ? { ...row, name } : row);
+            reply({ ...envelope, name });
+          }
+          return;
+        }
+        const response = replies[`${m.kind}:${m.do ?? m.act ?? ""}`] ?? answers[m.kind]?.() ?? {};
+        const answer = { ...envelope, ...(m.kind === "answer" ? { accepted: true } : response) };
+        if (m.kind === "answer" && m.took === "held" && holdAcknowledgement) {
+          holdAcknowledgement = false;
+          finishAcknowledgement = () => emit(answer);
+        } else if (m.kind === "answer" && m.took === "discard") {
+          finishExit = () => emit(answer);
+        } else {
+          reply(answer);
+        }
       },
       addEventListener(_t: string, l: (e: { data: string }) => void) { listeners.push(l); },
       removeEventListener() {},
@@ -272,8 +375,12 @@ describe("the built page in a browser", () => {
     stored: [string, string][] = [],
     kept: KeptReading = { words: [], refused: [] },
     viewport = { width: 412, height: 915 },
+    settings: PhoneSettingsReading = {},
+    feeds?: Feeds,
+    http?: HttpDoor,
+    replies: Readonly<Record<string, object>> = {},
   ) {
-    const built = await buildShell({ out });
+    const built = await buildShell({ out, app: config.app });
     const outside: string[] = [];
     const server: Server = createServer((req, res) => {
       const path = new URL(req.url ?? "/", "http://door").pathname;
@@ -301,7 +408,12 @@ describe("the built page in a browser", () => {
       const page = await context.newPage();
       const left: string[] = [];
       page.on("request", (r) => { if (!r.url().startsWith(`${origin}/shell/`)) left.push(r.url()); });
-      await page.addInitScript(nativeDouble, { config, kept });
+      if (http) {
+        await page.exposeFunction("__askNativeHttp", (ask: Parameters<HttpDoor["request"]>[0]) =>
+          http.request(ask, new AbortController().signal),
+        );
+      }
+      await page.addInitScript(nativeDouble, { config, kept, settings, feeds, nativeHttp: http !== undefined, replies });
       await page.addInitScript((rows) => { if (window === window.top) for (const [k, v] of rows) localStorage.setItem(k, v); }, stored);
       await page.goto(`${origin}/shell/index.html?epoch=e1`);
       await page.waitForFunction(() => (window as unknown as { __native: { asked: { kind: string }[] } }).__native.asked.some((a) => a.kind === "ready"));
@@ -311,6 +423,227 @@ describe("the built page in a browser", () => {
       throw fault;
     }
   }
+
+  const mail = { accountId: CONFIG.accountId, subject: "A letter for this phone" };
+
+  it("keeps a foreign From choice and letter out of the mounted mail page until the pairing is confirmed", async () => {
+    const sent: string[] = [];
+    let cleared = false;
+    const session = {
+      profile: { accountId: CONFIG.accountId },
+      standalone: false,
+      boundAccount: () => cleared ? CONFIG.accountId : null,
+      leave: () => { cleared = false; },
+      send: async (route: string) => {
+        const path = route.split("?")[0]!;
+        sent.push(path);
+        const accountId = cleared ? CONFIG.accountId : "acct-2";
+        if (path === "/mailboxes") {
+          return Response.json({ items: [{
+            accountId, id: "mailbox", status: "connected", address: cleared ? "Own From" : "Foreign From",
+          }] });
+        }
+        if (path === "/sync/snapshot") {
+          const date = new Date().toISOString();
+          const subject = cleared ? mail.subject : "Foreign letter";
+          return Response.json({ asOfSeq: 1, nextCursor: null, changes: [{
+            type: "message", op: "create", id: "message", seq: 1, updatedAt: date,
+            entity: {
+              id: "message", mailboxId: "mailbox", accountId, date, updatedAt: date, folder: "INBOX", subject,
+              snippet: "Preview", from: { name: "Fixture sender", address: ["sender", "example.invalid"].join("@") },
+              to: [], cc: [], labels: [], unread: true,
+            },
+          }] });
+        }
+        if (path === "/sync") {
+          return Response.json({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "MQ", hasMore: false });
+        }
+        return Response.json({}, { status: 404 });
+      },
+    } as unknown as ShellSession;
+    const http = new HttpDoor({ live: () => ({ session, scope: CONFIG.scope }), ready: () => true });
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/compose" }, [], undefined, undefined, {}, undefined, http);
+    try {
+      const subject = page.getByRole("textbox", { name: "Subject" });
+      await browserExpect(subject).toBeVisible({ timeout: 5_000 });
+      await page.waitForFunction(() => {
+        const native = (window as unknown as { __native: { asked: { path?: string }[] } }).__native;
+        return native.asked.some(({ path }) => path?.split("?")[0] === "/mailboxes");
+      });
+      await browserExpect(page.getByText("Foreign From", { exact: true })).toHaveCount(0);
+      await page.evaluate(() => { window.location.hash = "#/ohbox"; });
+      await browserExpect(page.getByRole("navigation", { name: "Places" })).toBeVisible();
+      await browserExpect(page.getByText("Foreign letter", { exact: true })).toHaveCount(0);
+      expect(sent).toEqual([]);
+
+      cleared = true;
+      await page.reload();
+      await browserExpect(page.getByText("Own From", { exact: true })).toBeVisible({ timeout: 5_000 });
+      await page.evaluate(() => { window.location.hash = "#/ohbox"; });
+      await browserExpect(page.getByRole("option", { name: new RegExp(mail.subject) })).toBeVisible({ timeout: 5_000 });
+      await browserExpect(page.getByText("Foreign letter", { exact: true })).toHaveCount(0);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("lists Ohbox and Settings in the phone's navigation", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en" });
+    try {
+      const dock = page.getByRole("navigation", { name: "Places" });
+      await browserExpect(dock.getByRole("button", { name: "Ohbox", exact: true })).toBeVisible({ timeout: 4_000 });
+      await dock.getByRole("button", { name: "More", exact: true }).click();
+      await browserExpect(page.getByRole("dialog", { name: "More" }).getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("shows the synced letters in the Ohbox and opens one with Reply", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/ohbox" }, [], undefined, undefined, {}, {
+      snapshot: [mail, { ...mail, subject: "Another letter for this phone" }],
+    });
+    try {
+      const row = page.getByRole("option", { name: `Fixture sender: ${mail.subject}`, exact: true });
+      await browserExpect(row).toBeVisible({ timeout: 4_000 });
+      await browserExpect(page.getByRole("option", { name: /Another letter for this phone/ })).toBeVisible();
+      await row.click();
+      await browserExpect(page.getByText("The fixture letter body", { exact: true })).toBeVisible();
+      const actions = page.getByRole("toolbar", { name: "Actions", exact: true });
+      await browserExpect(actions.getByRole("button", { name: "Reply", exact: true })).toBeVisible();
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("opens the Ohbox at an unknown place address without drawing another account's letter", async () => {
+    const foreign = { accountId: "acct-2", subject: "A letter for the other phone" };
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/not-a-place" }, [], undefined, undefined, {}, {
+      snapshot: [mail], updates: [foreign],
+    });
+    try {
+      await page.waitForFunction(() => {
+        const native = (window as unknown as { __native: { asked: { path?: string }[] } }).__native;
+        return native.asked.some(({ path }) => path?.startsWith("/sync?"));
+      }, undefined, { timeout: 4_000 });
+      await browserExpect(page.getByRole("option", { name: new RegExp(mail.subject) })).toBeVisible({ timeout: 4_000 });
+      await browserExpect(page.getByText(foreign.subject, { exact: true })).toHaveCount(0);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("keeps the calendar app's page on its own frame", async () => {
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language: "en" });
+    try {
+      const dock = page.getByRole("navigation", { name: "Places" });
+      await browserExpect(dock).toBeVisible();
+      await browserExpect(dock.getByRole("button", { name: "Ohbox", exact: true })).toHaveCount(0);
+      await browserExpect(page.getByRole("button", { name: "Settings", exact: true })).toHaveCount(0);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("opens New mail from phone Settings and shows the device's answer to each choice", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en" }, [], undefined, undefined, {
+      wake: {
+        os: "android", state: { k: "no_distributor" },
+        choices: [{ id: "fixture.helper", name: "Wake helper" }], chosen: null, busy: false,
+      },
+    });
+    try {
+      await page.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("dialog", { name: "More" }).getByRole("button", { name: "Settings", exact: true }).click({ timeout: 4_000 });
+      const notifications = page.getByRole("button", { name: "Notifications", exact: true });
+      await notifications.click();
+      const choice = page.getByRole("radio", { name: "Wake helper" });
+      const off = page.getByRole("radio", { name: "None" });
+      await browserExpect(page.getByText("New mail", { exact: true })).toBeVisible();
+      await browserExpect(off).toBeChecked();
+      await choice.click();
+      await browserExpect(choice).toBeChecked();
+      await off.click();
+      await browserExpect(off).toBeChecked();
+      await browserExpect(page.getByText(/No push distributor is chosen on this phone/)).toBeVisible();
+      await page.getByRole("button", { name: "Back to Settings" }).click();
+      await browserExpect(notifications).toBeVisible();
+      const wakeRequests = await page.evaluate(() => {
+        const native = (window as unknown as { __native: { asked: { kind: string; do?: string; distributor?: string }[] } }).__native;
+        return native.asked.filter((a) => a.kind === "phone.wake").map((a) => [a.do, a.distributor]);
+      });
+      expect(wakeRequests).toEqual([["read", undefined], ["choose", "fixture.helper"], ["off", undefined]]);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("opens General on this phone and writes only the sender name it edits", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", setting: "standalone" }, [], undefined, undefined, {
+      names: [
+        { id: "first", address: "First mailbox", name: "First name" },
+        { id: "second", address: "Second mailbox", name: "Second name" },
+      ],
+      refuseFirstNameRead: true,
+      refuseName: "Refused name",
+    });
+    try {
+      await page.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("dialog", { name: "More" }).getByRole("button", { name: "Settings", exact: true }).click();
+      const general = page.getByRole("button", { name: "General", exact: true });
+      await general.click({ timeout: 4_000 });
+      const first = page.getByRole("textbox", { name: "First mailbox" });
+      const second = page.getByRole("textbox", { name: "Second mailbox" });
+      await browserExpect(page.getByText("Your name", { exact: true })).toBeVisible();
+      await browserExpect(page.getByRole("status").filter({ hasText: "This part of ohmail couldn't load." })).toBeVisible();
+      await page.getByRole("button", { name: "Try again", exact: true }).click();
+      await browserExpect(first).toHaveValue("First name");
+      await browserExpect(second).toHaveValue("Second name");
+      await second.fill("n".repeat(101));
+      await second.press("Enter");
+      await browserExpect(page.getByText("Your name can hold up to 100 characters, on one line.")).toBeVisible();
+      await second.fill("Refused name");
+      await second.press("Enter");
+      await browserExpect(page.getByText("That did not save, so try again.")).toBeVisible();
+      await browserExpect(second).toHaveValue("Refused name");
+      await second.fill("Updated sender name");
+      await second.press("Enter");
+      await browserExpect(page.getByText("Saved", { exact: true })).toBeVisible();
+      await browserExpect.poll(() => page.evaluate(() => {
+        const native = (window as unknown as { __native: { asked: { kind: string; path?: string; name?: string }[] } }).__native;
+        const saved = native.asked.findIndex((entry) => entry.kind === "phone.name" && entry.name === "Updated sender name");
+        return saved < 0 ? 0 : native.asked.slice(saved + 1).filter((entry) => entry.kind === "http" && entry.path?.split("?")[0] === "/sync").length;
+      }), { timeout: 4_000 }).toBe(1);
+      await browserExpect(first).toHaveValue("First name");
+      await page.getByRole("button", { name: "Back to Settings" }).click();
+      await general.click();
+      await browserExpect(second).toHaveValue("Updated sender name");
+      const writes = await page.evaluate(() => {
+        const native = (window as unknown as { __native: { asked: { kind: string; do?: string; mailboxId?: string; name?: string }[] } }).__native;
+        return native.asked.filter((a) => a.kind === "phone.name" && a.do === "save").map((a) => [a.mailboxId, a.name]);
+      });
+      expect(writes).toEqual([["second", "Refused name"], ["second", "Updated sender name"]]);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("keeps a paired phone from asking for standalone sender names", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en" });
+    try {
+      await page.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("dialog", { name: "More" }).getByRole("button", { name: "Settings", exact: true }).click();
+      await browserExpect(page.getByRole("button", { name: "Notifications", exact: true })).toBeVisible();
+      await browserExpect(page.getByRole("button", { name: "General", exact: true })).toHaveCount(0);
+      const askedForName = await page.evaluate(() => {
+        const native = (window as unknown as { __native: { asked: { kind: string }[] } }).__native;
+        return native.asked.some((entry) => entry.kind === "phone.name");
+      });
+      expect(askedForName).toBe(false);
+    } finally {
+      await close();
+    }
+  }, 120_000);
 
   for (const [language, places] of [["en", "Places"], ["de", "Orte"]] as const) {
     it(`draws the frame in its ${language} words, says it drew, and asks nothing of any address`, async () => {
@@ -325,6 +658,149 @@ describe("the built page in a browser", () => {
         expect(asked.filter((a) => a.kind === "ready")).toHaveLength(1);
         expect(left).toEqual([]);
         expect(outside).toEqual([]);
+      } finally {
+        await close();
+      }
+    }, 120_000);
+  }
+
+  it("reads the measured backup state and shares only after a second press", async () => {
+    const { page, left, outside, close } = await drawn(
+      { ...CONFIG, language: "en", os: "ios", place: "#/settings/about" }, [], undefined, undefined,
+      undefined, undefined, undefined, {
+        "act:backup.read": { backup: "included" },
+        "phone.diagnostics:write": { fileName: "diagnostic.json" },
+        "phone.diagnostics:share": { shared: false },
+      },
+    );
+    try {
+      await page.getByText("The copied mail is in a backup.", { exact: false }).waitFor();
+      await page.getByText("On an iPhone the pairing stays", { exact: false }).waitFor();
+      const share = page.getByRole("button", { name: "Share file" });
+      expect(await share.count()).toBe(0);
+      await page.getByRole("button", { name: "Write file" }).click();
+      await page.getByText("Written to diagnostic.json", { exact: false }).waitFor();
+      const diagnosticPresses = () => page.evaluate(() => {
+        const native = (window as unknown as { __native: { asked: { kind: string; do?: string }[] } }).__native;
+        return native.asked.filter((a) => a.kind === "phone.diagnostics").map((a) => a.do);
+      });
+      expect(await diagnosticPresses()).toEqual(["write"]);
+      await share.click();
+      await page.getByText("This phone could not open the share sheet.", { exact: false }).waitFor();
+      expect(await diagnosticPresses()).toEqual(["write", "share"]);
+      expect(await share.isEnabled()).toBe(true);
+      expect(left).toEqual([]);
+      expect(outside).toEqual([]);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("asks before handing back the mailbox shown in Settings", async () => {
+    const row = {
+      id: "mailbox", address: "Current mailbox", tag: "organizing", notes: [], warnings: [],
+      start: false, stop: true, explainBackground: false, notifications: false,
+    };
+    const { page, close } = await drawn(
+      { ...CONFIG, setting: "standalone", language: "en", place: "#/settings/mailboxes" }, [], undefined, undefined,
+      undefined, undefined, undefined, { "phone.organize:read": { rows: [row] }, "phone.organize:stop": { rows: [] }, "phone.mailbox:list": { rows: [] } },
+    );
+    try {
+      const stop = page.getByRole("button", { name: "Stop organizing here" });
+      const dialog = page.getByRole("dialog");
+      const stops = () => page.evaluate(() => {
+        const native = (window as unknown as { __native: { asked: { kind: string; do?: string }[] } }).__native;
+        return native.asked.filter((a) => a.kind === "phone.organize" && a.do === "stop").length;
+      });
+      await stop.click();
+      await dialog.getByRole("button", { name: "Keep organizing" }).click();
+      expect(await stops()).toBe(0);
+      await stop.click();
+      await dialog.getByRole("button", { name: "Hand the mailbox back" }).click();
+      expect(await stops()).toBe(1);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("uses the shared mailbox editor on the standalone phone", async () => {
+    const row = {
+      id: "mailbox", address: "Current mailbox", status: "active", provider: "other", authKind: "password",
+      errorCode: null, disabledReason: null, syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: null,
+    };
+    const { page, close } = await drawn(
+      { ...CONFIG, setting: "standalone", language: "en", place: "#/settings/mailboxes" }, [], undefined, undefined,
+      undefined, undefined, undefined, {
+        "phone.organize:read": { rows: [] },
+        "phone.mailbox:list": { rows: [row] },
+        "phone.mailbox:edit": { edited: { ok: true, value: null } },
+      },
+    );
+    try {
+      await page.getByRole("button", { name: /Current mailbox/ }).click();
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.getByLabel("App password for this mailbox", { exact: true }).fill("fixture password");
+      await page.getByRole("button", { name: "Continue", exact: true }).click();
+      await page.getByLabel("App password for this mailbox", { exact: true }).waitFor({ state: "hidden" });
+      const operations = await page.evaluate(() => {
+        const native = (window as unknown as { __native: { asked: { kind: string; do?: string }[] } }).__native;
+        return native.asked.filter((a) => a.kind === "phone.mailbox").map((a) => a.do);
+      });
+      expect(operations.filter((action) => action === "edit")).toHaveLength(1);
+      expect(await page.getByRole("button", { name: "Add a mailbox" }).count()).toBe(0);
+      expect(await page.getByRole("button", { name: "Remove" }).count()).toBe(0);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  for (const [label, draft] of [
+    ["IMAP host", "fixture-server"],
+    ["App password for this mailbox", "fixture password"],
+  ] as const) {
+    it(`keeps or discards the inline mailbox edit after Back with unsaved ${label}`, async () => {
+      const row = {
+        id: "mailbox", address: "Current mailbox", status: "active", provider: "other", authKind: "password",
+        errorCode: null, disabledReason: null, syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: null,
+      };
+      const { page, close } = await drawn(
+        { ...CONFIG, setting: "standalone", language: "en", place: "#/settings/mailboxes" }, [], undefined, undefined,
+        undefined, undefined, undefined, { "phone.organize:read": { rows: [] }, "phone.mailbox:list": { rows: [row] } },
+      );
+      try {
+        await page.getByRole("button", { name: /Current mailbox/ }).click();
+        await page.getByRole("button", { name: "Edit", exact: true }).click();
+        const field = page.getByLabel(label, { exact: true });
+        const back = (askId: number, delay = false) => page.evaluate(([id, wait]) => {
+          (window as unknown as { __native: { back(id: number, delay: boolean): void } }).__native.back(id, wait);
+        }, [askId, delay] as const);
+        const dialog = page.getByRole("alertdialog");
+        expect(await field.inputValue()).toBe("");
+        await back(1, true);
+        await field.fill(draft);
+        await page.evaluate(() => {
+          (window as unknown as { __native: { finishAcknowledgement(): void } }).__native.finishAcknowledgement();
+        });
+        await dialog.getByRole("button", { name: "Keep editing" }).click({ timeout: 2500 });
+        expect(await field.inputValue()).toBe(draft);
+
+        await back(2);
+        await dialog.getByRole("button", { name: "Discard changes" }).click();
+        await page.waitForFunction(() => {
+          const native = (window as unknown as { __native: { asked: { askId?: number; took?: unknown }[] } }).__native;
+          return native.asked.some((a) => a.askId === 2 && a.took === "discard");
+        });
+        expect(await field.inputValue()).toBe(draft);
+        const edits = await page.evaluate(() => {
+          const native = (window as unknown as { __native: { asked: { kind: string; do?: string }[] } }).__native;
+          return native.asked.filter((a) => a.kind === "phone.mailbox" && a.do === "edit").length;
+        });
+        expect(edits).toBe(0);
+        await page.evaluate(() => {
+          (window as unknown as { __native: { finishExit(): void } }).__native.finishExit();
+        });
+        await field.waitFor({ state: "detached" });
+        expect(await page.getByRole("button", { name: "Edit", exact: true }).count()).toBe(1);
       } finally {
         await close();
       }
@@ -385,15 +861,20 @@ describe("the built page in a browser", () => {
   }
 
   it("judges its storage at the start by the scope native names: this mailbox's word comes back, another mailbox's letter stays", async () => {
-    const mine = `ohmail.ui.compose.${CONFIG.scope}.c1`;
+    const mine = `ohmail.ui.compose.${CONFIG.scope}.phone`;
+    const session = `ohmail.compose.session.${CONFIG.scope}.phone`;
     const theirs = `ohmail.ui.compose.p${"b".repeat(32)}.c1`;
     // Another mailbox's page left its refused letter and a reply under no owner's name; this mailbox's keeper holds a
     // letter the storage lacks. No key in the storage names this mailbox: its scope can only come from native.
     const stored: [string, string][] = [[theirs, "the other mailbox's refused letter"], ["ohmail.ui.reply:m1", "a reply under no owner's name"]];
-    const { page, close } = await drawn({ ...CONFIG, language: "en" }, stored, { words: [[mine, "this mailbox's kept letter"]], refused: [] });
+    const { page, close } = await drawn({ ...CONFIG, language: "en" }, stored, {
+      words: [[mine, "this mailbox's kept letter"], [session, "this mailbox's compose session"]],
+      refused: [],
+    });
     try {
       const now = await page.evaluate((keys) => keys.map((key) => localStorage.getItem(key)), [mine, theirs, "ohmail.ui.reply:m1"]);
       expect(now).toEqual(["this mailbox's kept letter", "the other mailbox's refused letter", null]);
+      await expect(page.evaluate((key) => localStorage.getItem(key), session)).resolves.toBe("this mailbox's compose session");
       const asked = await page.evaluate(() => (window as unknown as { __native: { asked: { kind: string }[] } }).__native.asked);
       expect(asked.filter((a) => a.kind === "keep")).toEqual([]);
     } finally {

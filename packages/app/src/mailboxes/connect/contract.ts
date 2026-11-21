@@ -6,6 +6,7 @@
  */
 import type { ReactNode } from "react";
 import type { ConnectKept, MailboxId } from "@ohmail/app-logic/mailboxes/connect/types";
+import type { AskLeave } from "../../host/device.js";
 import type { ConnectWire, None } from "../../host/index.js";
 
 /** The wire the form calls: a shell's `wires.connect`, or what a page with no frame built itself. */
@@ -82,6 +83,8 @@ export interface ConnectAsk {
   /** Typed words held by a caller that outlives the form; memory only, and never the password. */
   readonly kept?: ConnectKept;
   readonly guard?: ConnectGuard;
+  /** The surrounding Settings pane can hold a departure while an inline edit is unsaved. */
+  readonly holdLeave?: (ask: AskLeave) => () => void;
   /** "Do this later", where the mount has such a way. */
   readonly later?: () => void;
   /** A mail to support, where the mount has one: the provider's id and the last refusal's code, nothing typed. */

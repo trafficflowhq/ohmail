@@ -21,6 +21,7 @@
  *     pairing the keystore outlived is purged before a profile is read — which is what makes
  *     deleting the app a take-back on iOS, where the Keychain survives it.
  */
+import { calendarProfileMayRecover } from "../src/calendar/live-port";
 import { describe, expect, it, vi } from "vitest";
 import { refuse, sayRefusal } from "../src/refusal";
 import { OUTBOX_TYPE, SqlMirrorStore, mirrorDbName } from "@ohmail/client-engine";
@@ -2248,4 +2249,57 @@ describe("the shell's keeper and the web view's copy share the mirror's fate", (
     expect(reinstalled.kind).toBe("fresh-install");
     expect(await other.profiles.list()).toEqual([]);
   });
+});
+
+it("keeps a durable forget for an inactive pairing until calendar cleanup succeeds", async () => {
+  const { env, profiles } = testEnv();
+  await profiles.add({ origin: "https://fixture.invalid", flavor: "selfhost", accountId: "fixture", refreshToken: "fixture" });
+  const row = (await profiles.list())[0]!;
+  let canClean = false;
+  const calls: string[] = [];
+  const withCalendar = {
+    ...env, fetchImpl: async () => new Response(null, { status: 200 }), calendar: {
+      revoke: async (id: string) => { calls.push(id); return canClean; },
+    },
+  };
+  const revoke = async () => { calls.push("server"); return true; };
+
+  expect((await forgetProfile(withCalendar, row.id, { revoke, erased: true })).kind).toBe("partial");
+  expect(calls).toEqual([row.id]);
+  expect((await profiles.pendingWipes()).map(({ id }) => id)).toEqual([row.id]);
+  expect(await drainPendingWipes(withCalendar)).toHaveLength(1);
+  canClean = true;
+  expect(await drainPendingWipes(withCalendar)).toEqual([]);
+  expect(calls.filter((id) => id === row.id)).toHaveLength(3);
+  expect(await profiles.pendingWipes()).toEqual([]);
+});
+
+it("launch drains crash-saved wipes and checks the selected profile before recovering the calendar", async () => {
+  const { env, profiles } = testEnv();
+  await profiles.add({ origin: "https://fixture.invalid", flavor: "selfhost", accountId: "fixture", refreshToken: "fixture" });
+  const row = (await profiles.list())[0]!;
+  await profiles.setActive(row.id);
+  expect(await calendarProfileMayRecover(profiles, row.id)).toBe(true);
+  // The process exits after writing the obligation, before the first native call.
+  await profiles.markPendingWipe(row.id, mirrorOwnerKey(row.origin, row.accountId));
+  const restart = { ...env, fetchImpl: async () => new Response(null, { status: 200 }), calendar: { revoke: async () => false } };
+  expect(await drainPendingWipes(restart)).toHaveLength(1);
+  expect(await calendarProfileMayRecover(profiles, row.id)).toBe(false);
+  restart.calendar.revoke = async () => true;
+  expect(await drainPendingWipes(restart)).toEqual([]);
+  expect(await calendarProfileMayRecover(profiles, row.id)).toBe(false);
+
+
+  const whole = read("../src/net/connection.tsx");
+  const launch = whole.slice(whole.indexOf("useEffect(() => {\n    void gate"), whole.indexOf("const api = useMemo<Connection>("));
+  const wipes = launch.indexOf("await drainPendingWipes(env)");
+  const selected = launch.indexOf("await env.profiles.active()");
+  expect(wipes).toBeGreaterThan(-1);
+  expect(selected).toBeGreaterThan(wipes);
+  expect(launch).not.toMatch(/env\.calendar\?\.recover/);
+  const admit = whole.slice(whole.indexOf("const adoptShell"), whole.indexOf("const leaveEntered"));
+  expect(admit.indexOf("session.verifyIdentity()")).toBeGreaterThan(-1);
+  const checked = admit.indexOf("calendarProfileMayRecover(env.profiles, session.profile.id)");
+  expect(checked).toBeGreaterThan(admit.indexOf("session.verifyIdentity()"));
+  expect(admit.indexOf("env.calendar.open(")).toBeGreaterThan(checked);
 });

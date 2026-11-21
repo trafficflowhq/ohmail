@@ -2,18 +2,20 @@
  * WHAT THE PHONE'S PAGE HANDS THE FRAME: the places it mounts, the address, the window and the look. The page is a
  * browser's page, so the address is its fragment and the window its own; each change of the fragment is also told to
  * native, which keeps it to bring a page whose process ended back to the same place. The places come from the app the
- * page is built for (`mounted.<app>.ts`, chosen by the page's build): no place is mounted on the phone yet, and until
- * a place task mounts one in its app's file the frame stands with nothing in it.
+ * page is built for (`mounted.<app>.ts`, chosen by the page's build).
  */
 import { PLACE_IDS, STAGE_IDS, type FramePlaces, type FrameStages } from "@ohmail/app/frame/contract";
-import type { Appearance, FrameSupplies, HostAddress, Signal } from "@ohmail/app/host";
+import type { Appearance, FrameSupplies, HostAddress, HostContract, Signal } from "@ohmail/app/host";
 import { NONE } from "@ohmail/app/host/contract";
 import { browserWindowFacts, fragmentAddress } from "@ohmail/app/host/browser";
 
-/** What an app mounts: its places and stages. One file per app answers it (`./mounted`, the page's build picks it). */
+/** What an app mounts. One file per app answers it (`./mounted`, the page's build picks it). */
 export interface Mounted {
   readonly places: FramePlaces;
   readonly stages: FrameStages;
+  readonly reader: FrameSupplies["reader"];
+  readonly above: FrameSupplies["above"];
+  readonly mailboxWires?: Pick<HostContract["wires"], "mailboxes" | "connect">;
 }
 
 /** Every place and stage none: the frame with its dock and nothing in it. */
@@ -21,6 +23,8 @@ export function nothingMounted(): Mounted {
   return {
     places: Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])) as unknown as FramePlaces,
     stages: Object.fromEntries(STAGE_IDS.map((id) => [id, NONE])) as unknown as FrameStages,
+    reader: NONE,
+    above: NONE,
   };
 }
 
@@ -68,9 +72,8 @@ export function phoneFrameSupplies(
   return {
     places: mounted.places,
     stages: mounted.stages,
-    /* No place of the phone's has a reading column yet, and no old shell stands here: nothing above the panes. */
-    reader: NONE,
-    above: NONE,
+    reader: mounted.reader,
+    above: mounted.above,
     // A phone shell holds no keyboard registry, so it hands no over.
     overs: { palette: NONE, keys: NONE },
     address: keptAddress(address, kept),

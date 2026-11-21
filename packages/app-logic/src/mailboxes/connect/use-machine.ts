@@ -21,7 +21,7 @@ export interface Machine {
   readonly alive: RefObject<boolean>;
   /** The password field's handle is attached here. */
   readonly password: RefObject<PasswordHandle | null>;
-  readonly hasPassword: boolean;
+  readonly passwordInput: { readonly filled: boolean; readonly revision: number };
   passwordChanged(filled: boolean): void;
 }
 
@@ -52,6 +52,7 @@ export function useMachine(input: ConnectFormInput, facts: ConnectFacts): Machin
   if (held.current === null) held.current = initialState(input.kept?.read() ?? null, facts);
   const [, redraw] = useReducer((n: number) => n + 1, 0);
   const [hasPassword, setHasPassword] = useState(false);
+  const passwordRevision = useRef(0);
   const password = useRef<PasswordHandle | null>(null);
   const alive = useRef(false);
   useEffect(() => {
@@ -104,8 +105,9 @@ export function useMachine(input: ConnectFormInput, facts: ConnectFacts): Machin
     dispatch: machine.current.dispatch,
     alive,
     password,
-    hasPassword,
+    passwordInput: { filled: hasPassword, revision: passwordRevision.current },
     passwordChanged(filled) {
+      passwordRevision.current++;
       setHasPassword(filled);
       machine.current?.dispatch({ kind: "password" });
     },

@@ -7,7 +7,7 @@
  * that open the list with the list. A connect that upgrades the phone's store keeps its own screen, which counts the
  * upgrade, until the last pull request. Rendered in the calendar app, as its switch module names it.
  */
-import { act, createElement as h } from "react";
+import { act, createElement as h, useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount } from "./_rendered-dom";
 
@@ -32,6 +32,7 @@ vi.mock("expo-router", () => ({
   router: { push: (to: string) => void scene.pushed.push(to), canGoBack: () => false, back: () => undefined, replace: () => undefined },
   Redirect: ({ href }: { href: string }) => (scene.drawn.push(href), null),
   usePathname: () => "/",
+  useFocusEffect: useEffect,
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 /* The calendar app, as its switch module names it; no other native module is here. */
@@ -77,6 +78,10 @@ vi.mock("../src/shell/doors", () => ({
   onShellWake: () => () => undefined,
 }));
 vi.mock("../src/engine/notification-permission-native", () => ({ nativeNotificationPermission: () => null }));
+vi.mock("../src/engine/diagnostics-native", () => ({
+  nativePhoneDiagnosticDeps: vi.fn(),
+  shareDiagnosticFile: vi.fn(),
+}));
 vi.mock("../src/engine/backup-exclusion-native", () => ({ nativeBackupExclusion: () => null }));
 vi.mock("../src/switch/switch-native", () => ({ switchNative: () => null }));
 vi.mock("../src/shell/bridge-host", () => ({
@@ -84,7 +89,9 @@ vi.mock("../src/shell/bridge-host", () => ({
     constructor(deps: { act: (a: { act: string }) => Promise<unknown> }) {
       scene.bridge = deps;
     }
+    begin(): void {}
     send(): void {}
+    cancelPhysicalBack(): void {}
   },
 }));
 
@@ -131,6 +138,7 @@ describe("the calendar app on the door's pages", () => {
     const session = {
       profile: { id: "row-1", origin: "https://mail.example.test", flavor: "selfhost", accountId: "account-1", pin: null },
       ownerKey: "owner-1", standalone: false,
+      lifetime: new AbortController().signal,
     } as unknown as ShellSession;
     scene.conn = { state: { k: "shell", session }, profiles: [session.profile] };
     /* The app's root wraps every screen in the wake's provider (app/_layout.tsx); the shell reads its door. */

@@ -1,0 +1,10 @@
+{
+  "platforms": ["android", "apple"],
+  "android": {
+    "modules": ["app.ohmail.calendar.OhmailCalendarModule"]
+  },
+  "apple": {
+    "modules": ["OhmailCalendarModule"],
+    "appDelegateSubscribers": ["CalendarNoticeSubscriber"]
+  }
+}

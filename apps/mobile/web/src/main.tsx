@@ -9,11 +9,16 @@ import catalogue from "./catalogue";
 import mounted from "./mounted";
 import { createRoot, type Root } from "react-dom/client";
 import { createPortal } from "react-dom";
+import { calendarPortOf } from "@ohmail/app-logic/calendar";
+import { calendar as calendarEntry } from "@ohmail/app/calendar";
 import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { mailboxTotalOf, readSearchBy } from "@ohmail/app-logic/search";
 import { startSyncScheduler, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
+import { setComposerScope } from "@ohmail/app-logic/writing/compose";
 import { unsentDraftsOf, type NoticePermission } from "./engine-package";
 import { benchDoor, type BenchDoor } from "./bench";
+import { calendarRecordClearer, calendarRecordSender, followWidget } from "./calendar-record";
+import { isWidgetGeneration } from "../../src/calendar/opened";
 import type { LinkInTarget } from "../../src/shell/bridge-kinds";
 import { otherAppDoor } from "./other-app";
 import { note, type Bridge } from "./bridge";
@@ -39,6 +44,8 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
   const config = await bridge.request("config", {});
   await kept.adopt(words, refused, config.scope);
   ownStorage(config.scope);
+  // One composer per phone WebView. Its kept words must survive a restart of the WebView process.
+  if (config.app === "ohmail") setComposerScope("phone");
   // The phone's old copy of this mailbox, taken once, before the engine reads its own. One that could not be taken
   // stays, unmarked: the next start takes it again, filling only what this one lacks.
   if (config.oldCopy === "present") {
@@ -58,19 +65,62 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
   // that draws the place takes it.
   const other = otherAppDoor(bridge, config);
   let arrived: LinkInTarget | null = null;
+  let widget: string | null = null;
+  const widgetListeners = new Set<() => void>();
   bridge.on((e) => {
     if (e.type === "linkIn" && e.target.to !== "compose") arrived = e.target;
+    if (config.app === "ohcal" && e.type === "calendarWidget" && isWidgetGeneration(e.generation)) {
+      widget = e.generation;
+      for (const changed of widgetListeners) changed();
+    }
   });
+  const sendCalendar = calendarRecordSender(bridge);
+  const clearCalendar = calendarRecordClearer(bridge);
   if (__OHMAIL_BENCH__) {
     (window as unknown as { __ohmailBench?: BenchDoor }).__ohmailBench =
-      benchDoor(engine, store, localStorage, { door: other, arrival: () => arrived });
+      benchDoor(engine, store, localStorage, {
+        door: other, arrival: () => arrived,
+        calendar: async (record) => {
+          const publication = crypto.randomUUID();
+          const cleared = await clearCalendar(publication);
+          return cleared === "kept" ? sendCalendar(record, publication) : cleared;
+        },
+      });
   }
-  const signals = phoneSignals(bridge, config.facts, () => unsentDraftsOf(engine.read()).length);
   let permission: NoticePermission = config.notifications;
-  const frame = phoneFrameSupplies(mounted, config.place, (fragment) => void bridge.request("place", { fragment }).catch(() => {}));
+  const mountedPlaces = mounted(bridge, config);
+  const frame = phoneFrameSupplies(mountedPlaces, config.place, (fragment) => void bridge.request("place", { fragment }).catch(() => {}));
+  const signals = phoneSignals(bridge, config.facts, () => unsentDraftsOf(engine.read()).length, frame.address);
+  const transport = config.app === "ohcal" ? engine.calendarTransport() : null;
+  const calendar = transport ? calendarPortOf({
+    engine, transport, clock: { uuid: () => crypto.randomUUID(), now: Date.now },
+    mayRun: () => engine.calendarQueueReady(), settings: transport.calendarSettings,
+    held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),
+  }) : undefined;
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const widgets = config.app === "ohcal" ? {
+    send: sendCalendar,
+    clear: clearCalendar,
+    take() { const current = widget; widget = null; return current; },
+    subscribe(changed: () => void) {
+      widgetListeners.add(changed);
+      return () => { widgetListeners.delete(changed); };
+    },
+    open: (generation: string) => !calendar ? Promise.resolve() : followWidget(
+      generation,
+      async (id) => (await bridge.request("act", { act: "calendar.resolve", generation: id })).widget,
+      async () => {
+        const started = Date.now();
+        await engine.syncOnce();
+        if (engine.lastDriveAt() < started) await engine.syncOnce();
+      }, store, timeZone, (fragment) => frame.address.write(fragment, "push"),
+    ),
+  } : undefined;
   const facts = { setting: config.setting, scope: config.scope, accountId: config.accountId, build: config.build };
   const read = bridgeFetch(bridge, config.scope);
   const host = phoneHost(engine, facts, {
+    mailboxWires: mountedPlaces.mailboxWires,
+    mailFetch: config.app === "ohmail" ? read : undefined,
     search: {
       by: config.setting === "standalone" ? "people" : () => readSearchBy(read),
       mailboxTotal: async () => {
@@ -81,7 +131,8 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
       },
     },
     signOut: async () => { await bridge.request("act", { act: "signOut" }); },
-    frame,
+    frame: calendar ? { ...frame, calendar: calendarEntry } : frame,
+    calendar,
     notifications: {
       permission: () => permission,
       request: async () => {
@@ -113,10 +164,11 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
         host={host}
         locale={config.language}
         catalogue={catalogue}
-        timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
+        timeZone={timeZone}
         sync={sync}
-        drawn={() => void bridge.request("ready", { place: frame.address.read() }).catch(() => {})}
+        drawn={() => bridge.request("ready", { place: frame.address.read() }).catch(() => {})}
         noticeChoices={() => storedNoticeChoices(localStorage, config.app === "ohcal")}
+        widgets={widgets}
       />
     </portalRenderer.Provider>,
   );

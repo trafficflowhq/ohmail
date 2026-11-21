@@ -8,8 +8,8 @@ import {
 } from "@ohmail/client-engine";
 
 export {
-  HttpAdapter, IndexedDbMirrorStore, NOTICE_COUNT_MAX, OUTBOX_TYPE, OhmailEngine, ROUTING_JOURNAL_TYPE, SYNC_ENTITY_TYPES,
-  flattenResponse, lost, noticeChoicesOf, parseMailto, recordKey, unsentDraftsOf,
+  HttpAdapter, IndexedDbMirrorStore, MIRROR_ENTITY_TYPES, NOTICE_COUNT_MAX, OUTBOX_TYPE, OhmailEngine, ROUTING_JOURNAL_TYPE, SYNC_ENTITY_TYPES,
+  calendarChoicesOf, flattenResponse, lost, mailChoicesOf, noticeChoicesOf, readCalendarSnapshot, parseMailto, recordKey, unsentDraftsOf,
 } from "@ohmail/client-engine";
 
 /**
@@ -22,6 +22,6 @@ const CARRIED: ReadonlySet<string> = new Set([
 export const isCarriedLocalType = (type: string): boolean => CARRIED.has(type);
 export type { EmailAddress, EngineMutation } from "@ohmail/wire";
 export type {
-  IndexedDbMirrorStoreOptions, MailNotice, MirrorRecord, MirrorStore, Notice,
+  CalendarNoticeChoices, CalendarSnapshot, IndexedDbMirrorStoreOptions, MailNotice, MirrorRecord, MirrorStore, Notice,
   NoticeChoices, NoticePermission, NoticeTaken, SyncChange,
 } from "@ohmail/client-engine";

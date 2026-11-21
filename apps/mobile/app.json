@@ -195,6 +195,7 @@
       "./plugins/shell-assets",
       "./plugins/variant-modules",
       "./plugins/app-switch",
+      "./plugins/calendar-native",
       "./plugins/backup-exclusions"
     ],
     "locales": {

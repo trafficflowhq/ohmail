@@ -7,6 +7,8 @@ import type { SignatureEcho } from "@ohmail/app-logic/consent";
 import type { ReactNode } from "react";
 import { isRichEmpty, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 
+import type { AskLeave } from "../../host/device.js";
+
 export type { RichValue };
 
 export interface SignaturesMailbox {
@@ -38,7 +40,7 @@ export interface SignaturesModel {
   /** The sentence for a refused write, where the organizer refused it; null for the plain failure. */
   refusal(error: unknown, takeoverAsked: boolean): string | null;
   /** The shell's leave hold: while a draft is unsaved, a way out of the pane asks first. Returns its release. */
-  holdLeave(ask: (leave: () => void) => void): () => void;
+  holdLeave(ask: AskLeave): () => void;
   readonly editor: (props: SignatureEditorProps) => ReactNode;
   /** A note about a change that travelled to this mailbox from another device, where one stands. */
   readonly changeNote: (mailboxId: string) => ReactNode;

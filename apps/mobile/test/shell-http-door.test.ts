@@ -8,7 +8,8 @@
  * `test/phone-relay-routes-copy.test.ts` at the repository's root.
  */
 import { describe, expect, it } from "vitest";
-import type { ShellSession } from "../src/net/pairing";
+import { BearerManagerRN } from "../src/net/bearer";
+import { shellSessionOf, type ShellSession } from "../src/net/pairing";
 import { BridgeHost } from "../src/shell/bridge-host";
 import { HttpDoor, NATIVE_ONLY } from "../src/shell/http-door";
 import { RELAY_ROUTES } from "../src/shell/relay-routes";
@@ -31,6 +32,7 @@ function transport() {
 }
 
 function sessionOver(fetch: ShellSession["fetch"], cleared = true): ShellSession {
+  const lifetime = new AbortController();
   return {
     profile: { id: "a", origin: ORIGIN, accountId: "acct-1", apiBase: null } as unknown as ServerProfile,
     bearer: null,
@@ -39,12 +41,52 @@ function sessionOver(fetch: ShellSession["fetch"], cleared = true): ShellSession
     ownerKey: `${ORIGIN}::acct-1`,
     standalone: false,
     verifyIdentity: async () => ({ kind: "verified" }),
-    identityCleared: () => cleared,
+    boundAccount: () => cleared && !lifetime.signal.aborted ? "acct-1" : null,
+    lifetime: lifetime.signal,
+    leave: () => lifetime.abort(),
     oldCopy: null,
   };
 }
 
+function deferred<T>() {
+  let resolve!: (answer: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+const affirmed = (accountId = "acct-1") => Response.json({ user: { accountId } });
+
+function pairedOver(answer: (path: string) => Promise<Response>, deadline = 1_000) {
+  const calls: string[] = [];
+  const bearer = new BearerManagerRN({
+    origin: ORIGIN,
+    accessToken: ["fixture", "access"].join("-"),
+    refreshToken: ["fixture", "refresh"].join("-"),
+    vault: {
+      save: async () => "landed", clear: async () => "landed",
+      armAttempt: async () => "landed", oweSignOut: async () => false,
+    },
+    fetchImpl: (url) => {
+      const path = new URL(url).pathname;
+      calls.push(path);
+      return answer(path);
+    },
+  });
+  const profile = { ...sessionOver(bearer.fetch).profile, flavor: "managed" };
+  const session = shellSessionOf({ kind: "paired", profile, bearer, fetch: bearer.fetch, apiBase: null }, null, deadline);
+  return { session, calls };
+}
+
 const get = (path: string, more: object = {}) => ({ scope: SCOPE, method: "GET" as const, path, headers: [] as [string, string][], body: null, ...more });
+
+const accountCalls = [
+  get("/mailboxes"), get("/consent"), get("/messages/letter/body"), get("/sync/snapshot"),
+  get("/consent/settings", { method: "PATCH" }), get("/drafts/letter/send", { method: "POST" }),
+];
+
+function doorOver(session: ShellSession, options: Partial<ConstructorParameters<typeof HttpDoor>[0]> = {}) {
+  return new HttpDoor({ live: () => ({ session, scope: SCOPE }), ready: () => true, ...options });
+}
 
 function hostOver(door: HttpDoor, more: Partial<ConstructorParameters<typeof BridgeHost>[0]> = {}) {
   const posted: Record<string, unknown>[] = [];
@@ -75,7 +117,7 @@ describe("the shell's HTTP door", () => {
 
   it("refuses a second spelling of a path and the base's own prefix", async () => {
     const t = transport();
-    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true });
+    const door = doorOver(sessionOver(t.fetch));
     const signal = new AbortController().signal;
     for (const path of ["/mailboxes/", "//mailboxes", "/api/mailboxes", "/mailboxes//x"]) {
       expect(await door.request(get(path), signal), path).toMatchObject({ status: 403 });
@@ -85,7 +127,7 @@ describe("the shell's HTTP door", () => {
 
   it("never dials for a path that names another place, from the page's own message", async () => {
     const t = transport();
-    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true });
+    const door = doorOver(sessionOver(t.fetch));
     const { posted, say, settled } = hostOver(door);
     for (const [i, path] of ["https://elsewhere.example/sync", "//elsewhere.example/sync", "/a/../pair", "/%2e%2e/pair", "/sync\\x"].entries()) {
       say({ id: i + 1, epoch: "e1", kind: "http", ...get(path) });
@@ -97,7 +139,7 @@ describe("the shell's HTTP door", () => {
 
   it("refuses every route only native calls, and anything the relay does not forward", async () => {
     const t = transport();
-    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true });
+    const door = doorOver(sessionOver(t.fetch));
     const signal = new AbortController().signal;
     for (const spec of NATIVE_ONLY) {
       const [method, pattern] = spec.split(" ") as ["GET" | "POST" | "DELETE", string];
@@ -111,7 +153,7 @@ describe("the shell's HTTP door", () => {
   it("passes the calendar's connect door, and a typed sign-in goes out in the one request's body and is counted or kept nowhere", async () => {
     const t = transport();
     const counted: string[] = [];
-    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true, count: (what) => void counted.push(what) });
+    const door = doorOver(sessionOver(t.fetch), { count: (what) => void counted.push(what) });
     const signal = new AbortController().signal;
     // Values nobody wrote down, put together here so that no line of this file is shaped like a sign-in.
     const typedPassword = ["mk", "phone", "pw", String(Date.now())].join("");
@@ -143,7 +185,7 @@ describe("the shell's HTTP door", () => {
 
   it("never lets the page reach a route that answers session tokens or spends a pairing or handoff code", async () => {
     const t = transport();
-    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true });
+    const door = doorOver(sessionOver(t.fetch));
     const signal = new AbortController().signal;
     for (const path of ["/auth/2fa/totp/activate", "/auth/2fa/webauthn/register/verify", "/pair/handoff", "/pair/redeem"]) {
       const answer = await door.request(get(path, { method: "POST", body: { as: "text", text: "{}" } }), signal);
@@ -155,7 +197,7 @@ describe("the shell's HTTP door", () => {
   it("refuses a request under another profile's scope, and dials nothing before the launch is done", async () => {
     const t = transport();
     let ready = false;
-    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => ready });
+    const door = doorOver(sessionOver(t.fetch), { ready: () => ready });
     const signal = new AbortController().signal;
     expect(await door.request(get("/mailboxes", { scope: "p" + "f".repeat(32) }), signal)).toEqual({ refused: "foreignScope" });
     expect(await door.request(get("/mailboxes"), signal)).toMatchObject({ status: 503 });
@@ -166,7 +208,7 @@ describe("the shell's HTTP door", () => {
 
   it("drops the credentials the page names and hands back only the headers it may read", async () => {
     const t = transport();
-    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true });
+    const door = doorOver(sessionOver(t.fetch));
     const answer = await door.request(get("/mailboxes", {
       headers: [
         ["authorization", "Bearer stolen"], ["cookie", "s=1"], ["x-csrf-token", "c"], ["x-ohmail-client", "forged"],
@@ -182,7 +224,7 @@ describe("the shell's HTTP door", () => {
   it("holds the drain routes shut until the identity verdict, then forwards them", async () => {
     const t = transport();
     let cleared = false;
-    const door = new HttpDoor({ live: () => ({ session: { ...sessionOver(t.fetch), identityCleared: () => cleared }, scope: SCOPE }), ready: () => true });
+    const door = doorOver({ ...sessionOver(t.fetch), boundAccount: () => cleared ? "acct-1" : null });
     const signal = new AbortController().signal;
     const held = await door.request(get("/sync?since=0"), signal);
     expect(held).toMatchObject({ status: 503 });
@@ -191,12 +233,111 @@ describe("the shell's HTTP door", () => {
     expect(await door.request(get("/sync?since=0"), signal)).toMatchObject({ status: 200 });
     expect(t.calls.map((c) => c.url)).toEqual([`${ORIGIN}/sync?since=0`]);
   });
+
+  it("holds account reads and acts until the native probe confirms this pairing", async () => {
+    const identity = deferred<Response>();
+    const { session, calls } = pairedOver((path) => path === "/auth/session" ? identity.promise : Promise.resolve(Response.json({})));
+    const door = new HttpDoor({ live: () => ({ session, scope: SCOPE }), ready: () => true });
+    const signal = new AbortController().signal;
+    const probe = session.verifyIdentity();
+    try {
+      const held = await Promise.all(accountCalls.map((ask) => door.request(ask, signal)));
+      expect(calls).toEqual(["/auth/session"]);
+      expect(held.map((answer) => "status" in answer ? answer.status : answer.refused)).toEqual(accountCalls.map(() => 503));
+    } finally {
+      identity.resolve(affirmed());
+    }
+    expect((await probe).kind).toBe("verified");
+    expect(await door.request(get("/mailboxes"), signal)).toMatchObject({ status: 200 });
+    expect(await door.request(get("/consent/settings", { method: "PATCH" }), signal)).toMatchObject({ status: 200 });
+    expect(calls).toEqual(["/auth/session", "/mailboxes", "/consent/settings"]);
+  });
+
+  it.each([
+    ["mismatched", () => affirmed("acct-2"), "mismatch"],
+    ["unverified", () => Response.json({}), "unverified"],
+  ] as const)("forwards no account calls after a %s identity answer", async (_label, answer, verdict) => {
+    const { session, calls } = pairedOver(async () => answer());
+    const door = new HttpDoor({ live: () => ({ session, scope: SCOPE }), ready: () => true });
+    expect((await session.verifyIdentity()).kind).toBe(verdict);
+    const refused = await Promise.all(accountCalls.map((ask) => door.request(ask, new AbortController().signal)));
+    expect(calls).toEqual(["/auth/session"]);
+    expect(refused.map((result) => "status" in result ? result.status : result.refused)).toEqual(accountCalls.map(() => 503));
+  });
+
+  it("keeps calls held when the identity answer comes after the deadline", async () => {
+    const identity = deferred<Response>();
+    const { session, calls } = pairedOver(() => identity.promise, 1);
+    const door = new HttpDoor({ live: () => ({ session, scope: SCOPE }), ready: () => true });
+    expect((await session.verifyIdentity()).kind).toBe("unverified");
+    identity.resolve(affirmed());
+    const refused = await Promise.all(accountCalls.map((ask) => door.request(ask, new AbortController().signal)));
+    expect(calls).toEqual(["/auth/session"]);
+    expect(refused.map((result) => "status" in result ? result.status : result.refused)).toEqual(accountCalls.map(() => 503));
+  });
+
+  it("does not replay a write on a renewed credential before checking its account", async () => {
+    let renewed = false;
+    const { session, calls } = pairedOver(async (path) => {
+      if (path === "/auth/session") return affirmed(renewed ? "acct-2" : "acct-1");
+      if (path === "/auth/refresh") {
+        renewed = true;
+        return Response.json({ tokens: {
+          accessToken: ["renewed", "fixture"].join("-"), refreshToken: ["next", "fixture"].join("-"),
+        } });
+      }
+      return new Response(null, { status: 401 });
+    });
+    const door = doorOver(session);
+    expect((await session.verifyIdentity()).kind).toBe("verified");
+    const write = get("/consent/settings", { method: "PATCH" });
+    await door.request(write, new AbortController().signal);
+    expect(calls).toEqual(["/auth/session", "/consent/settings", "/auth/refresh"]);
+    expect(session.boundAccount()).toBeNull();
+    expect((await session.verifyIdentity()).kind).toBe("mismatch");
+    expect(await door.request(write, new AbortController().signal)).toMatchObject({ status: 503 });
+    expect(calls).toEqual(["/auth/session", "/consent/settings", "/auth/refresh", "/auth/session"]);
+  });
+
+  it.each(["header", "mailbox row", "sync row"] as const)("discards another account's %s after identity was confirmed", async (where) => {
+    const foreign = () => {
+      const row = { accountId: "acct-2", subject: "Foreign fixture" };
+      if (where === "header") return Response.json(row, { headers: { "x-ohmail-account": "acct-2" } });
+      if (where === "mailbox row") return Response.json({ items: [row] });
+      return Response.json({ changes: { creates: [{ entity: row }] } });
+    };
+    const { session } = pairedOver(async (path) => path === "/auth/session" ? affirmed() : foreign());
+    const door = new HttpDoor({ live: () => ({ session, scope: SCOPE }), ready: () => true });
+    expect((await session.verifyIdentity()).kind).toBe("verified");
+    const answer = await door.request(get(where === "sync row" ? "/sync" : "/mailboxes"), new AbortController().signal);
+    expect(answer).toMatchObject({ status: 403 });
+    expect(JSON.stringify(answer)).not.toContain("Foreign fixture");
+  });
+
+  it("discards an answer still being read when the session leaves", async () => {
+    const headers = deferred<void>();
+    const bytes = deferred<ArrayBuffer>();
+    const { session } = pairedOver(async (path) => {
+      if (path === "/auth/session") return affirmed();
+      const response = Response.json({});
+      response.arrayBuffer = () => { headers.resolve(); return bytes.promise; };
+      return response;
+    });
+    let live = { session, scope: SCOPE } as { session: ShellSession; scope: string } | null;
+    const door = new HttpDoor({ live: () => live, ready: () => true });
+    expect((await session.verifyIdentity()).kind).toBe("verified");
+    const read = door.request(get("/mailboxes"), new AbortController().signal);
+    await headers.promise;
+    live = null;
+    bytes.resolve(new TextEncoder().encode('{"items":[]}').buffer);
+    expect(await read).toEqual({ refused: "foreignScope" });
+  });
 });
 
 describe("the bridge's native end", () => {
   it("runs nothing for a message that is not the page's main frame or not this web view's", async () => {
     const t = transport();
-    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true });
+    const door = doorOver(sessionOver(t.fetch));
     const { posted, say, settled } = hostOver(door);
     const asked = { id: 1, epoch: "e1", kind: "http", ...get("/mailboxes") };
     say(asked, { mainFrame: false });
@@ -218,7 +359,7 @@ describe("the bridge's native end", () => {
       seen.push((init as RequestInit).signal!);
       return new Promise<Response>(() => {});
     };
-    const door = new HttpDoor({ live: () => ({ session: sessionOver(hanging), scope: SCOPE }), ready: () => true });
+    const door = doorOver(sessionOver(hanging));
     const { host, say, settled } = hostOver(door);
     say({ id: 1, epoch: "e1", kind: "http", ...get("/mailboxes") });
     say({ id: 2, epoch: "e1", kind: "http", ...get("/mailboxes") });

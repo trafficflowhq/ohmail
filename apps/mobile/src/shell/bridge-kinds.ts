@@ -3,10 +3,9 @@
  * file: the page under `web/`, and the native side under `src/shell/`. It holds one value, the
  * guard {@link readRequest}, which native runs on every message before anything else reads it.
  *
- * The page is the less trusted side: it draws letters, which are hostile content. So no kind
- * takes an address, a host, a file path, SQL or a keystore name; a request names a root-relative
- * path and native composes the origin, the base and the bearer. A link leaves only as the web
- * view's own navigation (native then asks, `linkAsk`), never as an address the page hands over.
+ * The page draws untrusted letters. HTTP requests carry a root-relative path; native composes
+ * the origin, the base and the bearer. Only a standalone mailbox edit can name its mail server.
+ * No kind takes a file path, SQL or a keystore name, and a link leaves through the view's own navigation.
  *
  * ENVELOPE. Page to native: `{ id, epoch, kind, ... }`, one answer per id. Native to page: answers
  * `{ id, epoch, ok, ... }` and events `{ type, epoch, ... }`. Native mints the epoch per web view
@@ -22,7 +21,7 @@
  * The facts that cross have the bridge's own shapes below, not an import of the host contract: the
  * contract's door reaches the kit, which the app's own program (Expo's lib) does not type. The page
  * holds each shape equal to the contract's (`web/src/signals.ts`), so the two cannot drift. This
- * file's only runtime import is the switch's place (`../switch/place`), which imports nothing.
+ * file reads the switch's place and the calendar's closed snapshot.
  *
  * THE SWITCH BETWEEN THE TWO APPS crosses as three closed kinds and one event, and none of them carries an address,
  * an account, a code or the other app's sign-in: the page asks whether the other app is here, asks native to open
@@ -32,7 +31,12 @@
  * words of a closed list. The page hands over no title, no sentence and no name; native writes every word a
  * notice shows from its own string resources ({@link readNotice}).
  */
+import { isWidgetGeneration, type WidgetTarget } from "../calendar/opened";
+import { readCalendarSnapshot, type CalendarSnapshot } from "../calendar/record";
 import { isSwitchPlace, type SwitchPlace } from "../switch/place";
+import type { MailboxRow } from "@ohmail/app-logic/mailboxes/pane-contract";
+import type { Answered } from "@ohmail/app-logic/mailboxes/connect/types";
+import type { PhoneDiagnosticRequest } from "./phone-diagnostics";
 import type { WakePaneState } from "@ohmail/app-logic/phone/wake";
 
 /** The permission to post notices, as the system reads it. */
@@ -71,9 +75,9 @@ export interface LinkedDraft {
 }
 
 /** The largest piece of a body that crosses in one message. */
-export const PIECE_BYTES = 256 * 1024;
+export { PIECE_BYTES } from "./framing";
 /** How long native waits for the page's answer to an `ask`; no answer is "not taken". */
-export const ASK_DEADLINE_MS = 700;
+export { ASK_DEADLINE_MS } from "./framing";
 /** The longest path a request may name, checked before anything else reads it. */
 export const PATH_MAX = 2048;
 
@@ -127,6 +131,13 @@ export type BridgeNoticeKind = BridgeNotice["kind"];
  */
 export type NoticePosted = "posted" | "unsupported" | "inFront" | "denied";
 
+/**
+ * What native did with the calendar's record. `kept`: written for this session's pairing, and its alerts set.
+ * `unsupported`: a build without the calendar's native side. `denied`: the session no longer stands, the record is
+ * another account's, or native refused it.
+ */
+export type CalendarKept = "kept" | "unsupported" | "denied";
+
 /** What the page is told once, before it mounts anything. */
 export interface ShellConfig {
   /** The app the page runs in, read natively from the app's own identifier. */
@@ -153,6 +164,7 @@ export interface ShellConfig {
    */
   readonly notices: readonly BridgeNoticeKind[];
   /** The readings as they stand now; each later change comes as its event. */
+  readonly os?: "android" | "ios";
   readonly facts: {
     readonly posture: FoldReading;
     readonly insets: SafeInsets;
@@ -168,16 +180,52 @@ export type ShellAct =
   | { readonly act: "chrome"; readonly scheme: "light" | "dark" }
   | { readonly act: "notifications.permission" }
   | { readonly act: "notifications.request" }
-  | { readonly act: "diagnostics.share" }
   | { readonly act: "backup.read" }
   /** Draw one mail notice. Native writes its words; what was done with it comes back as `notice`. */
   | { readonly act: "notices.post"; readonly notice: BridgeNotice }
+  | { readonly act: "calendar.snapshot"; readonly snapshot: CalendarSnapshot; readonly publication?: string }
+  | { readonly act: "calendar.clear"; readonly publication: string }
+  | { readonly act: "calendar.resolve"; readonly generation: string }
   /**
    * Whether a closed app is to be woken for new mail: this device's master switch and its new-mail switch,
    * both on. One boolean and nothing else. Native keeps this pairing's wake registration while it is true, and
    * takes it down at the server and at the distributor while it is false.
    */
   | { readonly act: "wake.want"; readonly wanted: boolean };
+
+export type PhoneOrganizerRequest =
+  | { readonly do: "read" }
+  | { readonly do: "start"; readonly mailboxId: string; readonly background: boolean }
+  | { readonly do: "stop" | "notifications"; readonly mailboxId: string };
+
+export interface PhoneOrganizerRow {
+  readonly id: string;
+  readonly address: string;
+  readonly tag: "organizing" | "starting" | "stopping" | "stopPending" | "handedBack" | "paused" | "notOrganized" | "reader" | null;
+  readonly notes: readonly string[];
+  readonly warnings: readonly string[];
+  readonly start: boolean;
+  readonly stop: boolean;
+  readonly explainBackground: boolean;
+  readonly notifications: boolean;
+}
+
+export interface PhoneServerPatch {
+  readonly host?: string;
+  readonly port?: number;
+  readonly user?: string;
+  readonly pass: string;
+}
+
+export interface PhoneMailboxPatch {
+  readonly imap: PhoneServerPatch;
+  readonly smtp?: PhoneServerPatch;
+}
+
+export type PhoneMailboxRequest =
+  | { readonly do: "list"; readonly counts: boolean }
+  | { readonly do: "check"; readonly mailboxId: string }
+  | { readonly do: "edit"; readonly mailboxId: string; readonly patch: PhoneMailboxPatch };
 
 export type PhoneNameRequest =
   | { readonly do: "read" }
@@ -234,7 +282,7 @@ export interface Requests {
     readonly ask: ShellAct;
     readonly answer: {
       readonly permission?: NoticePermission; readonly backup?: "excluded" | "included" | "unknown";
-      readonly notice?: NoticePosted;
+      readonly notice?: NoticePosted; readonly calendar?: CalendarKept; readonly widget?: WidgetTarget;
     };
   };
   readonly "phone.wake": {
@@ -245,14 +293,30 @@ export interface Requests {
     readonly ask: PhoneNameRequest;
     readonly answer: { readonly rows?: readonly PhoneNameRow[]; readonly name?: string | null };
   };
+  readonly "phone.organize": {
+    readonly ask: PhoneOrganizerRequest;
+    readonly answer: { readonly rows: readonly PhoneOrganizerRow[] };
+  };
+  readonly "phone.diagnostics": {
+    readonly ask: PhoneDiagnosticRequest;
+    readonly answer: { readonly fileName?: string; readonly shared?: boolean };
+  };
+  readonly "phone.mailbox": {
+    readonly ask: PhoneMailboxRequest;
+    readonly answer: {
+      readonly rows?: readonly MailboxRow[];
+      readonly checked?: unknown;
+      readonly edited?: Answered<null>;
+    };
+  };
   /** A link the web view's own navigation asked to open, held natively by its token. */
   readonly linkAskOpen: { readonly ask: { readonly token: string }; readonly answer: { readonly opened: boolean } };
   /** The page's answer to an `ask` event. */
   readonly answer: {
     readonly ask:
-      | { readonly askId: number; readonly what: "back"; readonly took: boolean }
+      | { readonly askId: number; readonly what: "back"; readonly took: boolean | "held" | "prepare" | "discard" }
       | { readonly askId: number; readonly what: "unsent"; readonly unsent: number };
-    readonly answer: Record<never, never>;
+    readonly answer: { readonly accepted: boolean };
   };
   /** A person's words or intent, written natively before the page's own write. `null` removes. */
   readonly keep: { readonly ask: { readonly key: string; readonly value: string | null }; readonly answer: { readonly kept: boolean } };
@@ -339,7 +403,10 @@ export type ShellEvent =
   | { readonly type: "keyboard"; readonly reading: KeyboardReading }
   | { readonly type: "network"; readonly online: boolean }
   | { readonly type: "wake"; readonly why: "foreground" | "push" }
+  | { readonly type: "backEnded"; readonly askId: number }
+  | { readonly type: "organizerChanged" }
   | { readonly type: "wakePane"; readonly wake: WakePaneState }
+  | { readonly type: "calendarWidget"; readonly generation: string }
   | { readonly type: "linkIn"; readonly target: LinkInTarget }
   | { readonly type: "ask"; readonly askId: number; readonly what: "back" | "unsent" }
   | { readonly type: "linkAsk"; readonly token: string; readonly url: string }
@@ -360,13 +427,13 @@ export type Event = ShellEvent & { readonly epoch: string };
  * named every place is.
  */
 export function readRequest(
-  raw: unknown, app: ShellApp | null = null,
+  raw: unknown, app: ShellApp | null = null, diagnosticCounts?: number,
 ): Request | { readonly refused: "unknownKind" | "malformed" } {
   if (typeof raw !== "object" || raw === null) return MALFORMED;
   const m = raw as Record<string, unknown>;
   if (!isId(m.id) || typeof m.epoch !== "string" || m.epoch.length === 0 || m.epoch.length > 64) return MALFORMED;
   if (typeof m.kind !== "string" || !Object.prototype.hasOwnProperty.call(FIELDS, m.kind)) return UNKNOWN;
-  return FIELDS[m.kind as Kind](m, app) ? (m as unknown as Request) : MALFORMED;
+  return FIELDS[m.kind as Kind](m, app, diagnosticCounts) ? (m as unknown as Request) : MALFORMED;
 }
 
 const MALFORMED = { refused: "malformed" } as const;
@@ -377,7 +444,7 @@ const isStr = (v: unknown, max = 4096): v is string => typeof v === "string" && 
 const METHODS: Record<HttpMethod, true> = { GET: true, HEAD: true, POST: true, PUT: true, PATCH: true, DELETE: true };
 const ACTS: Record<ShellAct["act"], true> = {
   signOut: true, openServers: true, chrome: true, "notifications.permission": true, "notifications.request": true,
-  "diagnostics.share": true, "backup.read": true, "notices.post": true, "wake.want": true,
+  "backup.read": true, "notices.post": true, "calendar.snapshot": true, "calendar.clear": true, "calendar.resolve": true, "wake.want": true,
 };
 const NOTES: Record<NoteWhat, true> = {
   mounted: true, durabilityLost: true, keeperRefused: true, pieceDropped: true, foreignEpoch: true, deadlinePassed: true,
@@ -442,6 +509,20 @@ const POST_KEYS: ReadonlySet<string> = new Set(["id", "epoch", "kind", "act", "n
 const isNoticePost = (m: Record<string, unknown>): boolean =>
   Reflect.ownKeys(m).every((key) => typeof key === "string" && POST_KEYS.has(key)) && readNotice(m.notice) !== null;
 
+/** The keys the act `calendar.snapshot` crosses with: the envelope's three, the act and its record. */
+const SNAPSHOT_KEYS: ReadonlySet<string> = new Set(["id", "epoch", "kind", "act", "snapshot", "publication"]);
+/** The calendar's record is as closed as a notice: no key beside its own, and a record the contract's reader reads. */
+const isSnapshotPost = (m: Record<string, unknown>): boolean =>
+  Reflect.ownKeys(m).every((key) => typeof key === "string" && SNAPSHOT_KEYS.has(key))
+  && (m.publication === undefined || isWidgetGeneration(m.publication))
+  && readCalendarSnapshot(m.snapshot) !== null;
+
+const CALENDAR_REQUEST_KEYS = new Set(["id", "epoch", "kind", "act"]);
+function isCalendarHandle(m: Record<string, unknown>, key: "publication" | "generation"): boolean {
+  return Object.prototype.hasOwnProperty.call(m, key) && isWidgetGeneration(m[key]) &&
+    Reflect.ownKeys(m).every((name) => name === key || (typeof name === "string" && CALENDAR_REQUEST_KEYS.has(name)));
+}
+
 /** The keys the act `wake.want` crosses with: the envelope's three, the act and its one boolean. */
 const WANT_KEYS: ReadonlySet<string> = new Set(["id", "epoch", "kind", "act", "wanted"]);
 /** As closed as the act that draws: no key beside its own, and `wanted` one of the two booleans, never a word for one. */
@@ -465,6 +546,51 @@ function isPhoneNameRequest(m: Record<string, unknown>, app: ShellApp | null): b
   if (m.do === "read") return Object.keys(m).every((key) => NAME_READ_KEYS.has(key));
   return m.do === "save" && isStr(m.mailboxId, 256) && m.mailboxId !== "" &&
     (m.name === null || isStr(m.name)) && Object.keys(m).every((key) => NAME_SAVE_KEYS.has(key));
+}
+
+function phoneFields(m: Record<string, unknown>, ...fields: string[]): boolean {
+  return Object.keys(m).every((key) => NAME_READ_KEYS.has(key) || fields.includes(key));
+}
+
+function phoneMailboxId(m: Record<string, unknown>): boolean {
+  return isStr(m.mailboxId, 256) && /^[a-zA-Z0-9_-]+$/.test(m.mailboxId);
+}
+
+function isOrganizerRequest(m: Record<string, unknown>, app: ShellApp | null): boolean {
+  if (app !== "ohmail") return false;
+  if (m.do === "read") return phoneFields(m);
+  if (!phoneMailboxId(m)) return false;
+  if (m.do === "start") return typeof m.background === "boolean" && phoneFields(m, "mailboxId", "background");
+  return (m.do === "stop" || m.do === "notifications") && phoneFields(m, "mailboxId");
+}
+
+function isDiagnosticRequest(m: Record<string, unknown>, app: ShellApp | null, diagnosticCounts?: number): boolean {
+  if (app !== "ohmail") return false;
+  if (m.do === "share") return phoneFields(m);
+  return m.do === "write" && phoneFields(m, "counts") && Array.isArray(m.counts) &&
+    m.counts.length === diagnosticCounts && m.counts.every(isId);
+}
+
+function isPhoneServerPatch(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const m = value as Record<string, unknown>;
+  return Object.keys(m).every((key) => ["host", "port", "user", "pass"].includes(key)) &&
+    isStr(m.pass, 4096) && m.pass.length > 0 &&
+    (m.host === undefined || isStr(m.host, 512)) &&
+    (m.user === undefined || isStr(m.user, 512)) &&
+    (m.port === undefined || (isId(m.port) && m.port > 0 && m.port <= 65535));
+}
+
+function isPhoneMailboxRequest(m: Record<string, unknown>, app: ShellApp | null): boolean {
+  if (app !== "ohmail") return false;
+  if (m.do === "list") return typeof m.counts === "boolean" && phoneFields(m, "counts");
+  if (!phoneMailboxId(m)) return false;
+  if (m.do === "check") return phoneFields(m, "mailboxId");
+  if (m.do !== "edit" || !phoneFields(m, "mailboxId", "patch") ||
+      typeof m.patch !== "object" || m.patch === null) return false;
+  const patch = m.patch as Record<string, unknown>;
+  return Object.keys(patch).every((key) => key === "imap" || key === "smtp") &&
+    isPhoneServerPatch(patch.imap) && (patch.smtp === undefined || isPhoneServerPatch(patch.smtp));
 }
 
 /** Root-relative, and nothing a URL parser could read as another place. */
@@ -494,7 +620,7 @@ const isRow = (v: unknown): v is KeptRow => {
 const isPairs = (v: unknown): boolean =>
   Array.isArray(v) && v.every((p) => Array.isArray(p) && p.length === 2 && isStr(p[0], 256) && isStr(p[1], 256));
 
-const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>, app: ShellApp | null) => boolean } = {
+const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>, app: ShellApp | null, diagnosticCounts?: number) => boolean } = {
   config: () => true,
   ready: (m) => isStr(m.place),
   place: (m) => isStr(m.fragment),
@@ -502,12 +628,18 @@ const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>, app: ShellApp
     isHeaders(m.headers) && isBody(m.body),
   cancel: (m) => isId(m.of),
   act: (m) => member(ACTS, m.act) && (m.act !== "chrome" || m.scheme === "light" || m.scheme === "dark") &&
-    (m.act !== "notices.post" || isNoticePost(m)) && (m.act !== "wake.want" || isWakeWant(m)),
+    (m.act !== "notices.post" || isNoticePost(m)) && (m.act !== "calendar.snapshot" || isSnapshotPost(m)) &&
+    (m.act !== "calendar.clear" || isCalendarHandle(m, "publication")) &&
+    (m.act !== "calendar.resolve" || isCalendarHandle(m, "generation")) &&
+    (m.act !== "wake.want" || isWakeWant(m)),
   "phone.wake": isWakePaneRequest,
   "phone.name": isPhoneNameRequest,
+  "phone.organize": isOrganizerRequest,
+  "phone.diagnostics": isDiagnosticRequest,
+  "phone.mailbox": isPhoneMailboxRequest,
   linkAskOpen: (m) => isStr(m.token, 128),
   answer: (m) => isId(m.askId) &&
-    ((m.what === "back" && typeof m.took === "boolean") || (m.what === "unsent" && isId(m.unsent))),
+    ((m.what === "back" && (typeof m.took === "boolean" || m.took === "held" || m.took === "prepare" || m.took === "discard")) || (m.what === "unsent" && isId(m.unsent))),
   keep: (m) => isStr(m.key, 512) && (m.value === null || typeof m.value === "string"),
   kept: () => true,
   keepRows: (m) => isStr(m.scope, 128) && Array.isArray(m.puts) && m.puts.every(isRow) && isPairs(m.deletes),

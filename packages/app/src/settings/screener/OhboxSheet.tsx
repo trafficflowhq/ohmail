@@ -100,7 +100,7 @@ function OhboxWords({ ohbox, busy }: { readonly ohbox: ScreenerOhbox; readonly b
     return v === ohbox.defaultBar.trim() || v === shownDefault.trim();
   };
   const changed = stored === null ? !isDefault(draft) : draft.trim() !== stored.trim();
-  const guard = useDraftLeave(changed && !!ohbox.holdLeave, (ask) => ohbox.holdLeave!(ask));
+  const guard = useDraftLeave(changed && !!ohbox.holdLeave, (ask) => ohbox.holdLeave!(ask), draft);
   const held = pending || busy;
   const toStore = (text: string): string | null => (isDefault(text) || !text.trim() ? null : text.trim());
 
@@ -134,10 +134,7 @@ function OhboxWords({ ohbox, busy }: { readonly ohbox: ScreenerOhbox; readonly b
         hot
         confirm={{
           label: leaveText("leaveDiscard"),
-          onPress: () => {
-            setDraft(stored ?? shownDefault);
-            guard.discard();
-          },
+          onPress: () => guard.discard(() => setDraft(stored ?? shownDefault)),
         }}
         cancel={{ label: leaveText("leaveKeep") }}
       />

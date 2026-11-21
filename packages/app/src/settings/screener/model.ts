@@ -1,3 +1,4 @@
+import type { AskLeave } from "../../host/device.js";
 import { NONE, type HostContract } from "../../host/index.js";
 
 /**
@@ -24,7 +25,7 @@ export type TravelledNote =
 /** What reaches the Ohbox: one account setting, two switches and the words. */
 export interface ScreenerOhbox {
   /** A host with navigation can ask about unsaved words before leaving. */
-  readonly holdLeave?: (ask: (leave: () => void) => void) => () => void;
+  readonly holdLeave?: (ask: AskLeave) => () => void;
   /** "Keep my Ohbox for what's relevant". */
   readonly relevant: boolean;
   /** Filing impersonations to Spam; `null` from an older server, which files none. */

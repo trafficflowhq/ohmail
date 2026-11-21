@@ -3,9 +3,8 @@ package app.ohmail.notices
 /**
  * FOR WHOM A NOTICE MAY BE DRAWN: only for the pairing kept as the signed-in one.
  *
- * ONE TEXT, TWO PACKAGES. apps/mobile/plugins/wake-push-renderer.js writes this file into the app
- * at prebuild, and the notices' module carries the same text under its own package; a test holds
- * the two equal. Change it in the plugin, never here.
+ * The wake renderer, notices and calendar share this gate. Its source is maintained in
+ * apps/mobile/plugins/wake-push-renderer.js and the modules' copies are checked against it.
  *
  * It imports nothing and keeps nothing: what the file says is handed in as lines, a wake's or a
  * notice's pairing as a string. Everything that is not exactly right draws nothing.

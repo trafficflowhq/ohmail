@@ -454,6 +454,18 @@
       "node": "./dist/servers/index.js",
       "default": "./src/servers/index.ts"
     },
+    "./phone-settings/this-phone": {
+      "types": "./src/phone-settings/this-phone/ThisPhoneSheet.tsx",
+      "ohmail-source": "./src/phone-settings/this-phone/ThisPhoneSheet.tsx",
+      "node": "./dist/phone-settings/this-phone/ThisPhoneSheet.js",
+      "default": "./src/phone-settings/this-phone/ThisPhoneSheet.tsx"
+    },
+    "./phone-settings/diagnostic-file": {
+      "types": "./src/phone-settings/on-this-phone/DiagnosticFileSheet.tsx",
+      "ohmail-source": "./src/phone-settings/on-this-phone/DiagnosticFileSheet.tsx",
+      "node": "./dist/phone-settings/on-this-phone/DiagnosticFileSheet.js",
+      "default": "./src/phone-settings/on-this-phone/DiagnosticFileSheet.tsx"
+    },
     "./phone-settings/your-name": {
       "types": "./src/phone-settings/your-name/YourNameSheet.tsx",
       "ohmail-source": "./src/phone-settings/your-name/YourNameSheet.tsx",

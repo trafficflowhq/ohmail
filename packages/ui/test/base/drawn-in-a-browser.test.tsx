@@ -36,7 +36,7 @@ import {
   StepDots,
   Tag,
 } from "../../src/base/index.js";
-import { AgendaRow, MiniMonth } from "../../src/calendar/index.js";
+import { AgendaRow, EventChip, MiniMonth } from "../../src/calendar/index.js";
 import {
   ActionPanel,
   ColumnHandle,
@@ -3939,6 +3939,28 @@ describe("a sheet that counts: storage", () => {
       });
     },
   );
+});
+
+it("lets the pointer resize timed events across their top and bottom edges", async () => {
+  const directions = await opened(
+    <div style={{ position: "relative", width: 240, height: 80 }}>
+      <EventChip size="block" tone={243} title="Lunch" place={{ top: 0, height: 58 }} handles />
+    </div>,
+    { entry: "calendar" },
+    (tab) =>
+      tab.getByRole("button", { name: "Lunch" }).evaluate((chip) => {
+        const { left, top, width, bottom, height } = chip.getBoundingClientRect();
+        const cursorAt = (x: number, y: number) => getComputedStyle(document.elementFromPoint(x, y)!).cursor;
+        return {
+          start: cursorAt(left + width / 2, top + 2),
+          end: cursorAt(left + width / 2, bottom - 2),
+          side: cursorAt(left + 2, top + height / 2),
+        };
+      }),
+  );
+  expect(directions.start).toBe("ns-resize");
+  expect(directions.end).toBe("ns-resize");
+  expect(directions.side).not.toBe("ew-resize");
 });
 
 describe("an agenda row the keys are on", () => {
